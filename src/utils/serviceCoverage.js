@@ -62,9 +62,20 @@ const OPP_STAGE_PRIORITY = { 'Sold': 4, 'Verbal': 3, 'Quoted': 3, 'Quoting': 2, 
 // it. Returns Map<prospect, Map<serviceKey, stage>>. Scope text is split on
 // ; , / and each part is fuzzily matched against the canonical service list,
 // mirroring ProspectModal so the two views can't disagree.
-export function buildOppStagesByClient(clients, oppsRecords) {
+//
+// `serviceNames` is which catalogue to match against, and a caller that
+// prices its own list should pass it. The seed categories are the default
+// because most callers want the built-in vocabulary, but a user who has
+// added services to the board has services no seed knows: matched against
+// the seed alone, an opp naming one of those leaves it reading as never
+// explored, which on the Account Potential page means still-to-sell money
+// against work already in flight.
+export function buildOppStagesByClient(clients, oppsRecords, serviceNames = null) {
   const result = new Map();
   if (!Array.isArray(oppsRecords) || oppsRecords.length === 0) return result;
+  const names = (Array.isArray(serviceNames) && serviceNames.length)
+    ? serviceNames
+    : SERVICE_CATEGORIES.flatMap(c => c.items || []);
   const opps = [];
   for (const r of oppsRecords) {
     const scope = String(r?.Scope || '').trim();
@@ -77,14 +88,12 @@ export function buildOppStagesByClient(clients, oppsRecords) {
     for (const o of opps) {
       if (!coverageCompaniesMatch(o.account, p.company)) continue;
       for (const part of scopeTokens(o.scope)) {
-        for (const cat of SERVICE_CATEGORIES) {
-          for (const item of cat.items) {
-            if (scopeTokenMatchesService(part, item)) {
-              const existing = matched.get(item);
-              const existingPri = existing ? (OPP_STAGE_PRIORITY[existing] ?? 1) : -1;
-              const newPri = OPP_STAGE_PRIORITY[o.stage] ?? 1;
-              if (newPri > existingPri) matched.set(item, o.stage);
-            }
+        for (const item of names) {
+          if (scopeTokenMatchesService(part, item)) {
+            const existing = matched.get(item);
+            const existingPri = existing ? (OPP_STAGE_PRIORITY[existing] ?? 1) : -1;
+            const newPri = OPP_STAGE_PRIORITY[o.stage] ?? 1;
+            if (newPri > existingPri) matched.set(item, o.stage);
           }
         }
       }

@@ -96,6 +96,15 @@ export function AccountPotentialTab({
   // account, and a combo offering to switch to somebody else's potential
   // inside their popup is a way to misread a page you did not mean to open.
   lockedCompany = null,
+  // The opp store, when the host already holds it. The company card loads
+  // it for its own sections and works out the same "what is still open"
+  // answer for its Biggest Deal field, so it hands the records over rather
+  // than letting this page read them again: two reads of the same store are
+  // two chances for the card and the page to name a different deal.
+  //
+  // Leave the prop off and this page pulls them itself. `null` means the
+  // host has them in flight, which is not the same as there being none.
+  oppRecords: hostOppRecords,
 }) {
   // `|| {}` so the tab still renders outside the AuthProvider (tests,
   // harnesses): with no user it reads the local opps cache and skips the
@@ -105,12 +114,16 @@ export function AccountPotentialTab({
   // The account this page is about, when the host already knows it.
   const locked = String(lockedCompany ?? '').trim();
 
-  // The account's own opportunities, pulled once the card knows which
-  // account it is about: their stages are what rules a service in or out.
-  // It's the whole opp store — thousands of rows — so a visit that only
-  // reads the rate card is never charged for it.
-  const [oppRecords, setOppRecords] = useState(null);
-  const [oppLoading, setOppLoading] = useState(false);
+  // The account's own opportunities: their stages are what rules a service
+  // out as sold, quoted or already in flight. Taken from the host when it
+  // has them, pulled here when it doesn't - it's the whole opp store,
+  // thousands of rows, so nobody reads it twice and a visit that never
+  // names an account never reads it at all.
+  const hostOwnsOpps = hostOppRecords !== undefined;
+  const [ownOppRecords, setOwnOppRecords] = useState(null);
+  const [ownOppLoading, setOwnOppLoading] = useState(false);
+  const oppRecords = hostOwnsOpps ? hostOppRecords : ownOppRecords;
+  const oppLoading = hostOwnsOpps ? hostOppRecords === null : ownOppLoading;
 
   // Which service in the scope breakdown has its working open, by name. A
   // name rather than the line itself, so the panel re-reads a live estimate:
@@ -167,13 +180,21 @@ export function AccountPotentialTab({
   // What this account's opportunities say about each service. The company
   // page treats an opp whose Scope names a service as having explored it,
   // so this page has to as well or the two disagree about what is still
-  // open. Needs the opp store, which is loaded lazily - until it arrives
-  // only the manual statuses are read, which is the same page with fewer
-  // services ruled out rather than a wrong one.
+  // open - and a service still open here is money this page is offering to
+  // go and sell.
+  //
+  // Matched against the services this page actually prices rather than the
+  // seed catalogue, so a service the user added to the board is ruled out
+  // by an opp naming it exactly like a built-in one.
+  //
+  // Null until the records arrive: that is the same page with fewer
+  // services ruled out rather than a wrong one, and the bar says it is
+  // still reading them.
   const oppStages = useMemo(() => {
     if (!client || !Array.isArray(oppRecords)) return null;
-    return buildOppStagesByClient([client], oppRecords).get(client) || new Map();
-  }, [client, oppRecords]);
+    const names = serviceRows.map(r => r.name);
+    return buildOppStagesByClient([client], oppRecords, names).get(client) || new Map();
+  }, [client, oppRecords, serviceRows]);
 
   // The account's own figures, with anything typed on the page winning.
   // Sites and meters are facts about the company and belong to its record;
@@ -244,7 +265,6 @@ export function AccountPotentialTab({
     // account's estate onto another's page is the quiet way to price a deal
     // against the wrong estate.
     setScenario(s2 => ({ ...s2, company: typed, services: [], counts: {}, serviceUnits: {} }));
-    if (next) ensureOpps();
   }
 
   // Keep the stored estimate in step with the one on screen. Written from
@@ -285,18 +305,30 @@ export function AccountPotentialTab({
   // account with no opportunities anyway, and the rate card half of it is
   // unaffected.
   async function ensureOpps() {
-    if (oppRecords || oppLoading) return;
-    setOppLoading(true);
+    if (ownOppRecords || ownOppLoading) return;
+    setOwnOppLoading(true);
     try {
       const data = await loadOpps2Newest(user?.uid);
-      setOppRecords(Array.isArray(data?.records) ? data.records : []);
+      setOwnOppRecords(Array.isArray(data?.records) ? data.records : []);
     } catch (err) {
       console.error('Account Potential: could not load opps', err);
-      setOppRecords([]);
+      setOwnOppRecords([]);
     } finally {
-      setOppLoading(false);
+      setOwnOppLoading(false);
     }
   }
+
+  // Pulled the moment the page knows which account it is about, whoever
+  // said so. It used to hang off the company combo, which a card embedding
+  // this page never shows - so the card priced its potential with nothing
+  // ruled out by an opportunity, and offered a service already being
+  // quoted as the biggest thing left to sell.
+  useEffect(() => {
+    if (company && !hostOwnsOpps) ensureOpps();
+    // ensureOpps is re-created every render and guards itself; the account
+    // changing is the only thing that should start a pull.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [company, hostOwnsOpps]);
 
   function clearScope() {
     // The per-service units go with the scope: they're this deal's slice of
