@@ -3114,36 +3114,9 @@
 
 /* ---- Account Potential ------------------------------------------------ */
 
-/* The account bar sits above the deal estimator and decides what the
-   estimator is even looking at, so it reads as the heavier of the two: an
-   accent edge rather than the plain border the estimator carries. */
-.potentialBar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 0.75rem 1.25rem;
-  margin: 0 1.25rem 0.5rem;
-  padding: 0.6rem 0.85rem;
-  border: 1px solid var(--color-border-light);
-  border-left: 3px solid var(--color-accent);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-}
-
-.potentialPick {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem 0.75rem;
-}
-
-/* ColumnFilterCombo was drawn for a table header, where it is one line in a
-   narrow cell. Given a width here it reads as the field it is. */
-.potentialCombo {
-  min-width: 230px;
-}
-
+/* The two things the estimator bar says about its own counts: that no
+   record was found behind the name, and that the opportunities deciding
+   what is still open are still being read. */
 .potentialNote,
 .potentialWarn {
   font-size: 0.72rem;
@@ -3565,15 +3538,3 @@
   color: var(--color-accent);
 }
 
-/* The account, on a card that already is one. Sits where the company combo
-   sits on the standalone page, and reads as a heading rather than a control:
-   there is nothing to pick here. */
-.potentialLockedName {
-  font-size: var(--font-size-sm);
-  font-weight: 700;
-  color: var(--color-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 320px;
-}
