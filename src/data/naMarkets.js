@@ -1,6 +1,7 @@
-// North America deregulation breakdown — the state-level Natural Gas /
-// Electric Power regulation status each US state / Canadian province
-// falls into. Drives the "Indicative Savings" Excel export (the
+// North America deregulation breakdown — the Natural Gas / Electric Power
+// regulation status each US state / Canadian province falls into, plus
+// Mexico, which is one market rather than a set of states (see
+// MX_MARKETS). Drives the "Indicative Savings" Excel export (the
 // State / Province deregulation status table + the per-site Electric
 // Market / Gas Market columns) and the NA deregulation choropleth.
 //
@@ -211,6 +212,32 @@ export const CA_MARKETS = [
   { code: 'QC', name: 'Québec',                   category: 'DEREG_NG' },
   { code: 'SK', name: 'Saskatchewan',             category: 'DEREG_NG' },
   { code: 'YT', name: 'Yukon',                    category: 'REG_NG_EP' },
+];
+
+// Mexico, as ONE market rather than 32 states.
+//
+// The other two lists are state-level because the US and Canada regulate
+// energy state by state. Mexico does not: the market is national, CFE is
+// the counterparty, and the CRE rules that open it are federal. So there
+// is nothing a per-state breakdown would say that this row does not, and
+// the NAM map has no Mexican state shapes to hang one on anyway - it
+// carries a single country outline.
+//
+// Its status comes from a different authority to the rows above. Those
+// mirror ELECTRIC_DEREGULATION / GAS_DEREGULATION, which are US + Canada
+// only; Mexico's comes from COUNTRY_DEREGULATION in
+// data/countryDeregulation.js, which is where every other country on the
+// site is read from and which has Mexico deregulated on both commodities.
+// The category is shared with Ontario rather than invented, so a reader
+// comparing the two sheets sees one vocabulary.
+//
+// What this row does NOT say is that every Mexican site is a sale. The
+// opportunity is gated per site - a CFE account, outside the Baja grids,
+// above 6,000,000 kWh a year - and the Detail sheet flags each one
+// individually. That is a site-level test, the same way a deregulated US
+// state still needs a supplier who will quote the meter.
+export const MX_MARKETS = [
+  { code: 'MX', name: 'Mexico', category: 'DEREG_NG_EP' },
 ];
 
 // Map a free-text Canadian province / territory value to its 2-letter
