@@ -2270,6 +2270,25 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* A service that comes with another one. It is on the page to be found -
+   its basis, its rate and its units are what somebody came to check - but
+   its money is on the lead's row, so the row reads a shade back from the
+   ones that carry a figure. Not greyed out: the cells are still legible,
+   and the checkbox on it still works. */
+.pricingRowBundled td {
+  background: var(--color-surface-alt, #f8fafc);
+}
+
+/* Ticked wins over shaded back. A bundled row goes into the scope with its
+   lead, and a row in the scope has to look like one wherever it sits. */
+.pricingRowScoped.pricingRowBundled td {
+  background: rgba(59, 130, 246, 0.06);
+}
+
+.pricingRowBundled .pricingNameText {
+  color: var(--color-text-secondary, #475569);
+}
+
 /* ── Odds and ends the pricing panels share ────────────────────────── */
 
 /* An outlined accent button, and a grey prose note under a bar. Both were
@@ -3174,6 +3193,18 @@
   font-weight: 700;
   color: var(--color-accent);
   background: var(--color-surface-alt, #eef2f6);
+}
+
+/* "with Invoice collection" beside an add-on's name: which row is holding
+   this service's money. Named rather than marked, because the whole point
+   of the row is that somebody can find the service AND find what it is
+   sold with without hovering anything. */
+.bundleWithChip {
+  margin-left: 0.4rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  font-style: italic;
+  color: var(--color-text-muted);
 }
 
 .bundlePanel {

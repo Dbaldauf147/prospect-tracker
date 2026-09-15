@@ -250,6 +250,24 @@ export function AccountPotentialTab({
     return `${total} left out: ${parts.join(', ')}`;
   }, [potential]);
 
+  // The same services by name, on the sentence itself. The count says how
+  // many went; the only question it is ever asked is which. Somebody
+  // looking for a service they cannot find on the table wants to know
+  // whether this is where it went, and a number cannot answer that.
+  const decidedTitle = useMemo(() => {
+    const named = [...potential.decided]
+      .map(d => `${d.name}${d.status ? ` (${d.status})` : ''}`)
+      .sort((a, b) => a.localeCompare(b));
+    if (!named.length) {
+      return 'Nothing on this account has been sold, quoted, turned down or marked N/A yet, so every service in the catalogue is below.';
+    }
+    const shown = named.slice(0, 16);
+    return 'Not on the table below, because the account has already ruled on them: '
+      + shown.join(', ')
+      + (named.length > shown.length ? `, and ${named.length - shown.length} more.` : '.')
+      + ' A status typed on the Services tab is changed there; one that came off an opportunity is changed on the opp.';
+  }, [potential]);
+
   // Only the undecided services reach the table. A service this account
   // already buys is not potential, and neither is one they turned down, one
   // marked N/A, or one already sitting in a live opp - that money is in the
@@ -488,8 +506,24 @@ export function AccountPotentialTab({
     || (effectiveCounts?.[u.unit] !== '' && effectiveCounts?.[u.unit] != null)
   ), [units, totals.unitsUsed, potential, effectiveCounts]);
 
-  // Every service as a table row. Lead services only. An auto-added service is counted inside its lead's
-  // figure, and a row of its own would count it a second time.
+  // Which lead drags each auto-added service in behind it. A service that
+  // comes with another one has no money of its own on this page - it is
+  // counted inside the lead's figure, and charging for it twice is the one
+  // thing the bundling exists to prevent - but it does get a row, because a
+  // service that is simply not on the page reads as a service the page has
+  // dropped. Somebody looks for Bill payment, does not find it, and asks
+  // whether the catalogue is broken.
+  const bundledInto = useMemo(() => {
+    const m = new Map();
+    for (const b of potential.bundles) {
+      for (const a of b.adds) if (a.open) m.set(a.name, b.lead.name);
+    }
+    return m;
+  }, [potential]);
+
+  // Every service as a table row. The leads carry the money; the services
+  // they drag in follow, named, with the lead's name where their figure
+  // would be.
   const leadRows = useMemo(
     () => openRows.filter(r => !potential.bundledNames.has(r.name)),
     [openRows, potential],
@@ -555,10 +589,67 @@ export function AccountPotentialTab({
         _note: est?.note || '',
         _scoped: inScope.has(name),
         _rank: potential.rank.get(name) ?? null,
+        _bundledInto: '',
       };
       return row;
-    }),
-  [leadRows, pricing, bases, allEstimates, inScope, serviceUnits, potential]);
+    })
+    // The services that come with one of those leads. Everything about the
+    // service itself reads exactly as it would on a row of its own - the
+    // basis, the rate card, the units it is charged on - because that is
+    // what somebody looking for it came to check. Only the money is
+    // different: it says which row is holding it.
+    .concat(openRows
+      .filter(r => bundledInto.has(r.name))
+      .map(({ name, meta, bucket }) => {
+        const entry = pricingFor(pricing, name, bases);
+        const basis = basisFor(entry.basis, bases);
+        const est = allEstimates.get(name);
+        const ownUnits = parseMoney(serviceUnits[name]);
+        const lead = bundledInto.get(name);
+        return {
+          id: name,
+          name,
+          serviceBucket: bucket,
+          serviceType: meta?.serviceType || '',
+          years: meta?.years || '',
+          basis: entry.basis,
+          basisLabel: basis?.label || '',
+          rate: entry.rate,
+          rateHigh: entry.rateHigh,
+          _entry: entry,
+          _how: est ? feeBasisLabel(est, bases) : '',
+          _extraLines: entry.lines.length,
+          notes: entry.notes,
+          setupLines: entry.setupLines,
+          _setupFee: est?.setup ?? 0,
+          _setupFeeHigh: est?.setupHigh ?? 0,
+          units: ownUnits !== null ? ownUnits : (est?.units ?? null),
+          _unitsOwn: ownUnits !== null,
+          _unit: basis?.unit || null,
+          _unitLabel: basis?.unitLabel || '',
+          // No money of its own, in either column. Its figure is inside the
+          // lead's, and a second copy of it on this page is the double count
+          // the bundling was built to stop.
+          fee: null,
+          feeHigh: null,
+          _feeAvg: null,
+          _ownFee: est?.priced ? est.fee : null,
+          _ownFeeHigh: est?.priced ? est.feeHigh : null,
+          _adds: [],
+          _kind: basis?.kind || '',
+          _note: est?.note || '',
+          // Ticked exactly when the lead is: the lead's checkbox already
+          // takes its add-ons in and out with it, so this reads the same set.
+          _scoped: inScope.has(name),
+          _rank: null,
+          _bundledInto: lead,
+          // Where the lead came in the money order, for the rank cell: "-"
+          // on its own says unranked, which is not the same as counted
+          // somewhere else.
+          _leadRank: potential.rank.get(lead) ?? null,
+        };
+      })),
+  [leadRows, openRows, bundledInto, pricing, bases, allEstimates, inScope, serviceUnits, potential]);
 
   // Which bundles are opened up. A set of lead names rather than of row
   // ids because they are the same thing here, and a name survives the
@@ -652,13 +743,18 @@ export function AccountPotentialTab({
         return {
           ...base,
           getSortValue: (row) => (row._scoped ? 0 : 1),
+          // A service that comes with another one is ticked through that
+          // one: it is never in a scope on its own, so its box moves the
+          // whole bundle rather than pretending to move itself.
           render: (row) => (
             <input
               type="checkbox"
               checked={row._scoped}
               onClick={swallow}
-              onChange={() => toggleScope(row.name)}
-              title={`Include "${row.name}" in the deal estimate above`}
+              onChange={() => toggleScope(row._bundledInto || row.name)}
+              title={row._bundledInto
+                ? `"${row.name}" comes with "${row._bundledInto}", so this ticks the whole bundle in or out of the deal estimate above`
+                : `Include "${row.name}" in the deal estimate above`}
               aria-label={`${row.name} in scope`}
               style={{ cursor: 'pointer' }}
             />
@@ -675,9 +771,13 @@ export function AccountPotentialTab({
           render: (row) => (
             <span
               className={styles.pricingRank}
-              title={row._rank
-                ? `${row.name} is the ${ordinal(row._rank)} biggest untapped service on this account`
-                : 'Not ranked - the rate card cannot price this service yet'}
+              title={row._bundledInto
+                ? `Counted inside "${row._bundledInto}"`
+                  + (row._leadRank ? `, the ${ordinal(row._leadRank)} biggest untapped service on this account.` : '.')
+                  + ' It has no rank of its own because it is not sold on its own.'
+                : row._rank
+                  ? `${row.name} is the ${ordinal(row._rank)} biggest untapped service on this account`
+                  : 'Not ranked - the rate card cannot price this service yet'}
             >{row._rank ?? '-'}</span>
           ),
         };
@@ -689,9 +789,11 @@ export function AccountPotentialTab({
           // so a reader looking for it by name has nowhere to find it -
           // which reads as the page having dropped it.
           render: (row) => (
-            <span className={styles.pricingNameText} title={row._adds.length
-              ? `${row.name} - sold with ${row._adds.map(a => a.name).join(', ')}. Click the arrow for the split.`
-              : `${row.name} - click the row to tick it in or out of the scope`}
+            <span className={styles.pricingNameText} title={row._bundledInto
+              ? `${row.name} - sold with "${row._bundledInto}", which is the row carrying the money for both. Click either to tick the bundle in or out of the scope.`
+              : row._adds.length
+                ? `${row.name} - sold with ${row._adds.map(a => a.name).join(', ')}. Click the arrow for the split.`
+                : `${row.name} - click the row to tick it in or out of the scope`}
             >
               {row._adds.length > 0 && (
                 <button
@@ -706,6 +808,9 @@ export function AccountPotentialTab({
               {row.name}
               {row._adds.length > 0 && (
                 <span className={styles.bundleChip}>{`+${row._adds.length}`}</span>
+              )}
+              {row._bundledInto && (
+                <span className={styles.bundleWithChip}>{`with ${row._bundledInto}`}</span>
               )}
             </span>
           ),
@@ -822,8 +927,26 @@ export function AccountPotentialTab({
           getSortValue: (row) => row._feeAvg,
           // The number, not the formatted string: a spreadsheet given
           // "$97,272" cannot add it up.
-          exportValue: (row) => (row._feeAvg === null ? '' : row._feeAvg),
+          exportValue: (row) => {
+            if (row._bundledInto) return `in ${row._bundledInto}`;
+            return row._feeAvg === null ? '' : row._feeAvg;
+          },
           render: (row) => {
+            // Its money is on the lead's row, so this says whose row to read
+            // rather than repeating a figure the page would then be
+            // counting twice.
+            if (row._bundledInto) {
+              return (
+                <span
+                  className={styles.serviceMutedCell}
+                  title={`Counted inside "${row._bundledInto}"`
+                    + (row._ownFee === null
+                      ? ', which is the row that carries the money for both.'
+                      : `: ${formatMoneyRange(row._ownFee, row._ownFeeHigh)} of that row's Year 1 fee is this service.`)
+                    + ' Open the arrow on that row for the split.'}
+                >{`in ${row._bundledInto}`}</span>
+              );
+            }
             if (row.fee === null) {
               return (
                 <span
@@ -880,7 +1003,7 @@ export function AccountPotentialTab({
             <span className={styles.potentialNote}>Reading their opportunities…</span>
           )}
           {client && (
-            <span className={styles.potentialNote}>
+            <span className={styles.potentialNote} title={decidedTitle}>
               {decidedSentence}
             </span>
           )}
@@ -1100,10 +1223,15 @@ export function AccountPotentialTab({
           // row itself — the name, the read-only cells, and the padding
           // around them. Ticking the scope is the one thing this table is
           // for, so that is what the row click does.
-          onRowClick={(row) => toggleScope(row.name)}
+          onRowClick={(row) => toggleScope(row._bundledInto || row.name)}
           expandedRowIds={expanded}
           renderExpansion={renderBundle}
-          rowClassName={(row) => (row._scoped ? styles.pricingRowScoped : undefined)}
+          rowClassName={(row) => [
+            row._scoped ? styles.pricingRowScoped : '',
+            // Greyed, the way the services board greys a retired service:
+            // the row is here to be found, not to be added up.
+            row._bundledInto ? styles.pricingRowBundled : '',
+          ].filter(Boolean).join(' ') || undefined}
           exportFileName="Account Potential"
           settings={settings}
           updateSettings={updateSettings}
