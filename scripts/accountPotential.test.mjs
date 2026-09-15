@@ -149,14 +149,16 @@ const run = (client, oppStages = null) => accountPotential({
     revived.decidedNames.has('Bill payment'), true);
 }
 
-// ---- ranking on year one, at the low end ---------------------------------
+// ---- ranking on year one, at the middle of the range ---------------------
 // The page is read for the first twelve months, so that is what it ranks
 // on: a three-year deal and a one-off of the same annual size are the same
 // first year, and the term total answers a question nobody asked here.
 //
-// And at the low end of a range. A range is an admission of uncertainty:
-// rank on its top and the head of the list fills with whatever we
-// understand least.
+// And at the middle of a range, which is the figure the money column shows.
+// Not the top: rank on that and the head of the list fills with whatever we
+// understand least. Not the bottom either: a service quoted "nothing up to
+// half a million" is not worth nothing, and ranking it there is how it
+// never gets looked at.
 {
   const byYear1 = rankByPotential([
     { name: 'Long term', priced: true, fee: 10000, feeHigh: 10000, value: 500000 },
@@ -164,17 +166,36 @@ const run = (client, oppStages = null) => accountPotential({
   ]);
   check('a long term does not outrank a bigger first year', byYear1[0].name, 'Big first year');
 
+  // Half of half a million is a quarter of a million, which is still less
+  // than four hundred thousand: the case the low end was picked for holds
+  // on the midpoint too.
   const ranked = rankByPotential([
     { name: 'Wide guess', priced: true, fee: 0, feeHigh: 500000, value: 0 },
     { name: 'Known quantity', priced: true, fee: 400000, feeHigh: 400000, value: 400000 },
   ]);
   check('a wide guess does not outrank a known quantity', ranked[0].name, 'Known quantity');
 
+  // $0-$1m averages a million more than $400k does, and on this reading it
+  // is the bigger prize. The low end said the opposite - it called that
+  // service worth nothing - and that is the change.
+  const wild = rankByPotential([
+    { name: 'Wide guess', priced: true, fee: 0, feeHigh: 1000000, value: 0 },
+    { name: 'Known quantity', priced: true, fee: 400000, feeHigh: 400000, value: 400000 },
+  ]);
+  check('but a range whose middle is bigger does outrank it', wild[0].name, 'Wide guess');
+
+  const midTied = rankByPotential([
+    { name: 'Shaky', priced: true, fee: 0, feeHigh: 400, value: 0 },
+    { name: 'Sure', priced: true, fee: 200, feeHigh: 200, value: 200 },
+  ]);
+  check('two services averaging the same are split by the surer one',
+    midTied[0].name, 'Sure');
+
   const tied = rankByPotential([
     { name: 'B', priced: true, fee: 100, feeHigh: 100, value: 100 },
     { name: 'A', priced: true, fee: 100, feeHigh: 900, value: 100 },
   ]);
-  check('the top of the range breaks a tie', tied[0].name, 'A');
+  check('a wider range on the same floor averages higher', tied[0].name, 'A');
 
   const sameBoth = rankByPotential([
     { name: 'Zeta', priced: true, fee: 1, feeHigh: 1, value: 1 },

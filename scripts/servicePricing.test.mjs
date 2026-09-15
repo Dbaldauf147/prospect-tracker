@@ -11,7 +11,7 @@
 // a contract value.
 import {
   estimateService, estimateScope, pricingFor, setPricingField, contractYears, formatMoney,
-  feeBasisLabel, projectServiceLines, formatMoneyRange, formatRate,
+  feeBasisLabel, projectServiceLines, formatMoneyRange, formatRate, avgMoney,
   normalizeSetupLines, setupLinesFor, estimateSetup, formatSetupSummary, setPricingSetupLine,
 } from '../src/utils/servicePricing.js';
 
@@ -424,6 +424,29 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
   check('a rate range reads as one', formatRate({ basis: 'per_site', rate: 450, rateHigh: 600 }), '$450–$600');
   check('a percentage range too', formatRate({ basis: 'pct_deal', rate: 3, rateHigh: 5 }), '3%–5%');
   check('a single rate is unchanged', formatRate({ basis: 'per_site', rate: 450 }), '$450');
+}
+
+// ── The middle of a range ─────────────────────────────────────────────
+// What the Account Potential money column shows, so that a column of
+// figures can be read down and sorted. The two ends answer different
+// questions; the middle is the one that compares.
+{
+  check('the middle of a range', avgMoney(45000, 60000), 52500);
+  check('ends that agree are their own middle', avgMoney(45000, 45000), 45000);
+  // Not half of it: a figure quoted flat is worth what it says, and halving
+  // it would price every unranged service at half the rate card.
+  check('no high end is the figure itself', avgMoney(45000, null), 45000);
+  check('and no low end is the same', avgMoney(null, 60000), 60000);
+  check('nothing at all is nothing', avgMoney(null, null), null);
+  check('a backwards pair averages the same', avgMoney(60000, 45000), 52500);
+  // Zero is a figure, not a missing end: "nothing up to half a million"
+  // averages a quarter of a million.
+  check('a range from nothing keeps its bottom', avgMoney(0, 500000), 250000);
+  // The one property the breakdown panel leans on: the middle of a sum of
+  // ranges is the sum of their middles, so the lines still foot to the
+  // total above them.
+  check('middles add up the way the ranges do',
+    avgMoney(10, 20) + avgMoney(200, 400), avgMoney(210, 420));
 }
 
 // ── Clearing the basis takes the whole range with it ──────────────────
