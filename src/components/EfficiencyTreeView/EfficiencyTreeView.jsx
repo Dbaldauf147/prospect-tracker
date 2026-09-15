@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import styles from './EfficiencyTreeView.module.css';
 import { DEFAULT_EFFICIENCY_TREE } from '../../data/efficiencyDecisionTree';
 import {
-  addBranch, addNode, deleteNode, detailBlocks, getNode, moveBranch, normalizeTree,
+  addBranch, addNextStep, addNode, deleteNode, detailBlocks, getNode, moveBranch, normalizeTree,
   orphanIds, outlineRows, pathFromRoot, removeBranch, setRoot, toggleNodeService,
   treeStats, updateBranch, updateNode,
 } from '../../utils/decisionTree';
@@ -394,6 +394,151 @@ function NodeDetailModal({ tree, nodeId, catalog, knownServices, editing, onClos
   );
 }
 
+// Adding the step that comes after a box, from the diagram itself.
+//
+// The whole of the choice is what KIND of step it is, because those are the
+// two things a flowchart is made of: a decision point that branches, and a
+// step that just says what happens. A decision point arrives with its Yes
+// and its No already on it - that is wiring you would otherwise open the
+// editor to do, and nobody drawing a flowchart wants a diamond with no ways
+// out of it.
+//
+// The one thing it has to ask about the wiring is which way out of the
+// previous step leads here, and only when that step has ways out going
+// spare: a gate whose Yes is spoken for and whose No is not should offer
+// the No rather than quietly repoint the Yes and strand what it reached.
+function AddStepModal({ tree, fromId, onCancel, onAdd }) {
+  const parent = getNode(tree, fromId);
+  const free = useMemo(() => (parent?.branches || []).filter(b => !b.to), [parent]);
+  const [kind, setKind] = useState('question');
+  const [title, setTitle] = useState('');
+  // '' means "on a new branch of its own"; anything else is one of the free
+  // branches above. It opens on the branch that was waiting when there is
+  // one: that is the answer nine times in ten, and picking it for them is
+  // what makes the second press of + fill in a gate's Yes. Read once, at
+  // mount - the dialog is thrown away and rebuilt on every press, so there
+  // is no later state of the tree for it to be stale against.
+  const [branchId, setBranchId] = useState(() => free[0]?.id || '');
+  const [branchLabel, setBranchLabel] = useState('');
+  const titleRef = useRef(null);
+
+  useEffect(() => { titleRef.current?.focus(); }, []);
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onCancel(); }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
+  if (!parent) return null;
+
+  const parentName = parent.title || '(untitled step)';
+
+  return createPortal(
+    <div className={styles.modalOverlay} onMouseDown={onCancel}>
+      <form
+        className={styles.modalCardNarrow}
+        onMouseDown={e => e.stopPropagation()}
+        onSubmit={e => {
+          e.preventDefault();
+          onAdd({ kind, title: title.trim(), branchId: branchId || null, branchLabel: branchLabel.trim() });
+        }}
+      >
+        <div className={styles.modalHead}>
+          <h2 className={styles.modalTitle}>Add the next step</h2>
+          <button type="button" className={styles.modalClose} onClick={onCancel} aria-label="Close">×</button>
+        </div>
+
+        <div className={styles.modalBody}>
+          <div className={styles.afterNote}>
+            After <strong>{parentName}</strong>
+          </div>
+
+          <div className={styles.fieldLabel}>What kind of step?</div>
+          <div className={styles.kindChoice}>
+            <button
+              type="button"
+              className={kind === 'question' ? styles.kindCardOn : styles.kindCard}
+              aria-pressed={kind === 'question'}
+              onClick={() => setKind('question')}
+            >
+              <span className={styles.kindCardIcon} aria-hidden="true">◇</span>
+              <span className={styles.kindCardName}>Decision point</span>
+              <span className={styles.kindCardNote}>
+                Branches out. Comes with a Yes and a No, ready to point at whatever follows each.
+              </span>
+            </button>
+            <button
+              type="button"
+              className={kind === 'outcome' ? styles.kindCardOn : styles.kindCard}
+              aria-pressed={kind === 'outcome'}
+              onClick={() => setKind('outcome')}
+            >
+              <span className={styles.kindCardIcon} aria-hidden="true">▭</span>
+              <span className={styles.kindCardName}>Free text</span>
+              <span className={styles.kindCardNote}>
+                A step that just says what happens. Nothing to answer, and no branches until you add one.
+              </span>
+            </button>
+          </div>
+
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Title</span>
+            <input
+              ref={titleRef}
+              className={styles.input}
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              placeholder={kind === 'question'
+                ? 'e.g. Is the payback under 2 years?'
+                : 'e.g. Scope the retrofit'}
+            />
+          </label>
+
+          {free.length > 0 && (
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>
+                Reached by
+                <span className={styles.fieldHint}>Which way out of &ldquo;{parentName}&rdquo; leads to it.</span>
+              </span>
+              <select className={styles.input} value={branchId} onChange={e => setBranchId(e.target.value)}>
+                {free.map(b => (
+                  <option key={b.id} value={b.id}>{b.label || '(unlabelled branch)'}</option>
+                ))}
+                <option value="">A new branch</option>
+              </select>
+            </label>
+          )}
+
+          {!branchId && (
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>
+                Label for the arrow
+                <span className={styles.fieldHint}>
+                  {parent.branches.length > 0
+                    ? 'Every way out of this step already leads somewhere, so this adds another one.'
+                    : 'Optional. A single arrow out of a step reads fine without one.'}
+                </span>
+              </span>
+              <input
+                className={styles.input}
+                value={branchLabel}
+                onChange={e => setBranchLabel(e.target.value)}
+                placeholder="e.g. Yes"
+              />
+            </label>
+          )}
+        </div>
+
+        <div className={styles.modalFoot}>
+          <button type="submit" className={styles.primaryBtn}>Add step</button>
+          <button type="button" className={styles.smallBtn} onClick={onCancel}>Cancel</button>
+        </div>
+      </form>
+    </div>,
+    document.body,
+  );
+}
+
 export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, updateSettings }) {
   // Every tree the user keeps, and which subtab is open. The shipped C&I
   // flow is one of them; so is anything they build from nothing.
@@ -411,6 +556,8 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   const [importError, setImportError] = useState('');
   const [zoom, setZoom] = useState(0.8);
   const [popupId, setPopupId] = useState(null);   // the box whose detail is open
+  const [addAfterId, setAddAfterId] = useState(null); // the box the + was pressed on
+  const [freshId, setFreshId] = useState(null);   // the step just added, to scroll to and mark
   const canvasWrapRef = useRef(null);
 
   // A save is owed (debounce running) or in the air. While that's true a
@@ -480,6 +627,47 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   const rows = useMemo(() => outlineRows(tree), [tree]);
   const orphans = useMemo(() => orphanIds(tree), [tree]);
   const layout = useMemo(() => layoutTree(tree), [tree]);
+
+  // How many arrows leave each box. An arrow with no label is readable when
+  // it is the only way out - it just continues the flow - but two blank
+  // arrows out of one box is a question with its answers rubbed off, so
+  // those still show a placeholder to fill in.
+  const outDegree = useMemo(() => {
+    const out = new Map();
+    for (const e of layout.edges) out.set(e.fromId, (out.get(e.fromId) || 0) + 1);
+    return out;
+  }, [layout]);
+
+  // A step added from the diagram is put on a row of its own, which on a
+  // tree of any size is off the bottom of the window. Scroll to it and mark
+  // it for a moment, so "add a step" ends with the step in front of you
+  // rather than with a canvas that looks unchanged.
+  useEffect(() => {
+    if (!freshId) return undefined;
+    const box = layout.byId.get(freshId);
+    const wrap = canvasWrapRef.current;
+    if (box && wrap) {
+      wrap.scrollLeft = Math.max(0, (box.x + box.w / 2) * zoom - wrap.clientWidth / 2);
+      wrap.scrollTop = Math.max(0, (box.y + box.h / 2) * zoom - wrap.clientHeight / 2);
+    }
+    const timer = setTimeout(() => setFreshId(null), 2000);
+    return () => clearTimeout(timer);
+  }, [freshId, layout, zoom]);
+
+  // The + on a box: the new step, wired to the one it was added after, and
+  // the diagram moved to it. Everything the dialog asked goes straight in;
+  // anything it didn't ask about is what addNextStep decides.
+  function addStepAfter(fromId, { kind, title, branchId, branchLabel }) {
+    const { tree: next, id } = addNextStep(tree, { fromId, branchId, branchLabel, kind, title });
+    setAddAfterId(null);
+    if (!id) {
+      setStatus('This tree is full - 500 steps is the limit.');
+      return;
+    }
+    applyTree(next);
+    setSelectedId(id);
+    setFreshId(id);
+  }
 
   // Where the walk is standing. The trail holds the ids answered through; an
   // empty trail means the root, and a trail whose last step has been deleted
@@ -749,7 +937,13 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
               : 'Empty tree - turn on Edit to build it.'}
           </span>
         )}
-        {mode === 'diagram' && <span className={styles.muted}>Click a box for the detail · drag to pan</span>}
+        {mode === 'diagram' && (
+          <span className={styles.muted}>
+            Click a box for the detail · drag to pan · {editing
+              ? 'hover a box for the + that adds the step after it'
+              : 'turn on Edit to add steps here'}
+          </span>
+        )}
         {status && <span className={styles.muted}>{status}</span>}
       </div>
 
@@ -805,14 +999,18 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                 })}
               </svg>
 
-              {layout.edges.map(e => (
-                <span
-                  key={`label-${e.fromId}-${e.branchId}`}
-                  className={e.back ? styles.edgeLabelBack : styles.edgeLabel}
-                  style={{ left: e.labelX, top: e.labelY }}
-                  title={e.label}
-                >{e.label || '-'}</span>
-              ))}
+              {layout.edges.map(e => {
+                const label = e.label || ((outDegree.get(e.fromId) || 0) > 1 ? '-' : '');
+                if (!label) return null;
+                return (
+                  <span
+                    key={`label-${e.fromId}-${e.branchId}`}
+                    className={e.back ? styles.edgeLabelBack : styles.edgeLabel}
+                    style={{ left: e.labelX, top: e.labelY }}
+                    title={e.label}
+                  >{label}</span>
+                );
+              })}
 
               {layout.nodes.map(box => {
                 const node = getNode(tree, box.id);
@@ -825,13 +1023,18 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                   onTrail ? styles.boxOnTrail : '',
                   here ? styles.boxHere : '',
                   popupId === box.id ? styles.boxOpen : '',
+                  freshId === box.id ? styles.boxFresh : '',
                 ].filter(Boolean).join(' ');
                 return (
-                  <button
+                  <div
                     key={box.id}
+                    className={styles.boxWrap}
+                    style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
+                  >
+                  <button
                     type="button"
                     className={cls}
-                    style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
+                    style={{ left: 0, top: 0, width: '100%', height: '100%' }}
                     onClick={(ev) => {
                       // A click that ended a pan isn't a click on the box.
                       const wrap = canvasWrapRef.current;
@@ -858,6 +1061,25 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                       )}
                     </span>
                   </button>
+                  {/* Where a flowchart tool puts it: on the edge the next
+                      arrow leaves from. Counter-scaled, because a handle
+                      that shrinks with the zoom is a handle nobody can hit
+                      on a tree big enough to need zooming out. */}
+                  {editing && (
+                    <button
+                      type="button"
+                      className={addAfterId === box.id ? styles.addHandleOn : styles.addHandle}
+                      style={{ transform: `translate(-50%, 50%) scale(${Math.min(3, 1 / zoom).toFixed(2)})` }}
+                      aria-label={`Add the step after ${node.title || 'this step'}`}
+                      title={`Add the step that comes after "${node.title || '(untitled step)'}"`}
+                      onClick={(ev) => {
+                        const wrap = canvasWrapRef.current;
+                        if (wrap?.dataset.panned) { delete wrap.dataset.panned; ev.preventDefault(); return; }
+                        setAddAfterId(box.id);
+                      }}
+                    >+</button>
+                  )}
+                  </div>
                 );
               })}
             </div>
@@ -1070,6 +1292,15 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
             )}
           </div>
         </div>
+      )}
+
+      {addAfterId && (
+        <AddStepModal
+          tree={tree}
+          fromId={addAfterId}
+          onCancel={() => setAddAfterId(null)}
+          onAdd={picked => addStepAfter(addAfterId, picked)}
+        />
       )}
 
       {popupId && (

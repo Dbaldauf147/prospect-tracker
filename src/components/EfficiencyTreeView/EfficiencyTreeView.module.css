@@ -757,6 +757,56 @@
   font-style: italic;
 }
 
+/* The box and the handle that adds what comes after it share one absolutely
+   positioned wrapper, so the handle can sit on the box's edge and the box
+   itself stays a plain button (a button inside a button is neither). */
+.boxWrap {
+  position: absolute;
+}
+
+.addHandle,
+.addHandleOn {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  /* The inline style appends a counter-zoom scale to this. */
+  transform: translate(-50%, 50%);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--color-accent);
+  background: var(--color-surface);
+  color: var(--color-accent);
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  /* Out of the way until the box is under the pointer: the diagram is read
+     far more often than it is drawn, and a canvas of plus signs is a canvas
+     you read past. Kept for keyboard focus, which has no hover. */
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+
+.boxWrap:hover .addHandle,
+.addHandle:focus-visible,
+.addHandleOn {
+  opacity: 1;
+}
+
+.addHandle:hover,
+.addHandleOn {
+  background: var(--color-accent);
+  color: #fff;
+}
+
 .boxQuestion,
 .boxOutcome {
   position: absolute;
@@ -802,6 +852,13 @@
 
 .boxOpen {
   outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+  box-shadow: var(--shadow-md);
+}
+
+/* The step just added, for as long as it takes to notice it. */
+.boxFresh {
+  outline: 2px solid var(--color-success);
   outline-offset: 1px;
   box-shadow: var(--shadow-md);
 }
@@ -860,6 +917,79 @@
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   overflow: hidden;
+}
+
+/* The add-step dialog asks three short questions, so it is half the width
+   of the detail popup rather than a wall with a form lost in it. */
+.modalCardNarrow {
+  width: 28rem;
+  max-width: 100%;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.afterNote {
+  margin-bottom: 0.7rem;
+  font-size: 0.78rem;
+  color: var(--color-text-secondary);
+}
+
+/* The two kinds, side by side and the same size, because it is a choice
+   between them rather than a default with an alternative. */
+.kindChoice {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin: 0.3rem 0 0.9rem;
+}
+
+.kindCard,
+.kindCardOn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  padding: 0.6rem;
+  text-align: left;
+  font-family: inherit;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.kindCard:hover {
+  border-color: var(--color-accent);
+}
+
+.kindCardOn {
+  border-color: var(--color-accent);
+  background: var(--color-accent-light);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.kindCardIcon {
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--color-accent);
+}
+
+.kindCardName {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.kindCardNote {
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: var(--color-text-secondary);
 }
 
 .modalHead {

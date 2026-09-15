@@ -286,6 +286,52 @@ export function addNode(tree, { parentId = null, branchId = null, title = '', ki
   return { tree: next, id };
 }
 
+// The two ways out of a decision point, the moment one is made. A decision
+// with no branches is a decision nobody can answer, and somebody who asked
+// for a decision point has already said what shape they want - so it
+// arrives wired for yes and no rather than as a box to go and wire. There
+// is no privilege in these two strings: relabelling them is one keystroke
+// in the editor, and a third way out is one click.
+export const DECISION_BRANCH_LABELS = ['Yes', 'No'];
+
+/**
+ * Add the step that comes after `fromId` - what the diagram's + handle does.
+ *
+ * `kind` is the whole of the choice the user makes there: 'question' is a
+ * decision point, which arrives with its Yes and its No, and 'outcome' is a
+ * plain step that just says what happens.
+ *
+ * `branchId` hangs the new step off a branch that already exists - the Yes
+ * of a gate that had nowhere to go yet. Without one (or with one the parent
+ * doesn't have) a new branch is added and given `branchLabel`, because a
+ * step added from the diagram must be REACHED from the step it was added
+ * after; an unlabelled arrow is readable, an unreachable box is not.
+ *
+ * Returns `{ tree, id }`, with a null id when the tree is already full.
+ */
+export function addNextStep(tree, {
+  fromId = null, branchId = null, branchLabel = '', kind = 'question', title = '', detail = '',
+} = {}) {
+  const parent = getNode(tree, fromId);
+  const onBranch = !!parent && !!branchId && parent.branches.some(b => b.id === branchId);
+  const { tree: added, id } = addNode(tree, {
+    parentId: parent ? fromId : null,
+    branchId: onBranch ? branchId : null,
+    title, kind, detail,
+  });
+  if (!id) return { tree, id: null };
+  let next = added;
+  if (parent && !onBranch) {
+    // addNode appended the branch it made, and made it unlabelled.
+    const made = getNode(next, fromId).branches[getNode(next, fromId).branches.length - 1];
+    if (made) next = updateBranch(next, fromId, made.id, { label: branchLabel });
+  }
+  if (kind === 'question') {
+    for (const label of DECISION_BRANCH_LABELS) next = addBranch(next, id, { label });
+  }
+  return { tree: next, id };
+}
+
 export function addBranch(tree, nodeId, { label = '', to = null } = {}) {
   const node = getNode(tree, nodeId);
   if (!node) return tree;
