@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { parseMoney } from '../../utils/servicePricing';
+import { IMPACT_SOURCES, impactTitle } from '../../utils/serviceImpact';
 import styles from './DropdownsView.module.css';
 
 // The cell editors the two pricing subtabs share. Services Pricing edits the
@@ -141,6 +142,31 @@ export function BasisCell({ value, bases, onCommit }) {
     >
       <option value="">-</option>
       {bases.map(b => <option key={b.key} value={b.key}>{b.label}</option>)}
+    </select>
+  );
+}
+
+// Which figure elsewhere on the site says what this service is worth to the
+// client. A picker rather than a box because the whole point is that the
+// figure is already produced somewhere - a number typed here would be a
+// third copy of it, free to disagree with the other two.
+export function ImpactCell({ value, onCommit }) {
+  return (
+    <select
+      value={value || ''}
+      onClick={swallow}
+      onChange={(e) => { if (e.target.value !== (value || '')) onCommit(e.target.value); }}
+      title={impactTitle(value)}
+      style={{
+        width: '100%', padding: '3px 4px',
+        border: '1px solid transparent', borderRadius: 4,
+        fontSize: '0.75rem', fontFamily: 'inherit',
+        background: 'transparent', color: 'var(--color-text)',
+        cursor: 'pointer', boxSizing: 'border-box',
+      }}
+    >
+      <option value="">-</option>
+      {IMPACT_SOURCES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
     </select>
   );
 }

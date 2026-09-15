@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { DataTable } from '../common/DataTable';
 import { PricingBasesModal } from './PricingBasesModal';
 import { ServicePricingModal } from './ServicePricingModal';
-import { BasisCell, NotesCell, NumberCell } from './pricingCells';
+import { BasisCell, ImpactCell, NotesCell, NumberCell } from './pricingCells';
 import {
   PRICING_BASES,
   basisFor,
@@ -27,6 +27,7 @@ import {
   setPricingLine,
   setPricingSetupLine,
 } from '../../utils/servicePricing';
+import { IMPACT_SOURCES, impactLabel, impactTitle } from '../../utils/serviceImpact';
 import styles from './DropdownsView.module.css';
 
 // Where this table's column widths, order and visibility are remembered,
@@ -66,6 +67,11 @@ const PRICING_TABLE_COLUMNS = [
   { key: 'rate',         label: 'Low Rate',           width: 140 },
   { key: 'rateHigh',     label: 'High Rate',          width: 140 },
   { key: 'notes',        label: 'Pricing Notes',      width: 260 },
+  // What the service is worth to the CLIENT, which is the other half of
+  // every one of these rows and the half a rate card has never carried.
+  // Named rather than priced: the figure itself belongs to a company and
+  // this card is the same card for all of them. See serviceImpact.
+  { key: 'impact',       label: 'Impact',             width: 230 },
 ];
 
 // Shipped switched off, not taken away: see the note on the rate columns.
@@ -86,6 +92,9 @@ const BULK_FIELDS = [
   { key: 'rate',     label: 'Low Rate',      kind: 'money' },
   { key: 'rateHigh', label: 'High Rate',     kind: 'money' },
   { key: 'notes',    label: 'Pricing Notes', kind: 'text' },
+  // "Every one of these is measured by savings" is a sentence worth
+  // saying once over a bucket of services, the same as a rate is.
+  { key: 'impact',   label: 'Impact',        kind: 'impact' },
 ];
 
 // "Alpha, Beta and 3 more" — a list short enough to read inside a confirm
@@ -298,6 +307,12 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         _extraLines: extraBases.length,
         _extraBasisLabels: extraBases.map(k => basisFor(k, bases)?.label || k),
         notes: entry.notes,
+        // Which figure elsewhere on the site measures this service, and what
+        // that figure is called. The label is carried on the row because the
+        // search box, the sort and the export all read words rather than the
+        // stored key.
+        impact: entry.impact,
+        _impactLabel: impactLabel(entry.impact),
         // What the panel prices against: the deal's own figure for this
         // service first, then the shared count the estimate carries. The
         // card's own standing figure was the middle term and is retired -
@@ -317,7 +332,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
 
   const rows = useMemo(
     () => (term
-      ? allRows.filter(r => [r.name, r.serviceBucket, r.basisLabel, r.notes]
+      ? allRows.filter(r => [r.name, r.serviceBucket, r.basisLabel, r.notes, r._impactLabel]
         .some(v => String(v).toLowerCase().includes(term)))
       : allRows),
     [allRows, term],
@@ -477,7 +492,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
       setBulkStatus({ type: 'error', message: `"${typed}" isn't a number.` });
       return;
     }
-    const unmarks = typed === '' || bulkColumn.key === 'notes'
+    const unmarks = typed === '' || bulkColumn.key === 'notes' || bulkColumn.key === 'impact'
       ? []
       : selectedNames.filter(n => pricing?.[n]?.noFee === true);
     if (unmarks.length > 0 && !window.confirm(
@@ -644,6 +659,19 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         };
       case 'notes':
         return { ...base, render: (row) => <NotesCell value={row.notes} onCommit={(v) => savePricingField(row.name, 'notes', v)} /> };
+      // The client's side of the row: which figure this service moves. Sorts
+      // and exports as the name of the figure rather than as the key stored
+      // behind it, so "show me everything measured by savings" is one click
+      // on the header and reads the same way in a spreadsheet.
+      case 'impact':
+        return {
+          ...base,
+          getSortValue: (row) => row._impactLabel,
+          exportValue: (row) => row._impactLabel,
+          render: (row) => (
+            <ImpactCell value={row.impact} onCommit={(v) => savePricingField(row.name, 'impact', v)} />
+          ),
+        };
       default:
         return { ...base, render: (row) => (row[col.key] || <span className={styles.serviceMutedCell}>-</span>) };
     }
@@ -779,6 +807,16 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             >
               <option value="">(clear the basis)</option>
               {bases.map(b => <option key={b.key} value={b.key}>{b.label}</option>)}
+            </select>
+          ) : bulkColumn.kind === 'impact' ? (
+            <select
+              className={styles.bulkInput}
+              value={bulkValue}
+              onChange={(e) => setBulkValue(e.target.value)}
+              title={impactTitle(bulkValue)}
+            >
+              <option value="">(clear the impact figure)</option>
+              {IMPACT_SOURCES.map(src => <option key={src.key} value={src.key}>{src.label}</option>)}
             </select>
           ) : (
             /* Text even for the rates, so a figure pasted the way a

@@ -75,9 +75,15 @@
 //            price where it has always been. Clearing it promotes the next
 //            line into its place; see writePricingLines.
 //   notes  — free text, for the assumptions a number can't carry
+//   impact — which figure elsewhere on the site says what this service
+//            is worth to the client (see serviceImpact). A name, not a
+//            number: the number belongs to a company, and this card is
+//            the same card for all of them.
 //
 // Stored under settings.servicePricing so it syncs across devices with the
 // rest of the dropdown vocabulary.
+
+import { impactKey } from './serviceImpact.js';
 
 // The three shapes a fee can take. A basis is one of these plus, for a
 // per-unit one, the count it multiplies.
@@ -813,6 +819,11 @@ export function pricingFor(pricing, name, bases = PRICING_BASES) {
     setupLines: setupLinesFor(row, bases),
     lines: normalizePricingLines(row?.lines, bases, basis ? basis.key : ''),
     notes: String(row?.notes || ''),
+    // Which figure elsewhere on the site measures this service. A key
+    // off a source the list no longer carries is dropped here, the same
+    // way an unknown basis is: a tie to a figure nothing produces any
+    // more is not a tie.
+    impact: impactKey(row?.impact),
   };
 }
 
@@ -977,7 +988,7 @@ export function setPricingField(pricing, name, field, value, bases = PRICING_BAS
   let row = { ...(next[name] || {}) };
   const blank = value == null || value === '';
   if (blank) delete row[field];
-  else row[field] = (field === 'basis' || field === 'notes') ? value : parseMoney(value);
+  else row[field] = (field === 'basis' || field === 'notes' || field === 'impact') ? value : parseMoney(value);
   // A rate is meaningless without a basis to read it against, so clearing
   // the basis takes the numbers that belonged to it rather than leaving a
   // stranded "$450 per nothing". A typed fee is not one of them — it
@@ -1007,8 +1018,11 @@ export function setPricingField(pricing, name, field, value, bases = PRICING_BAS
   // service marked no fee takes the mark off, because the figure someone
   // just typed is the later answer. Clearing one doesn't — that is not a
   // price — and neither does editing the notes, which sit alongside the
-  // mark rather than against it.
-  if (!blank && field !== 'notes') delete row.noFee;
+  // mark rather than against it. Nor the impact: what a service saves the
+  // client is not what it charges them, so a service given away free can
+  // still be the one that saves them the most, and saying so must not
+  // quietly start billing for it.
+  if (!blank && field !== 'notes' && field !== 'impact') delete row.noFee;
   if (Object.keys(row).length === 0) delete next[name];
   else next[name] = row;
   return next;
@@ -1021,7 +1035,9 @@ export function setPricingField(pricing, name, field, value, bases = PRICING_BAS
 //
 // The notes are not on the list. "Included with the GRESB engagement" is
 // exactly what someone writes there, and it is the reason for the mark
-// rather than a price competing with it. The two retired figures (minFee,
+// rather than a price competing with it. Neither is the impact figure: a
+// service given away free can still be the one that saves the account the
+// most, and that is arguably when saying so matters most. The two retired figures (minFee,
 // avgFee) aren't either — pricingFor drops them on the way out of storage,
 // so they reach no calculation to be cleared out of, and this file leaves
 // stored numbers alone where it can.
