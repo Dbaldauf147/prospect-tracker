@@ -2836,46 +2836,63 @@ function QuotedAmountCell({
           <div
             onMouseDown={(e) => e.stopPropagation()}
             style={{
-              background: '#fff', borderRadius: 8, padding: '1rem 1.25rem',
-              // Wider once the SIA column joins the estimate's two: four
-              // columns of money in a 520px dialog wrap, and a wrapped
-              // figure is one nobody can compare down its column.
-              minWidth: 360, maxWidth: comparePerService ? 660 : 520,
-              maxHeight: '86vh', overflowY: 'auto',
+              background: '#fff', borderRadius: 8, padding: '1.1rem 1.4rem',
+              // Room to read the whole deal at once. This dialog carries the
+              // scope priced out service by service, the saved SIA Option's
+              // figures and the services in it, and at 520px that was a
+              // column of money in a letterbox: every panel scrolled and
+              // nothing could be compared against anything else without
+              // moving. Wider again once the SIA column joins the
+              // estimate's two, because four columns of money is what
+              // actually needs the room.
+              //
+              // The vw ceiling is what makes it a size rather than a
+              // number: on a laptop it is the figure, on anything smaller
+              // it is the window minus a margin.
+              width: comparePerService ? 1100 : 900,
+              maxWidth: '94vw',
+              maxHeight: '92vh', overflowY: 'auto',
               boxShadow: '0 10px 30px rgba(0,0,0,0.18)',
               display: 'flex', flexDirection: 'column', gap: '0.75rem',
             }}
           >
             <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#1E293B' }}>Deal Size</div>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.78rem', color: '#475569' }}>
-              Amount
-              <input
-                autoFocus
-                type="text"
-                value={draftAmount}
-                onChange={(e) => setDraftAmount(formatQuotedAmountLive(e.target.value))}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); save(); }
-                  else if (e.key === 'Escape') { e.preventDefault(); closePopup(); }
-                }}
-                placeholder="$0"
-                style={{ padding: '0.4rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: 4, fontFamily: 'inherit', fontSize: '0.88rem' }}
-              />
-            </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.78rem', color: '#475569' }}>
-              Sharepoint Hyperlink
-              <input
-                type="text"
-                value={draftUrl}
-                onChange={(e) => setDraftUrl(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); save(); }
-                  else if (e.key === 'Escape') { e.preventDefault(); closePopup(); }
-                }}
-                placeholder="https://…"
-                style={{ padding: '0.4rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: 4, fontFamily: 'inherit', fontSize: '0.82rem' }}
-              />
-            </label>
+            {/* The two typed fields on one line. Stacked, each of them ran
+                the width of the dialog, which is a lot of box for "$25,000"
+                and reads as a form that has been pulled out of shape. They
+                wrap back to a column when the dialog is too narrow to hold
+                both. */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <label style={{ flex: '1 1 240px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.78rem', color: '#475569' }}>
+                Amount
+                <input
+                  autoFocus
+                  type="text"
+                  value={draftAmount}
+                  onChange={(e) => setDraftAmount(formatQuotedAmountLive(e.target.value))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); save(); }
+                    else if (e.key === 'Escape') { e.preventDefault(); closePopup(); }
+                  }}
+                  placeholder="$0"
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '0.4rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: 4, fontFamily: 'inherit', fontSize: '0.88rem' }}
+                />
+              </label>
+              <label style={{ flex: '2 1 320px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.78rem', color: '#475569' }}>
+                Sharepoint Hyperlink
+                <input
+                  type="text"
+                  value={draftUrl}
+                  onChange={(e) => setDraftUrl(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); save(); }
+                    else if (e.key === 'Escape') { e.preventDefault(); closePopup(); }
+                  }}
+                  placeholder="https://…"
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '0.4rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: 4, fontFamily: 'inherit', fontSize: '0.82rem' }}
+                />
+              </label>
+            </div>
             {(() => {
               // Read-only BFO context for this opp: the BFO Opportunity Name
               // ("BFO Link") and the BFO Address (live Salesforce URL).
@@ -5725,11 +5742,13 @@ function LeadQuotedAmountModal({
           if (e.key === 'Escape') { e.preventDefault(); onClose(); }
         }}
         style={{
-          // Wider once there is a fee table under the box: three columns of
-          // money in a 420px dialog wrap, and a wrapped figure is one nobody
-          // can compare down its column.
-          width: scopeEstimate ? 560 : 420, maxWidth: '92vw',
-          maxHeight: '86vh',
+          // Room to read the priced scope without scrolling it: this prompt
+          // is answered by looking at what the services come to, and at
+          // 560px that was three columns of money in a letterbox. Narrower
+          // with no fee table under the box, because then the dialog is one
+          // input and a sentence and the width would be empty.
+          width: scopeEstimate ? 940 : 560, maxWidth: '94vw',
+          maxHeight: '92vh',
           background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
