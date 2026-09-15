@@ -72,6 +72,7 @@ import { planSheetCompanyRename, spreadsheetIdFromUrl } from '../../utils/sheetC
 import { computePortfolioFitScore, siteCountNumber, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { SiteListPasteModal } from './SiteListPasteModal';
 import { siteListFacts as computeSiteListFacts, siteListScreeningRows, formatSqft } from '../../utils/siteListFacts';
+import { annualSavingsFromWorkbook } from '../../utils/analysisWorkbookFigures';
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
 // Aliased: `setClientManager` is also the name of this modal's own state
 // setter for the resolved value.
@@ -4489,21 +4490,29 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return () => { if (unsub) unsub(); };
   }, [prospect?.id, isNew]);
 
+  // This company's saved Master Analysis as bytes. Two callers now: the
+  // Download button, and Refresh figures, which reads a figure back out of
+  // it. One decode, so they can't disagree about what "empty" means.
+  async function loadAnalysisBytes() {
+    const saved = await loadIndicativeAnalysis(prospect.id);
+    if (!saved?.dataBase64) throw new Error('The saved analysis is empty: re-save it from Utility Lookup.');
+    const binary = atob(saved.dataBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return { bytes, fileName: saved.fileName || '' };
+  }
+
   async function downloadIndicativeAnalysis() {
     if (!prospect?.id || analysisDownloading) return;
     setAnalysisDownloading(true);
     setAnalysisError('');
     try {
-      const saved = await loadIndicativeAnalysis(prospect.id);
-      if (!saved?.dataBase64) throw new Error('The saved analysis is empty: re-save it from Utility Lookup.');
-      const binary = atob(saved.dataBase64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const { bytes, fileName } = await loadAnalysisBytes();
       const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = saved.fileName || indicativeAnalysis?.fileName || 'Indicative Savings.xlsx';
+      a.download = fileName || indicativeAnalysis?.fileName || 'Indicative Savings.xlsx';
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -5308,12 +5317,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       // answer, over the whole saved list rather than whichever upload
       // happened to be open when the analysis ran. See siteListFacts.
       //
-      // Indicative Annual Savings genuinely is not here. It is a
-      // month-by-month ramp gated by each site's supplier contract dates,
-      // and those dates are not among the columns the save writes, so there
-      // is nothing on this list to rebuild it from. It comes from a Master
-      // Analysis save, or it is typed - and the note below says so rather
-      // than leaving the one figure that did not move unexplained.
+      // Indicative Annual Savings is not on this list and is not rebuilt
+      // from it - it is a month-by-month ramp gated by each site's supplier
+      // contract dates, and those dates are not among the columns the save
+      // writes. But it does not have to be rebuilt: it is a figure the
+      // Master Analysis produced, and the analysis itself is saved against
+      // this company. So it is read back out of that workbook below, which
+      // is the same number the save stamps rather than a second opinion
+      // about it.
       const exposure = Math.round(CATEGORIES.reduce((sum, c) => sum + totalPenalty(screening, c), 0));
       const changes = [];
       // Only what actually moved is written, and the note names it: a button
@@ -5332,20 +5343,44 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       apply('sitesWithMandate', 'Sites w/ Mandate', mandated);
       apply('maxYearlyExposure', 'Est. Max Yearly Exposure', exposure);
       apply('deregulatedSites', 'Deregulated Sites', facts.deregulatedSites);
-      // What this button could not answer, named. Deregulated Sites is
-      // blank rather than wrong on a list nobody has classified, and
-      // Indicative Annual Savings is never refreshable here at all; a box
-      // that stays empty while the ones around it fill in reads as a bug,
-      // which is exactly how this one was reported.
-      const cannot = [];
-      if (facts.deregulatedSites == null) {
-        cannot.push('Deregulated Sites (this list carries no market classification: save it from Utility Lookup to add one)');
+
+      // The headline the saved workbook already carries. Fetched on the
+      // click rather than held by every visit: it is the whole analysis,
+      // which runs to hundreds of kilobytes, and this is the one moment
+      // anybody wants a figure out of it.
+      //
+      // Its own try/catch. A workbook that will not load - missing chunks,
+      // a legacy file - must not lose the five figures the site list just
+      // produced, so the failure is reported beside them rather than
+      // instead of them.
+      let savingsNote = '';
+      if (indicativeAnalysis && prospect?.id) {
+        try {
+          const { bytes } = await loadAnalysisBytes();
+          const XLSX = await import('xlsx');
+          const savings = annualSavingsFromWorkbook(XLSX.read(bytes, { type: 'array' }));
+          apply('indicativeAnnualSavings', 'Indicative Annual Savings', savings);
+          if (savings == null) {
+            savingsNote = ' Indicative Annual Savings not refreshed: the saved analysis carries no headline savings figure.';
+          }
+        } catch (err) {
+          console.error('Reading the saved analysis for its savings headline failed:', err);
+          savingsNote = ` Indicative Annual Savings not refreshed: ${err?.message || 'the saved analysis could not be read.'}`;
+        }
+      } else {
+        savingsNote = ' Indicative Annual Savings not refreshed: no Master Analysis is saved against this company, and it is the analysis that produces it.';
       }
-      cannot.push('Indicative Annual Savings (it follows each site\'s supplier contract dates, which the list does not hold)');
-      const cannotNote = ` Not refreshed from the list: ${cannot.join('; ')}.`;
+
+      // What this button could not answer, named. Deregulated Sites is
+      // blank rather than wrong on a list nobody has classified; a box that
+      // stays empty while the ones around it fill in reads as a bug, which
+      // is exactly how this was reported.
+      const deregNote = facts.deregulatedSites == null
+        ? ' Deregulated Sites not refreshed: this list carries no market classification, so save it from Utility Lookup to add one.'
+        : '';
       setAnalysisRefreshNote((changes.length
         ? `Updated from the ${facts.sites.toLocaleString()}-site list: ${changes.join(' · ')}.`
-        : `Already matches the ${facts.sites.toLocaleString()}-site list.`) + cannotNote);
+        : `Already matches the ${facts.sites.toLocaleString()}-site list.`) + deregNote + savingsNote);
     } catch (err) {
       console.error('Refreshing figures from the site list failed:', err);
       setAnalysisError(err?.message || 'Could not read the figures off the site list.');
@@ -7739,15 +7774,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               </div>
               {/* Re-reads Sites, Accounts, Equipment, Sites w/ Mandate,
                   Deregulated Sites and the exposure those mandates carry off
-                  the company's saved site list, so the Scale figures can be
-                  brought up to date without loading the portfolio back onto
-                  the Utility Lookup page and re-saving the whole workbook.
-                  The note under it names what it could not answer. */}
+                  the company's saved site list, and Indicative Annual
+                  Savings out of the saved analysis itself - so the Scale
+                  figures can be brought up to date without loading the
+                  portfolio back onto the Utility Lookup page and re-saving
+                  the whole workbook. The note under it names anything it
+                  could not answer. */}
               <button
                 type="button"
                 onClick={refreshAnalysisFigures}
                 disabled={analysisRefreshing}
-                title={'Re-read Sites, Accounts, Equipment, Sites w/ Mandate, Deregulated Sites and Est. Max Yearly Exposure from this company\u2019s saved site list - the latest property-type mapping, the current compliance screening and the market classification the list carries. Updates the Scale boxes below; it does not rebuild the saved workbook, and it cannot work out Indicative Annual Savings, which follows contract dates the list does not hold.'}
+                title={'Re-read Sites, Accounts, Equipment, Sites w/ Mandate, Deregulated Sites and Est. Max Yearly Exposure from this company\u2019s saved site list - the latest property-type mapping, the current compliance screening and the market classification the list carries - and Indicative Annual Savings from the saved analysis, which is where that figure is produced. Updates the Scale boxes below; it does not rebuild the saved workbook.'}
                 style={{
                   padding: '0.4rem 0.9rem',
                   background: '#fff',
