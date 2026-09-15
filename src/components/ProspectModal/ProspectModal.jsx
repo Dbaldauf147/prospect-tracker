@@ -7847,7 +7847,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               })()}
             </div>
 
-            <div className={styles.wideField}>
+            <div className={styles.tallField}>
               <label className={styles.label}>Email Domains</label>
               {(() => {
                 const domains = (fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
@@ -7886,7 +7886,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               })()}
             </div>
 
-            <div className={styles.wideField}>
+            <div className={styles.tallField}>
               <label className={styles.label}>Also Known As <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}>(former names / rebrands)</span></label>
               {(() => {
                 const aliases = (fields.aliases || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
@@ -8280,12 +8280,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div className={styles.sectionHead}>Profile</div>
 
-            <div className={styles.wideField}>
+            <div className={styles.tallField}>
               <label className={styles.label}>Asset Types</label>
               <MultiSelectDropdown options={assetTypeOptions} selected={fields.assetTypes || []} onToggle={(val) => toggleArrayField('assetTypes', val)} />
             </div>
 
-            <div className={styles.wideField}>
+            <div className={styles.tallField}>
               <label className={styles.label}>Strategies</label>
               <TagMultiSelect
                 options={strategyOptions}
@@ -8296,27 +8296,34 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               />
             </div>
 
-            <div className={styles.wideField}>
+            <div className={styles.tallField}>
               <label className={styles.label}>Frameworks</label>
-              <MultiSelectDropdown options={FRAMEWORKS} selected={effectiveFrameworks} onToggle={toggleFramework} sourceOf={frameworkSourceOf} />
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginTop: 4, fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>
-                {Object.entries(FRAMEWORK_SOURCE_BADGES).map(([k, b]) => (
-                  <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }} title={b.title}>
-                    <span style={{ display: 'inline-block', padding: '0 5px', borderRadius: 999, fontSize: '0.56rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', background: b.bg, color: b.text }}>{b.label}</span>
-                    <span>{k === 'auto' ? 'from Lists mapping' : k === 'claude' ? 'from Claude research' : 'added here'}</span>
-                  </span>
-                ))}
+              {/* The picker and the legend that reads it, in one wrapper: a
+                  row cell is a label and ONE control, and a third child
+                  lands in the label column on the next line - which put the
+                  badge key under the labels rather than under the badges it
+                  explains. */}
+              <div>
+                <MultiSelectDropdown options={FRAMEWORKS} selected={effectiveFrameworks} onToggle={toggleFramework} sourceOf={frameworkSourceOf} />
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginTop: 4, fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>
+                  {Object.entries(FRAMEWORK_SOURCE_BADGES).map(([k, b]) => (
+                    <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }} title={b.title}>
+                      <span style={{ display: 'inline-block', padding: '0 5px', borderRadius: 999, fontSize: '0.56rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', background: b.bg, color: b.text }}>{b.label}</span>
+                      <span>{k === 'auto' ? 'from Lists mapping' : k === 'claude' ? 'from Claude research' : 'added here'}</span>
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
 
-            {/* Competitors — full width like the other Profile fields, one
+            {/* Competitors — a row cell like the other Profile fields, one
                 short single-line-ish editor. Free text with @[Service]
                 tokens via the shared ScopingNotesEditor; the legacy
                 structured fields.competitors map is kept on the record
                 untouched so historical data still round-trips. */}
 
             {!isNew && (
-              <div className={styles.wideField}>
+              <div className={styles.tallField}>
                 <label className={styles.label}>Competitors</label>
                 <ScopingNotesEditor
                   value={fields.competitorsNotes || ''}
