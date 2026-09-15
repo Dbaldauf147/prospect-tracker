@@ -3507,3 +3507,19 @@
 .bundlePanel .bundleTitle {
   white-space: normal;
 }
+
+/* Where a searched-for service went, when Account Potential has no row for
+   it. Sits directly under the search box, because that is where the reader
+   just asked the question it answers. Amber rather than red: nothing is
+   wrong, a rule they cannot see has taken the service off the page. */
+.unlistedNote {
+  margin: -0.35rem 1.25rem 0.6rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #FDE68A;
+  border-left: 3px solid #F59E0B;
+  border-radius: 4px;
+  background: #FFFBEB;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: #92400E;
+}

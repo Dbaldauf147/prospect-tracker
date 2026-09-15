@@ -1215,6 +1215,12 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
     () => serviceRows.filter(r => !hiddenServices.has(r.name)),
     [serviceRows, hiddenServices],
   );
+  // The same set as a list, for the subtabs that have to name what they are
+  // not showing rather than only leave it out.
+  const hiddenServiceNames = useMemo(
+    () => serviceRows.filter(r => hiddenServices.has(r.name)).map(r => r.name),
+    [serviceRows, hiddenServices],
+  );
   const [showHiddenServices, setShowHiddenServices] = useState(false);
   // Rows that reached this table through the services board rather than the
   // Solutions list — the note under the search row explains them, since a
@@ -1948,6 +1954,12 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
           settings={settings}
           updateSettings={updateSettings}
           serviceRows={pricingServiceRows}
+          // The services this page never sees, by name. It cannot work out
+          // that a service is hidden from a list it has already been
+          // filtered out of, and "hidden on the Services tab" is one of the
+          // three reasons somebody comes looking for a service that is not
+          // there.
+          hiddenServices={hiddenServiceNames}
           scenario={pricingScenario}
           setScenario={setPricingScenario}
           prospects={prospects}
