@@ -29,6 +29,7 @@ import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
 import { isSetupFeeType } from '../../utils/setupFeeFloor';
 import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
 import { setOppPricingSnapshot } from '../../utils/oppsPricingSnapshot';
+import { servicesByFeeName } from '../../utils/siaScopeCompare';
 import { saveOppSourceFile, sourceFileMeta } from '../../utils/oppPricingSourceFile';
 import {
   loadOptionLinks,
@@ -6050,6 +6051,20 @@ export function PricingView({ settings } = {}) {
               // produces a self-contained snapshot that survives a
               // Pricing-tab Clear (or a workbook re-upload).
               const altRowsForOpt = opt ? (altFees[opt.optionNumber] || []) : [];
+              // Which services each fee row pays for, worked out here
+              // because here is the only place that knows: a cost line item
+              // names its services (the Line Item › Services mapping) and
+              // its Linked To tag names the fee row that bills it. Frozen
+              // onto the rows below, so the Opp can compare the quote
+              // against the rate-card estimate service by service long
+              // after this tab has been cleared.
+              const feeServices = servicesByFeeName({
+                items: (opt?.sections || []).flatMap(sec => (sec.items || []).map(item => ({
+                  description: item.description,
+                  linkedTo: resolvedLinkedTo(item),
+                }))),
+                lineItemServices,
+              });
               const rows = altRowsForOpt.map(r => {
                 const manualFee = Number(r.fee);
                 const hasManualFee = r.fee != null && r.fee !== ''
@@ -6066,6 +6081,7 @@ export function PricingView({ settings } = {}) {
                   unit: r.unit || '',
                   unitCount: r.unitCount,
                   startMonth: resolvedSm,
+                  services: feeServices.get(String(r.altItem || '').trim().toLowerCase()) || [],
                 };
               });
               // Deal margin for this option, frozen in alongside the
