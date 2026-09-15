@@ -17,6 +17,7 @@
 import {
   parseTargetAccountCdms, rowTargetCdms, buildTargetCdmResolver,
   targetCdmConflictLabel, describeTargetCdmConflict,
+  canonicalCdmOption, targetCdmApplyHint,
 } from '../src/utils/targetAccountCdm.js';
 
 let failures = 0;
@@ -149,6 +150,38 @@ eq('two reps read as a list',
   describeTargetCdmConflict({ cdms: ['Jane Smith', 'Ravi Patel'], accounts: [{ company: 'Apollo', cdms: ['Jane Smith', 'Ravi Patel'] }], source: 'mapped' }, 'Dan Baldauf'),
   '"Apollo" on the Target Accounts tab is assigned to Jane Smith and Ravi Patel. The CDM here is Dan Baldauf - check who covers this account.');
 eq('no conflict, no tooltip', describeTargetCdmConflict(null, 'Dan Baldauf'), '');
+
+// --- clicking the badge to take the workbook's word ----------------------
+//
+// The badge writes into the CDM dropdown, so the name it writes has to be
+// one of that dropdown's options wherever the list knows the person. The
+// workbook spells people its own way, and putting "McNary, Kristi" into a
+// list holding "Kristi McNary" would leave a second spelling of one rep on
+// the record - which is the exact confusion this warning exists to end.
+const CDM_LIST = ['Dan Baldauf', 'Kristi McNary', 'Ravi Patel'];
+
+eq('an exact name is left alone', canonicalCdmOption('Kristi McNary', CDM_LIST), 'Kristi McNary');
+eq('casing is corrected to the list', canonicalCdmOption('kristi mcnary', CDM_LIST), 'Kristi McNary');
+eq('the workbook spelling resolves to the list one',
+  canonicalCdmOption('McNary, Kristi', CDM_LIST), 'Kristi McNary');
+eq('a surname alone still finds the rep', canonicalCdmOption('McNary', CDM_LIST), 'Kristi McNary');
+eq('somebody the list has never heard of resolves to nothing',
+  canonicalCdmOption('Alex Fernandez', CDM_LIST), '');
+eq('a blank name resolves to nothing', canonicalCdmOption('   ', CDM_LIST), '');
+eq('no list, nothing to resolve to', canonicalCdmOption('Kristi McNary', []), '');
+
+// The click OVERWRITES a name somebody may have typed on purpose, so the
+// tooltip says whose name is about to go and who replaces it.
+eq('the hint names both the incoming and outgoing rep',
+  targetCdmApplyHint({ cdms: ['Kristi McNary'] }, 'Dan Baldauf'),
+  ' Click to put Kristi McNary in the CDM field, replacing Dan Baldauf.');
+eq('an empty field has nothing to replace',
+  targetCdmApplyHint({ cdms: ['Kristi McNary'] }, ''),
+  ' Click to put Kristi McNary in the CDM field.');
+eq('several reps means a choice, not an apply',
+  targetCdmApplyHint({ cdms: ['Kristi McNary', 'Ravi Patel'] }, 'Dan Baldauf'),
+  ' Click to pick one of them for the CDM field.');
+eq('no conflict, no hint', targetCdmApplyHint(null, 'Dan Baldauf'), '');
 
 console.log(failures === 0 ? '\nAll target-account CDM warning tests passed.' : `\n${failures} test(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
