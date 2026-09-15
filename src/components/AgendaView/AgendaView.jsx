@@ -8,6 +8,7 @@ import { getHubspotContacts, updateHubspotCache } from '../../utils/hubspotConta
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { getQueuedContactIds, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
+import { pendingSuggestionActions, summarizeSuggestionActions } from '../../utils/bulkSuggestionActions';
 import styles from './AgendaView.module.css';
 
 const STORAGE_KEY = 'bulk-contacts-cache';
@@ -2013,7 +2014,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
   // touching the other suggestions. emailDomain is multi-value, so we
   // append to the prospect's existing newline-joined list.
   const applySingleSuggestion = useCallback(async (prospect, fieldKey, value) => {
-    if (!onUpdateProspect || !prospect || !fieldKey || !value) return;
+    if (!onUpdateProspect || !prospect || !fieldKey || !value) return false;
     const key = `${prospect.id}::${fieldKey}`;
     setCellApplyState(prev => ({ ...prev, [key]: 'applying' }));
     try {
@@ -2025,16 +2026,20 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
         if (existingLower.has(String(value).toLowerCase())) {
           setCellApplyState(prev => ({ ...prev, [key]: 'applied' }));
           setTimeout(() => setCellApplyState(prev => { const n = { ...prev }; delete n[key]; return n; }), 1500);
-          return;
+          return true;
         }
         patchValue = [...existing, value].join('\n');
       }
       await onUpdateProspect(prospect.id, { [fieldKey]: patchValue });
       setCellApplyState(prev => ({ ...prev, [key]: 'applied' }));
       setTimeout(() => setCellApplyState(prev => { const n = { ...prev }; delete n[key]; return n; }), 1500);
+      return true;
     } catch {
       setCellApplyState(prev => ({ ...prev, [key]: 'error' }));
       setTimeout(() => setCellApplyState(prev => { const n = { ...prev }; delete n[key]; return n; }), 2500);
+      // Said out loud rather than only painted on the cell, so a caller
+      // applying a hundred of these can count the ones that did not land.
+      return false;
     }
   }, [onUpdateProspect]);
 
@@ -2076,6 +2081,80 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       message: `Updated ${done} prospect${done === 1 ? '' : 's'}${failed > 0 ? ` · ${failed} failed` : ''}.`,
     });
     setTimeout(() => setBackfillStatus(null), 4000);
+  }
+
+  // ---- Apply all the suggestions the table is showing ------------------
+  //
+  // Every yellow pill in the right-hand columns carries its own ✓, which is
+  // one click per decision. On a drop of 175 contacts the same answer -
+  // yes, these are right - costs a couple of hundred clicks, and the rows
+  // that get missed are the ones below the fold. So the toolbar offers the
+  // same answer once.
+  //
+  // Scoped to the ticked rows when there is a selection and to the visible
+  // rows otherwise: "apply what I picked" and "apply what I am looking at"
+  // are the same sentence with a different subject, and a filtered table is
+  // already somebody having narrowed it down.
+  const [applyAllBusy, setApplyAllBusy] = useState(false);
+  const [applyAllStatus, setApplyAllStatus] = useState(null);
+
+  const suggestionScopeSelected = bulkMassMode && bulkSelected.size > 0;
+  const suggestionScopeRows = useMemo(() => (
+    suggestionScopeSelected ? visibleRows.filter(r => bulkSelected.has(r.email)) : visibleRows
+  ), [suggestionScopeSelected, visibleRows, bulkSelected]);
+
+  const pendingSuggestions = useMemo(() => pendingSuggestionActions(suggestionScopeRows, {
+    suggestedCompanyFor: (r) => lookupMatch(r.email, r).suggestedCompany,
+    companyDismissed: (r) => dismissedSuggestedCompanies.has(r.email),
+    prospectFor: (r) => (r._matchedProspectId ? prospects.find(p => p.id === r._matchedProspectId) : null),
+    tvStateFor: rowTableViewState,
+    suggestionFor,
+    tvDismissed: (pid, field) => dismissedSuggestions.has(`${pid}::${field}`),
+  }), [suggestionScopeRows, lookupMatch, dismissedSuggestedCompanies, prospects,
+    rowTableViewState, suggestionFor, dismissedSuggestions]);
+
+  const suggestionSummary = useMemo(
+    () => summarizeSuggestionActions(pendingSuggestions),
+    [pendingSuggestions],
+  );
+
+  async function applyAllSuggestions() {
+    if (applyAllBusy || pendingSuggestions.length === 0) return;
+    const { total, companies, prospectFields, prospects: prospectCount } = suggestionSummary;
+    const lines = [
+      `Apply ${total} suggestion${total === 1 ? '' : 's'} on ${suggestionScopeRows.length} row${suggestionScopeRows.length === 1 ? '' : 's'}?`,
+      '',
+    ];
+    if (companies > 0) {
+      lines.push(`- ${companies} row${companies === 1 ? '' : 's'} take their Suggested Company, and the mapping is saved as a rule.`);
+    }
+    if (prospectFields > 0) {
+      lines.push(`- ${prospectFields} Table View field${prospectFields === 1 ? '' : 's'} written to ${prospectCount} prospect record${prospectCount === 1 ? '' : 's'}.`);
+    }
+    lines.push('', 'HubSpot is not touched: send the rows when you are ready.');
+    if (!confirm(lines.join('\n'))) return;
+
+    setApplyAllBusy(true);
+    let done = 0;
+    let failed = 0;
+    for (const action of pendingSuggestions) {
+      if (action.kind === 'company') {
+        // The same pair the cell's ✓ runs: save the mapping (which fixes
+        // every other row with that raw company) and set this row.
+        saveCompanyRule(action.from, action.to);
+        updateRow(action.email, { company: action.to });
+        done += 1;
+        continue;
+      }
+      const ok = await applySingleSuggestion(action.prospect, action.field, action.value);
+      if (ok) done += 1; else failed += 1;
+    }
+    setApplyAllBusy(false);
+    setApplyAllStatus({
+      type: failed > 0 ? 'partial' : 'success',
+      message: `Applied ${done} suggestion${done === 1 ? '' : 's'}${failed > 0 ? ` - ${failed} failed` : ''}.`,
+    });
+    setTimeout(() => setApplyAllStatus(null), 4000);
   }
 
   return (
@@ -2482,6 +2561,32 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              {applyAllStatus && (
+                <span style={{ fontSize: '0.7rem', fontWeight: 600, color: applyAllStatus.type === 'success' ? '#166534' : '#92400E' }}>
+                  {applyAllStatus.message}
+                </span>
+              )}
+              {/* The ✓ on every pill in the right-hand columns, once. Shown
+                  only when there is something to apply, because a button
+                  that says "0" is a button asking to be clicked to find
+                  that out. */}
+              {pendingSuggestions.length > 0 && (
+                <button
+                  type="button"
+                  onClick={applyAllSuggestions}
+                  disabled={applyAllBusy}
+                  title={`Accept every suggestion in the Suggested Company and Table View columns on ${
+                    suggestionScopeSelected
+                      ? `the ${suggestionScopeRows.length} selected row${suggestionScopeRows.length === 1 ? '' : 's'}`
+                      : `all ${suggestionScopeRows.length} row${suggestionScopeRows.length === 1 ? '' : 's'} shown`
+                  }: ${suggestionSummary.companies} Suggested Company, ${suggestionSummary.prospectFields} Table View field${suggestionSummary.prospectFields === 1 ? '' : 's'} across ${suggestionSummary.prospects} prospect${suggestionSummary.prospects === 1 ? '' : 's'}. Same as clicking each ✓. Dismissed suggestions stay dismissed.`}
+                  style={{ padding: '0.3rem 0.7rem', border: '1px solid #16A34A', borderRadius: 6, background: applyAllBusy ? '#86EFAC' : '#16A34A', color: '#fff', fontSize: '0.72rem', fontWeight: 700, cursor: applyAllBusy ? 'wait' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                >
+                  {applyAllBusy
+                    ? 'Applying…'
+                    : `✓ Apply ${pendingSuggestions.length} suggestion${pendingSuggestions.length === 1 ? '' : 's'}${suggestionScopeSelected ? ' (selected)' : ''}`}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => { setBulkMassMode(v => !v); setBulkSelected(new Set()); }}
