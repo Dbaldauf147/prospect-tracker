@@ -1303,7 +1303,7 @@ export function estimateSetup({
       unit: lineBasis.unit || null, unitLabel: lineBasis.unitLabel || '',
       rate: line.rate, rateHigh: line.rateHigh,
       units: ctx.units, unitsTyped: ctx.unitsTyped, recurs: false,
-      fee, feeHigh, note: ctx.note,
+      fee, feeHigh, note: ctx.note, gap: ctx.gap,
     });
   }
   return { total, totalHigh, breakdown, unitsNeeded: [...unitsNeeded] };
@@ -1324,6 +1324,11 @@ function lineContext(lineBasis, { counts, dealSize, ownUnit, ownUnits }) {
   let unitsTyped = false;
   let deal = 0;
   let note = '';
+  // The same fact as `note`, in a shape a caller can branch on. A note is a
+  // sentence for a reader; a gap says which INPUT is missing, so a table can
+  // colour the row red and a summary can group "these four want a site
+  // count" without matching on the wording of the sentence. See PRICING_GAPS.
+  let gap = null;
   if (lineBasis.kind === 'unit') {
     unitsTyped = ownUnits !== null && ownUnits !== undefined && lineBasis.unit === ownUnit;
     const shared = parseMoney(counts?.[lineBasis.unit]);
@@ -1348,6 +1353,11 @@ function lineContext(lineBasis, { counts, dealSize, ownUnit, ownUnits }) {
       note = unitsTyped
         ? `Set to no ${lineBasis.unitLabel.toLowerCase()}`
         : `No ${lineBasis.unitLabel.toLowerCase()} entered`;
+      // A typed zero is an answer, not a gap: somebody looked at this deal
+      // and said none. Only the unanswered count is something missing.
+      if (!unitsTyped) {
+        gap = { kind: 'units', unit: lineBasis.unit || null, unitLabel: lineBasis.unitLabel || '' };
+      }
     }
   } else if (lineBasis.kind === 'percent') {
     deal = parseMoney(dealSize) ?? 0;
@@ -1355,7 +1365,10 @@ function lineContext(lineBasis, { counts, dealSize, ownUnit, ownUnits }) {
     // a percentage bites on is typed in on Deal Sizing and worked out from
     // the bundle on Account Potential, and "no deal size entered" sends a
     // reader on that page looking for a field that isn't there.
-    if (deal <= 0) note = 'No deal to price on';
+    if (deal <= 0) {
+      note = 'No deal to price on';
+      gap = { kind: 'deal', unit: null, unitLabel: '' };
+    }
   }
   const feeAt = (r) => {
     if (note) return 0;
@@ -1363,7 +1376,7 @@ function lineContext(lineBasis, { counts, dealSize, ownUnit, ownUnits }) {
     if (lineBasis.kind === 'percent') return deal * (r / 100);
     return r;
   };
-  return { units, unitsTyped, note, feeAt };
+  return { units, unitsTyped, note, gap, feeAt };
 }
 
 // Whether one line bills again next year. A basis carrying `recurs` always
@@ -1392,6 +1405,11 @@ function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASE
     priced: false, fee: null, feeHigh: null, value: null, valueHigh: null, recurring, years,
     recurringFee: 0, recurringFeeHigh: 0, oneOffFee: 0, oneOffFeeHigh: 0,
     unit: basis?.unit || null, units: null, unitsTyped: false, note: '', typed: false,
+    // Which input the line is missing, or null when nothing is. Null on
+    // every ordinary line and on every DELIBERATE zero (a no-fee mark, a
+    // count typed as none), so a caller can read it off any estimate
+    // without testing for the field. See PRICING_GAPS.
+    gap: null,
     // Charged at nothing on purpose. False on every ordinary line, so a
     // caller can read it off any estimate without testing for the field.
     noFee: false,
@@ -1456,7 +1474,11 @@ function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASE
 
   const lines = pricingLines(entry);
   if (lines.length === 0) {
-    return { ...base, note: basis ? 'No rate set' : 'No pricing basis set' };
+    return {
+      ...base,
+      note: basis ? 'No rate set' : 'No pricing basis set',
+      gap: { kind: 'rate', unit: null, unitLabel: '' },
+    };
   }
 
   // The count the service was told to charge its own basis on follows that
@@ -1475,6 +1497,7 @@ function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASE
   // has always given.
   let allNothing = true;
   let firstNote = '';
+  let firstGap = null;
 
   for (const line of lines) {
     const lineBasis = basisFor(line.basis, bases);
@@ -1484,14 +1507,14 @@ function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASE
     const lo = line.rateHigh === null ? line.rate : Math.min(line.rate, line.rateHigh);
     const hi = line.rateHigh === null ? line.rate : Math.max(line.rate, line.rateHigh);
 
-    const { units, unitsTyped, note, feeAt } = lineContext(
+    const { units, unitsTyped, note, gap: ctxGap, feeAt } = lineContext(
       lineBasis, { counts, dealSize, ownUnit, ownUnits },
     );
     if (lineBasis.kind === 'unit' && !unitsTyped) unitsNeeded.add(lineBasis.unit);
     const feeLo = feeAt(lo);
     const feeHi = feeAt(hi);
     if (!note) allNothing = false;
-    else if (!firstNote) firstNote = note;
+    else if (!firstNote) { firstNote = note; firstGap = ctxGap; }
 
     const recurs = lineRecurs(lineBasis, recurring);
     if (recurs) { recurLo += feeLo; recurHi += feeHi; }
@@ -1501,12 +1524,16 @@ function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASE
       basis: lineBasis.key, basisLabel: lineBasis.label, kind: lineBasis.kind,
       unit: lineBasis.unit || null, unitLabel: lineBasis.unitLabel || '',
       rate: line.rate, rateHigh: line.rateHigh,
-      units, unitsTyped, recurs, fee: feeLo, feeHigh: feeHi, note,
+      units, unitsTyped, recurs, fee: feeLo, feeHigh: feeHi, note, gap: ctxGap,
     });
   }
 
   if (breakdown.length === 0) {
-    return { ...base, note: basis ? 'No rate set' : 'No pricing basis set' };
+    return {
+      ...base,
+      note: basis ? 'No rate set' : 'No pricing basis set',
+      gap: { kind: 'rate', unit: null, unitLabel: '' },
+    };
   }
 
   // The primary line's count is what the Units column and the saved
@@ -1523,7 +1550,7 @@ function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASE
   // floor invent money for work nobody counted, exactly as a single unit-
   // priced service with no count has always behaved.
   if (allNothing) {
-    return { ...shape, fee: 0, feeHigh: 0, value: 0, valueHigh: 0, note: firstNote };
+    return { ...shape, fee: 0, feeHigh: 0, value: 0, valueHigh: 0, note: firstNote, gap: firstGap };
   }
 
   // The floor is what the SERVICE costs to run at all, so it holds up the
@@ -1542,8 +1569,68 @@ function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASE
     oneOffFee: onceLo, oneOffFeeHigh: onceHi,
     fee: recurLo + onceLo, feeHigh: recurHi + onceHi,
     value: recurLo * years + onceLo, valueHigh: recurHi * years + onceHi,
-    note: firstNote,
+    note: firstNote, gap: firstGap,
   };
+}
+
+/**
+ * The three things a line can be missing, in the order they are worth
+ * reading. A gap is the reason a fee came out at nothing that somebody can
+ * do something about, which is why a deliberate zero is not one: a service
+ * marked no fee, or a count typed as none, has been answered.
+ *
+ * `rate` is answered on the rate card, `units` and `deal` are answered
+ * against this account - so they are two different errands and the readout
+ * groups them apart rather than printing one list of eight names.
+ */
+export const PRICING_GAPS = ['rate', 'units', 'deal'];
+
+const GAP_RANK = new Map(PRICING_GAPS.map((k, i) => [k, i]));
+
+/**
+ * What a priced scope is missing, grouped by the thing that is missing.
+ *
+ * The per-row notes say it one service at a time, which is the right place
+ * to read it while you are looking at that row and no use at all for "what
+ * do I have to go and find". Eight rows reading "No accounts entered" are
+ * one errand, and this is the shape that says so.
+ *
+ * Returns `[{ kind, unit, unitLabel, label, services }]`, one entry per
+ * distinct missing input, ordered by PRICING_GAPS. `label` names the input
+ * in the words the row notes use; where it is FIXED is the caller's to say,
+ * since that depends on which screen is asking.
+ *
+ * A line with no gap contributes nothing, so a fully answered scope returns
+ * an empty array rather than a shape the caller has to test the insides of.
+ */
+export function scopeGaps(lines) {
+  const byKey = new Map();
+  for (const line of lines || []) {
+    const gap = line?.gap;
+    if (!gap || !GAP_RANK.has(gap.kind)) continue;
+    // Per-unit gaps are one errand PER UNIT: a scope missing both a site
+    // count and a meter count is two numbers to go and find, and rolling
+    // them into one "counts missing" line would hide one of them.
+    const key = gap.kind === 'units' ? `units:${gap.unit || gap.unitLabel || ''}` : gap.kind;
+    const at = byKey.get(key);
+    if (at) { at.services.push(line.name); continue; }
+    const unitLabel = String(gap.unitLabel || '').toLowerCase();
+    byKey.set(key, {
+      kind: gap.kind,
+      unit: gap.unit || null,
+      unitLabel: gap.unitLabel || '',
+      label: gap.kind === 'units'
+        ? `No ${unitLabel || 'count'} entered`
+        : (gap.kind === 'deal' ? 'No deal size to take a percentage of' : 'No price on the rate card'),
+      services: [line.name],
+    });
+  }
+  return [...byKey.values()].sort((a, b) => {
+    const d = GAP_RANK.get(a.kind) - GAP_RANK.get(b.kind);
+    // Within a kind, the errand blocking the most services reads first.
+    return d || (b.services.length - a.services.length)
+      || String(a.unitLabel).localeCompare(String(b.unitLabel));
+  });
 }
 
 // How a line's fee was arrived at, in a few words: the phrase that goes
@@ -1714,6 +1801,12 @@ export function estimateScope({
     // without checking eight figures against each other.
     ranged: year1TotalHigh > year1Total || contractValueHigh > contractValue,
     unpriced, unitsUsed,
+    // What is missing, grouped by the missing thing rather than by the row
+    // it stopped. `unpriced` is the subset of this that the rate card
+    // answers; a service priced at a confident $0 because nobody has
+    // recorded a count is NOT in `unpriced`, and it is the one this exists
+    // to surface.
+    gaps: scopeGaps(lines),
   };
 }
 
