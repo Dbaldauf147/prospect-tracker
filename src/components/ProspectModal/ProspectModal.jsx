@@ -589,7 +589,7 @@ const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, numberOfAccounts: null,
   numberOfMeters: null, equipmentCount: null, annualMwh: null, sitesWithMandate: null, rank: '', tier: 'Tier 3',
-  hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', onePagerNotes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [],
+  hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', strategies: [], revenue: '',
   // Opts this company into the weekly acquisition-news digest
   // (api/company-news-scheduler). Off unless explicitly ticked.
@@ -5849,9 +5849,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
       const categories = getServiceCategories(settings);
 
+      // No notes passed, on purpose. The Notes section is the one part of
+      // the sheet that is written FOR a meeting rather than held by the
+      // app, so it belongs on the document: onePagerDocumentXml draws the
+      // heading with ruled lines under it, to fill in on the printed copy
+      // or in Word before sending. A box on this popup asked for the same
+      // thing a week early, out of the room the note is about.
       const model = onePagerModel({
         company: fields.company,
-        notes: fields.onePagerNotes || '',
         cdm: fields.cdm,
         clientManager,
         services: sold,
@@ -8219,35 +8224,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div className={styles.fieldFull}>
               <label className={styles.label}>Company Notes</label>
               <CommitOnBlurInput multiline autoGrow className={styles.textarea} value={fields.notes} onCommit={v => set('notes', v)} rows={2} />
-            </div>
-
-            {/* What goes on the one-pager, kept apart from Company Notes on
-                purpose: the notes above are the running record of an
-                account and include plenty nobody would hand to a customer,
-                and a sheet that printed them would be a sheet nobody could
-                take into a room. */}
-            <div className={styles.fieldFull}>
-              <label className={styles.label}>
-                One-pager Notes
-                <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>
-                  {' '}- printed above Key Client Contacts on the one-pager. Bulleted as you type.
-                </span>
-              </label>
-              {/* bulletList, not smartBullets: what goes here is a list of
-                  points for a meeting, so the first keystroke is already a
-                  bullet and Enter starts the next one - nobody should have
-                  to type the glyph, or remember the "- " that used to
-                  start one. A line meant as prose is one backspace away. */}
-              <CommitOnBlurInput
-                multiline
-                autoGrow
-                bulletList
-                className={styles.textarea}
-                value={fields.onePagerNotes}
-                onCommit={v => set('onePagerNotes', v)}
-                rows={3}
-                placeholder={'Chiller RFP lands in Q1'}
-              />
             </div>
 
             <div className={styles.fieldFull}>
