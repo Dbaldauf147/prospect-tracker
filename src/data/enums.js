@@ -8,6 +8,13 @@ export const STATUSES = [
   'Partnering w/Another CDM',
 ];
 
+// The Status that means the account has already answered no, spelled the
+// way a prospect record carries it. Named because several rules turn on
+// this one value rather than on the list as a whole: the Prospecting
+// ladder drops written-off accounts, and the PE Portfolio table flags a
+// firm carrying it whose PE Stage still reads as a live relationship.
+export const NOT_SOLD_STATUS = 'Lost - Not Sold';
+
 export const STATUS_COLORS = {
   'Client': '#10B981',
   'Inside Sales': '#3B82F6',

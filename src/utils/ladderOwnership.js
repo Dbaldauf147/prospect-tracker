@@ -16,12 +16,16 @@
 //
 // Imported with the extension so this module also loads under plain Node
 // (scripts/ladderOwnership.test.mjs), not just through the bundler.
+import { NOT_SOLD_STATUS } from '../data/enums.js';
 import { matchesCdm } from './cdmMatch.js';
 import { collectClientDomains, FREE_MAIL, rosterCompaniesMatch } from './contactRosters.js';
 
-// The Status that means the account has already said no. Spelled as
-// data/enums.js spells it, which is what a prospect record carries.
-export const NOT_SOLD_STATUS = 'Lost - Not Sold';
+// The Status that means the account has already said no. It lives beside
+// the status list in data/enums.js now, because the PE Portfolio table
+// turns on the same value and reading it through this module would have
+// dragged the whole ladder in with it. Re-exported so the callers that
+// already ask this module for it keep working.
+export { NOT_SOLD_STATUS };
 
 /**
  * Is this account one the ladder should be naming: this CDM's, and not
