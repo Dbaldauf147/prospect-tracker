@@ -5835,11 +5835,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         ? `${servicesExploredCount.explored}/${servicesExploredCount.total}`
         : '',
       opps: n(companyOppsSummary.total),
-      // What is on the Potential tab: the services nobody has ruled on. The
-      // tab's own headline calls them untapped services, and the count in
-      // the pill is that number rather than what happens to be ticked into
-      // the estimator - a tab bar says what is on a page, not what somebody
-      // left selected on it.
+      // What is on the Potential tab: the services still worth something,
+      // which is the ones nobody has ruled on plus the ones somebody is
+      // working on right now. The tab's own headline calls them untapped
+      // services, and the count in the pill is that number rather than what
+      // happens to be ticked into the estimator - a tab bar says what is on
+      // a page, not what somebody left selected on it. The answered ones
+      // are on the page too, greyed, and are deliberately not counted here:
+      // this pill is a count of work, not of rows.
       potential: n(accountPotentialReading?.open?.length || 0),
       portfolio: n((fields.portfolioCompanies || []).length),
     };
