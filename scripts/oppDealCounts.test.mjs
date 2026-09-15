@@ -17,7 +17,7 @@
 //   4. That every chip says where it came from. A surprising count is only
 //      checkable if the reader is told which record to go and look at.
 
-import { oppDealCounts, missingUnitChips } from '../src/utils/oppDealCounts.js';
+import { oppDealCounts, missingUnitChips, dealCountRows } from '../src/utils/oppDealCounts.js';
 import { PRICING_UNITS } from '../src/utils/servicePricing.js';
 
 let passed = 0, failed = 0;
@@ -104,6 +104,75 @@ eq('a count typed with separators is still a number',
 // vanishing — a custom basis is the user's own vocabulary.
 eq('an unknown unit is labelled with its own key',
   missingUnitChips({ counts: {}, needed: ['widgets'], units: PRICING_UNITS })[0].label, 'widgets');
+
+// --- the boxes the Deal Size popup types into -------------------------------
+//
+// Same numbers, now with somewhere to put them. What is guarded is the one
+// rule that makes the boxes trustworthy: the box you type in and the number
+// that prices the deal are the same number. Route a site count to the opp
+// column while the card's 6,176 goes on pricing it and the popup shows an
+// empty box above a fee worked against a figure the box never held.
+
+const rowsFor = (opp_, company, needed) =>
+  dealCountRows({ opp: opp_, company, units: PRICING_UNITS, needed });
+const shape = (rows) => rows.map(r => [r.unit, r.value, r.target, r.column || r.field, r.blocked]);
+
+{
+  // Nothing recorded: each count goes to the record that OWNS that fact -
+  // the opp for the sites this deal covers, the card for what the account
+  // has.
+  eq('an empty account offers a box on the right record for each count',
+    shape(rowsFor(opp(), { id: 'c1', company: 'Prologis' }, ['sites', 'accounts', 'meters'])),
+    [['sites', null, 'opp', 'Sites', null],
+     ['accounts', null, 'company', 'numberOfAccounts', null],
+     ['meters', null, 'company', 'numberOfMeters', null]]);
+
+  // Recorded: you edit the record it CAME from, so what is in the box is
+  // what prices the deal.
+  eq('a count edits the record that answered it',
+    shape(rowsFor(opp({ Sites: '40' }), COMPANY, ['sites', 'accounts'])),
+    [['sites', 40, 'opp', 'Sites', null],
+     ['sites_mandate', 300, 'company', 'sitesWithMandate', null],
+     ['accounts', 1240, 'company', 'numberOfAccounts', null]]);
+
+  // The card answered sites, so the card is what the box writes to. Sending
+  // it to the opp column would leave 6,176 pricing the deal from behind an
+  // empty box.
+  eq("a site count off the card edits the card, not the opp's blank column",
+    shape(rowsFor(opp(), COMPANY, ['sites'])),
+    [['sites', 6176, 'company', 'numberOfSites', null],
+     ['sites_mandate', 300, 'company', 'sitesWithMandate', null],
+     ['accounts', 1240, 'company', 'numberOfAccounts', null]]);
+}
+
+{
+  // A row with nowhere to write still shows: the missing count is why a fee
+  // below reads $0, and an offered box that drops what is typed into it is
+  // worse than none.
+  eq('no company card means the opp can still be typed and the rest cannot',
+    shape(rowsFor(opp(), null, ['sites', 'accounts'])),
+    [['sites', null, 'opp', 'Sites', null],
+     ['accounts', null, null, null, 'no-company']]);
+  eq('a unit no record carries says so rather than offering a box',
+    shape(rowsFor(opp(), COMPANY, ['invoices'])).filter(r => r[0] === 'invoices'),
+    [['invoices', null, null, null, 'no-field']]);
+}
+
+{
+  // Projects are a fact about the SERVICE, not the account: three lighting
+  // retrofits and a chiller replacement is four projects and neither
+  // service is priced on four. There is no single number to type.
+  eq('projects are never asked for here',
+    rowsFor(opp(), COMPANY, ['projects']).map(r => r.unit),
+    ['sites', 'sites_mandate', 'accounts']);
+
+  eq('a unit nothing charges on and nothing answers gets no row',
+    rowsFor(opp(), null, null), []);
+  eq('and a row says whether this scope is actually waiting on it',
+    rowsFor(opp(), COMPANY, ['accounts']).map(r => [r.unit, r.needed]),
+    [['sites', false], ['sites_mandate', false], ['accounts', true]]);
+  eq('no arguments at all is not a crash', dealCountRows(), []);
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
