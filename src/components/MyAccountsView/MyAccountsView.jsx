@@ -174,6 +174,16 @@ const TYPE2_COLORS = {
 // they stay visible (and fixable) instead of dropping out of the grouping.
 const UNSPECIFIED_TYPE = 'No Type Set';
 
+// What each column's ⚠ filter is called on the filter bar, so a table
+// that is missing rows says why somewhere the eye lands, not only on a
+// header that may have been scrolled off to the right.
+const FLAG_FILTER_LABELS = {
+  company: 'Similar names',
+  status: 'Status mismatches',
+  type: 'Type mismatches',
+  hqRegion: 'Missing HQ Region',
+};
+
 // The Master Site List (SitesView's "Master Site List" tab) persists its
 // rows under this key via uploadedListStore. We load it here to show a
 // per-company count of how many sites exist on that tab.
@@ -774,6 +784,46 @@ function TypeMismatchWarning({ row, onUpdate }) {
   );
 }
 
+// The ⚠ on a column header: how many rows that column has flagged, and a
+// click that narrows the table to exactly those.
+//
+// The count was already there and was already the answer to "how many" -
+// what it could not do was show you them. Reading a flag off a header and
+// then hunting for the rows it counted, down a table of two hundred, is the
+// kind of job a filter does in one click, and the header is where somebody
+// is already looking when they want it.
+//
+// Its own click, stopped here: the header cell around it sorts the column,
+// and a badge that sorted as well as filtered would do two things to the
+// table for one press.
+function ColumnFlagBadge({ count, active, onToggle, what }) {
+  if (!count) return null;
+  const n = `${count} account${count === 1 ? '' : 's'}`;
+  const fire = (e) => { e.stopPropagation(); onToggle(); };
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      aria-pressed={active}
+      title={active
+        ? `Showing only the ${n} flagged here (${what}). Click to bring the rest back.`
+        : `${n} flagged: ${what}. Click to show only those.`}
+      onClick={fire}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fire(e); } }}
+      style={{
+        marginLeft: 4, padding: '0 5px', borderRadius: 999,
+        // Filled while it is the one filtering, so a table that is missing
+        // rows always has the reason lit up on it somewhere.
+        background: active ? '#F59E0B' : '#FEF3C7',
+        border: '1px solid #F59E0B',
+        color: active ? '#fff' : '#92400E',
+        fontSize: '0.62rem', fontWeight: 700, whiteSpace: 'nowrap',
+        cursor: 'pointer', verticalAlign: 'middle',
+      }}
+    >{`⚠ ${count}`}</span>
+  );
+}
+
 function SimilarNamesWarning({ matches, onDismiss }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
@@ -1040,6 +1090,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const [filters, setFilters] = useState(savedView?.filters || {});
   const [expandedBucket, setExpandedBucket] = useState(null);
   const [bucketFilter, setBucketFilter] = useState(savedView?.bucketFilter ?? null); // 'tier1' | 'tier2' | 'client' | 'pipeline' | null
+  // Which column's ⚠ is narrowing the table to the rows it flagged, by
+  // column key, or '' for none. Deliberately NOT in savedView: this is a
+  // "show me the problems" glance, and coming back tomorrow to a table
+  // silently missing four fifths of its rows is how a view gets blamed for
+  // losing accounts.
+  const [flagFilter, setFlagFilter] = useState('');
+  const toggleFlagFilter = (key) => setFlagFilter(prev => (prev === key ? '' : key));
   const [hqLookupRunning, setHqLookupRunning] = useState(false);
   const [dedupeRunning, setDedupeRunning] = useState(false);
   const [tierSyncRunning, setTierSyncRunning] = useState(false);
@@ -1369,6 +1426,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     setFilters({});
     setSearch('');
     setBucketFilter(null);
+    setFlagFilter('');
   }
 
   const activeFilterCount = Object.values(filters).reduce((s, a) => s + a.length, 0);
@@ -2865,7 +2923,71 @@ Fix that now?
   }, [allAccounts]);
 
   // Apply filters, bucket filter, and search
-  const filteredAccounts = useMemo(() => {
+  // For each account, the set of OTHER Table View prospects whose
+  // company name normalizes to the same key - catches near-duplicate
+  // spellings like "Affinius Capital" vs "Affinius Capital, a USAA Co."
+  // that would otherwise live as separate prospects. Normalization
+  // strips parentheticals, corporate suffixes, and punctuation.
+  const similarNamesByAccount = useMemo(() => {
+    const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
+    const norm = s => String(s || '')
+      .toLowerCase()
+      .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+      .replace(/\(.*?\)/g, ' ')
+      .replace(/\[.*?\]/g, ' ')
+      .replace(/&/g, ' and ')
+      .replace(CORP_SUFFIXES, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    // Group every prospect's company by its normalized key.
+    const byNorm = new Map();
+    for (const p of prospects) {
+      const raw = (p.company || '').trim();
+      if (!raw) continue;
+      const k = norm(raw);
+      if (!k) continue;
+      if (!byNorm.has(k)) byNorm.set(k, []);
+      byNorm.get(k).push({ id: p.id, company: raw });
+    }
+    // Walk the accounts and collect the other entries that share a
+    // key but differ in display spelling. Account companies can
+    // themselves appear in the group; filter those out.
+    const out = new Map();
+    for (const a of allAccounts) {
+      if (a.ignoreSimilarNames) continue;
+      const raw = (a.company || '').trim();
+      if (!raw) continue;
+      const k = norm(raw);
+      const group = byNorm.get(k);
+      if (!group || group.length < 2) continue;
+      const rawLower = raw.toLowerCase();
+      const others = group.filter(g => g.company.toLowerCase() !== rawLower);
+      if (others.length > 0) out.set(rawLower, others);
+    }
+    return out;
+  }, [prospects, allAccounts]);
+
+  // What each column's ⚠ is counting, as a predicate per column key.
+  //
+  // One rule per flag, read twice: the header badge counts the rows it
+  // matches and the filter below keeps them. Written out once because a
+  // badge that said 12 and a filter that showed 9 would be a table nobody
+  // could trust, and two copies of a rule is how that happens.
+  const flagTests = useMemo(() => ({
+    company: (a) => similarNamesByAccount.has((a.company || '').toLowerCase().trim()),
+    status: (a) => !!a.statusMismatch,
+    type: (a) => !!a.typeMismatch,
+    hqRegion: (a) => !a.hqRegion && !INACTIVE_STATUSES.has(a.status),
+  }), [similarNamesByAccount]);
+
+  // Everything the search box, the column filters and the summary cards
+  // keep. The ⚠ filter is applied after this rather than inside it, so the
+  // badges can go on counting against the whole view while one of them is
+  // filtering - otherwise clicking Status would drop every row Type had
+  // flagged, Type's badge would go to zero and disappear, and there would
+  // be no way to click from one flag across to the next.
+  const matchingAccounts = useMemo(() => {
     let result = allAccounts;
     // Inactive status filter
     if (inactiveMode === 'hide') result = result.filter(a => !INACTIVE_STATUSES.has(a.status));
@@ -2898,6 +3020,15 @@ Fix that now?
     }
     return result;
   }, [allAccounts, filters, search, bucketFilter, inactiveMode]);
+
+  // ...and then only the rows one column has flagged, when a header badge
+  // has been clicked. Nothing else on the page changes: the cards, the
+  // counts and the column filters are all still whatever they were, and
+  // clicking the badge again gives the rest back.
+  const filteredAccounts = useMemo(() => {
+    const test = flagTests[flagFilter];
+    return test ? matchingAccounts.filter(test) : matchingAccounts;
+  }, [matchingAccounts, flagTests, flagFilter]);
 
   // Company Type subtab: the same accounts, bucketed by the Type column.
   // Built off allAccounts (not filteredAccounts) so the column filters and
@@ -3098,59 +3229,29 @@ Fix that now?
     return dupes;
   }, [allAccounts]);
 
-  // For each account, the set of OTHER Table View prospects whose
-  // company name normalizes to the same key - catches near-duplicate
-  // spellings like "Affinius Capital" vs "Affinius Capital, a USAA Co."
-  // that would otherwise live as separate prospects. Normalization
-  // strips parentheticals, corporate suffixes, and punctuation.
-  const similarNamesByAccount = useMemo(() => {
-    const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
-    const norm = s => String(s || '')
-      .toLowerCase()
-      .normalize('NFKD').replace(/[̀-ͯ]/g, '')
-      .replace(/\(.*?\)/g, ' ')
-      .replace(/\[.*?\]/g, ' ')
-      .replace(/&/g, ' and ')
-      .replace(CORP_SUFFIXES, ' ')
-      .replace(/[^a-z0-9]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    // Group every prospect's company by its normalized key.
-    const byNorm = new Map();
-    for (const p of prospects) {
-      const raw = (p.company || '').trim();
-      if (!raw) continue;
-      const k = norm(raw);
-      if (!k) continue;
-      if (!byNorm.has(k)) byNorm.set(k, []);
-      byNorm.get(k).push({ id: p.id, company: raw });
-    }
-    // Walk the accounts and collect the other entries that share a
-    // key but differ in display spelling. Account companies can
-    // themselves appear in the group; filter those out.
-    const out = new Map();
-    for (const a of allAccounts) {
-      if (a.ignoreSimilarNames) continue;
-      const raw = (a.company || '').trim();
-      if (!raw) continue;
-      const k = norm(raw);
-      const group = byNorm.get(k);
-      if (!group || group.length < 2) continue;
-      const rawLower = raw.toLowerCase();
-      const others = group.filter(g => g.company.toLowerCase() !== rawLower);
-      if (others.length > 0) out.set(rawLower, others);
-    }
-    return out;
-  }, [prospects, allAccounts]);
 
   // Set the company column render with onSelect, and make editable columns use InlineCell
   const columns = useMemo(() => {
     const mapped = ACCOUNT_COLUMNS.map(col => {
       if (col.key === 'company') {
-        const similarAccounts = filteredAccounts.filter(a => similarNamesByAccount.has((a.company || '').toLowerCase().trim())).map(a => a.company);
+        const similarAccounts = matchingAccounts.filter(flagTests.company).map(a => a.company);
         return {
           ...col,
-          label: similarAccounts.length > 0 ? `Company ⚠ ${similarAccounts.length}` : 'Company',
+          // The count rides in renderHeader rather than in the label now:
+          // the label is what the column picker and the Excel export read,
+          // and neither of them wants a ⚠ and a running total in the
+          // middle of a column name.
+          renderHeader: (label) => (
+            <span>
+              {label}
+              <ColumnFlagBadge
+                count={similarAccounts.length}
+                active={flagFilter === 'company'}
+                onToggle={() => toggleFlagFilter('company')}
+                what="similar names in Table View"
+              />
+            </span>
+          ),
           headerTitle: warningHeaderTitle('Similar names in Table View', similarAccounts),
           render: (row) => {
             const similar = similarNamesByAccount.get((row.company || '').toLowerCase().trim());
@@ -3224,8 +3325,18 @@ Fix that now?
         return { ...col, getFilterValue: (row) => (divisionsMap[row.id] || []).map(d => d.company).filter(Boolean).join(', '), render: (row) => <DivisionPicker parentId={row.id} divisions={divisionsMap[row.id] || []} allCompanies={allCompaniesForDivisions} onAdd={addDivision} onAddMany={addDivisions} onRemove={removeDivision} rules={divisionRules[row.id] || []} onSetRule={addDivisionRule} onRemoveRule={removeDivisionRule} /> };
       }
       if (col.key === 'status') {
-        const mismatchAccounts = filteredAccounts.filter(a => a.statusMismatch).map(a => a.company);
-        return { ...col, label: mismatchAccounts.length > 0 ? `Status ⚠ ${mismatchAccounts.length}` : 'Status', headerTitle: warningHeaderTitle('Status differs from opps-derived suggestion', mismatchAccounts), render: (row) => (
+        const mismatchAccounts = matchingAccounts.filter(flagTests.status).map(a => a.company);
+        return { ...col, renderHeader: (label) => (
+          <span>
+            {label}
+            <ColumnFlagBadge
+              count={mismatchAccounts.length}
+              active={flagFilter === 'status'}
+              onToggle={() => toggleFlagFilter('status')}
+              what="Status differs from the opps-derived suggestion"
+            />
+          </span>
+        ), headerTitle: warningHeaderTitle('Status differs from opps-derived suggestion', mismatchAccounts), render: (row) => (
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <InlineCell row={row} field="status" value={row.status} onUpdate={onUpdate} options={STATUSES} />
             {row.statusMismatch && <StatusMismatchWarning row={row} onUpdate={onUpdate} />}
@@ -3233,14 +3344,24 @@ Fix that now?
         )};
       }
       if (col.key === 'type') {
-        const typeMismatchAccounts = filteredAccounts.filter(a => a.typeMismatch).map(a => a.company);
+        const typeMismatchAccounts = matchingAccounts.filter(flagTests.type).map(a => a.company);
         // Source the dropdown options from the configurable "Type" list on
         // the Dropdowns tab - through the shared builder, so this picker
         // offers exactly what the company card and Table View do: the list,
         // then any Type already in use, then legacy customTypes, falling
         // back to the built-in enum if the list has been hidden or emptied.
         const typeOptions = buildTypeOptions(prospects, settings);
-        return { ...col, label: typeMismatchAccounts.length > 0 ? `Type ⚠ ${typeMismatchAccounts.length}` : 'Type', headerTitle: warningHeaderTitle('Type differs from PE-partner-derived suggestion', typeMismatchAccounts), render: (row) => (
+        return { ...col, renderHeader: (label) => (
+          <span>
+            {label}
+            <ColumnFlagBadge
+              count={typeMismatchAccounts.length}
+              active={flagFilter === 'type'}
+              onToggle={() => toggleFlagFilter('type')}
+              what="Type differs from the PE-partner-derived suggestion"
+            />
+          </span>
+        ), headerTitle: warningHeaderTitle('Type differs from PE-partner-derived suggestion', typeMismatchAccounts), render: (row) => (
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <InlineCell row={row} field="type" value={row.type} onUpdate={onUpdate} options={typeOptions} />
             {row.typeMismatch && <TypeMismatchWarning row={row} onUpdate={onUpdate} />}
@@ -3263,8 +3384,18 @@ Fix that now?
         return { ...col, render: (row) => <InlineCell row={row} field="numberOfSites" value={row.numberOfSites} onUpdate={onUpdate} type="number" /> };
       }
       if (col.key === 'hqRegion') {
-        const missingAccounts = filteredAccounts.filter(a => !a.hqRegion && !INACTIVE_STATUSES.has(a.status)).map(a => a.company);
-        return { ...col, label: missingAccounts.length > 0 ? `HQ Region ⚠ ${missingAccounts.length}` : 'HQ Region', headerTitle: warningHeaderTitle('Missing HQ Region', missingAccounts), render: (row) => <InlineCell row={row} field="hqRegion" value={row.hqRegion} onUpdate={onUpdate} options={['North America', 'Outside of North America']} /> };
+        const missingAccounts = matchingAccounts.filter(flagTests.hqRegion).map(a => a.company);
+        return { ...col, renderHeader: (label) => (
+          <span>
+            {label}
+            <ColumnFlagBadge
+              count={missingAccounts.length}
+              active={flagFilter === 'hqRegion'}
+              onToggle={() => toggleFlagFilter('hqRegion')}
+              what="no HQ Region set"
+            />
+          </span>
+        ), headerTitle: warningHeaderTitle('Missing HQ Region', missingAccounts), render: (row) => <InlineCell row={row} field="hqRegion" value={row.hqRegion} onUpdate={onUpdate} options={['North America', 'Outside of North America']} /> };
       }
       if (col.key === 'naRegion') {
         return { ...col, getFilterValue: (row) => (row.hqRegion ? '' : (hqRegionMap[row.id] || '')), render: (row) => {
@@ -3351,7 +3482,7 @@ Fix that now?
       render: (row) => <button className={styles.deleteBtn} onClick={(e) => { e.stopPropagation(); if (confirm(`Remove "${row.company}" from the database?`)) { dismissCompany(row.company); onDelete(row.id); } }} title="Remove">&#x2715;</button>,
     });
     return mapped;
-  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany, similarNamesByAccount, filteredAccounts, mslRowsByCompany, settings?.dropdownLists, settings?.dropdownListsHidden]);
+  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany, similarNamesByAccount, matchingAccounts, flagTests, flagFilter, mslRowsByCompany, settings?.dropdownLists, settings?.dropdownListsHidden]);
 
   // Prepend a checkbox column for the mass-edit selection. Opps-only rows
   // render no checkbox since they have no backing prospect to update.
@@ -3699,7 +3830,15 @@ Fix that now?
           );
         })()}
         {bucketFilter && <span style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', borderRadius: '999px', background: '#EBF2FC', color: '#3B7DDD', fontWeight: 600 }}>Showing: {bucketFilter === 'tier1' ? 'Tier 1' : bucketFilter === 'tier2' ? 'Tier 2' : bucketFilter === 'client' ? 'Clients' : bucketFilter === 'noTarget' ? 'No Target Mapped' : 'Tier 3'}</span>}
-        {(activeFilterCount > 0 || bucketFilter) && <button className={styles.clearBtn} onClick={clearFilters}>Clear all</button>}
+        {flagFilter && (
+          <button
+            type="button"
+            onClick={() => setFlagFilter('')}
+            title={`Showing only the accounts this column flagged. Click to bring the other ${matchingAccounts.length - filteredAccounts.length} back.`}
+            style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', borderRadius: '999px', background: '#FEF3C7', border: '1px solid #F59E0B', color: '#92400E', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+          >{`⚠ ${FLAG_FILTER_LABELS[flagFilter] || 'Flagged'} only ×`}</button>
+        )}
+        {(activeFilterCount > 0 || bucketFilter || flagFilter) && <button className={styles.clearBtn} onClick={clearFilters}>Clear all</button>}
         <button
           onClick={bulkLookupHqRegion}
           disabled={hqLookupRunning}
