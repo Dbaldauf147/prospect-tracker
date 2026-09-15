@@ -1,0 +1,199 @@
+.wrapper {
+  padding: 1rem 1.25rem 2rem;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: #1E293B;
+}
+
+.blurb {
+  margin-top: 0.3rem;
+  max-width: 70ch;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--color-text-muted);
+}
+
+.searchRow {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin: 0.8rem 0 1rem;
+}
+
+.search {
+  width: min(360px, 100%);
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 0.82rem;
+}
+
+.count {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+}
+
+/* One card per search. A grid rather than a row of columns: the sheet this
+   came from was seven columns wide and unreadable past the fourth, and the
+   thing a reader actually does here is look up ONE persona. */
+.cards {
+  /* Columns rather than a grid. Seven cards of seven different heights in a
+     grid leave the short ones sitting under a band of nothing, because
+     every row is as tall as its tallest card - and eight terms next to
+     twenty-seven is exactly this page. Columns pack them instead. */
+  column-width: 340px;
+  column-gap: 0.9rem;
+}
+
+.card {
+  /* A card split across a column break is two half-cards, each reading as
+     a search with some of its terms missing. */
+  break-inside: avoid;
+  margin-bottom: 0.9rem;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-surface, #fff);
+  padding: 0.7rem 0.8rem 0.8rem;
+}
+
+.cardHead {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.45rem;
+}
+
+.cardName {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #1E293B;
+}
+
+.cardCount {
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Who the search is run against, before any title is matched. On the card
+   rather than stated once at the top of the page: it is part of the search,
+   and a reader copying one group of terms out of here is copying half of a
+   search whose other half is this line. */
+.scope {
+  display: inline-block;
+  margin-bottom: 0.55rem;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  color: #1E40AF;
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.group + .group {
+  margin-top: 0.7rem;
+}
+
+.groupHead {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.3rem;
+}
+
+.groupLabel {
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #166534;
+}
+
+.groupLabelExclude {
+  composes: groupLabel;
+  color: #B91C1C;
+}
+
+/* A list the source never headed. Said in the label rather than left to
+   read as a heading somebody wrote, because the difference between "the
+   author called these the includes" and "the author just listed titles"
+   is the difference between a rule and a note. */
+.groupLabelPlain {
+  composes: groupLabel;
+  color: var(--color-text-muted);
+}
+
+.copyBtn {
+  margin-left: auto;
+  padding: 1px 7px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: 0.62rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.copyBtn:hover {
+  border-color: #009530;
+  color: #009530;
+}
+
+.terms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.term {
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: #F1F5F9;
+  border: 1px solid #E2E8F0;
+  color: #334155;
+  font-size: 0.72rem;
+}
+
+.termExclude {
+  composes: term;
+  background: #FEF2F2;
+  border-color: #FECACA;
+  color: #991B1B;
+}
+
+/* The one a search matched. Deliberately loud: the point of typing in the
+   box is to find which of seven searches already carries a title, and a
+   highlight you have to hunt for answers the question slowly. */
+.termHit {
+  background: #FEF9C3;
+  border-color: #FDE047;
+  color: #713F12;
+  font-weight: 700;
+}
+
+.empty {
+  padding: 1.2rem;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.foot {
+  margin-top: 1rem;
+  max-width: 70ch;
+  font-size: 0.7rem;
+  line-height: 1.55;
+  color: var(--color-text-muted);
+}

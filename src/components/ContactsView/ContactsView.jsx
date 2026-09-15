@@ -22,6 +22,7 @@ const AllContactsView = lazyView(() => import('../AllContactsView/AllContactsVie
 const KeyProspectsView = lazyView(() => import('../KeyProspectsView/KeyProspectsView').then(m => ({ default: m.KeyProspectsView })));
 const EventsView = lazyView(() => import('../EventsView/EventsView').then(m => ({ default: m.EventsView })));
 const MarketingLeadsView = lazyView(() => import('../MarketingLeadsView/MarketingLeadsView').then(m => ({ default: m.MarketingLeadsView })));
+const ContactTitlesView = lazyView(() => import('../ContactTitlesView/ContactTitlesView').then(m => ({ default: m.ContactTitlesView })));
 
 const ALL_SUBTABS = [
   { key: 'hubspot',    label: 'HubSpot',          adminOnly: true },
@@ -39,6 +40,9 @@ const ALL_SUBTABS = [
   { key: 'active',     label: 'Active' },
   { key: 'clients',    label: 'Clients' },
   { key: 'changed',    label: 'Changed Jobs' },
+  // Not a roster: the searches the rosters are built BY. It sits after them
+  // rather than among them so the tabs that list people stay together.
+  { key: 'titles',     label: 'Titles' },
   { key: 'events',     label: 'Events' },
   { key: 'zoominfo',   label: 'Zoom Info' },
   { key: 'dedupe',     label: 'Deduplication' },
@@ -178,6 +182,7 @@ export function ContactsView({
             onNavigate={onNavigate}
           />
         )}
+        {subtab === 'titles' && <ContactTitlesView />}
         {subtab === 'all' && (
           <AllContactsView
             prospects={prospects}
