@@ -113,10 +113,15 @@
    modal's width left each field floating in its own patch of space with
    nothing lining up down the page.
 
-   Every direct child of .grid is a row cell. The rich controls — chip
-   editors, multi-selects, note editors — opt out with .wideField and stay
-   stacked full width below the table, since a label column would squeeze
-   them and they're taller than a row. */
+   Every direct child of .grid is a row cell, the rich controls included —
+   chip editors, multi-selects, note editors. They used to opt out with
+   .wideField and stretch across the whole block, which broke the table
+   every few rows: a reader scanning the label column lost it at Email
+   Domains, found it again at Classification, lost it again at Asset
+   Types. A row that is taller than its neighbours is still a row, so they
+   take .tallField instead and keep the label column — only the Notes
+   section, whose boxes are meant to be written in rather than scanned,
+   still spans the full width with .fieldFull. */
 .grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -178,8 +183,10 @@
   margin-top: 0;
 }
 
-/* Two classes beat `.grid > div`, so these opt back out of the row layout. */
-.grid > .wideField,
+/* Two classes beat `.grid > div`, so this opts back out of the row layout.
+   The Notes boxes only: they are written in rather than read across, and a
+   150px label column in front of a textarea is 150px the prose doesn't
+   get. */
 .grid > .fieldFull {
   display: block;
   grid-column: 1 / -1;
@@ -188,9 +195,23 @@
   padding: 0.5rem 0 0;
 }
 
-.grid > .wideField > .label,
 .grid > .fieldFull > .label {
   margin-bottom: 0.15rem;
+}
+
+/* A row cell whose control is taller than one line: a chip box, a
+   multi-select, a note editor. An ordinary cell in every other respect —
+   same label column, same hairline, same third of the row — so these line
+   up with the plain fields above and below them instead of interrupting
+   them. The label goes to the TOP of the control rather than halfway down
+   it, because a label centred against a three-line chip box is a label
+   pointing at the middle of nothing. */
+.grid > .tallField {
+  align-items: start;
+}
+
+.grid > .tallField > .label {
+  padding-top: 0.5rem;
 }
 
 /* Narrower viewports can't hold three label/value pairs side by side. */
