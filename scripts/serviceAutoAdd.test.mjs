@@ -3,10 +3,15 @@
 //   node scripts/serviceAutoAdd.test.mjs
 //
 // The rules worth pinning: the resolution is transitive (a service pulled
-// in brings its own list), it terminates on a cycle, it never returns
-// something already in Scope, and it hands back the board's spelling rather
-// than whatever the cell was typed as — an auto-add that doesn't match a row
+// in brings its own list) and stays transitive through a service the Scope
+// already holds, it terminates on a cycle, it never returns something
+// already in Scope, and it hands back the board's spelling rather than
+// whatever the cell was typed as — an auto-add that doesn't match a row
 // ticks nothing and lands in the off-board bucket instead.
+//
+// The one caller that wants a chain to stop at what is already there asks
+// for it by name: Account Potential's bundling passes `stopAtPresent`, so
+// two bundles can't both count the same service's money.
 import {
   parseAutoAddList, formatAutoAddList, autoAddListFor, autoAddedByMap, collectAutoAdds,
 } from '../src/utils/serviceAutoAdd.js';
@@ -48,20 +53,59 @@ check(
   ['GHG', 'Cat 1 & 2', 'AP upload (indirect payment)'],
 );
 
-// Nothing already in Scope comes back — the caller appends the result.
+// Nothing already in Scope comes back — the caller appends the result —
+// but the chain runs THROUGH it: GHG is already there, so it isn't
+// re-added, and what GHG itself pulls in is still owed to the tick.
 check(
-  'skips what is already in Scope',
+  'skips what is already in Scope, and keeps going through it',
   collectAutoAdds(['CSRD readiness'], overrides, { present: ['CSRD readiness', 'GHG'] }),
-  ['Cat 1 & 2'],
+  ['Cat 1 & 2', 'AP upload (indirect payment)'],
 );
 
-// Case-insensitively, since Scope is free text — and a service that was
-// already there is left entirely alone, its own list included. That's what
-// keeps an auto-add removable: take AP upload off an opp that has GHG, tick
-// something else that names GHG, and the AP upload stays off.
+// Case-insensitively, since Scope is free text. Everything the chain names
+// is already there except the one at the end of it, which is what the tick
+// is owed: an opp that arrived by paste holding GHG has never run this rule
+// at all, so the service in the middle is exactly the one sitting there
+// with its own list unresolved.
 check(
-  'already in Scope, spelled differently, and not re-expanded',
+  'matches what is there case-insensitively, and still finishes the chain',
   collectAutoAdds(['CSRD readiness'], overrides, { present: ['csrd readiness', 'ghg', 'cat 1 & 2'] }),
+  ['AP upload (indirect payment)'],
+);
+
+// The whole chain already in Scope implies nothing: there is nothing left
+// to add, and walking it again must not hand back what is there.
+check(
+  'a chain already in Scope end to end adds nothing',
+  collectAutoAdds(['CSRD readiness'], overrides, {
+    present: ['CSRD readiness', 'GHG', 'Cat 1 & 2', 'AP upload (indirect payment)'],
+  }),
+  [],
+);
+
+// The reason this changed, in the shape it was reported: A names B, B names
+// C, and B is already in Scope. Ticking A owes the opp C.
+const chain = {
+  'Strategic sourcing': { autoAdd: 'Client sends invoices' },
+  'Client sends invoices': { autoAdd: 'Client management' },
+};
+check(
+  'a service named through one already in Scope is still added',
+  collectAutoAdds(['Strategic sourcing'], chain, {
+    present: ['Client sends invoices', 'Strategic sourcing'],
+  }),
+  ['Client management'],
+);
+
+// Account Potential divides one deal into bundles rather than choosing a
+// Scope, so the same chain has to stop where another bundle already holds
+// a service - otherwise both bundles bill Client management.
+check(
+  'stopAtPresent leaves the tail with the bundle that already holds it',
+  collectAutoAdds(['Strategic sourcing'], chain, {
+    present: ['Client sends invoices', 'Strategic sourcing'],
+    stopAtPresent: true,
+  }),
   [],
 );
 
