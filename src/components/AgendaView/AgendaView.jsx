@@ -411,7 +411,7 @@ function ensureProtocol(url) {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
-export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings, updateSettings, targetAccountsData }) {
+export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect, cdmName, settings, updateSettings, targetAccountsData }) {
   const { user } = useAuth();
   const [rows, setRows] = useState(() => loadCache());
   // Latest-rows ref so callbacks (e.g. toggleSuggestedCompanyDismiss)
@@ -2794,6 +2794,13 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                   const currentHsCompany = hubspotContact?.company?.trim() || '';
                   const tvState = rowTableViewState(r);
                   const prospect = r._matchedProspectId ? prospects.find(p => p.id === r._matchedProspectId) : null;
+                  // Which company card this row belongs to: the prospect the
+                  // page has already matched it to, and failing that whatever
+                  // the live lookup found - a typed company name, the HubSpot
+                  // company, the email domain. Null when the row names nobody
+                  // the tracker holds, and then there is no arrow: an arrow
+                  // that opened the wrong company would be worse than none.
+                  const companyCard = prospect || live.matched || null;
                   const renderTv = (fieldKey) => {
                     if (!tvState) return <span className={styles.metaText}>-</span>;
                     const existing = tvState.has[fieldKey];
@@ -3012,6 +3019,32 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                             list="bulk-contacts-company-list"
                             autoComplete="off"
                           />
+                          {/* Into that company's card, without leaving the
+                              page. The cell itself stays an input - typing a
+                              company is most of the work on this table and a
+                              link you had to click past to edit would cost
+                              more than it gives - so the way through is the
+                              ↗ beside it, the same as the LinkedIn cell.
+
+                              The company it opens is the row's matched
+                              prospect, which is the one every other column on
+                              this row is already about: the Tier badge, the
+                              CDM pills and the Table View columns all read it.
+                              What is typed in the cell can be the HubSpot
+                              spelling ("CBRE Inc (CBRE) - HQ") rather than the
+                              tracker's, so matching on the text would leave
+                              the arrow off exactly the rows that most need it.
+                              The tooltip names the company that will open, so
+                              the two never quietly disagree. */}
+                          {companyCard && onSelectProspect && (
+                            <button
+                              type="button"
+                              onClick={() => onSelectProspect(companyCard)}
+                              title={`Open the company popup for "${companyCard.company}"`}
+                              aria-label={`Open the company popup for ${companyCard.company}`}
+                              style={{ background: 'none', border: 'none', padding: 0, color: 'var(--color-accent)', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1 }}
+                            >↗</button>
+                          )}
                           {r._companyFromRule && (
                             <span title="Applied from a saved rule" style={{ fontSize: '0.72rem', color: '#F59E0B' }}>★</span>
                           )}
@@ -3155,7 +3188,20 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                               title={`${sc} · ${sourceLabel}`}
                               style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 6px 1px 8px', background: '#FEF9C3', border: '1px solid #FACC15', borderRadius: 999, fontSize: '0.68rem', fontWeight: 600, color: '#854D0E', maxWidth: '100%' }}
                             >
-                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{sc}</span>
+                              {/* The pill names a company the tracker holds -
+                                  that is what makes it a suggestion rather
+                                  than a guess off the domain - so the name
+                                  itself opens that company's card. */}
+                              {live.matched && onSelectProspect ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onSelectProspect(live.matched)}
+                                  title={`Open the company popup for "${sc}"`}
+                                  style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', cursor: 'pointer', textDecoration: 'underline', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, maxWidth: '100%' }}
+                                >{sc}</button>
+                              ) : (
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{sc}</span>
+                              )}
                               <button
                                 type="button"
                                 title="Use this as Company"
