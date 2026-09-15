@@ -1,0 +1,348 @@
+.wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem 0.5rem;
+}
+
+.title {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0 0 0.25rem;
+}
+
+.subtitle {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  max-width: 62ch;
+  line-height: 1.45;
+}
+
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.editCount {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.resetAll {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 6px);
+  background: var(--color-surface);
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.resetAll:hover {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.filterRow {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0 1.25rem 0.6rem;
+  flex-wrap: wrap;
+}
+
+.searchInput {
+  width: 260px;
+  max-width: 100%;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 6px);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+.searchInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.toggleGroup {
+  display: flex;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.toggle,
+.toggleActive {
+  padding: 0.35rem 0.8rem;
+  border: none;
+  background: #fff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  border-right: 1px solid var(--color-border);
+}
+
+.toggleGroup > button:last-child {
+  border-right: none;
+}
+
+.toggle:hover {
+  background: #F1F5F9;
+}
+
+.toggleActive {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.checkLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.resultCount {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.tableWrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border-top: 1px solid var(--color-border);
+}
+
+.table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.76rem;
+}
+
+/* The head is two rows deep (a commodity band over its own columns) and
+   the first row's cells span both, so pinning each row at its own offset
+   means knowing a height the browser is free to change. Sticking the
+   whole <thead> instead keeps the two rows together at any height. */
+.table thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.table thead th {
+  background: var(--color-surface-alt);
+  color: var(--color-text-secondary);
+  font-weight: 700;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.commodityHead {
+  text-align: center !important;
+  border-left: 2px solid var(--color-border);
+  color: var(--color-accent);
+}
+
+.commodityHeadAlt {
+  color: #B45309;
+}
+
+.marketCol { min-width: 210px; }
+.groupCol { min-width: 130px; }
+.statusCol { min-width: 120px; border-left: 2px solid var(--color-border); }
+.pctCol { width: 74px; text-align: right !important; }
+.rangeCol { min-width: 108px; }
+
+.table tbody td {
+  padding: 0.28rem 0.6rem;
+  border-bottom: 1px solid var(--color-border-light);
+  color: var(--color-text);
+  vertical-align: middle;
+}
+
+.table tbody tr:hover td {
+  background: var(--color-accent-light);
+}
+
+.rowEdited td {
+  background: #FFFDF5;
+}
+
+.rowEdited:hover td {
+  background: var(--color-accent-light);
+}
+
+.marketCell {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.groupCell {
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.statusCell {
+  border-left: 2px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.pillOn,
+.pillPart,
+.pillOff {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pillOn {
+  background: var(--color-success-light);
+  color: #047857;
+}
+
+.pillPart {
+  background: var(--color-warning-light);
+  color: #B45309;
+}
+
+.pillOff {
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+}
+
+.pctCell {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.pctButton {
+  width: 100%;
+  padding: 0.15rem 0.3rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  font-family: inherit;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--color-text);
+  text-align: right;
+  cursor: text;
+}
+
+.pctButton:hover {
+  border-color: var(--color-border);
+  background: #fff;
+}
+
+.pctInput {
+  width: 100%;
+  padding: 0.12rem 0.3rem;
+  border: 1px solid var(--color-accent);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 0.76rem;
+  text-align: right;
+  color: var(--color-text);
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.notEditable {
+  display: inline-block;
+  width: 100%;
+  text-align: right;
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.unset {
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.rangeCell {
+  white-space: nowrap;
+}
+
+.range {
+  color: var(--color-text-secondary);
+}
+
+.rangeEdited {
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.warn {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  line-height: 14px;
+  margin-right: 0.3rem;
+  border-radius: 50%;
+  background: var(--color-danger);
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-align: center;
+  cursor: help;
+}
+
+.resetCell {
+  margin-left: 0.35rem;
+  padding: 0 0.25rem;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 0.8rem;
+  line-height: 1;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.resetCell:hover {
+  color: var(--color-accent);
+}
+
+.empty {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--color-text-muted);
+}
