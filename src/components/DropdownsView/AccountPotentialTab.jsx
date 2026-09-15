@@ -1,17 +1,12 @@
-import { useCallback, useMemo, useRef, useState, useEffect } from 'react';
+import { useCallback, useMemo, useState, useEffect } from 'react';
 import { DataTable } from '../common/DataTable';
 import { useAuth } from '../../contexts/AuthContext';
-import { loadOpps2Newest, setOppFields } from '../../utils/opps2Store';
-import { oppScenario } from '../../utils/oppPricingImport';
+import { loadOpps2Newest } from '../../utils/opps2Store';
 import { loadPricingEstimate, savePricingEstimate } from '../../utils/pricingEstimateStore';
-import { ANALYSIS_FIELD, ESTIMATED_FEE_COLUMN, buildPricingAnalysis } from '../../utils/pricingAnalysis';
-import { OppImportModal } from './OppImportModal';
 import { ScopeLineMathModal } from './ScopeLineMathModal';
 import { CountInput, NumberCell } from './pricingCells';
 import { ColumnFilterCombo } from '../common/ColumnFilterCombo';
 import { accountPotential } from '../../utils/accountPotential';
-import { rowSearchText, searchable } from '../../utils/accountPotentialSearch';
-import { unlistedMatches, describeUnlisted } from '../../utils/accountPotentialUnlisted';
 import { clientCounts } from '../../utils/clientDealSizing';
 import { buildOppStagesByClient } from '../../utils/serviceCoverage';
 import { findProspectByCompany } from '../../utils/companyLookup';
@@ -95,14 +90,13 @@ const DEAL_TABLE_COLUMNS = [
 // a half-built estimate. It's a scratch calculation, so it isn't saved into
 // settings — the rate card is the part worth keeping, and that's over there.
 export function AccountPotentialTab({
-  settings, updateSettings, serviceRows = [], hiddenServices = [], scenario, setScenario, prospects = [],
+  settings, updateSettings, serviceRows = [], scenario, setScenario, prospects = [],
   // The account this page is about, when the page it is embedded in already
   // knows. On the company card there is nothing to pick: the card IS the
   // account, and a combo offering to switch to somebody else's potential
   // inside their popup is a way to misread a page you did not mean to open.
   lockedCompany = null,
 }) {
-  const [search, setSearch] = useState('');
   // `|| {}` so the tab still renders outside the AuthProvider (tests,
   // harnesses): with no user it reads the local opps cache and skips the
   // Firestore pull, which is exactly the right behaviour there.
@@ -111,30 +105,11 @@ export function AccountPotentialTab({
   // The account this page is about, when the host already knows it.
   const locked = String(lockedCompany ?? '').trim();
 
-  // What the last visit left in the estimator, read once on mount. The
-  // scenario half of it is restored by the parent, which owns that state;
-  // the two halves are written together below, so they can't come back out
-  // of step with each other.
-  //
-  // On a card, only when the stored estimate is THIS account's. There is one
-  // stored estimate and there are hundreds of company cards, so restoring it
-  // wherever it was found would open Ventas's popup holding Prologis's
-  // imported opp and the counts that went with it.
-  const restoredRef = useRef(undefined);
-  if (restoredRef.current === undefined) {
-    const found = loadPricingEstimate(user?.uid);
-    const belongsHere = !locked
-      || String(found?.scenario?.company ?? '').trim().toLowerCase() === locked.toLowerCase();
-    restoredRef.current = belongsHere ? found : null;
-  }
-  const restored = restoredRef.current;
-
-  // The Opps 2 dataset, pulled only when the picker is first opened. It's
-  // the whole opp store — thousands of rows — and a visit that only reads
-  // the totals back shouldn't be charged for loading it.
-  const [oppPicker, setOppPicker] = useState(false);
+  // The account's own opportunities, pulled once the card knows which
+  // account it is about: their stages are what rules a service in or out.
+  // It's the whole opp store — thousands of rows — so a visit that only
+  // reads the rate card is never charged for it.
   const [oppRecords, setOppRecords] = useState(null);
-  const [oppError, setOppError] = useState('');
   const [oppLoading, setOppLoading] = useState(false);
 
   // Which service in the scope breakdown has its working open, by name. A
@@ -148,7 +123,6 @@ export function AccountPotentialTab({
   // this, so a basis someone added behaves exactly like one that shipped.
   const bases = useMemo(() => resolvePricingBases(settings), [settings?.pricingBases]);
   const units = useMemo(() => pricingUnits(bases), [bases]);
-  const unitLabels = useMemo(() => Object.fromEntries(units.map(u => [u.unit, u.label])), [units]);
 
   const inScope = useMemo(
     () => new Set(Array.isArray(scenario?.services) ? scenario.services : []),
@@ -270,23 +244,8 @@ export function AccountPotentialTab({
     // account's estate onto another's page is the quiet way to price a deal
     // against the wrong estate.
     setScenario(s2 => ({ ...s2, company: typed, services: [], counts: {}, serviceUnits: {} }));
-    setOppImport(null);
-    setPinnedNames(null);
     if (next) ensureOpps();
   }
-
-  // What the last import filled in, so the bar can say where its numbers
-  // came from and what it couldn't answer. Cleared when the scope is.
-  const [oppImport, setOppImport] = useState(() => restored?.oppImport || null);
-
-  // The services an import put in scope, held to the top of the table so
-  // the five rows the deal is about aren't scattered through a hundred and
-  // forty. It's a snapshot of what the import ticked rather than a live
-  // read of the scope: ticking a sixth service afterwards shouldn't yank
-  // its row out from under the click, and unticking one shouldn't drop it
-  // back into the alphabet before you can see what you just did. Null when
-  // nothing is pinned.
-  const [pinnedNames, setPinnedNames] = useState(() => (restored?.pinned ? new Set(restored.pinned) : null));
 
   // Keep the stored estimate in step with the one on screen. Written from
   // here rather than split across the two components that hold it: the
@@ -300,8 +259,6 @@ export function AccountPotentialTab({
     // are hundreds of company cards.
     const next = {
       scenario: { company: companyTyped, services: [...inScope], counts, serviceUnits },
-      pinned: pinnedNames ? [...pinnedNames] : null,
-      oppImport,
     };
     // A card that has only been LOOKED at has produced no estimate, and
     // writing one would throw away whatever is stored for another account.
@@ -311,122 +268,34 @@ export function AccountPotentialTab({
     if (locked) {
       const nothingHere = inScope.size === 0
         && Object.keys(counts).length === 0
-        && Object.keys(serviceUnits).length === 0
-        && !oppImport && !pinnedNames;
+        && Object.keys(serviceUnits).length === 0;
       const storedFor = String(loadPricingEstimate(user?.uid)?.scenario?.company ?? '').trim();
       if (nothingHere && storedFor && storedFor.toLowerCase() !== locked.toLowerCase()) return;
     }
     savePricingEstimate(user?.uid, next);
-  }, [user?.uid, companyTyped, locked, inScope, counts, serviceUnits, pinnedNames, oppImport]);
+  }, [user?.uid, companyTyped, locked, inScope, counts, serviceUnits]);
 
-  // The last save, so the note under the bar can say it landed — and say
-  // it didn't when it didn't. { ok, at, error }.
-  const [saved, setSaved] = useState(null);
-  const [saving, setSaving] = useState(false);
-
-  // Freeze the estimate onto the opp it was built for. The whole analysis
-  // goes onto the record, and the year-one figure into the visible
-  // Estimated Fee column, so the opp shows the number and can open the
-  // working behind it. What's written is a copy, not a link: the estimator
-  // keeps whatever is on screen, and a rate edited next week doesn't
-  // rewrite what this deal was quoted at.
-  async function saveToOpp() {
-    const oppId = oppImport?.id;
-    if (!oppId || saving) return;
-    setSaving(true);
-    try {
-      const analysis = buildPricingAnalysis({
-        totals, counts: effectiveCounts, bases, account: oppImport.account,
-      });
-      await setOppFields(user?.uid, oppId, {
-        [ANALYSIS_FIELD]: analysis,
-        [ESTIMATED_FEE_COLUMN]: formatMoneyRange(analysis.year1Total, analysis.year1TotalHigh) || '$0',
-      });
-      setSaved({ ok: true, at: Date.now() });
-    } catch (err) {
-      console.error('Account Potential: could not save the analysis to the opp', err);
-      setSaved({ ok: false, error: err?.message || 'The save did not go through.' });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  // A "saved" note goes stale the moment the estimate moves under it, so it
-  // clears itself rather than going on claiming figures that are no longer
-  // the ones on the opp. Saving doesn't touch these, so the note survives
-  // its own save.
-  useEffect(() => { setSaved(null); }, [inScope, counts, serviceUnits]);
-
-  // The Opps 2 dataset, fetched once and shared by the two things that need
-  // it: the import picker, and the statuses an account's opportunities
-  // imply. Pulled lazily either way - it is the whole opp store, and a
-  // visit that only reads the rate card shouldn't be charged for it.
+  // The Opps 2 dataset, fetched once: what an account's opportunities imply
+  // about each service's status. Pulled lazily, since it is the whole opp
+  // store and a visit that only reads the rate card shouldn't be charged
+  // for it.
+  //
+  // A failure leaves the records empty rather than stopping the page: every
+  // service then reads as undecided, which is what the page shows for an
+  // account with no opportunities anyway, and the rate card half of it is
+  // unaffected.
   async function ensureOpps() {
     if (oppRecords || oppLoading) return;
     setOppLoading(true);
-    setOppError('');
     try {
       const data = await loadOpps2Newest(user?.uid);
       setOppRecords(Array.isArray(data?.records) ? data.records : []);
     } catch (err) {
       console.error('Account Potential: could not load opps', err);
-      setOppError('Could not load the opportunities. Open the Opps 2 tab to sync them, then try again.');
       setOppRecords([]);
     } finally {
       setOppLoading(false);
     }
-  }
-
-  function openOppPicker() {
-    setOppPicker(true);
-    ensureOpps();
-  }
-
-  // Apply an opp to the estimator. The scenario is replaced rather than
-  // merged: leaving a previous deal's site count behind would quietly
-  // inflate this one, and a number nobody typed for this account is worse
-  // than a blank the summary asks them to fill.
-  function applyOpp(opp) {
-    const scen = oppScenario({
-      opp,
-      prospects,
-      siteLists: settings?.companySiteLists,
-      serviceNames: serviceRows.map(r => r.name),
-    });
-
-    // Which units this scope actually needs, so the summary can name the
-    // ones nothing on file could answer.
-    const needed = new Set();
-    const noPrice = [];
-    for (const name of scen.services) {
-      const entry = pricingFor(pricing, name, bases);
-      const basis = basisFor(entry.basis, bases);
-      if (!basis) { noPrice.push(name); continue; }
-      if (basis.unit && entry.units === null) needed.add(basis.unit);
-    }
-
-    setScenario({ services: scen.services, counts: scen.counts, serviceUnits: {} });
-    setPinnedNames(scen.services.length > 0 ? new Set(scen.services) : null);
-    setSaved(null);
-    setOppImport({
-      account: scen.account,
-      // The opp's own id, so the finished estimate can be saved back onto
-      // the row it was built from without picking it out of the list again.
-      id: scen.id,
-      stage: scen.stage,
-      company: scen.matchedProspect ? scen.company : '',
-      services: scen.services.length,
-      unmatchedTokens: scen.unmatchedTokens,
-      filled: Object.keys(scen.counts).map(unit => ({
-        unit,
-        label: unitLabels[unit] || unit,
-        value: scen.counts[unit],
-        source: scen.countSources[unit],
-      })),
-      missing: [...needed].filter(u => scen.counts[u] === undefined).map(u => unitLabels[u] || u),
-      noPrice,
-    });
-    setOppPicker(false);
   }
 
   function clearScope() {
@@ -434,9 +303,6 @@ export function AccountPotentialTab({
     // the account, and leaving them behind would quietly re-price whatever
     // is estimated next against the last deal's numbers.
     setScenario(s => ({ ...s, services: [], serviceUnits: {} }));
-    setOppImport(null);
-    setPinnedNames(null);
-    setSaved(null);
   }
 
   // Ticking a lead ticks what comes with it, and unticking it takes them
@@ -552,23 +418,15 @@ export function AccountPotentialTab({
   // placeholder so a blank box reads as "using this" rather than as zero.
   const sharedProjects = parseMoney(effectiveCounts?.[PROJECT_UNIT]);
 
-  // Where each count came from, by unit, so the box can say so. Three
-  // answers: the company record, an import, or the user - and only the
-  // first two are worth naming, because a number somebody typed came from
-  // them and they know it.
-  //
-  // The import wins where both speak: it is the more specific claim (this
-  // opp's own site count, or a saved site list) and it is what the note
-  // under the bar is already describing.
-  const countSources = useMemo(() => {
-    const fromRecord = Object.fromEntries(Object.entries(countSourceByUnit || {})
+  // Where each count came from, by unit, so the box can say so. Two
+  // answers, and only one of them is worth naming: a figure read off the
+  // company record, or a figure somebody typed - and they know they typed
+  // it.
+  const countSources = useMemo(() => Object.fromEntries(
+    Object.entries(countSourceByUnit || {})
       .filter(([, src]) => src === 'client')
-      .map(([unit]) => [unit, `the ${company} record`]));
-    return {
-      ...fromRecord,
-      ...Object.fromEntries((oppImport?.filled || []).map(f => [f.unit, f.source])),
-    };
-  }, [countSourceByUnit, company, oppImport]);
+      .map(([unit]) => [unit, `the ${company} record`]),
+  ), [countSourceByUnit, company]);
 
   // Count boxes are shown for the units the scope actually needs, so the bar
   // asks for meters on a bill-pay deal and not on a reporting one. A unit
@@ -589,9 +447,7 @@ export function AccountPotentialTab({
     || (effectiveCounts?.[u.unit] !== '' && effectiveCounts?.[u.unit] != null)
   ), [units, totals.unitsUsed, potential, effectiveCounts]);
 
-  const term = searchable(search.trim());
-  // Every service as a table row, before the search box has its say.
-  // Lead services only. An auto-added service is counted inside its lead's
+  // Every service as a table row. Lead services only. An auto-added service is counted inside its lead's
   // figure, and a row of its own would count it a second time.
   const leadRows = useMemo(
     () => openRows.filter(r => !potential.bundledNames.has(r.name)),
@@ -651,44 +507,11 @@ export function AccountPotentialTab({
         _kind: basis?.kind || '',
         _note: est?.note || '',
         _scoped: inScope.has(name),
-        _pinned: !!pinnedNames?.has(name),
         _rank: potential.rank.get(name) ?? null,
       };
-      // Everything the row prints, as the one string the search box reads:
-      // the table is asked about rates, counts and fees as much as it is
-      // asked about names, and until this it could only answer the names.
-      return { ...row, _search: rowSearchText(row, bases, row._adds) };
+      return row;
     }),
-  [leadRows, pricing, bases, allEstimates, inScope, serviceUnits, pinnedNames, potential]);
-
-  const rows = useMemo(
-    () => (term ? allRows.filter(r => r._search.includes(term)) : allRows),
-    [allRows, term],
-  );
-
-  // Where a searched-for service went, when the table has no row for it.
-  // Three rules take services off this page and all three are silent, so
-  // looking for one and not finding it reads as the page having dropped it.
-  // See utils/accountPotentialUnlisted.
-  const unlisted = useMemo(() => unlistedMatches({
-    term: search,
-    visibleNames: rows.map(r => r.name),
-    hidden: hiddenServices,
-    decided: potential.decided,
-    bundles: potential.bundles,
-  }), [search, rows, hiddenServices, potential]);
-
-  // Band 0 is the imported scope, band 1 everything else, so those rows sit
-  // at the top of whatever sort or search is active rather than only when
-  // the In Scope column happens to be the sort key. Memoized against the
-  // pinned set because DataTable memoizes the grouped order against this
-  // callback's identity — a fresh arrow every render would regroup the
-  // whole table on each keystroke in the search box — and left undefined
-  // when nothing is pinned so the table skips the pass entirely.
-  const pinnedRowGroup = useMemo(
-    () => (pinnedNames ? (row) => (pinnedNames.has(row.name) ? 0 : 1) : undefined),
-    [pinnedNames],
-  );
+  [leadRows, pricing, bases, allEstimates, inScope, serviceUnits, potential]);
 
   // Which bundles are opened up. A set of lead names rather than of row
   // ids because they are the same thing here, and a name survives the
@@ -803,8 +626,7 @@ export function AccountPotentialTab({
           // The add-ons are NAMED in the tooltip, not just counted. A
           // service that comes with something else has no row of its own,
           // so a reader looking for it by name has nowhere to find it -
-          // which reads as the page having dropped it. The search box
-          // reads them for the same reason.
+          // which reads as the page having dropped it.
           render: (row) => (
             <span className={styles.pricingNameText} title={row._adds.length
               ? `${row.name} - sold with ${row._adds.map(a => a.name).join(', ')}. Click the arrow for the split.`
@@ -955,44 +777,6 @@ export function AccountPotentialTab({
 
   return (
     <>
-      <div className={styles.searchRow}>
-        <input
-          type="text"
-          className={styles.searchInput}
-          placeholder="Search services, buckets, rates, units, fees…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <button
-          type="button"
-          className={styles.importOppBtn}
-          onClick={openOppPicker}
-          title="Pull an opportunity's scope and its account's site / accounts figures into the estimator"
-        >Import opp</button>
-        {/* Rows and services are not the same number once services bundle,
-            and the table's own badge counts rows - so this says both
-            rather than leaving "8 rows" to argue with "12 services". */}
-        <span className={styles.resultCount}>
-          {term ? `${rows.length} of ${leadRows.length} rows` : `${leadRows.length} rows`}
-          {leadRows.length === openRows.length ? '' : ` · ${openRows.length} services`}
-          {` · ${inScope.size} in scope`}
-        </span>
-      </div>
-
-      {/* A service the search names that has no row here. Each line says
-          which rule took it and where that rule is undone, because "not
-          shown" on its own is the state the reader is already in. */}
-      {unlisted.entries.length > 0 && (
-        <div className={styles.unlistedNote}>
-          {unlisted.entries.map(entry => (
-            <div key={entry.name}>{describeUnlisted(entry, company)}</div>
-          ))}
-          {unlisted.more > 0 && (
-            <div>{unlisted.more} more service{unlisted.more === 1 ? '' : 's'} match, all of them off the table for one of these reasons.</div>
-          )}
-        </div>
-      )}
-
       {/* The account. Everything below reads off it: its own site and meter
           figures price the services, and its Services Explored decides
           which services are on the page at all. */}
@@ -1036,47 +820,6 @@ export function AccountPotentialTab({
             >Clear account</button>
           )}
         </div>
-        <div className={styles.pricingTotals}>
-          {/* The biggest single thing left to sell them. First among the
-              tiles because it is the one line of this page anybody reads
-              out loud - "the biggest thing open at BRE is Rate analysis,
-              two and a quarter million" - and a total alone never answers
-              the question that follows it, which is "of what?". */}
-          <div className={styles.potentialTop} title={potential.top
-            ? `${potential.top.name} is the biggest untapped service on this account, at ${formatMoneyRange(potential.top.fee, potential.top.feeHigh)} in its first year`
-            : 'Nothing here can be priced from the rate card yet'}
-          >
-            <span className={styles.pricingTotalLabel}>Biggest deal</span>
-            {potential.top ? (
-              <>
-                <span className={styles.pricingTotalValue}>
-                  {formatMoneyRange(potential.top.fee, potential.top.feeHigh)}
-                </span>
-                <span className={styles.potentialTopName}>{potential.top.name}</span>
-              </>
-            ) : (
-              <span className={styles.potentialTopNone}>Nothing priced yet</span>
-            )}
-          </div>
-          <div className={styles.pricingTotal}>
-            <span className={styles.pricingTotalLabel}>Untapped services</span>
-            <span className={styles.pricingTotalValue}>{openRows.length}</span>
-          </div>
-          {/* The whole account in its first year. The term total used to
-              sit beside this as the headline, and it is the bigger number
-              of the two - which is exactly why it went: a page read in a
-              pipeline review answers one question, and answering it twice
-              at two sizes is how the wrong one gets quoted. */}
-          <div
-            className={styles.pricingTotalMain}
-            title="Every service this account has not ruled on, priced over its first twelve months. What the account is worth in year one if we sold them all of it."
-          >
-            <span className={styles.pricingTotalLabel}>Year 1 potential</span>
-            <span className={styles.pricingTotalValueMain}>
-              {formatMoneyRange(potential.estimate.year1Total, potential.estimate.year1TotalHigh) || '$0'}
-            </span>
-          </div>
-        </div>
       </div>
 
       {/* The estimator. Everything in it is a scenario rather than saved
@@ -1085,17 +828,6 @@ export function AccountPotentialTab({
       <div className={styles.pricingBar}>
         <div className={styles.pricingInputs}>
           <span className={styles.pricingBarTitle}>Deal estimate</span>
-          {oppImport && (
-            <span
-              className={styles.oppChip}
-              title={oppImport.company && oppImport.company !== oppImport.account
-                ? `Imported from the ${oppImport.account} opp, matched to ${oppImport.company}`
-                : `Imported from the ${oppImport.account} opp`}
-            >
-              {oppImport.account}
-              {oppImport.stage && <span className={styles.oppChipStage}>{oppImport.stage}</span>}
-            </span>
-          )}
           {/* Where a figure came from is worth saying on the box itself,
               because a count seeded off a company record reads exactly like
               one somebody typed for this deal — and only one of them is
@@ -1112,15 +844,6 @@ export function AccountPotentialTab({
               onCommit={(v) => setCount(u.unit, v)}
             />
           ))}
-          {oppImport?.id && inScope.size > 0 && (
-            <button
-              type="button"
-              className={styles.saveOppBtn}
-              onClick={saveToOpp}
-              disabled={saving}
-              title={`Freeze this estimate onto the ${oppImport.account} opp: the Estimated Fee column shows the year-one figure, and clicking it opens this working. A copy, so later rate edits don't rewrite it.`}
-            >{saving ? 'Saving…' : 'Save to opp'}</button>
-          )}
           {inScope.size > 0 && (
             <button
               type="button"
@@ -1318,51 +1041,6 @@ export function AccountPotentialTab({
         </div>
       )}
 
-      {/* What the import did and didn't manage. Where each number came from
-          matters as much as the number: an estimate built on a site count
-          nobody checked is one you'd want to know was taken off a company
-          record rather than typed for this deal. */}
-      {oppImport && (
-        <div className={styles.oppImportNote}>
-          <strong>{oppImport.account}</strong>
-          {' - ticked '}{oppImport.services}{' service'}{oppImport.services === 1 ? '' : 's'}
-          {pinnedNames && ' and pinned them to the top of the table'}
-          {oppImport.filled.length > 0 && (
-            <>{'; filled '}{oppImport.filled.map(f => `${f.label} ${f.value.toLocaleString('en-US')} from ${f.source}`).join(', ')}</>
-          )}
-          {'.'}
-          {oppImport.missing.length > 0 && (
-            <span className={styles.oppImportGap}>
-              {' Nothing on file for '}{oppImport.missing.join(', ')} - the services priced on {oppImport.missing.length === 1 ? 'it' : 'those'} count as $0 until you enter {oppImport.missing.length === 1 ? 'it' : 'them'} above.
-            </span>
-          )}
-          {oppImport.unmatchedTokens.length > 0 && (
-            <span className={styles.oppImportGap}>
-              {' Nothing in the Scope matched: '}{oppImport.unmatchedTokens.join(', ')}.
-            </span>
-          )}
-          {saved?.ok && (
-            <span className={styles.oppSavedNote}>
-              {' Saved to the '}{oppImport.account}{' opp - '}{formatMoneyRange(totals.year1Total, totals.year1TotalHigh) || '$0'}
-              {' in Estimated Fee, with this working behind it.'}
-            </span>
-          )}
-          {saved && !saved.ok && (
-            <span className={styles.oppImportGap}>
-              {' Not saved to the opp: '}{saved.error}
-            </span>
-          )}
-          {pinnedNames && (
-            <button
-              type="button"
-              className={styles.unpinBtn}
-              onClick={() => setPinnedNames(null)}
-              title="Let the pinned services fall back into the table's own order - the scope and the estimate stay as they are"
-            >Unpin</button>
-          )}
-        </div>
-      )}
-
       {/* Said once, under the numbers, rather than as a footnote on every
           row: a service nobody has priced contributes nothing, so the total
           is short by however many of them are ticked. */}
@@ -1376,7 +1054,7 @@ export function AccountPotentialTab({
         <DataTable
           tableId={DEAL_TABLE_ID}
           columns={columns}
-          rows={rows}
+          rows={allRows}
           // Biggest prize first, because that is the question the page
           // answers. Alphabetical is what the table did as a rate card,
           // where every row was as interesting as every other; here the
@@ -1391,31 +1069,15 @@ export function AccountPotentialTab({
           // around them. Ticking the scope is the one thing this table is
           // for, so that is what the row click does.
           onRowClick={(row) => toggleScope(row.name)}
-          rowGroup={pinnedRowGroup}
           expandedRowIds={expanded}
           renderExpansion={renderBundle}
-          rowClassName={(row) => [
-            row._scoped ? styles.pricingRowScoped : '',
-            row._pinned ? styles.pricingRowPinned : '',
-          ].filter(Boolean).join(' ') || undefined}
+          rowClassName={(row) => (row._scoped ? styles.pricingRowScoped : undefined)}
           exportFileName="Account Potential"
           settings={settings}
           updateSettings={updateSettings}
-          emptyMessage={serviceRows.length === 0
-            ? 'The Solutions dropdown list is empty. Add services on the Services subtab and they show up here.'
-            : `No services match "${search}".`}
+          emptyMessage='The Solutions dropdown list is empty. Add services on the Services subtab and they show up here.'
         />
       </div>
-
-      {oppPicker && (
-        <OppImportModal
-          records={oppRecords}
-          loading={oppLoading}
-          error={oppError}
-          onPick={applyOpp}
-          onClose={() => setOppPicker(false)}
-        />
-      )}
 
       {mathLine && (
         <ScopeLineMathModal

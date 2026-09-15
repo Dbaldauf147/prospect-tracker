@@ -43,7 +43,7 @@ import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../uti
 import { splitPeOwners } from '../../utils/peOwners';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { serviceStatusColor, serviceStatusBucket, serviceBucket } from '../../utils/serviceStatusColors';
-import { buildServiceRows, pricedServiceRows } from '../../utils/serviceRows';
+import { pricedServiceRows } from '../../utils/serviceRows';
 import { AccountPotentialTab } from '../DropdownsView/AccountPotentialTab';
 import { loadPricingEstimate } from '../../utils/pricingEstimateStore';
 import { accountPotential } from '../../utils/accountPotential';
@@ -5860,16 +5860,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     accountPotentialReading, fields.portfolioCompanies]);
 
   // What the Potential tab prices: the catalogue minus the services retired
-  // on the Services tab, and the retired names beside it so the tab can say
-  // "hidden on the Services tab" when somebody searches for one rather than
-  // leaving it looking dropped.
+  // on the Services tab.
   const potentialServiceRows = useMemo(() => pricedServiceRows(settings), [settings]);
-  const potentialHiddenServices = useMemo(() => {
-    const hidden = new Set(settings?.hiddenServices || []);
-    return hidden.size
-      ? buildServiceRows(settings).filter(r => hidden.has(r.name)).map(r => r.name)
-      : [];
-  }, [settings]);
 
   // The services that ride along with it, named. A bundle is what actually
   // gets sold, so the figure above is the lead plus its add-ons, and a
@@ -9666,7 +9658,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               settings={settings}
               updateSettings={updateSettings}
               serviceRows={potentialServiceRows}
-              hiddenServices={potentialHiddenServices}
               scenario={potentialScenario}
               setScenario={setPotentialScenario}
               prospects={prospects}
