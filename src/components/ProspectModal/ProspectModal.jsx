@@ -38,6 +38,7 @@ import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { useAuth } from '../../contexts/AuthContext';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { nameFromEmail } from '../../utils/nameFromEmail';
+import { splitFullName } from '../../utils/splitFullName';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../utils/reportingFrameworks';
 import { splitPeOwners } from '../../utils/peOwners';
@@ -1774,6 +1775,16 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // edited once it's committed — blurred, picked from the list, or pushed by an
   // explicit Save click. A ref (not state) because the commit often lands in the
   // same batch as the close that unmounts us.
+  // What somebody typed or pasted into the Full Name box, or null while that
+  // box is only mirroring the two name fields.
+  //
+  // A draft rather than a field: nothing here is ever saved. The box is the
+  // shape a whole name arrives in - off a LinkedIn profile, an email
+  // signature, a forwarded introduction - and all it does is hand the two
+  // fields underneath something to be filled from. Applying the offer or
+  // dismissing it puts the box back to mirroring, which by then shows the
+  // same words.
+  const [fullNameDraft, setFullNameDraft] = useState(null);
   const companyCommittedRef = useRef(contact.company || '');
   const [, setCompanyCommittedTick] = useState(0);
   function commitCompany(value) {
@@ -1955,17 +1966,89 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           </div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem' }}>
-          <div><label style={labelStyle}>First Name</label><input style={inputStyle} value={f.firstname} onChange={e => set('firstname', e.target.value)} /></div>
-          <div><label style={labelStyle}>Last Name</label><input style={inputStyle} value={f.lastname} onChange={e => set('lastname', e.target.value)} /></div>
-          <div>
-            <label style={labelStyle}>Full Name <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(auto)</span></label>
-            <input
-              style={{ ...inputStyle, background: '#F8FAFC', color: '#64748B' }}
-              value={`${f.firstname || ''} ${f.lastname || ''}`.trim()}
-              readOnly
-              placeholder="-"
-            />
-          </div>
+          {/* Editing either half by hand settles the question the Full Name
+              box was asking, so the draft in it goes: leaving a stale one
+              behind would have the box showing one name while the fields
+              under it hold another. */}
+          <div><label style={labelStyle}>First Name</label><input style={inputStyle} value={f.firstname} onChange={e => { setFullNameDraft(null); set('firstname', e.target.value); }} /></div>
+          <div><label style={labelStyle}>Last Name</label><input style={inputStyle} value={f.lastname} onChange={e => { setFullNameDraft(null); set('lastname', e.target.value); }} /></div>
+          {(() => {
+            // The whole name, both ways round. With no draft the box mirrors
+            // the two fields, which is what it has always done; type or paste
+            // into it and it holds that instead and offers to split it.
+            //
+            // An offer, not an assignment. A name is a thing people are
+            // particular about, the split is a guess, and a guess that filled
+            // the fields on its own would be one somebody has to check every
+            // time in case it was wrong about theirs.
+            const mirror = `${f.firstname || ''} ${f.lastname || ''}`.trim();
+            const drafting = fullNameDraft !== null;
+            const guess = drafting ? splitFullName(fullNameDraft) : null;
+            const offer = guess
+              && (guess.firstname !== (f.firstname || '') || guess.lastname !== (f.lastname || ''))
+              ? guess : null;
+            const apply = () => {
+              setFullNameDraft(null);
+              set('firstname', offer.firstname);
+              set('lastname', offer.lastname);
+            };
+            return (
+              <div>
+                <label style={labelStyle}>
+                  Full Name{' '}
+                  <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>
+                    (auto, or paste one)
+                  </span>
+                </label>
+                <input
+                  style={{
+                    ...inputStyle,
+                    background: drafting ? '#fff' : '#F8FAFC',
+                    color: drafting ? undefined : '#64748B',
+                  }}
+                  value={drafting ? fullNameDraft : mirror}
+                  onChange={e => setFullNameDraft(e.target.value)}
+                  placeholder="-"
+                  title="Reads the First and Last boxes. Paste a whole name here and it offers to split it into them - nothing typed here is saved on its own."
+                />
+                {/* The row is there for as long as the box says something
+                    other than the two fields do - not only when there is a
+                    split to offer. An address or a phone number pasted in
+                    here produces no offer, and without the way out beside it
+                    the box would sit there holding text that is not the name
+                    this form is about to save, with nothing to clear it. */}
+                {drafting && fullNameDraft !== mirror && (
+                  <div style={{ marginTop: '0.25rem', display: 'flex', flexWrap: 'wrap', gap: '0.25rem', alignItems: 'center' }}>
+                    {/* Its own line: this cell is a quarter of the dialog
+                        wide, and the words plus the chip plus the way out do
+                        not fit on one - which last put the way out on a line
+                        of its own, orphaned under the chip. */}
+                    <span style={{ flexBasis: '100%', fontSize: '0.65rem', color: '#64748B' }}>
+                      {offer ? 'Split into:' : 'No name to split out of that.'}
+                    </span>
+                    {offer && (
+                      <button
+                        type="button"
+                        onClick={apply}
+                        title={`First name "${offer.firstname || '(none)'}", last name "${offer.lastname || '(none)'}"`}
+                        style={{ fontSize: '0.68rem', padding: '0.15rem 0.45rem', border: '1px solid #BBF7D0', borderRadius: '999px', background: '#F0FDF4', color: '#166534', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+                      >{[offer.firstname, offer.lastname].filter(Boolean).join(' ') || '(nothing)'}</button>
+                    )}
+                    {/* Backing out puts the box back on the two fields,
+                        rather than leaving a name on screen that is not the
+                        one the form is about to save. */}
+                    <button
+                      type="button"
+                      onClick={() => setFullNameDraft(null)}
+                      title={offer ? 'Leave the names as they are' : 'Put the box back on the First and Last names'}
+                      aria-label="Dismiss the name split"
+                      style={{ fontSize: '0.75rem', lineHeight: 1, padding: '0 2px', border: 'none', background: 'none', color: '#94A3B8', cursor: 'pointer', fontFamily: 'inherit' }}
+                    >&times;</button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <div><label style={labelStyle}>Work Phone Number</label><input style={inputStyle} value={f.phone} onChange={e => set('phone', e.target.value)} /></div>
           <div><label style={labelStyle}>Cell Phone Number</label><input style={inputStyle} value={f.mobilephone} onChange={e => set('mobilephone', e.target.value)} /></div>
           <div><label style={labelStyle}>Goes By <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.nickname} onChange={e => set('nickname', e.target.value)} placeholder="e.g. Bob" /></div>
