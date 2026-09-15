@@ -527,6 +527,43 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
 }
 
 
+// The card's pages, in the order the bar shows them.
+//
+// Company first because it is what somebody usually came for, then the two
+// things asked about an account in a meeting (who do we know there, what do
+// they buy), then the deals, then the portfolio side - divisions, sites and
+// holdings, which is the longest of the five and the least often opened.
+//
+// Out here rather than inside the component so the list is one thing to read
+// and the render doesn't rebuild it on every keystroke.
+const PROSPECT_TABS = [
+  {
+    key: 'company',
+    label: 'Company',
+    title: "The company's own record: identity, classification, coverage, scale, profile and notes",
+  },
+  {
+    key: 'contacts',
+    label: 'Contacts',
+    title: 'Everybody we know at this company, as a table or as an org chart',
+  },
+  {
+    key: 'services',
+    label: 'Services',
+    title: 'The services board: what this account already buys, what it has turned down, and what nobody has asked it about yet',
+  },
+  {
+    key: 'opps',
+    label: 'Opps',
+    title: 'The opportunities whose Account is this company, and the note pages kept against them',
+  },
+  {
+    key: 'portfolio',
+    label: 'Portfolio',
+    title: "The company's divisions, its site list, and the companies it holds",
+  },
+];
+
 // The Scale fields are numbers in Firestore but strings in an <input>, and a
 // cleared box hands back ''. Every save path runs a record through here, so a
 // field added to the section can't end up coerced on one path and stored as a
@@ -4003,7 +4040,10 @@ function DivisionsChart({ tree, parents, addingParent, editing, adding, picking,
 }
 
 function DivisionsSection({ parentId, parentCompany, prospects, contacts, settings, updateSettings, onOpenContact = () => {} }) {
-  const [open, setOpen] = useState(false);
+  // Open on arrival, like every other section on the card: the Portfolio
+  // tab is where somebody goes to see this, so it is already showing when
+  // they get there.
+  const [open, setOpen] = useState(true);
   const [draft, setDraft] = useState('');
   // Which box is being renamed, and which box is having one added under
   // it. Only one of each at a time, so a stray click can't leave two
@@ -4844,11 +4884,30 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [bulkField, setBulkField] = useState('jobtitle');
   const [bulkValue, setBulkValue] = useState('');
   const [bulkMode, setBulkMode] = useState('replace'); // 'replace' | 'append'
-  const [servicesOpen, setServicesOpen] = useState(false);
+  // Which page of the card is showing. The card holds five things - the
+  // company's own fields, its contacts, the services board, its opps, and
+  // the portfolio side (divisions, sites, holdings) - and it used to hold
+  // them end to end, so whichever one somebody opened it for, the other
+  // four were in the way.
+  //
+  // A record being added has none of the other five yet (every one of them
+  // is behind `!isNew`), so it skips the bar and is only ever the fields.
+  //
+  // Opened straight onto a contact - the card can be opened FROM one, from
+  // a division box or a roster row - it starts on the page that contact is
+  // on, so closing the editor doesn't land somebody on a tab they never
+  // asked for.
+  const [activeTab, setActiveTab] = useState(initialEditContact ? 'contacts' : 'company');
+  // Every section below still folds, and now every one of them starts
+  // unfolded: they used to open closed to keep this card short, and the
+  // tab bar does that job now. Clicking a tab is already somebody asking
+  // for what is on it, and answering with a collapsed heading makes them
+  // ask twice.
+  const [servicesOpen, setServicesOpen] = useState(true);
   const [servicesEditMode, setServicesEditMode] = useState(false);
   const [editingServiceName, setEditingServiceName] = useState(null);
   const [expandedServiceNote, setExpandedServiceNote] = useState(null);
-  const [portfolioOpen, setPortfolioOpen] = useState(false);
+  const [portfolioOpen, setPortfolioOpen] = useState(true);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergeQuery, setMergeQuery] = useState('');
   const [listsMatchOpen, setListsMatchOpen] = useState(false);
@@ -5093,7 +5152,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // off the company name, same convention as companyOpportunities/Deals).
   // The Email Drafts page reads these back to build a combined Site List
   // Overview for every company that has a contact in the draft.
-  const [siteListOpen, setSiteListOpen] = useState(false);
+  const [siteListOpen, setSiteListOpen] = useState(true);
   const [siteListDragActive, setSiteListDragActive] = useState(false);
   const [siteListPasteOpen, setSiteListPasteOpen] = useState(false);
   const siteListInputRef = useRef(null);
@@ -5483,7 +5542,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // itself, and a company with a dozen opps would otherwise push the rest of
   // the card off the screen. The header carries the count, so it says whether
   // it is worth opening without being opened.
-  const [oppListOpen, setOppListOpen] = useState(false);
+  const [oppListOpen, setOppListOpen] = useState(true);
 
   // Sales Partner suggestions: every partner name already used on an Opps 2
   // row, so a repeat partner is one click and spellings don't fragment. The
@@ -5555,6 +5614,60 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     () => [...new Set(serviceBoard.flatMap(c => c.items || []))],
     [serviceBoard],
   );
+
+  // How much of the service board this company has an answer on, as the
+  // Services tab and its own heading both say it.
+  //
+  // Counted off the board the user actually sees rather than the seed
+  // catalogue: a service added or retired on Dropdowns > Services moves
+  // the denominator. Explored means anything with a status on it - typed
+  // here, or implied by an opp whose Scope names it - so the figure and
+  // the coloured rows under it are the same reading.
+  //
+  // Lifted out of the heading it used to be computed inside so the tab can
+  // say it too. Two copies of this arithmetic is two answers to "how far
+  // through are we", and they would not stay the same for long.
+  const servicesExploredCount = useMemo(() => {
+    const svc = fields.servicesExplored || {};
+    const hidden = new Set(settings.hiddenServices || []);
+    const total = new Set(
+      serviceBoard.flatMap(cat => cat.items.filter(i => !hidden.has(i)))
+    ).size;
+    const explored = new Set();
+    for (const [item, val] of Object.entries(svc)) {
+      if (val && val !== '-' && !hidden.has(item)) explored.add(item);
+    }
+    for (const item of scopeMatchedServices.keys()) {
+      if (!hidden.has(item)) explored.add(item);
+    }
+    return {
+      explored: explored.size,
+      total,
+      pct: total > 0 ? Math.round((explored.size / total) * 100) : 0,
+    };
+  }, [fields.servicesExplored, settings.hiddenServices, serviceBoard, scopeMatchedServices]);
+
+  // What each tab carries, for the pill beside its name. Empty string where
+  // there is nothing to count, because the bar reads the counts as "there is
+  // something here" and a nought in a pill says the opposite of that while
+  // looking the same.
+  //
+  // Portfolio counts the companies it holds rather than adding its three
+  // sections up: divisions, sites and holdings are three different things
+  // and one number covering all of them would mean none of them.
+  const tabCounts = useMemo(() => {
+    const n = (v) => (v > 0 ? String(v) : '');
+    return {
+      company: '',
+      contacts: n(companyContacts.length),
+      services: servicesExploredCount.total
+        ? `${servicesExploredCount.explored}/${servicesExploredCount.total}`
+        : '',
+      opps: n(companyOppsSummary.total),
+      portfolio: n((fields.portfolioCompanies || []).length),
+    };
+  }, [companyContacts.length, servicesExploredCount, companyOppsSummary.total,
+    fields.portfolioCompanies]);
 
   // The biggest thing still left to sell this account, and what it is.
   //
@@ -7382,6 +7495,34 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             onClose={() => setListsMatchOpen(false)}
           />
         )}
+        {/* The card's pages. Only on a saved record: everything but the
+            fields themselves is behind `!isNew`, so a record being added
+            would get a bar of five tabs with nothing on four of them.
+
+            Each tab says what is on it. A count is only shown where there
+            is something to count, so an account with no contacts reads
+            "Contacts" rather than "Contacts 0" - a zero in a pill looks
+            like a thing that is there, and none of them is. */}
+        {!isNew && (
+          <div className={styles.subtabs} role="tablist">
+            {PROSPECT_TABS.map(tab => (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === tab.key}
+                className={activeTab === tab.key ? styles.subtabActive : styles.subtab}
+                onClick={() => setActiveTab(tab.key)}
+                title={tab.title}
+              >
+                {tab.label}
+                {tabCounts[tab.key] && (
+                  <span className={styles.subtabCount}>{tabCounts[tab.key]}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
         <div className={styles.body}>
           {raClientMatches.length > 0 && (
             /* One horizontal strip: warning, headline, explanation, then the
@@ -7527,6 +7668,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               >{analysisRemoving ? 'Removing…' : 'Remove'}</button>
             </div>
           )}
+          {(isNew || activeTab === 'company') && (
           <div className={styles.grid}>
             <div className={styles.sectionHead}>Identity</div>
 
@@ -8177,15 +8319,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               />
             </div>
           </div>
+          )}
 
           {/* Opps — the Opps 2 rows whose Account matches this company. Read
               only: the Opps tab is where an opp is worked, and a second
               editor for the same row is a second place for it to be wrong.
-              Above the Notes section because it is the shorter answer to
-              "where do we stand with these people" — and collapsed, because
-              the card is opened to read the company far more often than to
-              count its deals. */}
-          {!isNew && fields.company?.trim() && (
+              Above the Notes section on this page because it is the shorter
+              answer to "where do we stand with these people". */}
+          {!isNew && activeTab === 'opps' && fields.company?.trim() && (
             <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
               <div
                 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
@@ -8272,7 +8413,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           )}
 
           {/* Opportunities — bucketed notes pages, per-company, synced across devices */}
-          {!isNew && fields.company?.trim() && (
+          {!isNew && activeTab === 'opps' && fields.company?.trim() && (
             <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
               <div
                 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
@@ -8748,7 +8889,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           )}
 
           {/* Services Explored */}
-          {!isNew && (
+          {!isNew && activeTab === 'services' && (
             <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
               <div
                 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
@@ -8758,43 +8899,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   Services Explored
                 </label>
                 <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: servicesOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
-                {(() => {
-                  const svc = fields.servicesExplored || {};
-                  const hidden = new Set(settings.hiddenServices || []);
-                  // Counted off the board the user actually sees, not the
-                  // seed catalog: a service added or retired on Dropdowns ›
-                  // Services moves this denominator.
-                  const totalItems = new Set(
-                    serviceBoard.flatMap(cat => cat.items.filter(i => !hidden.has(i)))
-                  ).size;
-                  const exploredItems = new Set();
-                  for (const [item, val] of Object.entries(svc)) {
-                    if (val && val !== '-' && !hidden.has(item)) exploredItems.add(item);
-                  }
-                  for (const item of scopeMatchedServices.keys()) {
-                    if (!hidden.has(item)) exploredItems.add(item);
-                  }
-                  const pct = totalItems > 0 ? Math.round((exploredItems.size / totalItems) * 100) : 0;
-                  return (
-                    <>
-                      <span style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600 }}>
-                        {exploredItems.size}/{totalItems} ({pct}%)
-                      </span>
-                      {/* Queued opps aren't explored yet, so they stay out
-                          of the count above and get their own badge. */}
-                      {scheduledServices.size > 0 && (
-                        <span
-                          title="Services with a New Opp already scheduled for this company. Nothing exists on the Opps table until it fires."
-                          style={{
-                            fontSize: '0.6rem', fontWeight: 700, padding: '1px 5px', borderRadius: '3px',
-                            background: SCHEDULED_OPP_COLORS.bg, color: SCHEDULED_OPP_COLORS.color,
-                            border: `1px solid ${SCHEDULED_OPP_COLORS.border}`,
-                          }}
-                        >{scheduledServices.size} scheduled</span>
-                      )}
-                    </>
-                  );
-                })()}
+                <span style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600 }}>
+                  {servicesExploredCount.explored}/{servicesExploredCount.total} ({servicesExploredCount.pct}%)
+                </span>
+                {/* Queued opps aren't explored yet, so they stay out of the
+                    count above and get their own badge. */}
+                {scheduledServices.size > 0 && (
+                  <span
+                    title="Services with a New Opp already scheduled for this company. Nothing exists on the Opps table until it fires."
+                    style={{
+                      fontSize: '0.6rem', fontWeight: 700, padding: '1px 5px', borderRadius: '3px',
+                      background: SCHEDULED_OPP_COLORS.bg, color: SCHEDULED_OPP_COLORS.color,
+                      border: `1px solid ${SCHEDULED_OPP_COLORS.border}`,
+                    }}
+                  >{scheduledServices.size} scheduled</span>
+                )}
                 <button
                   onClick={async (e) => {
                     e.stopPropagation();
@@ -9337,7 +9456,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           {/* Divisions - other tracker companies that roll up under this
               one. Shares settings.divisionsMap with the My Accounts
               Divisions column. Needs a saved record to key the mapping. */}
-          {!isNew && prospect?.id && (
+          {!isNew && activeTab === 'portfolio' && prospect?.id && (
             <DivisionsSection
               parentId={prospect.id}
               parentCompany={fields.company}
@@ -9352,7 +9471,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           {/* Site List - uploaded spreadsheet of this company's physical
               sites/locations. Surfaces on the Email Drafts page as part of
               the combined Site List Overview. */}
-          {!isNew && (
+          {!isNew && activeTab === 'portfolio' && (
             <div
               style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem', position: 'relative', borderRadius: 8, transition: 'background 0.15s, outline 0.15s', outline: siteListDragActive ? '2px dashed var(--color-accent)' : '2px dashed transparent', outlineOffset: siteListDragActive ? '4px' : '0px', background: siteListDragActive ? 'rgba(59, 125, 221, 0.06)' : 'transparent' }}
               onDragOver={e => {
@@ -9536,7 +9655,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           )}
 
           {/* Portfolio Companies */}
-          {!isNew && (
+          {!isNew && activeTab === 'portfolio' && (
             <div
               style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem', position: 'relative', borderRadius: 8, transition: 'background 0.15s, outline 0.15s', outline: portfolioDragActive ? '2px dashed var(--color-accent)' : '2px dashed transparent', outlineOffset: portfolioDragActive ? '4px' : '0px', background: portfolioDragActive ? 'rgba(59, 125, 221, 0.06)' : 'transparent' }}
               onDragOver={e => {
@@ -10854,7 +10973,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
           )}
 
-          {!isNew && (
+          {/* Contacts - the roster, as a table or as an org chart. */}
+          {!isNew && activeTab === 'contacts' && (
             <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
                 <label className={styles.label} style={{ margin: 0 }}>

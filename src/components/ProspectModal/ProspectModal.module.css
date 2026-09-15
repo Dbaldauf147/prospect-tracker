@@ -47,6 +47,66 @@
   padding: 0.75rem 1.5rem 1rem;
 }
 
+/* ---- Subtabs --------------------------------------------------------
+   The card used to be one scroll: the detail table, then the opps, then
+   the services board, then the site list, then the portfolio, then the
+   contacts. Whichever half somebody opened it for, the other half was in
+   the way, and the interesting one was usually below the fold.
+
+   So each of those is its own page now, and the bar naming them sticks to
+   the top of the card while a page scrolls under it - a tab you have to
+   scroll back up to find is a tab nobody uses twice. Same shape as the
+   Dropdowns page's subtabs, because they are the same control and
+   learning it twice is a cost with nothing on the other side of it. */
+.subtabs {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.5rem 1.5rem 0;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.subtab,
+.subtabActive {
+  padding: 0.4rem 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: inherit;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  margin-bottom: -1px;
+  white-space: nowrap;
+}
+
+.subtab:hover {
+  color: var(--color-text);
+}
+
+.subtabActive {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+/* What the tab holds, said on the tab: 14 contacts, 8 of 160 services.
+   A tab bar that only names its pages makes you open all five to find
+   the one with anything on it. */
+.subtabCount {
+  margin-left: 0.35rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--color-border-light);
+  color: var(--color-text-muted);
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
 /* The company detail block reads as a table: a fixed label column beside its
    value, three label/value pairs to a row, a hairline under every row. Labels
    used to sit above their controls in a four-across grid, which at this
