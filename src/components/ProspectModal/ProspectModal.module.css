@@ -573,18 +573,6 @@
   color: #dc2626;
 }
 
-/* A figure read back in the shape people say it, under the box it was typed
-   into. A number input cannot carry thousands separators, and "1435951" is a
-   number nobody checks at a glance - which for a savings headline or a
-   penalty exposure is the whole job of having it on the card. Column 2, like
-   .requiredNote: every row here is a 150px label beside its field. */
-.fieldHint {
-  grid-column: 2;
-  margin-top: 3px;
-  font-size: 0.68rem;
-  color: var(--color-text-muted);
-}
-
 /* The Potential page, inside a card that scrolls as a whole.
    It was built to own a viewport: its table is `flex: 1` inside a column
    that has a height, which on a plain block parent collapses to the header

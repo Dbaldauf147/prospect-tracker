@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, memo } from 'react';
 import { BULLET, bulletBreak, bulletExit, dashToBullet, onBulletLine } from '../../utils/bulletText';
+import { asMoney, fromMoney } from '../../utils/moneyInput';
 
 // Uncontrolled-ish text input / textarea that holds its own local state
 // and only propagates up on blur. Drop-in replacement for a controlled
@@ -23,14 +24,25 @@ import { BULLET, bulletBreak, bulletExit, dashToBullet, onBulletLine } from '../
 //                 untouched. Different from bulletList — that one forces
 //                 every line to be bulleted, which is too aggressive for
 //                 a free-form Notes field.
-//   type        — input type (default 'text'); ignored when multiline
+//   money       — single-line opt-in. The box itself reads "$1,696,113" while
+//                 it sits there, and drops back to the bare digits the moment
+//                 it is focused, so it is still a number to type into. What
+//                 commits is the bare number, exactly as a type="number" box
+//                 would have committed it — the formatting is a way of
+//                 READING the field, never of storing it.
+//   type        — input type (default 'text'); ignored when multiline, and
+//                 overridden by `money`, which has to be a text box to hold
+//                 a comma
 //   ...rest     — forwarded to the underlying element (style, placeholder, etc.)
 export const CommitOnBlurInput = memo(function CommitOnBlurInput({
-  value, onCommit, multiline, autoGrow, bulletList, smartBullets, type, onKeyDown, onFocus, style, ...rest
+  value, onCommit, multiline, autoGrow, bulletList, smartBullets, money, type, onKeyDown, onFocus, style, ...rest
 }) {
   const [local, setLocal] = useState(value ?? '');
   const lastExternal = useRef(value ?? '');
   const taRef = useRef(null);
+  // Only a `money` box cares. It formats itself when it is not being typed
+  // into, which means it has to know whether it is.
+  const [focused, setFocused] = useState(false);
 
   useEffect(() => {
     const v = value ?? '';
@@ -73,9 +85,14 @@ export const CommitOnBlurInput = memo(function CommitOnBlurInput({
   };
 
   const handleBlur = () => {
-    if (local !== lastExternal.current) {
-      lastExternal.current = local;
-      if (onCommit) onCommit(local);
+    setFocused(false);
+    // A money box commits what it parsed, not what was typed: "$1,696,113"
+    // and "1696113" are the same figure, and only one of them is a number.
+    const committed = money ? fromMoney(local) : local;
+    if (money && committed !== local) setLocal(committed);
+    if (committed !== lastExternal.current) {
+      lastExternal.current = committed;
+      if (onCommit) onCommit(committed);
     }
   };
   const handleKey = (e) => {
@@ -122,6 +139,7 @@ export const CommitOnBlurInput = memo(function CommitOnBlurInput({
   };
 
   const handleFocus = (e) => {
+    setFocused(true);
     if (bulletList && multiline && !local) {
       // Same reasoning as the Enter above: the first letter typed after
       // focusing an empty box would otherwise land before the glyph.
@@ -147,13 +165,18 @@ export const CommitOnBlurInput = memo(function CommitOnBlurInput({
       />
     );
   }
+  // A money box is a text box whatever `type` says: a number input holds
+  // digits only, so the comma that makes 1696113 readable cannot go in one.
+  // inputMode keeps the numeric keypad on a phone.
   return (
     <input
-      type={type || 'text'}
+      type={money ? 'text' : (type || 'text')}
+      inputMode={money ? 'decimal' : undefined}
       {...rest}
       style={style}
-      value={local}
+      value={money && !focused ? asMoney(local) : local}
       onChange={e => setLocal(e.target.value)}
+      onFocus={handleFocus}
       onBlur={handleBlur}
       onKeyDown={handleKey}
     />
