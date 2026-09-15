@@ -2186,6 +2186,72 @@ function ScopeRefreshNote({ refresh }) {
 // itself prices whatever it is handed; re-reading the rate card is the
 // caller's business, because the caller is the one that knows where the card
 // came from.
+// The house error palette, borrowed from the row flags on the table behind
+// these popups so a blocker looks the same wherever it is raised.
+const GAP_INK = '#991B1B';
+const GAP_BG = '#FEF2F2';
+const GAP_BORDER = '#FCA5A5';
+
+// "Accel, Audax Group and Arctos Partners", so a list of blocked services
+// reads as a sentence rather than as comma-separated data.
+function andList(names) {
+  const list = (names || []).filter(Boolean);
+  if (list.length <= 1) return list[0] || '';
+  return `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+}
+
+// Where each kind of gap is answered. The estimator knows WHAT is missing;
+// only the screen knows where you go to supply it, which is why this
+// sentence lives here and not in utils/servicePricing.
+function gapFix(gap) {
+  if (gap.kind === 'rate') return 'Set one on Dropdowns \u203A Services Pricing.';
+  if (gap.kind === 'deal') return 'Type one into the Deal Size box above.';
+  // "the accounts count", not "a accounts count": the label is already
+  // plural ("Accounts", "Meters"), so the indefinite article never agreed
+  // with it.
+  const unit = String(gap.unitLabel || '').toLowerCase();
+  return `Add the ${unit ? `${unit} ` : ''}count to this opp, or to the account\u2019s company card.`;
+}
+
+// What the scope could not price, grouped by the missing input.
+//
+// The notes on the rows say this one service at a time, which is what you
+// want while looking at that row and no use at all for "what do I have to
+// go and find" - eight rows reading "No accounts entered" are one errand,
+// and the total above them is wrong by the same amount whether you read one
+// of them or all eight.
+//
+// Red, and stated as a blocker, because the failure mode this replaces was
+// silent: a service missing its count prices at a confident $0 and is NOT
+// counted as unpriced, so the Year 1 total quietly understated the deal
+// with nothing on screen saying so.
+function ScopeGapNotes({ gaps }) {
+  if (!gaps || !gaps.length) return null;
+  return (
+    <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {gaps.map((gap) => (
+        <div
+          key={`${gap.kind}:${gap.unit || gap.unitLabel || ''}`}
+          style={{
+            display: 'flex', gap: 6, alignItems: 'baseline',
+            padding: '4px 7px', borderRadius: 4,
+            background: GAP_BG, border: `1px solid ${GAP_BORDER}`,
+            fontSize: '0.7rem', color: GAP_INK, lineHeight: 1.45,
+          }}
+        >
+          <span aria-hidden="true">&#9888;</span>
+          <span>
+            <strong style={{ fontWeight: 700 }}>{gap.label}.</strong>{' '}
+            {andList(gap.services)}{' '}
+            cannot be priced without it.{' '}
+            {gapFix(gap)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = null, onUse, refresh = null }) {
   if (!estimate || !estimate.lines.length) return null;
   // The totals can be struck from a smaller set than the rows: the deal-size
@@ -2271,9 +2337,20 @@ function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = nu
                     still came out at nothing — the count it needed that
                     the opp doesn't carry. */}
                 {(line.note || line.how) ? (
-                  <div style={{ color: '#94A3B8', fontSize: '0.7rem' }}>
+                  <div style={{
+                    color: line.gap ? GAP_INK : '#94A3B8',
+                    fontSize: '0.7rem',
+                    fontWeight: line.gap ? 600 : 400,
+                  }}>
+                    {line.gap ? <span aria-hidden="true">&#9888; </span> : null}
                     {line.note || line.how}
-                    {line.recurring ? ' · per year' : ''}
+                    {/* The billing period stays grey on a blocked row: it is
+                        a fact about the service, not part of what is wrong,
+                        and in red it reads as though the year were the
+                        problem. */}
+                    {line.recurring
+                      ? <span style={{ color: '#94A3B8', fontWeight: 400 }}>{' · per year'}</span>
+                      : null}
                   </div>
                 ) : (line.recurring ? (
                   <div style={{ color: '#94A3B8', fontSize: '0.7rem' }}>per year</div>
@@ -2282,7 +2359,15 @@ function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = nu
               {line.priced ? (
                 <>
                   <td style={num}>
-                    <strong style={{ color: '#1E293B' }} title="Worked out from this service&rsquo;s basis and rate">
+                    {/* A $0 standing in for a fee nobody could work out is
+                        the whole problem this colour solves: it looks
+                        exactly like a service that is free. */}
+                    <strong
+                      style={{ color: line.gap ? GAP_INK : '#1E293B' }}
+                      title={line.gap
+                        ? `Not a price: ${line.note}. This service is missing from the total below.`
+                        : 'Worked out from this service’s basis and rate'}
+                    >
                       {money(line.fee)}
                     </strong>
                   </td>
@@ -2297,8 +2382,13 @@ function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = nu
                 </>
               ) : (
                 <>
-                  <td style={{ ...num, color: '#94A3B8' }} title="No price on the Services Pricing tab yet">-</td>
-                  <td style={{ ...num, color: '#94A3B8' }}>-</td>
+                  <td
+                    style={{ ...num, color: line.gap ? GAP_INK : '#94A3B8' }}
+                    title={line.gap
+                      ? `${line.note}. This service is missing from the total below.`
+                      : 'No price on the Services Pricing tab yet'}
+                  >-</td>
+                  <td style={{ ...num, color: line.gap ? GAP_INK : '#94A3B8' }}>-</td>
                 </>
               )}
             </tr>
@@ -2316,8 +2406,31 @@ function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = nu
                 const notes = [];
                 if (picking && onCount !== estimate.lines.length) notes.push(`${onCount} of ${estimate.lines.length} ticked`);
                 if (sums.unpriced.length) notes.push(`${sums.unpriced.length} unpriced`);
-                if (!notes.length) return null;
-                return <span style={{ color: '#94A3B8' }}>{' '}({notes.join(' · ')})</span>;
+                // Services the rate card CAN price but this account has no
+                // count for. They are not in `unpriced` - they came back
+                // priced, at $0 - so before this the total said nothing
+                // about them at all and read as though it had covered
+                // everything. Counted once each, however many inputs a
+                // service turns out to be short of.
+                const shortNames = new Set();
+                for (const gap of (sums.gaps || [])) {
+                  if (gap.kind === 'rate') continue;
+                  for (const name of gap.services) shortNames.add(name);
+                }
+                if (!notes.length && !shortNames.size) return null;
+                return (
+                  <span style={{ color: '#94A3B8' }}>
+                    {' '}({notes.join(' · ')}
+                    {shortNames.size ? (
+                      <>
+                        {notes.length ? ' · ' : ''}
+                        <span style={{ color: GAP_INK, fontWeight: 700 }}>
+                          {shortNames.size} missing data
+                        </span>
+                      </>
+                    ) : null})
+                  </span>
+                );
               })()}
             </td>
             <td style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}>
@@ -2354,11 +2467,11 @@ function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = nu
           </tr>
         </tfoot>
       </table>
-      {sums.unpriced.length > 0 && (
-        <div style={{ color: '#94A3B8', fontSize: '0.7rem', marginTop: 2 }}>
-          No price yet: {sums.unpriced.join(', ')} - set one on Dropdowns › Services Pricing.
-        </div>
-      )}
+      {/* Everything the total could not work out, grouped by the thing
+          that is missing. This replaced a grey one-liner that named only
+          the services with no rate card, which was the half of the problem
+          the total was already admitting to. */}
+      <ScopeGapNotes gaps={sums.gaps} />
       <ScopeRefreshNote refresh={refresh} />
     </div>
   );
