@@ -571,6 +571,7 @@ const PROSPECT_TABS = [
 const NUMERIC_FIELDS = [
   'peAum', 'reAum', 'numberOfSites', 'numberOfAccounts',
   'numberOfMeters', 'equipmentCount', 'annualMwh', 'sitesWithMandate',
+  'deregulatedSites', 'indicativeAnnualSavings', 'maxYearlyExposure',
 ];
 
 function recordToSave(fields) {
@@ -585,10 +586,30 @@ function recordToSave(fields) {
   return data;
 }
 
+// A big number read back the way it is said, under the box it was typed
+// into. A number input holds digits only, and the two analysis figures are
+// six and seven of them.
+function moneyHint(value) {
+  const n = Number(value);
+  if (value === '' || value == null || !Number.isFinite(n) || n === 0) return null;
+  return (
+    <div className={styles.fieldHint}>
+      {n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}
+    </div>
+  );
+}
+
 const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, numberOfAccounts: null,
-  numberOfMeters: null, equipmentCount: null, annualMwh: null, sitesWithMandate: null, rank: '', tier: 'Tier 3',
+  numberOfMeters: null, equipmentCount: null, annualMwh: null, sitesWithMandate: null,
+  // The three headline figures off the Utility Lookup analysis: how much of
+  // the estate can be shopped, what shopping it is worth, and what the
+  // building mandates cost if nothing is done. Null rather than 0 - none of
+  // them has been worked out until an analysis says so, and a zero would
+  // read as an answer.
+  deregulatedSites: null, indicativeAnnualSavings: null, maxYearlyExposure: null,
+  rank: '', tier: 'Tier 3',
   hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', strategies: [], revenue: '',
   // Opts this company into the weekly acquisition-news digest
@@ -5244,8 +5265,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     }
     setAnalysisRefreshing(true);
     try {
-      const { screenSites, sitesWithMandate } = await import('../../utils/complianceMandates');
-      const mandated = sitesWithMandate(screenSites(siteListScreeningRows(currentSiteList)));
+      const { screenSites, sitesWithMandate, CATEGORIES, totalPenalty } = await import('../../utils/complianceMandates');
+      const screening = screenSites(siteListScreeningRows(currentSiteList));
+      const mandated = sitesWithMandate(screening);
+      // What those mandates cost if none of them is met, off the same
+      // screening. It goes stale exactly as the count beside it does - an
+      // ordinance changes what a building owes, and the penalty changes with
+      // it - so the button that re-reads one re-reads the other.
+      //
+      // Deregulated Sites and Indicative Annual Savings are not here: both
+      // need the utility files and the savings model the Utility Lookup page
+      // holds, which a saved site list does not carry. They come from a
+      // Master Analysis save, or they are typed.
+      const exposure = Math.round(CATEGORIES.reduce((sum, c) => sum + totalPenalty(screening, c), 0));
       const changes = [];
       // Only what actually moved is written, and the note names it: a button
       // that says "done" without saying what it did leaves the user checking
@@ -5261,6 +5293,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       apply('numberOfAccounts', 'Accounts', facts.accounts);
       apply('equipmentCount', 'Equipment', facts.equipment);
       apply('sitesWithMandate', 'Sites w/ Mandate', mandated);
+      apply('maxYearlyExposure', 'Est. Max Yearly Exposure', exposure);
       setAnalysisRefreshNote(changes.length
         ? `Updated from the ${facts.sites.toLocaleString()}-site list: ${changes.join(' · ')}.`
         : `Already matches the ${facts.sites.toLocaleString()}-site list.`);
@@ -7342,6 +7375,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   function handlePrint() {
     const win = window.open('', '_blank');
     if (!win) { alert('Please allow popups to export PDF'); return; }
+    // Whole dollars for the two analysis figures. A savings headline is
+    // quoted to the dollar nowhere - it is a model - and the cents would be
+    // the widest thing in a narrow info cell.
+    const usdOrDash = (v) => (typeof v === 'number' && Number.isFinite(v)
+      ? v.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
+      : '-');
     const roleColors = { 'Decision Maker': '#166534', 'Influencer': '#1E40AF', 'Left': '#92400E', 'Other': '#7C3AED', 'Hide': '#991B1B', 'Unknown': '#6B7280' };
     const roleBgs = { 'Decision Maker': '#DCFCE7', 'Influencer': '#DBEAFE', 'Left': '#FEF9C3', 'Other': '#F3E8FF', 'Hide': '#FEE2E2', 'Unknown': '#F3F4F6' };
 
@@ -7386,6 +7425,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         <div class="info-item"><div class="info-label">Meters</div><div class="info-val">${f.numberOfMeters ?? '-'}</div></div>
         <div class="info-item"><div class="info-label">Equipment</div><div class="info-val">${f.equipmentCount ?? '-'}</div></div>
         <div class="info-item"><div class="info-label">Electric MWh</div><div class="info-val">${f.annualMwh != null ? f.annualMwh.toLocaleString() : '-'}</div></div>
+        <div class="info-item"><div class="info-label">Deregulated Sites</div><div class="info-val">${f.deregulatedSites != null ? f.deregulatedSites.toLocaleString() : '-'}</div></div>
+        <div class="info-item"><div class="info-label">Indicative Annual Savings</div><div class="info-val">${usdOrDash(f.indicativeAnnualSavings)}</div></div>
+        <div class="info-item"><div class="info-label">Est. Max Yearly Exposure</div><div class="info-val">${usdOrDash(f.maxYearlyExposure)}</div></div>
         <div class="info-item"><div class="info-label">Biggest Deal</div><div class="info-val">${biggestDeal ? `${formatMoneyRange(biggestDeal.fee, biggestDeal.feeHigh)}<div style="font-size:0.7rem;font-weight:600;color:#475569;margin-top:1px">${biggestDeal.name}${biggestDealAdds.length ? ` +${biggestDealAdds.length} with it` : ''}</div>` : '-'}</div></div>
         <div class="info-item"><div class="info-label">Revenue</div><div class="info-val">${f.revenue || '-'}</div></div>
         <div class="info-item"><div class="info-label">HQ Region</div><div class="info-val">${f.hqRegion || '-'}</div></div>
@@ -7624,15 +7666,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   <div style={{ fontSize: '0.68rem', color: '#166534', marginTop: '0.2rem' }}>{analysisRefreshNote}</div>
                 )}
               </div>
-              {/* Re-reads Sites, Accounts, Equipment and Sites w/ Mandate off
-                  the company's saved site list, so the Scale figures can be
-                  brought up to date without loading the portfolio back onto
-                  the Utility Lookup page and re-saving the whole workbook. */}
+              {/* Re-reads Sites, Accounts, Equipment, Sites w/ Mandate and
+                  the exposure those mandates carry off the company's saved
+                  site list, so the Scale figures can be brought up to date
+                  without loading the portfolio back onto the Utility Lookup
+                  page and re-saving the whole workbook. */}
               <button
                 type="button"
                 onClick={refreshAnalysisFigures}
                 disabled={analysisRefreshing}
-                title={'Re-read Sites, Accounts, Equipment and Sites w/ Mandate from this company\u2019s saved site list - the latest property-type mapping and the current compliance screening. Updates the Scale boxes below; it does not rebuild the saved workbook.'}
+                title={'Re-read Sites, Accounts, Equipment, Sites w/ Mandate and Est. Max Yearly Exposure from this company\u2019s saved site list - the latest property-type mapping and the current compliance screening. Updates the Scale boxes below; it does not rebuild the saved workbook.'}
                 style={{
                   padding: '0.4rem 0.9rem',
                   background: '#fff',
@@ -8138,6 +8181,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
 
             <div>
+              <label
+                className={styles.label}
+                title="How many of this company's sites sit in a deregulated market for electricity or natural gas, and can therefore be shopped. Filled in from the Utility Lookup page's market classification when a Master Analysis is saved against the company, and typed over here if you know better."
+              >Deregulated Sites</label>
+              <CommitOnBlurInput className={styles.input} type="number" value={fields.deregulatedSites ?? ''} onCommit={v => set('deregulatedSites', v)} />
+            </div>
+
+            <div>
               <label className={styles.label} title="Number of utility accounts">Accounts</label>
               <CommitOnBlurInput className={styles.input} type="number" value={fields.numberOfAccounts ?? ''} onCommit={v => set('numberOfAccounts', v)} />
             </div>
@@ -8158,6 +8209,29 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div>
               <label className={styles.label} title="Estimated annual electricity consumption, in MWh. Priced against by any per-MWh service.">Electric MWh</label>
               <CommitOnBlurInput className={styles.input} type="number" value={fields.annualMwh ?? ''} onCommit={v => set('annualMwh', v)} />
+            </div>
+
+            {/* The two headline dollars off the Utility Lookup analysis: what
+                shopping this estate is worth in a year, and what its building
+                mandates cost if nothing is done about them. Both were figures
+                you had to open a workbook to read, which is why they never
+                made it into a conversation about the account. */}
+            <div>
+              <label
+                className={styles.label}
+                title="Total indicative annual savings, electric and natural gas combined - the headline figure on the Utility Lookup analysis's Executive Summary, following the Savings Scenario and term chosen there. Filled in when a Master Analysis is saved against the company, and typed over here if you know better."
+              >Indicative Annual Savings ($)</label>
+              <CommitOnBlurInput className={styles.input} type="number" value={fields.indicativeAnnualSavings ?? ''} onCommit={v => set('indicativeAnnualSavings', v)} />
+              {moneyHint(fields.indicativeAnnualSavings)}
+            </div>
+
+            <div>
+              <label
+                className={styles.label}
+                title="Est. max yearly exposure - what this company's sites could be fined in a year if every building mandate they owe went unmet, summed across benchmarking, energy audits and performance standards. The Building Compliance tile of the same name, filled in when a Master Analysis is saved against the company."
+              >Est. Max Yearly Exposure ($)</label>
+              <CommitOnBlurInput className={styles.input} type="number" value={fields.maxYearlyExposure ?? ''} onCommit={v => set('maxYearlyExposure', v)} />
+              {moneyHint(fields.maxYearlyExposure)}
             </div>
 
             <div>

@@ -6376,7 +6376,28 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // Active sites only, like every other figure written onto the
       // company: a mandate on a building it has closed or sold is not a
       // mandate it has to meet.
-      const mandateSites = sitesWithMandate(screenSites(activeSites(complianceScopedSites), { ordinances }));
+      const complianceScreening = screenSites(activeSites(complianceScopedSites), { ordinances });
+      const mandateSites = sitesWithMandate(complianceScreening);
+      // What those mandates cost if none of them is met - the "Est. max
+      // yearly exposure" tile, summed across benchmarking, energy audits and
+      // performance standards. Off the SAME screening as the count above
+      // rather than the workbook's own, so the two figures on the company
+      // record are always about the same set of buildings.
+      const exposure = Math.round(
+        CATEGORIES.reduce((sum, c) => sum + totalPenalty(complianceScreening, c), 0),
+      );
+      // How much of the estate can actually be shopped. Either commodity
+      // counts: a site on a regulated electric utility whose gas is
+      // deregulated is still a supply conversation, and a count that took
+      // electricity alone would say there is nothing to talk about.
+      //
+      // Over every active loaded row rather than the division on screen, for
+      // the reason Number of Sites is: a division picked here must not
+      // shrink the portfolio figure written to the company.
+      const deregSites = activeSites(allRows).filter(r => (
+        classifyMarket(r, 'electric') === 'Deregulated'
+        || classifyMarket(r, 'gas') === 'Deregulated'
+      )).length;
       // What is installed across those sites — chillers, boilers, EV
       // chargers — estimated per site from its property type, the same
       // figure this page prints as "Est. equipment". It had nowhere to go
@@ -6415,6 +6436,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             // field on a stale number from a previous analysis would be
             // worse than saying nothing.
             sitesWithMandate: mandateSites,
+            // Written at zero for the same reason: a screening that found no
+            // exposure is a result, and leaving last analysis's number there
+            // would be worse than saying nothing.
+            maxYearlyExposure: exposure,
+            deregulatedSites: deregSites,
+            // Only when the workbook actually produced a headline. It follows
+            // the Savings Scenario and term chosen on the page, and a run
+            // that priced nothing must not blank a figure somebody typed.
+            ...(result.annualSavings > 0 ? { indicativeAnnualSavings: result.annualSavings } : {}),
           })).catch((e) => console.warn('Could not stamp analysis marker on prospect:', e));
         } catch (e) { console.warn('Could not stamp analysis marker on prospect:', e); }
       }
@@ -6431,10 +6461,19 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const equipmentNote = equipmentTotal > 0
         ? ` Equipment set to ${equipmentTotal.toLocaleString()} (estimated from property type).`
         : '';
+      // The three figures that used to live only inside the workbook. Named
+      // for the same reason the counts above are: a company record that
+      // changed without saying what changed is one nobody checks.
+      const usdWhole = (n) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+      const deregNote = ` Deregulated Sites set to ${deregSites.toLocaleString()}.`;
+      const exposureNote = ` Est. Max Yearly Exposure set to ${usdWhole(exposure)}.`;
+      const savingsNote = result.annualSavings > 0
+        ? ` Indicative Annual Savings set to ${usdWhole(result.annualSavings)}.`
+        : '';
       const nameMapNote = nameMapUnavailable
         ? ' The Utility Name Mapping table could not be read, so the three Utility Mapping sheets are empty - the rest of the analysis is complete.'
         : '';
-      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${equipmentNote}${mandateNote}${siteList.note}${nameMapNote}${savedOverRest ? ' (saved over a plain web request - the app\'s usual database connection is not getting through on this network.)' : ''}` });
+      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${equipmentNote}${mandateNote}${deregNote}${savingsNote}${exposureNote}${siteList.note}${nameMapNote}${savedOverRest ? ' (saved over a plain web request - the app\'s usual database connection is not getting through on this network.)' : ''}` });
       setSavePickerSearch(null);
       setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 4000);
     } catch (err) {
@@ -11037,6 +11076,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // into the rows reserved above. Uses a live formula that sums each
     // section's Total → Indicative Annual Savings cell, so the headline
     // follows the Savings Scenario toggle exactly like the tables below.
+    //
+    // Kept outside the block as well as written into it: a save to a company
+    // stamps this figure on the company record, and the alternative was a
+    // number you could only read by opening the workbook.
+    let headlineAnnualSavings = null;
     {
       ws.mergeCells(summaryBandHeaderRow, 1, summaryBandHeaderRow, SPAN);
       const sHead = ws.getCell(summaryBandHeaderRow, 1);
@@ -11050,6 +11094,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const gasTot = annualTotals['Natural Gas'];
       const refs = [elecTot?.cell, gasTot?.cell].filter(Boolean);
       const baseResult = Math.round((elecTot?.base || 0) + (gasTot?.base || 0));
+      headlineAnnualSavings = baseResult;
 
       // Label (cols 1–9) · value (col 10) · note (cols 11–SPAN).
       ws.mergeCells(summaryBandValueRow, 1, summaryBandValueRow, 9);
@@ -14320,12 +14365,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // Combined-export mode: hand the (already-added) sheets and the chart
     // descriptors back so the master export writes the merged workbook once
     // and injects the charts itself.
-    if (targetWb) return { chartInjections, fileName };
+    if (targetWb) return { chartInjections, fileName, annualSavings: headlineAnnualSavings };
     let buf = await wb.xlsx.writeBuffer();
     for (const injection of chartInjections) {
       buf = await injectLiveLineChart(buf, injection);
     }
-    if (returnBuffer) return { buffer: buf, fileName };
+    if (returnBuffer) return { buffer: buf, fileName, annualSavings: headlineAnnualSavings };
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -14673,6 +14718,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     await step('building the Indicative Savings sheets');
     const indicative = await exportIndicativeSavings({ targetWb: wb });
     const chartInjections = indicative?.chartInjections || [];
+    // The Executive Summary's headline figure, carried back out so a save
+    // to a company can write it onto the company record.
+    const annualSavings = indicative?.annualSavings ?? null;
 
     // 2. Building Compliance report + Site Detail, screened from the same
     //    site list the compliance subtabs use. Site Detail is renamed to
@@ -14804,7 +14852,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // say the utility mapping came out empty because the table couldn't be
     // read — a "Saved to <company>." over three blank sheets is the kind of
     // success nobody finds out about until they open the file.
-    if (returnBuffer) return { buffer: buf, fileName, nameMapUnavailable };
+    if (returnBuffer) return { buffer: buf, fileName, nameMapUnavailable, annualSavings };
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
