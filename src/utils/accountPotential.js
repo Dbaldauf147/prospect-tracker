@@ -23,9 +23,11 @@
 // Then the whitespace is ranked by what it is worth, because a list of a
 // hundred untouched services in alphabetical order answers nothing. The
 // ranking is by the Year 1 fee - what the account bills in the first twelve
-// months, which is the figure this page is read for - and at the LOW end of
-// a quoted range, so a service priced "nothing up to half a million" cannot
-// outrank one that is reliably worth four hundred thousand.
+// months, which is the figure this page is read for - and at the MIDDLE of
+// a quoted range, which is the deal most likely to be signed. A service
+// priced "nothing up to half a million" is worth a quarter of a million on
+// that reading, so it still does not outrank one reliably worth four
+// hundred thousand; what it no longer does is rank at nothing.
 //
 // Pure, so the decisions worth arguing about (what counts as decided, what
 // outranks what) can be read and tested without a browser.
@@ -103,10 +105,18 @@ export function decidedCounts(decided = []) {
  * are not the same prize over a contract, but they are the same first year,
  * and the first year is the one being compared here.
  *
- * At the LOW end first: a range is an admission of uncertainty, and ranking
- * on its top would put the service we know least about at the head of the
- * list. The high end breaks ties, then the term value, then the name so two
- * runs of the same account rank identically.
+ * At the MIDDLE of a quoted range: a range has no single answer to "how big
+ * is this one", and its two ends answer different questions - the low end
+ * is the floor we would still take, the high end is the ask. Ranking on the
+ * top would put the service we know least about at the head of the list;
+ * ranking on the bottom prices a service quoted "nothing up to half a
+ * million" at nothing, which is not what anybody thinks it is worth. The
+ * midpoint is the figure the table shows, so it is the figure the order has
+ * to follow, or the list would disagree with the column it is sorted on.
+ *
+ * The low end breaks a tie on the midpoint, so of two services averaging the
+ * same the surer one leads. Then the top of the range, then the term value,
+ * then the name so two runs of the same account rank identically.
  *
  * A service the rate card cannot price sorts to the bottom rather than to
  * zero-and-therefore-nowhere: it is not worth nothing, it is unknown, and
@@ -114,9 +124,13 @@ export function decidedCounts(decided = []) {
  */
 export function rankByPotential(lines = []) {
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  // The middle of the line's own range. A line with no high end is not half
+  // a line: it is worth what it says, which is both ends of it.
+  const mid = (l) => (num(l?.fee) + (Number.isFinite(Number(l?.feeHigh)) ? num(l.feeHigh) : num(l?.fee))) / 2;
   return [...lines].sort((a, b) => {
     if (!!a.priced !== !!b.priced) return a.priced ? -1 : 1;
-    return num(b.fee) - num(a.fee)
+    return mid(b) - mid(a)
+      || num(b.fee) - num(a.fee)
       || num(b.feeHigh) - num(a.feeHigh)
       || num(b.value) - num(a.value)
       || String(a.name).localeCompare(String(b.name));

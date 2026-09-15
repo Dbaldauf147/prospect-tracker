@@ -522,6 +522,26 @@ export function formatMoneyRange(low, high) {
   return `${formatMoney(Math.min(lo, hi))} – ${formatMoney(Math.max(lo, hi))}`;
 }
 
+// The middle of a range, as a number: what the two ends average out to.
+//
+// A range has no single answer to "how big is this one", and the two ends
+// answer different questions - the low end is the floor we would still
+// take, the high end is the ask. Comparing services on either alone
+// compares a floor against a floor, or a hope against a hope, and neither
+// is the deal most likely to be signed. The midpoint is, so it is what the
+// table ranks and sorts on.
+//
+// One end missing is not half a number: a figure quoted flat is worth what
+// it says, so a null high reads as "no range" rather than as zero.
+export function avgMoney(low, high) {
+  const lo = parseMoney(low);
+  const hi = parseMoney(high);
+  if (lo === null && hi === null) return null;
+  if (lo === null) return hi;
+  if (hi === null) return lo;
+  return (lo + hi) / 2;
+}
+
 // ---- Setup fees ----------------------------------------------------------
 //
 // The one-time cost of standing a service up, kept apart from the recurring

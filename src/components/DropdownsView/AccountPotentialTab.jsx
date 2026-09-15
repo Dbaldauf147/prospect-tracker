@@ -11,9 +11,11 @@ import { clientCounts } from '../../utils/clientDealSizing';
 import { buildOppStagesByClient } from '../../utils/serviceCoverage';
 import { findProspectByCompany } from '../../utils/companyLookup';
 import {
+  avgMoney,
   basisFor,
   estimateScope,
   feeBasisLabel,
+  formatMoney,
   formatMoneyRange,
   formatRate,
   getServicePricing,
@@ -71,7 +73,15 @@ const DEAL_TABLE_COLUMNS = [
   // service is one more than a reader can hold: the term figure is bigger,
   // so it is the one that gets quoted, and this page is asked about year
   // one.
-  { key: 'fee',          label: 'Estimated Year 1 Fee', width: 210 },
+  //
+  // One figure rather than the range behind it, and the middle of that
+  // range: this column is read to find the biggest thing left to sell, and
+  // a column of ranges makes that a comparison the reader has to do in
+  // their head - "$6 to $30 on 5,404" against "$35,000 to $50,000" is not a
+  // question anybody should answer by eye. The range is a hover away, and
+  // the header says the number is an average so it is never mistaken for a
+  // quote.
+  { key: 'fee',          label: 'Est. Year 1 Fee (avg)', width: 220 },
 ];
 
 // Dropdowns › Deal Pricing. One deal at a time, priced off the rate card the
@@ -531,6 +541,11 @@ export function AccountPotentialTab({
         // nobody can account for never reaches the page.
         fee: bundle?.totals.priced ? bundle.totals.fee : null,
         feeHigh: bundle?.totals.priced ? bundle.totals.feeHigh : null,
+        // The middle of that range, which is what the money column shows
+        // and what the table sorts and ranks on. Held on the row rather
+        // than worked out in the cell so the sort, the export and the
+        // figure on screen cannot come out as three different numbers.
+        _feeAvg: bundle?.totals.priced ? avgMoney(bundle.totals.fee, bundle.totals.feeHigh) : null,
         // The lead's own share of that, for the first line of the
         // breakdown.
         _ownFee: est?.priced ? est.fee : null,
@@ -564,7 +579,21 @@ export function AccountPotentialTab({
   // adds up to the one above it answers it at a glance where prose does
   // not.
   const renderBundle = useCallback((row) => {
-    const share = (fee) => (row.fee > 0 && fee > 0 ? `${Math.round((fee / row.fee) * 100)}%` : '');
+    const share = (fee) => (row._feeAvg > 0 && fee > 0 ? `${Math.round((fee / row._feeAvg) * 100)}%` : '');
+    // The same midpoint the row above shows, line by line. The two have to
+    // be the same kind of figure or the breakdown would not foot to the
+    // total it sits under - and they do foot: the middle of a sum of ranges
+    // is the sum of their middles. The range each one came from is on the
+    // cell.
+    const money = (fee, feeHigh) => {
+      const range = formatMoneyRange(fee, feeHigh);
+      const quoted = feeHigh !== null && feeHigh !== fee;
+      return (
+        <span title={quoted ? `The middle of ${range}, which is what the rate card quotes.` : undefined}>
+          {formatMoney(avgMoney(fee, feeHigh))}
+        </span>
+      );
+    };
     const line = (name, fee, feeHigh, open, isLead) => (
       <tr key={name} className={isLead ? styles.bundleLeadRow : undefined}>
         <td className={styles.bundleCellName}>
@@ -575,16 +604,16 @@ export function AccountPotentialTab({
         <td className={styles.bundleCellMoney}>
           {open
             ? (fee === null ? <span className={styles.serviceMutedCell}>no rate on the card</span>
-              : formatMoneyRange(fee, feeHigh))
+              : money(fee, feeHigh))
             : <span className={styles.serviceMutedCell}>already on the card here</span>}
         </td>
-        <td className={styles.bundleCellShare}>{open && fee !== null ? share(fee) : ''}</td>
+        <td className={styles.bundleCellShare}>{open && fee !== null ? share(avgMoney(fee, feeHigh)) : ''}</td>
       </tr>
     );
     return (
       <div className={styles.bundlePanel}>
         <div className={styles.bundleTitle}>
-          {`Sold with ${row.name}. Year 1 fee, and each service's share of it.`}
+          {`Sold with ${row.name}. Year 1 fee, the middle of each service's range, and its share of the total.`}
         </div>
         <table className={styles.bundleTable}>
           <tbody>
@@ -599,7 +628,7 @@ export function AccountPotentialTab({
             <tr className={styles.bundleTotalRow}>
               <td className={styles.bundleCellName}>Estimated Year 1 fee</td>
               <td className={styles.bundleCellMoney}>
-                {row.fee === null ? '-' : formatMoneyRange(row.fee, row.feeHigh)}
+                {row.fee === null ? '-' : money(row.fee, row.feeHigh)}
               </td>
               <td className={styles.bundleCellShare} />
             </tr>
@@ -784,23 +813,35 @@ export function AccountPotentialTab({
               </span>
             )),
         };
+      // The midpoint of the Year 1 range, so the column can be read down
+      // and sorted as one number. Both ends are still on the cell, because
+      // an average nobody can take apart is an average nobody can quote.
       case 'fee':
         return {
           ...base,
-          getSortValue: (row) => row.fee,
-          render: (row) => (row.fee === null
-            ? (
-              <span
-                className={styles.serviceMutedCell}
-                title={`Not priced yet${row._note ? ` - ${row._note.toLowerCase()}` : ''}. Set a basis and a rate on the Services Pricing subtab.`}
-              >-</span>
-            )
-            : (
+          getSortValue: (row) => row._feeAvg,
+          // The number, not the formatted string: a spreadsheet given
+          // "$97,272" cannot add it up.
+          exportValue: (row) => (row._feeAvg === null ? '' : row._feeAvg),
+          render: (row) => {
+            if (row.fee === null) {
+              return (
+                <span
+                  className={styles.serviceMutedCell}
+                  title={`Not priced yet${row._note ? ` - ${row._note.toLowerCase()}` : ''}. Set a basis and a rate on the Services Pricing subtab.`}
+                >-</span>
+              );
+            }
+            const range = formatMoneyRange(row.fee, row.feeHigh);
+            const quoted = row.feeHigh !== null && row.feeHigh !== row.fee;
+            return (
               <span
                 className={row._scoped ? styles.pricingEstScoped : undefined}
-                title={row._note || 'Worked out from the rate card against the counts above'}
-              >{formatMoneyRange(row.fee, row.feeHigh)}</span>
-            )),
+                title={(quoted ? `The middle of ${range}, which is what the rate card quotes. ` : '')
+                  + (row._note || 'Worked out from the rate card against the counts above')}
+              >{formatMoney(row._feeAvg)}</span>
+            );
+          },
         };
       default:
         return { ...base, render: (row) => (row[col.key] || <span className={styles.serviceMutedCell}>-</span>) };
