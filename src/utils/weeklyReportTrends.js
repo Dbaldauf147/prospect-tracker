@@ -21,6 +21,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // without the bars becoming stripes, and it is enough to see a direction.
 export const TREND_WEEKS = 5;
 export const TREND_MONTHS = 5;
+// Coverage looks back further than the two bar series do, because it is
+// drawn as a line and a line wants a shape rather than five readings. Half
+// a year is what the Progress tab's own charts show, and at the size the
+// email draws it 26 points still resolve into weekly steps.
+export const COVERAGE_WEEKS = 26;
 
 // The [start, end) ms window for the calendar month containing `ms`.
 export function monthBounds(ms) {
@@ -144,7 +149,7 @@ export function newOppsByMonth({ records, refMs = Date.now(), months = TREND_MON
 // no email recording is: the Progress tab writes a snapshot when it is
 // opened, so a week nobody opened it has no reading, and drawing that as
 // 0% would put a cliff in the line that no account ever fell off.
-export function coverageByWeek({ progressWeeks = [], refMs = Date.now(), weeks = TREND_WEEKS } = {}) {
+export function coverageByWeek({ progressWeeks = [], refMs = Date.now(), weeks = COVERAGE_WEEKS } = {}) {
   const byWeek = new Map();
   for (const w of (Array.isArray(progressWeeks) ? progressWeeks : [])) {
     if (w && typeof w === 'object' && typeof w.week === 'string') byWeek.set(w.week, w);

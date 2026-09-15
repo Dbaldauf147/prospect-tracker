@@ -16,7 +16,7 @@
 // These assertions are what stands between that and a Monday-morning send.
 
 import { renderWeeklyReportHtml } from '../api/_lib/weeklyReportEmailHtml.js';
-import { funnelAttachment } from '../api/_lib/weeklyReportEmail.js';
+import { funnelAttachment, coverageAttachments } from '../api/_lib/weeklyReportEmail.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -219,6 +219,89 @@ check('the coverage bars are droppable on a narrow client',
   /\.cbar \{ display:none/.test(html) && /<td class="cbar"/.test(html), true);
 check('the card’s one-line summary rides under the bars',
   html.includes('Tier 1 +12 pts to 100%, Tier 2 +26 pts to 79% since Aug 3.'), true);
+
+// With the chart drawn, the bars go and the card carries the picture plus
+// where each tier stands - the same trade the funnel makes with its stage
+// bars. The bars above are what a reader whose client blocked the image
+// gets, which is why both paths are pinned.
+{
+  const drawn = {
+    ...snapshot,
+    coverage: {
+      ...snapshot.coverage,
+      charts: snapshot.coverage.charts.map(c => ({
+        ...c,
+        image: { src: PNG, width: 360, height: 132, alt: `${c.title}: Tier 1 and Tier 2 by week` },
+      })),
+    },
+  };
+  const html2 = renderWeeklyReportHtml(drawn, {
+    coverageImageSrcs: { contactPct: 'cid:cov-contacts@x', dmPct: 'cid:cov-dm@x' },
+  });
+
+  check('a drawn chart is an img pointing at its own attachment',
+    /<img src="cid:cov-contacts@x" width="360" height="132"/.test(html2), true);
+  check('sized in CSS too, so it shrinks to a phone instead of overflowing',
+    /width:100%;max-width:360px;height:auto/.test(html2), true);
+  check('it carries the chart’s own screen-reader label',
+    html2.includes('alt="% of Accounts with HubSpot Contacts: Tier 1 and Tier 2 by week"'), true);
+  check('nothing is loaded over the network', /<img src="https?:/.test(html2), false);
+  // Pairing is by chart id, not by position: a card showing the other
+  // chart's picture would be wrong in a way nobody would spot.
+  check('each card gets the picture drawn for it',
+    html2.indexOf('cid:cov-contacts@x') < html2.indexOf('cid:cov-dm@x'), true);
+  check('a chart with no src of its own keeps its bars',
+    /<td width="\d+" height="9" bgcolor="#DC2626"/.test(
+      renderWeeklyReportHtml(drawn, { coverageImageSrcs: { dmPct: 'cid:cov-dm@x' } }),
+    ), true);
+
+  // The bars said the same series twice once the chart is there, so they
+  // give way to where each tier stands now.
+  check('the drawn card drops the weekly bars',
+    /<td width="\d+" height="9" bgcolor="#3B82F6"/.test(html2), false);
+  check('and states where each tier stands, keyed by its swatch',
+    /bgcolor="#DC2626"[^>]*>&nbsp;<\/td>\s*<td[^>]*>Tier 1<\/td>\s*<td[^>]*>100%<\/td>/.test(html2), true);
+  check('the latest recorded week is the figure, not the last week in the series',
+    html2.includes('>79%</td>'), true);
+  // The heading counts what is on the page. Drawn, that is the whole
+  // series; fallen back to bars, it is the five weeks the table shows, and
+  // a heading claiming half a year over five rows would be the report
+  // miscounting itself.
+  const long = (n, withImage) => ({
+    ...snapshot,
+    coverage: {
+      weeks: n,
+      charts: [{
+        id: 'contactPct',
+        title: '% of Accounts with HubSpot Contacts',
+        points: Array.from({ length: n }, (_, i) => ({ key: `w${i}`, label: `Wk ${i}`, t1: 90, t2: 70 })),
+        note: '',
+        image: withImage ? { src: PNG, width: 360, height: 132, alt: 'a' } : null,
+      }],
+    },
+  });
+  check('the heading counts the whole series where the chart is drawn',
+    /class="hnote"[^>]*>Last 26 weeks, from the Progress tab/.test(
+      renderWeeklyReportHtml(long(26, true), { coverageImageSrcs: { contactPct: 'cid:x@y' } }),
+    ), true);
+  check('and only the weeks the bars show where it is not',
+    /class="hnote"[^>]*>Last 5 weeks, from the Progress tab/.test(renderWeeklyReportHtml(long(26, false), {})), true);
+  check('the bars themselves are the recent end of the series',
+    renderWeeklyReportHtml(long(26, false), {}).includes('Wk 25')
+    && !renderWeeklyReportHtml(long(26, false), {}).includes('Wk 3<'), true);
+
+  // The pictures travel as attachments, for the same reason the funnel
+  // does: a remote image is blocked until the reader asks for it.
+  const files = coverageAttachments(drawn);
+  check('one attachment per drawn chart', files.length, 2);
+  check('each is a PNG, decoded rather than left as a data URL',
+    files.every(f => f.contentType === 'image/png' && Buffer.isBuffer(f.content)), true);
+  check('each cid is derived from the chart id the markup looks it up by',
+    files.map(f => f.cid).join(' '),
+    'weekly-report-coverage-contactPct@prospect-tracker weekly-report-coverage-dmPct@prospect-tracker');
+  check('a chart with no picture is not attached',
+    coverageAttachments(snapshot).length, 0);
+}
 
 // A snapshot with no coverage recorded says nothing rather than drawing an
 // empty pair of cards: what is missing is the recording, not the coverage.

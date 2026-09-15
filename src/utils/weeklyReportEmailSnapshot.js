@@ -161,7 +161,21 @@ export function emailSnapshotPayload({
     // via utils/weeklyReportTrends (coverageByWeek), from the same
     // progressHistory weeks the KPI cards read.
     coverage: coverage?.charts?.length
-      ? { weeks: coverage.weeks || coverage.charts[0].points.length, charts: coverage.charts }
+      ? {
+        weeks: coverage.weeks || coverage.charts[0].points.length,
+        // Each chart travels as its points AND as the picture drawn from
+        // them, because a mail client renders neither an SVG nor the line
+        // the tab draws. The points are not redundant: a client that
+        // blocks the image still gets the series, the way the funnel's
+        // stage table stands in for its chart.
+        charts: coverage.charts.map(c => ({
+          id: c.id,
+          title: c.title,
+          points: c.points,
+          note: c.note,
+          image: c.image || null,
+        })),
+      }
       : null,
     oppChanges: {
       closed: list(oc.closed, x => `${who(x)} → ${x.stage}${x.amount ? ` (${x.amount})` : ''}`),

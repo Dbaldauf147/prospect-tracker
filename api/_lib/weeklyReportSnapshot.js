@@ -29,6 +29,11 @@ export function trimList(items, max = 60, len = 300) {
 }
 
 const str = (v, len) => String(v ?? '').slice(0, len);
+
+// Both pictures the report can carry are checked against this before they
+// are stored. The string is written into an <img src> and decoded into an
+// email attachment, and only base64 PNG may take either path.
+const PNG_DATA_URL = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/;
 const strOrNull = (v, len) => (v ? String(v).slice(0, len) : null);
 
 // The funnel travels as text the tab already formatted, not as raw figures:
@@ -134,9 +139,34 @@ function closeRateTrendDoc(t) {
 // fact from a week where no account had a contact. clampInt would turn the
 // first into the second and draw a coverage collapse that never happened.
 export const MAX_COVERAGE_CHARTS = 4;
-export const MAX_COVERAGE_POINTS = 12;
+// Half a year of weeks, with room to spare. The chart is drawn from these
+// points, so a cap below the window the series is built over would store a
+// shorter chart than the one the picture shows.
+export const MAX_COVERAGE_POINTS = 40;
 
 const covPct = (v) => (v == null ? null : clampInt(v, 0, 100, 0));
+
+// A coverage chart is drawn from a handful of flat colours and stores as
+// an indexed PNG, so it runs to a few kilobytes where the funnel's
+// rasterised chart runs to hundreds. The cap is sized for that: two of
+// these are written into the snapshot on every visit to the tab, and
+// Firestore caps the document at ~1 MB.
+export const MAX_COVERAGE_IMAGE_CHARS = 120_000;
+
+function coverageImageDoc(v) {
+  if (!v || typeof v !== 'object') return null;
+  const src = String(v.src || '');
+  if (src.length > MAX_COVERAGE_IMAGE_CHARS || !PNG_DATA_URL.test(src)) return null;
+  const w = Number(v.width);
+  const h = Number(v.height);
+  if (!(w >= 1) || !(h >= 1)) return null;
+  return {
+    src,
+    width: clampInt(w, 1, 2000, 0),
+    height: clampInt(h, 1, 2000, 0),
+    alt: str(v.alt, 300) || 'Account coverage by week',
+  };
+}
 
 function coverageDoc(c) {
   if (!c || typeof c !== 'object') return null;
@@ -146,7 +176,10 @@ function coverageDoc(c) {
       id: str(ch?.id, 40),
       title: str(ch?.title, 120),
       points: (Array.isArray(ch?.points) ? ch.points : [])
-        .slice(0, MAX_COVERAGE_POINTS)
+        // The RECENT end, not the oldest: a series trimmed from the front
+        // would leave the card standing on a figure from months ago while
+        // its chart and its summary line both spoke about this week.
+        .slice(-MAX_COVERAGE_POINTS)
         .map(p => ({
           key: str(p?.key, 10),
           label: str(p?.label, 16),
@@ -155,6 +188,12 @@ function coverageDoc(c) {
         }))
         .filter(p => p.label),
       note: str(ch?.note, 200),
+      // The chart as a picture, through the same checks the funnel image
+      // goes through: this string is written into an <img src> and decoded
+      // into an email attachment, and only base64 PNG may take either
+      // path. Dropped rather than trimmed when it fails one - the points
+      // above are still a chart, just not a drawn one.
+      image: coverageImageDoc(ch?.image),
     }))
     .filter(ch => ch.title && ch.points.length);
   if (!charts.length) return null;
@@ -171,7 +210,6 @@ function coverageDoc(c) {
 // same figures under it either way. The pattern check is the other half:
 // this string is written into an <img src> and decoded into an email
 // attachment, and only base64 PNG may take either path.
-const PNG_DATA_URL = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/;
 export const MAX_FUNNEL_IMAGE_CHARS = 400_000;
 
 function funnelImageDoc(v) {

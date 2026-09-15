@@ -30,20 +30,46 @@ export {
 // without asking. (Same arrangement as the oil-price digest's chart.)
 const FUNNEL_CID = 'weekly-report-funnel@prospect-tracker';
 
+const PNG_PREFIX = 'data:image/png;base64,';
+
+const pngBytes = (src) => {
+  const s = String(src || '');
+  return s.startsWith(PNG_PREFIX) ? Buffer.from(s.slice(PNG_PREFIX.length), 'base64') : null;
+};
+
 // The snapshot stores the PNG as a data URL, which is what the tab's
 // preview renders directly; a sent message needs the bytes instead.
 export function funnelAttachment(snapshot) {
-  const src = String(snapshot?.funnelImage?.src || '');
-  const base64 = src.startsWith('data:image/png;base64,')
-    ? src.slice('data:image/png;base64,'.length)
-    : '';
-  if (!base64) return null;
+  const content = pngBytes(snapshot?.funnelImage?.src);
+  if (!content) return null;
   return {
     filename: 'pipeline-funnel.png',
-    content: Buffer.from(base64, 'base64'),
+    content,
     cid: FUNNEL_CID,
     contentType: 'image/png',
   };
+}
+
+// The same arrangement for the coverage charts, one attachment each. Their
+// ids come from the Progress tab (`contactPct`, `dmPct`) and are what the
+// markup looks each picture up by, so a card and its chart cannot be
+// paired up wrongly by position.
+export function coverageAttachments(snapshot) {
+  const charts = Array.isArray(snapshot?.coverage?.charts) ? snapshot.coverage.charts : [];
+  const out = [];
+  for (const chart of charts) {
+    const content = pngBytes(chart?.image?.src);
+    const id = String(chart?.id || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!content || !id) continue;
+    out.push({
+      id,
+      cid: `weekly-report-coverage-${id}@prospect-tracker`,
+      filename: `account-coverage-${id}.png`,
+      content,
+      contentType: 'image/png',
+    });
+  }
+  return out;
 }
 
 // A stale send is marked in the subject as well as in the banner. The
@@ -56,16 +82,25 @@ export const staleSubject = (subject, fresh) => (
 
 export async function sendWeeklyReportEmail({ to, subject, message, snapshot, replyTo }) {
   const attachment = funnelAttachment(snapshot);
+  const coverage = coverageAttachments(snapshot);
+  const coverageImageSrcs = Object.fromEntries(coverage.map(a => [a.id, `cid:${a.cid}`]));
   const html = renderWeeklyReportHtml(snapshot, {
     message,
     funnelImageSrc: attachment ? `cid:${FUNNEL_CID}` : '',
+    coverageImageSrcs,
   });
   const label = snapshot?.periodLabel ? ` - ${snapshot.periodLabel}` : '';
+  // `id` is this module's own bookkeeping for pairing a picture with its
+  // card; the mailer wants the file, so it is left behind here.
+  const files = [
+    ...(attachment ? [attachment] : []),
+    ...coverage.map(a => ({ filename: a.filename, content: a.content, cid: a.cid, contentType: a.contentType })),
+  ];
   return sendEmail({
     to,
     subject: staleSubject(String(subject || `Weekly Report${label}`), freshnessNote(snapshot)),
     html,
-    attachments: attachment ? [attachment] : undefined,
+    attachments: files.length ? files : undefined,
     replyTo,
   });
 }
