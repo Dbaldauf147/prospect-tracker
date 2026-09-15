@@ -11,7 +11,7 @@
 // a user's click and the defensive read that has to open a tree saved by an
 // older version.
 import {
-  addBranch, addNode, deleteNode, detailBlocks, makeId, moveBranch, normalizeTree,
+  addBranch, addNextStep, addNode, deleteNode, detailBlocks, makeId, moveBranch, normalizeTree,
   orphanIds, outlineRows, pathFromRoot, removeBranch, setRoot, treeStats,
   updateBranch, updateNode, childIds, reachableIds,
 } from '../src/utils/decisionTree.js';
@@ -173,6 +173,59 @@ eq(huge.nodes.a.detail.length, 4000, 'so is the detail');
 
 eq(makeId('b', new Set(['b', 'b-1'])), 'b-2', 'ids step past the ones already taken');
 eq(makeId('', new Set()), 'n', 'an empty prefix still produces a usable id');
+
+// ── adding the next step from the diagram ───────────────────────────────
+//
+// The + on a box asks two things and no more: what kind of step, and what
+// to call it. Everything else about the new step has to be right without
+// being asked, because the point of the button is not having to open the
+// editor to get a box on the canvas.
+
+const oneBox = normalizeTree({ rootId: 'a', nodes: { a: { id: 'a', title: 'Start', branches: [] } } });
+
+// A decision point you cannot answer is not a decision point.
+const withGate = addNextStep(oneBox, { fromId: 'a', kind: 'question', title: 'Forced?' });
+eq(withGate.tree.nodes[withGate.id].kind, 'question', 'a decision point is a question');
+eq(withGate.tree.nodes[withGate.id].branches.map(b => b.label), ['Yes', 'No'],
+  'and arrives with its two ways out');
+eq(withGate.tree.nodes[withGate.id].branches.map(b => b.to), [null, null],
+  'both pointing nowhere, for the steps that have not been added yet');
+eq(withGate.tree.nodes.a.branches.map(b => b.to), [withGate.id],
+  'the step it was added after now reaches it');
+
+// Free text is the other half of the choice: a step that just says what
+// happens, with nothing to answer.
+const withText = addNextStep(oneBox, { fromId: 'a', kind: 'outcome', title: 'Fix the leak' });
+eq(withText.tree.nodes[withText.id].kind, 'outcome', 'free text is an outcome');
+eq(withText.tree.nodes[withText.id].branches, [], 'and branches nowhere until somebody adds one');
+eq(withText.tree.nodes[withText.id].title, 'Fix the leak', 'the title asked for is the title kept');
+
+// Added onto a branch that was waiting: the gate's Yes finally goes
+// somewhere, and no second Yes is created alongside it.
+const gate = withGate.tree;
+const yesId = gate.nodes[withGate.id].branches[0].id;
+const filled = addNextStep(gate, { fromId: withGate.id, branchId: yesId, kind: 'outcome', title: 'Do it' });
+eq(filled.tree.nodes[withGate.id].branches.map(b => [b.label, b.to]),
+  [['Yes', filled.id], ['No', null]], 'an existing branch is pointed at the new step rather than duplicated');
+
+// Added with no branch to hang off: one is made, and it carries the label
+// the user typed so the arrow reads.
+const labelled = addNextStep(oneBox, { fromId: 'a', branchLabel: 'If funded', kind: 'outcome', title: 'Scope it' });
+eq(labelled.tree.nodes.a.branches.map(b => [b.label, b.to]), [['If funded', labelled.id]],
+  'a new branch is made and labelled');
+eq(addNextStep(oneBox, { fromId: 'a', kind: 'outcome' }).tree.nodes.a.branches[0].label, '',
+  'no label asked for is an unlabelled arrow, not a made-up one');
+
+// A branch id from another step (or one since deleted) must not leave the
+// new step floating where nothing reaches it.
+const bogus = addNextStep(oneBox, { fromId: 'a', branchId: 'not-a-branch', kind: 'outcome', title: 'X' });
+eq(bogus.tree.nodes.a.branches.map(b => b.to), [bogus.id],
+  'an unknown branch id still leaves the new step reachable');
+eq(orphanIds(bogus.tree), [], 'so nothing is stranded');
+
+// Every step it makes has to survive a save and a reload unchanged.
+eq(JSON.stringify(normalizeTree(withGate.tree)), JSON.stringify(withGate.tree),
+  'what it builds reads back identically');
 
 // ── the detail text ─────────────────────────────────────────────────────
 
