@@ -418,6 +418,17 @@ export function DataTable({
   // classic checkbox show/hide list. Visibility still drives what
   // renders; this is purely a friendlier remove/restore affordance.
   removableColumns = false,
+  // Vertical lines between the columns as well as the row lines every
+  // table has. Off by default: on a table of six columns the row lines
+  // alone are enough and the verticals are clutter. On a wide one - a
+  // contact roster seventeen columns across, read left to right across a
+  // row of phone numbers and cities - they are what keeps a value under
+  // its own heading.
+  gridLines = false,
+  // The toolbar's own Export Excel button. Off for a table whose page
+  // already carries an export of its own, so the two don't sit a few
+  // pixels apart offering the same file.
+  showExport = true,
 }) {
   const rawRemotePrefs = settings?.tablePrefs?.[tableId];
   const remotePrefs = useMemo(() => readRemoteTablePrefs(settings, tableId), [rawRemotePrefs]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -888,6 +899,18 @@ export function DataTable({
     setScrollTop(e.target.scrollTop);
   }
 
+  // ...and the other way round, which only one thing does: clicking into a
+  // column filter far off to the right. The browser scrolls the focused
+  // input into view, and the input lives in the header strip - so the
+  // header pans and the rows underneath do not, leaving every value sitting
+  // under somebody else's heading until the next body scroll puts them
+  // back. Guarded against the loop the pair would otherwise make: each side
+  // only writes the other when it is actually out of step.
+  function handleHeaderScroll(e) {
+    const body = bodyRef.current;
+    if (body && body.scrollLeft !== e.target.scrollLeft) body.scrollLeft = e.target.scrollLeft;
+  }
+
   useEffect(() => {
     if (!bodyRef.current) return;
     const el = bodyRef.current;
@@ -1076,7 +1099,7 @@ export function DataTable({
   }, [colWidths, columns, tableId, settings, updateSettings]);
 
   return (
-    <div className={styles.outerWrap}>
+    <div className={gridLines ? `${styles.outerWrap} ${styles.gridLines}` : styles.outerWrap}>
       <div className={styles.toolbar}>
         <ColumnToggle
           columns={orderedColumns}
@@ -1097,6 +1120,7 @@ export function DataTable({
         <button className={styles.resetBtn} onClick={() => { setColWidths({}); persistPrefs(tableId, settings, updateSettings, { widths: {} }); }}>
           Reset widths
         </button>
+        {showExport && (
         <button className={styles.exportBtn} onClick={async () => {
           if (typeof onExport === 'function') {
             onExport({
@@ -1164,6 +1188,7 @@ export function DataTable({
         }}>
           Export Excel
         </button>
+        )}
         {(toolbarActions || []).map(action => (
           <button
             key={action.key || action.label}
@@ -1194,7 +1219,7 @@ export function DataTable({
           the rows - users need to see which columns exist (and clear
           their filter) instead of staring at a blank panel. */}
       <>
-        <div className={styles.headerWrap} ref={headerRef}>
+        <div className={styles.headerWrap} ref={headerRef} onScroll={handleHeaderScroll}>
             <table className={styles.table} style={{ tableLayout: 'fixed', width: visibleColumns.reduce((s, c) => s + getWidth(c), 0) }}>
               <colgroup>
                 {visibleColumns.map(col => (
