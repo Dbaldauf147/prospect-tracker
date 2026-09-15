@@ -52,6 +52,7 @@ import { clientCounts } from '../../utils/clientDealSizing';
 import { formatMoneyRange, getServicePricing, resolvePricingBases } from '../../utils/servicePricing';
 import { classifyHqCountry, hqRegionMissing, HQ_REGION_OPTIONS, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
 import { estimateEmailDomainCandidates } from '../../utils/emailDomainPattern';
+import { emailSuggestions } from '../../utils/emailSuggestions';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 import { collectAutoNa, isSoldStatus, autoNaTitle } from '../../utils/serviceAutoNa';
 import {
@@ -2069,34 +2070,50 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                 style={{ padding: '0.3rem 0.55rem', border: '1px solid #BFDBFE', borderRadius: 4, background: emailCopied ? '#DCFCE7' : '#EFF6FF', color: emailCopied ? '#166534' : '#1E40AF', fontSize: '0.68rem', fontWeight: 600, cursor: f.email ? 'pointer' : 'not-allowed', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
               >{emailCopied ? 'Copied!' : 'Copy'}</button>
             </div>
+            {/* Addresses to try, with the likeliest one starred. Four chips
+                in a row all read as equally likely, so picking one meant
+                guessing - and the app already knows better: the company's
+                Email Domains field names the convention, and behind that
+                sits everybody already at the domain. See emailSuggestions
+                for what the star is standing on; the chip says which in its
+                tooltip, because a star meaning "on record" and a star
+                meaning "usually" have to be tellable apart by whoever is
+                about to send the email. */}
             {(() => {
               const isNewContact = !contact.id && !contact.vid;
               if (!isNewContact) return null;
-              const first = (f.firstname || '').toLowerCase().trim().replace(/[^a-z]/g, '');
-              const last = (f.lastname || '').toLowerCase().trim().replace(/[^a-z]/g, '');
-              if (!first && !last) return null;
-              const domains = (emailDomains || []).filter(Boolean);
-              if (domains.length === 0) return null;
-              const suggestions = [];
-              for (const d of domains) {
-                let domain = d.replace(/^@/, '').trim();
-                // If a full email was provided, extract only the domain part
-                if (domain.includes('@')) domain = domain.split('@').pop();
-                if (!domain || !domain.includes('.')) continue;
-                if (first && last) {
-                  suggestions.push(`${first}.${last}@${domain}`);
-                  suggestions.push(`${first}${last}@${domain}`);
-                  suggestions.push(`${first[0]}${last}@${domain}`);
-                }
-                if (first) suggestions.push(`${first}@${domain}`);
-              }
-              const unique = [...new Set(suggestions)];
-              if (unique.length === 0) return null;
+              const rows = emailSuggestions({
+                firstname: f.firstname,
+                lastname: f.lastname,
+                emailDomains,
+                contacts: companyContacts,
+              });
+              if (rows.length === 0) return null;
               return (
                 <div style={{ marginTop: '0.25rem', display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
                   <span style={{ fontSize: '0.65rem', color: '#64748B', alignSelf: 'center' }}>Suggest:</span>
-                  {unique.map(s => (
-                    <button key={s} type="button" onClick={() => set('email', s)} style={{ fontSize: '0.68rem', padding: '0.15rem 0.45rem', border: '1px solid #BFDBFE', borderRadius: '999px', background: '#EFF6FF', color: '#1E40AF', cursor: 'pointer', fontFamily: 'inherit' }}>{s}</button>
+                  {rows.map(row => (
+                    <button
+                      key={row.email}
+                      type="button"
+                      onClick={() => set('email', row.email)}
+                      title={row.primary ? `Most likely. ${row.why}` : `Use ${row.email}`}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
+                        fontSize: '0.68rem', padding: '0.15rem 0.45rem', borderRadius: '999px',
+                        cursor: 'pointer', fontFamily: 'inherit',
+                        // Gold and a star for the one to try first. The rest
+                        // keep the blue they have always been, so the
+                        // difference is the point rather than the colour.
+                        border: row.primary ? '1px solid #D97706' : '1px solid #BFDBFE',
+                        background: row.primary ? '#FFFBEB' : '#EFF6FF',
+                        color: row.primary ? '#92400E' : '#1E40AF',
+                        fontWeight: row.primary ? 700 : 400,
+                      }}
+                    >
+                      {row.primary && <span aria-hidden="true">{'\u2605'}</span>}
+                      {row.email}
+                    </button>
                   ))}
                 </div>
               );
