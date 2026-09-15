@@ -14,7 +14,6 @@ import {
   basisFor,
   estimateScope,
   feeBasisLabel,
-  formatMoney,
   formatMoneyRange,
   formatRate,
   getServicePricing,
@@ -408,8 +407,8 @@ export function AccountPotentialTab({
   const hasSetup = totals.setup > 0 || totals.setupHigh > 0;
 
   // The ticked scope as a breakdown: what each service bills in year one
-  // and its share of the deal. Read off the same estimate the bar's totals
-  // come from, so the panel and the headline can never disagree.
+  // and its share of the deal. Since the estimator bar stopped carrying its
+  // own totals, the panel this feeds is where the ticked deal is added up.
   const scopeLines = useMemo(() => scopeYear1Lines(totals), [totals]);
 
   // The same lines with their working still attached, for the panel that
@@ -886,60 +885,19 @@ export function AccountPotentialTab({
             >Clear scope</button>
           )}
         </div>
-
-        <div className={styles.pricingTotals}>
-          <div className={styles.pricingTotal}>
-            <span className={styles.pricingTotalLabel}>Services in scope</span>
-            <span className={styles.pricingTotalValue}>{inScope.size}</span>
-          </div>
-          <div className={styles.pricingTotal}>
-            <span className={styles.pricingTotalLabel}>Recurring / year</span>
-            <span className={styles.pricingTotalValue}>{formatMoneyRange(totals.recurringAnnual, totals.recurringAnnualHigh) || '$0'}</span>
-          </div>
-          {/* One-time money: the projects, plus every setup fee in the
-              scope. The label names the setup half only when there is one,
-              so a scope without any reads exactly as it did before setup
-              fees existed — and one with them can't pass a $8,000
-              implementation charge off as project work. A setup fee quoted
-              as a range says so in the tooltip rather than reporting its
-              low end as the figure. */}
-          <div className={styles.pricingTotal}>
-            <span className={styles.pricingTotalLabel}>
-              {hasSetup ? 'One-off + setup' : 'One-off projects'}
-            </span>
-            <span
-              className={styles.pricingTotalValue}
-              title={hasSetup
-                ? `Billed once: ${formatMoneyRange(totals.setup, totals.setupHigh)} of setup fees${totals.oneTime > totals.setup ? ` and ${formatMoney(totals.oneTime - totals.setup)} of one-off project work` : ''}.`
-                : undefined}
-            >{formatMoneyRange(totals.oneTime, totals.oneTimeHigh) || '$0'}</span>
-          </div>
-          {/* Year one, not the term: the recurring services at one year each
-              plus the projects in full. Ties out to the Estimated Year 1 Fee
-              column, which is the point — the headline is the sum of what
-              each row says. */}
-          <div className={styles.pricingTotalMain}>
-            <span className={styles.pricingTotalLabel}>Estimated Year 1 deal size</span>
-            <span
-              className={styles.pricingTotalValueMain}
-              title={'The first twelve months: each recurring service’s annual fee, every one-off project in full, and every setup fee. The sum of the Estimated Year 1 Fee column plus the setup fees beside it.'
-                + (totals.ranged ? ' A range, because some of these services are quoted on a low and a high rate - each end is the sum of that end.' : '')}
-            >{formatMoneyRange(totals.year1Total, totals.year1TotalHigh) || '$0'}</span>
-          </div>
-        </div>
       </div>
 
-      {/* The scope, itemised. The bar above states one figure and the table
-          below states a hundred and forty, and between them nothing said
-          what the deal on the bar is made of: the only breakdown on the
-          page was the panel under one bundle's own row, which answers for
-          that bundle and not for the deal.
-          So: every ticked service, biggest first, with its share of the
-          first year. Setup is carried inside each line rather than beside
-          it, because the question here is what the account pays in year
-          one and that is one figure per service - which is also what lets
-          this foot exactly to the headline it sits under. A total nobody
-          can take apart is a total nobody can check. */}
+      {/* The scope, itemised - and, since the estimator bar stopped
+          carrying its own totals, the one place the ticked deal is added
+          up. The bar is inputs now: the counts this estimate prices
+          against, and nothing else.
+          Every ticked service, biggest first, with its share of the first
+          year, and the total under them. Setup is carried inside each line
+          rather than beside it, because the question here is what the
+          account pays in year one and that is one figure per service -
+          which is what lets the lines foot exactly to the total they sit
+          above. A total nobody can take apart is a total nobody can
+          check. */}
       {scopeLines.length > 0 && (
         <div className={styles.scopePanel}>
           <div className={styles.bundleTitle}>
