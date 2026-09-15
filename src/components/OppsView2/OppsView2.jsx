@@ -148,7 +148,7 @@ import { DealTimelineModal } from './DealTimelineModal';
 // and the rate card's numbers have to be read the way the Services Pricing
 // tab reads them.
 import { getServicePricing, resolvePricingBases, estimateScope, feeBasisLabel, pricingUnits, parseMoney as parsePricingMoney, formatMoney as formatPricingMoney } from '../../utils/servicePricing';
-import { oppDealCounts, missingUnitChips } from '../../utils/oppDealCounts';
+import { oppDealCounts, missingUnitChips, dealCountRows, COUNT_SOURCE_OPP, COUNT_SOURCE_COMPANY } from '../../utils/oppDealCounts';
 // One read of the saved rate card, for the Deal Size popup's Refresh button.
 import { fetchUserSettings } from '../../utils/userSettingsSync';
 import { companiesMatch } from '../../utils/listFlags';
@@ -2124,6 +2124,167 @@ function DealCountChips({ chips, companyName, account }) {
   );
 }
 
+// The house error palette, borrowed from the row flags on the table behind
+// these popups so a blocker looks the same wherever it is raised.
+const GAP_INK = '#991B1B';
+const GAP_BG = '#FEF2F2';
+const GAP_BORDER = '#FCA5A5';
+
+// Where a count typed here is saved, in words. dealCountRows knows WHICH
+// record; only the screen knows what the user calls it.
+function countTargetNote(row, companyName, account) {
+  // Two lengths of the same fact. The short one sits under the box, where
+  // the column is 150px wide and a sentence would set the width of the
+  // whole row; the long one is the tooltip, because "no company card" is
+  // the kind of answer that raises the question of which card was looked
+  // for.
+  if (row.blocked === 'no-company') {
+    return {
+      short: 'no company card',
+      full: account
+        ? `No company card matches \u201c${account}\u201d, so there is nowhere to record this. Add the company on Table View.`
+        : 'This opp has no Account, so there is no company card to record this on.',
+    };
+  }
+  if (row.blocked === 'no-field') {
+    return {
+      short: 'nowhere to record it',
+      full: 'No record carries this count, so a service charged on it has to be priced another way.',
+    };
+  }
+  if (row.target === COUNT_SOURCE_OPP) {
+    return {
+      short: 'saves to this opp',
+      full: `Saved to this opp's ${row.column} column - what THIS deal covers, which beats the account's own count.`,
+    };
+  }
+  const card = companyName ? `${companyName}\u2019s company card` : 'the company card';
+  return {
+    short: `saves to ${card}`,
+    full: `Saved to ${card} - what the account HAS, so every other deal on it prices off this too.`,
+  };
+}
+
+// One count, as a box you can type into.
+//
+// The draft exists only while the box has focus - `null` is "not being
+// edited", and then the record is what shows. Every keystroke would
+// otherwise round-trip through Firestore and come back mid-word, and "1" on
+// the way to "1,240" is a real count that would reprice the whole table
+// under the cursor. Scoping the draft to the focus rather than syncing it
+// back afterwards also means there is no moment where the two disagree.
+function DealCountField({ row, note, onSave }) {
+  const stored = row.value == null ? '' : String(row.value);
+  const [draft, setDraft] = useState(null);
+  const shown = draft == null ? stored : draft;
+  // Escape blurs to leave the box, and the blur is what would otherwise
+  // save what Escape just abandoned: the handler runs inside blur(), before
+  // any state set alongside it has landed. A ref is the one thing both see.
+  const cancelled = useRef(false);
+
+  const editable = !!row.target && !!onSave;
+  // A count this scope charges on that nobody has recorded is the reason a
+  // fee below reads $0, so it is marked the same red the note under the
+  // table uses rather than sitting quietly blank among the answered ones.
+  const wanting = row.needed && row.value == null;
+
+  const commit = (text) => {
+    const trimmed = String(text ?? '').trim();
+    if (trimmed === '' && row.value == null) return;
+    const n = trimmed === '' ? null : Number(trimmed.replace(/[,\s]/g, ''));
+    // Anything that isn't a count is not an edit. Dropping the draft puts
+    // the record back in the box, which is better than writing a NaN
+    // nothing can price against.
+    if (n !== null && (!Number.isFinite(n) || n < 0)) return;
+    if (n === row.value) return;
+    onSave(row, n);
+  };
+
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 2, width: 150 }}>
+      <span style={{
+        fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em',
+        color: wanting ? GAP_INK : '#94A3B8',
+      }}>{row.label}</span>
+      <input
+        type="text"
+        inputMode="numeric"
+        value={shown}
+        disabled={!editable}
+        placeholder={editable ? 'none yet' : '-'}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          if (editable && !cancelled.current) commit(shown);
+          cancelled.current = false;
+          setDraft(null);
+        }}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+          else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancelled.current = true;
+            e.currentTarget.blur();
+          }
+        }}
+        title={note.full}
+        style={{
+          width: '100%', boxSizing: 'border-box', padding: '0.25rem 0.4rem',
+          border: `1px solid ${wanting ? GAP_BORDER : 'var(--color-border)'}`,
+          background: editable ? '#fff' : '#F8FAFC',
+          borderRadius: 4, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+          fontSize: '0.8rem', textAlign: 'right',
+          color: editable ? '#1E293B' : '#94A3B8',
+        }}
+      />
+      <span
+        title={note.full}
+        style={{ fontSize: '0.64rem', color: '#94A3B8', lineHeight: 1.3 }}
+      >{note.short}</span>
+    </label>
+  );
+}
+
+// The counts every per-unit fee below is worked against, as boxes rather
+// than as a readout.
+//
+// Reading what is missing is one job and answering it is another. The gap
+// notes under the table name the count and where it lives; the errand they
+// leave behind is finding that record - the account’s company card is two
+// screens away from the deal you are sizing, and a fee of $0 for want of a
+// meter count is easier to leave alone than to go and fix. So the boxes are
+// here, next to the total they move, and each says which record it writes
+// to: the opp for what THIS deal covers, the company card for what the
+// account HAS. A count written to the card is the account’s from then on,
+// which is why the card is named rather than implied.
+function DealCountEditor({ rows, companyName, account, onSave }) {
+  if (!rows || !rows.length) return null;
+  return (
+    <div style={{
+      padding: '0.5rem 0.6rem', background: '#F8FAFC',
+      border: '1px solid var(--color-border-light)', borderRadius: 4,
+      fontSize: '0.78rem', color: '#475569',
+    }}>
+      <div style={{ fontWeight: 600, color: '#1E293B', marginBottom: 6 }}>
+        Counts these fees are priced on{' '}
+        <span style={{ color: '#94A3B8', fontWeight: 400 }}>
+          &middot; type one in and the estimate below re-prices
+        </span>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+        {rows.map(row => (
+          <DealCountField
+            key={row.unit}
+            row={row}
+            note={countTargetNote(row, companyName, account)}
+            onSave={onSave}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // The Refresh control that sits in the header of either estimate table, and
 // the line under it saying what the last press found.
 //
@@ -2186,12 +2347,6 @@ function ScopeRefreshNote({ refresh }) {
 // itself prices whatever it is handed; re-reading the rate card is the
 // caller's business, because the caller is the one that knows where the card
 // came from.
-// The house error palette, borrowed from the row flags on the table behind
-// these popups so a blocker looks the same wherever it is raised.
-const GAP_INK = '#991B1B';
-const GAP_BG = '#FEF2F2';
-const GAP_BORDER = '#FCA5A5';
-
 // "Accel, Audax Group and Arctos Partners", so a list of blocked services
 // reads as a sentence rather than as comma-separated data.
 function andList(names) {
@@ -2203,14 +2358,22 @@ function andList(names) {
 // Where each kind of gap is answered. The estimator knows WHAT is missing;
 // only the screen knows where you go to supply it, which is why this
 // sentence lives here and not in utils/servicePricing.
-function gapFix(gap) {
+function gapFix(gap, typeable = null) {
   if (gap.kind === 'rate') return 'Set one on Dropdowns \u203A Services Pricing.';
   if (gap.kind === 'deal') return 'Type one into the Deal Size box above.';
   // "the accounts count", not "a accounts count": the label is already
   // plural ("Accounts", "Meters"), so the indefinite article never agreed
   // with it.
   const unit = String(gap.unitLabel || '').toLowerCase();
-  return `Add the ${unit ? `${unit} ` : ''}count to this opp, or to the account\u2019s company card.`;
+  const name = `the ${unit ? `${unit} ` : ''}count`;
+  // Where the popup carries a box for THIS count, the errand is six inches
+  // up rather than two screens away. Per unit rather than per popup: a box
+  // that is on screen but has nowhere to write - no company card matches the
+  // Account - is not somewhere to be sent, and the old sentence is the one
+  // that still applies to it.
+  return typeable?.has(gap.unit)
+    ? `Type ${name} into the row above.`
+    : `Add ${name} to this opp, or to the account\u2019s company card.`;
 }
 
 // What the scope could not price, grouped by the missing input.
@@ -2225,7 +2388,7 @@ function gapFix(gap) {
 // silent: a service missing its count prices at a confident $0 and is NOT
 // counted as unpriced, so the Year 1 total quietly understated the deal
 // with nothing on screen saying so.
-function ScopeGapNotes({ gaps }) {
+function ScopeGapNotes({ gaps, typeableUnits = null }) {
   if (!gaps || !gaps.length) return null;
   return (
     <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -2244,7 +2407,7 @@ function ScopeGapNotes({ gaps }) {
             <strong style={{ fontWeight: 700 }}>{gap.label}.</strong>{' '}
             {andList(gap.services)}{' '}
             cannot be priced without it.{' '}
-            {gapFix(gap)}
+            {gapFix(gap, typeableUnits)}
           </span>
         </div>
       ))}
@@ -2252,7 +2415,12 @@ function ScopeGapNotes({ gaps }) {
   );
 }
 
-function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = null, onUse, refresh = null }) {
+function ScopeFeeTable({
+  estimate, totals = null, selected = null, onToggle = null, onUse, refresh = null,
+  // The units the caller has put a working box for above this table, which
+  // is what decides where each red note sends you to fill one in.
+  typeableUnits = null,
+}) {
   if (!estimate || !estimate.lines.length) return null;
   // The totals can be struck from a smaller set than the rows: the deal-size
   // prompt lets a service be switched off, and an off service still has to
@@ -2471,7 +2639,7 @@ function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = nu
           that is missing. This replaced a grey one-liner that named only
           the services with no rate card, which was the half of the problem
           the total was already admitting to. */}
-      <ScopeGapNotes gaps={sums.gaps} />
+      <ScopeGapNotes gaps={sums.gaps} typeableUnits={typeableUnits} />
       <ScopeRefreshNote refresh={refresh} />
     </div>
   );
@@ -2770,7 +2938,8 @@ function SiaTotalsOnlyCompare({ compare }) {
 // no manual URL is set. All edits happen inside the popup.
 function QuotedAmountCell({
   value, onChange, snapshot, onViewSnapshot, url, onChangeUrl, services, bfoName, bfoAddress,
-  scopeNames = [], pricing = null, pricingBases = null, serviceOverrides = null, sites = '',
+  scopeNames = [], pricing = null, pricingBases = null, serviceOverrides = null,
+  opp = null, prospects = null, updateProspect = null, onChangeOppField = null,
   onRefreshPricing = null,
 }) {
   const [open, setOpen] = useState(false);
@@ -2824,6 +2993,20 @@ function QuotedAmountCell({
   // stays correct even after the Pricing tab is cleared.
   const snapStats = useMemo(() => pricingSnapshotYear1(snapshot), [snapshot]);
 
+  // The counts every per-unit fee in the table below is worked against: the
+  // opp for what this deal covers, the company card for what the account
+  // has — the same pair the Lead prompt reads. Until this read both, the
+  // popup priced a per-account service at nothing on an account whose card
+  // records 1,240 of them: the count was there, this screen was not looking
+  // at it, and the red note said "No accounts entered" about a number that
+  // had been entered.
+  const units = useMemo(() => pricingUnits(pricingBases || undefined), [pricingBases]);
+  const company = useMemo(
+    () => findProspectForAccount(opp?.['Account'], prospects),
+    [opp, prospects],
+  );
+  const dealCounts = useMemo(() => oppDealCounts({ opp, company, units }), [opp, company, units]);
+
   // The scope priced out, for the table below the amount box — see
   // useScopeFeeEstimate. Only while the popup is open, and off the card
   // Refresh fetched when there is one.
@@ -2833,9 +3016,39 @@ function QuotedAmountCell({
     pricing: freshCard ? freshCard.pricing : pricing,
     pricingBases: freshCard ? freshCard.bases : pricingBases,
     serviceOverrides: freshCard ? freshCard.overrides : serviceOverrides,
-    sites,
+    counts: dealCounts.counts,
     dealSize: draftAmount,
   });
+
+  // A box per count, for the ones this scope charges on and the ones the
+  // records already answer. Built off the estimate, because what the scope
+  // charges on is the estimate's answer — a meter count is worth asking for
+  // on a deal with a per-meter service in it and noise on every other deal.
+  const countRows = useMemo(() => dealCountRows({
+    opp,
+    company,
+    units,
+    needed: scopeEstimate?.unitsUsed ? [...scopeEstimate.unitsUsed] : null,
+  }), [opp, company, units, scopeEstimate]);
+
+  // The counts that can actually be answered from here. A row whose Account
+  // matches no company card still shows - the missing count is why a fee
+  // reads $0 - but it is not somewhere the note below should send anybody.
+  const typeableCountUnits = useMemo(
+    () => new Set(countRows.filter(r => r.target).map(r => r.unit)),
+    [countRows],
+  );
+
+  // A typed count goes to the record the row says it goes to, and nowhere
+  // else. `null` clears it: a box emptied is "nobody has recorded one",
+  // which is what both records already mean by blank.
+  const saveCount = (row, n) => {
+    if (row.target === COUNT_SOURCE_OPP && row.column && onChangeOppField) {
+      onChangeOppField(row.column, n == null ? '' : String(n));
+    } else if (row.target === COUNT_SOURCE_COMPANY && row.field && company?.id && updateProspect) {
+      updateProspect(company.id, { [row.field]: n });
+    }
+  };
 
   // Price this scope again off the saved rate card.
   //
@@ -2865,7 +3078,7 @@ function QuotedAmountCell({
         pricing: card.pricing,
         pricingBases: card.bases,
         serviceOverrides: card.overrides,
-        sites,
+        counts: dealCounts.counts,
         dealSize: draftAmount,
       });
       setFetchedCard({
@@ -3079,6 +3292,19 @@ function QuotedAmountCell({
             {/* The rate card the estimate columns are priced off, re-read
                 on demand. Passed to whichever of the two tables is showing:
                 both price the same scope off the same card. */}
+            {/* The counts first, then what they price out at. Above the
+                table because they are the first thing to check and now the
+                first thing to fix: the rates are the rate card's, the counts
+                are this account's, and a wrong or missing one is a wrong
+                deal no total will reveal. */}
+            {scopeEstimate && countRows.length > 0 && (
+              <DealCountEditor
+                rows={countRows}
+                companyName={company?.company || ''}
+                account={String(opp?.['Account'] ?? '').trim()}
+                onSave={saveCount}
+              />
+            )}
             {comparePerService ? (
               <SiaVsEstimateTable
                 compare={scopeCompare}
@@ -3091,6 +3317,7 @@ function QuotedAmountCell({
                   estimate={scopeEstimate}
                   onUse={(n) => setDraftAmount(formatQuotedAmountLive(String(Math.round(n))))}
                   refresh={refreshControl}
+                  typeableUnits={typeableCountUnits}
                 />
                 <SiaTotalsOnlyCompare compare={scopeCompare} />
               </>
@@ -14208,7 +14435,15 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 pricing={servicePricing}
                 pricingBases={pricingBases}
                 serviceOverrides={settings?.serviceOverrides}
-                sites={row['Sites']}
+                // The counts those services are priced on, and the two
+                // records they live in: the opp for what this deal covers,
+                // the company card for what the account has. Both are
+                // writable from the popup, so a fee that reads $0 for want
+                // of a meter count can be fixed where it is noticed.
+                opp={row}
+                prospects={prospects}
+                updateProspect={updateProspect}
+                onChangeOppField={(field, v) => updateOppField(row._id, field, v)}
                 onRefreshPricing={refreshRateCard}
               />
             );
