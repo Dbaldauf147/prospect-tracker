@@ -8,7 +8,7 @@
 // which is the same bug that made a single tile read "Emails sent 0", now
 // with four more weeks to get wrong.
 import {
-  monthBounds, recentWeeks, recentMonths, emailsByWeek, newOppsByMonth,
+  monthBounds, recentWeeks, recentMonths, emailsByWeek, newOppsByMonth, coverageByWeek,
 } from '../src/utils/weeklyReportTrends.js';
 
 let passed = 0, failed = 0;
@@ -158,6 +158,89 @@ const opp = (id, ms) => ({ id, account: `Acct ${id}`, Stage: 'Discovery', _rowUp
 
   eq(newOppsByMonth({ records: [], refMs: REF, months: 5 }).map(p => p.value), [0, 0, 0, 0, 0],
     'opps: an empty cache is five real zeroes, not five blanks');
+}
+
+// ---- Account coverage ----------------------------------------------------
+// The Progress tab's two charts, as the email carries them. The thing worth
+// guarding is the same one the emails series has: a week the Progress tab
+// was never opened has no snapshot, and reading that as 0% would draw a
+// collapse in coverage that no account ever went through.
+{
+  // The five weeks ending with the one containing REF (Sep 9 2026). Keyed
+  // off local date parts, the way the Progress tab keys its snapshots -
+  // toISOString() is UTC, and west of Greenwich a local midnight formats as
+  // the day before.
+  const wk = (n) => {
+    const d = new Date(weekStarts[n]);
+    const p = (v) => String(v).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+  const weeks = [
+    { week: wk(0), t1ContactPct: 88, t2ContactPct: 53, t1DMPct: 50, t2DMPct: 7 },
+    { week: wk(1), t1ContactPct: 88, t2ContactPct: 55, t1DMPct: 49, t2DMPct: 8 },
+    // wk(2) never recorded.
+    { week: wk(3), t1ContactPct: 100, t2ContactPct: 79, t1DMPct: 67, t2DMPct: 33 },
+    { week: wk(4), t1ContactPct: 100, t2ContactPct: 79, t1DMPct: 80, t2DMPct: 42 },
+    // A week beyond the window, which must not be drawn.
+    { week: '2026-09-14', t1ContactPct: 12, t2ContactPct: 12, t1DMPct: 12, t2DMPct: 12 },
+  ];
+
+  const cov = coverageByWeek({ progressWeeks: weeks, refMs: REF, weeks: 5 });
+  eq(cov.weeks, 5, 'coverage: five weekly points');
+  eq(cov.charts.map(c => c.id), ['contactPct', 'dmPct'], 'coverage: the two Progress charts, in tab order');
+  eq(cov.charts[0].title, '% of Accounts with HubSpot Contacts', 'coverage: the chart keeps its own title');
+
+  const contacts = cov.charts[0];
+  eq(contacts.points.map(p => p.t1), [88, 88, null, 100, 100], 'coverage: an unrecorded week is null, not 0');
+  eq(contacts.points.map(p => p.t2), [53, 55, null, 79, 79], 'coverage: both tiers read from the same snapshot');
+  eq(contacts.points.map(p => p.label), ['Aug 10', 'Aug 17', 'Aug 24', 'Aug 31', 'Sep 7'],
+    'coverage: every window is labelled, recorded or not');
+  eq(contacts.points[4].key, '2026-09-07', 'coverage: keyed by the Monday the Progress tab keys on');
+  eq(cov.charts[1].points.map(p => p.t1), [50, 49, null, 67, 80], 'coverage: the DM chart reads its own fields');
+
+  // The one line under the card: where each tier stands and how far it moved.
+  eq(contacts.note, 'Tier 1 +12 pts to 100%, Tier 2 +26 pts to 79% since Aug 10.',
+    'coverage: the note reads from the oldest recorded week');
+  eq(coverageByWeek({ progressWeeks: [weeks[3]], refMs: REF, weeks: 5 }).charts[0].note, '',
+    'coverage: one recorded week is a level, not a change');
+
+  // A tier that did not move says so rather than dropping out of the note.
+  const flat = coverageByWeek({
+    progressWeeks: [
+      { week: wk(0), t1ContactPct: 100, t2ContactPct: 70 },
+      { week: wk(4), t1ContactPct: 100, t2ContactPct: 64 },
+    ],
+    refMs: REF,
+    weeks: 5,
+  });
+  eq(flat.charts[0].note, 'Tier 1 flat at 100%, Tier 2 -6 pts to 64% since Aug 10.',
+    'coverage: a flat tier and a falling one read plainly');
+
+  // A single point of movement is a pt, not "1 pts" - the coverage lines
+  // move a point at a time more often than not, so this is the common case
+  // rather than the edge one.
+  const one = coverageByWeek({
+    progressWeeks: [
+      { week: wk(0), t1ContactPct: 80, t2ContactPct: 80 },
+      { week: wk(4), t1ContactPct: 81, t2ContactPct: 79 },
+    ],
+    refMs: REF,
+    weeks: 5,
+  });
+  eq(one.charts[0].note, 'Tier 1 +1 pt to 81%, Tier 2 -1 pt to 79% since Aug 10.',
+    'coverage: one point of movement is a pt, either way');
+  eq(flat.charts.length, 1, 'coverage: a chart with nothing recorded is left out rather than drawn empty');
+
+  eq(coverageByWeek({ progressWeeks: [], refMs: REF }), null, 'coverage: no history at all is null');
+  eq(coverageByWeek({ progressWeeks: [{ week: '2025-01-06', t1ContactPct: 50 }], refMs: REF }), null,
+    'coverage: history that misses the window entirely is null, not five blanks');
+
+  // Straight off a snapshot, so a stored value out of range is clamped
+  // rather than drawn running off the end of its 100% track.
+  const odd = coverageByWeek({
+    progressWeeks: [{ week: wk(4), t1ContactPct: 140, t2ContactPct: -5 }], refMs: REF, weeks: 1,
+  });
+  eq([odd.charts[0].points[0].t1, odd.charts[0].points[0].t2], [100, 0], 'coverage: percentages are clamped to the track');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

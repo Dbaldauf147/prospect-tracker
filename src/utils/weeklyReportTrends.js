@@ -13,6 +13,7 @@
 // email says is worth testing without a browser.
 import { computeActivity, computeOppChanges } from './weeklyReport.js';
 import { emailsSentFor } from './weeklyActivityLog.js';
+import { COVERAGE_CHARTS } from './progressCoverage.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -128,4 +129,68 @@ export function newOppsByMonth({ records, refMs = Date.now(), months = TREND_MON
     value: computeOppChanges(records, start, end).newOpps.length,
     recorded: false,
   }));
+}
+
+// Account coverage per week, for the two Progress-tab charts the email
+// carries: the share of Tier 1 and Tier 2 accounts with a HubSpot contact,
+// and the share with a decision maker identified.
+//
+// Unlike the two series above, this is not a count of what happened in the
+// period — it is where coverage stands, read off the Progress tab's own
+// weekly snapshots. Which is why a day-scoped report gets it too: "79% of
+// Tier 2 has a contact" is as true on a Tuesday as it is for the week.
+//
+// A week with no snapshot is null, not 0, for the same reason a week with
+// no email recording is: the Progress tab writes a snapshot when it is
+// opened, so a week nobody opened it has no reading, and drawing that as
+// 0% would put a cliff in the line that no account ever fell off.
+export function coverageByWeek({ progressWeeks = [], refMs = Date.now(), weeks = TREND_WEEKS } = {}) {
+  const byWeek = new Map();
+  for (const w of (Array.isArray(progressWeeks) ? progressWeeks : [])) {
+    if (w && typeof w === 'object' && typeof w.week === 'string') byWeek.set(w.week, w);
+  }
+  if (!byWeek.size) return null;
+
+  const windows = recentWeeks(refMs, weeks);
+  const charts = COVERAGE_CHARTS.map((c) => {
+    const points = windows.map(({ start }) => {
+      const snap = byWeek.get(localKey(start));
+      return {
+        key: localKey(start),
+        label: weekLabel(start),
+        t1: coveragePct(snap?.[c.t1Key]),
+        t2: coveragePct(snap?.[c.t2Key]),
+      };
+    });
+    return { id: c.id, title: c.label, points, note: coverageNote(points) };
+  }).filter(c => c.points.some(p => p.t1 != null || p.t2 != null));
+
+  return charts.length ? { weeks: windows.length, charts } : null;
+}
+
+// A percentage the snapshot actually carries, or null. Out-of-range values
+// are clamped rather than dropped: a bar is drawn from this, and a 140%
+// would run off the end of its track.
+function coveragePct(v) {
+  const n = Number(v);
+  if (v == null || v === '' || !Number.isFinite(n)) return null;
+  return Math.min(100, Math.max(0, Math.round(n)));
+}
+
+// The one line under a coverage card: where each tier stands now and how
+// far it has moved across the window. Five bars show the shape; this says
+// what the shape amounts to, which is the sentence a reader repeats.
+function coverageNote(points) {
+  const known = (p) => p.t1 != null || p.t2 != null;
+  const base = points.find(known);
+  const last = [...points].reverse().find(known);
+  if (!base || !last || base === last) return '';
+  const phrase = (name, key) => {
+    if (base[key] == null || last[key] == null) return '';
+    const d = last[key] - base[key];
+    if (d === 0) return `${name} flat at ${last[key]}%`;
+    return `${name} ${d > 0 ? '+' : ''}${d} ${Math.abs(d) === 1 ? 'pt' : 'pts'} to ${last[key]}%`;
+  };
+  const parts = [phrase('Tier 1', 't1'), phrase('Tier 2', 't2')].filter(Boolean);
+  return parts.length ? `${parts.join(', ')} since ${base.label}.` : '';
 }

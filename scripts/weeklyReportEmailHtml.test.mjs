@@ -72,6 +72,29 @@ const snapshot = {
       { key: '2026-09', label: 'Sep', value: 1, recorded: false },
     ],
   },
+  coverage: {
+    weeks: 5,
+    charts: [
+      {
+        id: 'contactPct',
+        title: '% of Accounts with HubSpot Contacts',
+        points: [
+          { key: '2026-08-03', label: 'Aug 3', t1: 88, t2: 53 },
+          { key: '2026-08-10', label: 'Aug 10', t1: null, t2: null },
+          { key: '2026-08-17', label: 'Aug 17', t1: 100, t2: 70 },
+          { key: '2026-08-24', label: 'Aug 24', t1: 100, t2: 0 },
+          { key: '2026-08-31', label: 'Aug 31', t1: 100, t2: 79 },
+        ],
+        note: 'Tier 1 +12 pts to 100%, Tier 2 +26 pts to 79% since Aug 3.',
+      },
+      {
+        id: 'dmPct',
+        title: '% of Accounts with Decision Maker Identified',
+        points: [{ key: '2026-08-31', label: 'Aug 31', t1: 71, t2: 42 }],
+        note: '',
+      },
+    ],
+  },
   oppChanges: { newOpps: ['Acme: HQ retrofit (Discovery)'] },
   goals: { active: ['#1 Close Berkshire'] },
   funnelImage: { src: PNG, width: 1600, height: 349, alt: 'Pipeline funnel: bands by stage' },
@@ -146,6 +169,64 @@ check('a funnel bar is sized in pixels like the trend bars',
   /<td width="\d+" height="12" bgcolor="#104281"/.test(html), true);
 check('the stage-bar column is droppable on a narrow client',
   /\.sbar \{ display:none/.test(html) && /<td class="sbar"/.test(html), true);
+
+// ---- Account coverage -----------------------------------------------------
+// The Progress tab draws these two as lines; mail gets neither an SVG nor a
+// chart, so the same weekly series arrives as paired bars. They are the one
+// pair of bars in the report drawn against a real axis - both are
+// percentages, so the 100% end is painted behind them and a bar can be read
+// straight across.
+check('the coverage section is announced with its own heading',
+  html.includes('Account coverage') && /class="hnote"[^>]*>Last 5 weeks, from the Progress tab/.test(html), true);
+check('each chart keeps the title it has on the Progress tab',
+  html.includes('% of Accounts with HubSpot Contacts')
+  && html.includes('% of Accounts with Decision Maker Identified'), true);
+check('a coverage bar is a bgcolor cell in the chart’s own tier colour',
+  /<td width="\d+" height="9" bgcolor="#DC2626"[^>]*width:\d+px/.test(html)
+  && /<td width="\d+" height="9" bgcolor="#3B82F6"/.test(html), true);
+// 79% of an 84px track is 66px, and it has to be that rather than the full
+// track: unlike the counts series above, these bars are not scaled to the
+// biggest one in the series.
+check('bars are drawn against the 100% axis, not the series max',
+  /<td width="66" height="9" bgcolor="#3B82F6"/.test(html), true);
+check('the rest of the track is painted so a bar has an end to be read against',
+  /<td width="18" height="9" bgcolor="#EDF1F6"/.test(html), true);
+// The two nulls and the real zero: a week the Progress tab never recorded is
+// a dash against an empty track, a week that genuinely sat at 0% is a zero.
+check('an unrecorded week is a dash, not a bar on the floor',
+  /<td width="84" height="9" bgcolor="#EDF1F6"[^>]*>&nbsp;<\/td>/.test(html) && html.includes('>-</td>'), true);
+check('a real 0% is still printed as a figure', html.includes('>0%</td>'), true);
+// Each tier heads its own column: colour is the only thing telling the two
+// apart otherwise, and a client that strips backgrounds strips it. The
+// heading takes the same cells a week's row takes, rather than spanning
+// them - a colspan here takes the row's slack for itself and carries
+// "Tier 2" off to the right of the figures it labels.
+check('each tier heads the column its figures are in',
+  /bgcolor="#DC2626"[^>]*>&nbsp;<\/td>\s*<\/tr><\/table><\/td>\s*<td width="40"[^>]*>Tier 1<\/td>/.test(html)
+  && /bgcolor="#3B82F6"[^>]*>&nbsp;<\/td>\s*<\/tr><\/table><\/td>\s*<td width="40"[^>]*>Tier 2<\/td>/.test(html), true);
+check('and no heading spans two columns',
+  /<td colspan[^>]*>(\s|<[^>]*>)*Tier [12]/.test(html), false);
+// The swatch keys the bars, so on a phone it leaves with them and the
+// column keeps its name.
+check('the tier swatch is dropped with the bars, the name is not',
+  /<td class="cbar"[^>]*>(?:(?!<\/td>)[\s\S])*bgcolor="#DC2626"/.test(html)
+  && /<td width="40"(?![^>]*cbar)[^>]*>Tier 1<\/td>/.test(html), true);
+check('every bar carries its own percentage in text',
+  html.includes('>88%</td>') && html.includes('>53%</td>') && html.includes('>79%</td>'), true);
+// Two fixed tracks and two figure columns are wider than a 320px phone, so
+// the bars are droppable there the same way the funnel's stage bars are.
+check('the coverage bars are droppable on a narrow client',
+  /\.cbar \{ display:none/.test(html) && /<td class="cbar"/.test(html), true);
+check('the card’s one-line summary rides under the bars',
+  html.includes('Tier 1 +12 pts to 100%, Tier 2 +26 pts to 79% since Aug 3.'), true);
+
+// A snapshot with no coverage recorded says nothing rather than drawing an
+// empty pair of cards: what is missing is the recording, not the coverage.
+{
+  const bare = renderWeeklyReportHtml({ ...snapshot, coverage: null }, {});
+  check('no coverage in the snapshot → no section at all',
+    bare.includes('Account coverage'), false);
+}
 
 // ---- The close rate trend -------------------------------------------------
 // The grid under the funnel. Its two colour cues are the stage swatch beside
