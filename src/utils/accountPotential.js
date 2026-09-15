@@ -13,15 +13,26 @@
 //     equipment and MWh come off the company record instead of being typed,
 //     which is what makes a number here checkable against something.
 //
-//   - Anything already decided drops out. A service we sold them is not
-//     potential, and neither is one they turned down or one marked N/A -
-//     and nor, less obviously, is one already in flight, because the money
-//     in a live opp is in the pipeline already and counting it here would
-//     be counting it twice. What is left is the whitespace: services
-//     nobody has ruled on either way.
+//   - Anything already ANSWERED drops out of the money. A service we sold
+//     them is not potential, and neither is one they turned down or one
+//     marked N/A. Three different answers, all of them an answer, and none
+//     of them something to go and sell.
 //
-// Then the whitespace is ranked by what it is worth, because a list of a
-// hundred untouched services in alphabetical order answers nothing. The
+//     A service in flight is not one of them. Exploring, Qualifying,
+//     Quoting, Proposed: nobody has said yes and nobody has said no, so it
+//     is still the account's potential and it is still what somebody is
+//     working on this week. It counts here, and the biggest deal on the
+//     account may well be one of them.
+//
+//   - The answered services are still SHOWN. They are priced and ranked
+//     alongside the rest so the table reads as the whole catalogue in size
+//     order, and the page can answer "what did we decide about that one?"
+//     - but they are greyed, they cannot be ticked into an estimate, and
+//     they can never be the biggest deal, because none of that is money
+//     left to win.
+//
+// Then the open services are ranked by what they are worth, because a list
+// of a hundred of them in alphabetical order answers nothing. The
 // ranking is by the Year 1 fee - what the account bills in the first twelve
 // months, which is the figure this page is read for - and at the MIDDLE of
 // a quoted range, which is the deal most likely to be signed. A service
@@ -36,6 +47,12 @@ import { autoAddListFor, collectAutoAdds } from './serviceAutoAdd.js';
 import { exploredStatus } from './clientDealSizing.js';
 import { serviceStatusBucket } from './serviceStatusColors.js';
 import { basisFor, estimateScope, pricingFor, pricingLines } from './servicePricing.js';
+
+// The outcomes that close a service off for good: we sold it, they turned
+// it down, or it does not apply to them. An in-flight status is
+// deliberately not here - see the note at the top - and neither is an
+// empty one.
+export const CLOSED_BUCKETS = new Set(['sold', 'notSold', 'na']);
 
 /**
  * What the company record already says about one service.
@@ -60,7 +77,11 @@ export function serviceDecision(client, name, oppStages = null) {
   return {
     status,
     statusBucket,
-    decided: statusBucket !== 'none',
+    decided: CLOSED_BUCKETS.has(statusBucket),
+    // Being worked on right now: a status, but not an answer. It stays in
+    // the potential, which is the one thing that separates this from a
+    // report of what has been closed out.
+    inFlight: statusBucket === 'inProgress',
     fromOpp: !!status && !(manual && manual !== '-'),
   };
 }
@@ -87,7 +108,11 @@ export function splitByDecision(client, serviceRows = [], oppStages = null) {
   return { open, decided };
 }
 
-/** The decided services counted by outcome, for a tile that has to say why. */
+/**
+ * Services counted by outcome bucket, for a tile that has to say why. Runs
+ * over either half: the answered ones to say what was decided, the open
+ * ones to say how many of them are already being worked on.
+ */
 export function decidedCounts(decided = []) {
   const counts = { sold: 0, inProgress: 0, notSold: 0, na: 0 };
   for (const d of decided) {
@@ -383,8 +408,49 @@ export function accountPotential({
   // unknown amount as the biggest deal on the account, which is a claim
   // nothing supports.
   const top = ranked.length && ranked[0].priced ? ranked[0] : null;
+
+  // The answered services, priced and put in size order of their own.
+  //
+  // None of this is potential and none of it reaches a total, a rank or
+  // the biggest deal above. It exists because the table still shows these
+  // rows, greyed, and a greyed row with no figure on it would be a service
+  // the page had dropped rather than one it had answered - and "what did
+  // we decide about that one, and what was it worth?" is a question a
+  // pipeline review asks out loud.
+  //
+  // Priced one at a time rather than bundled. A bundle is a sale being
+  // proposed, and these are not on offer; the money is here to sort the
+  // row, not to quote it. Percentage services among them are read against
+  // the same bundle deals the open pass worked out, so a service that sits
+  // in one is priced consistently whichever side of the line it fell.
+  const closedEstimate = decided.length
+    ? estimateScope({
+      rows: decided,
+      services: decided.map(r => r.name),
+      pricing, counts, dealSize, bases, serviceUnits, dealSizeByService: dealSizes,
+    })
+    : null;
+  const closedLines = new Map((closedEstimate?.lines || []).map(l => [l.name, l]));
+  const closed = rankByPotential(decided.map(row => {
+    const lead = closedLines.get(row.name)
+      || { name: row.name, priced: false, fee: 0, feeHigh: 0, value: 0, valueHigh: 0 };
+    const bundle = { lead, adds: [], totals: bundleTotals({ lead, adds: [] }) };
+    return {
+      ...bundle.totals,
+      name: row.name,
+      // The catalogue row and the priced line both, so a table can build a
+      // closed row out of exactly what it builds an open one out of.
+      row,
+      line: lead,
+      bundle,
+      status: row.status,
+      statusBucket: row.statusBucket,
+    };
+  }));
   return {
     top,
+    closed,
+    closedEstimate,
     bundles,
     bundleOf,
     // What each percentage service turned out to be a cut of, so a caller
@@ -399,11 +465,21 @@ export function accountPotential({
     open,
     decided,
     decidedCounts: decidedCounts(decided),
+    // The open services counted the same way, so a page can say how many of
+    // them are already being worked on rather than only how many there are.
+    // The two buckets that can show up here are inProgress and none.
+    openCounts: decidedCounts(open),
     estimate,
     ranked,
     rank,
-    // The services the card has ruled on, by name, so a caller can say which
-    // rather than only how many.
+    // The services the card has answered, by name, so a caller can say which
+    // rather than only how many - and so a table can tell in one lookup
+    // whether a row is one of the greyed ones.
     decidedNames: new Set(decided.map(d => d.name)),
+    // The effective status behind every service on the page, answered or
+    // not, so a row can say what it is without going back to the client
+    // record and working the opportunities out a second time. Empty for a
+    // service nobody has touched.
+    statusOf: new Map([...open, ...decided].filter(r => r.status).map(r => [r.name, r.status])),
   };
 }

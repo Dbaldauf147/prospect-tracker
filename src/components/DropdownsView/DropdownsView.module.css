@@ -2289,6 +2289,47 @@
   color: var(--color-text-secondary, #475569);
 }
 
+/* A service the account has already answered - sold, turned down, or ruled
+   N/A. It stays on the table so the page reads as the whole catalogue in
+   size order, but it is not potential: it is in no total, it cannot be
+   ticked into a deal, and it can never be the biggest one. So it recedes
+   further than a bundled row does, which is still money, just money
+   counted on a different line. Faded rather than hidden, and it comes back
+   on hover, because the figure on it is what the row is there for. */
+.pricingRowAnswered td {
+  background: var(--color-surface-alt, #f8fafc);
+  opacity: 0.52;
+}
+
+.pricingRowAnswered:hover td {
+  opacity: 0.85;
+}
+
+/* Why a row looks the way it does, in a word: the service's own status.
+   Grey on an answered service, amber on one somebody is working on right
+   now - which is still potential, and would otherwise be indistinguishable
+   from a service nobody has ever touched. The two colours are the ones the
+   services board already paints those statuses. */
+.potentialAnsweredChip,
+.potentialFlightChip {
+  margin-left: 0.4rem;
+  padding: 0 0.3rem;
+  border-radius: 8px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.potentialAnsweredChip {
+  color: #475569;
+  background: #e2e8f0;
+}
+
+.potentialFlightChip {
+  color: #854d0e;
+  background: #fef9c3;
+}
+
 /* ── Odds and ends the pricing panels share ────────────────────────── */
 
 /* An outlined accent button, and a grey prose note under a bar. Both were
@@ -3307,6 +3348,18 @@
   border-radius: var(--radius-md);
   background: var(--color-surface);
   overflow-x: auto;
+}
+
+/* The panel's heading line: what the breakdown is on the left, the way
+   back to the rows it came from on the right. One row rather than the
+   button under the table it refers to, because the sentence and the
+   button are the same thought - this deal is those ticks, here they are. */
+.scopePanelHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 /* A one-time charge sitting inside an annual figure, said on the row. Muted

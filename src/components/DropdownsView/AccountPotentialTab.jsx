@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, useEffect } from 'react';
+import { useCallback, useMemo, useRef, useState, useEffect } from 'react';
 import { DataTable } from '../common/DataTable';
 import { useAuth } from '../../contexts/AuthContext';
 import { loadOpps2Newest } from '../../utils/opps2Store';
@@ -45,6 +45,18 @@ const DEAL_TABLE_ID = 'dropdowns-deal-pricing';
 // its click has to stop there or the two would cancel each other out.
 const swallow = (e) => e.stopPropagation();
 
+// Where a row sits in the # order when it has no rank of its own. The
+// ranked services lead; under them the ones the rate card cannot price and
+// the ones counted inside a lead, which is where they already sat; and
+// under those the services the account has already answered, which carry
+// their own size order on top of the tier so that half of the table reads
+// biggest first as well.
+//
+// Plain large numbers rather than Infinity because the last tier has to be
+// able to add a position to its floor and still come out below the others.
+const UNRANKED_ORDER = 1e6;
+const ANSWERED_ORDER = 2e6;
+
 // 1st, 2nd, 3rd, 4th - including the teens, which are all -th however they
 // end.
 function ordinal(n) {
@@ -53,6 +65,11 @@ function ordinal(n) {
   if (teen >= 11 && teen <= 13) return `${v}th`;
   return `${v}${({ 1: 'st', 2: 'nd', 3: 'rd' })[v % 10] || 'th'}`;
 }
+
+// Past any rank the page can hand out - the ranks run 1 to however many
+// services the book holds - so an unpriced row sorts below the priced ones
+// instead of above them. See the In Scope column's sort.
+const UNRANKED = 1e6;
 
 const DEAL_TABLE_COLUMNS = [
   { key: 'scope',        label: 'In Scope',            width: 78 },
@@ -236,10 +253,15 @@ export function AccountPotentialTab({
   }), [client, serviceRows, pricing, bases, effectiveCounts, serviceUnits, oppStages,
     settings?.serviceOverrides]);
 
-  // Only the undecided services reach the table. A service this account
-  // already buys is not potential, and neither is one they turned down, one
-  // marked N/A, or one already sitting in a live opp - that money is in the
-  // pipeline and counting it here would count it twice in the same review.
+  // The services still worth something: nobody has ruled on them, or
+  // somebody is working on them right now. A service at Exploring or
+  // Quoting is nobody's answer yet, so it is still this account's potential
+  // and it prices, ranks and ticks exactly like whitespace does.
+  //
+  // What is out of the money is only what has been ANSWERED - sold, turned
+  // down, N/A - and even those keep a row below, greyed. See the closed
+  // rows further down: not on the page at all is how a service reads as one
+  // the page has dropped.
   const openRows = potential.open;
 
   // Keep the stored estimate in step with the one on screen. Written from
@@ -327,6 +349,9 @@ export function AccountPotentialTab({
   // - they arrived with the lead - so leaving them behind would leave the
   // estimate holding money for services nobody chose.
   function toggleScope(name) {
+    // Nothing to tick on a service the account has already answered: it is
+    // not on offer, so it can be neither in nor out of a deal.
+    if (potential.decidedNames.has(name)) return;
     const next = new Set(inScope);
     const withIt = (potential.bundleOf.get(name)?.adds || [])
       .filter(a => a.open).map(a => a.name);
@@ -558,7 +583,14 @@ export function AccountPotentialTab({
         _note: est?.note || '',
         _scoped: inScope.has(name),
         _rank: potential.rank.get(name) ?? null,
+        _order: potential.rank.get(name) ?? UNRANKED_ORDER,
         _bundledInto: '',
+        _closed: false,
+        // The service's own status, when it has one. A service at Quoting
+        // is on this page on purpose, and a row that looked identical to
+        // untouched whitespace would hide the one fact about it worth
+        // knowing.
+        _status: potential.statusOf.get(name) || '',
         ...impactOf(name, entry),
       };
       return row;
@@ -612,14 +644,75 @@ export function AccountPotentialTab({
           // takes its add-ons in and out with it, so this reads the same set.
           _scoped: inScope.has(name),
           _rank: null,
+          _order: UNRANKED_ORDER,
           _bundledInto: lead,
+          _closed: false,
+          _status: potential.statusOf.get(name) || '',
           ...impactOf(name, entry),
           // Where the lead came in the money order, for the rank cell: "-"
           // on its own says unranked, which is not the same as counted
           // somewhere else.
           _leadRank: potential.rank.get(lead) ?? null,
         };
-      })),
+      }))
+    // The services the account has already answered: sold, turned down, or
+    // ruled N/A. Greyed, read-only, unranked, and last - but here, priced,
+    // in size order of their own, because the table is read as the whole
+    // catalogue and "what did we decide about that one, and what was it
+    // worth?" is a question a pipeline review asks out loud. A row that
+    // vanished would read as one nobody had looked at.
+    //
+    // None of this money is in a total on the page and none of it can be
+    // the biggest deal. Shown and counted are two different things, and
+    // every figure here depends on them staying different.
+    .concat(potential.closed.map(({ row: { name, meta, bucket }, line, status }, i) => {
+      const entry = pricingFor(pricing, name, bases);
+      const basis = basisFor(entry.basis, bases);
+      const ownUnits = parseMoney(serviceUnits[name]);
+      return {
+        id: name,
+        name,
+        serviceBucket: bucket,
+        serviceType: meta?.serviceType || '',
+        years: meta?.years || '',
+        basis: entry.basis,
+        basisLabel: basis?.label || '',
+        rate: entry.rate,
+        rateHigh: entry.rateHigh,
+        _entry: entry,
+        _how: line ? feeBasisLabel(line, bases) : '',
+        _extraLines: entry.lines.length,
+        notes: entry.notes,
+        setupLines: entry.setupLines,
+        _setupFee: line?.setup ?? 0,
+        _setupFeeHigh: line?.setupHigh ?? 0,
+        units: ownUnits !== null ? ownUnits : (line?.units ?? null),
+        _unitsOwn: ownUnits !== null,
+        _unit: basis?.unit || null,
+        _unitLabel: basis?.unitLabel || '',
+        // What it would be worth, which is the only thing this figure is
+        // for: it puts the row in size order. Not bundled, because a bundle
+        // is a sale being proposed and this one is not on offer.
+        fee: line?.priced ? line.fee : null,
+        feeHigh: line?.priced ? line.feeHigh : null,
+        _feeAvg: line?.priced ? avgMoney(line.fee, line.feeHigh) : null,
+        _ownFee: line?.priced ? line.fee : null,
+        _ownFeeHigh: line?.priced ? line.feeHigh : null,
+        _adds: [],
+        _kind: basis?.kind || '',
+        _note: line?.note || '',
+        // Never in a deal: there is nothing to tick.
+        _scoped: false,
+        _rank: null,
+        _order: ANSWERED_ORDER + i,
+        _bundledInto: '',
+        _closed: true,
+        _status: status,
+        // Worth naming even here: a service they turned down, measured by
+        // the figure it would have moved, is the argument for asking again.
+        ...impactOf(name, entry),
+      };
+    })),
   [leadRows, openRows, bundledInto, pricing, bases, allEstimates, inScope, serviceUnits, potential,
     impactOf]);
 
@@ -635,6 +728,44 @@ export function AccountPotentialTab({
   // A bundle that is no longer on the page should not spring open when a
   // service by that name comes back.
   useEffect(() => { setExpanded(new Set()); }, [company]);
+
+  // How many rows of the table are ticked into the deal above. Counted off
+  // the rows rather than off the scope set, because those are the ticks
+  // somebody can actually go and find: a name left in the scope for a
+  // service the account has since ruled on is priced nowhere and shown
+  // nowhere, and counting it would send a reader looking for a checkbox
+  // that is not there.
+  const scopedCount = useMemo(() => allRows.filter(r => r._scoped).length, [allRows]);
+
+  // Taking a reader from the deal to the rows it is made of.
+  //
+  // The table is in money order, so a ticked service worth $1,600 sits a
+  // hundred rows below a fold that shows six-figure ones - and the deal
+  // panel above, which is the only thing on the page that says it is
+  // ticked at all, then reads as an estimate that came from nowhere. A
+  // scope also outlives the visit that built it (see the stored estimate
+  // above), so the reader who is surprised by it is often not the one who
+  // ticked it.
+  //
+  // Sorting by the tick rather than filtering to it: the question is
+  // "which of these did I tick", and an answer that hides every service
+  // they did not answers a different one.
+  const tableRef = useRef(null);
+  const [scopeSortSignal, setScopeSortSignal] = useState(null);
+  const showScopedRows = useCallback(() => {
+    setScopeSortSignal(prev => ({
+      key: 'scope',
+      direction: 'asc',
+      // Whatever column they are on: this is a click asking to be taken to
+      // the ticked rows, not a re-rank arriving behind their back.
+      force: true,
+      nonce: (prev?.nonce || 0) + 1,
+    }));
+    // 'nearest', so a table already on screen does not move: the panel
+    // this button sits on would scroll out from under the click, and the
+    // reader would have paid for the answer by losing the question.
+    tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, []);
 
   // What the lead's Year 1 fee is made of, as a table. Bulleted lines with
   // the money beside them rather than a sentence: the question this answers
@@ -714,7 +845,15 @@ export function AccountPotentialTab({
       case 'scope':
         return {
           ...base,
-          getSortValue: (row) => (row._scoped ? 0 : 1),
+          // Ticked first, and the money order kept inside each half.
+          // Sorting on the tick answers "which of these did I tick"; doing
+          // it by the tick alone would drop the other answer this page
+          // exists to give, and hand back the whole book in catalogue
+          // order.
+          // A service that comes with another one sorts on its lead's
+          // rank, so it stays beside the row carrying its money.
+          getSortValue: (row) => (row._scoped ? 0 : 2 * UNRANKED)
+            + (row._rank ?? row._leadRank ?? UNRANKED),
           // A service that comes with another one is ticked through that
           // one: it is never in a scope on its own, so its box moves the
           // whole bundle rather than pretending to move itself.
@@ -722,34 +861,43 @@ export function AccountPotentialTab({
             <input
               type="checkbox"
               checked={row._scoped}
+              // An answered service is not on offer, so there is no deal to
+              // put it in and nothing for the box to do.
+              disabled={row._closed}
               onClick={swallow}
               onChange={() => toggleScope(row._bundledInto || row.name)}
-              title={row._bundledInto
-                ? `"${row.name}" comes with "${row._bundledInto}", so this ticks the whole bundle in or out of the deal estimate above`
-                : `Include "${row.name}" in the deal estimate above`}
+              title={row._closed
+                ? `${row.name} is ${row._status} on this account, so there is no deal to put it in.`
+                : row._bundledInto
+                  ? `"${row.name}" comes with "${row._bundledInto}", so this ticks the whole bundle in or out of the deal estimate above`
+                  : `Include "${row.name}" in the deal estimate above`}
               aria-label={`${row.name} in scope`}
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: row._closed ? 'not-allowed' : 'pointer' }}
             />
           ),
         };
       case 'rank':
         return {
           ...base,
-          // A service the rate card cannot price has no rank rather than a
-          // last one: it is not worth nothing, it is unknown, and that is
-          // the reason to go and price it.
-          getSortValue: (row) => (row._rank ?? Number.MAX_SAFE_INTEGER),
+          // Not the row's own rank but the tier order behind it, so the
+          // ranked services lead and the answered ones come last in size
+          // order of their own. A service the rate card cannot price has no
+          // rank rather than a last one: it is not worth nothing, it is
+          // unknown, and that is the reason to go and price it.
+          getSortValue: (row) => row._order,
           exportValue: (row) => (row._rank ?? ''),
           render: (row) => (
             <span
               className={styles.pricingRank}
-              title={row._bundledInto
-                ? `Counted inside "${row._bundledInto}"`
-                  + (row._leadRank ? `, the ${ordinal(row._leadRank)} biggest untapped service on this account.` : '.')
-                  + ' It has no rank of its own because it is not sold on its own.'
-                : row._rank
-                  ? `${row.name} is the ${ordinal(row._rank)} biggest untapped service on this account`
-                  : 'Not ranked - the rate card cannot price this service yet'}
+              title={row._closed
+                ? `Not ranked - ${row.name} is ${row._status} on this account, so it is not potential. The figure beside it is what it would have been worth, which is why the row still sits in size order down here.`
+                : row._bundledInto
+                  ? `Counted inside "${row._bundledInto}"`
+                    + (row._leadRank ? `, the ${ordinal(row._leadRank)} biggest untapped service on this account.` : '.')
+                    + ' It has no rank of its own because it is not sold on its own.'
+                  : row._rank
+                    ? `${row.name} is the ${ordinal(row._rank)} biggest untapped service on this account`
+                    : 'Not ranked - the rate card cannot price this service yet'}
             >{row._rank ?? '-'}</span>
           ),
         };
@@ -761,11 +909,13 @@ export function AccountPotentialTab({
           // so a reader looking for it by name has nowhere to find it -
           // which reads as the page having dropped it.
           render: (row) => (
-            <span className={styles.pricingNameText} title={row._bundledInto
-              ? `${row.name} - sold with "${row._bundledInto}", which is the row carrying the money for both. Click either to tick the bundle in or out of the scope.`
-              : row._adds.length
-                ? `${row.name} - sold with ${row._adds.map(a => a.name).join(', ')}. Click the arrow for the split.`
-                : `${row.name} - click the row to tick it in or out of the scope`}
+            <span className={styles.pricingNameText} title={row._closed
+              ? `${row.name} is ${row._status} on this account. It is not potential, so it is in no total here and can never be the biggest deal - it is listed so the table still reads as the whole catalogue.`
+              : row._bundledInto
+                ? `${row.name} - sold with "${row._bundledInto}", which is the row carrying the money for both. Click either to tick the bundle in or out of the scope.`
+                : row._adds.length
+                  ? `${row.name} - sold with ${row._adds.map(a => a.name).join(', ')}. Click the arrow for the split.`
+                  : `${row.name} - click the row to tick it in or out of the scope`}
             >
               {row._adds.length > 0 && (
                 <button
@@ -783,6 +933,18 @@ export function AccountPotentialTab({
               )}
               {row._bundledInto && (
                 <span className={styles.bundleWithChip}>{`with ${row._bundledInto}`}</span>
+              )}
+              {/* Why the row looks the way it does, in a word. Without it a
+                  greyed row is a row somebody has to come and ask about,
+                  and a service sitting at Quoting reads as untouched
+                  whitespace - which is the one thing it is not. */}
+              {row._status && (
+                <span
+                  className={row._closed ? styles.potentialAnsweredChip : styles.potentialFlightChip}
+                  title={row._closed
+                    ? `Answered: ${row._status}. Left out of the totals and out of the biggest deal.`
+                    : `In flight: ${row._status}. Nobody has said yes or no yet, so it is still potential and still counts here.`}
+                >{row._status}</span>
               )}
             </span>
           ),
@@ -933,7 +1095,10 @@ export function AccountPotentialTab({
               <span
                 className={row._scoped ? styles.pricingEstScoped : undefined}
                 title={(quoted ? `The middle of ${range}, which is what the rate card quotes. ` : '')
-                  + (row._note || 'Worked out from the rate card against the counts above')}
+                  + (row._note || 'Worked out from the rate card against the counts above')
+                  + (row._closed
+                    ? `. ${row.name} is ${row._status} here, so this figure orders the row and nothing else: it is in no total on this page.`
+                    : '')}
               >{formatMoney(row._feeAvg)}</span>
             );
           },
@@ -1044,8 +1209,24 @@ export function AccountPotentialTab({
           check. */}
       {scopeLines.length > 0 && (
         <div className={styles.scopePanel}>
-          <div className={styles.bundleTitle}>
-            {`This deal, service by service. What each one bills in year one${hasSetup ? ', setup included' : ''}, and its share of the deal.`}
+          <div className={styles.scopePanelHead}>
+            <div className={styles.bundleTitle}>
+              {`This deal, service by service. What each one bills in year one${hasSetup ? ', setup included' : ''}, and its share of the deal.`}
+            </div>
+            {/* Where this deal came from, in one click. Everything in the
+                panel is here because a row below is ticked, and until now
+                the panel never said which - so a small service ticked on
+                a previous visit read as money the page had invented. */}
+            {scopedCount > 0 && (
+              <button
+                type="button"
+                className={styles.showHiddenBtn}
+                onClick={showScopedRows}
+                title={`This deal is ${scopedCount === 1 ? 'the one service' : `the ${scopedCount} services`} ticked in the table below. `
+                  + 'The table is in money order, so a ticked service worth little sits a long way down it. '
+                  + 'This brings the ticked rows to the top; Clear scope empties the deal instead.'}
+              >{`${scopedCount} ticked ${scopedCount === 1 ? 'row' : 'rows'} below - show ${scopedCount === 1 ? 'it' : 'them'}`}</button>
+            )}
           </div>
           <table className={styles.bundleTable}>
             <tbody>
@@ -1185,11 +1366,15 @@ export function AccountPotentialTab({
         </div>
       )}
 
-      <div className={styles.serviceTableWrap}>
+      <div className={styles.serviceTableWrap} ref={tableRef}>
         <DataTable
           tableId={DEAL_TABLE_ID}
           columns={columns}
           rows={allRows}
+          // Fired by "show them" on the deal panel, and by nothing else:
+          // it is the one thing on this page allowed to take the table out
+          // of the order the reader put it in.
+          sortSignal={scopeSortSignal}
           // Biggest prize first, because that is the question the page
           // answers. Alphabetical is what the table did as a rate card,
           // where every row was as interesting as every other; here the
@@ -1211,6 +1396,10 @@ export function AccountPotentialTab({
             // Greyed, the way the services board greys a retired service:
             // the row is here to be found, not to be added up.
             row._bundledInto ? styles.pricingRowBundled : '',
+            // Greyed harder: an answered service is not money on this page
+            // at all, so it recedes rather than reading as something to go
+            // and sell.
+            row._closed ? styles.pricingRowAnswered : '',
           ].filter(Boolean).join(' ') || undefined}
           exportFileName="Account Potential"
           settings={settings}
