@@ -3216,6 +3216,27 @@
   font-variant-numeric: normal;
 }
 
+/* The ROI cell: what the account gets back for what it pays, as a multiple.
+   Three readings, because the number means three different things and a
+   column of identical grey figures makes the reader work out which.
+   Ordinary weight for a service that pays back, amber for one whose fee
+   outruns the figure it moves, and green for one given away free, which
+   pays back without a fee at all. */
+.roiCell {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.roiCellThin {
+  font-weight: 600;
+  color: #B45309;
+}
+
+.roiCellFree {
+  font-weight: 600;
+  color: #15803D;
+}
+
 /* Tabular so the ranks read as a column of numbers rather than drifting
    with the digit count. */
 .pricingRank {
