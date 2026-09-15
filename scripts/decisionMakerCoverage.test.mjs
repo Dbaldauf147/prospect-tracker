@@ -120,7 +120,7 @@ check('a Schneider contact is caught by email domain as well as company',
     acct('Theta', 'Tier 1', { status: '' }),
   ];
   check('every status with a history behind it is out',
-    names(tierAccounts(prospects, CDM, 'Tier 1')), ['Alpha', 'Beta', 'Eta', 'Theta']);
+    names(tierAccounts(prospects, CDM, 'Tier 1')), ['Alpha', 'Eta', 'Theta']);
   // The status comes off a sheet, so a filter written for "Old Client"
   // must not be dodged by casing or stray spacing.
   check('casing and spacing do not let one through',
@@ -129,10 +129,14 @@ check('a Schneider contact is caught by email domain as well as company',
       acct('Beta', 'Tier 1', { status: ' HOLD  OFF ' }),
       acct('Gamma', 'Tier 1', { status: 'lost - not sold' }),
       acct('Delta', 'Tier 1', { status: 'Inside Sales' }),
+      acct('Epsilon', 'Tier 1', { status: ' qualifying ' }),
     ], CDM, 'Tier 1')), ['Delta']);
   check('the excluded list is what it says', COLD_OUTREACH_EXCLUDED_STATUSES,
-    ['Client', 'Old Client', 'Hold Off', 'Lost - Not Sold']);
-  check('an unknown status is still cold', isColdOutreachExcluded({ status: 'Qualifying' }), false);
+    ['Client', 'Old Client', 'Qualifying', 'Hold Off', 'Lost - Not Sold']);
+  // Qualifying is an account already being spoken to, so it is out of a
+  // step for names with no relationship yet.
+  check('an account being qualified is not cold', isColdOutreachExcluded({ status: 'Qualifying' }), true);
+  check('an unknown status is still cold', isColdOutreachExcluded({ status: 'Something Else' }), false);
   check('a missing status is still cold', isColdOutreachExcluded({}), false);
 }
 
