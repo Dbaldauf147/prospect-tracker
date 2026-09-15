@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { sentimentFor, sentimentMark } from '../../utils/contactSentiment';
 import { BUCKETS, contactHasTag, getContactTags } from './contactTags.js';
@@ -82,10 +82,49 @@ export function ContactsTable({
   emailCountsFor,
   sourceOf,
 }) {
+  // The rows currently passing the table's own column filters, so the
+  // select-all box ticks exactly what the user can see. Null until the
+  // table reports, and while a filter is off nothing distinguishes the
+  // two - falling back to the full roster keeps the box working from the
+  // first paint rather than after the first filter keystroke.
+  const [tableVisibleRows, setTableVisibleRows] = useState(null);
+  const selectableIds = useMemo(() => (
+    (tableVisibleRows ?? contacts).map(c => String(c.id || c.vid || '')).filter(Boolean)
+  ), [tableVisibleRows, contacts]);
+  const allSelected = selectableIds.length > 0 && selectableIds.every(id => bulkSelected.has(id));
+  const someSelected = selectableIds.some(id => bulkSelected.has(id));
+
   const columns = useMemo(() => [
     {
       key: '__select__',
-      label: '',
+      // Named rather than blank because the Columns menu reads its list
+      // off these labels, and it prints the label itself: a checkbox node
+      // here would put a second, live select-all inside that menu. The
+      // header cell gets the real control through renderHeader.
+      label: 'Select',
+      // Select-all, over whatever the filters have left on screen. A
+      // roster of thirteen people is thirteen clicks without it, which is
+      // most of the reason nobody reached the Bulk Edit button sitting
+      // above the table.
+      renderHeader: () => (
+        <input
+          type="checkbox"
+          checked={allSelected}
+          ref={el => { if (el) el.indeterminate = !allSelected && someSelected; }}
+          onChange={() => setBulkSelected(prev => {
+            const next = new Set(prev);
+            if (allSelected) for (const id of selectableIds) next.delete(id);
+            else for (const id of selectableIds) next.add(id);
+            return next;
+          })}
+          // Without this the click lands on the header cell underneath,
+          // which sorts the table.
+          onClick={e => e.stopPropagation()}
+          title={allSelected ? 'Clear the selection' : `Select all ${selectableIds.length} contact${selectableIds.length === 1 ? '' : 's'} on screen`}
+          aria-label={allSelected ? 'Clear the selection' : 'Select every contact on screen'}
+          style={{ cursor: 'pointer' }}
+        />
+      ),
       defaultWidth: 34,
       exportValue: () => '',
       render: (c) => {
@@ -395,7 +434,8 @@ export function ContactsTable({
       },
     },
   ], [settings, bulkSelected, setBulkSelected, excludedContactIds, onExclude, onUnexclude,
-    onDeleteContact, deletingContact, emailCountsFor, sourceOf, company]);
+    onDeleteContact, deletingContact, emailCountsFor, sourceOf, company,
+    allSelected, someSelected, selectableIds]);
 
   // The row's own tints, which say two things at a glance and have to
   // survive every sort: a decision maker is the row you came for, and a
@@ -432,6 +472,7 @@ export function ContactsTable({
         rowGroup={leftLast}
         rowStyle={rowStyle}
         onRowClick={onEditContact}
+        onFilteredRowsChange={setTableVisibleRows}
         gridLines
         showExport={false}
         enableColumnFilters
