@@ -47,7 +47,7 @@ import { pricedServiceRows } from '../../utils/serviceRows';
 import { accountPotential } from '../../utils/accountPotential';
 import { clientCounts } from '../../utils/clientDealSizing';
 import { formatMoneyRange, getServicePricing, resolvePricingBases } from '../../utils/servicePricing';
-import { classifyHqCountry, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
+import { classifyHqCountry, hqRegionMissing, HQ_REGION_OPTIONS, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 import { collectAutoNa, isSoldStatus, autoNaTitle } from '../../utils/serviceAutoNa';
 import {
@@ -4419,6 +4419,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return { ...EMPTY };
   });
 
+  // A company cannot be created without an HQ Region. It decides which book
+  // an account belongs to, and a record that arrives without one is worked
+  // on for weeks before the Issues tab's "HQ Region missing" row gets round
+  // to it - by which time the person who knew the answer has moved on. The
+  // new-opp flow that creates a company already asks for it (see OppsView2);
+  // this is the same rule on the popup that creates one directly.
+  //
+  // Scoped to `isNew` on purpose: an existing company that predates the rule
+  // keeps saving normally, because this popup autosaves every keystroke and
+  // gating that would gate every other field on the card too.
+  const needsHqRegion = isNew && hqRegionMissing(fields.hqRegion);
+
   // "Show hidden" toggle on the contacts panel below - declared
   // BEFORE baseContacts because that memo references it inside its
   // filter callback (the callback fires during render, so the state
@@ -7304,6 +7316,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
   function handleSave() {
     if (!fields.company.trim()) return;
+    // Belt as well as braces: the button is disabled while this is true,
+    // and an Enter key or a future caller should not be able to route
+    // around it.
+    if (needsHqRegion) return;
     onSave(recordToSave(fields));
   }
 
@@ -7919,13 +7935,32 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               </select>
             </div>
 
+            {/* Required on a company being added, and only there. A record
+                that lands without a region is not a small gap: My Accounts
+                flags it, the Issues tab queues it, and somebody comes back
+                to fill it in later without the context they had while they
+                were creating the account. An EXISTING company missing one
+                is left alone - this popup autosaves every keystroke, so
+                blocking there would be blocking an edit to an unrelated
+                field on a record that is already this way. */}
             <div>
-              <label className={styles.label}>HQ Region</label>
-              <select className={styles.input} value={fields.hqRegion} onChange={e => set('hqRegion', e.target.value)}>
+              <label className={styles.label}>
+                HQ Region{needsHqRegion && <span className={styles.requiredMark}> *</span>}
+              </label>
+              <select
+                className={styles.input}
+                style={needsHqRegion ? { borderColor: '#dc2626' } : undefined}
+                value={fields.hqRegion}
+                onChange={e => set('hqRegion', e.target.value)}
+              >
                 <option value="">-</option>
-                <option value="North America">North America</option>
-                <option value="Outside of North America">Outside of North America</option>
+                {HQ_REGION_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
+              {needsHqRegion && (
+                <div className={styles.requiredNote}>
+                  Required to add a company: pick one before saving.
+                </div>
+              )}
             </div>
 
             <div>
@@ -11518,7 +11553,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           <div style={{ flex: 1 }} />
           <button className={styles.cancelBtn} onClick={onClose}>Close</button>
           {isNew && (
-            <button className={styles.saveBtn} onClick={handleSave} disabled={!fields.company.trim()}>
+            <button
+              className={styles.saveBtn}
+              onClick={handleSave}
+              disabled={!fields.company.trim() || needsHqRegion}
+              // A disabled button with no reason on it is a dead end. Say
+              // which field is holding it, since the one that is missing is
+              // further up a page somebody has scrolled past.
+              title={!fields.company.trim()
+                ? 'Enter a company name first'
+                : needsHqRegion ? 'Pick an HQ Region first' : ''}
+            >
               Add Prospect
             </button>
           )}
