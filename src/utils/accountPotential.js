@@ -234,14 +234,17 @@ export function bundleAutoAdds(lines = [], overrides = null, names = null) {
   for (const pass of passes) for (const line of pass) {
     if (claimed.has(line.name)) continue;
     claimed.add(line.name);
-    // `present` is everything already spoken for, and collectAutoAdds
-    // neither takes those nor expands through them - so a chain stops at
+    // `present` is everything already spoken for, and `stopAtPresent` says
+    // to take none of it and walk through none of it - so a chain stops at
     // the first service another bundle already holds instead of dragging
-    // that bundle's tail in behind it.
+    // that bundle's tail in behind it. The Scope picker asks for the
+    // opposite, because a person ticking a service wants everything it
+    // implies; here the same money must land in exactly one bundle.
     const pulled = collectAutoAdds([line.name], overrides, {
       canonical: spell,
       present: [...claimed],
       names: known,
+      stopAtPresent: true,
     });
     const adds = [];
     for (const name of pulled) {

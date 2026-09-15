@@ -25,7 +25,7 @@ import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } fr
 import { SERVICE_STATUS_COLORS } from '../../utils/serviceStatusColors';
 import { parseMulti } from '../common/columnLinks';
 import { splitServiceNames } from '../../utils/serviceNameList';
-import { autoAddListFor, collectAutoAdds } from '../../utils/serviceAutoAdd';
+import { collectAutoAdds } from '../../utils/serviceAutoAdd';
 import { collectAutoNa, isSoldStatus, autoNaTitle } from '../../utils/serviceAutoNa';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 import { isCoverageTracked } from '../../utils/pipelineDashboardStore';
@@ -384,14 +384,22 @@ export function ScopeServicesModal({
   }, [allItems, manualStatuses, autoStatuses, settings?.serviceOverrides, canonical]);
 
   // What each service on the board pulls in, so a row can say so before it's
-  // ticked rather than only after. One pass over the board's items — the
-  // lists themselves are a settings lookup per service.
+  // ticked rather than only after. The whole chain, not just the cell: a
+  // tick resolves through what it pulls in, so a row promising "+1" and then
+  // adding four services is the board telling two different stories about
+  // the same click.
+  //
+  // Read against an empty Scope rather than the current one, so the chip
+  // states what the service comes with rather than flickering as other rows
+  // are ticked. Anything already in Scope simply stays as it is.
   const autoAddByItem = useMemo(() => {
     const map = new Map();
     for (const item of allItems) {
-      const list = autoAddListFor(item, settings?.serviceOverrides, allItems)
-        .map(canonical)
-        .filter(Boolean);
+      const list = collectAutoAdds([item], settings?.serviceOverrides, {
+        canonical,
+        present: [item],
+        names: allItems,
+      }).filter(Boolean);
       if (list.length > 0) map.set(item, list);
     }
     return map;
@@ -738,7 +746,10 @@ export function ScopeServicesModal({
                           </label>
                           {pulls.length > 0 && (
                             <span
-                              title={`Ticking ${displayName(item)} also adds: ${pulls.join(', ')}. Set on Dropdowns › Services (Auto-add Services).`}
+                              title={`Ticking ${displayName(item)} also adds: ${pulls.join(', ')}`
+                                + ' - the services it comes with, and the ones those come with in turn.'
+                                + ' Anything already in Scope stays as it is.'
+                                + ' Set on Dropdowns › Services (Auto-add Services).'}
                               style={{
                                 flex: '0 0 auto', fontSize: '0.52rem', fontWeight: 700,
                                 padding: '0.05rem 0.25rem', borderRadius: 3,

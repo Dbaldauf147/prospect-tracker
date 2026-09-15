@@ -11,8 +11,10 @@
 // import or paste — an existing opp's Scope is what it is, and rewriting it
 // behind a sync would change history rather than help someone choose.
 //
-// What comes back is only ever *added*: unticking an auto-added service
-// leaves it unticked, because nothing here removes anything.
+// What comes back is only ever *added*: nothing here removes anything, so
+// unticking an auto-added service leaves it unticked - until a later tick
+// implies it again, which is the point of the rule rather than a hole in
+// it. See collectAutoAdds.
 
 // Explicit .js extension: pinned by a plain-Node test
 // (scripts/serviceAutoAdd.test.mjs), which resolves the path itself rather
@@ -61,17 +63,41 @@ export function autoAddedByMap(names, overrides) {
 
 // Everything `triggers` implies that isn't already there.
 //
-// Transitive: a service pulled in brings its own auto-adds with it, so a
-// chain doesn't have to be spelled out on every row. Cycles are fine — each
-// trigger is expanded once — and the result keeps the order things were
-// pulled in, so the message naming them reads in the order they'd be ticked.
+// Transitive, and transitive THROUGH what is already in Scope: a service
+// pulled in brings its own auto-adds with it, and so does one the Scope
+// already held. Ticking Strategic sourcing, which names Client sends
+// invoices, which names Client management, puts Client management in Scope
+// whether or not Client sends invoices was already there - because what the
+// tick implies does not depend on the order somebody got here in. A Scope
+// that arrived by paste or import never ran this at all, so the service in
+// the middle of a chain is exactly the one likely to be sitting there with
+// its own list unresolved.
+//
+// The cost, which is real: a service taken off an opp by hand comes back if
+// something ticked later implies it. It is the same trade the rule makes
+// everywhere else - an auto-add is a statement that these are sold together
+// - and the picker names what it added, so a second removal is one click.
+//
+// Cycles are fine (each service is expanded once) and the result keeps the
+// order things were pulled in, so the message naming them reads in the
+// order they'd be ticked.
 //
 // `canonical` maps a stored name to the board's spelling, so a cell typed
 // with different casing still ticks the row rather than adding a second
 // off-board entry. `present` is what's already in Scope.
 // `names` is every service the board knows, used both to rebuild a name with
 // a comma in it and (via `canonical`) to spell it the way the board does.
-export function collectAutoAdds(triggers, overrides, { canonical, present = [], names } = {}) {
+//
+// `stopAtPresent` puts the old behaviour back for the one caller that wants
+// it: Account Potential's bundling, where `present` is the services other
+// bundles have already claimed and walking through one would drag that
+// bundle's tail into this one's money. A deal is being divided up there,
+// not chosen.
+export function collectAutoAdds(
+  triggers,
+  overrides,
+  { canonical, present = [], names, stopAtPresent = false } = {},
+) {
   const spell = typeof canonical === 'function' ? canonical : (n => n);
   const have = new Set(present.map(n => String(n || '').trim().toLowerCase()).filter(Boolean));
   const expanded = new Set();
@@ -86,9 +112,15 @@ export function collectAutoAdds(triggers, overrides, { canonical, present = [], 
     for (const raw of autoAddListFor(trigger, overrides, names)) {
       const name = spell(raw);
       const nameKey = String(name || '').trim().toLowerCase();
+      if (!nameKey) continue;
       // Already in Scope (or already added by another trigger this round):
-      // nothing to do, and no second pass over its own list.
-      if (!nameKey || have.has(nameKey)) continue;
+      // nothing to add. Its own list is still walked, since that list is
+      // just as true today as it was when the service arrived - unless the
+      // caller is dividing a deal rather than choosing one.
+      if (have.has(nameKey)) {
+        if (!stopAtPresent) queue.push(name);
+        continue;
+      }
       have.add(nameKey);
       added.push(name);
       queue.push(name);
