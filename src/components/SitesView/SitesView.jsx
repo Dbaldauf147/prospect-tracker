@@ -45,12 +45,12 @@ import { ComplianceRoadmap } from './ComplianceRoadmap';
 import { applyOrdinanceOverrides, overrideKey, mergeOverrideLayers } from '../../utils/ordinanceOverrides';
 import { loadSharedOrdinanceOverrides, saveSharedOrdinanceOverride } from '../../utils/ordinanceOverrideStore';
 import MASTER_ORDINANCES from '../../data/masterOrdinances.js';
-import { scopeSitesByOwnership, isLeasedUtilityRow, savingsOwnershipScope, tenureCoverage } from './ownershipScope.js';
+import { scopeSitesByOwnership, isLeasedUtilityRow, savingsOwnershipScope } from './ownershipScope.js';
 import { SAVINGS_STATUS, savingsStatusFor, isNoSavingsRow } from './savingsStatus.js';
 import { EUROPE_VOLUME_GWH, largeEuropeanMarkets, largeEuropeanMarketLabel } from './europeVolume.js';
-import { SavingsScopeToggle, TenureWarningBanner } from './OwnershipScopeBar.jsx';
-import { MarketCoverageBanner } from './MarketCoverageBanner.jsx';
-import { marketCoverageWarning, marketWarningKey } from './marketCoverage.js';
+import { SavingsScopeToggle } from './OwnershipScopeBar.jsx';
+import { DataQualityTable } from './DataQualityTable.jsx';
+import { buildDataQualitySummary } from './dataQualitySummary.js';
 import CorporateCompliance from './CorporateCompliance';
 import { screenSites, CATEGORIES, totalPenalty, bpsPrioritization, sitesWithMandate } from '../../utils/complianceMandates';
 // The same reading of a saved site list the company popup renders under
@@ -3410,21 +3410,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // nothing.
   const leasedSiteCount = useMemo(() => savingsOwnershipScope(rows).leased, [rows]);
 
-  // Tenure coverage, and whether the page is currently warning about it.
-  // Everything above reads one optional column, and an upload that never
-  // carried it is indistinguishable downstream from a portfolio that owns
-  // every building — so say so here rather than let the silence pass for an
-  // answer. See TenureWarningBanner for what the two shapes of the gap mean.
-  const tenureStats = useMemo(() => tenureCoverage(rows), [rows]);
-  // Dismissal is per-gap, not forever: the key changes whenever the shape of
-  // the gap does (a new upload, a re-mapped column, a mass edit that fills
-  // some in), so hiding the warning on one list never hides it on the next.
-  const tenureWarningKey = `${tenureStats.total}:${tenureStats.missing}:${ownershipOverride || ''}`;
-  const [tenureWarningDismissed, setTenureWarningDismissed] = useState(null);
-  const showTenureWarning = sitesData.length > 0
-    && tenureStats.missing > 0
-    && tenureWarningDismissed !== tenureWarningKey;
-
   // Which statuses the portfolio actually holds, and how many of each.
   // Counted over every row, never over what the search left on screen: it
   // is a fact about the estate, and one that moved as you typed would be
@@ -4791,6 +4776,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     };
   }, [rows]);
 
+  // What the page is working from, as the data summary renders it: the
+  // provenance of every input, counted once. Reads the tally above rather
+  // than walking the rows again for figures it already holds.
+  const dataQuality = useMemo(
+    () => buildDataQualitySummary({ analysis: analysisSummary, rows }),
+    [analysisSummary, rows],
+  );
+
   const matchStats = useMemo(() => {
     if (!utility?.zipMap || !rows.length) return null;
     let matched = 0;
@@ -5044,9 +5037,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   //     These are exactly the rows the by-state export skips.
   //
   // Declared as a hoisted function so the Market column closure defined
-  // above, the marketSummary memo below, and the export builders can all
-  // share it. References the dereg maps above — only ever called during
-  // render / export, well after they're initialized.
+  // above and the export builders can share it. References the dereg maps
+  // above — only ever called during render / export, well after they're
+  // initialized.
   function classifyMarket(row, commodity) {
     const state = effectiveStateCode(row);
     if (!state) {
@@ -5091,53 +5084,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     if (provider) return `${state} is a competitive market · utility: ${provider}`;
     return `${state} is a competitive market, but this site has no utility or supplier on file to confirm it.`;
   }
-
-  // Regulated / deregulated split for the on-page summary card. Lives
-  // in its own memo (after the dereg maps) so it can use the classifier
-  // above. Three buckets per commodity always sum to total, and the
-  // deregulated bucket matches the exports' Deregulated Sites totals.
-  const marketSummary = useMemo(() => {
-    if (!rows.length) return null;
-    const bucket = () => ({
-      deregulated: 0, regulated: 0, unknown: 0,
-      // The Unknown bucket split by which clause of the classifier
-      // produced it, because the two have different fixes — a competitive
-      // state with nothing on file is a missing utility file or an
-      // unmapped column; no state and no country is a geography problem.
-      // See MarketCoverageBanner, which reads exactly this split.
-      unknownNoUtility: 0, unknownNoPlace: 0,
-    });
-    const electric = bucket(), gas = bucket();
-    const tally = (acc, cls, row) => {
-      if (cls === 'Deregulated') acc.deregulated++;
-      else if (cls === 'Regulated') acc.regulated++;
-      else {
-        acc.unknown++;
-        // classifyMarket returns null from two places, and the state code
-        // tells them apart: a row that resolved one got as far as the
-        // competitive-state check, a row that didn't never had a market
-        // reference to read.
-        if (effectiveStateCode(row)) acc.unknownNoUtility++;
-        else acc.unknownNoPlace++;
-      }
-    };
-    for (const r of rows) {
-      tally(electric, classifyMarket(r, 'electric'), r);
-      tally(gas, classifyMarket(r, 'gas'), r);
-    }
-    return { total: rows.length, electric, gas };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, utility]);
-
-  // Whether the page is currently warning that most of the portfolio can't
-  // be placed in a market at all. Same treatment as the tenure warning
-  // above: dismissal is per-gap, so hiding it on one upload never hides it
-  // on the next. See marketCoverage.js for what counts as a gap worth
-  // showing at all.
-  const marketWarning = useMemo(() => marketCoverageWarning(marketSummary), [marketSummary]);
-  const marketWarningId = marketWarningKey(marketWarning);
-  const [marketWarningDismissed, setMarketWarningDismissed] = useState(null);
-  const showMarketWarning = !!marketWarning && marketWarningDismissed !== marketWarningId;
 
   // Detect a company column on the uploaded sites sheet so we can
   // group the overview by (company, state). Falls back to the sticky
@@ -16531,114 +16477,18 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         </div>
       )}
 
-      {/* Missing Tenure (Owned / Leased). Above the summary cards because
-          it changes how every figure under it should be read: with no
-          tenure on the upload, the compliance subtabs screen the whole
-          list and the savings run on the full deregulated spend. */}
-      {showTenureWarning && (
-        <TenureWarningBanner
-          coverage={tenureStats}
-          mapped={!!ownershipOverride}
-          onFixMapping={openUpdateColumnMapping}
-          onDismiss={() => setTenureWarningDismissed(tenureWarningKey)}
-        />
-      )}
+      {/* What this page is working from, in one table: what the upload
+          gave us and what we worked out because it didn't.
 
-      {showMarketWarning && (
-        <MarketCoverageBanner
-          warning={marketWarning}
-          onLoadUtilityFile={() => setShowDataSources(true)}
-          onDismiss={() => setMarketWarningDismissed(marketWarningId)}
-        />
-      )}
-
-      {analysisSummary && (() => {
-        const s = analysisSummary;
-        const m = marketSummary || { total: s.total, electric: { deregulated: 0, regulated: 0, unknown: s.total }, gas: { deregulated: 0, regulated: 0, unknown: s.total } };
-        const ELEC = '#92400E';
-        const GAS = '#1E3A8A';
-        const SLATE = '#475569';
-        const MUTED = '#94A3B8';
-        const cardStyle = { border: '1px solid #E2E8F0', borderRadius: 8, background: '#FFFFFF', padding: '0.65rem 0.85rem' };
-        const cardTitleStyle = { fontSize: '0.72rem', fontWeight: 700, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.45rem' };
-        const rowStyle = { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.5rem', padding: '0.2rem 0', borderBottom: '1px dashed #F1F5F9' };
-        // Tone per row — a tinted background and a left accent bar so the
-        // shape of the portfolio reads at a glance. Green / amber / red
-        // means best / qualified / worst in whatever that card measures:
-        // actual vs estimated vs missing on Consumption and Cost, taken
-        // from the source vs derived from the zip vs unknown on Utility
-        // Companies, and deregulated (a sourcing opportunity) vs
-        // regulated vs unknown on Market. Only applied when the row
-        // actually carries a value; a zero row stays plain so empty
-        // cards don't light up.
-        const toneRowStyle = (bg, bar) => ({ ...rowStyle, background: bg, borderLeft: `3px solid ${bar}`, borderRadius: 4, padding: '0.2rem 0.4rem', margin: '0 -0.4rem' });
-        const ROW_TONES = {
-          good:   toneRowStyle('#F0FDF4', '#16A34A'),
-          warn:   toneRowStyle('#FFFBEB', '#F59E0B'),
-          danger: toneRowStyle('#FEF2F2', '#DC2626'),
-        };
-        const labelStyle = (color) => ({ fontSize: '0.72rem', color, fontWeight: 600, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
-        const valueStyle = { fontSize: '0.78rem', fontWeight: 600, color: '#0F172A', fontVariantNumeric: 'tabular-nums' };
-        const subStyle = { fontSize: '0.65rem', color: MUTED, fontWeight: 500, marginLeft: '0.35rem' };
-        const fmtInt = (n) => Math.round(n).toLocaleString();
-        const fmtPct = (num, den) => den > 0 ? `${Math.round((num / den) * 100)}%` : '0%';
-        // `tone` is 'good' | 'warn' | 'danger' | null. The commodity
-        // colour stays on the label for good/warn so the electric / gas
-        // distinction survives the tint; danger keeps its red label.
-        const sumLine = (color, label, value, sub, tone = null) => (
-          <div style={ROW_TONES[tone] || rowStyle}>
-            <span style={labelStyle(tone === 'danger' ? '#991B1B' : color)}>{label}</span>
-            <span>
-              <span style={tone === 'danger' ? { ...valueStyle, color: '#991B1B' } : valueStyle}>{value}</span>
-              {sub && <span style={subStyle}>{sub}</span>}
-            </span>
-          </div>
-        );
-        // Tone helpers: colour only once the row has something in it.
-        const good = (n) => (n > 0 ? 'good' : null);
-        const warn = (n) => (n > 0 ? 'warn' : null);
-        const bad  = (n) => (n > 0 ? 'danger' : null);
-        return (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem', margin: '0.5rem 1.25rem 0.75rem' }}>
-            <div style={cardStyle}>
-              <div style={cardTitleStyle}>Consumption</div>
-              {sumLine(ELEC, 'Electric: Actual',    `${fmtInt(s.consumption.electric.actual)} kWh`,   `${s.consumption.electric.actualSites} site${s.consumption.electric.actualSites === 1 ? '' : 's'}`, good(s.consumption.electric.actual))}
-              {sumLine(ELEC, 'Electric: Estimated', `${fmtInt(s.consumption.electric.est)} kWh`,      `${s.consumption.electric.estSites} site${s.consumption.electric.estSites === 1 ? '' : 's'}`, warn(s.consumption.electric.est))}
-              {sumLine(SLATE, 'Electric: Missing',  `${fmtInt(s.consumption.electric.missingSites)} sites`, null, bad(s.consumption.electric.missingSites))}
-              {sumLine(GAS,  'Gas: Actual',         `${fmtInt(s.consumption.gas.actual)} therms`,     `${s.consumption.gas.actualSites} site${s.consumption.gas.actualSites === 1 ? '' : 's'}`, good(s.consumption.gas.actual))}
-              {sumLine(GAS,  'Gas: Estimated',      `${fmtInt(s.consumption.gas.est)} therms`,        `${s.consumption.gas.estSites} site${s.consumption.gas.estSites === 1 ? '' : 's'}`, warn(s.consumption.gas.est))}
-              {sumLine(SLATE, 'Gas: Missing',       `${fmtInt(s.consumption.gas.missingSites)} sites`, null, bad(s.consumption.gas.missingSites))}
-            </div>
-            <div style={cardStyle}>
-              <div style={cardTitleStyle}>Cost</div>
-              {sumLine(ELEC, 'Electric: Actual',    formatMoney(s.cost.electric.actual), `${s.cost.electric.actualSites} site${s.cost.electric.actualSites === 1 ? '' : 's'}`, good(s.cost.electric.actual))}
-              {sumLine(ELEC, 'Electric: Estimated', formatMoney(s.cost.electric.est),    `${s.cost.electric.estSites} site${s.cost.electric.estSites === 1 ? '' : 's'}`, warn(s.cost.electric.est))}
-              {sumLine(SLATE, 'Electric: Missing',  `${fmtInt(s.cost.electric.missingSites)} sites`, null, bad(s.cost.electric.missingSites))}
-              {sumLine(GAS,  'Gas: Actual',         formatMoney(s.cost.gas.actual),      `${s.cost.gas.actualSites} site${s.cost.gas.actualSites === 1 ? '' : 's'}`, good(s.cost.gas.actual))}
-              {sumLine(GAS,  'Gas: Estimated',      formatMoney(s.cost.gas.est),         `${s.cost.gas.estSites} site${s.cost.gas.estSites === 1 ? '' : 's'}`, warn(s.cost.gas.est))}
-              {sumLine(SLATE, 'Gas: Missing',       `${fmtInt(s.cost.gas.missingSites)} sites`, null, bad(s.cost.gas.missingSites))}
-            </div>
-            <div style={cardStyle}>
-              <div style={cardTitleStyle} title="Source = the upload's supplier column named a utility we recognized. Zip lookup = no supplier in the source, utility derived from the rates file via zip code.">Utility Companies</div>
-              {sumLine(ELEC, 'Electric: From Supplier',  fmtInt(s.utility.electric.fromSupplier), fmtPct(s.utility.electric.fromSupplier, s.total), good(s.utility.electric.fromSupplier))}
-              {sumLine(ELEC, 'Electric: From Zip Lookup', fmtInt(s.utility.electric.fromZip),     fmtPct(s.utility.electric.fromZip, s.total), warn(s.utility.electric.fromZip))}
-              {sumLine(SLATE, 'Electric: Unknown',        fmtInt(s.utility.electric.unknown),     fmtPct(s.utility.electric.unknown, s.total), bad(s.utility.electric.unknown))}
-              {sumLine(GAS,  'Gas: From Supplier',        fmtInt(s.utility.gas.fromSupplier),     fmtPct(s.utility.gas.fromSupplier, s.total), good(s.utility.gas.fromSupplier))}
-              {sumLine(GAS,  'Gas: From Zip Lookup',      fmtInt(s.utility.gas.fromZip),          fmtPct(s.utility.gas.fromZip, s.total), warn(s.utility.gas.fromZip))}
-              {sumLine(SLATE, 'Gas: Unknown',             fmtInt(s.utility.gas.unknown),          fmtPct(s.utility.gas.unknown, s.total), bad(s.utility.gas.unknown))}
-            </div>
-            <div style={cardStyle}>
-              <div style={cardTitleStyle} title="Market structure per site, on the same rule the Master Analysis uses: so these counts match its Deregulated Sites totals. US/CA: the state's deregulation map decides whether the market is competitive; inside a competitive state the site's utility (or a supplier on file) decides whether that site counts, so municipals and coops drop out. International sites follow the country reference. Deregulated = supplier choice, a sourcing opportunity. Regulated = single-utility market. Unknown = no recognized state or country, or a competitive state with no utility / supplier on file yet.">Market</div>
-              {sumLine(ELEC, 'Electric: Deregulated', fmtInt(m.electric.deregulated), fmtPct(m.electric.deregulated, m.total), good(m.electric.deregulated))}
-              {sumLine(ELEC, 'Electric: Regulated',   fmtInt(m.electric.regulated),   fmtPct(m.electric.regulated, m.total), warn(m.electric.regulated))}
-              {sumLine(SLATE, 'Electric: Unknown',     fmtInt(m.electric.unknown),     fmtPct(m.electric.unknown, m.total), bad(m.electric.unknown))}
-              {sumLine(GAS,  'Gas: Deregulated',       fmtInt(m.gas.deregulated),      fmtPct(m.gas.deregulated, m.total), good(m.gas.deregulated))}
-              {sumLine(GAS,  'Gas: Regulated',         fmtInt(m.gas.regulated),        fmtPct(m.gas.regulated, m.total), warn(m.gas.regulated))}
-              {sumLine(SLATE, 'Gas: Unknown',          fmtInt(m.gas.unknown),          fmtPct(m.gas.unknown, m.total), bad(m.gas.unknown))}
-            </div>
-          </div>
-        );
-      })()}
+          It replaces four cards (Consumption, Cost, Utility Companies,
+          Market) and the two warning banners that argued the tenure and
+          market gaps in a paragraph each. They were all true and they were
+          all about the same question - how much of this analysis is real -
+          and none of them answered it in one pass: the reader had to hold
+          six numbers per card and work out the shares themselves. The
+          fixes those banners offered are still one click away, on Update
+          Column Mapping and Data sources in the toolbar above. */}
+      <DataQualityTable summary={dataQuality} />
 
       <div className={styles.searchRow}>
         <input
