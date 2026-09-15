@@ -13,8 +13,10 @@
 // band and is named for what it is wherever the statuses are spelled
 // out.
 //
-// "Deregulated" / "Some deregulation" on Electric Power or Gas →
-// commodity-savings motion applies (2 - 4 % on annual spend).
+// "Deregulated" on Electric Power or Gas → commodity-savings motion
+// applies (2 - 4 % on annual spend). "Some deregulation" names a market
+// too narrow for that band and carries 0 - 0 % instead; see SAVINGS_BAND
+// below.
 // "Power Rate Optimization" of "Deregulated" / "Some deregulation" →
 // regulated-rate motion applies (flat 0.25 % on regulated electric
 // spend) — same mechanic the US (state, utility) reg-rate-opportunity
@@ -205,14 +207,32 @@ export const COUNTRY_DEREGULATION = {
   'Zimbabwe': { region: 'Africa', electric: 'Unlikely', gas: 'Unlikely', powerRateOptimization: 'Some deregulation' },
 };
 
-// Deregulated / Some deregulation → 2 - 4 % savings; everything else
-// suppresses the commodity-savings motion. Stored as the same
-// { range, lowPct, highPct } shape the US ELECTRIC_DEREGULATION /
-// GAS_DEREGULATION maps use, so the export code can read either source
-// through the same accessor.
+// Deregulated → 2 - 4 % savings; everything else earns nothing, one of
+// two ways. Stored as the same { range, lowPct, highPct } shape the US
+// ELECTRIC_DEREGULATION / GAS_DEREGULATION maps use, so the export code
+// can read either source through the same accessor.
+//
+// "Some deregulation" is a market where retail choice exists but is
+// narrow enough that the standard band doesn't apply to it. It used to
+// earn the full 2 - 4 % anyway, which is the same claim as a fully
+// competitive market and was never meant to be. It now reads 0 - 0 %,
+// exactly as its US and Canadian counterparts already do: AZ / CA / MI
+// electric are "Limited" and the large-load-only gas states are their
+// own spelling of the same thing, and both carry 0 - 0 % in
+// marketSavingsBands.js. The row still SHOWS, with a status that keeps
+// it out of the regulated-hide filter, so the market is still named on
+// the Indicative Savings tab - every savings column against it just
+// resolves to $0.
+//
+// A 0 - 0 % band is a floor, not a verdict: a seller who wins a deal in
+// one of these markets can raise it on the Market Savings subtab, the
+// same as they can for AZ or CA.
+//
+// 'Unlikely' / 'No opportunity' / 'Not served' are the other way: no
+// band at all (nulls), so those rows quote nothing rather than a zero.
 const SAVINGS_BAND = {
   'Deregulated':       { range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-  'Some deregulation': { range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+  'Some deregulation': { range: '0 - 0%', lowPct: 0,    highPct: 0 },
   'Unlikely':          { range: '',       lowPct: null, highPct: null },
   'No opportunity':    { range: '',       lowPct: null, highPct: null },
   // No band, and no European "TBD" either: TBD says a range is coming,
@@ -226,7 +246,10 @@ const SAVINGS_BAND = {
 // otherwise apply. Scoped to every country whose region is "Europe" or
 // "Europe/Asia", the same grouping the Europe View sheet uses. Markets
 // that already earn no commodity savings (Unlikely / No opportunity)
-// stay blank rather than flipping to TBD.
+// stay blank rather than flipping to TBD, and a European market on the
+// 0 - 0 % band stays at 0 - 0 % for the same reason: TBD promises a
+// range, and for a market we've decided earns nothing there is no range
+// coming.
 const TBD_BAND = { range: 'TBD', lowPct: null, highPct: null };
 
 function isEuropeanRegion(region) {
@@ -254,9 +277,11 @@ export function isEuropeanCountry(name) {
 
 // Resolves the commodity-savings band for a country bucket, applying
 // the European TBD override on top of the status-driven SAVINGS_BAND.
+// The override only covers a band that could actually produce a dollar
+// — see the note above on why a 0 - 0 % market doesn't become TBD.
 function savingsBandFor(status, region) {
   const band = bandFor(status);
-  if (band.lowPct != null && isEuropeanRegion(region)) return TBD_BAND;
+  if (band.highPct > 0 && isEuropeanRegion(region)) return TBD_BAND;
   return band;
 }
 
