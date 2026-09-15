@@ -43,13 +43,24 @@ import { basisFor, estimateScope, pricingFor, pricingLines } from './servicePric
  * imply - so this page and that page can never disagree about whether a
  * service has been dealt with.
  *
+ * `fromOpp` says which record is holding that status, because the two are
+ * undone in different places: a stage comes off the opportunity, a typed
+ * status off the company card. A page explaining why a service is not on it
+ * has to be able to say which one to go and look at.
+ *
  * @param oppStages Map<serviceName, stage> for THIS client, or null when no
  *                  opps are loaded; then only the manual statuses are read.
  */
 export function serviceDecision(client, name, oppStages = null) {
+  const manual = String((client?.servicesExplored || {})[name] ?? '').trim();
   const status = exploredStatus(client, name, oppStages);
   const statusBucket = serviceStatusBucket(status);
-  return { status, statusBucket, decided: statusBucket !== 'none' };
+  return {
+    status,
+    statusBucket,
+    decided: statusBucket !== 'none',
+    fromOpp: !!status && !(manual && manual !== '-'),
+  };
 }
 
 /**

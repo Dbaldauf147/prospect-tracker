@@ -10,6 +10,7 @@ import { CountInput, NumberCell } from './pricingCells';
 import { ColumnFilterCombo } from '../common/ColumnFilterCombo';
 import { accountPotential } from '../../utils/accountPotential';
 import { rowSearchText, searchable } from '../../utils/accountPotentialSearch';
+import { unlistedMatches, describeUnlisted } from '../../utils/accountPotentialUnlisted';
 import { clientCounts } from '../../utils/clientDealSizing';
 import { buildOppStagesByClient } from '../../utils/serviceCoverage';
 import { findProspectByCompany } from '../../utils/companyLookup';
@@ -92,7 +93,7 @@ const DEAL_TABLE_COLUMNS = [
 // parent rather than here so switching subtabs and coming back doesn't lose
 // a half-built estimate. It's a scratch calculation, so it isn't saved into
 // settings — the rate card is the part worth keeping, and that's over there.
-export function AccountPotentialTab({ settings, updateSettings, serviceRows = [], scenario, setScenario, prospects = [] }) {
+export function AccountPotentialTab({ settings, updateSettings, serviceRows = [], hiddenServices = [], scenario, setScenario, prospects = [] }) {
   const [search, setSearch] = useState('');
   // `|| {}` so the tab still renders outside the AuthProvider (tests,
   // harnesses): with no user it reads the local opps cache and skips the
@@ -602,6 +603,18 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
     [allRows, term],
   );
 
+  // Where a searched-for service went, when the table has no row for it.
+  // Three rules take services off this page and all three are silent, so
+  // looking for one and not finding it reads as the page having dropped it.
+  // See utils/accountPotentialUnlisted.
+  const unlisted = useMemo(() => unlistedMatches({
+    term: search,
+    visibleNames: rows.map(r => r.name),
+    hidden: hiddenServices,
+    decided: potential.decided,
+    bundles: potential.bundles,
+  }), [search, rows, hiddenServices, potential]);
+
   // Band 0 is the imported scope, band 1 everything else, so those rows sit
   // at the top of whatever sort or search is active rather than only when
   // the In Scope column happens to be the sort key. Memoized against the
@@ -902,6 +915,20 @@ export function AccountPotentialTab({ settings, updateSettings, serviceRows = []
           {` · ${inScope.size} in scope`}
         </span>
       </div>
+
+      {/* A service the search names that has no row here. Each line says
+          which rule took it and where that rule is undone, because "not
+          shown" on its own is the state the reader is already in. */}
+      {unlisted.entries.length > 0 && (
+        <div className={styles.unlistedNote}>
+          {unlisted.entries.map(entry => (
+            <div key={entry.name}>{describeUnlisted(entry, company)}</div>
+          ))}
+          {unlisted.more > 0 && (
+            <div>{unlisted.more} more service{unlisted.more === 1 ? '' : 's'} match, all of them off the table for one of these reasons.</div>
+          )}
+        </div>
+      )}
 
       {/* The account. Everything below reads off it: its own site and meter
           figures price the services, and its Services Explored decides
