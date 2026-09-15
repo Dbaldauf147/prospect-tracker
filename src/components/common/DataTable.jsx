@@ -340,10 +340,12 @@ export function DataTable({
   onSort: externalSort,
   sortConfig: externalSortConfig,
   defaultSort,
-  // Imperative sort trigger: { key, direction, nonce }. Bumping nonce
-  // re-applies the given sort through the same path as a header click
-  // (incl. the freeze snapshot). Lets a parent re-rank on demand
+  // Imperative sort trigger: { key, direction, nonce, force }. Bumping
+  // nonce re-applies the given sort through the same path as a header
+  // click (incl. the freeze snapshot). Lets a parent re-rank on demand
   // without owning sort state. Ignored when an external sort is wired.
+  // `force` lands the sort whatever column the user is on, and is only
+  // for a signal they asked for by name - see resolveSortSignal.
   sortSignal,
   alwaysVisible = [],
   defaultHidden = [],
