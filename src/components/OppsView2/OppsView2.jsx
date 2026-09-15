@@ -75,6 +75,10 @@ import {
   QUOTED_VARIANCE_COLUMN, quotedVariance, formatQuotedVariance, quotedVarianceTone,
 } from '../../utils/quotedVariance';
 import { compareSiaToEstimate } from '../../utils/siaScopeCompare';
+// The two HQ Region values and the rule for a missing one, shared with the
+// company popup that creates a company directly - one list, so a region
+// offered here is one that card can read back.
+import { HQ_REGION_OPTIONS, hqRegionMissing } from '../../utils/hqRegion';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { loadClientManagerMap, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
@@ -179,10 +183,6 @@ const OPP_DETAIL_HIDDEN_FIELDS_KEY = 'opp-detail-hidden-fields';
 // per field, applied to every opp's popup, kept per user.
 const OPP_DETAIL_FIELD_PLACEMENT_KEY = 'opp-detail-field-placement';
 
-// HQ Region choices offered when the New Opp modal creates a new Table
-// View company. Mirrors the option set the MyAccounts / PE Portfolio
-// cells use so regions stay consistent across views.
-const HQ_REGION_OPTIONS = ['North America', 'Outside of North America'];
 
 // Free-text SME box for one row of the Services tab. Local while typing so
 // a name isn't a settings write per keystroke; commits on blur or Enter,
@@ -4419,7 +4419,7 @@ function NewOppModal({
   // True when we're actually about to create a Table View company — that's
   // the case where HQ Region is required.
   const willAddCompany = canAddCompany && addToTableView;
-  const needsHqRegion = willAddCompany && !hqRegion;
+  const needsHqRegion = willAddCompany && hqRegionMissing(hqRegion);
   // Prefill the PE Owners from the matched Table View company until the
   // user edits the chips.
   const peOwners = peOwnerTouched ? peOwnersInput : splitPeOwners(matchedProspect?.peOwner || '');

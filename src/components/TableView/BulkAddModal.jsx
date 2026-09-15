@@ -4,6 +4,7 @@ import { STATUSES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS } from '../../
 import { buildTypeOptions, buildCdmOptions, buildAssetTypeOptions, buildStrategyOptions } from '../../utils/prospectOptions';
 import { splitPeOwners } from '../../utils/peOwners';
 import { FIELDS, autoMap, parseDelimitedRows, cellsToProspect } from './pasteFields';
+import { HQ_REGION_OPTIONS, resolveHqRegion } from '../../utils/hqRegion';
 
 // Defaults a bulk-added company starts with, matching what the single
 // "+ Add" popup pre-fills (see EMPTY in ProspectModal) so a company
@@ -29,6 +30,10 @@ const SHARED_FIELDS = [
   { key: 'tier', label: 'Tier', options: TIERS },
   { key: 'geography', label: 'Geography', options: GEOGRAPHIES },
   { key: 'publicPrivate', label: 'Pub/Priv', options: PUBLIC_PRIVATE },
+  // A company cannot be created without one, so it is one of the always-on
+  // dropdowns rather than a field to go and add: the whole point of the
+  // shared row is that a batch usually answers this once.
+  { key: 'hqRegion', label: 'HQ Region', options: HQ_REGION_OPTIONS, required: true },
 ];
 const FIXED_SHARED = new Set(SHARED_FIELDS.map(f => f.key));
 
@@ -310,19 +315,42 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
       } else {
         seen.add(key);
       }
-      rows.push({ record, name, state, note });
+      // The record as it would actually be written: the row's own values
+      // over the shared ones. Its HQ Region is resolved here rather than at
+      // the point of writing, so what the table shows is what lands - and
+      // so a mapped column of locations ("Toronto, Ontario, Canada") is
+      // read as the region it names instead of being stored as a string the
+      // field's dropdown cannot show.
+      const merged = { ...sharedRecord, ...record };
+      // The row's own value when it can be read, the shared one otherwise.
+      // "Paste wins" means a cell that actually answers beats the shared
+      // pick - a cell nobody can place has not answered, and falling back
+      // is what makes "pick one above to cover them" true rather than a
+      // button that stays grey after you did.
+      const hqRegion = resolveHqRegion(record.hqRegion) || resolveHqRegion(sharedRecord.hqRegion);
+      rows.push({
+        record,
+        effective: { ...merged, hqRegion },
+        name,
+        state,
+        note,
+        // Only ever asked of a company about to be created. A row being
+        // skipped is not being written, so it has nothing to be missing.
+        needsHq: state === 'new' && !hqRegion,
+      });
     }
     return {
       rows,
-      toAdd: rows.filter(r => r.state === 'new').map(r => r.record),
+      toAdd: rows.filter(r => r.state === 'new').map(r => r.effective),
       existing: rows.filter(r => r.state === 'existing').length,
       repeats: rows.filter(r => r.state === 'repeat').length,
       skipped: rows.filter(r => r.state === 'skip').length,
+      needsHq: rows.filter(r => r.needsHq).length,
     };
-  }, [text, existingProspects, table, mapping, companyMapped]);
+  }, [text, existingProspects, table, mapping, companyMapped, sharedRecord]);
 
   async function handleAdd() {
-    if (busy || plan.toAdd.length === 0) return;
+    if (busy || !canAdd) return;
     setBusy(true);
     setResult(null);
     const failed = [];
@@ -331,7 +359,7 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
       for (const record of plan.toAdd) {
         setProgress({ done: added + failed.length, total: plan.toAdd.length });
         try {
-          await onAdd({ ...sharedRecord, ...record });
+          await onAdd(record);
           added++;
         } catch (err) {
           console.error('Bulk add failed for', record.company, err);
@@ -357,7 +385,10 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
     skip: { color: '#991B1B', background: '#FEF2F2', label: 'Skip' },
   };
   const cell = { padding: '0.3rem 0.5rem', borderBottom: '1px solid #E2E8F0' };
-  const canAdd = plan.toAdd.length > 0 && (!table || companyMapped);
+  // Every company about to be created needs an HQ Region, the same rule the
+  // single-company popup applies. One pick on the shared row answers it for
+  // the whole batch, so this is a field to fill rather than a wall.
+  const canAdd = plan.toAdd.length > 0 && (!table || companyMapped) && plan.needsHq === 0;
 
   return (
     <div onClick={() => { if (!busy) onClose(); }} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
@@ -437,12 +468,21 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
               const overridden = mapping.includes(f.key);
               return (
                 <label key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: '0.68rem', color: '#64748B', fontWeight: 600 }}>
-                  {f.label}{overridden && <span style={{ fontWeight: 400, fontStyle: 'italic' }}> (paste wins)</span>}
+                  {/* One line: the label is a flex column, so a bare span
+                      beside the text would drop to a row of its own. Marked
+                      only while it is actually holding the add up, so a
+                      batch whose paste already answers is not warned about a
+                      field it has filled. */}
+                  <span>
+                    {f.label}
+                    {f.required && plan.needsHq > 0 && <span style={{ color: '#dc2626' }}> *</span>}
+                    {overridden && <span style={{ fontWeight: 400, fontStyle: 'italic' }}> (paste wins)</span>}
+                  </span>
                   <select
                     value={shared[f.key] || ''}
                     disabled={busy}
                     onChange={e => setShared(s => ({ ...s, [f.key]: e.target.value }))}
-                    style={{ padding: '0.3rem 0.4rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit', minWidth: 130, background: '#fff', color: '#1E293B', fontWeight: 400 }}
+                    style={{ padding: '0.3rem 0.4rem', border: `1px solid ${f.required && plan.needsHq > 0 ? '#dc2626' : '#CBD5E1'}`, borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit', minWidth: 130, background: '#fff', color: '#1E293B', fontWeight: 400 }}
                   >
                     <option value="">(blank)</option>
                     {(options || []).map(o => <option key={o} value={o}>{o}</option>)}
@@ -512,11 +552,32 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
                           </td>
                           <td style={{ ...cell, fontWeight: 600, color: '#1E293B' }}>{r.name || <span style={{ color: '#CBD5E1' }}>-</span>}</td>
                           {extraFields.map(f => {
-                            const v = r.record[f.key];
+                            // HQ Region shows what will actually be stored:
+                            // a pasted location is read as the region it
+                            // names, and a preview still showing "Toronto,
+                            // Ontario, Canada" would be describing a value
+                            // the field never holds. The raw cell stays on
+                            // the hover, so a row that was read differently
+                            // than expected can still be checked.
+                            const raw = r.record[f.key];
+                            const v = f.key === 'hqRegion' ? r.effective.hqRegion : raw;
                             const shown = Array.isArray(v) ? v.join(', ') : v == null ? '' : String(v);
-                            return <td key={f.key} style={{ ...cell, color: '#475569', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={shown}>{shown || <span style={{ color: '#CBD5E1' }}>-</span>}</td>;
+                            const rawShown = raw == null ? '' : String(raw);
+                            return (
+                              <td
+                                key={f.key}
+                                style={{ ...cell, color: '#475569', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                title={rawShown && rawShown !== shown ? `${shown || '(not placed)'} - read from "${rawShown}"` : shown}
+                              >{shown || <span style={{ color: '#CBD5E1' }}>-</span>}</td>
+                            );
                           })}
-                          <td style={{ ...cell, color: '#64748B' }}>{r.note}</td>
+                          {/* A row being created with no region says so on
+                              its own line: when a mapped column answers for
+                              some rows and not others, the count in the
+                              footer cannot say which ones. */}
+                          <td style={{ ...cell, color: r.needsHq ? '#991B1B' : '#64748B' }}>
+                            {r.needsHq ? 'needs an HQ Region' : r.note}
+                          </td>
                         </tr>
                       );
                     })}
@@ -535,9 +596,18 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
         </div>
 
         <div style={{ padding: '0.75rem 1rem', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
-          {progress && (
+          {progress ? (
             <span style={{ marginRight: 'auto', fontSize: '0.72rem', color: '#475569' }}>Adding {progress.done + 1}/{progress.total}…</span>
-          )}
+          ) : plan.needsHq > 0 ? (
+            // What is holding the button, beside the button. One pick on the
+            // shared row usually answers the whole batch, so this says where
+            // to go rather than only that something is wrong.
+            <span style={{ marginRight: 'auto', fontSize: '0.72rem', color: '#991B1B', fontWeight: 600 }}>
+              {plan.needsHq === plan.toAdd.length
+                ? `HQ Region is required: pick one above${table ? ', or map a column to it' : ''}.`
+                : `${plan.needsHq} of ${plan.toAdd.length} have no HQ Region: pick one above to cover them.`}
+            </span>
+          ) : null}
           <button onClick={() => { if (!busy) onClose(); }} disabled={busy} style={{ padding: '0.4rem 0.8rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', fontSize: '0.78rem', cursor: busy ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>
             {result ? 'Done' : 'Cancel'}
           </button>

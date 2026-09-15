@@ -533,3 +533,21 @@
   border-style: dashed;
   color: var(--color-text-muted);
 }
+
+/* A field a new company cannot be created without. The asterisk marks it
+   while it is empty rather than permanently: on a card that is only ever
+   read, a red star beside a filled-in field is a warning about nothing. */
+.requiredMark {
+  color: #dc2626;
+  font-weight: 700;
+}
+
+.requiredNote {
+  /* Under the control, not under the label: every row in this block is a
+     150px label column beside its field, and a third child would otherwise
+     land back in the label column and wrap to three lines. */
+  grid-column: 2;
+  margin-top: 4px;
+  font-size: 0.7rem;
+  color: #dc2626;
+}

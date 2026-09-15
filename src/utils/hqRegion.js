@@ -111,3 +111,38 @@ export function normalizeHqRegion(value) {
   if (v === clean(OUTSIDE_NORTH_AMERICA)) return OUTSIDE_NORTH_AMERICA;
   return '';
 }
+
+// The two values the field can hold, as one list rather than three copies.
+// Every place that offers the choice - the company popup, the new-opp flow
+// that creates a company, the bulk add - renders this, so a value offered in
+// one of them is a value the others can read back.
+export const HQ_REGION_OPTIONS = [NORTH_AMERICA, OUTSIDE_NORTH_AMERICA];
+
+/**
+ * Whether a company record is still missing its HQ Region.
+ *
+ * The same rule the My Accounts flag and the Issues tab already apply, so a
+ * company that passes the check at creation is not flagged the moment it
+ * lands. Anything that is not one of the two values counts as missing: the
+ * field renders as a select, and a value the select cannot show is a blank
+ * with extra steps. '-' is the app's blank sentinel and reads as blank here
+ * too.
+ */
+export function hqRegionMissing(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw || raw === '-') return true;
+  return normalizeHqRegion(raw) === '';
+}
+
+/**
+ * A cell that is meant to be an HQ Region, as one of the two values.
+ *
+ * Takes the value as written when it already is one, and otherwise reads it
+ * as a location - which is what a pasted "HQ" column actually carries
+ * ("Toronto, Ontario, Canada"), and what classifyHqRegion exists to place.
+ * A location it cannot place comes back '' rather than guessing: a wrong
+ * region is worse than a blank somebody is asked to fill.
+ */
+export function resolveHqRegion(value) {
+  return normalizeHqRegion(value) || classifyHqRegion(value);
+}
