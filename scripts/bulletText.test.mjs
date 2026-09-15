@@ -1,5 +1,6 @@
 // Assertion tests for the bulleted textareas' string arithmetic - the
-// One-pager Notes box and every other field that bullets as you type.
+// opportunity form's Evidence and Impact boxes, and every other field that
+// bullets as you type.
 // Plain Node - no test framework (the project has none). Run:
 //   node scripts/bulletText.test.mjs
 //
