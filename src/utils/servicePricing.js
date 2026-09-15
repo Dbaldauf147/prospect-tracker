@@ -762,19 +762,33 @@ export function pricingFor(pricing, name, bases = PRICING_BASES) {
     basis: basis ? basis.key : '',
     rate: parseMoney(row?.rate),
     rateHigh: parseMoney(row?.rateHigh),
-    // Retired: a minimum fee used to floor what the basis worked out, and a
-    // typed fee used to replace it outright. Both boxes are gone from the
-    // pricing panel, and both figures stop here — dropped on the way out of
-    // storage rather than deleted from it, so a number somebody saved is
-    // left exactly where it is and simply stops reaching any calculation.
-    // Every service now prices off its basis and its rates, and nothing can
+    // Retired: a minimum fee used to floor what the basis worked out, a
+    // typed fee used to replace it outright, and a standing count of units
+    // to charge on. All three boxes are gone from the pricing panel, and
+    // all three figures stop here — dropped on the way out of storage
+    // rather than deleted from it, so a number somebody saved is left
+    // exactly where it is and simply stops reaching any calculation. Every
+    // service now prices off its basis and its rates, and nothing can
     // quietly outrank them.
     //
-    // These two lines are the whole of it: restore the `parseMoney` reads
-    // and put the two boxes back in ServicePricingModal and the pair works
-    // again, on the figures that were always there.
+    // `units` is the newest of the three and the one that made the case.
+    // With no box left to edit it, a count saved years ago went on pricing
+    // every deal and could not be cleared: API/ETL charged three projects
+    // on every estimate, the Units cell explained itself as "a standing
+    // figure on the rate card: 3 projects on every deal", and there was
+    // nowhere to go and say otherwise. A standing default nobody can reach
+    // is not a default, it is a number the app is stuck on.
+    //
+    // A count typed against ONE estimate is untouched: estimateScope lays
+    // it over the entry after this (`{ ...card, units: own }`), so the
+    // Units cell on Account Potential still charges that deal on its own
+    // figure.
+    //
+    // These three lines are the whole of it: restore the `parseMoney` reads
+    // and put the boxes back in ServicePricingModal and they work again, on
+    // the figures that were always there.
     minFee: null,
-    units: parseMoney(row?.units),
+    units: null,
     avgFee: null,
     setupLines: setupLinesFor(row, bases),
     lines: normalizePricingLines(row?.lines, bases, basis ? basis.key : ''),
@@ -1276,7 +1290,24 @@ function lineContext(lineBasis, { counts, dealSize, ownUnit, ownUnits }) {
   let note = '';
   if (lineBasis.kind === 'unit') {
     unitsTyped = ownUnits !== null && ownUnits !== undefined && lineBasis.unit === ownUnit;
-    units = unitsTyped ? ownUnits : (parseMoney(counts?.[lineBasis.unit]) ?? 0);
+    const shared = parseMoney(counts?.[lineBasis.unit]);
+    // A project service nobody has counted is ONE project.
+    //
+    // Every other unit is a fact about the account - sites, accounts,
+    // meters, MWh - and a count nobody has given is unknown, which prices
+    // at nothing and says so. Guessing one site would be inventing the
+    // portfolio. Projects are not like that: a project is the thing being
+    // sold, and the ordinary shape of the sale is one of them. It is the
+    // same reading a typed lump sum already gets a few lines down ("It
+    // prices ONE of whatever the service is: one rollout, one retrofit"),
+    // and a deal carrying three says three, here or on the row.
+    //
+    // Only where there is no answer at all. A count typed against the row,
+    // or a shared Projects count on the estimate, still wins - including a
+    // deliberate zero, which goes on reading "Set to no projects" rather
+    // than being quietly rounded back up to one.
+    const fallback = lineBasis.unit === PROJECT_UNIT ? 1 : 0;
+    units = unitsTyped ? ownUnits : (shared ?? fallback);
     if (units <= 0) {
       note = unitsTyped
         ? `Set to no ${lineBasis.unitLabel.toLowerCase()}`
