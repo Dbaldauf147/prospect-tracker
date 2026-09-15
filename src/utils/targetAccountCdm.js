@@ -157,6 +157,52 @@ export function targetCdmConflictLabel(conflict) {
   return `${cdms.length} other CDMs`;
 }
 
+/**
+ * The CDM dropdown option that names the same person as a workbook value.
+ *
+ * The workbook spells people its own way - "McNary, Kristi" where the CDM
+ * list holds "Kristi McNary" - so applying the warning's name verbatim
+ * would put a value in the field that is not on the list, and the next
+ * person to read it could not tell whether it was a second rep or the same
+ * one typed differently. matchesCdm is what the rest of the app uses to
+ * decide two spellings are one person, so it decides here too.
+ *
+ * Returns '' when the list has nobody who matches; the caller then has to
+ * choose between the raw name and nothing.
+ */
+export function canonicalCdmOption(name, options = []) {
+  const wanted = String(name || '').trim();
+  if (!wanted) return '';
+  for (const o of options || []) {
+    const opt = String(o || '').trim();
+    if (opt && opt.toLowerCase() === wanted.toLowerCase()) return opt;
+  }
+  for (const o of options || []) {
+    const opt = String(o || '').trim();
+    if (opt && (matchesCdm(opt, wanted) || matchesCdm(wanted, opt))) return opt;
+  }
+  return '';
+}
+
+/**
+ * What clicking the badge will do, appended to its tooltip.
+ *
+ * The badge states a disagreement, and the fix for a disagreement about
+ * who covers an account is almost always "the workbook is right" - so the
+ * badge is the button for it. Said out loud because a warning that is also
+ * a control does not look like one, and because it OVERWRITES a name
+ * somebody may have typed on purpose.
+ */
+export function targetCdmApplyHint(conflict, cdm) {
+  const cdms = conflict?.cdms || [];
+  if (cdms.length === 0) return '';
+  const mine = String(cdm || '').trim();
+  if (cdms.length > 1) return ' Click to pick one of them for the CDM field.';
+  return mine
+    ? ` Click to put ${cdms[0]} in the CDM field, replacing ${mine}.`
+    : ` Click to put ${cdms[0]} in the CDM field.`;
+}
+
 // The badge's tooltip: who the targets list says covers the account, which
 // target row(s) say so, and what that means for the CDM on this record.
 export function describeTargetCdmConflict(conflict, cdm) {

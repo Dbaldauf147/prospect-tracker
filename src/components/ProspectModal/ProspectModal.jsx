@@ -83,7 +83,10 @@ import {
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, buildCdmOptions, buildTypeOptions } from '../../utils/prospectOptions';
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
-import { buildTargetCdmResolver, targetCdmConflictLabel, describeTargetCdmConflict } from '../../utils/targetAccountCdm';
+import {
+  buildTargetCdmResolver, targetCdmConflictLabel, describeTargetCdmConflict,
+  canonicalCdmOption, targetCdmApplyHint,
+} from '../../utils/targetAccountCdm';
 import {
   divisionsFor,
   divisionParentsFor,
@@ -4821,6 +4824,30 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return base;
   }, [prospects, settings, fields.cdm]);
 
+  // Taking the workbook's word for it.
+  //
+  // The badge states a disagreement about who covers this account, and the
+  // answer is nearly always "the Target Accounts list is right" - it is the
+  // shared record, and this field is one person's copy of it. It used to
+  // leave the reader to read the name off the warning and pick it out of
+  // the dropdown by hand, which is a transcription step between knowing the
+  // answer and recording it.
+  //
+  // The workbook's spelling is resolved to the dropdown's ("McNary, Kristi"
+  // to "Kristi McNary") so the field lands on a real option rather than a
+  // second spelling of somebody already on the list. A name the list does
+  // not carry at all goes in as it is written: it is still who the
+  // workbook says covers the account, and the field keeps an off-list
+  // value (see cdmOptions).
+  const [cdmPickOpen, setCdmPickOpen] = useState(false);
+  const applyTargetCdm = useCallback((name) => {
+    const raw = String(name || '').trim();
+    if (!raw) return;
+    set('cdm', canonicalCdmOption(raw, cdmOptions) || raw);
+    setCdmPickOpen(false);
+  }, [cdmOptions]);
+
+
   // Competitor name suggestions for the @-mention dropdown in the
   // notes editors. Harvested across every prospect's competitorsNotes
   // / serviceNotes / legacy competitors map (see harvestCompetitors)
@@ -8095,22 +8122,66 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     placeholder="Select CDM…"
                   />
                 </div>
-                {targetCdmConflict && (
-                  <span
-                    title={describeTargetCdmConflict(targetCdmConflict, fields.cdm)}
-                    style={{
-                      display: 'inline-flex', alignItems: 'center', gap: '0.2rem', flexShrink: 0,
-                      maxWidth: '45%', padding: '0.15rem 0.35rem', borderRadius: 4,
-                      background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E',
-                      fontSize: '0.62rem', fontWeight: 700, lineHeight: 1.3, cursor: 'help',
-                    }}
-                  >
-                    <span aria-hidden="true">⚠</span>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {targetCdmConflictLabel(targetCdmConflict)}
+                {targetCdmConflict && (() => {
+                  // The badge is the fix as well as the warning: one name
+                  // goes straight in, several open a list to pick from,
+                  // because the page cannot know which of two reps the
+                  // workbook means. Either way it REPLACES what is in the
+                  // field, so the tooltip says so before the click.
+                  const names = targetCdmConflict.cdms || [];
+                  const single = names.length === 1;
+                  return (
+                    <span style={{ position: 'relative', flexShrink: 0, maxWidth: '45%' }}>
+                      <button
+                        type="button"
+                        title={describeTargetCdmConflict(targetCdmConflict, fields.cdm)
+                          + targetCdmApplyHint(targetCdmConflict, fields.cdm)}
+                        aria-haspopup={single ? undefined : 'true'}
+                        aria-expanded={single ? undefined : cdmPickOpen}
+                        onClick={() => {
+                          if (single) applyTargetCdm(names[0]);
+                          else setCdmPickOpen(v => !v);
+                        }}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
+                          maxWidth: '100%', padding: '0.15rem 0.35rem', borderRadius: 4,
+                          background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E',
+                          fontSize: '0.62rem', fontWeight: 700, lineHeight: 1.3, cursor: 'pointer',
+                          fontFamily: 'inherit',
+                        }}
+                      >
+                        <span aria-hidden="true">⚠</span>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {targetCdmConflictLabel(targetCdmConflict)}
+                        </span>
+                      </button>
+                      {!single && cdmPickOpen && (
+                        <div
+                          style={{
+                            position: 'absolute', right: 0, top: 'calc(100% + 3px)', zIndex: 60,
+                            background: '#fff', border: '1px solid var(--color-border)', borderRadius: 6,
+                            boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: 180, overflow: 'hidden',
+                          }}
+                        >
+                          <div style={{ padding: '0.3rem 0.5rem', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)', borderBottom: '1px solid var(--color-border-light)' }}>
+                            Target Accounts says
+                          </div>
+                          {names.map(name => (
+                            <button
+                              key={name}
+                              type="button"
+                              onClick={() => applyTargetCdm(name)}
+                              title={`Put ${name} in the CDM field${String(fields.cdm || '').trim() ? `, replacing ${String(fields.cdm).trim()}` : ''}`}
+                              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.35rem 0.5rem', background: 'none', border: 'none', fontSize: '0.74rem', fontFamily: 'inherit', color: 'var(--color-text)', cursor: 'pointer' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-surface-alt, #F1F5F9)'; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+                            >{name}</button>
+                          ))}
+                        </div>
+                      )}
                     </span>
-                  </span>
-                )}
+                  );
+                })()}
               </div>
             </div>
 
