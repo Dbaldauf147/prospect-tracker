@@ -22,7 +22,7 @@ import { AccountPotentialTab } from './AccountPotentialTab';
 import { buildServiceRows } from '../../utils/serviceRows';
 import { TimelinesTab } from './TimelinesTab';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
-import { getServicePricing, renameServicePricing } from '../../utils/servicePricing';
+import { getServicePricing, renameServicePricing, isGraveyardBucket } from '../../utils/servicePricing';
 import { LIBRARY_KEY, getTreeLibrary, hasSavedTrees, renameServiceInLibrary } from '../../utils/treeLibrary';
 import { loadPricingEstimate } from '../../utils/pricingEstimateStore';
 import { parseServiceRefs, formatServiceRef } from '../../utils/serviceStepDeps';
@@ -80,6 +80,15 @@ const SERVICE_TABLE_COLUMNS = [
   // who already have a saved column set.
   { key: 'hide',             label: 'Hide',              width: 58,     editable: false },
 ];
+
+// A retired thing, wherever it is offered in a menu: greyed, never removed.
+// One object, since it is the same grey in every menu that has one.
+const MUTED_OPTION = { color: 'var(--color-text-muted)' };
+
+// Retired services render under the live ones whichever column the table is
+// sorted by (see DataTable's rowGroup). Module-level so the table isn't
+// handed a new function on every render.
+const serviceRowGroup = (row) => (row._muted ? 1 : 0);
 
 // Columns added to the Services table after it gained saved column prefs.
 // A user with a stored visible-set has it without these keys, so DataTable
@@ -198,6 +207,18 @@ function ServiceYesNoCell({ value, onCommit }) {
 // catch-all card, and choosing it takes the service out of every box.
 function ServiceBucketCell({ value, options, onCommit }) {
   const current = value || UNGROUPED_SERVICES;
+  // The boxes plus the board's catch-all card, which is a choice here even
+  // though nothing is stored under it: picking it takes the service out of
+  // every box. Graveyards last, as on the board.
+  const bucketMenu = useMemo(
+    () => {
+      const all = [...options, UNGROUPED_SERVICES];
+      const live = all.filter(b => !isGraveyardBucket(b));
+      const dead = all.filter(isGraveyardBucket);
+      return [...live, ...dead];
+    },
+    [options],
+  );
   return (
     <select
       value={current}
@@ -217,8 +238,13 @@ function ServiceBucketCell({ value, options, onCommit }) {
         cursor: 'pointer', boxSizing: 'border-box',
       }}
     >
-      {options.map(b => <option key={b} value={b}>{b}</option>)}
-      <option value={UNGROUPED_SERVICES}>{UNGROUPED_SERVICES}</option>
+      {/* The graveyard box reads greyed here as it does on the board, and
+          lands under "Other services" for the same reason it does there:
+          unfiled work is still live work. Still pickable - filing a service
+          into the graveyard is how a service is retired. */}
+      {bucketMenu.map(b => (
+        <option key={b} value={b} style={isGraveyardBucket(b) ? MUTED_OPTION : undefined}>{b}</option>
+      ))}
     </select>
   );
 }
@@ -754,7 +780,7 @@ function ServiceNameCell({ name, url, onSaveUrl, onOpenDetails }) {
 // the row grows a second column where the user can attach a
 // presentation hyperlink for that option. The link commits on blur /
 // Enter; clearing it removes the link.
-function OptionRow({ value, onCommit, onRemove, linkEnabled, link, onSaveLink }) {
+function OptionRow({ value, onCommit, onRemove, linkEnabled, link, onSaveLink, muted }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => { setDraft(value); }, [value]);
 
@@ -793,12 +819,13 @@ function OptionRow({ value, onCommit, onRemove, linkEnabled, link, onSaveLink })
           if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
           else if (e.key === 'Escape') { e.preventDefault(); cancel(); e.currentTarget.blur(); }
         }}
+        title={muted ? `${value} is in the graveyard: it stays on the list so old deals still read, and nobody quotes it.` : undefined}
         style={{
           flex: 1, minWidth: 0,
           padding: '3px 6px',
           border: '1px solid transparent', borderRadius: 4,
           fontSize: '0.78rem', fontFamily: 'inherit',
-          color: 'var(--color-text)', background: 'transparent',
+          color: muted ? 'var(--color-text-muted)' : 'var(--color-text)', background: 'transparent',
         }}
         onFocus={(e) => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.borderColor = 'var(--color-border)'; }}
         onBlurCapture={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'transparent'; }}
@@ -961,6 +988,13 @@ function ListCard({ list, filter, wide, links, onSaveLink, onChange, onRenameLab
   }
 
   const filterLower = filter.trim().toLowerCase();
+  // Options the list itself says are retired — the Solutions list's
+  // graveyard, and nothing on any other list. They read greyed and the list
+  // already arrives with them at the bottom.
+  const mutedOptions = useMemo(
+    () => new Set((list.muted || []).map(o => String(o).toLowerCase())),
+    [list.muted],
+  );
   // Walk the original list so each entry keeps its real index — the
   // edit / remove handlers refer back to the underlying array, not
   // the filtered subset.
@@ -1009,6 +1043,7 @@ function ListCard({ list, filter, wide, links, onSaveLink, onChange, onRenameLab
               linkEnabled={linkEnabled}
               link={linkEnabled ? (links?.[opt] || '') : ''}
               onSaveLink={onSaveLink}
+              muted={mutedOptions.has(opt.toLowerCase())}
             />
           ))
         )}
@@ -1437,7 +1472,7 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
   // Flat rows for the table: one field per column so sorting, the search
   // box and the Excel export all read straight off the row, with the
   // pieces the cells need to render (link, muted state) alongside.
-  const serviceTableRows = useMemo(() => filteredServiceRows.map(({ name, meta, bucket }) => ({
+  const serviceTableRows = useMemo(() => filteredServiceRows.map(({ name, meta, bucket, graveyard }) => ({
     id: name,
     name,
     bfoTag: meta?.bfoTag || '',
@@ -1454,7 +1489,11 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
     sme: meta?.sme || '',
     ktm: meta?.ktm || '',
     _url: serviceLinks[name] || '',
-    _muted: !!meta?.graveyard,
+    // Retired: greyed here and pinned under the live services below. Reads
+    // the row's own answer (the box it is filed in, or the seed catalog's
+    // flag) so this table and every menu built off the Solutions list agree
+    // about what is dead - see graveyardTest.
+    _muted: !!graveyard,
     _hidden: hiddenServices.has(name),
   })), [filteredServiceRows, serviceLinks, hiddenServices]);
 
@@ -1906,6 +1945,10 @@ export function DropdownsView({ settings, updateSettings, prospects = [] }) {
               // isn't where the user clicked.
               onRowClick={(row) => setDetailName(row.name)}
               rowClassName={(row) => ((row._muted || row._hidden) ? styles.serviceRowMuted : undefined)}
+              // Retired services sit under the live ones whichever column
+              // the user sorts by: a header click reorders the work, not
+              // what is still work.
+              rowGroup={serviceRowGroup}
               exportFileName="Services"
               settings={settings}
               updateSettings={updateSettings}

@@ -18,7 +18,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SERVICE_STATUSES } from '../../data/enums';
-import { buildServiceBoard } from '../../utils/serviceCategoriesStore';
+import { buildServiceBoard, graveyardTest } from '../../utils/serviceCategoriesStore';
+import { isGraveyardBucket } from '../../utils/servicePricing';
 import { companiesMatch } from '../../utils/listFlags';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { SERVICE_STATUS_COLORS } from '../../utils/serviceStatusColors';
@@ -283,6 +284,10 @@ export function ScopeServicesModal({
   const trackedServices = useCoverageServices();
 
   const categories = useMemo(() => buildCategories(settings, options), [settings, options]);
+  // Retired services read greyed here as they do everywhere else. The board
+  // has already put the graveyard box last; this is what says so on a
+  // service that is filed somewhere live and dead all the same.
+  const isDead = useMemo(() => graveyardTest(settings), [settings]);
   const allItems = useMemo(() => categories.flatMap(c => c.items), [categories]);
   // Scope is stored comma-separated, and some services have commas in their
   // names ("Cat 3, 5, 6, and 7 (part of GHG)"). Split against the board's own
@@ -663,11 +668,18 @@ export function ScopeServicesModal({
                   border: '1px solid var(--color-border)', borderRadius: 5,
                   overflow: 'hidden', fontSize: '0.72rem',
                 }}>
-                  <div style={{
-                    padding: '0.2rem 0.4rem', background: '#EFF6FF',
-                    borderBottom: '1px solid var(--color-border)',
-                    fontWeight: 700, fontSize: '0.65rem', color: '#1E40AF',
-                  }}>{cat.name}</div>
+                  <div
+                    title={isGraveyardBucket(cat.name)
+                      ? 'The graveyard: kept so old deals still read, not sold any more. Last on the board for the same reason.'
+                      : undefined}
+                    style={{
+                      padding: '0.2rem 0.4rem',
+                      background: isGraveyardBucket(cat.name) ? '#F1F5F9' : '#EFF6FF',
+                      borderBottom: '1px solid var(--color-border)',
+                      fontWeight: 700, fontSize: '0.65rem',
+                      color: isGraveyardBucket(cat.name) ? '#94A3B8' : '#1E40AF',
+                    }}
+                  >{cat.name}</div>
                   <div style={{ padding: '0.1rem 0' }}>
                     {cat.items.map(item => {
                       const checked = selectedSet.has(item.toLowerCase());
@@ -717,7 +729,11 @@ export function ScopeServicesModal({
                               flex: 1, minWidth: 0, fontSize: '0.68rem',
                               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                               fontWeight: checked ? 700 : 500,
-                              color: checked ? '#166534' : 'var(--color-text)',
+                              // A retired service still ticks - it is in the
+                              // deals that already carry it, and green says
+                              // so louder than grey says "retired".
+                              color: checked ? '#166534'
+                                : (isDead(item) ? 'var(--color-text-muted)' : 'var(--color-text)'),
                             }}>{displayName(item)}</span>
                           </label>
                           {pulls.length > 0 && (

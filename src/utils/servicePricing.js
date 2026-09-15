@@ -995,15 +995,17 @@ export function setPricingField(pricing, name, field, value, bases = PRICING_BAS
  * Does a service bucket mean "not sold any more"?
  *
  * The graveyard is where a retired service goes: it stays in the vocabulary
- * so old deals still read, but nobody quotes it. That is the same fact the
- * no-fee mark states, so a service filed there is marked for you rather
- * than one box at a time — see the rule in `estimateScope`.
+ * so old deals still read, but nobody quotes it. Two things follow from
+ * that, and both read this one test rather than each deciding for itself:
+ * the service is charged nothing wherever it is priced (see the rule in
+ * `estimateScope`), and it is shown greyed and last wherever it is listed
+ * (see graveyardTest in serviceCategoriesStore).
  *
  * Matched on the word rather than on one exact bucket name, because the
  * bucket is the user's own: "Graveyard", "Old Graveyard" and "Graveyard
  * (2024)" are all the same box to the person who named it.
  */
-export function isNoFeeBucket(bucket) {
+export function isGraveyardBucket(bucket) {
   return String(bucket ?? '').toLowerCase().includes('graveyard');
 }
 
@@ -1588,7 +1590,7 @@ export function estimateScope({
     // stay where they are, and a service moved back out of the graveyard
     // prices exactly as it did before it went in. estimateRecurring already
     // puts the mark ahead of any rate that survived it.
-    const entry = isNoFeeBucket(row.bucket) ? { ...withUnits, noFee: true } : withUnits;
+    const entry = isGraveyardBucket(row.bucket) ? { ...withUnits, noFee: true } : withUnits;
     const ownDeal = dealSizeByService?.get(row.name) || null;
     const est = ownDeal
       ? estimateServiceRange({

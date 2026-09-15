@@ -1,5 +1,7 @@
 import { DROPDOWN_LISTS, SOLUTIONS_CATALOG } from '../data/dropdownLists.js';
-import { boardServiceNames, sortServiceNames } from './serviceCategoriesStore.js';
+import {
+  boardServiceNames, graveyardNamesLast, graveyardTest, sortServiceNames,
+} from './serviceCategoriesStore.js';
 
 // The Solutions / Service Catalog is shown alongside the named lists
 // on the Dropdowns page but lives in a separate constant. Surface it
@@ -37,7 +39,7 @@ const SOLUTIONS_LIST = {
 // board sort by, so "Cat 9" still comes before "Cat 10". Sorting by the stored
 // name rather than any serviceRenames alias: the list holds the underlying
 // names, which is what Scope values are stored under.
-export function mergeBoardServices(options, settings) {
+export function mergeBoardServices(options, settings, isDead) {
   const merged = [...(options || [])];
   const have = new Set(merged.map(o => String(o).trim().toLowerCase()));
   for (const item of boardServiceNames(settings)) {
@@ -46,7 +48,11 @@ export function mergeBoardServices(options, settings) {
     have.add(key);
     merged.push(item);
   }
-  return sortServiceNames(merged);
+  // Retired services go under the live ones, alphabetical within each half.
+  // The list is read to answer "what could this deal include", and a name
+  // nobody sells any more is not a candidate — it is kept so old deals still
+  // read, which is a different job and belongs at the bottom.
+  return graveyardNamesLast(sortServiceNames(merged), isDead || graveyardTest(settings));
 }
 
 // How many services the merge above contributes — board services the stored
@@ -62,6 +68,10 @@ export function boardOnlyServiceCount(settings) {
     .filter(n => !have.has(String(n).trim().toLowerCase()))
     .length;
 }
+
+// One empty array for every list that has no retired options, so a consumer
+// that memoizes on `list.muted` isn't handed a fresh [] each render.
+const EMPTY_MUTED = [];
 
 // The full set of built-in lists the Dropdowns tab knows about. Order
 // matters here: it's the order the cards render in.
@@ -91,15 +101,30 @@ export function getEffectiveDropdownLists(settings) {
   const hidden = new Set(Array.isArray(settings?.dropdownListsHidden) ? settings.dropdownListsHidden : []);
   const customLists = Array.isArray(settings?.dropdownCustomLists) ? settings.dropdownCustomLists : [];
 
+  // Built once for the Solutions list rather than per option: it reads the
+  // whole board to find out which boxes are graveyards.
+  const isDead = graveyardTest(settings);
+
   const out = [];
   for (const list of BUILTIN_DROPDOWN_LISTS) {
     if (hidden.has(list.key)) continue;
     const stored = Array.isArray(optionOverrides[list.key]) ? optionOverrides[list.key] : list.options;
     // Solutions carries the services board's vocabulary too — see
     // mergeBoardServices. Every other list is served as stored.
-    const options = list.key === 'solutions' ? mergeBoardServices(stored, settings) : stored;
+    const solutions = list.key === 'solutions';
+    const options = solutions ? mergeBoardServices(stored, settings, isDead) : stored;
     const label = labelOverrides[list.key] || list.label;
-    out.push({ key: list.key, label, options, builtin: true });
+    // Which of those options are retired, so a menu built from this list can
+    // grey them without knowing what a services board is. Solutions is the
+    // only list with a graveyard; every other one serves an empty set rather
+    // than undefined, so a consumer never has to guard.
+    out.push({
+      key: list.key,
+      label,
+      options,
+      muted: solutions ? options.filter(isDead) : EMPTY_MUTED,
+      builtin: true,
+    });
   }
   for (const list of customLists) {
     if (!list?.key) continue;
@@ -107,7 +132,7 @@ export function getEffectiveDropdownLists(settings) {
       ? optionOverrides[list.key]
       : (Array.isArray(list.options) ? list.options : []);
     const label = labelOverrides[list.key] || list.label || 'Untitled list';
-    out.push({ key: list.key, label, options, builtin: false });
+    out.push({ key: list.key, label, options, muted: EMPTY_MUTED, builtin: false });
   }
   return out;
 }

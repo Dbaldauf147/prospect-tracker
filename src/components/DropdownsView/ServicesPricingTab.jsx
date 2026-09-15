@@ -14,7 +14,7 @@ import {
   formatYear1,
   year1FromCard,
   getServicePricing,
-  isNoFeeBucket,
+  isGraveyardBucket,
   parseMoney,
   pricingCoverage,
   pricingFor,
@@ -70,6 +70,11 @@ const PRICING_TABLE_COLUMNS = [
 
 // Shipped switched off, not taken away: see the note on the rate columns.
 const DEFAULT_HIDDEN_COLUMNS = ['rate', 'rateHigh'];
+
+// Retired services render under the live ones whichever column the table is
+// sorted by (see DataTable's rowGroup). Module-level so the table isn't
+// handed a new function on every render.
+const pricingRowGroup = (row) => (row._graveyard ? 1 : 0);
 
 // What the bulk bar can set across a selection: the card columns whose
 // value is the same sentence on every row it applies to. A rate is here
@@ -231,7 +236,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   // panels open a service by name and stay open while the user types behind
   // them, so they read from this rather than from the filtered list.
   const allRows = useMemo(() => serviceRows
-    .map(({ name, meta, bucket }) => {
+    .map(({ name, meta, bucket, graveyard }) => {
       const entry = pricingFor(pricing, name, bases);
       // What the service is actually priced on, setup lines included. A
       // basis the user picked off the dropdown still leads even before a
@@ -252,11 +257,14 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         // than off the estimate so the badge is the mark itself — except
         // for a service in the graveyard, which the bucket marks for you
         // and which prices at zero whether or not anyone ever ticked it.
-        noFee: entry.noFee || isNoFeeBucket(bucket),
+        noFee: entry.noFee || isGraveyardBucket(bucket),
         // Ticked by the bucket rather than by hand, so the tick is not the
         // user's to take off: move the service to another bucket and its
         // rate card — still intact underneath — prices it again.
-        _noFeeByBucket: isNoFeeBucket(bucket),
+        _noFeeByBucket: isGraveyardBucket(bucket),
+        // Retired, by its box or by the seed catalog. Pins the row under
+        // the live services whichever column this table is sorted by.
+        _graveyard: !!graveyard,
         serviceBucket: bucket,
         serviceType: meta?.serviceType || '',
         years: meta?.years || '',
@@ -447,7 +455,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   function toggleNoFee(name, on) {
     // Nothing to toggle where the bucket is the mark. The checkbox is
     // disabled, so this only catches the panel and the keyboard.
-    if (isNoFeeBucket(serviceRows.find(r => r.name === name)?.bucket)) return;
+    if (isGraveyardBucket(serviceRows.find(r => r.name === name)?.bucket)) return;
     if (on && pricedBases(pricingFor(pricing, name, bases)).length > 0
       && !window.confirm(
         `Mark "${name}" as charging no fee? That clears the basis, rates and setup lines, `
@@ -842,6 +850,9 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           // on it ticks the row instead of opening the panel: picking
           // twelve rows would otherwise be twelve modals to dismiss.
           onRowClick={(row) => (bulkOn ? toggleRow(row.name) : setPricingPanelFor(row.name))}
+          // Retired services stay at the bottom under any sort: what is
+          // still sold is what this page is for.
+          rowGroup={pricingRowGroup}
           rowClassName={(row) => [
             // Nothing to price on this row: it reads as settled rather than
             // as a gap, which is what the mark means. Behind the scope and

@@ -34,6 +34,30 @@ export function parseMulti(value) {
     .filter(Boolean);
 }
 
+// A lookup for the options a list says are retired, as the cells below use
+// it: lower-cased, and one empty set when there are none.
+//
+// The list itself works out which of its options are dead (see
+// getEffectiveDropdownLists) — a cell is handed the answer rather than the
+// rule, so a menu can grey a retired service without knowing that services
+// have boxes or that one of those boxes is a graveyard.
+const NO_MUTED = new Set();
+function useMutedSet(muted) {
+  return useMemo(() => {
+    if (!muted || !muted.length) return NO_MUTED;
+    return new Set(muted.map(o => String(o).toLowerCase()));
+  }, [muted]);
+}
+
+// A retired option stays pickable: old values have to stay readable, and a
+// service is occasionally quoted on the way out. It just reads as what it
+// is, and the list has already put it at the bottom.
+const MUTED_OPTION_COLOR = '#94A3B8';
+
+// The one line a retired option explains itself with, in either menu.
+const mutedTitle = (opt) =>
+  `${opt} is in the graveyard: kept so old records still read, not sold any more.`;
+
 // Resolve a column's effective dropdown binding. User picks (from the
 // Link Columns modal) win over the caller's built-in defaults; an
 // explicit `none` from the user disables a default. Returns null when
@@ -56,7 +80,7 @@ export function resolveColumnLink(columnName, userLinks, defaultLinks = {}) {
 // Single-select cell — click to open a popover of options sourced from
 // the Dropdowns page. Picking an option commits the value and closes
 // the popover; "Clear" empties it.
-export function SelectCell({ value, onChange, options }) {
+export function SelectCell({ value, onChange, options, muted }) {
   const [open, setOpen] = useState(false);
   // Popup is portaled to <body> so the table cell's overflow:hidden
   // can't clip it; position is recomputed from the wrapper's bounding
@@ -99,6 +123,7 @@ export function SelectCell({ value, onChange, options }) {
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
 
+  const mutedSet = useMutedSet(muted);
   const current = String(value || '').trim();
   const isEmpty = !current;
   // Surface any pre-existing free-text value that isn't in the
@@ -149,14 +174,16 @@ export function SelectCell({ value, onChange, options }) {
           <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }}>
             {displayOptions.map(opt => {
               const selected = opt.toLowerCase() === current.toLowerCase();
+              const dead = mutedSet.has(opt.toLowerCase());
               return (
                 <div
                   key={opt}
                   onClick={() => pick(opt)}
+                  title={dead ? mutedTitle(opt) : undefined}
                   style={{
                     padding: '0.35rem 0.6rem', cursor: 'pointer',
                     background: selected ? '#DCFCE7' : 'transparent',
-                    color: selected ? '#166534' : '#1E293B',
+                    color: selected ? '#166534' : (dead ? MUTED_OPTION_COLOR : '#1E293B'),
                     fontWeight: selected ? 700 : 500,
                     whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                   }}
@@ -192,7 +219,7 @@ export function SelectCell({ value, onChange, options }) {
 // Multi-select cell — checkbox popover. Stores the chosen options as a
 // comma-separated string so the value round-trips through plain text
 // storage (CSV export, Firestore strings, etc.).
-export function MultiSelectCell({ value, onChange, options, extraGroups, extraGroupsLabel, extraGroupsPlaceholder, nowrap, placeholder }) {
+export function MultiSelectCell({ value, onChange, options, muted, extraGroups, extraGroupsLabel, extraGroupsPlaceholder, nowrap, placeholder }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [popPos, setPopPos] = useState({ top: 0, left: 0 });
@@ -201,6 +228,7 @@ export function MultiSelectCell({ value, onChange, options, extraGroups, extraGr
   const popRef = useRef(null);
   const selected = useMemo(() => parseMulti(value), [value]);
   const selectedSet = useMemo(() => new Set(selected.map(s => s.toLowerCase())), [selected]);
+  const mutedSet = useMutedSet(muted);
   const groups = useMemo(
     () => (Array.isArray(extraGroups) ? extraGroups.filter(g => g && g.label && Array.isArray(g.options) && g.options.length > 0) : []),
     [extraGroups],
@@ -343,14 +371,16 @@ export function MultiSelectCell({ value, onChange, options, extraGroups, extraGr
               </div>
             ) : filteredOptions.map(opt => {
               const checked = selectedSet.has(opt.toLowerCase());
+              const dead = mutedSet.has(opt.toLowerCase());
               return (
                 <label
                   key={opt}
+                  title={dead ? mutedTitle(opt) : undefined}
                   style={{
                     display: 'flex', alignItems: 'center', gap: '0.55rem',
                     padding: '0.4rem 0.7rem', cursor: 'pointer',
                     background: checked ? '#DCFCE7' : 'transparent',
-                    color: checked ? '#166534' : '#1E293B',
+                    color: checked ? '#166534' : (dead ? MUTED_OPTION_COLOR : '#1E293B'),
                     fontWeight: checked ? 600 : 500,
                   }}
                 >
