@@ -737,11 +737,43 @@ export function ProgressView({ prospects, settings, cdmName }) {
     // Load HubSpot cache for contact data (loaded async into hubspotContactsState)
     const hubspotContacts = hubspotContactsState;
 
+    // Which company a contact belongs to is not HubSpot's Company text
+    // alone, and this page has to work that out for itself: App overlays
+    // the local overrides only on the copy it hands the popup, and the
+    // links live in settings nothing here used to read. Without both, an
+    // account whose roster you fixed by hand on its card still counted as
+    // having nobody, and the chart quietly disagreed with the popup the
+    // user had just been reading.
+    //
+    // A company typed over a contact (contactLocalFields._companyOverride)
+    // wins over HubSpot's text, the same precedence App.jsx applies.
+    const contactLocalFields = settings?.contactLocalFields || {};
+    const companyOf = (c) => {
+      const override = contactLocalFields[c?.id]?._companyOverride;
+      const co = (typeof override === 'string' && override) ? override : (c?.company || '');
+      return String(co).toLowerCase();
+    };
+    // Contacts pinned to a card (companyContactLinks, keyed by the
+    // lower-cased company name) belong to it whatever their Company text
+    // says: that is the whole point of linking one. Ids are compared as
+    // strings because the popup stores them that way.
+    const contactLinks = settings?.companyContactLinks || {};
+    const contactsById = new Map();
+    for (const c of hubspotContacts) {
+      const id = String(c?.id || c?.vid || '');
+      if (id) contactsById.set(id, c);
+    }
+    const pinnedContactsFor = (company) => {
+      const ids = contactLinks[String(company || '').trim().toLowerCase()];
+      if (!Array.isArray(ids)) return [];
+      return ids.map(id => contactsById.get(String(id))).filter(Boolean);
+    };
+
     const contactCompanies = new Set();
     const contactDomains = new Set();
     const FREE_MAIL = new Set(['gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com', 'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com']);
     for (const c of hubspotContacts) {
-      const co = (c.company || '').toLowerCase();
+      const co = companyOf(c);
       if (co) contactCompanies.add(co);
       if (c.email) {
         const at = c.email.lastIndexOf('@');
@@ -793,7 +825,9 @@ export function ProgressView({ prospects, settings, cdmName }) {
       for (const d of prospectDomains(p)) {
         if (contactDomains.has(d)) return true;
       }
-      return false;
+      // Linked by hand on the card. Last because it is the rarest of the
+      // three, not because it counts for less.
+      return pinnedContactsFor(p?.company).length > 0;
     }
 
     // Match the Opps column logic: account has opps if totalOppsByAccount > 0 (fuzzy match)
@@ -814,11 +848,12 @@ export function ProgressView({ prospects, settings, cdmName }) {
     }
 
     // Build DM companies set — companies with at least one contact tagged as Decision Maker
+    const isDecisionMaker = (c) =>
+      String(c?.dans_tags || c?.dan_s_tags || c?.dans_tag || '').toLowerCase().includes('decision maker');
     const dmCompanies = new Set();
     for (const c of hubspotContacts) {
-      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-      if (tags.includes('decision maker')) {
-        const co = (c.company || '').toLowerCase();
+      if (isDecisionMaker(c)) {
+        const co = companyOf(c);
         if (co) dmCompanies.add(co);
       }
     }
@@ -835,7 +870,8 @@ export function ProgressView({ prospects, settings, cdmName }) {
       const domainMap = new Map();
       const contactMap = new Map();
       for (const c of hubspotContacts) {
-        if (c.email && c.company) contactMap.set(c.email.toLowerCase(), c.company.toLowerCase());
+        const co = companyOf(c);
+        if (c.email && co) contactMap.set(c.email.toLowerCase(), co);
       }
       for (const p of myProspects) {
         if (p.emailDomain) {
@@ -890,7 +926,12 @@ export function ProgressView({ prospects, settings, cdmName }) {
           if (co.startsWith(firstWord)) return true;
         }
       }
-      return false;
+      // A contact linked to this card by hand counts here for the same
+      // reason it counts as a contact: the link is the user saying whose
+      // they are. Leaving it out of this one would flip an account to
+      // "has contacts" and leave it reading "no decision maker" with a
+      // Decision Maker tag sitting on its card.
+      return pinnedContactsFor(company).some(isDecisionMaker);
     }
 
     const inactiveStatuses = new Set(['Lost - Not Sold', 'Hold Off', 'Old Client']);
