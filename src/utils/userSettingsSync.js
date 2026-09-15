@@ -305,3 +305,18 @@ export async function initUserSettings(userId) {
     await migrateFromLocalStorage(userId);
   }
 }
+
+// One read of the settings document, right now, outside the live
+// subscription above.
+//
+// The subscription is what normally keeps a reader current, and while it is
+// healthy this returns what the reader already has. It earns its keep when
+// it doesn't: a crashed SDK client (see firestoreClientHealth) leaves every
+// listener in the tab dead, so a rate card edited on another device stops
+// arriving and nothing says so. readSettingsDoc goes around that over HTTPS,
+// which means a reader that asks can still get the saved truth out of a tab
+// that has quietly stopped hearing it.
+export async function fetchUserSettings(userId) {
+  if (!userId) return null;
+  return readSettingsDoc(userId, doc(db, COL, userId));
+}

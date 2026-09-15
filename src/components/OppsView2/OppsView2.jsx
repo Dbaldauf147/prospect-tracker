@@ -145,6 +145,8 @@ import { DealTimelineModal } from './DealTimelineModal';
 // tab reads them.
 import { getServicePricing, resolvePricingBases, estimateScope, feeBasisLabel, pricingUnits, parseMoney as parsePricingMoney, formatMoney as formatPricingMoney } from '../../utils/servicePricing';
 import { oppDealCounts, missingUnitChips } from '../../utils/oppDealCounts';
+// One read of the saved rate card, for the Deal Size popup's Refresh button.
+import { fetchUserSettings } from '../../utils/userSettingsSync';
 import { companiesMatch } from '../../utils/listFlags';
 import styles from './OppsView2.module.css';
 
@@ -1992,32 +1994,72 @@ const EMPTY_SCOPE = [];
 // showing a confident $0. A percentage-of-deal service reads the amount being
 // typed into the box beside it, which is what it is a percentage of.
 //
-// `active` is what stops this running per rendered row: the answer is only
-// ever looked at inside a popup that is open.
+// A plain function rather than only a hook: the Refresh button below prices
+// the scope a second time against the card it has just fetched, and has to
+// do that inside the click rather than a render later.
+function scopeFeeEstimate({ scopeNames, pricing, pricingBases, serviceOverrides, sites, counts, dealSize }) {
+  const names = scopeNames || EMPTY_SCOPE;
+  if (!names.length) return null;
+  const rows = names.map(name => ({
+    name,
+    meta: getEffectiveServiceMetadata(name, serviceOverrides),
+  }));
+  const est = estimateScope({
+    rows,
+    services: names,
+    pricing: pricing || {},
+    bases: pricingBases || undefined,
+    // Whatever the caller knows about the account. The Deal Size cell has
+    // only the opp's Sites; the Lead prompt reads the company card too, so
+    // a per-account service prices there instead of coming back at nothing.
+    counts: counts || { sites: parsePricingMoney(sites) ?? 0 },
+    dealSize: parsePricingMoney(dealSize),
+  });
+  // Each line says where its fee came from, so a number that moves has a
+  // reason on the row — the percentage ones move with the amount being
+  // typed beside them, which is the deal size they are a cut of.
+  return { ...est, lines: est.lines.map(line => ({ ...line, how: feeBasisLabel(line, pricingBases || undefined) })) };
+}
+
+// What a Refresh turned out to say: the same scope priced off the card that
+// was on screen and off the card just read back, compared.
+//
+// A refresh that changes nothing is the usual outcome and is reported as
+// one. "The card has not moved" is what you press the button to find out,
+// as often as a new total is, and a button that goes quiet on success
+// leaves you unable to tell a confirmed number from a click that missed.
+function repriceNote(before, after) {
+  const when = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const money = (v) => fmtMoneyWhole(Math.round(v || 0)) || '$0';
+  if (!after || !before) return `Priced off the saved rate card at ${when}.`;
+  const moved = [];
+  if (Math.round(before.year1Total || 0) !== Math.round(after.year1Total || 0)) {
+    moved.push(`Year 1 low was ${money(before.year1Total)}, now ${money(after.year1Total)}`);
+  }
+  if (Math.round(before.year1TotalHigh || 0) !== Math.round(after.year1TotalHigh || 0)) {
+    moved.push(`Year 1 high was ${money(before.year1TotalHigh)}, now ${money(after.year1TotalHigh)}`);
+  }
+  // A service that gains (or loses) a price without moving the total still
+  // changed the estimate: the footnote under the table counts it.
+  if ((before.unpriced?.length || 0) !== (after.unpriced?.length || 0)) {
+    moved.push(`services with no price: ${before.unpriced?.length || 0}, now ${after.unpriced?.length || 0}`);
+  }
+  return moved.length
+    ? `Repriced at ${when}: ${moved.join('; ')}.`
+    : `No change: the saved rate card prices this scope the same (checked ${when}).`;
+}
+
+// The same estimate, memoized for a popup. `active` is what stops it running
+// per rendered row: the answer is only ever looked at inside a popup that is
+// open.
 function useScopeFeeEstimate({ active, scopeNames, pricing, pricingBases, serviceOverrides, sites, counts, dealSize }) {
   const names = scopeNames || EMPTY_SCOPE;
-  return useMemo(() => {
-    if (!active || !names.length) return null;
-    const rows = names.map(name => ({
-      name,
-      meta: getEffectiveServiceMetadata(name, serviceOverrides),
-    }));
-    const est = estimateScope({
-      rows,
-      services: names,
-      pricing: pricing || {},
-      bases: pricingBases || undefined,
-      // Whatever the caller knows about the account. The Deal Size cell has
-      // only the opp's Sites; the Lead prompt reads the company card too, so
-      // a per-account service prices there instead of coming back at nothing.
-      counts: counts || { sites: parsePricingMoney(sites) ?? 0 },
-      dealSize: parsePricingMoney(dealSize),
-    });
-    // Each line says where its fee came from, so a number that moves has a
-    // reason on the row — the percentage ones move with the amount being
-    // typed beside them, which is the deal size they are a cut of.
-    return { ...est, lines: est.lines.map(line => ({ ...line, how: feeBasisLabel(line, pricingBases || undefined) })) };
-  }, [active, names, pricing, pricingBases, serviceOverrides, sites, counts, dealSize]);
+  return useMemo(
+    () => (active
+      ? scopeFeeEstimate({ scopeNames: names, pricing, pricingBases, serviceOverrides, sites, counts, dealSize })
+      : null),
+    [active, names, pricing, pricingBases, serviceOverrides, sites, counts, dealSize],
+  );
 }
 
 // What is known about the account, as a row of counts above the fee table.
@@ -2082,6 +2124,48 @@ function DealCountChips({ chips, companyName, account }) {
   );
 }
 
+// The Refresh control that sits in the header of either estimate table, and
+// the line under it saying what the last press found.
+//
+// Both tables price the same scope off the same rate card, so both carry the
+// same button: which of the two is showing depends on whether an SIA has
+// been saved, and that is no reason for the card to stop being re-readable.
+// A `refresh` of null (no caller wiring) is simply no button.
+function ScopeRefreshButton({ refresh }) {
+  if (!refresh) return null;
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); refresh.onRefresh?.(); }}
+      disabled={!!refresh.busy}
+      title="Re-read the rate card on Dropdowns › Services Pricing and price this scope again off it. Reads what is saved, so a price changed on another device (or while this tab was offline) lands here."
+      style={{
+        background: 'none', border: 'none', textDecoration: 'underline',
+        padding: 0, font: 'inherit', fontSize: '0.7rem', fontWeight: 600,
+        whiteSpace: 'nowrap',
+        color: refresh.busy ? '#94A3B8' : '#2563eb',
+        cursor: refresh.busy ? 'wait' : 'pointer',
+      }}
+    >{refresh.busy ? 'Refreshing…' : '↻ Refresh'}</button>
+  );
+}
+
+// A refresh that changes nothing says so rather than going quiet: "the card
+// has not moved" is the answer you pressed the button for as often as a new
+// total is, and a button that only speaks up on a change leaves you unable
+// to tell a confirmed number from a click that missed.
+function ScopeRefreshNote({ refresh }) {
+  if (!refresh || (!refresh.error && !refresh.note)) return null;
+  return (
+    <div style={{
+      color: refresh.error ? '#B91C1C' : '#64748B',
+      fontSize: '0.7rem', marginTop: 2,
+    }}>
+      {refresh.error || refresh.note}
+    </div>
+  );
+}
+
 // The scope priced out, as a table: one row per service, the low end of its
 // year 1 fee and the high end beside it.
 //
@@ -2095,7 +2179,14 @@ function DealCountChips({ chips, companyName, account }) {
 // box sits under the end it fills. Nothing is written until the user presses
 // one: the estimate is what the rate card says, and whether that IS the deal
 // size is theirs to decide.
-function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = null, onUse }) {
+//
+// `refresh`, when a caller passes one, puts a Refresh control in the header:
+// `{ onRefresh, busy, error, note }` - what to call, whether it is in flight,
+// why the last one failed, and what the last one turned out to say. The table
+// itself prices whatever it is handed; re-reading the rate card is the
+// caller's business, because the caller is the one that knows where the card
+// came from.
+function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = null, onUse, refresh = null }) {
   if (!estimate || !estimate.lines.length) return null;
   // The totals can be struck from a smaller set than the rows: the deal-size
   // prompt lets a service be switched off, and an off service still has to
@@ -2126,21 +2217,27 @@ function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = nu
       border: '1px solid var(--color-border-light)', borderRadius: 4,
       fontSize: '0.78rem', color: '#475569',
     }}>
-      <div style={{ fontWeight: 600, color: '#1E293B', marginBottom: 4 }}>
-        Scope services{' '}
-        <span style={{ color: '#94A3B8', fontWeight: 400 }}>
-          ({picking && onCount !== estimate.lines.length
-            ? `${onCount} of ${estimate.lines.length}`
-            : estimate.lines.length}) &middot; est. Year 1 fee
-        </span>
-        {picking ? (
-          <span
-            style={{ color: '#94A3B8', fontWeight: 400 }}
-            title="A service left unticked still shows what it is worth - it just stops counting towards the total, so you can see what the deal is without it."
-          >
-            {' '}&middot; untick to exclude
+      <div style={{
+        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+        gap: 8, fontWeight: 600, color: '#1E293B', marginBottom: 4,
+      }}>
+        <span>
+          Scope services{' '}
+          <span style={{ color: '#94A3B8', fontWeight: 400 }}>
+            ({picking && onCount !== estimate.lines.length
+              ? `${onCount} of ${estimate.lines.length}`
+              : estimate.lines.length}) &middot; est. Year 1 fee
           </span>
-        ) : null}
+          {picking ? (
+            <span
+              style={{ color: '#94A3B8', fontWeight: 400 }}
+              title="A service left unticked still shows what it is worth - it just stops counting towards the total, so you can see what the deal is without it."
+            >
+              {' '}&middot; untick to exclude
+            </span>
+          ) : null}
+        </span>
+        <ScopeRefreshButton refresh={refresh} />
       </div>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
@@ -2262,6 +2359,7 @@ function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = nu
           No price yet: {sums.unpriced.join(', ')} - set one on Dropdowns › Services Pricing.
         </div>
       )}
+      <ScopeRefreshNote refresh={refresh} />
     </div>
   );
 }
@@ -2283,7 +2381,7 @@ function ScopeFeeTable({ estimate, totals = null, selected = null, onToggle = nu
 // SIA charges for that the Scope never listed is a Scope cell somebody
 // forgot — neither shows up if the table only lists what both sides agree
 // on, which is exactly when a comparison is worth drawing.
-function SiaVsEstimateTable({ compare, onUse }) {
+function SiaVsEstimateTable({ compare, onUse, refresh = null }) {
   if (!compare || !compare.rows.length) return null;
   const { rows, totals } = compare;
   const cell = { padding: '2px 0', verticalAlign: 'top' };
@@ -2322,14 +2420,23 @@ function SiaVsEstimateTable({ compare, onUse }) {
       border: '1px solid var(--color-border-light)', borderRadius: 4,
       fontSize: '0.78rem', color: '#475569',
     }}>
-      <div style={{ fontWeight: 600, color: '#1E293B', marginBottom: 4 }}>
-        SIA vs estimate{' '}
-        <span
-          style={{ color: '#94A3B8', fontWeight: 400 }}
-          title="Every service on either side: what the rate card estimated it at, and what the saved SIA actually bills for it in year 1."
-        >
-          ({rows.length}) &middot; Year 1
+      <div style={{
+        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+        gap: 8, fontWeight: 600, color: '#1E293B', marginBottom: 4,
+      }}>
+        <span>
+          SIA vs estimate{' '}
+          <span
+            style={{ color: '#94A3B8', fontWeight: 400 }}
+            title="Every service on either side: what the rate card estimated it at, and what the saved SIA actually bills for it in year 1."
+          >
+            ({rows.length}) &middot; Year 1
+          </span>
         </span>
+        {/* The estimate half of this table is the rate card's answer, so it
+            is re-readable here for the same reason it is on the table this
+            one replaces. */}
+        <ScopeRefreshButton refresh={refresh} />
       </div>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
@@ -2498,6 +2605,7 @@ function SiaVsEstimateTable({ compare, onUse }) {
           No price yet: {compare.unpriced.join(', ')} - set one on Dropdowns › Services Pricing.
         </div>
       )}
+      <ScopeRefreshNote refresh={refresh} />
     </div>
   );
 }
@@ -2550,6 +2658,7 @@ function SiaTotalsOnlyCompare({ compare }) {
 function QuotedAmountCell({
   value, onChange, snapshot, onViewSnapshot, url, onChangeUrl, services, bfoName, bfoAddress,
   scopeNames = [], pricing = null, pricingBases = null, serviceOverrides = null, sites = '',
+  onRefreshPricing = null,
 }) {
   const [open, setOpen] = useState(false);
   const [draftAmount, setDraftAmount] = useState(value ?? '');
@@ -2557,11 +2666,32 @@ function QuotedAmountCell({
   useEffect(() => { if (!open) setDraftAmount(value ?? ''); }, [value, open]);
   useEffect(() => { if (!open) setDraftUrl(url ?? ''); }, [url, open]);
 
+  // The rate card the Refresh button read back from the cloud, what that
+  // read turned out to say, and the live card it was fetched against.
+  const [fetchedCard, setFetchedCard] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
+  // A fetched card only stands while the one the table handed down is the
+  // one it was compared against. Once the subscription delivers a newer
+  // card, the fetched one is history and so is the note about it: it would
+  // be describing a card that is no longer in force. Derived rather than
+  // cleared, so there is no moment where the two disagree.
+  const freshCard = (fetchedCard
+    && fetchedCard.from.pricing === pricing
+    && fetchedCard.from.bases === pricingBases
+    && fetchedCard.from.overrides === serviceOverrides)
+    ? fetchedCard
+    : null;
+
   const closePopup = () => setOpen(false);
   const openPopup = (e) => {
     if (e) e.stopPropagation();
     setDraftAmount(value ?? '');
     setDraftUrl(url ?? '');
+    // A popup that opens asks again if it wants to know: the live card is
+    // the one to trust until somebody presses Refresh.
+    setFetchedCard(null);
+    setRefreshError('');
     setOpen(true);
   };
   const save = () => {
@@ -2582,10 +2712,66 @@ function QuotedAmountCell({
   const snapStats = useMemo(() => pricingSnapshotYear1(snapshot), [snapshot]);
 
   // The scope priced out, for the table below the amount box — see
-  // useScopeFeeEstimate. Only while the popup is open.
+  // useScopeFeeEstimate. Only while the popup is open, and off the card
+  // Refresh fetched when there is one.
   const scopeEstimate = useScopeFeeEstimate({
-    active: open, scopeNames, pricing, pricingBases, serviceOverrides, sites, dealSize: draftAmount,
+    active: open,
+    scopeNames,
+    pricing: freshCard ? freshCard.pricing : pricing,
+    pricingBases: freshCard ? freshCard.bases : pricingBases,
+    serviceOverrides: freshCard ? freshCard.overrides : serviceOverrides,
+    sites,
+    dealSize: draftAmount,
   });
+
+  // Price this scope again off the saved rate card.
+  //
+  // Everything the estimate reads arrives on a Firestore listener, so the
+  // usual answer is that nothing moved — which is the answer worth having
+  // when you are about to commit to a number. The times it isn't are the
+  // reason the button exists: a listener killed mid-session (the SDK's
+  // internal assertion, see firestoreClientHealth) leaves this tab quietly
+  // pricing off whatever card it last heard, and the re-read goes over
+  // plain HTTPS instead.
+  const refreshPricing = () => {
+    if (refreshing || !onRefreshPricing) return;
+    setRefreshing(true);
+    setRefreshError('');
+    // A promise chain rather than an async handler: an async function in a
+    // component body makes the react-hooks lint rules bail out on the whole
+    // component, which would quietly stop them checking everything else in
+    // here. Same work, still linted.
+    onRefreshPricing().then((card) => {
+      // The verdict is about the moment the button was pressed, so it is
+      // settled here rather than derived on later renders: the totals move
+      // with the amount being typed in the box above (a percentage service
+      // is a cut of it), and a note recomputed against those would blame the
+      // rate card for the typing.
+      const after = scopeFeeEstimate({
+        scopeNames,
+        pricing: card.pricing,
+        pricingBases: card.bases,
+        serviceOverrides: card.overrides,
+        sites,
+        dealSize: draftAmount,
+      });
+      setFetchedCard({
+        ...card,
+        note: repriceNote(scopeEstimate, after),
+        from: { pricing, bases: pricingBases, overrides: serviceOverrides },
+      });
+    }).catch((err) => {
+      console.error('Deal Size: rate card refresh failed', err);
+      setRefreshError(`Refresh failed: ${err?.message || 'the rate card could not be read'}.`);
+    }).finally(() => setRefreshing(false));
+  };
+  // The button and what it last found, for whichever table is showing.
+  const refreshControl = onRefreshPricing ? {
+    onRefresh: refreshPricing,
+    busy: refreshing,
+    error: refreshError,
+    note: freshCard?.note || '',
+  } : null;
 
   // Once an SIA is saved, the estimate stops being the answer and becomes
   // the thing to test: the same services, what the card said they were
@@ -2760,16 +2946,21 @@ function QuotedAmountCell({
                 )}
               </div>
             )}
+            {/* The rate card the estimate columns are priced off, re-read
+                on demand. Passed to whichever of the two tables is showing:
+                both price the same scope off the same card. */}
             {comparePerService ? (
               <SiaVsEstimateTable
                 compare={scopeCompare}
                 onUse={(n) => setDraftAmount(formatQuotedAmountLive(String(Math.round(n))))}
+                refresh={refreshControl}
               />
             ) : (
               <>
                 <ScopeFeeTable
                   estimate={scopeEstimate}
                   onUse={(n) => setDraftAmount(formatQuotedAmountLive(String(Math.round(n))))}
+                  refresh={refreshControl}
                 />
                 <SiaTotalsOnlyCompare compare={scopeCompare} />
               </>
@@ -13158,6 +13349,20 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // Dropdowns › Services Pricing, so a fee here reads off the same list of
   // bases that priced it there.
   const pricingBases = useMemo(() => resolvePricingBases(settings), [settings?.pricingBases]);
+  // The rate card as it is saved this second, for the Deal Size popup's
+  // Refresh button. Read straight from the settings document rather than
+  // from `settings` above: the point of the button is to answer for the
+  // saved card even when this tab's listener has stopped delivering it.
+  const refreshRateCard = useCallback(async () => {
+    if (!user?.uid) throw new Error('you are signed out');
+    const fresh = await fetchUserSettings(user.uid);
+    if (!fresh) throw new Error('no saved settings were found');
+    return {
+      pricing: getServicePricing(fresh),
+      bases: resolvePricingBases(fresh),
+      overrides: fresh.serviceOverrides || null,
+    };
+  }, [user?.uid]);
   const records = useMemo(() => data?.records || [], [data]);
 
   // Drop any selection ids that no longer match a live record (e.g.
@@ -13399,6 +13604,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 pricingBases={pricingBases}
                 serviceOverrides={settings?.serviceOverrides}
                 sites={row['Sites']}
+                onRefreshPricing={refreshRateCard}
               />
             );
           }
@@ -14018,7 +14224,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     // `records` and `settings` feed the Scope services board (the account's
     // other opps and the user's category layout). Both belong in the deps so
     // a status edited elsewhere shows up the next time the board is opened.
-  }, [headers, columnLinks, listRegistry, updateOppField, deleteOppField, deleteOpp, companySuggestions, peOwnerSuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById, filteredRowIds, records, settings]);
+  }, [headers, columnLinks, listRegistry, updateOppField, deleteOppField, deleteOpp, companySuggestions, peOwnerSuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById, filteredRowIds, records, settings, refreshRateCard]);
 
   // The same columns, taught to render a scheduled placeholder differently.
   // Wrapping once here beats a `__scheduledOpp` check inside forty column
