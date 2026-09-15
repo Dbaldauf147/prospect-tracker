@@ -120,6 +120,7 @@ import { tagListHas } from '../../utils/contactTagReview';
 import { loadDealsList } from '../../utils/dealsStore';
 import { isDecisionMakerContact } from '../../utils/decisionMakerCoverage';
 import { ListsMatchPanel } from './ListsMatchPanel';
+import { AnalysisMenu } from './AnalysisMenu';
 import styles from './ProspectModal.module.css';
 
 async function loadOppsFromIndexedDB() {
@@ -7578,7 +7579,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       <div className={styles.modal} onClick={e => e.stopPropagation()}>
         <div className={styles.header}>
           <h2 className={styles.title}>{isNew ? 'Add Prospect' : fields.company}</h2>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          {/* Wraps rather than squashing: there are five of these now, and
+              a header that runs the account's own name off the edge to keep
+              them on one line has its priorities backwards. */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: '0.5rem' }}>
             {!isNew && fields.company && (
               <button
                 ref={listsMatchBtnRef}
@@ -7606,6 +7610,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   cursor: onePagerBusy ? 'wait' : 'pointer', fontFamily: 'inherit',
                 }}
               >{onePagerBusy ? 'Building…' : 'One-pager'}</button>
+            )}
+            {/* The saved Indicative Savings workbook. One button rather
+                than the green strip it used to be across the top of the
+                card: what it is worth is a yes - there IS an analysis
+                here - and the file name, the date and the three things you
+                can do to it are a click away, where they are read once
+                rather than on every open of every tab. */}
+            {!isNew && (
+              <AnalysisMenu
+                analysis={indicativeAnalysis}
+                error={analysisError}
+                note={analysisRefreshNote}
+                refreshing={analysisRefreshing}
+                downloading={analysisDownloading}
+                removing={analysisRemoving}
+                onRefresh={refreshAnalysisFigures}
+                onDownload={downloadIndicativeAnalysis}
+                onRemove={removeIndicativeAnalysis}
+              />
             )}
             {!isNew && onDeleteProspect && onUpdateProspect && (
               <button
@@ -7715,110 +7738,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   </span>
                 ))}
               </span>
-            </div>
-          )}
-          {indicativeAnalysis && (
-            <div style={{
-              marginBottom: '0.8rem',
-              padding: '0.6rem 0.8rem',
-              background: '#F0FDF4',
-              border: '1px solid #BBF7D0',
-              borderRadius: 6,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '0.8rem',
-              flexWrap: 'wrap',
-            }}>
-              <div style={{ minWidth: 0, flex: '1 1 200px' }}>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  Indicative Savings Analysis
-                </div>
-                <div style={{ fontSize: '0.78rem', color: '#1E293B', fontWeight: 600, marginTop: '0.15rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {indicativeAnalysis.fileName || 'Indicative Savings by State.xlsx'}
-                </div>
-                <div style={{ fontSize: '0.68rem', color: '#475569', marginTop: '0.1rem' }}>
-                  {(() => {
-                    const ts = indicativeAnalysis.capturedAt?.toDate?.();
-                    const when = ts ? ts.toLocaleString() : 'Recently saved';
-                    const kb = indicativeAnalysis.sizeBytes ? ` · ${Math.round(indicativeAnalysis.sizeBytes / 1024).toLocaleString()} KB` : '';
-                    return `Saved ${when}${kb}`;
-                  })()}
-                </div>
-                {analysisError && (
-                  <div style={{ fontSize: '0.68rem', color: '#B91C1C', marginTop: '0.2rem' }}>{analysisError}</div>
-                )}
-                {analysisRefreshNote && (
-                  <div style={{ fontSize: '0.68rem', color: '#166534', marginTop: '0.2rem' }}>{analysisRefreshNote}</div>
-                )}
-              </div>
-              {/* Re-reads Sites, Accounts, Equipment, Sites w/ Mandate,
-                  Deregulated Sites and the exposure those mandates carry off
-                  the company's saved site list, and Indicative Annual
-                  Savings out of the saved analysis itself - so the Scale
-                  figures can be brought up to date without loading the
-                  portfolio back onto the Utility Lookup page and re-saving
-                  the whole workbook. The note under it names anything it
-                  could not answer. */}
-              <button
-                type="button"
-                onClick={refreshAnalysisFigures}
-                disabled={analysisRefreshing}
-                title={'Re-read Sites, Accounts, Equipment, Sites w/ Mandate, Deregulated Sites and Est. Max Yearly Exposure from this company\u2019s saved site list - the latest property-type mapping, the current compliance screening and the market classification the list carries - and Indicative Annual Savings from the saved analysis, which is where that figure is produced. Updates the Scale boxes below; it does not rebuild the saved workbook.'}
-                style={{
-                  padding: '0.4rem 0.9rem',
-                  background: '#fff',
-                  color: analysisRefreshing ? '#94A3B8' : '#166534',
-                  border: `1px solid ${analysisRefreshing ? '#CBD5E1' : '#BBF7D0'}`,
-                  borderRadius: 6,
-                  fontSize: '0.78rem',
-                  fontWeight: 600,
-                  cursor: analysisRefreshing ? 'wait' : 'pointer',
-                  fontFamily: 'inherit',
-                  whiteSpace: 'nowrap',
-                }}
-              >{analysisRefreshing ? 'Refreshing…' : '↻ Refresh figures'}</button>
-              <button
-                type="button"
-                onClick={downloadIndicativeAnalysis}
-                disabled={analysisDownloading}
-                title={analysisDownloading ? 'Fetching the workbook…' : 'Download the saved analysis'}
-                style={{
-                  padding: '0.4rem 0.9rem',
-                  background: analysisDownloading ? '#94A3B8' : '#009530',
-                  color: '#fff',
-                  border: `1px solid ${analysisDownloading ? '#94A3B8' : '#009530'}`,
-                  borderRadius: 6,
-                  fontSize: '0.78rem',
-                  fontWeight: 600,
-                  cursor: analysisDownloading ? 'wait' : 'pointer',
-                  fontFamily: 'inherit',
-                  whiteSpace: 'nowrap',
-                }}
-              >{analysisDownloading ? 'Preparing…' : '⬇ Download'}</button>
-              {/* Last, and the only one on the card that isn't green: this is
-                  the destructive one, and it should not sit where a thumb
-                  reaching for Download lands. */}
-              <button
-                type="button"
-                onClick={removeIndicativeAnalysis}
-                disabled={analysisRemoving}
-                title={analysisRemoving
-                  ? 'Removing…'
-                  : 'Delete the saved workbook from this company. The site list and the Scale figures below are kept.'}
-                style={{
-                  padding: '0.4rem 0.9rem',
-                  background: '#fff',
-                  color: analysisRemoving ? '#94A3B8' : '#B91C1C',
-                  border: `1px solid ${analysisRemoving ? '#CBD5E1' : '#FECACA'}`,
-                  borderRadius: 6,
-                  fontSize: '0.78rem',
-                  fontWeight: 600,
-                  cursor: analysisRemoving ? 'wait' : 'pointer',
-                  fontFamily: 'inherit',
-                  whiteSpace: 'nowrap',
-                }}
-              >{analysisRemoving ? 'Removing…' : 'Remove'}</button>
             </div>
           )}
           {(isNew || activeTab === 'company') && (
