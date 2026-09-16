@@ -168,6 +168,49 @@ const shape = (rows) => rows.map(r => [r.unit, r.value, r.target, r.column || r.
 
   eq('a unit nothing charges on and nothing answers gets no row',
     rowsFor(opp(), null, null), []);
+
+  // ...unless the caller asked for the whole vocabulary. Then the row is
+  // there to be typed into and is NOT marked as something this scope is
+  // waiting on - nothing below reads $0 for want of it.
+  const everyUnit = PRICING_UNITS.map(u => u.unit);
+  eq('offering every count gives a box for each the records can hold',
+    shape(dealCountRows({
+      opp: opp(), company: { id: 'c1', company: 'Prologis' },
+      units: PRICING_UNITS, needed: null, offer: everyUnit,
+    })),
+    [['sites', null, 'opp', 'Sites', null],
+     ['sites_mandate', null, 'company', 'sitesWithMandate', null],
+     ['accounts', null, 'company', 'numberOfAccounts', null],
+     ['meters', null, 'company', 'numberOfMeters', null],
+     ['mwh', null, 'company', 'annualMwh', null],
+     ['equipment', null, 'company', 'equipmentCount', null]]);
+  eq('and none of them is marked as one this scope is waiting on',
+    dealCountRows({
+      opp: opp(), company: COMPANY, units: PRICING_UNITS,
+      needed: ['accounts'], offer: everyUnit,
+    }).filter(r => r.needed).map(r => r.unit),
+    ['accounts']);
+
+  // An offer is only an offer where the number can be saved. Invoices are
+  // carried by no record, and the company fields have no card behind them,
+  // so neither is somewhere to type - the deal's own Sites still is.
+  eq('an offered count with nowhere to write is not offered at all',
+    dealCountRows({
+      opp: opp(), company: COMPANY, units: PRICING_UNITS, offer: everyUnit,
+    }).map(r => r.unit).includes('invoices'), false);
+  eq('and an Account matching no company card offers only the opp\u2019s own',
+    shape(dealCountRows({
+      opp: opp(), company: null, units: PRICING_UNITS, offer: everyUnit,
+    })),
+    [['sites', null, 'opp', 'Sites', null]]);
+  // A count this scope DOES charge on still says why it cannot be answered.
+  eq('a needed count with nowhere to write still shows its blocker',
+    shape(dealCountRows({
+      opp: opp(), company: null, units: PRICING_UNITS,
+      needed: ['accounts'], offer: everyUnit,
+    })),
+    [['sites', null, 'opp', 'Sites', null],
+     ['accounts', null, null, null, 'no-company']]);
   eq('and a row says whether this scope is actually waiting on it',
     rowsFor(opp(), COMPANY, ['accounts']).map(r => [r.unit, r.needed]),
     [['sites', false], ['sites_mandate', false], ['accounts', true]]);

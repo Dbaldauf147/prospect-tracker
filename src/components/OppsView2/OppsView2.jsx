@@ -148,7 +148,7 @@ import { DealTimelineModal } from './DealTimelineModal';
 // and the rate card's numbers have to be read the way the Services Pricing
 // tab reads them.
 import { getServicePricing, resolvePricingBases, estimateScope, feeBasisLabel, pricingUnits, parseMoney as parsePricingMoney, formatMoney as formatPricingMoney } from '../../utils/servicePricing';
-import { oppDealCounts, missingUnitChips, dealCountRows, COUNT_SOURCE_OPP, COUNT_SOURCE_COMPANY } from '../../utils/oppDealCounts';
+import { oppDealCounts, dealCountRows, COUNT_SOURCE_OPP, COUNT_SOURCE_COMPANY } from '../../utils/oppDealCounts';
 // One read of the saved rate card, for the Deal Size popup's Refresh button.
 import { fetchUserSettings } from '../../utils/userSettingsSync';
 import { companiesMatch } from '../../utils/listFlags';
@@ -2062,68 +2062,6 @@ function useScopeFeeEstimate({ active, scopeNames, pricing, pricingBases, servic
   );
 }
 
-// What is known about the account, as a row of counts above the fee table.
-//
-// Every per-unit fee below is one of these numbers times a rate, so the
-// numbers themselves are the first thing to check: a fee worked out against
-// a portfolio's 6,176 sites when the deal covers 40 of them is wrong in a
-// way no total will reveal. Each chip says which record answered — the opp
-// for what this deal covers, the company card for what the account has.
-//
-// A unit nothing has recorded is shown too, and only when some service in
-// the scope charges on it: that blank is the reason a line below reads $0,
-// and without it the $0 is indistinguishable from a service that is free.
-function DealCountChips({ chips, companyName, account }) {
-  if (!chips || !chips.length) return null;
-  return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
-      {chips.map(chip => {
-        const known = chip.value != null;
-        return (
-          <span
-            key={chip.unit}
-            title={known
-              ? `${chip.label}: ${chip.value.toLocaleString()}, from ${chip.from}. Every fee charged per ${chip.label.toLowerCase()} below is worked against it.`
-              : `No ${chip.label.toLowerCase()} count is recorded for this account, on the opp or on the company card - which is why a service charged per ${chip.label.toLowerCase()} prices at nothing below.`}
-            style={{
-              display: 'inline-flex', alignItems: 'baseline', gap: 4,
-              padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', whiteSpace: 'nowrap',
-              background: known ? '#F1F5F9' : '#fff',
-              border: `1px ${known ? 'solid #E2E8F0' : 'dashed #E2E8F0'}`,
-              color: known ? '#334155' : '#94A3B8',
-            }}
-          >
-            <span style={{ fontWeight: 600 }}>{chip.label}</span>
-            {known ? (
-              <>
-                <strong style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-                  {chip.value.toLocaleString()}
-                </strong>
-                <span style={{ color: '#94A3B8', fontSize: '0.66rem' }}>
-                  {chip.source === 'opp' ? 'this opp' : 'company card'}
-                </span>
-              </>
-            ) : <span>not recorded</span>}
-          </span>
-        );
-      })}
-      {/* Which company card was read. The Account on an opp and the company
-          on the card are matched by name, so naming the one it landed on is
-          what makes a surprising count checkable. */}
-      {companyName ? (
-        <span style={{ fontSize: '0.68rem', color: '#94A3B8' }}>
-          from <strong style={{ fontWeight: 600 }}>{companyName}</strong>
-        </span>
-      ) : account ? (
-        <span
-          style={{ fontSize: '0.68rem', color: '#94A3B8' }}
-          title={`No company record matches “${account}”, so only what the opp itself carries is known here.`}
-        >no company card for {account}</span>
-      ) : null}
-    </div>
-  );
-}
-
 // The house error palette, borrowed from the row flags on the table behind
 // these popups so a blocker looks the same wherever it is raised.
 const GAP_INK = '#991B1B';
@@ -2257,7 +2195,14 @@ function DealCountField({ row, note, onSave }) {
 // to: the opp for what THIS deal covers, the company card for what the
 // account HAS. A count written to the card is the account’s from then on,
 // which is why the card is named rather than implied.
-function DealCountEditor({ rows, companyName, account, onSave }) {
+//
+// `showAll` widens the row from the counts this deal prices on to every
+// count the records can hold. The scope decides what is worth ASKING for -
+// a meter count is noise on a deal with no per-meter service in it - but
+// the card is open and the account's meters are known now, so the rest are
+// one click away rather than two screens away. `onToggleAll` of null is
+// simply no link.
+function DealCountEditor({ rows, companyName, account, onSave, showAll = false, onToggleAll = null }) {
   if (!rows || !rows.length) return null;
   return (
     <div style={{
@@ -2265,11 +2210,28 @@ function DealCountEditor({ rows, companyName, account, onSave }) {
       border: '1px solid var(--color-border-light)', borderRadius: 4,
       fontSize: '0.78rem', color: '#475569',
     }}>
-      <div style={{ fontWeight: 600, color: '#1E293B', marginBottom: 6 }}>
-        Counts these fees are priced on{' '}
-        <span style={{ color: '#94A3B8', fontWeight: 400 }}>
-          &middot; type one in and the estimate below re-prices
-        </span>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+        <div style={{ fontWeight: 600, color: '#1E293B' }}>
+          Counts these fees are priced on{' '}
+          <span style={{ color: '#94A3B8', fontWeight: 400 }}>
+            &middot; type one in and the estimate below re-prices
+          </span>
+        </div>
+        {onToggleAll ? (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onToggleAll(); }}
+            title={showAll
+              ? 'Show only the counts some service in this scope charges on.'
+              : 'Show every count the opp and the company card can hold, including the ones nothing in this scope is priced on. They save to the same records.'}
+            style={{
+              background: 'none', border: 'none', textDecoration: 'underline',
+              padding: 0, font: 'inherit', fontSize: '0.7rem', fontWeight: 600,
+              whiteSpace: 'nowrap', marginLeft: 'auto',
+              color: '#2563eb', cursor: 'pointer',
+            }}
+          >{showAll ? 'Only what this prices on' : 'Show every count'}</button>
+        ) : null}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
         {rows.map(row => (
@@ -2951,6 +2913,11 @@ function QuotedAmountCell({
   // The rate card the Refresh button read back from the cloud, what that
   // read turned out to say, and the live card it was fetched against.
   const [fetchedCard, setFetchedCard] = useState(null);
+  // Whether the count boxes show the whole vocabulary or only what this
+  // scope is priced on. Off by default: the deal in front of you decides
+  // what is worth asking for, and a row of blanks nothing is waiting on
+  // reads as more things to go and find.
+  const [allCounts, setAllCounts] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState('');
   // A fetched card only stands while the one the table handed down is the
@@ -3029,7 +2996,8 @@ function QuotedAmountCell({
     company,
     units,
     needed: scopeEstimate?.unitsUsed ? [...scopeEstimate.unitsUsed] : null,
-  }), [opp, company, units, scopeEstimate]);
+    offer: allCounts ? units.map(u => u.unit) : null,
+  }), [opp, company, units, scopeEstimate, allCounts]);
 
   // The counts that can actually be answered from here. A row whose Account
   // matches no company card still shows - the missing count is why a fee
@@ -3303,6 +3271,8 @@ function QuotedAmountCell({
                 companyName={company?.company || ''}
                 account={String(opp?.['Account'] ?? '').trim()}
                 onSave={saveCount}
+                showAll={allCounts}
+                onToggleAll={() => setAllCounts(v => !v)}
               />
             )}
             {comparePerService ? (
@@ -6011,6 +5981,7 @@ function SoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onC
 function LeadQuotedAmountModal({
   opp, onSave, onClose,
   scopeNames = null, pricing = null, pricingBases = null, serviceOverrides = null, prospects = null,
+  updateProspect = null, onChangeOppField = null,
 }) {
   const [quotedAmount, setQuotedAmount] = useState(String(opp?.['Quoted Amount'] ?? ''));
   // Services left out of the total. Held as the ones switched OFF rather
@@ -6018,6 +5989,11 @@ function LeadQuotedAmountModal({
   // open counts it — the default for a service in the deal is that it is in
   // the deal.
   const [excluded, setExcluded] = useState(() => new Set());
+  // Whether the count boxes show the whole vocabulary or only what this
+  // scope is priced on. Off by default: the deal in front of you decides
+  // what is worth asking for, and a row of blanks nothing is waiting on
+  // reads as eight more things to go and find.
+  const [allCounts, setAllCounts] = useState(false);
   const toggleService = (name) => setExcluded(prev => {
     const next = new Set(prev);
     if (next.has(name)) next.delete(name); else next.add(name);
@@ -6078,17 +6054,43 @@ function LeadQuotedAmountModal({
     dealSize: quotedAmount,
   });
   const selectedServices = useMemo(() => new Set(pickedNames), [pickedNames]);
-  // Known counts first, then the ones this particular scope turned out to
-  // charge on and nobody has recorded — which is why the line below them
-  // reads $0.
-  const countChips = useMemo(() => [
-    ...dealCounts.chips,
-    ...missingUnitChips({
-      counts: dealCounts.counts,
-      needed: scopeEstimate?.unitsUsed ? [...scopeEstimate.unitsUsed] : null,
-      units,
-    }),
-  ], [dealCounts, scopeEstimate, units]);
+  // A box per count rather than a readout of them: the counts are the other
+  // half of this question. Every per-unit fee below is one of these numbers
+  // times a rate, so a missing one is why a line reads $0 - and the record
+  // that would fix it is two screens away from the prompt asking for the
+  // figure. Built off the estimate, because what the scope charges on is
+  // the estimate's answer.
+  const countRows = useMemo(() => dealCountRows({
+    opp,
+    company,
+    units,
+    needed: scopeEstimate?.unitsUsed ? [...scopeEstimate.unitsUsed] : null,
+    offer: allCounts ? units.map(u => u.unit) : null,
+  }), [opp, company, units, scopeEstimate, allCounts]);
+
+  // The counts that can actually be answered from here. A row whose Account
+  // matches no company card still shows - the missing count is why a fee
+  // reads $0 - but it is not somewhere the note under the table should send
+  // anybody.
+  const typeableCountUnits = useMemo(
+    () => new Set(countRows.filter(r => r.target).map(r => r.unit)),
+    [countRows],
+  );
+
+  // A typed count goes to the record the row says it goes to, and nowhere
+  // else. `null` clears it: a box emptied is "nobody has recorded one",
+  // which is what both records already mean by blank.
+  //
+  // Saved on the spot rather than held until Save, because these are not
+  // this prompt's answer - the deal size is. An account's meter count is a
+  // fact about the account, and Skip for now should not throw it away.
+  const saveCount = (row, n) => {
+    if (row.target === COUNT_SOURCE_OPP && row.column && onChangeOppField) {
+      onChangeOppField(row.column, n == null ? '' : String(n));
+    } else if (row.target === COUNT_SOURCE_COMPANY && row.field && company?.id && updateProspect) {
+      updateProspect(company.id, { [row.field]: n });
+    }
+  };
 
   function handleSave() {
     onSave({ quotedAmount: quotedAmount.trim() });
@@ -6167,14 +6169,18 @@ function LeadQuotedAmountModal({
             />
           </div>
           {/* What every per-unit fee below is worked against, and where each
-              of those numbers came from. Above the table because it is the
-              first thing to check: the rates are the rate card's, but the
-              counts are this account's, and a wrong count is a wrong deal. */}
-          {countChips.length > 0 && (
-            <DealCountChips
-              chips={countChips}
+              of those numbers goes. Above the table because it is the first
+              thing to check and the first thing to fix: the rates are the
+              rate card's, but the counts are this account's, and a wrong or
+              missing count is a wrong deal no total will reveal. */}
+          {countRows.length > 0 && (
+            <DealCountEditor
+              rows={countRows}
               companyName={company?.company || ''}
               account={String(opp?.['Account'] ?? '').trim()}
+              onSave={saveCount}
+              showAll={allCounts}
+              onToggleAll={() => setAllCounts(v => !v)}
             />
           )}
           {/* The scope priced out. "Use low" / "Use high" fill the box above
@@ -6186,6 +6192,7 @@ function LeadQuotedAmountModal({
             selected={selectedServices}
             onToggle={toggleService}
             onUse={(n) => setQuotedAmount(formatQuotedAmountLive(String(Math.round(n))))}
+            typeableUnits={typeableCountUnits}
           />
           {/* A deal with nothing in Scope has nothing to price, and saying so
               is more use than an empty panel — the scope is where the figure
@@ -16081,7 +16088,12 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             serviceOverrides={settings?.serviceOverrides}
             // For the account's own counts — the company card behind this
             // opp's Account carries its Sites, Sites w/ Mandate and Accounts.
+            // Writable from in here as well as readable: a count is the
+            // other half of what prices this deal, and the prompt that asks
+            // for the figure is the moment the missing one is noticed.
             prospects={prospects}
+            updateProspect={updateProspect}
+            onChangeOppField={(column, v) => updateOppField(opp._id, column, v)}
             onSave={({ quotedAmount }) => {
               // Only push when the value actually changed so the undo
               // stack stays uncluttered with no-op snapshots.

@@ -131,26 +131,36 @@ export function missingUnitChips({ counts = {}, needed = null, units = null } = 
  * the opp column while the card's 6,176 goes on pricing it would show an
  * empty box above a fee worked against a figure the box never held.
  *
+ * `offer` widens that: units listed there get a row even when this scope
+ * charges on none of them and no record answers them, and are NOT marked
+ * needed — nothing below is waiting on them. That is for the "show every
+ * count" case: the account's meters are worth recording while the card is
+ * open whether or not today's deal happens to price on them. An offered
+ * unit with nowhere to write is dropped rather than shown blocked, because
+ * an offer is only an offer where the number can be saved; a unit this
+ * scope actually needs still shows its blocker.
+ *
  * `projects` is left out. It is a fact about the SERVICE rather than the
  * account — three lighting retrofits and a chiller replacement is four
  * projects and neither service is priced on four — so it is asked per
  * service on the rate card and there is no single account number to type.
  */
-export function dealCountRows({ opp, company, units = null, needed = null } = {}) {
+export function dealCountRows({ opp, company, units = null, needed = null, offer = null } = {}) {
   const { counts, chips } = oppDealCounts({ opp, company, units });
   const chipByUnit = new Map(chips.map(c => [c.unit, c]));
   const labels = new Map((units || []).map(u => [u.unit, u.label]));
   const want = new Set(needed || []);
+  const offered = new Set(offer || []);
   const rows = [];
   const seen = new Set();
 
   const push = (unit) => {
     if (!unit || seen.has(unit) || unit === PROJECT_UNIT) return;
     const known = counts[unit];
-    // A unit is worth a box when it already answers something or when some
-    // service in this scope charges on it. Every other unit in the
-    // vocabulary is noise on this deal.
-    if (known === undefined && !want.has(unit)) return;
+    // A unit is worth a box when it already answers something, when some
+    // service in this scope charges on it, or when the caller asked for the
+    // whole vocabulary. Every other unit is noise on this deal.
+    if (known === undefined && !want.has(unit) && !offered.has(unit)) return;
     seen.add(unit);
     const chip = chipByUnit.get(unit) || null;
     const source = chip?.source || null;
@@ -165,6 +175,10 @@ export function dealCountRows({ opp, company, units = null, needed = null } = {}
     // is typed into it.
     if (target === COUNT_SOURCE_COMPANY && !company) { target = null; blocked = 'no-company'; }
     else if (!target) blocked = 'no-field';
+    // A row nothing is waiting on, that nothing has answered, and that there
+    // is nowhere to answer, is a box that would swallow what is typed into
+    // it. Offering that is worse than offering nothing.
+    if (!target && known === undefined && !want.has(unit)) { seen.delete(unit); return; }
     rows.push({
       unit,
       label: labels.get(unit) || chip?.label || unit,
@@ -182,5 +196,6 @@ export function dealCountRows({ opp, company, units = null, needed = null } = {}
   for (const u of (units || [])) push(u.unit);
   for (const unit of Object.keys(counts)) push(unit);
   for (const unit of want) push(unit);
+  for (const unit of offered) push(unit);
   return rows;
 }
