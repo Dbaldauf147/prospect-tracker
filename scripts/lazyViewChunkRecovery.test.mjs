@@ -23,10 +23,18 @@ globalThis.window = { location: { href: `${ORIGIN}/`, origin: ORIGIN, reload() {
 
 let fetches = [];
 let fetchFails = false;
+const routes = new Map();   // url -> { status, type, body } | 'throw'
 globalThis.fetch = async (url, options) => {
   fetches.push({ url, options });
-  if (fetchFails) throw new TypeError('Failed to fetch');
-  return { ok: true, status: 200 };
+  const route = routes.get(String(url));
+  if (fetchFails || route === 'throw') throw new TypeError('Failed to fetch');
+  const { status = 200, type = 'text/javascript', body = '' } = route || {};
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (k) => (k.toLowerCase() === 'content-type' ? type : null) },
+    text: async () => body,
+  };
 };
 
 function reset() {
@@ -35,10 +43,11 @@ function reset() {
   reloads = 0;
   fetches = [];
   fetchFails = false;
+  routes.clear();
 }
 
 const {
-  isChunkLoadError, chunkUrlFrom, recoverFromChunkError, reloadPastCache,
+  isChunkLoadError, chunkUrlFrom, recoverFromChunkError, reloadPastCache, diagnoseChunk,
 } = await import('../src/utils/lazyView.js');
 
 let passed = 0, failed = 0;
@@ -59,6 +68,8 @@ const safari = new Error('Importing a module script failed.');
 check('Chrome wording', isChunkLoadError(chrome), true);
 check('Firefox wording', isChunkLoadError(firefox), true);
 check('Safari wording', isChunkLoadError(safari), true);
+check("Vite's CSS preload wording",
+  isChunkLoadError(new Error(`Unable to preload CSS for ${ORIGIN}/assets/DraftEmailsPage-x.css`)), true);
 check('an ordinary crash is not this', isChunkLoadError(new TypeError('x is not a function')), false);
 check('nothing at all', isChunkLoadError(null), false);
 
@@ -118,6 +129,56 @@ store.set('chunk-reload-at', String(Date.now()));
 await reloadPastCache(chrome);
 check('the button repairs even inside the cooldown', fetches.map(f => f.url), [CHUNK]);
 check('and reloads', reloads, 1);
+
+// --- saying what actually went wrong ---------------------------------
+// One sentence and one error message is all a report of this arrives
+// with, and the message is the same whichever of these it was.
+const DEP = `${ORIGIN}/assets/chunk-zsgVPwQN.js`;
+const withDeps = { body: `import{a}from"./chunk-zsgVPwQN.js";import"./draftEmail-x.js";` };
+
+reset();
+routes.set(CHUNK, 'throw');
+check('a request that never lands is called blocked', (await diagnoseChunk(CHUNK)).verdict, 'blocked');
+
+reset();
+routes.set(CHUNK, { status: 404, type: 'text/plain' });
+const missing = await diagnoseChunk(CHUNK);
+check('a 404 is the deploy, not the browser', missing.verdict, 'missing');
+check('and says so with the status', missing.summary.includes('HTTP 404'), true);
+
+reset();
+routes.set(CHUNK, { status: 200, type: 'text/html; charset=utf-8', body: '<!doctype html>' });
+check('HTML where JavaScript belongs', (await diagnoseChunk(CHUNK)).verdict, 'wrong-type');
+
+reset();
+routes.set(CHUNK, withDeps);
+const reachable = await diagnoseChunk(CHUNK);
+check('everything serves, so the browser is the one refusing', reachable.verdict, 'reachable');
+check('it counted the imports it checked', reachable.summary.includes('the 2 it is built from'), true);
+check('and asked about each by HEAD',
+  fetches.filter(f => f.options?.method === 'HEAD').map(f => f.url).includes(DEP), true);
+
+reset();
+routes.set(CHUNK, withDeps);
+routes.set(DEP, { status: 404 });
+const dep = await diagnoseChunk(CHUNK);
+check('a missing import is found behind a chunk that serves fine', dep.verdict, 'missing-dep');
+check('and named, since the error message names the wrong file',
+  dep.summary.includes('chunk-zsgVPwQN.js'), true);
+check('with the status it returned', dep.detail.includes('404'), true);
+
+reset();
+routes.set(CHUNK, withDeps);
+routes.set(DEP, 'throw');
+check('an import blocked on the way out', (await diagnoseChunk(CHUNK)).verdict, 'blocked-dep');
+
+reset();
+check('nothing to test without a URL', (await diagnoseChunk('')).verdict, 'unknown');
+
+reset();
+const CSS = `${ORIGIN}/assets/DraftEmailsPage-DBsKLELe.css`;
+routes.set(CSS, { status: 200, type: 'text/css', body: '.x{color:red}' });
+check('a stylesheet is judged as a stylesheet', (await diagnoseChunk(CSS)).verdict, 'reachable');
 
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
