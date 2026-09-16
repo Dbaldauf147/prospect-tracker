@@ -10766,6 +10766,20 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onToggl
     lineHeight: 1.4, resize: 'vertical', minHeight: 56, background: '#fff',
     overflow: 'hidden',
   };
+  // A step ticked off for today is settled until tomorrow, so it steps back
+  // out of the way: greyed text on a grey field, so the eye lands on what is
+  // still to do. Greyed, not disabled - the note is still typed into, and a
+  // box you cannot correct because you ticked it is a box you untick to
+  // correct and forget to tick again.
+  const doneInputStyle = {
+    ...inputStyle,
+    background: '#F8FAFC',
+    // The whole shorthand, not just borderColor: inputStyle sets `border`,
+    // and React warns about a longhand overriding a shorthand between
+    // renders because which one wins depends on the order they are applied.
+    border: '1px solid #E2E8F0',
+    color: '#94A3B8',
+  };
   // Read once per render rather than per row, so every box on the table is
   // answering the same question about the same day.
   const today = todayISO();
@@ -10789,11 +10803,17 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onToggl
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, idx) => (
-            <tr key={idx} style={{ verticalAlign: 'top' }}>
+          {rows.map((row, idx) => {
+            const doneToday = isStepDoneToday(row.doneOn, today);
+            const boxStyle = doneToday ? doneInputStyle : inputStyle;
+            return (
+            <tr
+              key={idx}
+              style={{ verticalAlign: 'top', background: doneToday ? '#F8FAFC' : 'transparent' }}
+            >
               <td style={{ padding: '0.3rem 0.4rem 0.3rem 0', borderBottom: '1px solid #F1F5F9' }}>
                 <AutoGrowTextarea
-                  style={inputStyle}
+                  style={boxStyle}
                   value={row.note}
                   onChange={(e) => onUpdateRow(idx, 'note', e.target.value)}
                   onBlur={onCommit}
@@ -10802,7 +10822,7 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onToggl
               </td>
               <td style={{ padding: '0.3rem 0.4rem', borderBottom: '1px solid #F1F5F9' }}>
                 <AutoGrowTextarea
-                  style={inputStyle}
+                  style={boxStyle}
                   value={row.waitingOn}
                   onChange={(e) => onUpdateRow(idx, 'waitingOn', e.target.value)}
                   onBlur={onCommit}
@@ -10811,7 +10831,6 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onToggl
               </td>
               <td style={{ padding: '0.3rem', borderBottom: '1px solid #F1F5F9', textAlign: 'center' }}>
                 {(() => {
-                  const doneToday = isStepDoneToday(row.doneOn, today);
                   const last = String(row.doneOn || '').trim();
                   return (
                     <label
@@ -10856,7 +10875,8 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onToggl
                 >×</button>
               </td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
       <div style={{ marginTop: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
