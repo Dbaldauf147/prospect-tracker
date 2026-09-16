@@ -822,6 +822,10 @@ export function ScopeServicesCell({
   value, onChange, options, account, prospects, updateProspect, settings,
   oppRows, currentOppId, extraGroups, extraGroupsLabel, extraGroupsPlaceholder,
   nowrap, placeholder,
+  // Passed straight through to the board. A caller that can store the
+  // answer gets the commodity row; one that can't omits them and the row
+  // doesn't render, same rule as the modal's own.
+  commodities, onCommoditiesChange, updateSettings,
 }) {
   const [open, setOpen] = useState(false);
   const selected = useMemo(() => parseMulti(value), [value]);
@@ -861,6 +865,9 @@ export function ScopeServicesCell({
           extraGroups={extraGroups}
           extraGroupsLabel={extraGroupsLabel}
           extraGroupsPlaceholder={extraGroupsPlaceholder}
+          commodities={commodities}
+          onCommoditiesChange={onCommoditiesChange}
+          updateSettings={updateSettings}
         />
       )}
     </div>

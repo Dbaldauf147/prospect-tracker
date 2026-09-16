@@ -8148,6 +8148,10 @@ function OppFieldEditor({
   onOpenContact,
   onOpenCompany,
   settings,
+  // Only the Scope board uses it, and only for the "+ Add" shortcut on the
+  // commodity row: typing a new commodity there writes it to the standard
+  // Dropdowns list. Without it the row still shows and still ticks.
+  updateSettings,
   oppRows,
 }) {
   const formatValue = (key, raw) => {
@@ -8257,6 +8261,9 @@ function OppFieldEditor({
               extraGroups={extraGroups}
               extraGroupsLabel="Add from Pricing Option"
               extraGroupsPlaceholder="(pick an option)"
+              commodities={opp[COMMODITY_COLUMN]}
+              onCommoditiesChange={(next) => onFieldChange(COMMODITY_COLUMN, formatCommodities(next))}
+              updateSettings={updateSettings}
               nowrap
               placeholder="AEM"
             />
@@ -8743,6 +8750,7 @@ export function OppInfoModal({
   // already carries. Optional — without them the board still picks Scope,
   // just without the status chips.
   settings,
+  updateSettings,
   oppRows,
 }) {
   // Globally-hidden detail rows (header fields) + a session toggle to
@@ -8888,6 +8896,7 @@ export function OppInfoModal({
       onOpenContact={onOpenContact}
       onOpenCompany={onOpenCompany}
       settings={settings}
+      updateSettings={updateSettings}
       oppRows={oppRows}
     />
   );
@@ -14557,6 +14566,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                     extraGroups={extraGroups}
                     extraGroupsLabel="Add from Pricing Option"
                     extraGroupsPlaceholder="(pick an option)"
+                    commodities={row[COMMODITY_COLUMN]}
+                    onCommoditiesChange={(next) => updateOppField(row._id, COMMODITY_COLUMN, formatCommodities(next))}
+                    updateSettings={updateSettings}
                     nowrap
                     placeholder="AEM"
                   />
@@ -14998,7 +15010,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     // `records` and `settings` feed the Scope services board (the account's
     // other opps and the user's category layout). Both belong in the deps so
     // a status edited elsewhere shows up the next time the board is opened.
-  }, [headers, columnLinks, listRegistry, updateOppField, deleteOppField, deleteOpp, companySuggestions, peOwnerSuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById, filteredRowIds, records, settings, refreshRateCard]);
+  }, [headers, columnLinks, listRegistry, updateOppField, deleteOppField, deleteOpp, companySuggestions, peOwnerSuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById, filteredRowIds, records, settings, updateSettings, refreshRateCard]);
 
   // The same columns, taught to render a scheduled placeholder differently.
   // Wrapping once here beats a `__scheduledOpp` check inside forty column
@@ -16420,6 +16432,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             onOpenContact={openContactDetails}
             onOpenCompany={openCompanyDetails}
             settings={settings}
+            updateSettings={updateSettings}
             oppRows={records}
           />
         );
@@ -16450,6 +16463,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               onOpenContact: openContactDetails,
               onOpenCompany: openCompanyDetails,
               settings,
+              updateSettings,
               oppRows: records,
             }}
           />
