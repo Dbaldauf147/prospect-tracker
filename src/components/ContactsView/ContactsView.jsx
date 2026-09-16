@@ -182,7 +182,7 @@ export function ContactsView({
             onNavigate={onNavigate}
           />
         )}
-        {subtab === 'titles' && <ContactTitlesView />}
+        {subtab === 'titles' && <ContactTitlesView settings={settings} updateSettings={updateSettings} />}
         {subtab === 'all' && (
           <AllContactsView
             prospects={prospects}
