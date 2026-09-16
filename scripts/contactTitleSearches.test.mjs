@@ -9,9 +9,15 @@
 // So: the counts the sheet had, the terms most likely to be "fixed", and
 // the shape the page relies on - every group a kind, every search a scope.
 //
+// The page now edits these searches and saves the result to settings, so
+// the second half of this file covers that layer: what a saved list does to
+// the built-ins, and what a stored value that is missing a field, carrying a
+// duplicate key or not a list at all turns into before anything renders it.
+//
 // Run: node scripts/contactTitleSearches.test.mjs
 import {
-  CONTACT_TITLE_SEARCHES, searchTerms, termCount,
+  CONTACT_TITLE_SEARCHES, normalizeTitleSearches, resolveTitleSearches,
+  searchTerms, slugifyKey, termCount, uniqueKey,
 } from '../src/data/contactTitleSearches.js';
 
 let failures = 0;
@@ -95,6 +101,76 @@ const groupOf = (key, label) => by(key).groups.find(g => g.label === label);
     true);
   check('the keys are unique, which is what React draws them by',
     new Set(CONTACT_TITLE_SEARCHES.map(e => e.key)).size, 7);
+}
+
+// ---- a saved list stands in for the built-ins ----------------------------
+{
+  // Nothing saved is the common case, and it must hand back the module's
+  // own array rather than a copy: the page reads it on every render.
+  check('no settings gives the built-ins', resolveTitleSearches(undefined), CONTACT_TITLE_SEARCHES);
+  check('unedited settings gives the built-ins', resolveTitleSearches({}), CONTACT_TITLE_SEARCHES);
+  check('so does a saved value that is not a list at all',
+    resolveTitleSearches({ contactTitleSearches: 'nonsense' }), CONTACT_TITLE_SEARCHES);
+
+  const saved = [{ key: 'mine', name: 'Mine', scope: 'NA', groups: [{ label: '', kind: 'include', terms: ['CFO'] }] }];
+  check('a saved list replaces the built-ins rather than adding to them',
+    JSON.stringify(resolveTitleSearches({ contactTitleSearches: saved })), JSON.stringify(saved));
+
+  // Deleting every search is a state the user can reach, and it is not the
+  // same as never having edited: falling back here would put the seven
+  // straight back on the next render.
+  check('an empty saved list stays empty',
+    resolveTitleSearches({ contactTitleSearches: [] }).length, 0);
+}
+
+// ---- what a stored value turns into before it is rendered ----------------
+{
+  const out = normalizeTitleSearches([
+    { name: '  Utilities  ', groups: [{ terms: ['  Energy  ', '', null, 'Energy'] }] },
+  ]);
+  check('names are trimmed', out[0].name, 'Utilities');
+  check('a missing key is derived from the name', out[0].key, 'utilities');
+  check('a missing kind defaults to include', out[0].groups[0].kind, 'include');
+  // Duplicates are kept on purpose. A list that silently loses its second
+  // "Energy" is no longer the list that gets pasted into the search box,
+  // which is the one thing this page exists to be right about.
+  check('blank terms go and duplicates stay',
+    out[0].groups[0].terms.join(' | '), 'Energy | Energy');
+
+  check('an exclude group keeps its kind',
+    JSON.stringify(normalizeTitleSearches([{ key: 'x', groups: [{ label: ' Not ', kind: 'exclude', terms: ['Tax'] }] }])[0].groups[0]),
+    JSON.stringify({ label: 'Not', kind: 'exclude', terms: ['Tax'] }));
+
+  // Two searches sharing a key would be drawn under one React key and edit
+  // each other, so the second is suffixed rather than dropped: a duplicate
+  // is still a search somebody wrote.
+  const dup = normalizeTitleSearches([{ key: 'cfo', name: 'CFO' }, { key: 'cfo', name: 'CFO again' }]);
+  check('a duplicate key is suffixed', dup.map(e => e.key).join(' '), 'cfo cfo-2');
+  check('and both searches survive it', dup.length, 2);
+
+  const bare = normalizeTitleSearches([{ name: '', groups: [] }]);
+  check('a nameless, termless search is still a search', bare.length, 1);
+  check('and still gets a key to be drawn by', bare[0].key.length > 0, true);
+  check('a null list normalizes to empty', normalizeTitleSearches(null).length, 0);
+  check('and so does a list of junk', normalizeTitleSearches([null, 'x', 7]).length, 0);
+
+  // Round-tripping the built-ins through the saved path must not alter a
+  // single term - this is the guard that editing cannot quietly retidy the
+  // transcription the first half of this file checks.
+  check('the built-ins survive a round trip through settings unchanged',
+    JSON.stringify(resolveTitleSearches({ contactTitleSearches: CONTACT_TITLE_SEARCHES })),
+    JSON.stringify(CONTACT_TITLE_SEARCHES));
+}
+
+// ---- keys for searches the user adds -------------------------------------
+{
+  check('a name slugifies', slugifyKey('ESG reporting'), 'esg-reporting');
+  check('punctuation collapses and the edges trim', slugifyKey('  Climate / Risk!  '), 'climate-risk');
+  check('an empty name slugifies to nothing', slugifyKey(''), '');
+  check('a free key is used as is', uniqueKey('cfo', new Set()), 'cfo');
+  check('a taken key gets the next number', uniqueKey('cfo', new Set(['cfo'])), 'cfo-2');
+  check('and keeps counting', uniqueKey('cfo', new Set(['cfo', 'cfo-2'])), 'cfo-3');
+  check('an unnameable search still gets a key', uniqueKey('', new Set()), 'search');
 }
 
 console.log(`\n${failures ? `${failures} FAILED` : 'All passed'}`);

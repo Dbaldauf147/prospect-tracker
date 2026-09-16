@@ -2,11 +2,76 @@
   padding: 1rem 1.25rem 2rem;
 }
 
+/* The heading and the edit controls on one line, so Edit sits with the
+   thing it edits rather than floating above the first card. */
+.head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .title {
   margin: 0;
   font-size: 1.2rem;
   font-weight: 700;
   color: #1E293B;
+}
+
+.editBtn {
+  padding: 2px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.editBtn:hover {
+  border-color: #009530;
+  color: #009530;
+}
+
+.doneBtn {
+  composes: editBtn;
+  border-color: #009530;
+  background: #009530;
+  color: #fff;
+}
+
+.doneBtn:hover {
+  background: #007a27;
+  border-color: #007a27;
+  color: #fff;
+}
+
+/* Quiet, and red only on hover: putting the seven back throws away every
+   edit on the page, and a button that does that should not be the one the
+   eye lands on first. It stays next to Done rather than being pushed to
+   the far edge, where on a wide screen it reads as belonging to nothing. */
+.resetBtn {
+  composes: editBtn;
+  margin-left: 0.4rem;
+}
+
+.resetBtn:hover {
+  border-color: #B91C1C;
+  color: #B91C1C;
+}
+
+.editNote {
+  margin: 0.8rem 0 1rem;
+  padding: 0.5rem 0.7rem;
+  max-width: 70ch;
+  border: 1px solid #FDE047;
+  border-radius: var(--radius-md, 8px);
+  background: #FEFCE8;
+  color: #713F12;
+  font-size: 0.72rem;
+  line-height: 1.55;
 }
 
 .blurb {
@@ -196,4 +261,208 @@
   font-size: 0.7rem;
   line-height: 1.55;
   color: var(--color-text-muted);
+}
+
+/* ── Edit mode ────────────────────────────────────────────────────────
+   Every editable field keeps the size and weight of the text it replaces,
+   so turning Edit on doesn't reflow the page into a different shape. The
+   boxes read as the same words with a line under them. */
+
+.fieldInput {
+  border: none;
+  border-bottom: 1px dashed var(--color-border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0 1px 1px;
+  font-family: inherit;
+  color: inherit;
+}
+
+.fieldInput:focus {
+  outline: none;
+  border-bottom-color: #009530;
+  background: #F0FDF4;
+}
+
+.nameInput {
+  composes: fieldInput;
+  flex: 1;
+  min-width: 8ch;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #1E293B;
+}
+
+.scopeInput {
+  composes: fieldInput;
+  display: block;
+  width: 100%;
+  margin-bottom: 0.55rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: #1E40AF;
+}
+
+.labelInput {
+  composes: fieldInput;
+  width: 22ch;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #166534;
+}
+
+.labelInputExclude {
+  composes: labelInput;
+  color: #B91C1C;
+}
+
+/* A term chip that can be typed in: the chip is the wrapper, the input
+   inside it carries no border of its own so the two don't double up. */
+.termEdit {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 3px 1px 7px;
+  border-radius: 4px;
+  background: #F1F5F9;
+  border: 1px solid #E2E8F0;
+}
+
+.termEditExclude {
+  composes: termEdit;
+  background: #FEF2F2;
+  border-color: #FECACA;
+}
+
+.termEdit:focus-within {
+  border-color: #009530;
+  background: #F0FDF4;
+}
+
+.termInput {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+  font-size: 0.72rem;
+  color: #334155;
+}
+
+.termInput:focus {
+  outline: none;
+}
+
+.termEditExclude .termInput {
+  color: #991B1B;
+}
+
+.termX {
+  border: none;
+  background: transparent;
+  padding: 0 2px;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: 0.8rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.termX:hover {
+  color: #B91C1C;
+}
+
+.addTermInput {
+  padding: 1px 7px;
+  border: 1px dashed var(--color-border);
+  border-radius: 4px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 0.72rem;
+  color: #334155;
+}
+
+.addTermInput:focus {
+  outline: none;
+  border-style: solid;
+  border-color: #009530;
+  background: #F0FDF4;
+}
+
+.deleteBtn {
+  padding: 0 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: 0.62rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.deleteBtn:hover {
+  border-color: #B91C1C;
+  color: #B91C1C;
+}
+
+.removeGroupBtn {
+  composes: deleteBtn;
+  margin-left: auto;
+}
+
+.cardFoot {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-top: 0.7rem;
+  padding-top: 0.55rem;
+  border-top: 1px dashed var(--color-border-light);
+}
+
+.addGroupBtn {
+  padding: 1px 7px;
+  border: 1px dashed var(--color-border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: 0.62rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.addGroupBtn:hover {
+  border-color: #166534;
+  color: #166534;
+}
+
+.addGroupBtnExclude {
+  composes: addGroupBtn;
+}
+
+.addGroupBtnExclude:hover {
+  border-color: #B91C1C;
+  color: #B91C1C;
+}
+
+/* Under the cards rather than in the toolbar: a new search appears at the
+   end of the list, and the button that makes one should be where it lands. */
+.addSearchBtn {
+  margin-top: 0.2rem;
+  padding: 0.35rem 0.8rem;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.addSearchBtn:hover {
+  border-color: #009530;
+  color: #009530;
 }
