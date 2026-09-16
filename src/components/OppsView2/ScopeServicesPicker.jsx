@@ -29,7 +29,8 @@ import { collectAutoAdds } from '../../utils/serviceAutoAdd';
 import { collectAutoNa, isSoldStatus, autoNaTitle } from '../../utils/serviceAutoNa';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 import { scopeCopyText } from '../../utils/scopeCopyText';
-import { scopeCopyHtml, writeScopeCopy } from '../../utils/scopeCopyRich';
+import { scopeCopyHtml } from '../../utils/scopeCopyRich';
+import { writeRichCopy } from '../../utils/clipboardCopy';
 import { isCoverageTracked } from '../../utils/pipelineDashboardStore';
 import { useCoverageServices } from '../../hooks/useCoverageServices';
 import { CoverageMark } from '../common/CoverageMark';
@@ -538,7 +539,7 @@ export function ScopeServicesModal({
 
   async function copyScope() {
     if (!copyText) return;
-    const ok = await writeScopeCopy(copyText, copyHtml);
+    const ok = await writeRichCopy(copyText, copyHtml);
     setCopyFailed(!ok);
     setCopied(ok);
   }

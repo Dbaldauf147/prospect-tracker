@@ -13,6 +13,8 @@ import {
   textToBulletItems, encodeNoteLine, nextStepLinesFromCall, callOnOppPatch, NOTE_LINEBREAK,
   NEXT_STEPS_DONE_FIELD, readStepsDone, isStepDoneToday, toggleStepDone,
 } from '../../utils/nextSteps';
+import { nextStepsCopyText, nextStepsCopyHtml } from '../../utils/nextStepsCopy';
+import { writeRichCopy } from '../../utils/clipboardCopy';
 import { loadCallRecord } from '../../utils/callRecordingsStore';
 import { lastCallOn, describeCallAge } from '../../utils/lastCallOnOpp';
 import { buildOppNumberMap } from '../../utils/oppNumbers';
@@ -10887,6 +10889,31 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onToggl
   // answering the same question about the same day.
   const today = todayISO();
   const doneCount = rows.filter(r => isStepDoneToday(r?.doneOn, today)).length;
+
+  // The table as something a spreadsheet will take. Built from the live
+  // rows, so what is copied is what is on screen, including the note being
+  // typed into right now.
+  const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+  const copyText = nextStepsCopyText(rows, today);
+  const copyHtml = nextStepsCopyHtml(rows, today);
+
+  // Clears itself, and clears on unmount too: this table lives in a modal,
+  // and closing it while the timer is still running would set state on a
+  // component that has gone.
+  useEffect(() => {
+    if (!copied && !copyFailed) return undefined;
+    const t = setTimeout(() => { setCopied(false); setCopyFailed(false); }, copyFailed ? 4000 : 1600);
+    return () => clearTimeout(t);
+  }, [copied, copyFailed]);
+
+  async function copyTable() {
+    if (!copyText) return;
+    const ok = await writeRichCopy(copyText, copyHtml);
+    setCopyFailed(!ok);
+    setCopied(ok);
+  }
+
   return (
     <>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
@@ -10999,6 +11026,27 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onToggl
             ? `${doneCount} done today. Ticks clear overnight, so tomorrow the list starts fresh.`
             : 'Ticks in "Done today" clear overnight, so tomorrow the list starts fresh.'}
         </span>
+        <button
+          type="button"
+          onClick={copyTable}
+          disabled={!copyText}
+          title={copyFailed
+            ? 'This browser refused the clipboard. Nothing was copied, so paste would land whatever was on the clipboard before.'
+            : copyText
+              ? 'Copy this table to paste into Excel: one row a step, the note beside who it is waiting on. A note with several lines in it stays one cell.'
+              : 'Nothing written down yet to copy.'}
+          style={{
+            marginLeft: 'auto',
+            padding: '0.35rem 0.7rem', borderRadius: 4,
+            fontSize: '0.75rem', fontWeight: 600, fontFamily: 'inherit',
+            border: `1px solid ${copied ? '#15803D' : copyFailed ? '#B91C1C' : 'var(--color-border)'}`,
+            background: copied ? '#DCFCE7' : copyFailed ? '#FEE2E2' : 'transparent',
+            color: copied ? '#15803D' : copyFailed ? '#B91C1C' : 'var(--color-text-muted)',
+            cursor: copyText ? 'pointer' : 'default',
+            opacity: copyText ? 1 : 0.55,
+            whiteSpace: 'nowrap',
+          }}
+        >{copied ? 'Copied' : copyFailed ? 'Copy blocked' : 'Copy for Excel'}</button>
       </div>
     </>
   );
