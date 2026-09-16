@@ -14,6 +14,7 @@ import { saveTagReview } from '../../utils/contactTagReview';
 import { useDraftCampaignQueue, clearQueuedContacts, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { useDraftLeadsQueue, clearQueuedLeads, removeQueuedLead, leadQueueKey } from '../../utils/draftLeadsQueue';
 import { useDraftRecipientsQueue, clearQueuedRecipients, removeQueuedRecipient, recipientQueueKey } from '../../utils/draftRecipientsQueue';
+import { workingLeadContacts } from '../../utils/workingLeads';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import {
   normalizeBanners, findBanner, bannerHtml, bannerPlainText, bannerTextColor,
@@ -978,6 +979,121 @@ function CampaignRecipientsQueueSection({ selectedContacts, setSelectedContacts 
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// Standing bucket of Marketing Leads whose Status is "Working" - the ones
+// actively being worked, ready to drop into the draft without a trip to
+// the Marketing Leads page and without being queued there first. Sits
+// below Saved Drafts in the right column.
+//
+// Distinct from the "From Marketing Leads" queue inside the Custom Email
+// Campaign card above: that one holds whatever was ticked and pushed over,
+// and is emptied by hand. This one is derived from the saved leads, so it
+// follows the Status column: change a lead to Working and it appears here,
+// move it on and it leaves. Both hand over the same contact shape, so a
+// lead that arrives by both routes is still one recipient.
+function WorkingLeadsCard({ settings, selectedContacts, setSelectedContacts }) {
+  const [search, setSearch] = useState('');
+  const leads = useMemo(() => workingLeadContacts(settings), [settings]);
+
+  const selectedIds = new Set(selectedContacts.map(c => c.id));
+  const selectedEmails = new Set(selectedContacts.map(c => String(c.email || '').trim().toLowerCase()).filter(Boolean));
+  const inDraft = (c) => selectedIds.has(c.id) || (c.email && selectedEmails.has(c.email.toLowerCase()));
+
+  const q = search.trim().toLowerCase();
+  const shown = q
+    ? leads.filter(c => `${c.name} ${c.company} ${c.title} ${c.email}`.toLowerCase().includes(q))
+    : leads;
+  const addable = shown.filter(c => !inDraft(c));
+
+  const addAll = () => {
+    setSelectedContacts(prev => {
+      const ids = new Set(prev.map(c => c.id));
+      const emails = new Set(prev.map(c => String(c.email || '').trim().toLowerCase()).filter(Boolean));
+      const toAdd = shown.filter(c => !ids.has(c.id) && !emails.has(c.email.toLowerCase()));
+      return [...prev, ...toAdd];
+    });
+  };
+  const addOne = (c) => {
+    setSelectedContacts(prev => (prev.some(p => p.id === c.id
+      || (p.email && c.email && p.email.trim().toLowerCase() === c.email.toLowerCase()))
+      ? prev
+      : [...prev, c]));
+  };
+  const removeOne = (c) => {
+    const email = c.email.toLowerCase();
+    setSelectedContacts(prev => prev.filter(p => p.id !== c.id
+      && String(p.email || '').trim().toLowerCase() !== email));
+  };
+
+  return (
+    <div className={`${styles.draftsCard} ${styles.coverageCard}`}>
+      <div className={styles.draftsHeader}>
+        <h3 className={styles.cardTitle}>Working Marketing Leads ({leads.length})</h3>
+        {addable.length > 0 && (
+          <button
+            type="button"
+            onClick={addAll}
+            title={`Add ${addable.length} lead${addable.length === 1 ? '' : 's'} to the To line`}
+            style={{ fontSize: '0.7rem', padding: '0.25rem 0.55rem', border: '1px solid #7C3AED', background: '#7C3AED', color: '#fff', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600, whiteSpace: 'nowrap' }}
+          >Add all ({addable.length})</button>
+        )}
+      </div>
+      {leads.length === 0 ? (
+        <p className={styles.emptyDrafts}>
+          No Marketing Leads are set to Working. Set the Status column to Working on the Marketing Leads page and the lead shows up here.
+        </p>
+      ) : (
+        <>
+          <p className={styles.draftsHint}>
+            Every saved Marketing Lead with a Working status and an email address. Leads hidden on that page are left out.
+          </p>
+          {leads.length > 6 && (
+            <input
+              type="search"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Filter by name, company, title or email"
+              style={{ width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.45rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.74rem', fontFamily: 'inherit', marginBottom: '0.45rem' }}
+            />
+          )}
+          <div style={{ maxHeight: 240, overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: 4, background: '#F8FAFC' }}>
+            {shown.length === 0 ? (
+              <div style={{ padding: '0.5rem', fontSize: '0.72rem', color: '#64748B' }}>No Working lead matches that filter.</div>
+            ) : shown.map(c => {
+              const isIn = inDraft(c);
+              return (
+                <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.25rem 0.5rem', borderTop: '1px solid #E2E8F0', fontSize: '0.72rem' }}>
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${c.name}${c.title ? ` · ${c.title}` : ''}${c.company ? ` · ${c.company}` : ''} · ${c.email}`}>
+                    <span style={{ fontWeight: 600, color: '#1E293B' }}>{c.name || c.email}</span>
+                    {c.company && <span style={{ color: '#64748B' }}> · {c.company}</span>}
+                  </span>
+                  {isIn ? (
+                    <>
+                      <span style={{ fontSize: '0.62rem', color: '#16A34A', fontWeight: 700 }}>in draft</span>
+                      <button
+                        type="button"
+                        onClick={() => removeOne(c)}
+                        title="Take this lead back out of the draft"
+                        style={{ border: '1px solid #CBD5E1', background: '#fff', color: '#64748B', borderRadius: 3, fontSize: '0.65rem', cursor: 'pointer', fontFamily: 'inherit', padding: '0 5px', lineHeight: 1.4 }}
+                      >×</button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => addOne(c)}
+                      title={`Add ${c.name || c.email} to the To line`}
+                      style={{ border: '1px solid #7C3AED', background: '#fff', color: '#7C3AED', borderRadius: 3, fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', padding: '0 6px', lineHeight: 1.5 }}
+                    >Add</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -2908,6 +3024,15 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
               </>
             )}
           </div>
+
+          {/* Working Marketing Leads - the standing bucket below Saved
+              Drafts. Derived from the Marketing Leads page's Status
+              column rather than from anything queued by hand. */}
+          <WorkingLeadsCard
+            settings={settings}
+            selectedContacts={selectedContacts}
+            setSelectedContacts={setSelectedContacts}
+          />
         </div>
       </div>
       {campaignPreview && createPortal(
