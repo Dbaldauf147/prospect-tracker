@@ -68,7 +68,9 @@ export class RootErrorBoundary extends Component {
         'wrong-type': 'A file this page needs is not on the server',
         blocked: 'Something is blocking part of this page',
         'blocked-dep': 'Something is blocking part of this page',
+        'script-blocked': 'Something is blocking part of this page',
         reachable: 'Something is blocking part of this page',
+        transient: 'Part of the app did not load',
       })[diagnosis?.verdict] || 'This page is out of date';
 
     return (

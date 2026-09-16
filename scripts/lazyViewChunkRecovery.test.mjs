@@ -18,6 +18,20 @@ globalThis.sessionStorage = {
   setItem(key, value) { if (denyStorage) throw new Error('storage denied'); store.set(key, String(value)); },
 };
 
+let scriptProbe = 'error';   // which event the modulepreload link fires
+globalThis.document = {
+  createElement: () => {
+    const handlers = {};
+    return {
+      addEventListener(type, fn) { handlers[type] = fn; },
+      remove() {},
+      fire() { handlers[scriptProbe]?.(); },
+    };
+  },
+  head: { appendChild: (link) => queueMicrotask(() => link.fire()) },
+};
+const noDocument = () => { const d = globalThis.document; delete globalThis.document; return () => { globalThis.document = d; }; };
+
 let reloads = 0;
 globalThis.window = { location: { href: `${ORIGIN}/`, origin: ORIGIN, reload() { reloads += 1; } } };
 
@@ -134,7 +148,13 @@ check('and reloads', reloads, 1);
 // One sentence and one error message is all a report of this arrives
 // with, and the message is the same whichever of these it was.
 const DEP = `${ORIGIN}/assets/chunk-zsgVPwQN.js`;
+const DEEP = `${ORIGIN}/assets/draftCampaignQueue-x.js`;
 const withDeps = { body: `import{a}from"./chunk-zsgVPwQN.js";import"./draftEmail-x.js";` };
+// chunk -> dep -> deep: the browser fetches all three, the error names none but the first.
+const nested = () => {
+  routes.set(CHUNK, withDeps);
+  routes.set(DEP, { body: `import"./draftCampaignQueue-x.js";` });
+};
 
 reset();
 routes.set(CHUNK, 'throw');
@@ -152,14 +172,6 @@ check('HTML where JavaScript belongs', (await diagnoseChunk(CHUNK)).verdict, 'wr
 
 reset();
 routes.set(CHUNK, withDeps);
-const reachable = await diagnoseChunk(CHUNK);
-check('everything serves, so the browser is the one refusing', reachable.verdict, 'reachable');
-check('it counted the imports it checked', reachable.summary.includes('the 2 it is built from'), true);
-check('and asked about each by HEAD',
-  fetches.filter(f => f.options?.method === 'HEAD').map(f => f.url).includes(DEP), true);
-
-reset();
-routes.set(CHUNK, withDeps);
 routes.set(DEP, { status: 404 });
 const dep = await diagnoseChunk(CHUNK);
 check('a missing import is found behind a chunk that serves fine', dep.verdict, 'missing-dep');
@@ -172,13 +184,51 @@ routes.set(CHUNK, withDeps);
 routes.set(DEP, 'throw');
 check('an import blocked on the way out', (await diagnoseChunk(CHUNK)).verdict, 'blocked-dep');
 
+// One level is not enough: the view that started all this imports 24
+// files directly and pulls in ninety through them.
+reset();
+nested();
+routes.set(DEEP, { status: 404 });
+const deep = await diagnoseChunk(CHUNK);
+check('a file two levels down is still found', deep.verdict, 'missing-dep');
+check('and named', deep.summary.includes('draftCampaignQueue-x.js'), true);
+
+reset();
+nested();
+check('a clean graph is walked to the bottom', (await diagnoseChunk(CHUNK)).detail.includes('3 files'), true);
+check('each file asked for once', new Set(fetches.map(f => f.url)).size, fetches.length);
+
+// The question a fetch cannot answer: the browser tags a module
+// `Sec-Fetch-Dest: script`, and a filter can refuse that while letting
+// every fetch above through.
+reset();
+scriptProbe = 'error';
+routes.set(CHUNK, withDeps);
+const blockedScript = await diagnoseChunk(CHUNK);
+check('downloads as data, refused as code', blockedScript.verdict, 'script-blocked');
+check('and says it is a filter, not the app', blockedScript.summary.includes('That is a filter'), true);
+
+reset();
+scriptProbe = 'load';
+routes.set(CHUNK, withDeps);
+check('loads as code too, so it was momentary', (await diagnoseChunk(CHUNK)).verdict, 'transient');
+
+reset();
+routes.set(CHUNK, withDeps);
+const restore = noDocument();
+const reachable = await diagnoseChunk(CHUNK);
+restore();
+check('no way to ask, so no claim either way', reachable.verdict, 'reachable');
+check('it still counted what it walked', reachable.summary.includes('the 2 files it pulls in'), true);
+
 reset();
 check('nothing to test without a URL', (await diagnoseChunk('')).verdict, 'unknown');
 
 reset();
 const CSS = `${ORIGIN}/assets/DraftEmailsPage-DBsKLELe.css`;
 routes.set(CSS, { status: 200, type: 'text/css', body: '.x{color:red}' });
-check('a stylesheet is judged as a stylesheet', (await diagnoseChunk(CSS)).verdict, 'reachable');
+scriptProbe = 'load';
+check('a stylesheet is judged as a stylesheet', (await diagnoseChunk(CSS)).verdict, 'transient');
 
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
