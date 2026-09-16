@@ -1987,6 +1987,75 @@ function PricingOptionSnapshotView({ snapshot }) {
 // estimator on every render against a fresh [].
 const EMPTY_SCOPE = [];
 
+// Services in a deal's Scope that the deal is not charging for, kept on the
+// opp itself.
+//
+// A line in the Scope is not always a line on the invoice: a service can
+// already be inside the account's contract, or bundled into another service
+// this deal does charge for, and pricing it a second time overstates what
+// the deal is worth. It is still in the scope - somebody is delivering it -
+// so striking it from the list is the wrong answer; what it needs is to be
+// there, visible, and out of the total.
+//
+// On the opp rather than in component state because it is a decision about
+// the deal, not about the popup that happened to be open: the Lead prompt
+// could already untick a service, and forgot it the moment the prompt
+// closed, so the Deal Size cell added it straight back and flagged the rate
+// card it does not need.
+//
+// Stored as a JSON array of the names as the Scope spells them, matched
+// without case so a service that comes back capitalised differently is
+// still the one that was marked.
+const UNPRICED_SERVICES_FIELD = '_unpricedServices';
+
+// A stable empty set, for the usual opp that charges for everything in it.
+const EMPTY_UNPRICED = new Set();
+
+// The names on the opp, as stored. Anything unparseable reads as "nothing
+// is marked": a deal that charges for its whole scope is the safe way to be
+// wrong, since the alternative silently drops services out of the total.
+function unpricedServiceList(opp) {
+  const raw = opp?.[UNPRICED_SERVICES_FIELD];
+  if (!raw) return [];
+  let list = raw;
+  if (typeof raw === 'string') {
+    try { list = JSON.parse(raw); } catch { return []; }
+  }
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const n of list) {
+    const v = String(n ?? '').trim();
+    const k = v.toLowerCase();
+    if (!v || seen.has(k)) continue;
+    seen.add(k);
+    out.push(v);
+  }
+  return out;
+}
+
+// The same names, lowercased, for asking whether a given service is marked.
+function unpricedServiceKeys(opp) {
+  const list = unpricedServiceList(opp);
+  if (!list.length) return EMPTY_UNPRICED;
+  return new Set(list.map(n => n.toLowerCase()));
+}
+
+// Mark a service as not charged for, or charge for it again. Written
+// straight to the opp: this is the same kind of answer as a count typed
+// into the row above the table, and a popup dismissed with Escape should
+// not take it back.
+function toggleUnpricedService(opp, name, onChangeOppField) {
+  const value = String(name ?? '').trim();
+  if (!value || !onChangeOppField) return;
+  const key = value.toLowerCase();
+  const list = unpricedServiceList(opp);
+  const next = list.some(n => n.toLowerCase() === key)
+    ? list.filter(n => n.toLowerCase() !== key)
+    : [...list, value];
+  onChangeOppField(UNPRICED_SERVICES_FIELD, next.length ? JSON.stringify(next) : '');
+}
+
 // What the services in a deal's Scope are worth in their first year, read
 // off the rate card on Dropdowns › Services Pricing.
 //
@@ -2387,10 +2456,10 @@ function ScopeFeeTable({
   typeableUnits = null,
 }) {
   if (!estimate || !estimate.lines.length) return null;
-  // The totals can be struck from a smaller set than the rows: the deal-size
-  // prompt lets a service be switched off, and an off service still has to
-  // be readable — you turn it off to see what the deal is worth without it,
-  // not to make it disappear.
+  // The totals can be struck from a smaller set than the rows: a service
+  // this deal is not charging for is still in the scope, and an off service
+  // still has to be readable — what it would have been worth is the size of
+  // what is being absorbed, which is the reason to look.
   const sums = totals || estimate;
   const picking = !!selected && !!onToggle;
   const isOn = (name) => (picking ? selected.has(name) : true);
@@ -2430,9 +2499,9 @@ function ScopeFeeTable({
           {picking ? (
             <span
               style={{ color: '#94A3B8', fontWeight: 400 }}
-              title="A service left unticked still shows what it is worth - it just stops counting towards the total, so you can see what the deal is without it."
+              title="Untick a service this deal is not charging for - one already inside the contract, or bundled into another service here. It keeps its row and its figures, drops out of the Year 1 total, and stops being flagged for a rate card it does not need."
             >
-              {' '}&middot; untick to exclude
+              {' '}&middot; untick what this deal is not charging for
             </span>
           ) : null}
         </span>
@@ -2448,84 +2517,107 @@ function ScopeFeeTable({
           </tr>
         </thead>
         <tbody>
-          {estimate.lines.map((line) => (
-            <tr key={line.name} style={isOn(line.name) ? undefined : { opacity: 0.5 }}>
-              {picking ? (
-                <td style={{ ...cell, paddingTop: 3 }}>
-                  <input
-                    type="checkbox"
-                    checked={isOn(line.name)}
-                    onChange={(e) => { e.stopPropagation(); onToggle(line.name); }}
-                    onClick={(e) => e.stopPropagation()}
-                    title={isOn(line.name)
-                      ? `Leave ${line.name} out of the total`
-                      : `Count ${line.name} in the total`}
-                    style={{ cursor: 'pointer', accentColor: 'var(--color-accent)' }}
-                  />
+          {estimate.lines.map((line) => {
+            // A service this deal is not charging for, and a service the
+            // estimate could not work out. They look the same on the row -
+            // no figure in the money columns - and they are opposite
+            // things: one is answered, the other is waiting for an answer.
+            // So an off row drops the red entirely. What is missing for a
+            // service nobody is billing for is not missing.
+            const off = picking && !isOn(line.name);
+            const gapped = !!line.gap && !off;
+            return (
+              <tr key={line.name} style={off ? { opacity: 0.55 } : undefined}>
+                {picking ? (
+                  <td style={{ ...cell, paddingTop: 3 }}>
+                    <input
+                      type="checkbox"
+                      checked={isOn(line.name)}
+                      onChange={(e) => { e.stopPropagation(); onToggle(line.name); }}
+                      onClick={(e) => e.stopPropagation()}
+                      title={isOn(line.name)
+                        ? `This deal is not charging for ${line.name}: keep the row, leave it out of the total`
+                        : `Charge for ${line.name} again and count it in the total`}
+                      style={{ cursor: 'pointer', accentColor: 'var(--color-accent)' }}
+                    />
+                  </td>
+                ) : null}
+                <td style={cell}>
+                  {line.name}
+                  {/* An unticked row is a decision, and one that outlives the
+                      popup, so it says what it is rather than leaving a
+                      half-faded row to be puzzled over a week later. */}
+                  {off ? (
+                    <div
+                      style={{ color: '#94A3B8', fontSize: '0.7rem', fontWeight: 600 }}
+                      title="In the scope, not on this deal's bill: already in the contract, or bundled into another service here."
+                    >already in scope, not charged</div>
+                  ) : null}
+                  {/* Where the fee came from, and — when a priced service
+                      still came out at nothing — the count it needed that
+                      the opp doesn't carry. */}
+                  {((off ? line.how : (line.note || line.how))) ? (
+                    <div style={{
+                      color: gapped ? GAP_INK : '#94A3B8',
+                      fontSize: '0.7rem',
+                      fontWeight: gapped ? 600 : 400,
+                    }}>
+                      {gapped ? <span aria-hidden="true">&#9888; </span> : null}
+                      {off ? line.how : (line.note || line.how)}
+                      {/* The billing period stays grey on a blocked row: it is
+                          a fact about the service, not part of what is wrong,
+                          and in red it reads as though the year were the
+                          problem. */}
+                      {line.recurring
+                        ? <span style={{ color: '#94A3B8', fontWeight: 400 }}>{' · per year'}</span>
+                        : null}
+                    </div>
+                  ) : (line.recurring ? (
+                    <div style={{ color: '#94A3B8', fontSize: '0.7rem' }}>per year</div>
+                  ) : null)}
                 </td>
-              ) : null}
-              <td style={cell}>
-                {line.name}
-                {/* Where the fee came from, and — when a priced service
-                    still came out at nothing — the count it needed that
-                    the opp doesn't carry. */}
-                {(line.note || line.how) ? (
-                  <div style={{
-                    color: line.gap ? GAP_INK : '#94A3B8',
-                    fontSize: '0.7rem',
-                    fontWeight: line.gap ? 600 : 400,
-                  }}>
-                    {line.gap ? <span aria-hidden="true">&#9888; </span> : null}
-                    {line.note || line.how}
-                    {/* The billing period stays grey on a blocked row: it is
-                        a fact about the service, not part of what is wrong,
-                        and in red it reads as though the year were the
-                        problem. */}
-                    {line.recurring
-                      ? <span style={{ color: '#94A3B8', fontWeight: 400 }}>{' · per year'}</span>
-                      : null}
-                  </div>
-                ) : (line.recurring ? (
-                  <div style={{ color: '#94A3B8', fontSize: '0.7rem' }}>per year</div>
-                ) : null)}
-              </td>
-              {line.priced ? (
-                <>
-                  <td style={num}>
-                    {/* A $0 standing in for a fee nobody could work out is
-                        the whole problem this colour solves: it looks
-                        exactly like a service that is free. */}
-                    <strong
-                      style={{ color: line.gap ? GAP_INK : '#1E293B' }}
-                      title={line.gap
-                        ? `Not a price: ${line.note}. This service is missing from the total below.`
-                        : 'Worked out from this service’s basis and rate'}
+                {line.priced ? (
+                  <>
+                    <td style={num}>
+                      {/* A $0 standing in for a fee nobody could work out is
+                          the whole problem this colour solves: it looks
+                          exactly like a service that is free. */}
+                      <strong
+                        style={{ color: gapped ? GAP_INK : '#1E293B' }}
+                        title={gapped
+                          ? `Not a price: ${line.note}. This service is missing from the total below.`
+                          : (off
+                            ? 'What this service would have been worth. This deal is not charging for it, so it is not in the total.'
+                            : 'Worked out from this service’s basis and rate')}
+                      >
+                        {money(line.fee)}
+                      </strong>
+                    </td>
+                    <td
+                      style={num}
+                      title={line.feeHigh > line.fee ? undefined : 'One fee, not a range: the card charges this whatever the deal.'}
                     >
-                      {money(line.fee)}
-                    </strong>
-                  </td>
-                  <td
-                    style={num}
-                    title={line.feeHigh > line.fee ? undefined : 'One fee, not a range: the card charges this whatever the deal.'}
-                  >
-                    <strong style={{ color: line.feeHigh > line.fee ? '#1E293B' : '#94A3B8' }}>
-                      {line.feeHigh > line.fee ? money(line.feeHigh) : '-'}
-                    </strong>
-                  </td>
-                </>
-              ) : (
-                <>
-                  <td
-                    style={{ ...num, color: line.gap ? GAP_INK : '#94A3B8' }}
-                    title={line.gap
-                      ? `${line.note}. This service is missing from the total below.`
-                      : 'No price on the Services Pricing tab yet'}
-                  >-</td>
-                  <td style={{ ...num, color: line.gap ? GAP_INK : '#94A3B8' }}>-</td>
-                </>
-              )}
-            </tr>
-          ))}
+                      <strong style={{ color: line.feeHigh > line.fee ? '#1E293B' : '#94A3B8' }}>
+                        {line.feeHigh > line.fee ? money(line.feeHigh) : '-'}
+                      </strong>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td
+                      style={{ ...num, color: gapped ? GAP_INK : '#94A3B8' }}
+                      title={gapped
+                        ? `${line.note}. This service is missing from the total below.`
+                        : (off
+                          ? 'This deal is not charging for it, so it needs no price.'
+                          : 'No price on the Services Pricing tab yet')}
+                    >-</td>
+                    <td style={{ ...num, color: gapped ? GAP_INK : '#94A3B8' }}>-</td>
+                  </>
+                )}
+              </tr>
+            );
+          })}
         </tbody>
         <tfoot>
           <tr>
@@ -2537,7 +2629,7 @@ function ScopeFeeTable({
               {(() => {
                 // One parenthetical, not two stacked next to each other.
                 const notes = [];
-                if (picking && onCount !== estimate.lines.length) notes.push(`${onCount} of ${estimate.lines.length} ticked`);
+                if (picking && onCount !== estimate.lines.length) notes.push(`${estimate.lines.length - onCount} not charged`);
                 if (sums.unpriced.length) notes.push(`${sums.unpriced.length} unpriced`);
                 // Services the rate card CAN price but this account has no
                 // count for. They are not in `unpriced` - they came back
@@ -3010,6 +3102,30 @@ function QuotedAmountCell({
     [countRows],
   );
 
+  // What this deal is not charging for, and so what the total is struck
+  // from. Read off the opp (see UNPRICED_SERVICES_FIELD), so the answer is
+  // the same one the Lead prompt was given and is still here next time.
+  //
+  // Priced twice when anything is marked: once over the whole scope for the
+  // rows, once over the charged ones for the totals and the red notes. A
+  // service nobody is billing for should not be holding the estimate open
+  // for a rate card, and it should still show what it is worth.
+  const unpricedKeys = useMemo(() => unpricedServiceKeys(opp), [opp]);
+  const chargedNames = useMemo(
+    () => (scopeNames || EMPTY_SCOPE).filter(n => !unpricedKeys.has(String(n ?? '').trim().toLowerCase())),
+    [scopeNames, unpricedKeys],
+  );
+  const chargedServices = useMemo(() => new Set(chargedNames), [chargedNames]);
+  const chargedEstimate = useScopeFeeEstimate({
+    active: open && unpricedKeys.size > 0,
+    scopeNames: chargedNames,
+    pricing: freshCard ? freshCard.pricing : pricing,
+    pricingBases: freshCard ? freshCard.bases : pricingBases,
+    serviceOverrides: freshCard ? freshCard.overrides : serviceOverrides,
+    counts: dealCounts.counts,
+    dealSize: draftAmount,
+  });
+
   // A typed count goes to the record the row says it goes to, and nowhere
   // else. `null` clears it: a box emptied is "nobody has recorded one",
   // which is what both records already mean by blank.
@@ -3121,11 +3237,20 @@ function QuotedAmountCell({
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}
       >{display}</span>
-      {open && (
+      {/* Out to the body, not left inside the cell that opened it.
+          DataTable's own rules reach every td under the table - no wrapping,
+          overflow hidden, max-width 0, and inline-block on whatever a cell
+          contains - and a dialog rendered in place inherited the lot. That
+          is what put "saves to Brookfield (Canadian Office)'s company card"
+          on one unbroken line across its neighbours, and what folded each
+          fee's basis back up beside the service name instead of under it.
+          A portal is outside the table, so the dialog is laid out as the
+          dialog says. */}
+      {open && createPortal(
         <div
           onMouseDown={(e) => { if (e.target === e.currentTarget) closePopup(); }}
           style={{
-            position: 'fixed', inset: 0, zIndex: 100,
+            position: 'fixed', inset: 0, zIndex: 9000,
             background: 'rgba(15, 23, 42, 0.35)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}
@@ -3288,6 +3413,15 @@ function QuotedAmountCell({
               <>
                 <ScopeFeeTable
                   estimate={scopeEstimate}
+                  totals={chargedEstimate || scopeEstimate}
+                  // The ticks only appear where there is somewhere to write
+                  // the answer: a table that forgets which services it was
+                  // told not to charge for is worse than one that never
+                  // offered.
+                  selected={onChangeOppField ? chargedServices : null}
+                  onToggle={onChangeOppField
+                    ? ((name) => toggleUnpricedService(opp, name, onChangeOppField))
+                    : null}
                   onUse={(n) => setDraftAmount(formatQuotedAmountLive(String(Math.round(n))))}
                   refresh={refreshControl}
                   typeableUnits={typeableCountUnits}
@@ -3344,7 +3478,8 @@ function QuotedAmountCell({
               >Save</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
@@ -5997,21 +6132,21 @@ function LeadQuotedAmountModal({
   updateProspect = null, onChangeOppField = null,
 }) {
   const [quotedAmount, setQuotedAmount] = useState(String(opp?.['Quoted Amount'] ?? ''));
-  // Services left out of the total. Held as the ones switched OFF rather
-  // than the ones on, so a scope that gains a service while the prompt is
-  // open counts it — the default for a service in the deal is that it is in
-  // the deal.
-  const [excluded, setExcluded] = useState(() => new Set());
+  // Services this deal is not charging for. Held on the opp rather than in
+  // this prompt's state (see UNPRICED_SERVICES_FIELD): the answer is about
+  // the deal, not about the prompt, and it used to die with the prompt -
+  // untick a service here and the Deal Size cell added it straight back.
+  //
+  // Held as the ones switched OFF rather than the ones on, so a scope that
+  // gains a service later still charges for it: the default for a service
+  // in the deal is that it is in the deal.
+  const excluded = useMemo(() => unpricedServiceKeys(opp), [opp]);
   // Whether the count boxes show the whole vocabulary or only what this
   // scope is priced on. Off by default: the deal in front of you decides
   // what is worth asking for, and a row of blanks nothing is waiting on
   // reads as eight more things to go and find.
   const [allCounts, setAllCounts] = useState(false);
-  const toggleService = (name) => setExcluded(prev => {
-    const next = new Set(prev);
-    if (next.has(name)) next.delete(name); else next.add(name);
-    return next;
-  });
+  const toggleService = (name) => toggleUnpricedService(opp, name, onChangeOppField);
 
   // The company record behind this opp's Account, for the counts its card
   // carries. Matched on the name the same fuzzy way every other reader of
@@ -6054,7 +6189,7 @@ function LeadQuotedAmountModal({
     dealSize: quotedAmount,
   });
   const pickedNames = useMemo(
-    () => (scopeNames || EMPTY_SCOPE).filter(n => !excluded.has(n)),
+    () => (scopeNames || EMPTY_SCOPE).filter(n => !excluded.has(String(n ?? '').trim().toLowerCase())),
     [scopeNames, excluded],
   );
   const pickedEstimate = useScopeFeeEstimate({
@@ -6202,8 +6337,10 @@ function LeadQuotedAmountModal({
           <ScopeFeeTable
             estimate={scopeEstimate}
             totals={pickedEstimate || scopeEstimate}
-            selected={selectedServices}
-            onToggle={toggleService}
+            // Only where the answer has somewhere to be written: a tick
+            // this prompt would forget is worse than no tick at all.
+            selected={onChangeOppField ? selectedServices : null}
+            onToggle={onChangeOppField ? toggleService : null}
             onUse={(n) => setQuotedAmount(formatQuotedAmountLive(String(Math.round(n))))}
             typeableUnits={typeableCountUnits}
           />
