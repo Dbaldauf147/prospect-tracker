@@ -29,6 +29,7 @@ import { collectAutoAdds } from '../../utils/serviceAutoAdd';
 import { collectAutoNa, isSoldStatus, autoNaTitle } from '../../utils/serviceAutoNa';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
 import { scopeCopyText } from '../../utils/scopeCopyText';
+import { scopeCopyHtml, writeScopeCopy } from '../../utils/scopeCopyRich';
 import { isCoverageTracked } from '../../utils/pipelineDashboardStore';
 import { useCoverageServices } from '../../hooks/useCoverageServices';
 import { CoverageMark } from '../common/CoverageMark';
@@ -282,6 +283,14 @@ export function ScopeServicesModal({
   // Set for a moment and cleared by a timer, so the Copy button can say it
   // worked. The clipboard gives no other sign that it did.
   const [copied, setCopied] = useState(false);
+
+  // Set when the clipboard refuses, and cleared by the next attempt. The
+  // button used to swallow a refusal on the grounds that the services are
+  // still on screen - true, but the click looks identical to one that
+  // worked, so the scope goes into the email as whatever was on the
+  // clipboard before. Saying so on the button is quieter than an alert and
+  // still tells the truth.
+  const [copyFailed, setCopyFailed] = useState(false);
   // The services the Pipeline page is watching coverage on. Picking Scope is
   // a decision about which services to push, and these are the ones being
   // measured — so the board says which is which.
@@ -505,30 +514,32 @@ export function ScopeServicesModal({
   //
   // Commodities only when the row is on screen: a caller with nowhere to
   // store them doesn't show the question, so the copy shouldn't answer it.
-  const copyText = useMemo(
-    () => scopeCopyText(selectedGroups, onCommoditiesChange ? parseCommodities(commodities) : []),
-    [selectedGroups, commodities, onCommoditiesChange],
+  const copyPicks = useMemo(
+    () => (onCommoditiesChange ? parseCommodities(commodities) : []),
+    [commodities, onCommoditiesChange],
   );
+  const copyText = useMemo(() => scopeCopyText(selectedGroups, copyPicks), [selectedGroups, copyPicks]);
+  // The same copy as markup, sent alongside the text. A scope pasted into
+  // Outlook or Word is usually going into a proposal, where a real bulleted
+  // list under bold headings is the difference between a scope and lines
+  // that happen to start with a hyphen. Anywhere that will not take markup
+  // takes the text and loses nothing.
+  const copyHtml = useMemo(() => scopeCopyHtml(selectedGroups, copyPicks), [selectedGroups, copyPicks]);
 
   // Clears itself, and clears on unmount too: the board is a modal, and
   // "Done" while the timer is still running would set state on a component
   // that has gone.
   useEffect(() => {
-    if (!copied) return undefined;
-    const t = setTimeout(() => setCopied(false), 1600);
+    if (!copied && !copyFailed) return undefined;
+    const t = setTimeout(() => { setCopied(false); setCopyFailed(false); }, copyFailed ? 4000 : 1600);
     return () => clearTimeout(t);
-  }, [copied]);
+  }, [copied, copyFailed]);
 
   async function copyScope() {
     if (!copyText) return;
-    try {
-      await navigator.clipboard?.writeText(copyText);
-      setCopied(true);
-    } catch {
-      // No clipboard permission (or an insecure origin): nothing is lost,
-      // the services are still on the screen, and an alert here would be
-      // louder than the problem.
-    }
+    const ok = await writeScopeCopy(copyText, copyHtml);
+    setCopyFailed(!ok);
+    setCopied(ok);
   }
 
   return createPortal(
@@ -607,19 +618,22 @@ export function ScopeServicesModal({
             type="button"
             onClick={copyScope}
             disabled={!copyText}
-            title={copyText
-              ? 'Copy everything in Scope as text, grouped by category, to paste into a document or an email.'
-              : 'Nothing in Scope to copy yet.'}
+            title={copyFailed
+              ? 'This browser refused the clipboard. Nothing was copied, so paste would land whatever was on the clipboard before.'
+              : copyText
+                ? 'Copy everything in Scope, grouped by category, to paste into a document or an email. Pastes as a bulleted list in Outlook and Word, as text everywhere else.'
+                : 'Nothing in Scope to copy yet.'}
             style={{
               padding: '0.25rem 0.6rem', borderRadius: 3,
               fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
-              border: `1px solid ${copied ? '#15803D' : 'var(--color-border)'}`,
-              background: copied ? '#DCFCE7' : 'transparent',
-              color: copied ? '#15803D' : 'var(--color-text-muted)',
+              border: `1px solid ${copied ? '#15803D' : copyFailed ? '#B91C1C' : 'var(--color-border)'}`,
+              background: copied ? '#DCFCE7' : copyFailed ? '#FEE2E2' : 'transparent',
+              color: copied ? '#15803D' : copyFailed ? '#B91C1C' : 'var(--color-text-muted)',
               cursor: copyText ? 'pointer' : 'default',
               opacity: copyText ? 1 : 0.55,
+              whiteSpace: 'nowrap',
             }}
-          >{copied ? 'Copied' : 'Copy'}</button>
+          >{copied ? 'Copied' : copyFailed ? 'Copy blocked' : 'Copy'}</button>
           <button
             type="button"
             onClick={() => { setAutoAdded([]); onChange(''); }}
