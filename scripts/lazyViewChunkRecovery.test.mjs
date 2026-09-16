@@ -40,7 +40,8 @@ let fetchFails = false;
 const routes = new Map();   // url -> { status, type, body } | 'throw'
 globalThis.fetch = async (url, options) => {
   fetches.push({ url, options });
-  const route = routes.get(String(url));
+  let route = routes.get(String(url));
+  if (route && (route.default || route.reload)) route = route[options?.cache === 'reload' ? 'reload' : 'default'];
   if (fetchFails || route === 'throw') throw new TypeError('Failed to fetch');
   const { status = 200, type = 'text/javascript', body = '' } = route || {};
   return {
@@ -229,6 +230,52 @@ const CSS = `${ORIGIN}/assets/DraftEmailsPage-DBsKLELe.css`;
 routes.set(CSS, { status: 200, type: 'text/css', body: '.x{color:red}' });
 scriptProbe = 'load';
 check('a stylesheet is judged as a stylesheet', (await diagnoseChunk(CSS)).verdict, 'transient');
+
+// --- a stored copy that isn't the file -------------------------------
+// The one a fetch of the chunk itself never sees: the server has the
+// file, the browser has something else saved under its name, and only
+// the copy the module loader would read shows it. A shared chunk keeps
+// its hash between deploys, so a bad copy of one outlives every rebuild
+// of the view that imports it.
+const HTML = { status: 200, type: 'text/html', body: '<!doctype html><title>app</title>' };
+
+reset();
+routes.set(CHUNK, withDeps);
+routes.set(DEP, { default: HTML, reload: { body: 'export const a=1;' } });
+const fixed = await diagnoseChunk(CHUNK);
+check('a bad saved copy is found', fixed.verdict, 'repaired');
+check('and named', fixed.summary.includes('chunk-zsgVPwQN.js'), true);
+check('and refreshed past the cache',
+  fetches.some(f => String(f.url) === DEP && f.options?.cache === 'reload'), true);
+check('the file itself is not blamed', fixed.summary.includes('The file itself was fine'), true);
+
+// A bad copy has no imports to read, so everything under it goes
+// unexamined until the real file is back.
+reset();
+routes.set(CHUNK, withDeps);
+routes.set(DEP, { default: HTML, reload: { body: 'import"./draftCampaignQueue-x.js";' } });
+routes.set(DEEP, { status: 404 });
+const under = await diagnoseChunk(CHUNK);
+check('the walk carries on through what it repaired', under.verdict, 'missing-dep');
+check('and reaches what was hidden under it', under.summary.includes('draftCampaignQueue-x.js'), true);
+
+reset();
+routes.set(CHUNK, withDeps);
+routes.set(DEP, HTML);
+const stillHtml = await diagnoseChunk(CHUNK);
+check('a bad copy the server also serves is not repairable', stillHtml.verdict, 'missing-dep');
+check('and says what came back instead',
+  stillHtml.summary.includes('text/html instead of JavaScript'), true);
+
+// The recovery does the same repair before it reloads, so the fresh
+// document has a whole tree to load and not one mended file.
+reset();
+routes.set(CHUNK, withDeps);
+routes.set(DEP, { default: HTML, reload: { body: 'export const a=1;' } });
+check('recovery reports itself underway', await recoverFromChunkError(chrome), true);
+check('it repaired the import too',
+  fetches.some(f => String(f.url) === DEP && f.options?.cache === 'reload'), true);
+check('and then reloaded', reloads, 1);
 
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

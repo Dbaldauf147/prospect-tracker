@@ -71,6 +71,7 @@ export class RootErrorBoundary extends Component {
         'script-blocked': 'Something is blocking part of this page',
         reachable: 'Something is blocking part of this page',
         transient: 'Part of the app did not load',
+        repaired: 'A saved copy of one of this page\'s files was wrong',
       })[diagnosis?.verdict] || 'This page is out of date';
 
     return (

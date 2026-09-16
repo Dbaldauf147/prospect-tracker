@@ -96,7 +96,12 @@ async function refetchPastCache(url) {
 // when the automatic attempt below was skipped or didn't take, and where
 // a plain reload is the thing that has already been proven not to work.
 export async function reloadPastCache(error) {
-  await refetchPastCache(chunkUrlFrom(error));
+  const url = chunkUrlFrom(error);
+  if (url && /\.js($|\?)/.test(url)) {
+    await repairGraph(url);
+  } else {
+    await refetchPastCache(url);
+  }
   window.location.reload();
 }
 
@@ -128,20 +133,59 @@ function staticDeps(source, base) {
   return [...deps].slice(0, 40);
 }
 
+// Is what came back actually the file?
+//
+// Status is not enough. A response can be 200 and still not be the
+// module: the app's own index.html answered for a path the server didn't
+// recognise, an error page from somewhere in the middle. The browser
+// refuses those, and since a hashed asset is cached for a year, a copy
+// like that stays in front of the real file until something overwrites
+// it.
+const looksLikeMarkup = /^\s*<(?:!doctype|html|head|body|\?xml)/i;
+
+async function inspect(url, cache) {
+  try {
+    const res = await request(url, { cache });
+    if (!res.ok) return { ok: false, why: `HTTP ${res.status}` };
+
+    const type = (res.headers.get('content-type') || '').split(';')[0];
+    const text = await res.text().catch(() => '');
+    const wantsCss = /\.css($|\?)/.test(url);
+    if (wantsCss ? !/css/i.test(type) : !JS_TYPE.test(type)) {
+      return {
+        ok: false,
+        why: `${type || 'no content type'} instead of ${wantsCss ? 'a stylesheet' : 'JavaScript'}`,
+      };
+    }
+    if (!wantsCss && looksLikeMarkup.test(text)) {
+      return { ok: false, why: 'a page of HTML instead of the file' };
+    }
+    return { ok: true, text };
+  } catch {
+    return { ok: false, why: 'no response' };
+  }
+}
+
 // Walk what the browser would actually have fetched: the chunk's
 // imports, their imports, and so on. One level is not enough -- a view
 // here imports two dozen files directly and pulls in ninety through
 // them, and any one of the ninety failing takes the import down under
 // the name of the chunk on top.
 //
-// `cache: 'default'` keeps this close to free: every file the page
-// already holds answers out of cache, and only something genuinely
-// absent reaches the network.
+// `cache: 'default'` is the point rather than an optimisation: it reads
+// what the module loader would read, stored copy and all, which is the
+// only way to see a file that the server serves correctly and the
+// browser has wrong. With `repair`, a file like that is fetched again
+// past the cache, and if the real one comes back the walk carries on
+// through it -- a bad copy has no imports to follow, so without this
+// everything underneath it stays unexamined.
 const GRAPH_LIMIT = 250;
 const BATCH = 12;
 
-async function walkGraph(entryUrl, entrySource) {
+async function walkGraph(entryUrl, entrySource, { repair = false } = {}) {
   const seen = new Set([entryUrl]);
+  const broken = [];
+  const repaired = [];
   let frontier = staticDeps(entrySource, entryUrl);
   let checked = 0;
 
@@ -155,22 +199,36 @@ async function walkGraph(entryUrl, entrySource) {
     frontier = [];
 
     for (let i = 0; i < batch.length; i += BATCH) {
-      const results = await Promise.all(batch.slice(i, i + BATCH).map(async (url) => {
+      await Promise.all(batch.slice(i, i + BATCH).map(async (url) => {
         checked += 1;
-        try {
-          const res = await request(url, { cache: 'default' });
-          if (!res.ok) return { url, status: res.status };
-          frontier.push(...staticDeps(await res.text().catch(() => ''), url));
-          return null;
-        } catch {
-          return { url, status: 0 };
-        }
+        const stored = await inspect(url, 'default');
+        if (stored.ok) { frontier.push(...staticDeps(stored.text, url)); return; }
+
+        if (!repair) { broken.push({ url, why: stored.why }); return; }
+
+        const fresh = await inspect(url, 'reload');
+        if (!fresh.ok) { broken.push({ url, why: fresh.why }); return; }
+        repaired.push(url);
+        frontier.push(...staticDeps(fresh.text, url));
       }));
-      const bad = results.find(Boolean);
-      if (bad) return { bad, checked };
     }
   }
-  return { bad: null, checked };
+  return { broken, repaired, checked };
+}
+
+// Fix every stored copy in a view's graph that isn't the file, so the
+// reload that follows has a whole tree to load rather than one repaired
+// file and the same bad copy underneath it. Bounded: a stuck request
+// must not hold the page on a Suspense fallback.
+const REPAIR_DEADLINE_MS = 6000;
+
+async function repairGraph(url) {
+  const entry = await inspect(url, 'reload');
+  if (!entry.ok) return { repaired: [], checked: 0 };
+  return Promise.race([
+    walkGraph(url, entry.text, { repair: true }),
+    new Promise(resolve => setTimeout(() => resolve({ repaired: [], checked: 0 }), REPAIR_DEADLINE_MS)),
+  ]);
 }
 
 // A fetch and a module load are not the same request. The browser tags a
@@ -284,17 +342,31 @@ async function judgeChunk(url) {
     };
   }
 
-  const { bad, checked } = await walkGraph(url, await res.text().catch(() => ''));
+  const { broken, repaired, checked } = await walkGraph(url, await res.text().catch(() => ''), { repair: true });
+
+  const bad = broken[0];
   if (bad) {
     const name = bad.url.split('/').pop();
     return {
-      verdict: bad.status ? 'missing-dep' : 'blocked-dep',
-      summary: bad.status
-        ? `This file loads, but ${name}, which it is built from, returned HTTP ${bad.status}. The error `
-          + 'above names the wrong file: that is the one missing from the server.'
-        : `This file loads, but the request for ${name}, which it is built from, never reached the `
-          + `server. ${CAUSES}`,
-      detail: `Diagnosis: ${url} is served, but ${bad.url} returned ${bad.status || 'no response'}.`,
+      verdict: bad.why === 'no response' ? 'blocked-dep' : 'missing-dep',
+      summary: `This file loads, but ${name}, which it is built from, came back as ${bad.why}. The `
+        + 'error above names the wrong file: that is the one to look at.'
+        + (bad.why === 'no response' ? ` ${CAUSES}` : ''),
+      detail: `Diagnosis: ${url} is served, but ${bad.url} came back as ${bad.why}.`,
+    };
+  }
+
+  if (repaired.length) {
+    const name = repaired[0].split('/').pop();
+    return {
+      verdict: 'repaired',
+      summary: `The file itself was fine. ${count(repaired.length)} it is built from `
+        + `${repaired.length === 1 ? 'was' : 'were'} not: this browser had something else saved in `
+        + `${repaired.length === 1 ? 'its' : 'their'} place (${name}${repaired.length > 1 ? ' and the rest' : ''}), `
+        + 'which is why the view would not load however many times it was tried. That has been fetched '
+        + 'again from the server. Reload and it should open.',
+      detail: `Diagnosis: ${url} is served, but a bad copy was stored for ${repaired.join(', ')}; `
+        + `re-fetched past the cache. ${count(checked)} walked.`,
     };
   }
 
