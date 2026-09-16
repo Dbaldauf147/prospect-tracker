@@ -12,26 +12,20 @@
 //
 // The row builders are pure — campaign in, cells out — so the shape of the
 // file is pinned by scripts/campaignExport.test.mjs rather than by clicking
-// the button. Only `downloadCsv` touches the DOM.
+// the button. Nothing in here touches the DOM: the download itself is
+// `downloadCsv`, re-exported from utils/csv.js below.
 import { campaignSendStats, isCampaignActive, campaignOutreachLabel } from './campaignOutreach.js';
 import { stripDashes } from './exportSanitize.js';
+import { toCsv } from './csv.js';
 import { campaignSubjects } from './campaignSubjects.js';
 import { campaignEventUrl } from './campaignEventLink.js';
 import { followUpInfo, followUpLabel } from './campaignFollowUp.js';
 import { contactOutreach, contactOutreachLabel } from './campaignContactHold.js';
 
-// One CSV cell. Quoted only where it has to be, doubled quotes inside.
-export function csvCell(v) {
-  const s = (v === null || v === undefined) ? '' : String(v);
-  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-}
-
-// Header row + data rows → the finished file. CRLF line endings: Excel reads
-// either, but a bare \n confuses a few older Windows tools and nothing is
-// gained by risking it.
-export function toCsv(headers, rows) {
-  return [headers, ...rows].map(r => r.map(csvCell).join(',')).join('\r\n');
-}
+// The CSV mechanics live in utils/csv.js now that the Site List export
+// needs the same quoting and the same download. Re-exported here so the
+// callers and tests that have always read them off this module still can.
+export { csvCell, toCsv, downloadCsv } from './csv.js';
 
 // Dates go out ISO-first (YYYY-MM-DD, plus the time where we have one that
 // matters) so a spreadsheet sorts them as dates instead of as the "Sep 8,
@@ -209,17 +203,3 @@ export function csvFilename(name, date = new Date()) {
   return stripDashes(`${safe}${stamp ? ` ${stamp}` : ''}.csv`);
 }
 
-// Hand the file to the browser. The only part of this module that needs a DOM;
-// the BOM is what makes Excel open a UTF-8 CSV as UTF-8 rather than mangling
-// every accented name in it.
-export function downloadCsv(filename, csv) {
-  const blob = new Blob(['\uFEFF' + stripDashes(csv)], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}

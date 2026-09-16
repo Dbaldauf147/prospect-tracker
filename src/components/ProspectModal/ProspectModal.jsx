@@ -74,6 +74,7 @@ import { readSheetSync } from '../../utils/sheetSyncSettings';
 import { planSheetCompanyRename, spreadsheetIdFromUrl } from '../../utils/sheetCompanyRename';
 import { computePortfolioFitScore, siteCountNumber, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { SiteListPasteModal } from './SiteListPasteModal';
+import { SiteListExportMenu } from './SiteListExportMenu';
 import { siteListFacts as computeSiteListFacts, siteListScreeningRows, formatSqft } from '../../utils/siteListFacts';
 import { annualSavingsFromWorkbook } from '../../utils/analysisWorkbookFigures';
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
@@ -10157,6 +10158,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     </button>
                     {currentSiteList && (
                       <>
+                        {/* Pulls the saved list back out as a file. Sits
+                            with the other things you do TO the list rather
+                            than under the table, because on a long list the
+                            table's bottom is a scroll away. */}
+                        <SiteListExportMenu list={currentSiteList} company={fields.company} />
                         <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
                           {currentSiteList.fileName}
                           {currentSiteList.uploadedAt ? ` · ${new Date(currentSiteList.uploadedAt).toLocaleDateString()}` : ''}
