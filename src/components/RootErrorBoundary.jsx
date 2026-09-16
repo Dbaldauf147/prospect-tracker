@@ -1,5 +1,5 @@
 import { Component } from 'react';
-import { isChunkLoadError, reloadPastCache } from '../utils/lazyView';
+import { isChunkLoadError, reloadPastCache, chunkUrlFrom, diagnoseChunk } from '../utils/lazyView';
 
 // The last boundary before the page. Individual pages have their own (see
 // KeyContactsView, PipelineView) so a bad row there doesn't take the app
@@ -12,7 +12,7 @@ import { isChunkLoadError, reloadPastCache } from '../utils/lazyView';
 export class RootErrorBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { error: null, info: null };
+    this.state = { error: null, info: null, diagnosis: null };
   }
 
   static getDerivedStateFromError(error) { return { error }; }
@@ -20,12 +20,21 @@ export class RootErrorBoundary extends Component {
   componentDidCatch(error, info) {
     console.error('App render crashed', error, info);
     this.setState({ info });
+    // A file that wouldn't load is the one crash where the screen can find
+    // out more than it was told. Ask the network what happened to it, and
+    // say so here rather than leaving it to be guessed at from the message.
+    if (isChunkLoadError(error)) {
+      diagnoseChunk(chunkUrlFrom(error))
+        .then(diagnosis => this.setState({ diagnosis }))
+        .catch(() => {});
+    }
   }
 
   details() {
-    const { error, info } = this.state;
+    const { error, info, diagnosis } = this.state;
     return [
       `Error: ${String(error?.message || error || 'Unknown error')}`,
+      diagnosis ? `\n${diagnosis.detail}` : '',
       error?.stack ? `\nStack:\n${error.stack}` : '',
       info?.componentStack ? `\nComponent stack:${info.componentStack}` : '',
       `\nPage: ${window.location.href}`,
@@ -34,7 +43,7 @@ export class RootErrorBoundary extends Component {
   }
 
   render() {
-    const { error } = this.state;
+    const { error, diagnosis } = this.state;
     if (!error) return this.props.children;
 
     const box = { maxWidth: 720, margin: '3rem auto', padding: '1.5rem', fontFamily: 'Inter, system-ui, sans-serif', color: '#0F172A' };
@@ -49,21 +58,33 @@ export class RootErrorBoundary extends Component {
     // the reader looking for a bug in the page they were opening.
     const stale = isChunkLoadError(error);
 
+    // Once the diagnosis is in, the heading can say which of the two this
+    // is, instead of leading with staleness for a file the server never
+    // had or one an extension is eating.
+    const heading = !stale ? 'Something in the page crashed'
+      : ({
+        missing: 'A file this page needs is not on the server',
+        'missing-dep': 'A file this page needs is not on the server',
+        'wrong-type': 'A file this page needs is not on the server',
+        blocked: 'Something is blocking part of this page',
+        'blocked-dep': 'Something is blocking part of this page',
+        reachable: 'Something is blocking part of this page',
+      })[diagnosis?.verdict] || 'This page is out of date';
+
     return (
       <div style={box}>
         <h1 style={{ fontSize: '1.15rem', margin: '0 0 0.5rem' }}>
-          {stale ? 'This page is out of date' : 'Something in the page crashed'}
+          {heading}
         </h1>
         <p style={{ color: '#475569', fontSize: 13, lineHeight: 1.5 }}>
           {stale ? (
             <>
-              Part of the app would not load. Either this tab has been open
-              across a deploy and is asking for a file that has since been
-              replaced, or the browser has a bad copy of that file saved. Your
-              data is untouched. Reload fetches it again from scratch, ignoring
-              anything saved - if that was just tried and you are still here,
-              the file may be missing from the server, so copy the details
-              below.
+              Part of the app would not load. Your data is untouched.{' '}
+              {diagnosis
+                ? diagnosis.summary
+                : 'Checking whether the file is on the server, or whether something here stopped it '
+                  + 'from loading. Reload fetches it again from scratch, ignoring anything saved.'}
+              {' '}Copy the details below to pass this on.
             </>
           ) : (
             <>

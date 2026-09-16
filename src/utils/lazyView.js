@@ -30,7 +30,14 @@ import { lazy } from 'react';
 // Rollup/Vite word this differently per browser: Chrome says "Failed to
 // fetch dynamically imported module", Firefox "error loading dynamically
 // imported module", Safari "Importing a module script failed".
-const CHUNK_ERROR = /dynamically imported module|Importing a module script failed|error loading dynamically imported/i;
+//
+// The fourth is Vite's own. Its preload helper hangs a <link> for each
+// stylesheet a view needs and throws "Unable to preload CSS for <url>"
+// when one won't load, which is the same failure wearing different words:
+// the view didn't load because a file it is built from didn't arrive.
+// Without it here, a missing stylesheet reads as a component crash and
+// nothing tries to recover.
+const CHUNK_ERROR = /dynamically imported module|Importing a module script failed|error loading dynamically imported|Unable to preload CSS/i;
 
 export function isChunkLoadError(error) {
   return CHUNK_ERROR.test(String(error?.message || error || ''));
@@ -66,18 +73,21 @@ export function chunkUrlFrom(error) {
 // network is gone the reload is still the user's best move. The timeout
 // only stops a hung request from holding the page on a Suspense fallback
 // with nothing happening.
-const REFETCH_TIMEOUT_MS = 4000;
+const REQUEST_TIMEOUT_MS = 4000;
+
+function request(url, options) {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), REQUEST_TIMEOUT_MS);
+  return fetch(url, { credentials: 'same-origin', ...options, signal: abort.signal })
+    .finally(() => clearTimeout(timer));
+}
 
 async function refetchPastCache(url) {
   if (!url) return;
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), REFETCH_TIMEOUT_MS);
   try {
-    await fetch(url, { cache: 'reload', credentials: 'same-origin', signal: abort.signal });
+    await request(url, { cache: 'reload' });
   } catch {
     // Offline, blocked, aborted: nothing to do differently.
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -88,6 +98,118 @@ async function refetchPastCache(url) {
 export async function reloadPastCache(error) {
   await refetchPastCache(chunkUrlFrom(error));
   window.location.reload();
+}
+
+
+// Reading the failure back out of the network.
+//
+// "Failed to fetch dynamically imported module" is the same sentence
+// whether the file is missing from the deploy, the server answered with
+// something that isn't JavaScript, or the request never left the browser
+// because an extension or a company proxy ate it. It also names the
+// module that was asked for rather than the file that actually failed: a
+// view chunk imports a couple of dozen others, and any one of them not
+// arriving takes the whole import down under the name of the one on top.
+//
+// None of that can be told apart by looking, and looking is all a report
+// of this arrives with. So once a view has failed and the reload hasn't
+// cleared it, ask the network directly and say what came back.
+
+const JS_TYPE = /javascript|ecmascript/i;
+
+// The files a chunk names in its own import statements. Bundled ESM puts
+// them at the top, so the head of the file is enough, and only plain
+// relative filenames are followed.
+function staticDeps(source, base) {
+  const deps = new Set();
+  for (const m of source.slice(0, 8000).matchAll(/(?:import|from)\s*["'](\.\/[A-Za-z0-9._-]+\.(?:js|css))["']/g)) {
+    try { deps.add(new URL(m[1], base).href); } catch { /* not a URL we can ask about */ }
+  }
+  return [...deps].slice(0, 40);
+}
+
+// HEAD is enough to learn whether the server has a file, and keeps this
+// from re-downloading a couple of megabytes to answer a question. null
+// means the request itself never completed.
+async function head(url) {
+  try {
+    const res = await request(url, { method: 'HEAD', cache: 'reload' });
+    return { url, status: res.status, ok: res.ok };
+  } catch {
+    return { url, status: 0, ok: false };
+  }
+}
+
+const CAUSES = 'A browser extension, an ad or privacy blocker, a VPN, or a company proxy is the '
+  + 'usual cause. An incognito window with extensions turned off is the quickest way to tell.';
+
+/**
+ * Work out why a chunk wouldn't load. Returns { verdict, summary, detail }:
+ * `summary` is a sentence for the person looking at the crash screen,
+ * `detail` a line for the report they copy. Never throws.
+ */
+export async function diagnoseChunk(url) {
+  if (!url) {
+    return {
+      verdict: 'unknown',
+      summary: 'This browser did not say which file it could not load, so there is nothing to test.',
+      detail: 'Diagnosis: no module URL in the error message.',
+    };
+  }
+
+  let res;
+  try {
+    res = await request(url, { cache: 'reload' });
+  } catch {
+    return {
+      verdict: 'blocked',
+      summary: `The request for this file never reached the server. ${CAUSES}`,
+      detail: `Diagnosis: request for ${url} did not complete.`,
+    };
+  }
+
+  if (!res.ok) {
+    return {
+      verdict: 'missing',
+      summary: `The server does not have this file (HTTP ${res.status}). That is a problem with the deploy `
+        + 'rather than with this browser, and reloading will not fix it.',
+      detail: `Diagnosis: ${url} returned HTTP ${res.status}.`,
+    };
+  }
+
+  const type = res.headers.get('content-type') || 'no content type';
+  const wantsCss = /\.css($|\?)/.test(url);
+  if (!(wantsCss ? /css/i.test(type) : JS_TYPE.test(type))) {
+    return {
+      verdict: 'wrong-type',
+      summary: `The server answered with ${type.split(';')[0]} instead of the file itself, so the browser `
+        + 'refused to run it.',
+      detail: `Diagnosis: ${url} returned HTTP ${res.status} as ${type}.`,
+    };
+  }
+
+  const deps = await Promise.all(staticDeps(await res.text().catch(() => ''), url).map(head));
+  const bad = deps.find(d => !d.ok);
+  if (bad) {
+    const name = bad.url.split('/').pop();
+    return {
+      verdict: bad.status ? 'missing-dep' : 'blocked-dep',
+      summary: bad.status
+        ? `This file loads, but ${name}, which it is built from, returned HTTP ${bad.status}. The error `
+          + 'above names the wrong file: that is the one missing from the server.'
+        : `This file loads, but the request for ${name}, which it is built from, never reached the `
+          + `server. ${CAUSES}`,
+      detail: `Diagnosis: ${url} is served, but ${bad.url} returned ${bad.status || 'no response'}.`,
+    };
+  }
+
+  return {
+    verdict: 'reachable',
+    summary: `This file and the ${deps.length} it is built from all download fine when asked for `
+      + 'directly, so the server has everything. Something stopped the browser from loading it as part '
+      + `of the page. ${CAUSES}`,
+    detail: `Diagnosis: ${url} and its ${deps.length} imports are all served normally.`,
+  };
 }
 
 // One reload per window, tracked across the reload itself. Without this a
