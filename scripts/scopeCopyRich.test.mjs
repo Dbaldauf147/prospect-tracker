@@ -74,6 +74,75 @@ const groups = [
   ok(!html.includes('font-weight:700'), 'with no empty heading above it');
 }
 
+// ---- the categories run across the page, not down it ------------------------
+
+// One long column is what a dozen categories used to paste as. These pin the
+// layout that replaced it: a table, because Outlook renders with Word's
+// engine and ignores CSS column-count.
+
+const cat = (n, size = 1) => ({
+  category: `Category ${n}`,
+  items: Array.from({ length: size }, (_, i) => ({ label: `Service ${n}.${i + 1}` })),
+});
+const cols = (html) => {
+  const first = html.match(/<tr>.*?<\/tr>/)?.[0] || '';
+  return (first.match(/<td /g) || []).length;
+};
+const rows = (html) => (html.match(/<tr>/g) || []).length;
+
+{
+  // One category is a list, not a layout.
+  const one = scopeCopyHtml([cat(1)], []);
+  eq(one.includes('<table'), false, 'a single category pastes as a plain list, with no table around it');
+
+  eq(cols(scopeCopyHtml([cat(1), cat(2)], [])), 2, 'two categories go side by side');
+  eq(cols(scopeCopyHtml([cat(1), cat(2), cat(3), cat(4)], [])), 2,
+    'and four stay at two, so they land as a tidy 2x2 rather than three and a straggler');
+  eq(rows(scopeCopyHtml([cat(1), cat(2), cat(3), cat(4)], [])), 2, 'which is two rows of two');
+  eq(cols(scopeCopyHtml([cat(1), cat(2), cat(3), cat(4), cat(5)], [])), 3, 'five categories open a third column');
+
+  // Capped, or the cells get narrower than the names they hold.
+  const many = scopeCopyHtml(Array.from({ length: 12 }, (_, i) => cat(i + 1)), []);
+  eq(cols(many), 3, 'twelve categories still use three columns, not twelve');
+  eq(rows(many), 4, 'wrapping onto four rows');
+}
+
+{
+  // Order is the board's: across, then down. The person ticking the services
+  // read them in that order.
+  const html = scopeCopyHtml([cat(1), cat(2), cat(3), cat(4), cat(5)], []);
+  const seen = (html.match(/Category \d/g) || []);
+  eq(seen, ['Category 1', 'Category 2', 'Category 3', 'Category 4', 'Category 5'],
+    'the categories keep board order, running across each row before wrapping');
+}
+
+{
+  // A ragged last row keeps its empty cells, or the one category left over
+  // stretches the full width and reads as though it spans the columns above.
+  const html = scopeCopyHtml([cat(1), cat(2), cat(3)], []);
+  const last = html.match(/<tr>(?:(?!<tr>).)*<\/tr>\s*<\/table>/)?.[0] || '';
+  eq((last.match(/<td /g) || []).length, 2, 'the short last row is padded out to the full column count');
+  eq(/<td [^>]*>\s*<\/td>/.test(last), true, 'with a cell that is genuinely empty');
+}
+
+{
+  // Percentages, so the paste sizes itself to whatever it lands in rather
+  // than carrying one document's width into all of them.
+  const html = scopeCopyHtml([cat(1), cat(2), cat(3), cat(4), cat(5)], []);
+  eq(html.includes('width="33%"'), true, 'a third each across three columns');
+  eq(/<table[^>]*width="100%"/.test(html), true, 'and the table fills its container');
+  eq(/width\s*[:=]\s*"?\d+px/.test(html), false, 'and no width anywhere is pinned in pixels');
+  eq((html.match(/valign="top"/g) || []).length, cols(html) * rows(html),
+    'every cell is top-aligned, so a short category does not float beside a long one');
+}
+
+{
+  // The commodity line is about the whole scope, so it stays above the
+  // columns rather than becoming one of them.
+  const html = scopeCopyHtml([cat(1), cat(2)], ['Electric']);
+  eq(html.indexOf('Commodities:') < html.indexOf('<table'), true, 'commodities lead, outside the table');
+}
+
 // ---- the two flavours agree on what "nothing to copy" means ----------------
 
 {
