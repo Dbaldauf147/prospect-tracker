@@ -128,17 +128,85 @@ function staticDeps(source, base) {
   return [...deps].slice(0, 40);
 }
 
-// HEAD is enough to learn whether the server has a file, and keeps this
-// from re-downloading a couple of megabytes to answer a question. null
-// means the request itself never completed.
-async function head(url) {
-  try {
-    const res = await request(url, { method: 'HEAD', cache: 'reload' });
-    return { url, status: res.status, ok: res.ok };
-  } catch {
-    return { url, status: 0, ok: false };
+// Walk what the browser would actually have fetched: the chunk's
+// imports, their imports, and so on. One level is not enough -- a view
+// here imports two dozen files directly and pulls in ninety through
+// them, and any one of the ninety failing takes the import down under
+// the name of the chunk on top.
+//
+// `cache: 'default'` keeps this close to free: every file the page
+// already holds answers out of cache, and only something genuinely
+// absent reaches the network.
+const GRAPH_LIMIT = 250;
+const BATCH = 12;
+
+async function walkGraph(entryUrl, entrySource) {
+  const seen = new Set([entryUrl]);
+  let frontier = staticDeps(entrySource, entryUrl);
+  let checked = 0;
+
+  while (frontier.length && checked < GRAPH_LIMIT) {
+    const batch = [];
+    for (const url of frontier) {
+      if (seen.has(url) || checked + batch.length >= GRAPH_LIMIT) continue;
+      seen.add(url);
+      batch.push(url);
+    }
+    frontier = [];
+
+    for (let i = 0; i < batch.length; i += BATCH) {
+      const results = await Promise.all(batch.slice(i, i + BATCH).map(async (url) => {
+        checked += 1;
+        try {
+          const res = await request(url, { cache: 'default' });
+          if (!res.ok) return { url, status: res.status };
+          frontier.push(...staticDeps(await res.text().catch(() => ''), url));
+          return null;
+        } catch {
+          return { url, status: 0 };
+        }
+      }));
+      const bad = results.find(Boolean);
+      if (bad) return { bad, checked };
+    }
   }
+  return { bad: null, checked };
 }
+
+// A fetch and a module load are not the same request. The browser tags a
+// module `Sec-Fetch-Dest: script`, and a filter that only blocks scripts
+// lets every fetch above through while refusing the import -- which
+// looks, from the error alone, exactly like a file that isn't there.
+//
+// A modulepreload link is that same kind of request without running
+// anything, so it tells the two apart. Browsers without modulepreload
+// fire neither event, which is why 'unknown' is one of the answers.
+const SCRIPT_PROBE_MS = 5000;
+
+function loadsAsScript(url) {
+  return new Promise((resolve) => {
+    if (typeof document === 'undefined') { resolve('unknown'); return; }
+    let link = null;
+    let timer = null;
+    const done = (verdict) => { clearTimeout(timer); link?.remove(); resolve(verdict); };
+    timer = setTimeout(() => done('unknown'), SCRIPT_PROBE_MS);
+    try {
+      link = document.createElement('link');
+      link.rel = 'modulepreload';
+      link.as = 'script';
+      // A URL the module map has no opinion about yet, so the answer is
+      // about the network rather than about this document's history.
+      link.href = `${url}${url.includes('?') ? '&' : '?'}probe=${Date.now()}`;
+      link.addEventListener('load', () => done('loaded'));
+      link.addEventListener('error', () => done('failed'));
+      document.head.appendChild(link);
+    } catch {
+      done('unknown');
+    }
+  });
+}
+
+const count = (n) => `${n} file${n === 1 ? '' : 's'}`;
 
 const CAUSES = 'A browser extension, an ad or privacy blocker, a VPN, or a company proxy is the '
   + 'usual cause. An incognito window with extensions turned off is the quickest way to tell.';
@@ -188,8 +256,7 @@ export async function diagnoseChunk(url) {
     };
   }
 
-  const deps = await Promise.all(staticDeps(await res.text().catch(() => ''), url).map(head));
-  const bad = deps.find(d => !d.ok);
+  const { bad, checked } = await walkGraph(url, await res.text().catch(() => ''));
   if (bad) {
     const name = bad.url.split('/').pop();
     return {
@@ -203,12 +270,38 @@ export async function diagnoseChunk(url) {
     };
   }
 
+  // Everything the view is built from is on the server and downloads
+  // here. So ask the one question a fetch can't: does the browser accept
+  // this file when the page loads it the way a page loads code?
+  const asScript = await loadsAsScript(url);
+  const served = `${url} and the ${count(checked)} it pulls in are all served normally`;
+
+  if (asScript === 'failed') {
+    return {
+      verdict: 'script-blocked',
+      summary: 'This file downloads fine when the page asks for it as data, along with the '
+        + `${count(checked)} it pulls in, but the browser refuses the same file when the page loads it `
+        + 'as code. '
+        + `That is a filter rather than a fault in the app or the server. ${CAUSES}`,
+      detail: `Diagnosis: ${served}, but loading it as a script is refused.`,
+    };
+  }
+
+  if (asScript === 'loaded') {
+    return {
+      verdict: 'transient',
+      summary: `This file and the ${count(checked)} it pulls in all load now, as code as well as `
+        + 'data, so whatever stopped it looks momentary. A reload should clear it.',
+      detail: `Diagnosis: ${served} and load as scripts.`,
+    };
+  }
+
   return {
     verdict: 'reachable',
-    summary: `This file and the ${deps.length} it is built from all download fine when asked for `
+    summary: `This file and the ${count(checked)} it pulls in all download fine when asked for `
       + 'directly, so the server has everything. Something stopped the browser from loading it as part '
       + `of the page. ${CAUSES}`,
-    detail: `Diagnosis: ${url} and its ${deps.length} imports are all served normally.`,
+    detail: `Diagnosis: ${served}; this browser would not say whether it accepts the file as a script.`,
   };
 }
 
