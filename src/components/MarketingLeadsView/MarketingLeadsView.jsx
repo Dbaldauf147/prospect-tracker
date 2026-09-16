@@ -13,6 +13,7 @@ import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { useAuth } from '../../contexts/AuthContext';
 import { resolveSignature, plainBodyToHtml, personalizeDraftText, buildUnsentEml, downloadDrafts, safeFileName } from '../../utils/draftEmail';
 import { addQueuedLeads } from '../../utils/draftLeadsQueue';
+import { leadToDraftContact } from '../../utils/workingLeads';
 import { withCompanyOverride } from '../../utils/contactCompanyOverride';
 import { saveTagReview } from '../../utils/contactTagReview';
 import {
@@ -1310,22 +1311,6 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
     persist(persistedRows.map(r => (ids.has(r.id) ? { ...r, [bulkField]: val } : r)));
     const n = ids.size;
     setBulkResult(`Set ${bulkFieldLabel} on ${n} lead${n === 1 ? '' : 's'}${val.trim() ? ` to “${val.trim()}”` : ' (cleared)'}.`);
-  }
-
-  // Shape a lead into the contact object the Draft Emails composer expects,
-  // splitting the "First Last" name into first / last for {firstName} etc.
-  function leadToDraftContact(r) {
-    const name = String(r.name || '').trim();
-    const parts = name.split(/\s+/).filter(Boolean);
-    return {
-      id: `lead:${r.id}`,
-      name: name || String(r.email || '').trim(),
-      firstName: parts[0] || '',
-      lastName: parts.slice(1).join(' '),
-      email: String(r.email || '').trim(),
-      company: String(r.company || '').trim(),
-      title: String(r.jobTitle || '').trim(),
-    };
   }
 
   function sendSelectedToDrafts() {
