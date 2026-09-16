@@ -94,6 +94,12 @@ async function handler(req, res, auth) {
       companies: digest.companies,
       searched: digest.searched,
       deals: digest.deals,
+      // How the trade-newsletter source fared this run. A test send is the
+      // one place somebody is watching, so it's also the only practical way
+      // to tell whether the mailbox wiring works: without this the label,
+      // the filter and the IMAP toggle can all be wrong and the only symptom
+      // is a digest that is quietly thinner than it should be.
+      newsletters: digest.newsletters || null,
       recipients: to.length,
     });
   } catch (err) {

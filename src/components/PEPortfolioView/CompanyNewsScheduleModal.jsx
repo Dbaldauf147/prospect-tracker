@@ -26,6 +26,19 @@ function emptyForm() {
   };
 }
 
+// What the test send has to say about the trade-newsletter source, appended
+// to the toast. This is the only feedback loop for the mailbox wiring: the
+// Gmail label, the filter and the IMAP toggle all live outside the app, and
+// a run that reads nothing looks exactly like a quiet week otherwise.
+function newsletterNote(news) {
+  if (!news || !news.configured) return '';
+  if (news.error) return ` Newsletters weren't read: ${news.error}`;
+  if (!news.count) {
+    return ' No newsletter headlines in the window, so this ran on the news feeds alone.';
+  }
+  return ` Read ${news.count} newsletter headline${news.count === 1 ? '' : 's'} from the mailbox.`;
+}
+
 const tzLabel = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time'; }
   catch { return 'local time'; }
@@ -172,7 +185,7 @@ export function CompanyNewsScheduleModal({ open, onClose, uid, prospects = [] })
       const coverage = searched < (data.companies ?? 0)
         ? `${searched} of ${data.companies} tracked companies`
         : `${searched} tracked companies`;
-      setToast(`Sent ${data.deals ?? 0} deal(s) across ${coverage} to ${data.recipients ?? 0} recipient(s).`);
+      setToast(`Sent ${data.deals ?? 0} deal(s) across ${coverage} to ${data.recipients ?? 0} recipient(s).${newsletterNote(data.newsletters)}`);
     } catch (err) {
       setError(String(err.message || err));
     } finally {
@@ -197,6 +210,8 @@ export function CompanyNewsScheduleModal({ open, onClose, uid, prospects = [] })
           )}
 
           <TrackedSummary tracked={tracked} />
+
+          <SourcesNote />
 
           {!editing && (
             <>
@@ -347,6 +362,55 @@ export function CompanyNewsScheduleModal({ open, onClose, uid, prospects = [] })
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Where the digest looks, and what it takes to open the second door.
+//
+// The research pass reads public news feeds, which anybody would guess, and
+// the PE trade newsletters sitting in the app's own mailbox, which nobody
+// would. That second source is the one that matters for add-ons: PE Hub
+// Wire and Axios Pro Rata carry them days ahead of the open web and
+// sometimes instead of it. It is also the one that can be silently off,
+// because it depends on a Gmail label and filter set up outside this app,
+// and a run that reads no newsletters looks exactly like a quiet week.
+// So it is said here, next to the schedule it feeds, rather than left to
+// be discovered in the footer of an email that already went out thin.
+function SourcesNote() {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div style={{ marginBottom: '0.85rem', padding: '0.55rem 0.7rem', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.74rem', color: '#475569', lineHeight: 1.45 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+        <span>Sources: public news feeds, plus the PE trade newsletters in this app’s mailbox.</span>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          style={{ background: 'none', border: 'none', color: '#2563EB', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', padding: 0, whiteSpace: 'nowrap' }}
+        >{expanded ? 'Hide' : 'Newsletter setup'}</button>
+      </div>
+      {expanded && (
+        <div style={{ marginTop: 6, lineHeight: 1.55 }}>
+          PE Hub Wire and Axios Pro Rata report add-ons days before the open web does, and
+          some of them never reach it at all. To feed them in, in the Gmail account this app
+          sends from:
+          <ol style={{ margin: '6px 0 0', paddingLeft: '1.1rem' }}>
+            <li>Subscribe that address to the newsletters, or auto-forward them to it.</li>
+            <li>
+              Add a filter for <code>from:(pehub.com OR axios.com)</code> that applies a label
+              called <strong>deal-news</strong> and skips the inbox.
+            </li>
+            <li>Turn on IMAP under Settings, Forwarding and POP/IMAP.</li>
+          </ol>
+          <div style={{ marginTop: 6, color: '#64748B' }}>
+            Then use <strong>Send test now</strong> on a schedule: the result says how many
+            newsletter headlines it read, which is how you know the label is wired up. Nothing
+            outside that one label is ever read, and inside it only mail from the newsletters
+            themselves.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
