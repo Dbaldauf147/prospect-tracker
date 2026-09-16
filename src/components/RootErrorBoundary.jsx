@@ -1,5 +1,5 @@
 import { Component } from 'react';
-import { isChunkLoadError } from '../utils/lazyView';
+import { isChunkLoadError, reloadPastCache } from '../utils/lazyView';
 
 // The last boundary before the page. Individual pages have their own (see
 // KeyContactsView, PipelineView) so a bad row there doesn't take the app
@@ -41,11 +41,12 @@ export class RootErrorBoundary extends Component {
     const btn = { padding: '0.45rem 0.9rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' };
 
     // A page whose chunk wouldn't load didn't crash so much as go stale:
-    // it is running an index.html from before the last deploy, naming
-    // files that aren't on the server any more. lazyView reloads once by
-    // itself, so reaching here means that already happened and didn't
-    // take — worth saying, because "a component threw" would send the
-    // reader looking for a bug in the page they were opening.
+    // either it is running an index.html from before the last deploy,
+    // naming files that aren't on the server any more, or the browser is
+    // holding a bad copy of a file it was told to cache for a year.
+    // lazyView already tried the fix for both, so reaching here means it
+    // didn't take — worth saying, because "a component threw" would send
+    // the reader looking for a bug in the page they were opening.
     const stale = isChunkLoadError(error);
 
     return (
@@ -56,11 +57,13 @@ export class RootErrorBoundary extends Component {
         <p style={{ color: '#475569', fontSize: 13, lineHeight: 1.5 }}>
           {stale ? (
             <>
-              The tab has been open across a deploy, so part of the app it went to
-              load no longer exists under that name. Your data is untouched. A
-              reload picks up the current version - if it was just tried and you
-              are still here, the deploy itself may be incomplete, so copy the
-              details below.
+              Part of the app would not load. Either this tab has been open
+              across a deploy and is asking for a file that has since been
+              replaced, or the browser has a bad copy of that file saved. Your
+              data is untouched. Reload fetches it again from scratch, ignoring
+              anything saved - if that was just tried and you are still here,
+              the file may be missing from the server, so copy the details
+              below.
             </>
           ) : (
             <>
@@ -74,7 +77,13 @@ export class RootErrorBoundary extends Component {
           {String(error?.message || error)}
         </pre>
         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
-          <button type="button" style={btn} onClick={() => window.location.reload()}>Reload</button>
+          <button
+            type="button"
+            style={btn}
+            onClick={() => { if (stale) reloadPastCache(error); else window.location.reload(); }}
+          >
+            Reload
+          </button>
           <button
             type="button"
             style={btn}
