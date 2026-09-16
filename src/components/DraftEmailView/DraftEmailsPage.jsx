@@ -6,17 +6,24 @@
 //
 // Tracking and Campaigns are linked: clicking a campaign in the tracking
 // table hops to the Email Campaigns tab with that campaign open.
+//
+// Sent Log sits alongside them but reads the other way round: rather than
+// what this app sent, it is what Outlook sent, read back out of the Sent
+// Items folder. It is what replaced the HubSpot BCC add-in, and it belongs
+// here because "what went out, and to whom" is the question the rest of
+// this page is already about.
 
 import { useState } from 'react';
 import { DraftEmailView } from './DraftEmailView';
 import { EmailCampaignView } from '../EmailCampaignView/EmailCampaignView';
 import { EmailTrackingView } from '../EmailTrackingView/EmailTrackingView';
+import { SentLogView } from '../SentLogView/SentLogView';
 import { SiteListOverview } from './SiteListOverview';
 import { DansDraftsView } from './DansDraftsView';
 import { MarketUpdatesView } from './MarketUpdatesView';
 import { primarySubject } from '../../utils/campaignSubjects';
 
-const TABS = ['drafts', 'dansdrafts', 'marketupdates', 'campaigns', 'tracking', 'sitelists'];
+const TABS = ['drafts', 'dansdrafts', 'marketupdates', 'campaigns', 'tracking', 'sentlog', 'sitelists'];
 
 export function DraftEmailsPage({ prospects, settings, updateSettings, updateSettingsPath, cdmName = '', onSelectProspect, initialTab = 'drafts' }) {
   const [tab, setTab] = useState(TABS.includes(initialTab) ? initialTab : 'drafts');
@@ -59,6 +66,7 @@ export function DraftEmailsPage({ prospects, settings, updateSettings, updateSet
         {tabBtn('marketupdates', 'Market Updates')}
         {tabBtn('campaigns', 'Email Campaigns')}
         {tabBtn('tracking', 'Email Tracking')}
+        {tabBtn('sentlog', 'Sent Log')}
         {tabBtn('sitelists', 'Site List Overview')}
       </div>
       {tab === 'drafts' && (
@@ -75,6 +83,7 @@ export function DraftEmailsPage({ prospects, settings, updateSettings, updateSet
         />
       )}
       {tab === 'tracking' && <EmailTrackingView onOpenCampaign={openCampaign} />}
+      {tab === 'sentlog' && <SentLogView prospects={prospects} />}
       {tab === 'sitelists' && (
         <SiteListOverview prospects={prospects} settings={settings} />
       )}
