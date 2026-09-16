@@ -14,6 +14,7 @@
 import {
   textToBulletItems, encodeNoteLine, NOTE_LINEBREAK,
   nextStepLinesFromCall, callOnOppPatch,
+  NEXT_STEPS_DONE_FIELD, readStepsDone, isStepDoneToday, toggleStepDone, countStepsDoneToday,
 } from '../src/utils/nextSteps.js';
 
 let passed = 0, failed = 0;
@@ -153,6 +154,72 @@ function ok(value, name) { eq(!!value, true, name); }
     followUps: [{ text: 'Send pricing' }, { text: 'Book the walk' }],
   });
   eq(lines, ['Send pricing', 'Book the walk'], 'a call still yields its follow-up lines');
+}
+
+// --- "done today" is a day, not a boolean --------------------------------
+// The whole point of storing the DAY: nothing has to run at midnight for
+// yesterday's ticks to fall off. Tomorrow simply isn't the day on the
+// stamp, on every device at once, whether or not anybody had the app open.
+{
+  ok(isStepDoneToday('2026-09-16', '2026-09-16'), 'a step stamped today is done');
+  eq(isStepDoneToday('2026-09-15', '2026-09-16'), false,
+    "yesterday's tick is not today's - this is the reset, and it needs no job to run");
+  eq(isStepDoneToday('2026-09-17', '2026-09-16'), false, 'nor is a stamp from the future');
+  eq(isStepDoneToday('', '2026-09-16'), false, 'an unticked step is not done');
+  eq(isStepDoneToday(null, '2026-09-16'), false, 'and neither is a missing stamp');
+  eq(isStepDoneToday('  2026-09-16  ', '2026-09-16'), true, 'a padded stamp still counts');
+  // A blank "today" must never make every unticked step read as done.
+  eq(isStepDoneToday('', ''), false, 'blank against blank is still not done');
+}
+
+// --- toggling ------------------------------------------------------------
+{
+  eq(toggleStepDone('', '2026-09-16'), '2026-09-16', 'ticking stamps today');
+  eq(toggleStepDone('2026-09-16', '2026-09-16'), '', 'unticking clears it');
+  // Re-ticking a step done last week moves the stamp forward rather than
+  // clearing it: the click meant "I did this today", not "undo".
+  eq(toggleStepDone('2026-09-09', '2026-09-16'), '2026-09-16',
+    'ticking a step last done a week ago re-stamps it for today');
+}
+
+// --- reading the stored array -------------------------------------------
+{
+  eq(NEXT_STEPS_DONE_FIELD, '_nextStepsDone', 'the field name is what the opp stores');
+  eq(readStepsDone({ _nextStepsDone: ['2026-09-16', '', ' 2026-09-15 '] }),
+    ['2026-09-16', '', '2026-09-15'], 'stamps come back trimmed and in order');
+  eq(readStepsDone({}), [], 'an opp that has never been ticked reads as empty');
+  eq(readStepsDone(null), [], 'and so does no opp at all');
+  eq(readStepsDone({ _nextStepsDone: 'not an array' }), [], 'junk reads as empty rather than throwing');
+  eq(readStepsDone({ _nextStepsDone: [null, undefined, 5] }), ['', '', '5'],
+    'every entry is coerced to a string so alignment is never lost to a hole');
+}
+
+// --- counting ------------------------------------------------------------
+{
+  eq(countStepsDoneToday(['2026-09-16', '', '2026-09-15', '2026-09-16'], '2026-09-16'), 2,
+    "only today's stamps count");
+  eq(countStepsDoneToday([], '2026-09-16'), 0, 'nothing ticked counts nothing');
+  eq(countStepsDoneToday(null, '2026-09-16'), 0, 'and neither does junk');
+}
+
+// --- the arrays stay index-aligned --------------------------------------
+// The rule the whole file exists for, now with a third half. This is what
+// the two editors do on save: drop wholly-empty rows and map each
+// surviving row to its own entry, so the three come out the same length.
+{
+  const rows = [
+    { note: 'Call Mike', waitingOn: 'Mike', doneOn: '2026-09-16' },
+    { note: '', waitingOn: '', doneOn: '' },
+    { note: 'Send the appraisal', waitingOn: 'Sophie', doneOn: '' },
+  ];
+  const kept = rows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
+  const text = kept.map(r => encodeNoteLine(r.note)).join('\n');
+  const waiting = kept.map(r => (r.waitingOn || '').trim());
+  const done = kept.map(r => (r.doneOn || '').trim());
+  eq(textToBulletItems(text).length, waiting.length, 'steps and waiting-ons come out the same length');
+  eq(waiting.length, done.length, 'and so do waiting-ons and done stamps');
+  eq(done, ['2026-09-16', ''], 'the empty row is dropped from all three together');
+  eq(countStepsDoneToday(done, '2026-09-16'), 1, 'leaving the surviving tick on the right step');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

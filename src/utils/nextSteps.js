@@ -3,10 +3,11 @@
 //
 // "Next Steps" is the column Opps 2 renders as **Notes** — the bulleted
 // checklist a rep works off. It is stored as one newline-joined string
-// (so search, sort, and export keep working on a plain field) with a
-// parallel `_nextStepsWaiting` array holding each step's Waiting On, one
-// entry per line, index-aligned. That alignment is the whole reason this
-// file exists: anything appending to the list has to extend both halves
+// (so search, sort, and export keep working on a plain field) with two
+// parallel arrays, one entry per line, index-aligned: `_nextStepsWaiting`
+// holding each step's Waiting On, and `_nextStepsDone` holding the day it
+// was last ticked off. That alignment is the whole reason this file
+// exists: anything appending to the list has to extend every half
 // together, or every step below the insertion point starts showing
 // somebody else's Waiting On.
 //
@@ -40,6 +41,51 @@ export function textToBulletItems(text) {
 
 /** One step's internal newlines collapsed to U+2028, ready to be joined. */
 export const encodeNoteLine = (note) => String(note ?? '').trim().replace(/\r?\n/g, NOTE_LINEBREAK);
+
+// ---- done for today ---------------------------------------------------
+
+/** The opp field holding each step's last-ticked day, index-aligned. */
+export const NEXT_STEPS_DONE_FIELD = '_nextStepsDone';
+
+/**
+ * A step's "done" mark is the DAY it was ticked, not a boolean.
+ *
+ * The mark is meant to last one day: it says "I did this today", and
+ * every step starts tomorrow unticked again. A boolean would need
+ * somebody to come along at midnight and clear it — a scheduled job that
+ * has to run on the right device, in the right timezone, whether or not
+ * anybody had the app open, and that silently leaves yesterday's ticks
+ * standing every time it doesn't. A date needs nobody: the mark simply
+ * stops being today's, on every device at once, and an app that was shut
+ * for a week comes back correct.
+ *
+ * It also keeps something a boolean throws away — when the step was last
+ * worked — which is what the checkbox's tooltip says.
+ *
+ * This is the same mechanism as the Called / Meeting chips in the popup's
+ * header (`_calledOn`, `_metOn`), which stamp a day and read back as
+ * "marked" only while that day is today.
+ */
+export function isStepDoneToday(stamp, today) {
+  const s = String(stamp ?? '').trim();
+  return !!s && s === String(today ?? '').trim();
+}
+
+/** Tick an unticked step for today, or untick one already ticked today. */
+export function toggleStepDone(stamp, today) {
+  return isStepDoneToday(stamp, today) ? '' : String(today ?? '').trim();
+}
+
+/** A stored `_nextStepsDone` value as a plain array of stamps. */
+export function readStepsDone(opp) {
+  const raw = opp?.[NEXT_STEPS_DONE_FIELD];
+  return Array.isArray(raw) ? raw.map(v => String(v ?? '').trim()) : [];
+}
+
+/** How many of a list of stamps are today's. */
+export function countStepsDoneToday(stamps, today) {
+  return (Array.isArray(stamps) ? stamps : []).filter(s => isStepDoneToday(s, today)).length;
+}
 
 // ---- a call's follow-ups as next steps --------------------------------
 

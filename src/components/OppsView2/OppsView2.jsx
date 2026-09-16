@@ -9,7 +9,10 @@ import { normalizeMetState, MET_YES } from '../../utils/metInPerson';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { saveTagReview } from '../../utils/contactTagReview';
 import { DataTable } from '../common/DataTable';
-import { textToBulletItems, encodeNoteLine, nextStepLinesFromCall, callOnOppPatch, NOTE_LINEBREAK } from '../../utils/nextSteps';
+import {
+  textToBulletItems, encodeNoteLine, nextStepLinesFromCall, callOnOppPatch, NOTE_LINEBREAK,
+  NEXT_STEPS_DONE_FIELD, readStepsDone, isStepDoneToday, toggleStepDone,
+} from '../../utils/nextSteps';
 import { loadCallRecord } from '../../utils/callRecordingsStore';
 import { lastCallOn, describeCallAge } from '../../utils/lastCallOnOpp';
 import { buildOppNumberMap } from '../../utils/oppNumbers';
@@ -5570,15 +5573,24 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solution
   // local state and flattened back on Save.
   const noteLines = useMemo(() => textToBulletItems(opp?.['Next Steps']), [opp]);
   const storedWaiting = Array.isArray(opp?._nextStepsWaiting) ? opp._nextStepsWaiting : [];
+  // The done stamps ride along even though this screen has no checkbox:
+  // deleting a step here shortens the list, and a stamp array left behind
+  // at its old length would hand every step below the gap somebody else's
+  // "done today".
+  const storedDone = readStepsDone(opp);
   const [rows, setRows] = useState(() => {
-    const seed = noteLines.map((note, i) => ({ note, waitingOn: String(storedWaiting[i] || '') }));
-    return seed.length > 0 ? seed : [{ note: '', waitingOn: '' }];
+    const seed = noteLines.map((note, i) => ({
+      note,
+      waitingOn: String(storedWaiting[i] || ''),
+      doneOn: String(storedDone[i] || ''),
+    }));
+    return seed.length > 0 ? seed : [{ note: '', waitingOn: '', doneOn: '' }];
   });
   const updateRow = (idx, key, value) => setRows(prev => prev.map((r, i) => i === idx ? { ...r, [key]: value } : r));
-  const addRow = () => setRows(prev => [...prev, { note: '', waitingOn: '' }]);
+  const addRow = () => setRows(prev => [...prev, { note: '', waitingOn: '', doneOn: '' }]);
   const deleteRow = (idx) => setRows(prev => {
     const next = prev.filter((_, i) => i !== idx);
-    return next.length > 0 ? next : [{ note: '', waitingOn: '' }];
+    return next.length > 0 ? next : [{ note: '', waitingOn: '', doneOn: '' }];
   });
 
   // Dependent options: only the Reason Not Sold values that have a
@@ -5618,6 +5630,7 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solution
       competition: competition.trim(),
       nextSteps: kept.map(r => encodeNoteLine(r.note)).join('\n'),
       nextStepsWaiting: kept.map(r => (r.waitingOn || '').trim()),
+      nextStepsDone: kept.map(r => (r.doneOn || '').trim()),
     });
   }
 
@@ -7318,32 +7331,54 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
     updateOppField(opp._id, '_links', nextList.filter(r => (r?.url || '').trim() || (r?.label || '').trim()));
   }
 
-  // Notes rows: one { note, waitingOn } per line, flattened back to the
-  // 'Next Steps' text and its parallel _nextStepsWaiting array on commit.
+  // Notes rows: one { note, waitingOn, doneOn } per line, flattened back to
+  // the 'Next Steps' text and its two parallel arrays on commit. Carrying
+  // all three on one row object is what keeps them index-aligned through
+  // every add, delete and reorder: there is no second list to forget.
   const noteLines = useMemo(() => textToBulletItems(opp?.['Next Steps']), [opp]);
   const storedWaiting = Array.isArray(opp?._nextStepsWaiting) ? opp._nextStepsWaiting : [];
+  const storedDone = readStepsDone(opp);
   const [rows, setRows] = useState(() => {
-    const seed = noteLines.map((note, i) => ({ note, waitingOn: String(storedWaiting[i] || '') }));
-    return seed.length > 0 ? seed : [{ note: '', waitingOn: '' }];
+    const seed = noteLines.map((note, i) => ({
+      note,
+      waitingOn: String(storedWaiting[i] || ''),
+      doneOn: String(storedDone[i] || ''),
+    }));
+    return seed.length > 0 ? seed : [{ note: '', waitingOn: '', doneOn: '' }];
   });
 
   function commit(nextRows) {
     const kept = nextRows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
     updateOppField(opp._id, 'Next Steps', kept.map(r => encodeNoteLine(r.note)).join('\n'));
     updateOppField(opp._id, '_nextStepsWaiting', kept.map(r => (r.waitingOn || '').trim()));
+    updateOppField(opp._id, NEXT_STEPS_DONE_FIELD, kept.map(r => (r.doneOn || '').trim()));
   }
   const updateRow = (idx, key, value) => setRows(prev => prev.map((r, i) => i === idx ? { ...r, [key]: value } : r));
-  const addRow = () => setRows(prev => {
-    const next = [...prev, { note: '', waitingOn: '' }];
+  // The three below build the next list from `rows` and then set it, rather
+  // than from inside a setRows updater. commit() writes to the record, which
+  // is a setState on the page above - and React may run an updater during
+  // render, where a parent setState is the "cannot update a component while
+  // rendering a different component" warning and, on a re-run, a second
+  // write. These all fire from a click, where `rows` is already current.
+  const addRow = () => {
+    const next = [...rows, { note: '', waitingOn: '', doneOn: '' }];
+    setRows(next);
     commit(next);
-    return next;
-  });
-  const deleteRow = (idx) => setRows(prev => {
-    const next = prev.filter((_, i) => i !== idx);
-    const safe = next.length > 0 ? next : [{ note: '', waitingOn: '' }];
+  };
+  const deleteRow = (idx) => {
+    const next = rows.filter((_, i) => i !== idx);
+    const safe = next.length > 0 ? next : [{ note: '', waitingOn: '', doneOn: '' }];
+    setRows(safe);
     commit(safe);
-    return safe;
-  });
+  };
+  // Ticking is a save on its own - the other two fields wait for a blur
+  // because they are being typed into, and a checkbox isn't.
+  const toggleRowDone = (idx) => {
+    const today = todayISO();
+    const next = rows.map((r, i) => (i === idx ? { ...r, doneOn: toggleStepDone(r.doneOn, today) } : r));
+    setRows(next);
+    commit(next);
+  };
 
   // Rows with something in them, per tab — an empty seed row isn't content.
   const tabCounts = {
@@ -7612,6 +7647,7 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
               onUpdateRow={updateRow}
               onAddRow={addRow}
               onDeleteRow={deleteRow}
+              onToggleDone={toggleRowDone}
               onCommit={() => commit(rows)}
             />
           )}
@@ -10586,20 +10622,32 @@ function LastCallLine({ opp }) {
   );
 }
 
-function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommit }) {
+function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onToggleDone, onCommit }) {
   const inputStyle = {
     width: '100%', padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1',
     borderRadius: 4, fontSize: '0.85rem', fontFamily: 'inherit',
     lineHeight: 1.4, resize: 'vertical', minHeight: 56, background: '#fff',
     overflow: 'hidden',
   };
+  // Read once per render rather than per row, so every box on the table is
+  // answering the same question about the same day.
+  const today = todayISO();
+  const doneCount = rows.filter(r => isStepDoneToday(r?.doneOn, today)).length;
   return (
     <>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
         <thead>
           <tr style={{ background: '#F1F5F9', textAlign: 'left', color: '#475569' }}>
-            <th style={{ padding: '0.4rem 0.5rem', fontWeight: 600, width: '55%', borderBottom: '1px solid #E2E8F0' }}>Note</th>
-            <th style={{ padding: '0.4rem 0.5rem', fontWeight: 600, width: '40%', borderBottom: '1px solid #E2E8F0' }}>Waiting On</th>
+            <th style={{ padding: '0.4rem 0.5rem', fontWeight: 600, width: '52%', borderBottom: '1px solid #E2E8F0' }}>Note</th>
+            <th style={{ padding: '0.4rem 0.5rem', fontWeight: 600, width: '38%', borderBottom: '1px solid #E2E8F0' }}>Waiting On</th>
+            <th
+              title="Ticked means you worked this step today. Every tick clears itself overnight, so tomorrow the list starts unticked again."
+              style={{
+                padding: '0.4rem 0.3rem', fontWeight: 600, width: 62,
+                textAlign: 'center', borderBottom: '1px solid #E2E8F0',
+                fontSize: '0.68rem', lineHeight: 1.2,
+              }}
+            >Done today</th>
             <th style={{ width: 32, borderBottom: '1px solid #E2E8F0' }} aria-label="" />
           </tr>
         </thead>
@@ -10624,6 +10672,40 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommi
                   placeholder="Who / what?"
                 />
               </td>
+              <td style={{ padding: '0.3rem', borderBottom: '1px solid #F1F5F9', textAlign: 'center' }}>
+                {(() => {
+                  const doneToday = isStepDoneToday(row.doneOn, today);
+                  const last = String(row.doneOn || '').trim();
+                  return (
+                    <label
+                      title={doneToday
+                        ? 'Done today. Click to untick. It clears itself overnight either way.'
+                        : last
+                          ? `Last done on ${formatDateDisplay(last)}. Click to mark it done for today.`
+                          : 'Mark this step done for today. It comes back unticked tomorrow.'}
+                      style={{
+                        // Centred in one note-box's height rather than in
+                        // the whole cell, so a step whose note has grown to
+                        // four lines keeps its tick up beside the top of it
+                        // and the column still reads as a column.
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        width: '100%', height: 56, cursor: 'pointer',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={doneToday}
+                        onChange={() => onToggleDone(idx)}
+                        aria-label="Done today"
+                        style={{
+                          width: 17, height: 17, margin: 0, cursor: 'pointer',
+                          accentColor: '#16A34A',
+                        }}
+                      />
+                    </label>
+                  );
+                })()}
+              </td>
               <td style={{ padding: '0.3rem 0 0.3rem 0.2rem', borderBottom: '1px solid #F1F5F9', textAlign: 'right' }}>
                 <button
                   type="button"
@@ -10640,7 +10722,7 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommi
           ))}
         </tbody>
       </table>
-      <div style={{ marginTop: '0.6rem' }}>
+      <div style={{ marginTop: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
         <button
           type="button"
           onClick={onAddRow}
@@ -10650,6 +10732,13 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommi
             cursor: 'pointer', fontFamily: 'inherit',
           }}
         >+ Add step</button>
+        {/* Said on the page rather than left to be discovered tomorrow
+            morning, when an empty column would read as lost work. */}
+        <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+          {doneCount > 0
+            ? `${doneCount} done today. Ticks clear overnight, so tomorrow the list starts fresh.`
+            : 'Ticks in "Done today" clear overnight, so tomorrow the list starts fresh.'}
+        </span>
       </div>
     </>
   );
@@ -16026,7 +16115,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             reasonOptions={listRegistry.get('reasonNotSold')?.options || []}
             competitionOptions={listRegistry.get('competition')?.options || []}
             solutionOptions={listRegistry.get('solutions')?.options || []}
-            onSave={({ closeDate, reason, finalMargin, competition, nextSteps, nextStepsWaiting }) => {
+            onSave={({ closeDate, reason, finalMargin, competition, nextSteps, nextStepsWaiting, nextStepsDone }) => {
               // Only push fields whose value actually changed so the
               // undo stack stays uncluttered with no-op snapshots.
               if (closeDate !== (toISODate(opp['Close Date']) || '')) {
@@ -16050,6 +16139,10 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               const curWaiting = Array.isArray(opp._nextStepsWaiting) ? opp._nextStepsWaiting : [];
               if (JSON.stringify(nextStepsWaiting) !== JSON.stringify(curWaiting)) {
                 updateOppField(opp._id, '_nextStepsWaiting', nextStepsWaiting);
+              }
+              const curDone = readStepsDone(opp);
+              if (JSON.stringify(nextStepsDone) !== JSON.stringify(curDone)) {
+                updateOppField(opp._id, NEXT_STEPS_DONE_FIELD, nextStepsDone);
               }
               setNotSoldPromptId(null);
             }}
