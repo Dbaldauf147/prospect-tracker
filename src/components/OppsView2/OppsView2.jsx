@@ -2476,8 +2476,15 @@ function ScopeFeeTable({
   };
   // A fee that isn't a range prints once rather than twice: "$5,000" under
   // Low and "$5,000" under High is the same claim made twice, and the eye
-  // reads the repetition as a spread that isn't there.
+  // reads the repetition as a spread that isn't there. The same goes for
+  // Avg: the middle of a single fee is that fee, and a third copy of it
+  // across the row is the same claim a third time.
   const money = (v) => fmtMoneyWhole(Math.round(v || 0)) || '$0';
+  // The middle of a range. Which is the figure most of these estimates get
+  // quoted at - the low is the floor and the high is the ceiling, and the
+  // deal is usually neither - so it is worth a column of its own rather
+  // than being worked out in somebody's head one row at a time.
+  const mid = (lo, hi) => ((lo || 0) + (hi || 0)) / 2;
 
   return (
     <div style={{
@@ -2514,6 +2521,7 @@ function ScopeFeeTable({
             <th style={{ ...head, textAlign: 'left' }}>Service</th>
             <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="The bottom of what the rate card says this service comes to">Low</th>
             <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="The top of what the rate card says this service comes to">High</th>
+            <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="Halfway between the low and the high. Blank where the card charges one fee whatever the deal, because then there is no spread to take the middle of.">Avg</th>
           </tr>
         </thead>
         <tbody>
@@ -2601,6 +2609,26 @@ function ScopeFeeTable({
                         {line.feeHigh > line.fee ? money(line.feeHigh) : '-'}
                       </strong>
                     </td>
+                    {/* The middle of this service's range, on the row that
+                        states the two ends of it, so the figure a quote
+                        actually lands on doesn't have to be worked out
+                        from the two beside it. */}
+                    <td
+                      style={num}
+                      title={line.feeHigh > line.fee
+                        ? (gapped
+                          ? `Not a price: ${line.note}. This service is missing from the total below.`
+                          : 'Halfway between this service\u2019s low and high')
+                        : 'One fee, not a range: the average is the figure under Low.'}
+                    >
+                      <strong style={{
+                        color: line.feeHigh > line.fee
+                          ? (gapped ? GAP_INK : '#1E293B')
+                          : '#94A3B8',
+                      }}>
+                        {line.feeHigh > line.fee ? money(mid(line.fee, line.feeHigh)) : '-'}
+                      </strong>
+                    </td>
                   </>
                 ) : (
                   <>
@@ -2612,6 +2640,7 @@ function ScopeFeeTable({
                           ? 'This deal is not charging for it, so it needs no price.'
                           : 'No price on the Services Pricing tab yet')}
                     >-</td>
+                    <td style={{ ...num, color: gapped ? GAP_INK : '#94A3B8' }}>-</td>
                     <td style={{ ...num, color: gapped ? GAP_INK : '#94A3B8' }}>-</td>
                   </>
                 )}
@@ -2689,6 +2718,31 @@ function ScopeFeeTable({
                 </div>
               ) : null}
             </td>
+            {/* The middle of the range, struck from the same services the
+                two totals beside it are struck from: whatever is ticked.
+                Untick a service this deal is not charging for and the
+                average moves with the low and the high, because an average
+                of money nobody is billing is not this deal's average. */}
+            <td
+              style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}
+              title={sums.ranged
+                ? 'Halfway between the low and high totals, over the services counted above'
+                : 'No service in this scope is priced as a range, so the average is the total itself.'}
+            >
+              <strong style={{ color: sums.ranged ? '#1E293B' : '#94A3B8' }}>
+                {sums.ranged ? money(mid(sums.year1Total, sums.year1TotalHigh)) : '-'}
+              </strong>
+              {onUse && sums.ranged ? (
+                <div>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onUse(mid(sums.year1Total, sums.year1TotalHigh)); }}
+                    title="Put the middle of this estimate in the Deal Size box"
+                    style={useLink}
+                  >Use avg</button>
+                </div>
+              ) : null}
+            </td>
           </tr>
         </tfoot>
       </table>
@@ -2734,6 +2788,10 @@ function SiaVsEstimateTable({ compare, onUse, refresh = null }) {
   };
   const sub = { color: '#94A3B8', fontSize: '0.7rem' };
   const money = (v) => fmtMoneyWhole(Math.round(v || 0)) || '$0';
+  // The middle of the card's range, which is the figure the quote beside it
+  // is most usefully read against: a fee that came in under the high but
+  // over the middle is not the same news as one that cleared both.
+  const mid = (lo, hi) => ((lo || 0) + (hi || 0)) / 2;
 
   // The gap, in the words it is read in: which end the quote passed and by
   // how much. Inside the range there is no gap — the quote is what the card
@@ -2782,6 +2840,7 @@ function SiaVsEstimateTable({ compare, onUse, refresh = null }) {
             <th style={{ ...head, textAlign: 'left' }}>Service</th>
             <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="The bottom of what the rate card says this service comes to in year 1, setup included">Est. low</th>
             <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="The top of what the rate card says this service comes to in year 1, setup included">Est. high</th>
+            <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="Halfway between the estimate's low and high. Blank where the card charges one fee whatever the deal, because then there is no spread to take the middle of.">Est. avg</th>
             <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="What the saved SIA actually bills for this service in year 1">SIA</th>
           </tr>
         </thead>
@@ -2827,6 +2886,16 @@ function SiaVsEstimateTable({ compare, onUse, refresh = null }) {
                       {row.estimatedHigh > row.estimated ? money(row.estimatedHigh) : '-'}
                     </strong>
                   </td>
+                  <td
+                    style={num}
+                    title={row.estimatedHigh > row.estimated
+                      ? 'Halfway between this service’s estimated low and high'
+                      : 'One fee, not a range: the average is the figure under Est. low.'}
+                  >
+                    <strong style={{ color: row.estimatedHigh > row.estimated ? '#1E293B' : '#94A3B8' }}>
+                      {row.estimatedHigh > row.estimated ? money(mid(row.estimated, row.estimatedHigh)) : '-'}
+                    </strong>
+                  </td>
                 </>
               ) : (
                 <>
@@ -2836,6 +2905,7 @@ function SiaVsEstimateTable({ compare, onUse, refresh = null }) {
                       ? 'No price on the Services Pricing tab yet, so there is nothing to compare the SIA against.'
                       : 'Not in this opp’s Scope, so the rate card never priced it.'}
                   >-</td>
+                  <td style={{ ...num, color: '#94A3B8' }}>-</td>
                   <td style={{ ...num, color: '#94A3B8' }}>-</td>
                 </>
               )}
@@ -2898,6 +2968,30 @@ function SiaVsEstimateTable({ compare, onUse, refresh = null }) {
                         title="Put the high end of the estimate in the Deal Size box"
                         style={useLink}
                       >Use high</button>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <span style={{ color: '#94A3B8' }}>-</span>
+              )}
+            </td>
+            <td
+              style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}
+              title={totals.estimatedHigh > totals.estimated
+                ? 'Halfway between the low and high estimated totals'
+                : 'Nothing in this scope is priced as a range, so the average is the total itself.'}
+            >
+              {totals.estimatedHigh > totals.estimated ? (
+                <>
+                  <strong style={{ color: '#1E293B' }}>{money(mid(totals.estimated, totals.estimatedHigh))}</strong>
+                  {onUse ? (
+                    <div>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onUse(mid(totals.estimated, totals.estimatedHigh)); }}
+                        title="Put the middle of the estimate in the Deal Size box"
+                        style={useLink}
+                      >Use avg</button>
                     </div>
                   ) : null}
                 </>
@@ -3268,10 +3362,16 @@ function QuotedAmountCell({
               // estimate's two, because four columns of money is what
               // actually needs the room.
               //
+              // Wider again for the average: the estimate table now runs
+              // Low, High and Avg, and a service name is the one column
+              // that pays for the extra width - "Invoice variance testing"
+              // and the grey line under it are what get squeezed first
+              // when the money columns take their share.
+              //
               // The vw ceiling is what makes it a size rather than a
               // number: on a laptop it is the figure, on anything smaller
               // it is the window minus a margin.
-              width: comparePerService ? 1100 : 900,
+              width: comparePerService ? 1280 : 1100,
               maxWidth: '94vw',
               maxHeight: '92vh', overflowY: 'auto',
               boxShadow: '0 10px 30px rgba(0,0,0,0.18)',
@@ -6277,8 +6377,11 @@ function LeadQuotedAmountModal({
           // is answered by looking at what the services come to, and at
           // 560px that was three columns of money in a letterbox. Narrower
           // with no fee table under the box, because then the dialog is one
-          // input and a sentence and the width would be empty.
-          width: scopeEstimate ? 940 : 560, maxWidth: '94vw',
+          // input and a sentence and the width would be empty. The same
+          // table's Avg column buys the rest: the money columns grew by
+          // one, and the service names are what they would have taken it
+          // from.
+          width: scopeEstimate ? 1060 : 560, maxWidth: '94vw',
           maxHeight: '92vh',
           background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
