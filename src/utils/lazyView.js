@@ -211,12 +211,40 @@ const count = (n) => `${n} file${n === 1 ? '' : 's'}`;
 const CAUSES = 'A browser extension, an ad or privacy blocker, a VPN, or a company proxy is the '
   + 'usual cause. An incognito window with extensions turned off is the quickest way to tell.';
 
+// What the request that actually failed did, out of the browser's own
+// record of it. Everything above re-asks for the file, and by then it
+// usually loads: this is the only account of the attempt that went
+// wrong. Whether a response ever arrived separates a file the network
+// refused from one that never got a turn, and the count of what else was
+// in flight is there because a view pulling in ninety files at once is a
+// plausible way for one of them to be dropped.
+function originalAttempt(url) {
+  try {
+    const bare = (name) => String(name).split('?')[0];
+    const entries = performance.getEntriesByType('resource');
+    const failed = entries.filter(e => bare(e.name) === bare(url)).shift();
+    if (!failed) return '';
+    const busy = entries.filter(e =>
+      e !== failed && e.startTime <= failed.startTime && e.responseEnd >= failed.startTime).length;
+    const outcome = failed.responseStatus ? `HTTP ${failed.responseStatus}` : 'no response';
+    return `\nThe attempt that failed: ${outcome} after ${Math.round(failed.duration)} ms, `
+      + `with ${count(busy)} loading alongside it.`;
+  } catch {
+    return '';
+  }
+}
+
 /**
  * Work out why a chunk wouldn't load. Returns { verdict, summary, detail }:
  * `summary` is a sentence for the person looking at the crash screen,
  * `detail` a line for the report they copy. Never throws.
  */
 export async function diagnoseChunk(url) {
+  const verdict = await judgeChunk(url);
+  return { ...verdict, detail: verdict.detail + originalAttempt(url) };
+}
+
+async function judgeChunk(url) {
   if (!url) {
     return {
       verdict: 'unknown',
@@ -291,7 +319,10 @@ export async function diagnoseChunk(url) {
     return {
       verdict: 'transient',
       summary: `This file and the ${count(checked)} it pulls in all load now, as code as well as `
-        + 'data, so whatever stopped it looks momentary. A reload should clear it.',
+        + 'data, so whatever stopped it had passed by the time this screen went looking. The app '
+        + 'already asked twice more and reloaded before showing you this, so if you are reading it '
+        + 'the failure lasted longer than those attempts. The details below say what the request '
+        + 'that failed actually did.',
       detail: `Diagnosis: ${served} and load as scripts.`,
     };
   }
@@ -336,13 +367,60 @@ export async function recoverFromChunkError(error) {
   return true;
 }
 
+// Asking for the same file again, at a URL the document has no history
+// with.
+//
+// A module that failed to fetch is remembered as failed: the module map
+// holds the failure for the life of the document, so `import()` on that
+// URL a second time returns the same rejection without a request leaving
+// the browser (measured under Chromium). Changing the query gives a new
+// map entry and a real second attempt, and since the file's own imports
+// are relative they still resolve to the canonical URLs, so everything
+// shared stays shared. Only the view module itself ends up loaded twice,
+// which costs nothing but the parse.
+//
+// Two attempts, a moment apart, because the failures that survive to here
+// are the ones that clear on their own: a request lost in the burst when
+// a view pulls in ninety files at once, a connection that dropped. The
+// wait is what makes the second attempt worth making.
+const RETRY_DELAYS_MS = [200, 1000];
+
+async function importAgain(url) {
+  // Only modules. A stylesheet that wouldn't preload reaches here too,
+  // and import() is not how it gets loaded.
+  if (!url || !/\.js($|\?)/.test(url)) return null;
+
+  for (const [attempt, delay] of RETRY_DELAYS_MS.entries()) {
+    await new Promise(resolve => setTimeout(resolve, delay));
+    try {
+      return await import(/* @vite-ignore */ `${url}${url.includes('?') ? '&' : '?'}retry=${attempt + 1}`);
+    } catch {
+      // Still no. The next attempt waits longer; after that the reload
+      // and then the screen take over.
+    }
+  }
+  return null;
+}
+
 /**
- * lazy() for a route view. `load` is the same `() => import(...)` the
- * call site would have passed straight to lazy().
+ * lazy() for a route view. `load` is the `() => import(...)` the call
+ * site would have passed straight to lazy(); `exportName` is the
+ * component to take out of it, so that a retry can load the same file
+ * from a different URL and still know what to hand back.
  */
-export function lazyView(load) {
-  return lazy(() => load().catch(async err => {
-    if (!isChunkLoadError(err) || !(await recoverFromChunkError(err))) throw err;
+export function lazyView(load, exportName) {
+  const pick = (mod) => ({ default: exportName ? mod[exportName] : mod.default });
+
+  return lazy(() => load().then(pick).catch(async err => {
+    if (!isChunkLoadError(err)) throw err;
+
+    // Try again before doing anything the user can see. A view that
+    // loads on the second ask is a view that loaded, not a crash screen
+    // and a reload that throws away everything else the page is holding.
+    const retried = await importAgain(chunkUrlFrom(err));
+    if (retried) return pick(retried);
+
+    if (!(await recoverFromChunkError(err))) throw err;
     // The reload is underway but not instant. Returning a promise that
     // never settles keeps Suspense showing its fallback for the moment
     // the page has left, instead of flashing a crash on the way out.

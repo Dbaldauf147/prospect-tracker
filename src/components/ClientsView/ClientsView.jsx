@@ -35,12 +35,12 @@ import { dealSoldDate, postSaleFollowUpRows } from '../../utils/postSaleFollowUp
 // chunk. Deals, Commissions, Deal Sizing and the contract pages are 296 kB
 // of JS (78 kB gzipped) between them, and the clients table itself — the
 // tab that actually opens by default — needs none of it.
-const DealsView = lazyView(() => import('../DealsView/DealsView').then(m => ({ default: m.DealsView })));
-const CommissionsView = lazyView(() => import('./CommissionsView').then(m => ({ default: m.CommissionsView })));
-const ContractServicesView = lazyView(() => import('./ContractServicesView').then(m => ({ default: m.ContractServicesView })));
-const ContractLanguageView = lazyView(() => import('./ContractLanguageView').then(m => ({ default: m.ContractLanguageView })));
-const DealSizingView = lazyView(() => import('./DealSizingView').then(m => ({ default: m.DealSizingView })));
-const ServiceOpportunityView = lazyView(() => import('./ServiceOpportunityView').then(m => ({ default: m.ServiceOpportunityView })));
+const DealsView = lazyView(() => import('../DealsView/DealsView'), 'DealsView');
+const CommissionsView = lazyView(() => import('./CommissionsView'), 'CommissionsView');
+const ContractServicesView = lazyView(() => import('./ContractServicesView'), 'ContractServicesView');
+const ContractLanguageView = lazyView(() => import('./ContractLanguageView'), 'ContractLanguageView');
+const DealSizingView = lazyView(() => import('./DealSizingView'), 'DealSizingView');
+const ServiceOpportunityView = lazyView(() => import('./ServiceOpportunityView'), 'ServiceOpportunityView');
 
 
 const MS_PER_DAY = 86400000;
