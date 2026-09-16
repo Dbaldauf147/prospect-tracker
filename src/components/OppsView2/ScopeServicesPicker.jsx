@@ -28,6 +28,7 @@ import { splitServiceNames } from '../../utils/serviceNameList';
 import { collectAutoAdds } from '../../utils/serviceAutoAdd';
 import { collectAutoNa, isSoldStatus, autoNaTitle } from '../../utils/serviceAutoNa';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
+import { scopeCopyText } from '../../utils/scopeCopyText';
 import { isCoverageTracked } from '../../utils/pipelineDashboardStore';
 import { useCoverageServices } from '../../hooks/useCoverageServices';
 import { CoverageMark } from '../common/CoverageMark';
@@ -278,6 +279,9 @@ export function ScopeServicesModal({
 }) {
   const [query, setQuery] = useState('');
   const [quickPick, setQuickPick] = useState('');
+  // Set for a moment and cleared by a timer, so the Copy button can say it
+  // worked. The clipboard gives no other sign that it did.
+  const [copied, setCopied] = useState(false);
   // The services the Pipeline page is watching coverage on. Picking Scope is
   // a decision about which services to push, and these are the ones being
   // measured — so the board says which is which.
@@ -493,6 +497,40 @@ export function ScopeServicesModal({
     return ordered;
   }, [selected, categories, renames]);
 
+  // What the Copy button puts on the clipboard: the same services the
+  // summary strip shows, grouped the same way, as plain text. The strip is
+  // built from <button> chips so none of it can be selected with a mouse,
+  // which left retyping as the only way to get a scope into a proposal or
+  // an email.
+  //
+  // Commodities only when the row is on screen: a caller with nowhere to
+  // store them doesn't show the question, so the copy shouldn't answer it.
+  const copyText = useMemo(
+    () => scopeCopyText(selectedGroups, onCommoditiesChange ? parseCommodities(commodities) : []),
+    [selectedGroups, commodities, onCommoditiesChange],
+  );
+
+  // Clears itself, and clears on unmount too: the board is a modal, and
+  // "Done" while the timer is still running would set state on a component
+  // that has gone.
+  useEffect(() => {
+    if (!copied) return undefined;
+    const t = setTimeout(() => setCopied(false), 1600);
+    return () => clearTimeout(t);
+  }, [copied]);
+
+  async function copyScope() {
+    if (!copyText) return;
+    try {
+      await navigator.clipboard?.writeText(copyText);
+      setCopied(true);
+    } catch {
+      // No clipboard permission (or an insecure origin): nothing is lost,
+      // the services are still on the screen, and an alert here would be
+      // louder than the problem.
+    }
+  }
+
   return createPortal(
     <div
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
@@ -565,6 +603,23 @@ export function ScopeServicesModal({
               ))}
             </select>
           )}
+          <button
+            type="button"
+            onClick={copyScope}
+            disabled={!copyText}
+            title={copyText
+              ? 'Copy everything in Scope as text, grouped by category, to paste into a document or an email.'
+              : 'Nothing in Scope to copy yet.'}
+            style={{
+              padding: '0.25rem 0.6rem', borderRadius: 3,
+              fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
+              border: `1px solid ${copied ? '#15803D' : 'var(--color-border)'}`,
+              background: copied ? '#DCFCE7' : 'transparent',
+              color: copied ? '#15803D' : 'var(--color-text-muted)',
+              cursor: copyText ? 'pointer' : 'default',
+              opacity: copyText ? 1 : 0.55,
+            }}
+          >{copied ? 'Copied' : 'Copy'}</button>
           <button
             type="button"
             onClick={() => { setAutoAdded([]); onChange(''); }}
