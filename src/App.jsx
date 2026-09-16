@@ -511,9 +511,10 @@ function App() {
             // no companies, no opps, no contacts -- which reads as "your
             // data is gone" rather than "it didn't load". Say which it is.
             <ProspectsLoadError message={dataError} />
-          ) : view === 'drafts' || view === 'campaigns' || view === 'tracking' ? (
-            // Campaigns and Tracking are sub-tabs of Draft Emails; the view
-            // keys stay routable so existing links land on the right tab.
+          ) : view === 'drafts' || view === 'campaigns' || view === 'tracking' || view === 'sentlog' ? (
+            // Campaigns, Tracking and the Sent Log are sub-tabs of Draft
+            // Emails; the view keys stay routable so existing links land on
+            // the right tab.
             <DraftEmailsPage prospects={prospects} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} cdmName={cdmName} onSelectProspect={handleSelect} initialTab={view === 'drafts' ? 'drafts' : view} />
           ) : view === 'charts' ? (
             <ChartsView prospects={prospects} settings={settings} updateSettings={updateSettings} cdmName={cdmName} onSelectProspect={handleSelect} />
