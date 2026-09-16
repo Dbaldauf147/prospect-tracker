@@ -4000,7 +4000,7 @@ function contactIsHidden(raw) {
 // captured at tag time. The HubSpot contacts cache is an IndexedDB cache
 // that can be cleared or go stale — without the stored map, a tag's email
 // (resolved live from that cache) would silently vanish until a refresh.
-function ContactCell({ value, onChange, account, peOwner, prospects, updateProspect, hubspotContacts, onOpenContact, onOpenCompany, contactEmails, onChangeEmails }) {
+function ContactCell({ value, onChange, account, peOwner, prospects, updateProspect, hubspotContacts, onOpenContact, onOpenCompany, contactEmails, onChangeEmails, settings }) {
   // Single boolean for popover state — the popover handles both
   // viewing currently tagged contacts and adding new ones (from the
   // company roster or as a custom one-off tag), so the picker/view
@@ -4036,10 +4036,38 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
     .filter(Boolean)
     .join(' & ');
 
-  // Build the contact roster for this opp. Pull from two sources and
+  // The company popup lets the user pin a contact to a company by hand
+  // (settings.companyContactLinks) and drop one from its roster
+  // (settings.companyContactExclusions), both keyed by lowercased
+  // company name. Neither shows up in the contact's own HubSpot Company
+  // text, so a roster built from name / domain matching alone disagrees
+  // with the company popup: a pinned contact is missing here, an
+  // excluded one lingers. Read both so the two views list the same
+  // people. The account text and the matched company name are both
+  // tried as keys, since an opp's Account can be spelled differently
+  // from the Table View record the pin was made on.
+  const contactLinkMap = settings?.companyContactLinks;
+  const contactExclusionMap = settings?.companyContactExclusions;
+  const idsForCompany = useCallback((map, names) => {
+    const out = new Set();
+    if (!map) return out;
+    for (const name of names) {
+      const key = String(name || '').trim().toLowerCase();
+      if (!key) continue;
+      for (const id of (map[key] || [])) {
+        const s = String(id || '').trim();
+        if (s) out.add(s);
+      }
+    }
+    return out;
+  }, []);
+
+  // Build the contact roster for this opp. Pull from three sources and
   // dedupe by name (case-insensitive):
   //   1. The HubSpot contacts cache, filtered by company match
-  //   2. Any contacts attached directly to the matched prospect record
+  //   2. Contacts pinned to the company on its popup, whose HubSpot
+  //      Company text may not match the account name at all
+  //   3. Any contacts attached directly to the matched prospect record
   // Each contact is gathered against the deal company AND, when the opp
   // has a PE Owner, that PE firm — tagged with its source company so the
   // mixed list stays legible. The HubSpot cache is the primary source
@@ -4074,11 +4102,16 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
       [account, matched?.company],
       prospectEmailDomains(matched),
     );
+    const companyLinkIds = idsForCompany(contactLinkMap, [account, matched?.company]);
+    const companyExcludedIds = idsForCompany(contactExclusionMap, [account, matched?.company]);
     // One matcher per PE owner so each firm's contacts get tagged with
-    // that firm's name in the mixed roster.
+    // that firm's name in the mixed roster. Each carries its own pins and
+    // exclusions, since those are per company.
     const peMatchers = peResolved.map(({ owner, prospect }) => ({
       label: (prospect?.company || owner).trim(),
       prospect,
+      linkIds: idsForCompany(contactLinkMap, [owner, prospect?.company]),
+      excludedIds: idsForCompany(contactExclusionMap, [owner, prospect?.company]),
       matches: makeMatcher(
         new Set([
           ...companyMatchKeys(owner),
@@ -4110,14 +4143,22 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
       });
     };
     // Deal company wins on a tie (checked first), so a contact shared by
-    // both rosters is labeled with the deal company, not the PE firm.
+    // both rosters is labeled with the deal company, not the PE firm. A
+    // pin counts the same as a name match, and an exclusion overrides
+    // both - a contact dropped from the deal company's roster can still
+    // land under a PE firm, which is where it belonged.
     for (const c of (hubspotContacts || [])) {
-      if (matchesCompany(c)) {
+      const id = String(c?.id || c?.vid || '').trim();
+      const onCompany = (matchesCompany(c) || (id && companyLinkIds.has(id)))
+        && !(id && companyExcludedIds.has(id));
+      if (onCompany) {
         pushContact(c, 'company', matched?.company || account);
-      } else {
-        const pm = peMatchers.find(m => m.matches(c));
-        if (pm) pushContact(c, 'pe', pm.label);
+        continue;
       }
+      const pm = peMatchers.find(m =>
+        (m.matches(c) || (id && m.linkIds.has(id)))
+        && !(id && m.excludedIds.has(id)));
+      if (pm) pushContact(c, 'pe', pm.label);
     }
     for (const c of (matched?.contacts || [])) pushContact(c, 'company', matched?.company || account);
     for (const pm of peMatchers) {
@@ -4125,7 +4166,7 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
     }
     out.sort((a, b) => a.name.localeCompare(b.name));
     return out;
-  }, [account, hubspotContacts, matched, peResolved]);
+  }, [account, hubspotContacts, matched, peResolved, contactLinkMap, contactExclusionMap, idsForCompany]);
 
   const selected = useMemo(() => parseMulti(value), [value]);
   const selectedSet = useMemo(() => new Set(selected.map(s => s.toLowerCase())), [selected]);
@@ -8244,6 +8285,7 @@ function OppFieldEditor({
           onOpenCompany={onOpenCompany}
           contactEmails={opp._contactEmails}
           onChangeEmails={(m) => onFieldChange('_contactEmails', m)}
+          settings={settings}
         />
       );
     }
@@ -14550,6 +14592,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 onOpenCompany={openCompanyDetails}
                 contactEmails={row._contactEmails}
                 onChangeEmails={(m) => updateOppField(row._id, '_contactEmails', m)}
+                settings={settings}
               />
             );
           }
