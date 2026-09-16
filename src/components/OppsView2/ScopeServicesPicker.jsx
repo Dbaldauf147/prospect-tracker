@@ -520,8 +520,9 @@ export function ScopeServicesModal({
   );
   const copyText = useMemo(() => scopeCopyText(selectedGroups, copyPicks), [selectedGroups, copyPicks]);
   // The same copy as markup, sent alongside the text. A scope pasted into
-  // Outlook or Word is usually going into a proposal, where a real bulleted
-  // list under bold headings is the difference between a scope and lines
+  // Outlook or Word is usually going into a proposal, where real bulleted
+  // lists under bold headings, laid out across the page as the board lays
+  // its cards out, are the difference between a scope and a column of lines
   // that happen to start with a hyphen. Anywhere that will not take markup
   // takes the text and loses nothing.
   const copyHtml = useMemo(() => scopeCopyHtml(selectedGroups, copyPicks), [selectedGroups, copyPicks]);
@@ -621,7 +622,7 @@ export function ScopeServicesModal({
             title={copyFailed
               ? 'This browser refused the clipboard. Nothing was copied, so paste would land whatever was on the clipboard before.'
               : copyText
-                ? 'Copy everything in Scope, grouped by category, to paste into a document or an email. Pastes as a bulleted list in Outlook and Word, as text everywhere else.'
+                ? 'Copy everything in Scope, grouped by category, to paste into a document or an email. Pastes into Outlook and Word as bulleted lists laid out across the page, as text everywhere else.'
                 : 'Nothing in Scope to copy yet.'}
             style={{
               padding: '0.25rem 0.6rem', borderRadius: 3,
