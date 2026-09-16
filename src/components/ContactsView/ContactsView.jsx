@@ -10,19 +10,19 @@ import { slimHubspotContact } from '../../utils/hubspotContactFields';
 // Contacts used to download every contacts page at once — 404 kB of JS
 // (105 kB gzipped) — whichever tab you were actually headed to. The
 // <Suspense> around the tab body below covers them all.
-const HubSpotView = lazyView(() => import('../HubSpotView/HubSpotView').then(m => ({ default: m.HubSpotView })));
-const AgendaView = lazyView(() => import('../AgendaView/AgendaView').then(m => ({ default: m.AgendaView })));
-const KeyContactsView = lazyView(() => import('../KeyContactsView/KeyContactsView').then(m => ({ default: m.KeyContactsView })));
-const ActiveContactsView = lazyView(() => import('../ActiveContactsView/ActiveContactsView').then(m => ({ default: m.ActiveContactsView })));
-const ClientContactsView = lazyView(() => import('../ClientContactsView/ClientContactsView').then(m => ({ default: m.ClientContactsView })));
-const ChangedJobsContactsView = lazyView(() => import('../ChangedJobsContactsView/ChangedJobsContactsView').then(m => ({ default: m.ChangedJobsContactsView })));
-const DedupeView = lazyView(() => import('../DedupeView/DedupeView').then(m => ({ default: m.DedupeView })));
-const ZoomInfoView = lazyView(() => import('../ZoomInfoView/ZoomInfoView').then(m => ({ default: m.ZoomInfoView })));
-const AllContactsView = lazyView(() => import('../AllContactsView/AllContactsView').then(m => ({ default: m.AllContactsView })));
-const KeyProspectsView = lazyView(() => import('../KeyProspectsView/KeyProspectsView').then(m => ({ default: m.KeyProspectsView })));
-const EventsView = lazyView(() => import('../EventsView/EventsView').then(m => ({ default: m.EventsView })));
-const MarketingLeadsView = lazyView(() => import('../MarketingLeadsView/MarketingLeadsView').then(m => ({ default: m.MarketingLeadsView })));
-const ContactTitlesView = lazyView(() => import('../ContactTitlesView/ContactTitlesView').then(m => ({ default: m.ContactTitlesView })));
+const HubSpotView = lazyView(() => import('../HubSpotView/HubSpotView'), 'HubSpotView');
+const AgendaView = lazyView(() => import('../AgendaView/AgendaView'), 'AgendaView');
+const KeyContactsView = lazyView(() => import('../KeyContactsView/KeyContactsView'), 'KeyContactsView');
+const ActiveContactsView = lazyView(() => import('../ActiveContactsView/ActiveContactsView'), 'ActiveContactsView');
+const ClientContactsView = lazyView(() => import('../ClientContactsView/ClientContactsView'), 'ClientContactsView');
+const ChangedJobsContactsView = lazyView(() => import('../ChangedJobsContactsView/ChangedJobsContactsView'), 'ChangedJobsContactsView');
+const DedupeView = lazyView(() => import('../DedupeView/DedupeView'), 'DedupeView');
+const ZoomInfoView = lazyView(() => import('../ZoomInfoView/ZoomInfoView'), 'ZoomInfoView');
+const AllContactsView = lazyView(() => import('../AllContactsView/AllContactsView'), 'AllContactsView');
+const KeyProspectsView = lazyView(() => import('../KeyProspectsView/KeyProspectsView'), 'KeyProspectsView');
+const EventsView = lazyView(() => import('../EventsView/EventsView'), 'EventsView');
+const MarketingLeadsView = lazyView(() => import('../MarketingLeadsView/MarketingLeadsView'), 'MarketingLeadsView');
+const ContactTitlesView = lazyView(() => import('../ContactTitlesView/ContactTitlesView'), 'ContactTitlesView');
 
 const ALL_SUBTABS = [
   { key: 'hubspot',    label: 'HubSpot',          adminOnly: true },

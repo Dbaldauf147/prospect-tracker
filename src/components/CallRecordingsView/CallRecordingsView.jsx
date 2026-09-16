@@ -92,7 +92,7 @@ const DEFAULT_FOLDER = '/Recordings';
 // now the Activity subtab here. Lazy like the route views are: somebody
 // working through calls shouldn't pay to download the feed, and lazyView
 // carries the post-deploy chunk-reload handling every split view needs.
-const ActivityView = lazyView(() => import('../ActivityView/ActivityView').then(m => ({ default: m.ActivityView })));
+const ActivityView = lazyView(() => import('../ActivityView/ActivityView'), 'ActivityView');
 
 const SUBTABS = new Set(['calls', 'history', 'breakdown', 'activity']);
 // Refresh a little early so a long page session doesn't hit a 401 mid-click.
