@@ -734,3 +734,19 @@
   font-weight: 700;
   border-bottom: none;
 }
+
+/* A service name on the Scope board. It opens that service's popup, so it
+   has to look like it does something — but 167 of them permanently
+   underlined would read as a page of links rather than a list of services.
+   So the underline waits for the pointer, and the focus ring is always
+   there for anyone arriving by keyboard. */
+.scopeServiceName:hover,
+.scopeServiceName:focus-visible {
+  text-decoration: underline;
+}
+
+.scopeServiceName:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 1px;
+  border-radius: 2px;
+}

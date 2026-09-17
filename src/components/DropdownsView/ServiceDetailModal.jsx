@@ -1102,7 +1102,11 @@ function LinkField({ name, url, onSaveUrl }) {
  *   onSaveTemplates - (next) => void, the Timelines tab's own save path
  *   onOpenTimelines - (templateId) => void, optional; hands the user to the
  *                 full stage table for dates, format and marker artwork
+ *   zIndex      - optional; stacks the overlay above a modal that opened it
  *   onClose     - () => void
+ *
+ * Opened from the Services subtab, and from anywhere else through
+ * common/ServiceDetailPopup, which derives every prop above from settings.
  */
 export function ServiceDetailModal({
   service,
@@ -1128,6 +1132,9 @@ export function ServiceDetailModal({
   onToggleHide,
   onSaveTemplates,
   onOpenTimelines,
+  // Lifts the overlay above a modal that opened it. Omitted on the Services
+  // subtab, where nothing is underneath but the page.
+  zIndex,
   onClose,
 }) {
   const panelRef = useRef(null);
@@ -1149,6 +1156,7 @@ export function ServiceDetailModal({
   return createPortal(
     <div
       className={styles.detailOverlay}
+      style={zIndex ? { zIndex } : undefined}
       onClick={onClose}
       role="presentation"
     >
