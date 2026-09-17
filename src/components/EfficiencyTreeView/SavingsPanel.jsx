@@ -6,9 +6,10 @@ import {
 import styles from './SavingsPanel.module.css';
 import { NYMEX_MONTH_LABELS, NYMEX_UNIT } from '../../data/nymexHistory.js';
 import {
-  SAVINGS_KEY, SHIPPED_SETTLES, TERM_LADDER, VOLUME_SHAPES,
-  buildSavings, getSavingsState, hasSavedSavings, monthlySeries, normalizeSavingsState, parseNymexTable,
-  percentileRank, priceStats, termLadder, yearRows, addMonths, monthKey,
+  SAVINGS_KEY, SHIPPED_FORWARD, SHIPPED_FORWARD_ASOF, SHIPPED_SETTLES, TERM_LADDER, VOLUME_SHAPES,
+  buildSavings, forwardSeries, getSavingsState, hasSavedSavings, monthlySeries, normalizeSavingsState,
+  parseForwardTable, parseNymexTable, percentileRank, priceStats, sourceSummary, termLadder, yearRows,
+  addMonths, monthKey,
 } from '../../utils/nymexSavings.js';
 
 // The Savings subtab on Service Deep Dives: load the NYMEX record, describe a
@@ -23,9 +24,12 @@ import {
 //   What has it saved?         the running total, and which months paid
 //   How long should I go?      the same hedge at 12, 24, 36, 48 and 60 months
 //
-// Everything is priced off the settle table above it, so a term in the past
-// is a measurement and a term in the future is priced at the forward
-// assumption and marked. The page never quietly mixes the two.
+// Every month is priced from one of three places - the settle, the forward
+// curve, or one flat number where neither reaches - and the page never
+// quietly mixes them. Each appears with its own mark on the chart, its own
+// flag in the tables and its own count in the tiles, because a saving
+// measured against a settle and a saving quoted off a curve are different
+// claims even when they come to the same number.
 
 const SAVE_DELAY_MS = 800;
 
@@ -37,6 +41,10 @@ const INDEX_COLOR = '#C2410C';
 const CONTRACT_COLOR = '#0369A1';
 // Polarity, not identity: a month the hedge paid for itself against a month
 // it cost money. Never used for a series.
+// Quotes are the SAME measure as settles in another state, so they take the
+// same hue and say so with a dash instead. A second hue here would claim the
+// forward curve is a different quantity from the price it is a forecast of.
+const FORWARD_DASH = '7 4';
 const SAVED_COLOR = '#0D9488';
 const COST_COLOR = '#B91C1C';
 const GRID = '#E2E8F0';
@@ -101,7 +109,12 @@ function Tile({ label, value, sub, tone = 'plain', title }) {
   return (
     <div className={styles.tile} title={title}>
       <div className={styles.tileLabel}>{label}</div>
-      <div className={tone === 'good' ? styles.tileValueGood : tone === 'bad' ? styles.tileValueBad : styles.tileValue}>{value}</div>
+      <div className={
+        tone === 'good' ? styles.tileValueGood
+          : tone === 'bad' ? styles.tileValueBad
+            : tone === 'warn' ? styles.tileValueWarn
+              : styles.tileValue
+      }>{value}</div>
       {sub && <div className={styles.tileSub}>{sub}</div>}
     </div>
   );
@@ -125,7 +138,15 @@ function LegendKey({ items }) {
     <div className={styles.legend}>
       {items.map(it => (
         <span key={it.label} className={styles.legendItem}>
-          <span className={styles.legendSwatch} style={{ background: it.color }} aria-hidden="true" />
+          {/* A dashed key for a dashed line: identity here is the mark, not
+              only the colour, because both states share a hue. */}
+          <span
+            className={it.dash ? styles.legendSwatchDash : styles.legendSwatch}
+            style={it.dash
+              ? { backgroundImage: `repeating-linear-gradient(to right, ${it.color} 0 4px, transparent 4px 7px)` }
+              : { background: it.color }}
+            aria-hidden="true"
+          />
           {it.label}
         </span>
       ))}
@@ -157,7 +178,10 @@ function ChartTip({ active, payload, label, format, footer }) {
 export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSettings }) {
   const [state, setState] = useState(() => getSavingsState(settings));
   const [status, setStatus] = useState('');
-  const [pasteOpen, setPasteOpen] = useState(false);
+  // The paste box serves both tables. `pasteKind` is null when it is shut,
+  // and 'settles' or 'forward' for the one it is aimed at - two boxes side
+  // by side would be two places to paste the same thing into wrongly.
+  const [pasteKind, setPasteKind] = useState(null);
   const [pasteText, setPasteText] = useState('');
   const [pasteError, setPasteError] = useState('');
   const [showHistory, setShowHistory] = useState(false);
@@ -222,10 +246,28 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
 
   const settles = state.settles || SHIPPED_SETTLES;
   const custom = !!state.settles;
+  const forward = state.forward || SHIPPED_FORWARD;
+  const customForward = !!state.forward;
+  const forwardAsOf = customForward
+    ? (state.forwardAsOf ? `pasted ${state.forwardAsOf}` : 'pasted')
+    : `quoted ${SHIPPED_FORWARD_ASOF}`;
   const series = useMemo(() => monthlySeries(settles), [settles]);
+  const curve = useMemo(() => forwardSeries(forward), [forward]);
   const stats = useMemo(() => priceStats(series), [series]);
-  const run = useMemo(() => buildSavings(state.scenario, series), [state.scenario, series]);
-  const ladder = useMemo(() => termLadder(state.scenario, series), [state.scenario, series]);
+  const curveStats = useMemo(() => priceStats(curve) || { min: null, max: null, mean: null }, [curve]);
+  // Months between the last settle and the first quote that neither table
+  // covers. Real with the shipped pair - the settles stop in September and
+  // the quotes start in November - and the kind of hole that is invisible
+  // until a term runs through it, so the page counts it out loud.
+  const gapMonths = useMemo(() => {
+    if (!series.length || !curve.length) return 0;
+    const last = series[series.length - 1];
+    const first = curve[0];
+    const months = (first.year * 12 + first.month) - (last.year * 12 + last.month) - 1;
+    return Math.max(0, months);
+  }, [series, curve]);
+  const run = useMemo(() => buildSavings(state.scenario, series, curve), [state.scenario, series, curve]);
+  const ladder = useMemo(() => termLadder(state.scenario, series, curve), [state.scenario, series, curve]);
   const history = useMemo(() => yearRows(settles), [settles]);
   const s = run.scenario;
   const strikeRank = run.hedge.price == null ? null : percentileRank(series, run.hedge.price);
@@ -237,22 +279,76 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
 
   // The whole record, thinned for the axis but not for the line: every settle
   // is still a point, only the labels are sampled.
-  const historyData = useMemo(() => series.map(p => ({
-    key: p.key, label: p.label, year: p.year, month: p.month, price: p.price,
-  })), [series]);
+  // Settles and quotes on one timeline, as two keys rather than two charts:
+  // it is the same measure in two states, so it is one line that changes
+  // from solid to dashed where the market stops having happened.
+  //
+  // The last settle is repeated into the forward key so the two halves join
+  // up instead of leaving a visual gap at the handover. Where the tables
+  // leave a real gap - a month neither covers - the keys are genuinely null
+  // and the line breaks, which is the honest picture.
+  const historyData = useMemo(() => {
+    const rows = series.map(p => ({
+      key: p.key, label: p.label, year: p.year, month: p.month, settle: p.price, forward: null,
+    }));
+    const lastSettle = rows[rows.length - 1];
+    if (lastSettle && curve.length) {
+      const next = addMonths(lastSettle.year, lastSettle.month, 1);
+      // Only when the curve picks up the very next month. With the shipped
+      // tables it does not - the settles stop at September and the quotes
+      // start in November - so the line breaks over the missing month
+      // rather than drawing a segment across a price nobody has.
+      if (curve[0].key === monthKey(next.year, next.month)) lastSettle.forward = lastSettle.settle;
+    }
+    for (const p of curve) {
+      rows.push({ key: p.key, label: p.label, year: p.year, month: p.month, settle: null, forward: p.price });
+    }
+    return rows.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  }, [series, curve]);
 
   const termData = run.months.map(m => ({
-    key: m.key, label: m.label, short: m.short, assumed: m.assumed,
+    key: m.key, label: m.label, short: m.short, assumed: m.assumed, source: m.source,
     index: m.indexAllIn, contract: m.contractAllIn,
     saving: m.saving, cumulative: m.cumulative, volume: m.volume,
   }));
 
   // Where the term sits inside the history chart, so the strip of market the
-  // contract actually covers is visible rather than described.
-  const termBandStart = series.find(p => p.key >= termStartKey)?.key;
-  const termBandEnd = [...series].reverse().find(p => p.key <= termEndKey)?.key;
+  // contract actually covers is visible rather than described. Looked up on
+  // the whole timeline rather than on the settles: a forward term sits
+  // entirely past the end of them, and searching only the settles is how the
+  // band silently disappears exactly when the term is the interesting one.
+  const termBandStart = historyData.find(r => r.key >= termStartKey)?.key;
+  const termBandEnd = [...historyData].reverse().find(r => r.key <= termEndKey)?.key;
 
-  const firstAssumed = run.months.find(m => m.assumed);
+  // The stretches of the term that are not settled market, as CONSECUTIVE
+  // runs rather than first-to-last.
+  //
+  // They interleave: with the shipped tables a term straddling today runs
+  // settles, then the uncovered month, then two years of curve, then flat
+  // again past its end. Shading first-flat to last-flat would paint the grey
+  // band straight over the curve in the middle and say the whole tail was
+  // guessed.
+  const sourceBands = useMemo(() => {
+    const bands = [];
+    for (const m of run.months) {
+      const last = bands[bands.length - 1];
+      if (last && last.source === m.source) { last.x2 = m.key; last.count += 1; continue; }
+      bands.push({ source: m.source, x1: m.key, x2: m.key, count: 1 });
+    }
+    return bands.filter(band => band.source !== 'settled');
+  }, [run.months]);
+
+  const BAND_STYLE = {
+    forward: { fill: INDEX_COLOR, fillOpacity: 0.06, text: 'forward curve' },
+    assumed: { fill: AXIS_TEXT, fillOpacity: 0.1, text: 'flat' },
+  };
+  // A band gets a label only when there is room for one and it is not the
+  // whole term - a label on a one-month run lands on its neighbour, and a
+  // label on the whole term lands on the y axis while saying nothing the
+  // note above the chart does not.
+  const bandLabel = (band) => (band.count >= 5 && band.count < run.months.length
+    ? { value: BAND_STYLE[band.source].text, position: 'insideTop', fill: AXIS_TEXT, fontSize: 9, fontWeight: 700 }
+    : undefined);
 
   // Recharts samples ticks by width, which can drop every January - and
   // January is the only label carrying a year. So the ticks are chosen
@@ -267,30 +363,60 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
     const picks = januaries.length ? januaries : run.months.slice(0, 1);
     // Still too many to read on a long term, so thin them evenly.
     const stride = Math.ceil(picks.length / 8) || 1;
-    return picks.filter((_, i) => i % stride === 0).map(m => m.short);
+    return picks.filter((_, i) => i % stride === 0).map(m => m.key);
   }, [run.months]);
 
+  // Key to the label shown under it. The axis plots the unique month; this
+  // turns it back into something short enough to read.
+  const shortByKey = useMemo(() => new Map(run.months.map(m => [m.key, m.short])), [run.months]);
+
+  function openPaste(kind) {
+    setPasteKind(prev => (prev === kind ? null : kind));
+    setPasteText('');
+    setPasteError('');
+  }
+
+  const skippedNote = (skipped) => (skipped.length
+    ? `, skipping ${skipped.length} line${skipped.length === 1 ? '' : 's'} it could not read`
+    : '');
+
   function loadPaste() {
+    const today = new Date().toISOString().slice(0, 10);
+    if (pasteKind === 'forward') {
+      const parsed = parseForwardTable(pasteText);
+      if (!parsed.months) {
+        setPasteError('No quotes read. Each line wants a month and a price, like "Nov 26  $3.043".');
+        return;
+      }
+      apply({ ...state, forward: parsed.forward, forwardAsOf: today });
+      setPasteKind(null);
+      setPasteText('');
+      setPasteError('');
+      setStatus(`Loaded a ${parsed.months} month curve${skippedNote(parsed.skipped)}.`);
+      return;
+    }
     const parsed = parseNymexTable(pasteText);
     if (!parsed.years) {
       setPasteError('No rows read. Each line wants a year, then twelve monthly settles.');
       return;
     }
-    apply({
-      ...state,
-      settles: parsed.settles,
-      loadedAt: new Date().toISOString().slice(0, 10),
-    });
-    setPasteOpen(false);
+    apply({ ...state, settles: parsed.settles, loadedAt: today });
+    setPasteKind(null);
     setPasteText('');
     setPasteError('');
-    setStatus(`Loaded ${parsed.years} year${parsed.years === 1 ? '' : 's'} and ${parsed.months} settled month${parsed.months === 1 ? '' : 's'}${parsed.skipped.length ? `, skipping ${parsed.skipped.length} line${parsed.skipped.length === 1 ? '' : 's'} it could not read` : ''}.`);
+    setStatus(`Loaded ${parsed.years} year${parsed.years === 1 ? '' : 's'} and ${parsed.months} settled month${parsed.months === 1 ? '' : 's'}${skippedNote(parsed.skipped)}.`);
   }
 
   function resetTable() {
-    if (!window.confirm('Put the shipped NYMEX table back? The table you loaded is replaced, and your contract and hedge layers are kept.')) return;
+    if (!window.confirm('Put the shipped settle table back? The table you loaded is replaced. Your curve, contract and hedge layers are kept.')) return;
     apply({ ...state, settles: null, loadedAt: null });
-    setStatus('Back on the shipped table.');
+    setStatus('Back on the shipped settle table.');
+  }
+
+  function resetCurve() {
+    if (!window.confirm('Put the shipped forward curve back? The curve you loaded is replaced. Your settles, contract and hedge layers are kept.')) return;
+    apply({ ...state, forward: null, forwardAsOf: null });
+    setStatus('Back on the shipped curve.');
   }
 
   function setLayer(i, patch) {
@@ -322,9 +448,12 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       `At index: ${usd(run.totals.indexCost)} (${price(run.totals.avgIndexAllIn)} all-in)`,
       `On contract: ${usd(run.totals.contractCost)} (${price(run.totals.avgContractAllIn)} all-in)`,
       `Saving: ${usd(run.totals.saving)} (${pct(run.totals.savingPct)}, ${price(run.totals.savingPerDth)} a Dth)`,
+      `Priced from: ${sourceSummary(run.totals)}.`,
       run.totals.assumedMonths
-        ? `${run.totals.settledMonths} of ${s.termMonths} months are settled market; the other ${run.totals.assumedMonths} are priced at ${price(s.forwardPrice)}.`
-        : `Every month of the term is settled market, so this is measured rather than forecast.`,
+        ? `${run.totals.assumedMonths} month${run.totals.assumedMonths === 1 ? '' : 's'} sit past both tables and price flat at ${price(s.forwardPrice)}.`
+        : run.totals.forwardMonths
+          ? `The forward months are quoted off the curve ${forwardAsOf}, not measured.`
+          : 'Every month of the term is settled market, so this is measured rather than forecast.',
     ];
     try {
       await navigator.clipboard.writeText(lines.join('\n'));
@@ -341,47 +470,77 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       {/* ── the record this is all priced off ─────────────────────────── */}
       <div className={styles.bar}>
         <div className={styles.barMain}>
-          <span className={styles.barTitle}>NYMEX Henry Hub settles</span>
+          <span className={styles.barTitle}>Settles</span>
           <span className={styles.barFacts}>
             {stats
               ? `${stats.count.toLocaleString('en-US')} months, ${series[0].label} to ${series[series.length - 1].label} · low ${price(stats.min)} · median ${price(stats.median)} · high ${price(stats.max)}`
               : 'No settles loaded.'}
           </span>
           <span className={custom ? styles.pillCustom : styles.pillShipped}>
-            {custom ? `Your table${state.loadedAt ? `, loaded ${state.loadedAt}` : ''}` : 'Shipped table'}
+            {custom ? `Yours${state.loadedAt ? `, loaded ${state.loadedAt}` : ''}` : 'Shipped'}
           </span>
         </div>
         <div className={styles.barActions}>
-          <button type="button" className={styles.smallBtn} onClick={() => setPasteOpen(v => !v)}>
-            {pasteOpen ? 'Close' : 'Load data'}
+          <button type="button" className={styles.smallBtn} onClick={() => openPaste('settles')}>
+            {pasteKind === 'settles' ? 'Close' : 'Load settles'}
           </button>
-          {custom && <button type="button" className={styles.smallBtn} onClick={resetTable}>Reset to the shipped table</button>}
+          {custom && <button type="button" className={styles.smallBtn} onClick={resetTable}>Reset</button>}
           <button type="button" className={styles.smallBtn} onClick={() => setShowHistory(v => !v)}>
             {showHistory ? 'Hide the table' : 'Show the table'}
           </button>
+        </div>
+      </div>
+
+      {/* The curve gets a row of its own rather than a line in the settles
+          row, because it is the table that goes stale: the date it was
+          quoted at belongs beside it, not in a tooltip. */}
+      <div className={styles.bar}>
+        <div className={styles.barMain}>
+          <span className={styles.barTitle}>Forward curve</span>
+          <span className={styles.barFacts}>
+            {curve.length
+              ? `${curve.length} month${curve.length === 1 ? '' : 's'}, ${curve[0].label} to ${curve[curve.length - 1].label} · low ${price(curveStats.min)} · avg ${price(curveStats.mean)} · high ${price(curveStats.max)}`
+              : 'No curve loaded, so every month past the last settle prices at the flat assumption.'}
+          </span>
+          <span className={customForward ? styles.pillCustom : styles.pillShipped}>{forwardAsOf}</span>
+          {gapMonths > 0 && (
+            <span className={styles.pillGap} title="Neither table covers these months, so they price at the flat assumption. Paste a curve that starts earlier to close the gap.">
+              {gapMonths} month{gapMonths === 1 ? '' : 's'} uncovered
+            </span>
+          )}
+        </div>
+        <div className={styles.barActions}>
+          <button type="button" className={styles.smallBtn} onClick={() => openPaste('forward')}>
+            {pasteKind === 'forward' ? 'Close' : 'Load curve'}
+          </button>
+          {customForward && <button type="button" className={styles.smallBtn} onClick={resetCurve}>Reset</button>}
           {status && <span className={styles.muted}>{status}</span>}
         </div>
       </div>
 
-      {pasteOpen && (
+      {pasteKind && (
         <div className={styles.pastePanel}>
           <div className={styles.fieldLabel}>
-            Paste a settle table
+            {pasteKind === 'settles' ? 'Paste a settle table' : 'Paste a forward curve'}
             <span className={styles.fieldHint}>
-              One line per year: the year, then Jan to Dec, tab or comma separated. A header row and an AVG column on the end are ignored, so a block copied straight out of a spreadsheet comes in as it is. Blank cells stay blank rather than becoming zeroes.
+              {pasteKind === 'settles'
+                ? 'One line per year: the year, then Jan to Dec, tab or comma separated. A header row and an AVG column on the end are ignored, so a block copied straight out of a spreadsheet comes in as it is. Blank cells stay blank rather than becoming zeroes.'
+                : 'One line per month: the month, then the price. The month can be written any way it comes ("Nov 26", "November 2026", "2027-01", "1/27"), dollar signs and a header row are ignored, and the price is whatever is last on the line. This replaces the whole curve rather than merging into it.'}
             </span>
           </div>
           <textarea
             className={styles.textarea}
             rows={6}
             value={pasteText}
-            placeholder={`YEAR\tJan\tFeb\tMar\t...\tDec\n2025\t3.514\t3.535\t3.906\t...\t4.424`}
+            placeholder={pasteKind === 'settles'
+              ? `YEAR\tJan\tFeb\tMar\t...\tDec\n2025\t3.514\t3.535\t3.906\t...\t4.424`
+              : `Month\tPrice\nNov 26\t$3.043\nDec 26\t$3.418`}
             onChange={e => { setPasteText(e.target.value); setPasteError(''); }}
           />
           {pasteError && <div className={styles.warn}>{pasteError}</div>}
           <div className={styles.rowActions}>
             <button type="button" className={styles.primaryBtn} onClick={loadPaste} disabled={!pasteText.trim()}>Load it</button>
-            <button type="button" className={styles.smallBtn} onClick={() => { setPasteOpen(false); setPasteError(''); }}>Cancel</button>
+            <button type="button" className={styles.smallBtn} onClick={() => { setPasteKind(null); setPasteError(''); }}>Cancel</button>
           </div>
         </div>
       )}
@@ -603,12 +762,11 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             : '-'}
         />
         <Tile
-          label="Measured"
-          value={`${run.totals.settledMonths} of ${s.termMonths}`}
-          sub={run.totals.assumedMonths
-            ? `${run.totals.assumedMonths} priced at ${price(s.forwardPrice)}`
-            : 'every month settled'}
-          title="How much of the term is market the NYMEX table actually carries, rather than the forward assumption."
+          label="Priced off the market"
+          value={`${run.totals.pricedMonths} of ${s.termMonths}`}
+          sub={sourceSummary(run.totals)}
+          tone={run.totals.assumedMonths ? 'warn' : 'plain'}
+          title={`Months with a settle or a quote behind them. The rest price at the flat assumption of ${price(s.forwardPrice)}, which is the only one of the three that is nobody's price.`}
         />
       </div>
 
@@ -617,17 +775,23 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
         <button type="button" className={styles.smallBtn} onClick={() => setShowMonths(v => !v)}>
           {showMonths ? 'Hide the month by month' : 'Show the month by month'}
         </button>
-        {firstAssumed && (
+        {(run.totals.forwardMonths > 0 || run.totals.assumedMonths > 0) && (
           <span className={styles.muted}>
-            The settles run out at {run.lastSettled?.label || 'the end of the table'}, so {firstAssumed.label} onwards is priced at the forward assumption.
+            The settles run out at {run.lastSettled?.label || 'the end of the table'}.
+            {run.totals.forwardMonths > 0 && ` ${run.totals.forwardMonths} month${run.totals.forwardMonths === 1 ? ' is' : 's are'} priced off the curve (${forwardAsOf}).`}
+            {run.totals.assumedMonths > 0 && ` ${run.totals.assumedMonths} month${run.totals.assumedMonths === 1 ? '' : 's'} neither table reaches, priced flat at ${price(s.forwardPrice)}.`}
           </span>
         )}
       </div>
 
       {/* ── the record, and where this contract sits in it ────────────── */}
       <ChartCard
-        title={`Henry Hub settles, ${series.length ? series[0].year : ''} to ${series.length ? series[series.length - 1].year : ''}`}
-        note="Every settled month on the table above. The shaded strip is the term; the rule is the blended strike, so the question of whether this is a good price is answered against the whole record rather than against last winter."
+        title={`Henry Hub, ${series.length ? series[0].year : ''} to ${curve.length ? curve[curve.length - 1].year : (series.length ? series[series.length - 1].year : '')}`}
+        note={`Settled months solid, the forward curve dashed (${forwardAsOf}). The shaded strip is the term; the rule is the blended strike, so the question of whether this is a good price is answered against the whole record rather than against last winter.`}
+        legend={<LegendKey items={[
+          { label: 'Settled', color: INDEX_COLOR },
+          { label: 'Forward curve', color: INDEX_COLOR, dash: true },
+        ]} />}
       >
         <div className={styles.chartBox}>
           <ResponsiveContainer width="100%" height={240}>
@@ -672,13 +836,26 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
               />
               <Line
                 type="monotone"
-                dataKey="price"
-                name="Settle"
+                dataKey="settle"
+                name="Settled"
                 stroke={INDEX_COLOR}
                 strokeWidth={2}
                 dot={false}
                 activeDot={{ r: 4, strokeWidth: 2, stroke: '#fff' }}
                 isAnimationActive={false}
+                connectNulls={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="forward"
+                name="Forward curve"
+                stroke={INDEX_COLOR}
+                strokeWidth={2}
+                strokeDasharray={FORWARD_DASH}
+                dot={false}
+                activeDot={{ r: 4, strokeWidth: 2, stroke: '#fff' }}
+                isAnimationActive={false}
+                connectNulls={false}
               />
             </LineChart>
           </ResponsiveContainer>
@@ -689,20 +866,21 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       <div className={styles.chartGrid}>
         <ChartCard
           title="Over the term: index against this contract"
-          note={`All-in ${NYMEX_UNIT}, basis and adder included on both.`}
+          note={`All-in ${NYMEX_UNIT}, basis and adder included on both. Priced from: ${sourceSummary(run.totals)}.`}
           legend={<LegendKey items={[{ label: 'At index', color: INDEX_COLOR }, { label: 'This contract', color: CONTRACT_COLOR }]} />}
         >
           <div className={styles.chartBox}>
             <ResponsiveContainer width="100%" height={230}>
-              <LineChart data={termData} margin={{ top: 8, right: 16, bottom: 4, left: 4 }}>
+              <LineChart data={termData} margin={{ top: 8, right: 32, bottom: 4, left: 4 }}>
                 <CartesianGrid stroke={GRID} strokeDasharray="2 4" vertical={false} />
                 <XAxis
-                  dataKey="short"
+                  dataKey="key"
                   tick={{ fontSize: 10, fill: AXIS_TEXT }}
                   tickLine={false}
                   axisLine={{ stroke: GRID }}
                   ticks={termTicks}
                   interval={0}
+                  tickFormatter={k => shortByKey.get(k) || k}
                 />
                 <YAxis
                   tick={{ fontSize: 10, fill: AXIS_TEXT }}
@@ -711,22 +889,28 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                   width={44}
                   tickFormatter={v => `$${v.toFixed(2)}`}
                 />
-                {firstAssumed && (
+                {/* Two different shades for two different claims: the
+                    stretch priced off the curve, and the stretch priced off
+                    one flat number because neither table reaches it. */}
+                {sourceBands.map(band => (
                   <ReferenceArea
-                    x1={firstAssumed.short}
-                    x2={termData[termData.length - 1]?.short}
-                    fill={AXIS_TEXT}
-                    fillOpacity={0.07}
-                    label={{ value: 'assumed', position: 'insideTop', fill: AXIS_TEXT, fontSize: 9, fontWeight: 700 }}
+                    key={`${band.source}-${band.x1}`}
+                    x1={band.x1}
+                    x2={band.x2}
+                    fill={BAND_STYLE[band.source].fill}
+                    fillOpacity={BAND_STYLE[band.source].fillOpacity}
+                    label={bandLabel(band)}
                   />
-                )}
+                ))}
                 <Tooltip
                   content={(
                     <ChartTip
                       format={v => `${price(v)} ${NYMEX_UNIT}`}
-                      footer={row => (row?.assumed
-                        ? <div className={styles.tipNote}>priced at the forward assumption</div>
-                        : null)}
+                      footer={row => (row?.source === 'settled' ? null : (
+                        <div className={styles.tipNote}>
+                          {row?.source === 'forward' ? 'priced off the forward curve' : 'priced at the flat assumption'}
+                        </div>
+                      ))}
                     />
                   )}
                   cursor={{ stroke: AXIS_TEXT, strokeDasharray: '3 3' }}
@@ -745,7 +929,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
         >
           <div className={styles.chartBox}>
             <ResponsiveContainer width="100%" height={230}>
-              <AreaChart data={termData} margin={{ top: 8, right: 16, bottom: 4, left: 4 }}>
+              <AreaChart data={termData} margin={{ top: 8, right: 32, bottom: 4, left: 4 }}>
                 <defs>
                   <linearGradient id="savings-fill" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={SAVED_COLOR} stopOpacity={0.35} />
@@ -754,12 +938,13 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                 </defs>
                 <CartesianGrid stroke={GRID} strokeDasharray="2 4" vertical={false} />
                 <XAxis
-                  dataKey="short"
+                  dataKey="key"
                   tick={{ fontSize: 10, fill: AXIS_TEXT }}
                   tickLine={false}
                   axisLine={{ stroke: GRID }}
                   ticks={termTicks}
                   interval={0}
+                  tickFormatter={k => shortByKey.get(k) || k}
                 />
                 <YAxis
                   tick={{ fontSize: 10, fill: AXIS_TEXT }}
@@ -794,15 +979,16 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
         >
           <div className={styles.chartBox}>
             <ResponsiveContainer width="100%" height={230}>
-              <BarChart data={termData} margin={{ top: 8, right: 16, bottom: 4, left: 4 }}>
+              <BarChart data={termData} margin={{ top: 8, right: 32, bottom: 4, left: 4 }}>
                 <CartesianGrid stroke={GRID} strokeDasharray="2 4" vertical={false} />
                 <XAxis
-                  dataKey="short"
+                  dataKey="key"
                   tick={{ fontSize: 10, fill: AXIS_TEXT }}
                   tickLine={false}
                   axisLine={{ stroke: GRID }}
                   ticks={termTicks}
                   interval={0}
+                  tickFormatter={k => shortByKey.get(k) || k}
                 />
                 <YAxis
                   tick={{ fontSize: 10, fill: AXIS_TEXT }}
@@ -828,7 +1014,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
 
         <ChartCard
           title="How long to go for"
-          note={`The same hedge and the same start, run for ${TERM_LADDER.join(', ')} months. Hover a bar for how much of it is settled market rather than assumption.`}
+          note={`The same hedge and the same start, run for ${TERM_LADDER.join(', ')} months. Hover a bar for where its prices come from.`}
           legend={<LegendKey items={[{ label: 'Hedge saved', color: SAVED_COLOR }, { label: 'Hedge cost', color: COST_COLOR }]} />}
         >
           <div className={styles.chartBox}>
@@ -862,9 +1048,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                       format={v => usd(v)}
                       footer={row => (
                         <div className={styles.tipNote}>
-                          {price(row?.savingPerDth)} a Dth · {row?.assumedMonths
-                            ? `${row.settledMonths} settled, ${row.assumedMonths} assumed`
-                            : 'every month settled'}
+                          {price(row?.savingPerDth)} a Dth · {row?.sources}
                         </div>
                       )}
                     />
@@ -914,7 +1098,12 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                 <tr key={y.year}>
                   <th scope="row">
                     {y.year}
-                    {y.assumed > 0 && <span className={styles.assumedFlag} title={`${y.assumed} of this year's ${y.months} months are priced at the forward assumption`}>{y.assumed} assumed</span>}
+                    {y.forward > 0 && (
+                      <span className={styles.curveFlag} title={`${y.forward} of this year's ${y.months} months are priced off the forward curve`}>{y.forward} curve</span>
+                    )}
+                    {y.assumed > 0 && (
+                      <span className={styles.assumedFlag} title={`${y.assumed} of this year's ${y.months} months are priced at the flat assumption`}>{y.assumed} flat</span>
+                    )}
                   </th>
                   <td className={styles.tdNum}>{y.months}</td>
                   <td className={styles.tdNum}>{vol(y.volume)}</td>
@@ -962,10 +1151,15 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
               </thead>
               <tbody>
                 {run.months.map(m => (
-                  <tr key={m.key} className={m.assumed ? styles.assumedRow : undefined}>
+                  <tr key={m.key} className={m.source === 'assumed' ? styles.assumedRow : undefined}>
                     <th scope="row">
                       {m.label}
-                      {m.assumed && <span className={styles.assumedFlag} title="No settle for this month yet, so it is priced at the forward assumption">assumed</span>}
+                      {m.source === 'forward' && (
+                        <span className={styles.curveFlag} title={`No settle for this month yet, so it is priced off the forward curve (${forwardAsOf})`}>curve</span>
+                      )}
+                      {m.source === 'assumed' && (
+                        <span className={styles.assumedFlag} title="Neither the settles nor the curve reach this month, so it is priced at the flat assumption">flat</span>
+                      )}
                     </th>
                     <td className={styles.tdNum}>{price(m.index)}</td>
                     <td className={styles.tdNum}>{price(m.indexAllIn)}</td>
@@ -984,7 +1178,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       )}
 
       <div className={styles.footNote}>
-        Savings are the same volume priced twice: once at the NYMEX settle for the month, once at what this contract charges after its hedge layers. Basis and the retail adder sit on both legs, so they move the bill and not the saving. Months with no settle yet are priced at the forward assumption and marked; nothing on this page is a forward curve.
+        Savings are the same volume priced twice: once at the market price for the month, once at what this contract charges after its hedge layers. Basis and the retail adder sit on both legs, so they move the bill and not the saving. Each month takes the best price there is for it, in this order: the settle, then the forward curve, then one flat assumption where neither reaches. Every chart, table and tile says which, because a saving measured against a settle and a saving quoted off a curve are different claims. A curve also goes stale in a way a settle never does, so the date it was quoted at travels with it.
         {!hasSavedSavings(settings) && settingsLoaded && ' Nothing is saved yet, so this is the shipped table and a worked example. The first thing you change saves a copy of your own.'}
       </div>
     </div>

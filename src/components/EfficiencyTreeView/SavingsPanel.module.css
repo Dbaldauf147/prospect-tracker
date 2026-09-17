@@ -74,6 +74,19 @@
   border: 1px solid #BFD8F5;
 }
 
+/* Months neither table covers. A hole that is invisible until a term runs
+   through it, so it is counted where the tables are named. */
+.pillGap {
+  font-size: 0.64rem;
+  font-weight: 700;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: #FFFBEB;
+  color: #92400E;
+  border: 1px solid #FDE68A;
+}
+
 .pastePanel {
   display: flex;
   flex-direction: column;
@@ -356,6 +369,8 @@
 
 .tileValueGood { color: #0F766E; }
 .tileValueBad { color: #B91C1C; }
+/* Not bad news, just news: some of this term is a flat guess. */
+.tileValueWarn { color: #B45309; }
 
 .tileSub {
   margin-top: 0.05rem;
@@ -436,6 +451,13 @@
   width: 0.7rem;
   height: 0.16rem;
   border-radius: 999px;
+}
+
+/* The forward curve shares the settles' hue, so its key has to carry the
+   dash as well as the colour or the two read as the same thing. */
+.legendSwatchDash {
+  width: 0.9rem;
+  height: 0.16rem;
 }
 
 .tip {
@@ -546,7 +568,8 @@
   background: var(--color-surface-alt);
 }
 
-.assumedFlag {
+.assumedFlag,
+.curveFlag {
   margin-left: 0.3rem;
   font-size: 0.6rem;
   font-weight: 700;
@@ -554,6 +577,19 @@
   letter-spacing: 0.02em;
   padding: 0.02rem 0.25rem;
   border-radius: 3px;
+  white-space: nowrap;
+}
+
+/* A quote is a real price somebody would deal on, so it is marked rather
+   than warned about. The flat assumption is nobody's price, so it keeps the
+   louder colour. */
+.curveFlag {
+  background: #FFF7ED;
+  color: #9A3412;
+  border: 1px solid #FED7AA;
+}
+
+.assumedFlag {
   background: #FFFBEB;
   color: #92400E;
   border: 1px solid #FDE68A;
