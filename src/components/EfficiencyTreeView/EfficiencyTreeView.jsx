@@ -1041,9 +1041,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
         )}
         {mode === 'diagram' && (
           <span className={styles.muted}>
-            Click a box for the detail · drag to pan · “+ Add step” for the step after the one you picked{editing
-              ? ', or hover a box for its own +'
-              : ''}
+            Click a box for the detail · drag to pan · hover a box for the + that adds the step after it, or “+ Add step” for the step after the one you picked
           </span>
         )}
         {status && <span className={styles.muted}>{status}</span>}
@@ -1163,24 +1161,25 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                       )}
                     </span>
                   </button>
-                  {/* Where a flowchart tool puts it: on the edge the next
-                      arrow leaves from. Counter-scaled, because a handle
-                      that shrinks with the zoom is a handle nobody can hit
-                      on a tree big enough to need zooming out. */}
-                  {editing && (
-                    <button
-                      type="button"
-                      className={addAfter?.fromId === box.id ? styles.addHandleOn : styles.addHandle}
-                      style={{ transform: `translate(-50%, 50%) scale(${Math.min(3, 1 / zoom).toFixed(2)})` }}
-                      aria-label={`Add the step after ${node.title || 'this step'}`}
-                      title={`Add the step that comes after "${node.title || '(untitled step)'}"`}
-                      onClick={(ev) => {
-                        const wrap = canvasWrapRef.current;
-                        if (wrap?.dataset.panned) { delete wrap.dataset.panned; ev.preventDefault(); return; }
-                        openAddStep(box.id);
-                      }}
-                    >+</button>
-                  )}
+                  {/* Below and to the right of the box, on hover: where you
+                      look for "and then what?", and clear of the arrow that
+                      leaves from the bottom edge. Not gated on Edit, since
+                      the toolbar's own "+ Add step" isn't either and the
+                      dialog turns Edit on anyway. Counter-scaled, because a
+                      handle that shrinks with the zoom is a handle nobody
+                      can hit on a tree big enough to need zooming out. */}
+                  <button
+                    type="button"
+                    className={addAfter?.fromId === box.id ? styles.addHandleOn : styles.addHandle}
+                    style={{ transform: `translate(-30%, -30%) scale(${Math.min(3, 1 / zoom).toFixed(2)})` }}
+                    aria-label={`Add the step after ${node.title || 'this step'}`}
+                    title={`Add the step that comes after "${node.title || '(untitled step)'}"`}
+                    onClick={(ev) => {
+                      const wrap = canvasWrapRef.current;
+                      if (wrap?.dataset.panned) { delete wrap.dataset.panned; ev.preventDefault(); return; }
+                      openAddStep(box.id);
+                    }}
+                  >+</button>
                   </div>
                 );
               })}
