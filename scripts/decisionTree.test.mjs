@@ -200,6 +200,26 @@ eq(withText.tree.nodes[withText.id].kind, 'outcome', 'free text is an outcome');
 eq(withText.tree.nodes[withText.id].branches, [], 'and branches nowhere until somebody adds one');
 eq(withText.tree.nodes[withText.id].title, 'Fix the leak', 'the title asked for is the title kept');
 
+// The third shape a flowchart is drawn with: the terminator. It is a claim
+// about the route rather than about the branches - a step with no branches
+// is where the route ran out, an End is where it was MEANT to - so what has
+// to hold is that the kind survives, and that it arrives with nothing
+// hanging off it.
+const withEnd = addNextStep(oneBox, { fromId: 'a', kind: 'end', title: 'Close it out' });
+eq(withEnd.tree.nodes[withEnd.id].kind, 'end', 'an end is its own kind, not an outcome');
+eq(withEnd.tree.nodes[withEnd.id].branches, [], 'and arrives with no ways out');
+eq(withEnd.tree.nodes.a.branches.map(b => b.to), [withEnd.id],
+  'reached from the step it was added after, like any other');
+eq(treeStats(withEnd.tree).ends, 1, 'and counts as an end of the route');
+eq(JSON.stringify(normalizeTree(withEnd.tree)), JSON.stringify(withEnd.tree),
+  'an end reads back identically after a save');
+// A tree written by a version that had only two kinds still opens, and a
+// kind this version does not know still reads as a question.
+eq(normalizeTree({ rootId: 'x', nodes: { x: { id: 'x', kind: 'end', title: 'Stop', branches: [] } } }).nodes.x.kind,
+  'end', 'an end saved on another device opens as an end');
+eq(updateNode(withText.tree, withText.id, { kind: 'end' }).nodes[withText.id].kind, 'end',
+  'the editor can turn a step into an end');
+
 // Added onto a branch that was waiting: the gate's Yes finally goes
 // somewhere, and no second Yes is created alongside it.
 const gate = withGate.tree;

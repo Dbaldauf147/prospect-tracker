@@ -35,6 +35,23 @@ import {
 // src/data/efficiencyDecisionTree.js and nothing is written at all.
 
 const SAVE_DELAY_MS = 800;
+
+// What each kind of step looks like, in one place: the diagram box, the dot
+// on an outline row, the badge in Walk it, and what that badge says. Five
+// places used to read the kind with a ternary, which is how a third kind
+// gets added everywhere but the one spot nobody remembered.
+const KIND_UI = {
+  question: { box: styles.boxQuestion, dot: styles.dotQuestion, badge: styles.kindQuestion, label: 'Decide' },
+  outcome: { box: styles.boxOutcome, dot: styles.dotOutcome, badge: styles.kindOutcome, label: 'Do this' },
+  end: { box: styles.boxEnd, dot: styles.dotEnd, badge: styles.kindEnd, label: 'Stop here' },
+};
+// A tree saved by an older version can carry a kind this one doesn't know;
+// normalizeTree already reads that as a question, and so does this.
+const kindUi = (kind) => KIND_UI[kind] || KIND_UI.question;
+
+// Said in three places - the two shut buttons in the editor and the status
+// line when something tries anyway - so it is said the same way each time.
+const END_NO_NEXT = 'This step is an End, so nothing comes after it. Change its Kind to give it a way out.';
 // How much of the catalog the picker lists at once. The Solutions list runs
 // to a hundred and fifty services, and a dropdown that long is scrolled
 // rather than read — so it shows a window and the search box narrows it.
@@ -229,6 +246,7 @@ function NodeEditor({ tree, nodeId, catalog, onChange, onAddStep }) {
           >
             <option value="question">Question - branches out</option>
             <option value="outcome">Outcome - what to do</option>
+            <option value="end">End - the route stops here</option>
           </select>
         </label>
       </div>
@@ -255,7 +273,11 @@ function NodeEditor({ tree, nodeId, catalog, onChange, onAddStep }) {
       <div className={styles.branchBlock}>
         <div className={styles.fieldLabel}>Branches out of this step</div>
         {node.branches.length === 0 && (
-          <div className={styles.emptyNote}>No branches - this step is an end of the route.</div>
+          <div className={styles.emptyNote}>
+            {node.kind === 'end'
+              ? 'An end of the route - nothing comes after it. Change Kind above to give it a way out.'
+              : 'No branches - this step is an end of the route.'}
+          </div>
         )}
         {node.branches.map((b, i) => (
           <div key={b.id} className={styles.branchRow}>
@@ -290,11 +312,17 @@ function NodeEditor({ tree, nodeId, catalog, onChange, onAddStep }) {
             </div>
           </div>
         ))}
+        {/* An end is a claim that the route stops here, so the two buttons
+            that would give it a way out are shut rather than left to
+            contradict it. Changing Kind above opens them again. */}
         <div className={styles.branchActions}>
           <button type="button" className={styles.smallBtn}
+            disabled={node.kind === 'end'}
+            title={node.kind === 'end' ? END_NO_NEXT : 'Another way out of this step'}
             onClick={() => onChange(addBranch(tree, nodeId, { label: '' }))}>+ Add branch</button>
           <button type="button" className={styles.primaryBtn}
-            title="A decision point that branches, or a step that just says what happens"
+            disabled={node.kind === 'end'}
+            title={node.kind === 'end' ? END_NO_NEXT : 'A decision point that branches, or a step that just says what happens'}
             onClick={() => onAddStep?.(nodeId)}>+ Add the next step</button>
         </div>
       </div>
@@ -333,8 +361,8 @@ function NodeDetailModal({ tree, nodeId, catalog, knownServices, editing, onClos
     <div className={styles.modalOverlay} onMouseDown={onClose}>
       <div className={styles.modalCard} onMouseDown={e => e.stopPropagation()} role="dialog" aria-label={node.title}>
         <div className={styles.modalHead}>
-          <span className={node.kind === 'outcome' ? styles.kindOutcome : styles.kindQuestion}>
-            {node.kind === 'outcome' ? 'Do this' : 'Decide'}
+          <span className={kindUi(node.kind).badge}>
+            {kindUi(node.kind).label}
           </span>
           <h2 className={styles.modalTitle}>{node.title || '(untitled step)'}</h2>
           <button type="button" className={styles.modalClose} onClick={onClose} aria-label="Close">×</button>
@@ -500,6 +528,18 @@ function AddStepModal({ tree, fromId, lockedBranchId = null, onCancel, onAdd }) 
                 A step that just says what happens. Nothing to answer, and no branches until you add one.
               </span>
             </button>
+            <button
+              type="button"
+              className={kind === 'end' ? styles.kindCardOn : styles.kindCard}
+              aria-pressed={kind === 'end'}
+              onClick={() => setKind('end')}
+            >
+              <span className={styles.kindCardIcon} aria-hidden="true">⬭</span>
+              <span className={styles.kindCardName}>End</span>
+              <span className={styles.kindCardNote}>
+                Where the route stops. Drawn as a stadium, and nothing hangs off it.
+              </span>
+            </button>
           </div>
 
           <label className={styles.field}>
@@ -511,7 +551,9 @@ function AddStepModal({ tree, fromId, lockedBranchId = null, onCancel, onAdd }) 
               onChange={e => setTitle(e.target.value)}
               placeholder={kind === 'question'
                 ? 'e.g. Is the payback under 2 years?'
-                : 'e.g. Scope the retrofit'}
+                : kind === 'end'
+                  ? 'e.g. Nothing further - close it out'
+                  : 'e.g. Scope the retrofit'}
             />
           </label>
 
@@ -701,6 +743,13 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   // is closed because the dialog would otherwise open behind it.
   const openAddStep = useCallback((fromId, branchId = null) => {
     if (!fromId) return;
+    // Every way in comes through here - the toolbar, the + on a box, the
+    // editor, an outline row - so an end refuses them all in one place
+    // rather than in four.
+    if (getNode(activeEntry(libraryRef.current).tree, fromId)?.kind === 'end') {
+      setStatus(END_NO_NEXT);
+      return;
+    }
     setPopupId(null);
     setEditing(true);
     setAddAfter({ fromId, branchId });
@@ -1118,7 +1167,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                 const onTrail = trailSteps.includes(box.id);
                 const here = trailSteps[trailSteps.length - 1] === box.id;
                 const cls = [
-                  node.kind === 'outcome' ? styles.boxOutcome : styles.boxQuestion,
+                  kindUi(node.kind).box,
                   box.orphan ? styles.boxOrphan : '',
                   onTrail ? styles.boxOnTrail : '',
                   here ? styles.boxHere : '',
@@ -1167,7 +1216,11 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                       the toolbar's own "+ Add step" isn't either and the
                       dialog turns Edit on anyway. Counter-scaled, because a
                       handle that shrinks with the zoom is a handle nobody
-                      can hit on a tree big enough to need zooming out. */}
+                      can hit on a tree big enough to need zooming out.
+
+                      Not on an end: nothing comes after one, so a + there
+                      would offer something it then refuses. */}
+                  {node.kind !== 'end' && (
                   <button
                     type="button"
                     className={addAfter?.fromId === box.id ? styles.addHandleOn : styles.addHandle}
@@ -1180,6 +1233,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                       openAddStep(box.id);
                     }}
                   >+</button>
+                  )}
                   </div>
                 );
               })}
@@ -1209,8 +1263,8 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
           {current ? (
             <div className={styles.card}>
               <div className={styles.cardHead}>
-                <span className={current.kind === 'outcome' ? styles.kindOutcome : styles.kindQuestion}>
-                  {current.kind === 'outcome' ? 'Do this' : 'Decide'}
+                <span className={kindUi(current.kind).badge}>
+                  {kindUi(current.kind).label}
                 </span>
                 <h2 className={styles.cardTitle}>{current.title || '(untitled step)'}</h2>
               </div>
@@ -1284,7 +1338,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                         onClick={() => setSelectedId(node.id)}
                         title="Select this step"
                       >
-                        <span className={node.kind === 'outcome' ? styles.dotOutcome : styles.dotQuestion} />
+                        <span className={kindUi(node.kind).dot} />
                         {node.title || '(untitled step)'}
                         {node.id === tree.rootId && <span className={styles.rootChip}>start</span>}
                       </button>
@@ -1340,7 +1394,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                     <div key={id} className={styles.outlineRow}>
                       <button type="button" className={selectedId === id ? styles.outlineNodeActive : styles.outlineNode}
                         onClick={() => setSelectedId(id)}>
-                        <span className={node.kind === 'outcome' ? styles.dotOutcome : styles.dotQuestion} />
+                        <span className={kindUi(node.kind).dot} />
                         {node.title || '(untitled step)'}
                       </button>
                       {editing && (
