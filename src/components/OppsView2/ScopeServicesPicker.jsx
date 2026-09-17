@@ -34,10 +34,12 @@ import { writeRichCopy } from '../../utils/clipboardCopy';
 import { isCoverageTracked } from '../../utils/pipelineDashboardStore';
 import { useCoverageServices } from '../../hooks/useCoverageServices';
 import { CoverageMark } from '../common/CoverageMark';
+import { ServiceDetailPopup } from '../common/ServiceDetailPopup';
 import { coverageRowStyle } from '../../utils/coverageMark';
 import {
   COMMODITY_LIST_KEY, commodityOptions, parseCommodities, toggleCommodity, splitCommodities,
 } from '../../utils/commodities';
+import styles from './OppsView2.module.css';
 
 // Same palette the company card's services board uses, so a service reads
 // the same colour in both places.
@@ -292,6 +294,16 @@ export function ScopeServicesModal({
   // clipboard before. Saying so on the button is quieter than an alert and
   // still tells the truth.
   const [copyFailed, setCopyFailed] = useState(false);
+  // The service whose popup is open, by name. Clicking the name asks what a
+  // service IS - what it covers, who the SME is, what ticking it brings with
+  // it - which is the question you have at the moment of ticking and which
+  // the row itself has no room to answer. Held by name rather than by row so
+  // an edit made in the popup doesn't leave it showing a stale copy.
+  const [detailName, setDetailName] = useState(null);
+  // The popup edits the service catalog, so it opens only where those edits
+  // can be saved. Every caller passes an updater today; one that didn't
+  // would offer boxes that take typing and store none of it.
+  const canOpenDetail = typeof updateSettings === 'function';
   // The services the Pipeline page is watching coverage on. Picking Scope is
   // a decision about which services to push, and these are the ones being
   // measured — so the board says which is which.
@@ -359,10 +371,16 @@ export function ScopeServicesModal({
   );
 
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
+    const onKey = (e) => {
+      // A service popup is open on top: Escape belongs to it. Both listen on
+      // document and this one is registered first, so without the guard one
+      // Escape would close the board out from under the popup.
+      if (detailName) return;
+      if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, detailName]);
 
   // Services that come with other services, per the Auto-add Services column
   // on Dropdowns › Services. Ticking one here ticks whatever it names, so a
@@ -787,14 +805,15 @@ export function ScopeServicesModal({
                             ...(tracked ? coverageRowStyle : null),
                           }}
                         >
-                          {/* The label covers only the tick and the name —
-                              the status select sits outside it so opening
-                              the menu can't flip the Scope selection. */}
+                          {/* The label covers the tick alone. The name next
+                              to it opens the service's popup instead, and
+                              the status select sits outside both so opening
+                              either can't flip the Scope selection. */}
                           <label
-                            title={sme ? `SME: ${sme}` : displayName(item)}
+                            title={`${checked ? 'Untick' : 'Tick'} ${displayName(item)}`}
                             style={{
-                              flex: 1, minWidth: '4.5rem', display: 'flex', alignItems: 'center',
-                              gap: '0.3rem', cursor: 'pointer',
+                              flex: '0 0 auto', display: 'flex', alignItems: 'center',
+                              gap: '0.3rem', padding: '0.1rem 0.15rem 0.1rem 0', cursor: 'pointer',
                             }}
                           >
                             <input
@@ -804,17 +823,38 @@ export function ScopeServicesModal({
                               style={{ margin: 0, flex: '0 0 auto' }}
                             />
                             {tracked && <CoverageMark />}
-                            <span style={{
-                              flex: 1, minWidth: 0, fontSize: '0.68rem',
-                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                              fontWeight: checked ? 700 : 500,
-                              // A retired service still ticks - it is in the
-                              // deals that already carry it, and green says
-                              // so louder than grey says "retired".
-                              color: checked ? '#166534'
-                                : (isDead(item) ? 'var(--color-text-muted)' : 'var(--color-text)'),
-                            }}>{displayName(item)}</span>
                           </label>
+                          {canOpenDetail ? (
+                            <button
+                              type="button"
+                              className={styles.scopeServiceName}
+                              onClick={() => setDetailName(item)}
+                              title={`${displayName(item)}: open its details${sme ? ` (SME: ${sme})` : ''}. Tick the box to put it in Scope.`}
+                              style={{
+                                flex: 1, minWidth: '4.5rem', textAlign: 'left',
+                                border: 0, background: 'none', padding: 0,
+                                fontFamily: 'inherit', fontSize: '0.68rem', cursor: 'pointer',
+                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                fontWeight: checked ? 700 : 500,
+                                // A retired service still ticks - it is in the
+                                // deals that already carry it, and green says
+                                // so louder than grey says "retired".
+                                color: checked ? '#166534'
+                                  : (isDead(item) ? 'var(--color-text-muted)' : 'var(--color-text)'),
+                              }}
+                            >{displayName(item)}</button>
+                          ) : (
+                            <span
+                              title={sme ? `SME: ${sme}` : displayName(item)}
+                              style={{
+                                flex: 1, minWidth: '4.5rem', fontSize: '0.68rem',
+                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                fontWeight: checked ? 700 : 500,
+                                color: checked ? '#166534'
+                                  : (isDead(item) ? 'var(--color-text-muted)' : 'var(--color-text)'),
+                              }}
+                            >{displayName(item)}</span>
+                          )}
                           {pulls.length > 0 && (
                             <span
                               title={`Ticking ${displayName(item)} also adds: ${pulls.join(', ')}`
@@ -877,9 +917,21 @@ export function ScopeServicesModal({
           background: 'var(--color-bg)', fontSize: '0.65rem', color: 'var(--color-text-muted)',
         }}>
           {canEditStatus
-            ? 'Tick a service to put it in Scope. A “+N” means it brings that many services with it (Dropdowns › Services › Auto-add Services) - they arrive as ordinary ticks and can be removed. The status dropdown saves to the company card: italic means it is derived - from another opp, or an N/A implied by something this account has already bought (Auto-N/A Services) - and “- (auto)” reverts to that.'
+            ? `Tick a service to put it in Scope${canOpenDetail ? '; click its name to open what it covers, who owns it and what it pulls in' : ''}. A “+N” means it brings that many services with it (Dropdowns › Services › Auto-add Services) - they arrive as ordinary ticks and can be removed. The status dropdown saves to the company card: italic means it is derived - from another opp, or an N/A implied by something this account has already bought (Auto-N/A Services) - and “- (auto)” reverts to that.`
             : `${cannotEditReason} Ticking a service still sets Scope.`}
         </div>
+
+        {/* Above the board rather than behind it: both overlays sit at 9500
+            by default, which leaves the stacking to the DOM. */}
+        {detailName && canOpenDetail && (
+          <ServiceDetailPopup
+            name={detailName}
+            settings={settings}
+            updateSettings={updateSettings}
+            zIndex={9600}
+            onClose={() => setDetailName(null)}
+          />
+        )}
       </div>
     </div>,
     document.body,
