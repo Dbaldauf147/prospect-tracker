@@ -1,0 +1,638 @@
+/* The Savings subtab. Scrolls as one page: the settle record at the top, the
+   contract under it, then the answer as tiles, charts and tables. */
+
+.wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.75rem 1rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* ── the settle record ───────────────────────────────────────────────── */
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.75rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.barMain {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  min-width: 18rem;
+}
+
+.barTitle {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.barFacts {
+  font-size: 0.72rem;
+  color: var(--color-text-secondary);
+}
+
+.barActions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+/* Whose numbers these are. The distinction matters the moment somebody
+   quotes a figure off this page in a meeting. */
+.pillShipped,
+.pillCustom {
+  font-size: 0.64rem;
+  font-weight: 700;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.pillShipped {
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+
+.pillCustom {
+  background: #EBF2FC;
+  color: #1E4E8C;
+  border: 1px solid #BFD8F5;
+}
+
+.pastePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.historyWrap {
+  overflow: auto;
+  max-height: 22rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.historyTable {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.historyTable th,
+.historyTable td {
+  padding: 0.18rem 0.4rem;
+  text-align: right;
+  border-bottom: 1px solid var(--color-border-light);
+  white-space: nowrap;
+}
+
+.historyTable thead th {
+  position: sticky;
+  top: 0;
+  background: var(--color-surface-alt);
+  color: var(--color-text-secondary);
+  font-weight: 700;
+  z-index: 1;
+}
+
+.thYear {
+  text-align: left !important;
+  font-weight: 700;
+  color: var(--color-text);
+  position: sticky;
+  left: 0;
+  background: var(--color-surface);
+}
+
+.historyTable thead .thYear {
+  background: var(--color-surface-alt);
+  z-index: 2;
+}
+
+.thAvg {
+  font-weight: 700;
+}
+
+.cell {
+  color: var(--color-text);
+}
+
+/* A month with no settle is empty rather than a zero or a dash, because a
+   dash in a column of prices reads as a price of nothing. */
+.cellEmpty {
+  background: var(--color-surface-alt);
+}
+
+.cellAvg {
+  font-weight: 700;
+  color: var(--color-text);
+  background: var(--color-surface-alt);
+}
+
+/* ── the contract ────────────────────────────────────────────────────── */
+
+.inputs {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.inputGroup {
+  flex: 1 1 22rem;
+  min-width: 20rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem 0.75rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.groupTitle {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--color-text);
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.groupHint {
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--color-text-secondary);
+}
+
+.fieldRow {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.fieldLabel {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+}
+
+.fieldHint {
+  font-size: 0.65rem;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.fieldNote {
+  flex: 1 1 14rem;
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  align-self: flex-end;
+  padding-bottom: 0.3rem;
+}
+
+.inputWrap {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.28rem 0.4rem;
+  font-family: inherit;
+  font-size: 0.78rem;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.inputSmall {
+  width: 100%;
+  min-width: 4rem;
+  padding: 0.22rem 0.35rem;
+  font-family: inherit;
+  font-size: 0.74rem;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.inputSuffix {
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.textarea {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+}
+
+/* ── hedge layers ────────────────────────────────────────────────────── */
+
+.layerTable {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.74rem;
+}
+
+.layerTable th,
+.layerTable td {
+  padding: 0.2rem 0.3rem;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.layerTable thead th {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+}
+
+.thNum,
+.tdNum {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.layerTable .tdNum .field {
+  align-items: flex-end;
+}
+
+.layerTable .tdNum .input {
+  text-align: right;
+  max-width: 6rem;
+}
+
+.layerTotal th,
+.layerTotal td {
+  font-weight: 700;
+  color: var(--color-text);
+  border-top: 1px solid var(--color-border);
+}
+
+.layerFloat th,
+.layerFloat td {
+  color: var(--color-text-secondary);
+}
+
+/* ── the answer ──────────────────────────────────────────────────────── */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.5rem;
+}
+
+.tile {
+  padding: 0.5rem 0.65rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+
+.tileLabel {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+}
+
+.tileValue,
+.tileValueGood,
+.tileValueBad {
+  margin-top: 0.1rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  color: var(--color-text);
+}
+
+.tileValueGood { color: #0F766E; }
+.tileValueBad { color: #B91C1C; }
+
+.tileSub {
+  margin-top: 0.05rem;
+  font-size: 0.68rem;
+  color: var(--color-text-secondary);
+}
+
+/* ── charts ──────────────────────────────────────────────────────────── */
+
+/* Two columns, not auto-fit. There are four charts, and auto-fit lands on
+   three of them across with one orphaned underneath at exactly the window
+   widths people use. */
+.chartGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+}
+
+@media (min-width: 64rem) {
+  .chartGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.card {
+  padding: 0.6rem 0.75rem 0.75rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+
+.cardHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.cardTitle {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.cardNote {
+  margin-top: 0.15rem;
+  font-size: 0.68rem;
+  color: var(--color-text-secondary);
+  max-width: 44rem;
+}
+
+.chartBox {
+  margin-top: 0.4rem;
+  width: 100%;
+}
+
+/* Identity never rests on colour alone: the key is always present, and the
+   charts that carry two series name them here as well as on hover. */
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.legendSwatch {
+  width: 0.7rem;
+  height: 0.16rem;
+  border-radius: 999px;
+}
+
+.tip {
+  padding: 0.35rem 0.5rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  font-size: 0.72rem;
+}
+
+.tipHead {
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 0.15rem;
+}
+
+.tipRow {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.tipSwatch {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.tipName {
+  color: var(--color-text-secondary);
+}
+
+.tipValue {
+  margin-left: auto;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.tipNote {
+  margin-top: 0.15rem;
+  font-size: 0.66rem;
+  color: var(--color-text-muted);
+}
+
+/* ── tables ──────────────────────────────────────────────────────────── */
+
+.tableWrap {
+  margin-top: 0.4rem;
+  overflow: auto;
+  max-height: 26rem;
+}
+
+.dataTable {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.dataTable th,
+.dataTable td {
+  padding: 0.22rem 0.45rem;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.dataTable thead th {
+  position: sticky;
+  top: 0;
+  background: var(--color-surface-alt);
+  color: var(--color-text-secondary);
+  font-weight: 700;
+  z-index: 1;
+}
+
+.dataTable tbody th {
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.tdGood,
+.tdBad {
+  /* `.dataTable td` is a class AND an element, so it outranks a bare class:
+     without this the money columns fall back to left-aligned. */
+  text-align: right !important;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.tdGood { color: #0F766E; }
+.tdBad { color: #B91C1C; }
+
+.totalRow th,
+.totalRow td {
+  border-top: 1px solid var(--color-border);
+  font-weight: 700;
+  background: var(--color-surface-alt);
+}
+
+/* A month the market has not reached is priced off an assumption, and every
+   place it appears says so rather than letting it pass as a settle. */
+.assumedRow td,
+.assumedRow th {
+  background: var(--color-surface-alt);
+}
+
+.assumedFlag {
+  margin-left: 0.3rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: 0.02rem 0.25rem;
+  border-radius: 3px;
+  background: #FFFBEB;
+  color: #92400E;
+  border: 1px solid #FDE68A;
+}
+
+/* ── odds and ends ───────────────────────────────────────────────────── */
+
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.smallBtn {
+  padding: 0.28rem 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--color-text-secondary);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.smallBtn:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+}
+
+.primaryBtn {
+  padding: 0.28rem 0.7rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #fff;
+  background: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.primaryBtn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.iconBtn {
+  padding: 0.05rem 0.35rem;
+  font-size: 0.85rem;
+  line-height: 1.2;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.iconBtn:hover {
+  color: #B91C1C;
+  border-color: var(--color-border);
+}
+
+.muted {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+}
+
+.warn {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #B45309;
+}
+
+.footNote {
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  max-width: 62rem;
+  line-height: 1.5;
+}

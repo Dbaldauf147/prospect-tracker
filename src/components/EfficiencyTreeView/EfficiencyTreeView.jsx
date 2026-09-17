@@ -8,14 +8,21 @@ import {
   treeStats, updateBranch, updateNode,
 } from '../../utils/decisionTree';
 import { edgePath, layoutTree } from '../../utils/treeLayout';
+import { SavingsPanel } from './SavingsPanel.jsx';
 import { pricedServiceRows } from '../../utils/serviceRows';
 import {
   LEGACY_KEY, LIBRARY_KEY, activeEntry, addTree, blankTree, duplicateTree, getTreeLibrary,
   hasSavedTrees, putTree, removeTree, renameTree, setActiveTree,
 } from '../../utils/treeLibrary';
 
-// The page for the C&I efficiency decision tree: walk it to make a call on a
-// measure, or open the map and edit the flow itself.
+// Service Deep Dives: the decision trees that sequence a service, and the
+// Savings subtab that prices a gas contract against the NYMEX record.
+//
+// The trees are the page's original job - walk one to make a call on a
+// measure, or open the map and edit the flow itself. Savings is a subtab
+// alongside them rather than a page of its own because it answers the same
+// question from the money end: the tree says which measure, Savings says
+// what the hedge behind it is worth.
 //
 // Two modes rather than one, because the tree is read far more often than it
 // is changed. WALK shows one step at a time with its branches as buttons and
@@ -568,6 +575,11 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   const [library, setLibrary] = useState(() => getTreeLibrary(settings));
   const entry = activeEntry(library);
   const tree = entry.tree;
+  // Which subtab is open: a tree, or Savings. Savings is not a tree and is
+  // not in the library, so it is a flag beside it rather than an entry in
+  // it - the alternative would be a tree-shaped thing with no steps that
+  // every piece of tree arithmetic on the page then has to skip.
+  const [onSavings, setOnSavings] = useState(false);
   const [mode, setMode] = useState('diagram');
   const [editing, setEditing] = useState(false);
   const [trail, setTrail] = useState([]);           // node ids answered through, root first
@@ -781,6 +793,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   // route being walked, the step being inspected, the popup. They are ids,
   // and an id from another tree means nothing here.
   function switchTree(id) {
+    setOnSavings(false);
     if (id === library.activeId) return;
     setTrail([]);
     setSelectedId(null);
@@ -794,6 +807,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   // Landing on a diagram of a single box with the editor off would be a
   // page that looks broken rather than empty.
   function newTree() {
+    setOnSavings(false);
     const label = (window.prompt('Name for the new decision tree:', 'New tree') || '').trim();
     if (!label) return;
     const { library: next, id } = addTree(library, { name: label, tree: blankTree() });
@@ -809,6 +823,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
 
   // A copy to change, for a flow that is mostly right for the next job.
   function copyTree() {
+    setOnSavings(false);
     const { library: next, id } = duplicateTree(library, entry.id);
     if (!id) { setStatus(`That is as many trees as this page holds (${library.trees.length}).`); return; }
     setTrail([]);
@@ -849,6 +864,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   // looking at: an import that replaced the open tree was safe when the page
   // held one, and is a tree thrown away now that it holds several.
   function runImport() {
+    setOnSavings(false);
     try {
       const parsed = JSON.parse(importText);
       const imported = normalizeTree(parsed);
@@ -874,11 +890,18 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
     <div className={styles.wrapper}>
       <div className={styles.header}>
         <div className={styles.headerMain}>
-          <h1 className={styles.title}>Efficiency Decision Tree</h1>
+          <h1 className={styles.title}>Service Deep Dives</h1>
           <div className={styles.subtitle}>
-            C&amp;I efficiency work, sequenced: what to fix in what order, and what gets funded with whose money.
+            {onSavings
+              ? 'What a gas contract and its hedge layers are worth against the NYMEX record: load the settles, describe the term, and see the saving month by month.'
+              : 'C&I efficiency work, sequenced: what to fix in what order, and what gets funded with whose money.'}
           </div>
         </div>
+        {/* Every control up here acts on the tree in front of you, so on
+            Savings there is no tree for them to act on and they are gone
+            rather than disabled. Not rendered rather than hidden: the strip
+            is a flex row, and `hidden` loses to that. */}
+        {!onSavings && (
         <div className={styles.headerActions}>
           <div className={styles.modeSwitch}>
             <button type="button" className={mode === 'diagram' ? styles.modeBtnActive : styles.modeBtn}
@@ -920,16 +943,17 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
           <button type="button" className={styles.smallBtn} onClick={resetToTemplate}
             title={`Replace "${entry.name}" with the built-in C&I efficiency template`}>Reset to template</button>
         </div>
+        )}
       </div>
 
       {/* The subtabs: one per tree the user keeps. The shipped C&I flow is
           one of them and carries no privileges — it can be renamed, copied,
           rebuilt or deleted like any other, as long as one tree is left for
           the page to open on. */}
-      <div className={styles.treeTabs} role="tablist" aria-label="Decision trees">
+      <div className={styles.treeTabs} role="tablist" aria-label="Service deep dives">
         {library.trees.map(t => {
           const count = Object.keys(t.tree.nodes).length;
-          const open = t.id === entry.id;
+          const open = !onSavings && t.id === entry.id;
           return (
             <button
               key={t.id}
@@ -952,20 +976,43 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
           title="Start a tree from nothing: one step, then add the rest"
         >+ New tree</button>
 
+        {/* Savings is a subtab and not a tree, so it sits after the trees
+            behind a divider: renaming, duplicating and deleting are tree
+            verbs and none of them mean anything to it. */}
+        <span className={styles.tabDivider} aria-hidden="true" />
+        <button
+          type="button"
+          role="tab"
+          aria-selected={onSavings}
+          className={onSavings ? styles.treeTabActive : styles.treeTab}
+          onClick={() => setOnSavings(true)}
+          title="Historical NYMEX settles, contract pricing, hedge layers and term length, and what the hedge is worth"
+        >Savings</button>
+
         <span className={styles.treeTabsSpacer} />
 
         {/* Acting on the tree that's open, which is the one named to the
-            left of them. Deleting asks; renaming and copying don't need to. */}
-        <button type="button" className={styles.smallBtn} onClick={renameActiveTree}
-          title={`Rename "${entry.name}"`}>Rename</button>
-        <button type="button" className={styles.smallBtn} onClick={copyTree}
-          title={`Copy "${entry.name}" into a tree of its own`}>Duplicate</button>
-        <button type="button" className={styles.smallBtn} onClick={deleteActiveTree}
-          disabled={library.trees.length <= 1}
-          title={library.trees.length <= 1
-            ? 'The page needs one tree - add another before deleting this one'
-            : `Delete "${entry.name}"`}>Delete</button>
+            left of them. Deleting asks; renaming and copying don't need to.
+            None of them apply on Savings, which has no tree open. */}
+        {!onSavings && (
+          <>
+            <button type="button" className={styles.smallBtn} onClick={renameActiveTree}
+              title={`Rename "${entry.name}"`}>Rename</button>
+            <button type="button" className={styles.smallBtn} onClick={copyTree}
+              title={`Copy "${entry.name}" into a tree of its own`}>Duplicate</button>
+            <button type="button" className={styles.smallBtn} onClick={deleteActiveTree}
+              disabled={library.trees.length <= 1}
+              title={library.trees.length <= 1
+                ? 'The page needs one tree - add another before deleting this one'
+                : `Delete "${entry.name}"`}>Delete</button>
+          </>
+        )}
       </div>
+
+      {onSavings ? (
+        <SavingsPanel settings={settings} settingsLoaded={settingsLoaded} updateSettings={updateSettings} />
+      ) : (
+      <>
 
       <div className={styles.statusBar}>
         <span>{stats.nodes} steps · {stats.branches} branches · {stats.ends} ends</span>
@@ -1364,6 +1411,8 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
           onChange={applyTree}
           onAddStep={openAddStep}
         />
+      )}
+      </>
       )}
     </div>
   );

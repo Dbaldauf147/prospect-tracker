@@ -479,10 +479,10 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
         <button
           className={view === 'efficiency' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('efficiency')}
-          title="Walk the C&I efficiency decision tree, or edit the flow"
+          title="Walk a service decision tree or edit the flow, and price a gas contract against the NYMEX record on Savings"
         >
           <span className={styles.navIcon}>&#127795;</span>
-          Efficiency Decision Tree
+          Service Deep Dives
         </button>
       </nav>
 
