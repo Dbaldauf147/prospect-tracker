@@ -2,7 +2,7 @@
 //
 // A tree is `{ rootId, nodes: { [id]: node } }` and a node is:
 //
-//   { id, kind: 'question' | 'outcome', title, detail,
+//   { id, kind: 'question' | 'outcome' | 'end', title, detail,
 //     services: ['Sub-metering', …],
 //     branches: [{ id, label, to }] }
 //
@@ -21,7 +21,12 @@
 // process, so the model allows it and the readers below are the ones that
 // stay finite — see outlineRows.
 
-const KINDS = new Set(['question', 'outcome']);
+// The three shapes a flowchart is drawn with: the diamond that asks, the box
+// that says what happens, and the terminator that stops. 'end' is a claim
+// about the route rather than about the branches - a step with no branches is
+// where the route runs out, but an END is where it was MEANT to; the page
+// draws it as a stadium and won't hang branches off it.
+const KINDS = new Set(['question', 'outcome', 'end']);
 
 // Free text the user types. Capped because this all lives in one Firestore
 // settings document with a hard size limit, and an accidental paste of a
@@ -298,8 +303,10 @@ export const DECISION_BRANCH_LABELS = ['Yes', 'No'];
  * Add the step that comes after `fromId` - what the diagram's + handle does.
  *
  * `kind` is the whole of the choice the user makes there: 'question' is a
- * decision point, which arrives with its Yes and its No, and 'outcome' is a
- * plain step that just says what happens.
+ * decision point, which arrives with its Yes and its No, 'outcome' is a
+ * plain step that just says what happens, and 'end' is where the route
+ * stops. Only a question arrives with branches; the other two arrive with
+ * none, which is what an end stays with.
  *
  * `branchId` hangs the new step off a branch that already exists - the Yes
  * of a gate that had nowhere to go yet. Without one (or with one the parent
