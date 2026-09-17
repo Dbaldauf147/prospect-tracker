@@ -1322,3 +1322,14 @@
 .treeTabs .smallBtn {
   margin-bottom: 0.3rem;
 }
+
+/* Between the trees and Savings. Savings is a subtab of this page but not a
+   tree, and the rule says so without needing a word for it. */
+/* An explicit height rather than `align-self: stretch`: the strip is
+   centre-aligned and wraps, so a stretched divider comes out as nothing. */
+.tabDivider {
+  width: 1px;
+  height: 1.3rem;
+  margin: 0 0.3rem 0.3rem;
+  background: var(--color-border);
+}
