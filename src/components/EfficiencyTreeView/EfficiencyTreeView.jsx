@@ -7,6 +7,7 @@ import {
   orphanIds, outlineRows, pathFromRoot, removeBranch, setRoot, toggleNodeService,
   treeStats, updateBranch, updateNode,
 } from '../../utils/decisionTree';
+import { answeredArrows, answerTrail } from '../../utils/decisionWalk';
 import { edgePath, layoutTree } from '../../utils/treeLayout';
 import { SavingsPanel } from './SavingsPanel.jsx';
 import { pricedServiceRows } from '../../utils/serviceRows';
@@ -776,9 +777,41 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   const currentId = trail.length ? trail[trail.length - 1] : tree.rootId;
   const current = getNode(tree, currentId) || getNode(tree, tree.rootId);
 
+  // Answering on the diagram moves you down the flow, and on a tree of any
+  // size the step you land on is off the bottom of the window. Bring it into
+  // view when it isn't in it - and leave the canvas exactly where it is when
+  // it already is, so answering a question in the middle of the screen
+  // doesn't jerk the whole diagram under the pointer.
+  useEffect(() => {
+    if (mode !== 'diagram' || trail.length === 0) return;
+    const wrap = canvasWrapRef.current;
+    const box = layout.byId.get(currentId);
+    if (!wrap || !box) return;
+    const left = box.x * zoom;
+    const top = box.y * zoom;
+    const right = (box.x + box.w) * zoom;
+    const bottom = (box.y + box.h) * zoom;
+    const inView = left >= wrap.scrollLeft && right <= wrap.scrollLeft + wrap.clientWidth
+      && top >= wrap.scrollTop && bottom <= wrap.scrollTop + wrap.clientHeight;
+    if (inView) return;
+    wrap.scrollTo({
+      left: Math.max(0, (box.x + box.w / 2) * zoom - wrap.clientWidth / 2),
+      top: Math.max(0, (box.y + box.h / 2) * zoom - wrap.clientHeight / 2),
+      behavior: 'smooth',
+    });
+  }, [currentId, mode, trail.length, layout, zoom]);
+
+  // Answering one question, from either screen: the walk's big buttons and
+  // the diagram's Yes / No labels both land here. What the trail becomes -
+  // carry on, take the answer back, or move the route to the step being
+  // answered - is decided in utils/decisionWalk, where it can be tested.
+  function answerBranch(fromId, branch) {
+    const next = answerTrail(tree, trail, fromId, branch);
+    if (next) setTrail(next);
+  }
+
   function choose(branch) {
-    if (!branch?.to || !getNode(tree, branch.to)) return;
-    setTrail(prev => [...(prev.length ? prev : [tree.rootId]), branch.to]);
+    answerBranch(currentId, branch);
   }
 
   function rewindTo(index) {
@@ -934,6 +967,14 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   }
 
   const trailSteps = trail.length ? trail : [tree.rootId];
+  // The arrows that have been answered, as from → to pairs. Pairs rather
+  // than a branch id because the trail stores where you went, not which way
+  // out you took: on the rare step with two arrows to the same box both read
+  // as picked, which is the truth anyway - either answer put you there.
+  const pickedArrows = answeredArrows(trailSteps);
+  // Everything answered through: the trail minus the step you are standing
+  // on, which is the one still waiting for an answer.
+  const answeredSteps = new Set(trailSteps.slice(0, -1));
 
   return (
     <div className={styles.wrapper}>
@@ -981,6 +1022,21 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
               <button type="button" className={styles.iconBtn} title="Zoom in"
                 onClick={() => setZoom(z => Math.min(1.5, +(z + 0.1).toFixed(2)))}>+</button>
               <button type="button" className={styles.smallBtn} onClick={zoomToFit}>Fit</button>
+            </div>
+          )}
+          {/* Undoing the answers. Taking back the last one is also a click on
+              its own tick out on the diagram; this is the version you can
+              find without hunting for the arrow it was given on. Only there
+              once something has been answered, since neither does anything
+              from the top of the flow. */}
+          {mode === 'diagram' && trailSteps.length > 1 && (
+            <div className={styles.zoomBar}>
+              <button type="button" className={styles.smallBtn}
+                onClick={() => setTrail(trailSteps.slice(0, -1))}
+                title="Take back the last answer">Back</button>
+              <button type="button" className={styles.smallBtn}
+                onClick={() => setTrail([])}
+                title="Clear every answer and start again at the top">Start over</button>
             </div>
           )}
           <label className={styles.editToggle} title="Show the editor for each step">
@@ -1090,7 +1146,15 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
         )}
         {mode === 'diagram' && (
           <span className={styles.muted}>
-            Click a box for the detail · drag to pan · hover a box for the + that adds the step after it, or “+ Add step” for the step after the one you picked
+            Click Yes or No on an arrow to answer it and carry on down · click a ticked answer to take it back · click a box for the detail · drag to pan · hover a box for the + that adds the step after it
+          </span>
+        )}
+        {/* How far down the flow the answers have got you. The trail is the
+            same one Walk it keeps, so a route answered here is the route that
+            page opens on, and the other way round. */}
+        {mode === 'diagram' && trailSteps.length > 1 && (
+          <span className={styles.muted}>
+            {trailSteps.length - 1} answered · standing on “{current?.title || '(untitled step)'}”
           </span>
         )}
         {status && <span className={styles.muted}>{status}</span>}
@@ -1132,11 +1196,10 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                   </marker>
                 </defs>
                 {layout.edges.map(e => {
-                  // An edge lights up when both ends are consecutive steps on
-                  // the route currently being walked, so the diagram shows
-                  // where you are rather than just what exists.
-                  const i = trailSteps.indexOf(e.fromId);
-                  const onTrail = i !== -1 && trailSteps[i + 1] === e.toId;
+                  // An edge lights up when it is one of the answers given, so
+                  // the diagram shows the route taken rather than just what
+                  // exists.
+                  const onTrail = pickedArrows.has(`${e.fromId}->${e.toId}`);
                   return (
                     <path
                       key={`${e.fromId}-${e.branchId}`}
@@ -1148,16 +1211,44 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                 })}
               </svg>
 
+              {/* The answers, on the arrows they belong to. Clicking “Yes”
+                  here is the same act as pressing it on Walk it: it ticks,
+                  the route lights up to it, and the step it leads to becomes
+                  the one you are standing on. Clicking a tick takes that
+                  answer back. */}
               {layout.edges.map(e => {
-                const label = e.label || ((outDegree.get(e.fromId) || 0) > 1 ? '-' : '');
-                if (!label) return null;
+                const from = getNode(tree, e.fromId);
+                const branch = from?.branches.find(b => b.id === e.branchId);
+                const target = getNode(tree, e.toId);
+                const forkHere = (outDegree.get(e.fromId) || 0) > 1;
+                const standingHere = currentId === e.fromId;
+                // An arrow with no label just continues the flow, and reads
+                // fine unlabelled - until you are standing on the box and
+                // need a way to move on. Then it offers “Next”, so a step
+                // nobody wrote an answer onto is still walkable.
+                const label = e.label || (forkHere ? '-' : (standingHere ? 'Next' : ''));
+                if (!label || !branch || !target) return null;
+                const picked = pickedArrows.has(`${e.fromId}->${e.toId}`);
+                const cls = picked
+                  ? styles.edgeLabelPicked
+                  : (e.back ? styles.edgeLabelBtnBack : styles.edgeLabelBtn);
                 return (
-                  <span
+                  <button
                     key={`label-${e.fromId}-${e.branchId}`}
-                    className={e.back ? styles.edgeLabelBack : styles.edgeLabel}
+                    type="button"
+                    className={cls}
+                    aria-pressed={picked}
                     style={{ left: e.labelX, top: e.labelY }}
-                    title={e.label}
-                  >{label}</span>
+                    title={picked
+                      ? `Answered “${e.label || label}” on “${from.title || 'this step'}”. Click to take it back.`
+                      : `Answer “${e.label || label}” on “${from.title || 'this step'}” and carry on to “${target.title || 'the next step'}”.`}
+                    onClick={(ev) => {
+                      // A click that ended a pan isn't a click on the answer.
+                      const wrap = canvasWrapRef.current;
+                      if (wrap?.dataset.panned) { delete wrap.dataset.panned; ev.preventDefault(); return; }
+                      answerBranch(e.fromId, branch);
+                    }}
+                  >{picked ? `✓ ${label}` : label}</button>
                 );
               })}
 
@@ -1195,6 +1286,14 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                   >
                     <span className={styles.boxTitle}>{node.title || '(untitled step)'}</span>
                     <span className={styles.boxMeta}>
+                      {/* Checked off: a step the route has been through, and
+                          the one it is standing on. The tick is the record of
+                          the answers given - take one back on the arrow above
+                          it and the tick goes with it. */}
+                      {answeredSteps.has(box.id) && !here && (
+                        <span className={styles.doneChip} title="Answered. Click the ticked answer on an arrow to take it back.">&#10003; done</span>
+                      )}
+                      {here && trailSteps.length > 1 && <span className={styles.hereChip}>you are here</span>}
                       {box.id === tree.rootId && <span className={styles.rootChip}>start</span>}
                       {box.orphan && <span className={styles.repeatChip}>unreachable</span>}
                       {node.branches.length === 0 && !box.orphan && <span className={styles.repeatChip}>end</span>}
