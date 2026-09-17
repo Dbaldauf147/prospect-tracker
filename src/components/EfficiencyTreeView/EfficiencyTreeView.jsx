@@ -983,7 +983,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
           <h1 className={styles.title}>Service Deep Dives</h1>
           <div className={styles.subtitle}>
             {onSavings
-              ? 'What a gas contract and its hedge layers are worth against the NYMEX record: load the settles, describe the term, and see the saving month by month.'
+              ? 'What a gas contract and its hedge layers are worth against the NYMEX record: load the settles and the forward curve, describe the term, and see the saving month by month.'
               : 'C&I efficiency work, sequenced: what to fix in what order, and what gets funded with whose money.'}
           </div>
         </div>

@@ -14,11 +14,28 @@
 // what the customer recognises off an invoice, and the saving is what the
 // hedge is responsible for.
 //
+// A month is priced from one of three places, in this order, and every row
+// carries which one on `source`:
+//
+//   settled   the NYMEX settle. What the market DID. A measurement.
+//   forward   the forward curve. What the market is QUOTED at. A price
+//             somebody would deal on, and a snapshot that goes stale.
+//   assumed   one flat number, for months neither table reaches - past the
+//             end of the curve, or in the gap between the last settle and
+//             the first quote. The weakest of the three and the loudest on
+//             the page.
+//
+// They are never averaged into one "how confident is this" score. The counts
+// travel separately all the way to the tiles, because a term that is mostly
+// settled and a term that is mostly guessed can produce the same saving and
+// are not the same claim.
+//
 // Nothing here knows about React, settings or the DOM - it takes a settle
 // table and a scenario and hands back rows. scripts/nymexSavings.test.mjs
 // pins the results.
 
 import { NYMEX_MONTH_LABELS, NYMEX_SETTLES } from '../data/nymexHistory.js';
+import { NYMEX_FORWARD, NYMEX_FORWARD_ASOF } from '../data/nymexForward.js';
 
 /** Where the subtab's scenario and settle table live in the settings document. */
 export const SAVINGS_KEY = 'deepDiveSavings';
@@ -26,6 +43,8 @@ export const SAVINGS_KEY = 'deepDiveSavings';
 const MAX_YEARS = 120;
 const MAX_LAYERS = 12;
 const MAX_TERM_MONTHS = 120;
+// A curve this long is somebody pasting a settle table into the wrong box.
+const MAX_FORWARD_MONTHS = 240;
 const MAX_NAME = 80;
 
 /** The term lengths the ladder compares, in months. */
@@ -154,6 +173,114 @@ export function parseNymexTable(input) {
   };
 }
 
+/** Month names to a number, so "Nov", "November" and "nov" all land on 11. */
+const MONTH_NUMBER = (() => {
+  const map = new Map();
+  NYMEX_MONTH_LABELS.forEach((label, i) => {
+    map.set(label.toLowerCase(), i + 1);
+    map.set(String(i + 1), i + 1);
+  });
+  for (const [long, n] of [
+    ['january', 1], ['february', 2], ['march', 3], ['april', 4], ['may', 5], ['june', 6],
+    ['july', 7], ['august', 8], ['september', 9], ['october', 10], ['november', 11], ['december', 12],
+  ]) map.set(long, n);
+  return map;
+})();
+
+/** A two-digit year is this century. Curves are quoted "Nov 26", never "Nov 2026". */
+const fullYear = (n) => (n < 100 ? 2000 + n : n);
+
+/**
+ * A forward curve from anywhere, reduced to [year, month, price] triples,
+ * sorted, one row per month.
+ *
+ * Same contract as normalizeSettles: never throws, never returns a row that
+ * cannot be priced off.
+ */
+export function normalizeForward(raw) {
+  const byKey = new Map();
+  for (const row of Array.isArray(raw) ? raw : []) {
+    if (!Array.isArray(row)) continue;
+    const year = fullYear(Math.trunc(num(row[0], 0)));
+    const month = Math.trunc(num(row[1], 0));
+    const price = num(row[2], NaN);
+    if (!year || year < 1900 || year > 2400) continue;
+    if (!(month >= 1 && month <= 12)) continue;
+    if (!Number.isFinite(price) || price <= 0) continue;
+    // A later row for the same month wins, which is what re-pasting a
+    // corrected strip is asking for.
+    byKey.set(monthKey(year, month), [year, month, Math.round(price * 1000) / 1000]);
+  }
+  return [...byKey.values()].sort((a, b) => (a[0] - b[0]) || (a[1] - b[1])).slice(0, MAX_FORWARD_MONTHS);
+}
+
+/** The shipped curve, normalized once. */
+export const SHIPPED_FORWARD = normalizeForward(NYMEX_FORWARD);
+export const SHIPPED_FORWARD_ASOF = NYMEX_FORWARD_ASOF;
+
+/**
+ * Read a pasted forward curve.
+ *
+ * The shape a curve is handed over in is two columns: a month, then a price.
+ * The month is written every way there is - "Nov 26", "Nov 2026",
+ * "November 2026", "2027-01", "1/27" - so all of them are read rather than
+ * one of them being declared correct. A dollar sign and a header row are
+ * ignored, same as in the settle table.
+ *
+ * Returns { forward, months, skipped }.
+ */
+export function parseForwardTable(input) {
+  const skipped = [];
+  const rows = [];
+  const report = (line) => skipped.push(line.replace(/\s+/g, ' ').trim().slice(0, 120));
+  for (const rawLine of String(input ?? '').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const cells = line.split(/\t|,|\s+/).map(c => c.trim()).filter(Boolean);
+    if (!cells.length) continue;
+
+    // The price is the last cell that reads as a number. Taking it from the
+    // end rather than from a fixed column is what lets "Nov 26  $3.043" and
+    // "2027-01  3.787" through the same path.
+    const priceCell = cells[cells.length - 1];
+    const price = num(priceCell, NaN);
+    if (!Number.isFinite(price) || price <= 0) { report(line); continue; }
+
+    const monthCells = cells.slice(0, -1);
+    let year = 0, month = 0;
+    // "2027-01" or "1/27" - one cell carrying both.
+    const joined = monthCells.join(' ');
+    const slashed = joined.match(/^(\d{1,4})\s*[-/]\s*(\d{1,4})$/);
+    if (slashed) {
+      const a = Number(slashed[1]), b = Number(slashed[2]);
+      // The four-digit side is the year; with two two-digit numbers the
+      // month is whichever one could be a month.
+      if (a > 12) { year = fullYear(a); month = b; }
+      else if (b > 12) { year = fullYear(b); month = a; }
+      else { month = a; year = fullYear(b); }
+    } else {
+      for (const cell of monthCells) {
+        const asMonth = MONTH_NUMBER.get(cell.toLowerCase().replace(/\.$/, '').slice(0, 3))
+          ?? MONTH_NUMBER.get(cell.toLowerCase().replace(/\.$/, ''));
+        const asNumber = Math.trunc(num(cell, NaN));
+        if (asMonth && !month) { month = asMonth; continue; }
+        if (Number.isFinite(asNumber) && asNumber > 0) year = fullYear(asNumber);
+      }
+    }
+    if (!month || !year) { report(line); continue; }
+    rows.push([year, month, price]);
+  }
+  const forward = normalizeForward(rows);
+  return { forward, months: forward.length, skipped };
+}
+
+/** The curve as a series, the same shape the settles come back in. */
+export function forwardSeries(forward) {
+  return (forward || []).map(([year, month, price]) => ({
+    key: monthKey(year, month), year, month, label: monthLabel(year, month), price,
+  }));
+}
+
 /** Every month that has a settle, oldest first. */
 export function monthlySeries(settles) {
   const out = [];
@@ -224,17 +351,22 @@ function normalizeLayer(raw, index) {
 /**
  * The scenario the subtab opens on, before anybody touches it.
  *
- * It opens on a BACKTEST rather than on a forward deal: a 36-month term
- * ending at the last settle in the table, so every month on the page is
- * something the market actually did and the saving is measured rather than
- * assumed. The layer prices are the settle in the month before the term
- * starts, which is the closest thing the table has to "what you could have
- * locked when you would have signed" - a proxy, and the page says so, but a
- * defensible one rather than a number picked to look good.
+ * It opens on the FORWARD deal when there is a curve to price one against:
+ * a term starting at the first quoted month and running the length of the
+ * curve, which is the deal somebody is actually deciding about. The layer
+ * prices are the last settle, as the closest thing the tables have to "what
+ * you could lock today" - a proxy, and the page says so, but a defensible
+ * one rather than a number picked to make the opening screen look good.
+ *
+ * With no curve loaded it opens on a BACKTEST instead: a 36-month term
+ * ending at the last settle, every month of it measured. Either way the
+ * first thing on screen is priced off the market rather than off the flat
+ * assumption.
  */
-export function defaultScenario(series = monthlySeries(SHIPPED_SETTLES)) {
+export function defaultScenario(series = monthlySeries(SHIPPED_SETTLES), forward = forwardSeries(SHIPPED_FORWARD)) {
   const today = new Date();
-  if (!series.length) {
+  const curve = forward || [];
+  if (!series.length && !curve.length) {
     return {
       name: '', startYear: today.getFullYear() - 3, startMonth: 1, termMonths: 36,
       annualVolumeDth: 250000, volumeShape: 'even', basis: 0, adder: 0.35,
@@ -242,29 +374,37 @@ export function defaultScenario(series = monthlySeries(SHIPPED_SETTLES)) {
       layers: [{ id: 'L1', label: 'Layer 1', pct: 40, price: 3.5 }, { id: 'L2', label: 'Layer 2', pct: 25, price: 3.7 }],
     };
   }
-  const last = series[series.length - 1];
-  const termMonths = 36;
-  const start = addMonths(last.year, last.month, -(termMonths - 1));
-  // The settle in the month before the term opens. Falls back to the first
-  // month in the record when the table is too short to have one.
-  const beforeKey = (() => {
-    const b = addMonths(start.year, start.month, -1);
-    return monthKey(b.year, b.month);
-  })();
-  const before = series.find(p => p.key === beforeKey) || series[0];
-  const strike = Math.round(before.price * 100) / 100;
+
+  const lastSettle = series.length ? series[series.length - 1] : null;
+  // Past the end of the curve there is nothing quoted, so the flat number
+  // carries on from where the curve stopped rather than from a settle years
+  // behind it. With no curve at all it is the last settle.
+  const flat = curve.length ? curve[curve.length - 1].price : lastSettle.price;
+  // What a hedge would be struck at if it were struck now.
+  const strike = Math.round((lastSettle ? lastSettle.price : curve[0].price) * 100) / 100;
+
+  let startYear, startMonth, termMonths;
+  if (curve.length) {
+    startYear = curve[0].year;
+    startMonth = curve[0].month;
+    termMonths = Math.min(curve.length, MAX_TERM_MONTHS);
+  } else {
+    termMonths = 36;
+    const start = addMonths(lastSettle.year, lastSettle.month, -(termMonths - 1));
+    startYear = start.year;
+    startMonth = start.month;
+  }
+
   return {
     name: '',
-    startYear: start.year,
-    startMonth: start.month,
+    startYear,
+    startMonth,
     termMonths,
     annualVolumeDth: 250000,
     volumeShape: 'even',
     basis: 0,
     adder: 0.35,
-    // Past the last settle there is no market to price against, so the page
-    // prices those months at the last one that settled and marks them.
-    forwardPrice: Math.round(last.price * 100) / 100,
+    forwardPrice: Math.round(flat * 100) / 100,
     layers: [
       { id: 'L1', label: 'Layer 1', pct: 40, price: strike },
       { id: 'L2', label: 'Layer 2', pct: 25, price: Math.round((strike + 0.2) * 100) / 100 },
@@ -273,8 +413,8 @@ export function defaultScenario(series = monthlySeries(SHIPPED_SETTLES)) {
 }
 
 /** A scenario from settings, made safe to compute with. */
-export function normalizeScenario(raw, series = null) {
-  const base = defaultScenario(series || monthlySeries(SHIPPED_SETTLES));
+export function normalizeScenario(raw, series = null, forward = null) {
+  const base = defaultScenario(series || monthlySeries(SHIPPED_SETTLES), forward || forwardSeries(SHIPPED_FORWARD));
   if (!raw || typeof raw !== 'object') return base;
   const layers = (Array.isArray(raw.layers) ? raw.layers : base.layers)
     .slice(0, MAX_LAYERS)
@@ -318,10 +458,13 @@ export function hedgeSummary(layers = []) {
  * is the normal case and refusing to price it would make the page useless
  * exactly when somebody is deciding whether to sign.
  */
-export function buildSavings(scenario, series) {
+export function buildSavings(scenario, series, forward = []) {
   const s = normalizeScenario(scenario, series);
   const byKey = new Map(series.map(p => [p.key, p.price]));
+  const forwardByKey = new Map((forward || []).map(p => [p.key, p.price]));
   const lastSettled = series.length ? series[series.length - 1] : null;
+  const curveStart = forward?.length ? forward[0] : null;
+  const curveEnd = forward?.length ? forward[forward.length - 1] : null;
   const hedge = hedgeSummary(s.layers);
   const weights = VOLUME_SHAPES[s.volumeShape].weights;
   const hedgedShare = hedge.pct / 100;
@@ -330,19 +473,27 @@ export function buildSavings(scenario, series) {
   const months = [];
   for (let i = 0; i < s.termMonths; i++) {
     const { year, month } = addMonths(s.startYear, s.startMonth, i);
-    const settled = byKey.get(monthKey(year, month));
-    const assumed = settled == null;
-    const index = assumed ? s.forwardPrice : settled;
+    const key = monthKey(year, month);
+    // Settle, then quote, then the flat number. Never the other way round: a
+    // month that settled is not an opinion any more.
+    const settled = byKey.get(key);
+    const quoted = settled == null ? forwardByKey.get(key) : undefined;
+    const source = settled != null ? 'settled' : quoted != null ? 'forward' : 'assumed';
+    const index = settled != null ? settled : quoted != null ? quoted : s.forwardPrice;
+    const assumed = source !== 'settled';
     const volume = s.annualVolumeDth * weights[month - 1];
     const commodity = hedgedShare * strike + (1 - hedgedShare) * index;
     const indexAllIn = index + s.basis + s.adder;
     const contractAllIn = commodity + s.basis + s.adder;
     months.push({
-      key: monthKey(year, month),
+      key,
       year,
       month,
       label: monthLabel(year, month),
       short: shortMonthLabel(year, month),
+      source,
+      // "Not a settle" - what the charts shade and the tables flag. The
+      // three-way `source` says which kind of not-a-settle it is.
       assumed,
       index,
       indexAllIn,
@@ -363,17 +514,22 @@ export function buildSavings(scenario, series) {
   const indexCost = months.reduce((n, m) => n + m.indexCost, 0);
   const contractCost = months.reduce((n, m) => n + m.contractCost, 0);
   const saving = indexCost - contractCost;
-  const assumedMonths = months.filter(m => m.assumed).length;
+  const settledMonths = months.filter(m => m.source === 'settled').length;
+  const forwardMonths = months.filter(m => m.source === 'forward').length;
+  const assumedMonths = months.filter(m => m.source === 'assumed').length;
 
   // One row per calendar year the term touches, which is how a customer
   // budgets and how the savings get reported internally.
   const yearMap = new Map();
   for (const m of months) {
     const row = yearMap.get(m.year) || {
-      year: m.year, months: 0, assumed: 0, volume: 0, indexCost: 0, contractCost: 0, saving: 0, indexSum: 0,
+      year: m.year, months: 0, settled: 0, forward: 0, assumed: 0,
+      volume: 0, indexCost: 0, contractCost: 0, saving: 0, indexSum: 0,
     };
     row.months += 1;
-    row.assumed += m.assumed ? 1 : 0;
+    row.settled += m.source === 'settled' ? 1 : 0;
+    row.forward += m.source === 'forward' ? 1 : 0;
+    row.assumed += m.source === 'assumed' ? 1 : 0;
     row.volume += m.volume;
     row.indexCost += m.indexCost;
     row.contractCost += m.contractCost;
@@ -393,6 +549,8 @@ export function buildSavings(scenario, series) {
     months,
     years,
     lastSettled,
+    curveStart,
+    curveEnd,
     totals: {
       volume,
       indexCost,
@@ -403,10 +561,30 @@ export function buildSavings(scenario, series) {
       avgIndex: months.length ? months.reduce((n, m) => n + m.index, 0) / months.length : null,
       avgIndexAllIn: volume ? indexCost / volume : null,
       avgContractAllIn: volume ? contractCost / volume : null,
+      settledMonths,
+      forwardMonths,
       assumedMonths,
-      settledMonths: months.length - assumedMonths,
+      // Months with a real market price behind them, settled or quoted. The
+      // rest is the flat number, which is the only one of the three that is
+      // nobody's price.
+      pricedMonths: settledMonths + forwardMonths,
     },
   };
+}
+
+/**
+ * One line saying where a term's prices came from, for the tile and the
+ * copied summary.
+ *
+ * Written out in full rather than as a ratio, because "36 of 36" reads as
+ * reassurance regardless of whether those 36 are settles or guesses.
+ */
+export function sourceSummary(totals) {
+  const parts = [];
+  if (totals.settledMonths) parts.push(`${totals.settledMonths} settled`);
+  if (totals.forwardMonths) parts.push(`${totals.forwardMonths} on the curve`);
+  if (totals.assumedMonths) parts.push(`${totals.assumedMonths} at the flat assumption`);
+  return parts.join(', ') || 'no months';
 }
 
 /**
@@ -416,39 +594,51 @@ export function buildSavings(scenario, series) {
  * the conversation happens, and the honest way to argue it is to show what
  * each length would have done rather than to assert that longer is better.
  */
-export function termLadder(scenario, series, terms = TERM_LADDER) {
+export function termLadder(scenario, series, forward = [], terms = TERM_LADDER) {
   return terms.map(termMonths => {
-    const run = buildSavings({ ...scenario, termMonths }, series);
+    const run = buildSavings({ ...scenario, termMonths }, series, forward);
     return {
       termMonths,
       saving: run.totals.saving,
       savingPerDth: run.totals.savingPerDth,
       savingPct: run.totals.savingPct,
       avgIndex: run.totals.avgIndex,
-      assumedMonths: run.totals.assumedMonths,
       settledMonths: run.totals.settledMonths,
+      forwardMonths: run.totals.forwardMonths,
+      assumedMonths: run.totals.assumedMonths,
+      pricedMonths: run.totals.pricedMonths,
+      sources: sourceSummary(run.totals),
       end: run.months.length ? run.months[run.months.length - 1] : null,
     };
   });
 }
 
 /**
- * The whole subtab's saved state: the scenario, and the settle table if the
- * user replaced the shipped one.
+ * The whole subtab's saved state: the scenario, and either table if the user
+ * replaced the shipped one.
  *
- * `settles` is null when they have not, rather than a copy of the shipped
- * table - a copy would freeze the table they are looking at at the version
- * that shipped the day they first opened the page, and the next update to
- * the shipped numbers would never reach them.
+ * `settles` and `forward` are null when they have not, rather than a copy of
+ * what shipped - a copy would freeze the tables at the version that shipped
+ * the day they first opened the page, and the next update would never reach
+ * them. That matters more for the curve than for the settles: a settle is
+ * permanent and a quote goes stale.
  */
 export function normalizeSavingsState(raw) {
-  const custom = raw && Array.isArray(raw.settles) ? normalizeSettles(raw.settles) : [];
-  const settles = custom.length ? custom : null;
+  const customSettles = raw && Array.isArray(raw.settles) ? normalizeSettles(raw.settles) : [];
+  const customForward = raw && Array.isArray(raw.forward) ? normalizeForward(raw.forward) : [];
+  const settles = customSettles.length ? customSettles : null;
+  const forward = customForward.length ? customForward : null;
   const series = monthlySeries(settles || SHIPPED_SETTLES);
+  const curve = forwardSeries(forward || SHIPPED_FORWARD);
   return {
     settles,
+    forward,
     loadedAt: text(raw?.loadedAt, 40) || null,
-    scenario: normalizeScenario(raw?.scenario, series),
+    // When the curve was quoted. The user's own curve carries the day they
+    // pasted it; the shipped one carries the as-of date it was quoted at,
+    // which is not the same thing and is not guessed at from the file.
+    forwardAsOf: text(raw?.forwardAsOf, 40) || null,
+    scenario: normalizeScenario(raw?.scenario, series, curve),
   };
 }
 
@@ -460,5 +650,6 @@ export function getSavingsState(settings) {
 /** True once the user has saved something of their own, so the page can say whose numbers these are. */
 export function hasSavedSavings(settings) {
   const raw = settings?.[SAVINGS_KEY];
-  return !!raw && typeof raw === 'object' && (!!raw.scenario || Array.isArray(raw.settles));
+  return !!raw && typeof raw === 'object'
+    && (!!raw.scenario || Array.isArray(raw.settles) || Array.isArray(raw.forward));
 }

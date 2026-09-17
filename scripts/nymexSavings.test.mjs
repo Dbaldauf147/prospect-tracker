@@ -18,12 +18,15 @@
 import {
   NYMEX_SETTLES, NYMEX_MONTH_LABELS,
 } from '../src/data/nymexHistory.js';
+import { NYMEX_FORWARD, NYMEX_FORWARD_ASOF } from '../src/data/nymexForward.js';
 import {
   SHIPPED_SETTLES, VOLUME_SHAPES, TERM_LADDER,
   normalizeSettles, parseNymexTable, monthlySeries, yearRows, priceStats,
   percentileRank, defaultScenario, normalizeScenario, hedgeSummary,
   buildSavings, termLadder, addMonths, monthKey, monthLabel, shortMonthLabel,
   normalizeSavingsState, getSavingsState, hasSavedSavings, SAVINGS_KEY,
+  SHIPPED_FORWARD, SHIPPED_FORWARD_ASOF, normalizeForward, parseForwardTable,
+  forwardSeries, sourceSummary,
 } from '../src/utils/nymexSavings.js';
 
 let passed = 0, failed = 0;
@@ -38,6 +41,7 @@ function near(actual, expected, tol, name) {
 }
 
 const series = monthlySeries(SHIPPED_SETTLES);
+const curve = forwardSeries(SHIPPED_FORWARD);
 
 // ── the shipped table is the table that was handed over ──────────────────
 //
@@ -162,13 +166,27 @@ const series = monthlySeries(SHIPPED_SETTLES);
 
 // ── the scenario ─────────────────────────────────────────────────────────
 {
-  const base = defaultScenario(series);
+  // With a curve loaded the page opens on the deal somebody is deciding
+  // about: the whole quoted strip.
+  const withCurve = defaultScenario(series, curve);
+  eq({ year: withCurve.startYear, month: withCurve.startMonth }, { year: curve[0].year, month: curve[0].month },
+    'the page opens at the first quoted month');
+  eq(withCurve.termMonths, curve.length, 'and runs the length of the curve');
+  const opening = buildSavings(withCurve, series, curve).totals;
+  eq(opening.forwardMonths, curve.length, 'so every month of it is quoted');
+  eq(opening.assumedMonths, 0, 'and none of it is the flat assumption');
+  eq(withCurve.forwardPrice, Math.round(curve[curve.length - 1].price * 100) / 100,
+    'the flat number carries on from the end of the curve, not from a settle years behind it');
+
+  // With no curve it falls back to the backtest it opened on before there
+  // was one to price against.
+  const base = defaultScenario(series, []);
   const last = series[series.length - 1];
   eq(addMonths(base.startYear, base.startMonth, base.termMonths - 1), { year: last.year, month: last.month },
-    'the page opens on a term that ends at the last settle');
+    'with no curve the page opens on a term that ends at the last settle');
   eq(buildSavings(base, series).totals.assumedMonths, 0, 'so every month of it is measured, not assumed');
 
-  eq(normalizeScenario(null, series).termMonths, base.termMonths, 'nothing saved yet opens the default');
+  eq(normalizeScenario(null, series, []).termMonths, base.termMonths, 'nothing saved yet opens the default');
   eq(normalizeScenario({ termMonths: 999 }, series).termMonths, 120, 'a term longer than the page holds is clipped');
   eq(normalizeScenario({ termMonths: 0 }, series).termMonths, 1, 'and a term of nothing is a month');
   eq(normalizeScenario({ annualVolumeDth: -5 }, series).annualVolumeDth, 0, 'volume cannot be negative');
@@ -176,7 +194,8 @@ const series = monthlySeries(SHIPPED_SETTLES);
   eq(normalizeScenario({ volumeShape: 'made up' }, series).volumeShape, 'even', 'a shape nobody defined falls back to even');
   eq(normalizeScenario({ layers: [] }, series).layers.length > 0, true, 'a scenario always has a layer to edit');
   eq(normalizeScenario({ startMonth: 13 }, series).startMonth, 12, 'a month past December is December');
-  eq(defaultScenario([]).termMonths, 36, 'and an empty record still opens a scenario rather than nothing');
+  eq(defaultScenario([], []).termMonths, 36, 'and an empty record still opens a scenario rather than nothing');
+  eq(defaultScenario([], curve).termMonths, curve.length, 'a curve with no settles behind it still opens a term');
 }
 
 // ── the saving is a measurement ──────────────────────────────────────────
@@ -269,20 +288,159 @@ const series = monthlySeries(SHIPPED_SETTLES);
 
 // ── the term ladder ──────────────────────────────────────────────────────
 {
-  const base = defaultScenario(series);
+  const base = defaultScenario(series, []);
   const ladder = termLadder(base, series);
   eq(ladder.map(r => r.termMonths), TERM_LADDER, 'the ladder runs the terms it advertises');
-  eq(ladder.find(r => r.termMonths === base.termMonths).saving, buildSavings(base, series).totals.saving,
-    'and its row for the chosen term is the term on the page');
+  eq(ladder.find(r => r.termMonths === 36).saving, buildSavings({ ...base, termMonths: 36 }, series).totals.saving,
+    'and each row is that term priced the same way the page prices it');
   ok(ladder[0].assumedMonths <= ladder[ladder.length - 1].assumedMonths,
     'a longer term runs further past the settles, never less far');
+
+  // The curve reaches the ladder too, so a longer term is not punished for
+  // running into months the curve actually quotes.
+  const onCurve = defaultScenario(series, curve);
+  const withCurve = termLadder(onCurve, series, curve);
+  const withoutCurve = termLadder(onCurve, series, []);
+  eq(withCurve[0].forwardMonths, 12, 'a 12-month term off the curve is twelve quoted months');
+  eq(withoutCurve[0].forwardMonths, 0, 'the same term with no curve loaded has none');
+  ok(withCurve[0].saving !== withoutCurve[0].saving, 'so the curve changes the answer rather than only the label');
+}
+
+// ── the shipped forward curve ────────────────────────────────────────────
+//
+// Typed in from a two-column quote, so the same worry applies as to the
+// settle table: a digit wrong here moves every figure on a forward deal.
+// There is no AVG column to check it against, so the checks are on shape and
+// on the handful of values at the ends and the extremes.
+{
+  eq(SHIPPED_FORWARD.length, 24, 'the shipped curve is two years of quotes');
+  eq(NYMEX_FORWARD.length, SHIPPED_FORWARD.length, 'and normalizing it drops none of them');
+  eq(SHIPPED_FORWARD[0], [2026, 11, 3.043], 'it opens at Nov 2026');
+  eq(SHIPPED_FORWARD[SHIPPED_FORWARD.length - 1], [2028, 10, 3.671], 'and runs to Oct 2028');
+  eq(SHIPPED_FORWARD.every(r => r[1] >= 1 && r[1] <= 12), true, 'every row names a real month');
+  eq(new Set(SHIPPED_FORWARD.map(r => `${r[0]}-${r[1]}`)).size, SHIPPED_FORWARD.length, 'with no month quoted twice');
+
+  // Consecutive, with no gap in the middle: a curve with a hole in it would
+  // silently price that month off the flat assumption.
+  let gaps = 0;
+  for (let i = 1; i < SHIPPED_FORWARD.length; i++) {
+    const want = addMonths(SHIPPED_FORWARD[i - 1][0], SHIPPED_FORWARD[i - 1][1], 1);
+    if (want.year !== SHIPPED_FORWARD[i][0] || want.month !== SHIPPED_FORWARD[i][1]) gaps++;
+  }
+  eq(gaps, 0, 'and the months run consecutively, so nothing inside the strip falls through to the flat assumption');
+
+  const prices = SHIPPED_FORWARD.map(r => r[2]);
+  eq(Math.max(...prices), 4.626, 'the peak of the strip is Jan 2028');
+  eq(Math.min(...prices), 2.731, 'and the trough is Apr 2027');
+  eq(SHIPPED_FORWARD.find(r => r[0] === 2028 && r[1] === 1)[2], 4.626, 'Jan 2028 is quoted at 4.626');
+  eq(SHIPPED_FORWARD.find(r => r[0] === 2027 && r[1] === 4)[2], 2.731, 'Apr 2027 at 2.731');
+  near(prices.reduce((a, b) => a + b, 0) / prices.length, 3.4283, 0.0002, 'and the strip averages 3.428');
+  ok(typeof SHIPPED_FORWARD_ASOF === 'string' && SHIPPED_FORWARD_ASOF.length > 0,
+    'the curve says when it was quoted, because a quote goes stale and a settle does not');
+  eq(SHIPPED_FORWARD_ASOF, NYMEX_FORWARD_ASOF, 'and that date travels with it');
+
+  const cs = forwardSeries(SHIPPED_FORWARD);
+  eq(cs[0].key, '2026-11', 'as a series it keys like the settles do');
+  eq(cs[0].label, 'Nov 2026', 'and labels like them');
+}
+
+// ── reading a curve back in ──────────────────────────────────────────────
+{
+  eq(normalizeForward([[2027, 13, 3]]), [], 'a month that is not a month is dropped');
+  eq(normalizeForward([[2027, 1, 0]]), [], 'and so is a price of nothing');
+  eq(normalizeForward([[2027, 1, -3]]), [], 'or a negative one');
+  eq(normalizeForward('nonsense'), [], 'anything that is not rows reads as an empty curve');
+  eq(normalizeForward([[27, 1, 3]]), [[2027, 1, 3]], 'a two-digit year is this century, the way a curve is quoted');
+  eq(normalizeForward([[2027, 2, 3], [2027, 1, 4]]).map(r => r[1]), [1, 2], 'months come back in order');
+  eq(normalizeForward([[2027, 1, 3], [2027, 1, 9]]), [[2027, 1, 9]], 'a second quote for a month replaces the first');
+}
+
+// ── the curve paste box ──────────────────────────────────────────────────
+{
+  // The shape the curve was actually handed over in.
+  const pasted = parseForwardTable([
+    'Month\tPrice',
+    'Nov  26\t $3.043',
+    'Dec  26\t $3.418',
+    'Jan  27\t $3.787',
+  ].join('\n'));
+  eq(pasted.months, 3, 'three quotes came in');
+  eq(pasted.forward, [[2026, 11, 3.043], [2026, 12, 3.418], [2027, 1, 3.787]], 'with the months and prices they were written with');
+  eq(pasted.skipped, ['Month Price'], 'and the header reported rather than read as data');
+
+  // Every other way a month gets written.
+  eq(parseForwardTable('Nov 2026 3.043').forward, [[2026, 11, 3.043]], 'a four-digit year reads');
+  eq(parseForwardTable('November 2026 3.043').forward, [[2026, 11, 3.043]], 'a spelled-out month reads');
+  eq(parseForwardTable('NOV 26,3.043').forward, [[2026, 11, 3.043]], 'shouting and commas read');
+  eq(parseForwardTable('2027-01\t3.787').forward, [[2027, 1, 3.787]], 'an ISO-ish month reads');
+  eq(parseForwardTable('1/27 3.787').forward, [[2027, 1, 3.787]], 'and so does month-slash-year');
+  eq(parseForwardTable('$1,010.50 is not a month').months, 0, 'a line with no month in it is skipped');
+  eq(parseForwardTable('Nov 26').months, 0, 'and so is a month with no price');
+  eq(parseForwardTable('').months, 0, 'an empty paste is an empty curve, not an error');
+}
+
+// ── settle, then quote, then the flat number ─────────────────────────────
+//
+// The precedence is the whole point of having three sources: a month that
+// settled is not an opinion any more, and a month somebody has quoted is
+// worth more than one flat guess.
+{
+  const settled = monthlySeries(normalizeSettles([[2026, null, null, null, null, null, null, null, null, 5]]));
+  const quoted = forwardSeries(normalizeForward([
+    [2026, 9, 99], // the same month the settle covers - must lose
+    [2026, 11, 7],
+    [2026, 12, 8],
+  ]));
+  const run = buildSavings({
+    startYear: 2026, startMonth: 9, termMonths: 5, annualVolumeDth: 1200,
+    volumeShape: 'even', basis: 0, adder: 0, forwardPrice: 1,
+    layers: [{ pct: 100, price: 4 }],
+  }, settled, quoted);
+
+  eq(run.months.map(m => m.label), ['Sep 2026', 'Oct 2026', 'Nov 2026', 'Dec 2026', 'Jan 2027'], 'five months of term');
+  eq(run.months.map(m => m.source), ['settled', 'assumed', 'forward', 'forward', 'assumed'], 'each priced from the best source it has');
+  eq(run.months[0].index, 5, 'the settle beats the quote for the month they both cover');
+  eq(run.months[1].index, 1, 'the gap between the last settle and the first quote falls to the flat number');
+  eq(run.months[2].index, 7, 'inside the curve the quote is used');
+  eq(run.months[4].index, 1, 'and past the end of it the flat number takes over again');
+
+  eq(run.totals.settledMonths, 1, 'the counts are kept apart');
+  eq(run.totals.forwardMonths, 2, 'one bucket each');
+  eq(run.totals.assumedMonths, 2, 'including the weakest one');
+  eq(run.totals.pricedMonths, 3, 'and only settles and quotes count as priced off the market');
+  eq(run.months.every(m => m.assumed === (m.source !== 'settled')), true,
+    '"assumed" still means "not a settle", which is what the charts shade');
+
+  eq(sourceSummary(run.totals), '1 settled, 2 on the curve, 2 at the flat assumption', 'and it is all spelled out rather than scored');
+  eq(sourceSummary({ settledMonths: 0, forwardMonths: 0, assumedMonths: 0 }), 'no months', 'an empty term says so');
+  eq(sourceSummary({ settledMonths: 3, forwardMonths: 0, assumedMonths: 0 }), '3 settled', 'a bucket with nothing in it is left out');
+
+  // The year rollup splits the same three ways.
+  const y2026 = run.years.find(y => y.year === 2026);
+  eq([y2026.settled, y2026.forward, y2026.assumed], [1, 2, 1], 'and the year rows carry the split too');
+}
+
+// ── a curve changes the answer, not just the labelling ───────────────────
+{
+  const settled = monthlySeries(normalizeSettles([[2026, null, null, null, null, null, null, null, null, 5]]));
+  const shared = {
+    startYear: 2026, startMonth: 10, termMonths: 2, annualVolumeDth: 1200,
+    volumeShape: 'even', basis: 0, adder: 0, forwardPrice: 4,
+    layers: [{ pct: 100, price: 4 }],
+  };
+  const flat = buildSavings(shared, settled, []);
+  const withCurve = buildSavings(shared, settled, forwardSeries(normalizeForward([[2026, 10, 6], [2026, 11, 6]])));
+  eq(flat.totals.saving, 0, 'at the flat number struck at the flat number, the hedge is worth nothing');
+  eq(withCurve.totals.volume, 200, 'two months of a 1,200 Dth year is 200 Dth');
+  eq(withCurve.totals.saving, 400, 'against a curve $2 above the strike that is $400');
+  eq(buildSavings(shared, settled).totals.saving, 0, 'and a caller that passes no curve at all still prices the term');
 }
 
 // ── what gets saved, and what deliberately does not ──────────────────────
 {
   eq(hasSavedSavings({}), false, 'a settings document with nothing in it has nothing saved');
   eq(getSavingsState({}).settles, null, 'and opens on the shipped table');
-  eq(getSavingsState({}).scenario.termMonths, 36, 'with the default scenario');
+  eq(getSavingsState({}).scenario.termMonths, SHIPPED_FORWARD.length, 'with the default scenario, which runs the shipped curve');
 
   // The shipped table is NOT copied into settings. A user who never pasted
   // their own has to keep following the shipped one as it is updated.
@@ -299,6 +457,20 @@ const series = monthlySeries(SHIPPED_SETTLES);
   // table, not the shipped one.
   eq(normalizeSavingsState({ settles: [[2024, 3, 3, 3]] }).scenario.layers[0].price, 3,
     'the opening scenario is struck off the table actually loaded');
+
+  // The curve is stored the same way and for the same reason - more so, in
+  // fact, since a shipped curve is the one table that is expected to be
+  // refreshed under a user who never pasted their own.
+  eq(getSavingsState({}).forward, null, 'a fresh page opens on the shipped curve');
+  eq(normalizeSavingsState({ scenario: { termMonths: 24 } }).forward, null,
+    'saving a scenario does not freeze a copy of the shipped curve under it');
+  const ownCurve = normalizeSavingsState({ forward: [[2030, 1, 5]], forwardAsOf: '2026-09-17' });
+  eq(ownCurve.forward, [[2030, 1, 5]], 'a pasted curve is kept');
+  eq(ownCurve.forwardAsOf, '2026-09-17', 'with the day it came in');
+  eq(ownCurve.settles, null, 'and pasting a curve leaves the settle table alone');
+  eq(normalizeSavingsState({ forward: [] }).forward, null, 'an empty pasted curve falls back to the shipped one');
+  eq(normalizeSavingsState({ forward: 'nope' }).forward, null, 'and so does one that is not a curve');
+  eq(hasSavedSavings({ [SAVINGS_KEY]: { forward: [[2030, 1, 5]] } }), true, 'a saved curve alone counts as saved');
 
   eq(normalizeSavingsState(null).settles, null, 'nothing at all still opens');
   eq(normalizeSavingsState({ settles: 'nope' }).settles, null, 'and so does a settles field that is not a table');
