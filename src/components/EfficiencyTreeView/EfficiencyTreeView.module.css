@@ -767,10 +767,14 @@
 .addHandle,
 .addHandleOn {
   position: absolute;
-  left: 50%;
-  bottom: 0;
+  /* Below and to the right of the box, overlapping its corner just enough to
+     stay attached to it: out of the way of the title, out of the way of the
+     arrow that leaves from the bottom edge, and on a continuous path from
+     the box so the pointer can reach it without the hover dropping. */
+  left: 100%;
+  top: 100%;
   /* The inline style appends a counter-zoom scale to this. */
-  transform: translate(-50%, 50%);
+  transform: translate(-30%, -30%);
   z-index: 3;
   display: flex;
   align-items: center;
@@ -790,8 +794,12 @@
   box-shadow: var(--shadow-sm);
   /* Out of the way until the box is under the pointer: the diagram is read
      far more often than it is drawn, and a canvas of plus signs is a canvas
-     you read past. Kept for keyboard focus, which has no hover. */
+     you read past. Kept for keyboard focus, which has no hover.
+     Deaf to the mouse while it is invisible, or each box would leave an
+     unseeable button hanging over the gap next to it, taking clicks meant
+     for the box or the arrow underneath. */
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.12s, background 0.12s, color 0.12s;
 }
 
@@ -799,6 +807,7 @@
 .addHandle:focus-visible,
 .addHandleOn {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .addHandle:hover,
