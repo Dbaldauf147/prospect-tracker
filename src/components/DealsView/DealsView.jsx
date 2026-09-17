@@ -27,6 +27,7 @@ import {
   indexOppYear1ByBfo, oppYear1ForDeal, planOppYear1Fills,
   DEAL_SETUP_KEY, DEAL_RECURRING_KEY,
 } from '../../utils/dealOppYear1';
+import { indexOppScopeByBfo, oppScopeForDeal, oppScopeText } from '../../utils/dealOppScope';
 import {
   asNumber, asDate, fmtCurrency, fmtPercent, fmtDate, isExpiredDeal,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
@@ -51,6 +52,12 @@ const STATUS_COL_KEY = '__clientStatus__';
 const STATUS_COL_LABEL = 'Client Status';
 const PROGRESS_COL_KEY = '__progress__';
 const PROGRESS_COL_LABEL = 'Progress';
+// The scope the deal was sold on, read off the opp its BFO opportunity
+// name ties it to. Double-underscore key: it is pulled in rather than
+// stored on the deal, so buildColumns leaves it out of the data columns
+// and the Link Columns modal can't bind a dropdown to it.
+const OPP_SCOPE_COL_KEY = '__oppScope__';
+const OPP_SCOPE_COL_LABEL = 'Scope';
 // Per-deal flag (truthy → ignored). Lives on the deal row alongside
 // other cell values so it persists through the same dealsStore path
 // as everything else. Double-underscore prefix keeps it out of the
@@ -944,6 +951,45 @@ function dealYear(row) {
   return d ? String(d.getFullYear()) : '';
 }
 
+// The Scope cell on the Deals grid: the services the deal's opp was sold
+// on, pulled across by BFO opportunity name (see utils/dealOppScope).
+//
+// Read-only. Scope belongs to the opp and is edited on Opps 2 with the
+// services board; an editable copy here would be a second answer to the
+// same question, and the two would drift the first time one was changed.
+function OppScopeCell({ row }) {
+  const entry = row[OPP_SCOPE_COL_KEY];
+  const muted = { color: 'var(--color-text-muted)' };
+  if (!entry) {
+    const bfo = String(row[DEAL_BFO_KEY] ?? '').trim();
+    const why = bfo && bfo !== '-'
+      ? `No opp carries the BFO opportunity name “${bfo}”, so there is no scope to pull in.`
+      : 'This deal has no BFO opportunity name yet, so it is not tied to an opp.';
+    return <span style={muted} title={why}>-</span>;
+  }
+  if (entry.items.length === 0) {
+    return (
+      <span style={muted} title="The opp this deal is tied to has no Scope yet. Set it on Opps 2 and it shows up here.">-</span>
+    );
+  }
+  // Where the list came from, so a pooled scope reads as one: two opps
+  // under the same BFO name are two halves of the same sale, and the
+  // tooltip says so rather than leaving the extra services unexplained.
+  const source = entry.oppCount > 1
+    ? `Pooled from ${entry.oppCount} opps sharing this BFO opportunity name`
+      + `${entry.accounts.length ? ` (${entry.accounts.join(', ')})` : ''}.`
+    : `From the ${entry.accounts[0] || 'matching'} opp.`;
+  const title = `${entry.items.map(it => `• ${it}`).join('\n')}\n\n${source} Edit it on Opps 2.`;
+  return (
+    <span
+      title={title}
+      style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#334155' }}
+    >
+      {oppScopeText(entry)}
+    </span>
+  );
+}
+
 function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
   if (!rows.length) return [];
   const keys = new Set();
@@ -1699,6 +1745,9 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
   // name. Only opps carrying a saved Pricing Option are in here — an opp
   // with no option has nothing to give.
   const oppYear1ByBfo = useMemo(() => indexOppYear1ByBfo(opps2Records), [opps2Records]);
+  // What each BFO opportunity was sold on, keyed the same way: the Scope
+  // items off the opps, pooled when more than one opp shares the name.
+  const oppScopeByBfo = useMemo(() => indexOppScopeByBfo(opps2Records), [opps2Records]);
 
   const rows = useMemo(
     // A row counts as the freshly-added "new" row (and gets autofocused
@@ -1706,21 +1755,32 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     // a Client Name yet. Anchoring this to Client Name rather than the
     // raw key count lets addNewDeal seed defaults like Due Date without
     // disabling the autofocus behavior.
-    () => data.map((r, i) => ({
-      ...r,
-      id: i,
-      __onUpdate: updateCell,
-      __onShowCommissionBreakdown: showCommissionBreakdown,
-      __newRow: i === 0 && !isFilled(r['Client Name']),
-      // Year-1 Setup / Recurring from the opp this deal's BFO name ties it
-      // to, when that opp has a saved Pricing Option. Carried on the row so
-      // a blank cell can show what it would be filled with, and so the
-      // contract-value denominator can count it before anyone imports.
-      __oppYear1__: oppYear1ForDeal(oppYear1ByBfo, r),
-    })),
+    () => data.map((r, i) => {
+      // The opp's Scope, for the Scope column. Looked up once here rather
+      // than in the renderer so the cell, the export and the search all
+      // read the same list.
+      const oppScope = oppScopeForDeal(oppScopeByBfo, r);
+      return {
+        ...r,
+        id: i,
+        __onUpdate: updateCell,
+        __onShowCommissionBreakdown: showCommissionBreakdown,
+        __newRow: i === 0 && !isFilled(r['Client Name']),
+        // Year-1 Setup / Recurring from the opp this deal's BFO name ties it
+        // to, when that opp has a saved Pricing Option. Carried on the row so
+        // a blank cell can show what it would be filled with, and so the
+        // contract-value denominator can count it before anyone imports.
+        __oppYear1__: oppYear1ForDeal(oppYear1ByBfo, r),
+        [OPP_SCOPE_COL_KEY]: oppScope,
+        // The same items as plain text, because the page's search box walks
+        // the row's values and an object there reads as "[object Object]".
+        // With this, searching a service finds the deals sold on it.
+        __oppScopeText__: oppScopeText(oppScope),
+      };
+    }),
     // updateCell is useCallback'd with a stable identity, so listing it
     // here satisfies the exhaustive-deps rule without costing a rebuild.
-    [data, oppYear1ByBfo, updateCell]
+    [data, oppYear1ByBfo, oppScopeByBfo, updateCell]
   );
   // Sold Opps 2 opps that don't line up with any deal here. The link
   // between the two is the BFO opportunity name — "BFO Link" on an opp,
@@ -1937,8 +1997,27 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
         );
       },
     };
+    // The scope the deal was sold on, read off its opp. Sits straight after
+    // the BFO opp name it is looked up by, so the join is visible: the name
+    // in one column, what it brought back in the next. A saved column order
+    // from before this shipped has never seen the key, so there it lands at
+    // the end of the sheet until the user drags it somewhere.
+    const oppScopeCol = {
+      key: OPP_SCOPE_COL_KEY,
+      label: OPP_SCOPE_COL_LABEL,
+      defaultWidth: 240,
+      render: (row) => <OppScopeCell row={row} />,
+      exportValue: (row) => oppScopeText(row[OPP_SCOPE_COL_KEY]),
+      getFilterValue: (row) => oppScopeText(row[OPP_SCOPE_COL_KEY]),
+    };
+    const withOppScope = (cols) => {
+      const at = cols.findIndex(c => c.key === DEAL_BFO_KEY);
+      return at === -1
+        ? [...cols, oppScopeCol]
+        : [...cols.slice(0, at + 1), oppScopeCol, ...cols.slice(at + 1)];
+    };
     if (clientNameSet.size === 0) {
-      return [selectCol, historyCol, progressCol, clientNameCol, ...baseColumns.slice(1)];
+      return withOppScope([selectCol, historyCol, progressCol, clientNameCol, ...baseColumns.slice(1)]);
     }
     const helperCol = {
       key: MAPPED_COL_KEY,
@@ -2018,8 +2097,9 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
         return prospectByName.get(lookupKey)?.status || '';
       },
     };
-    // Order: select · history · progress · client name · mapped-to-client · status · rest.
-    return [selectCol, historyCol, progressCol, clientNameCol, helperCol, statusCol, ...baseColumns.slice(1)];
+    // Order: select · history · progress · client name · mapped-to-client · status · rest,
+    // with the pulled-in Scope slotted in beside the BFO opp name.
+    return withOppScope([selectCol, historyCol, progressCol, clientNameCol, helperCol, statusCol, ...baseColumns.slice(1)]);
   }, [baseColumns, mapTargetOptions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry, selectedIds, cdmName, addProspect, updateCell, deleteDeal]);
   // Stable: keyed on the table, not on its column list. The id used to
   // carry the sorted column keys, so every column the page gained sent the
