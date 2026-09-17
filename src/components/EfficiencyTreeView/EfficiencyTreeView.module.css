@@ -440,6 +440,31 @@
   font-weight: 600;
 }
 
+/* Checked off, and where you have got to. Both ride in the box's meta row
+   with the start / end / services chips, so a box says what it is and where
+   the route stands on it in the same line. */
+.doneChip,
+.hereChip {
+  font-size: 0.6rem;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  white-space: nowrap;
+}
+
+.doneChip {
+  background: var(--color-accent-light);
+  color: var(--color-accent);
+}
+
+.hereChip {
+  background: var(--color-accent);
+  color: #fff;
+  text-transform: uppercase;
+  font-size: 0.55rem;
+  letter-spacing: 0.03em;
+}
+
 .outlineDead {
   display: inline-flex;
   align-items: center;
@@ -734,27 +759,59 @@
   stroke-width: 2.5;
 }
 
-.edgeLabel,
-.edgeLabelBack {
+/* The answers, sitting on the arrows they belong to.
+   These used to be captions - a word printed on an arrow, with
+   pointer-events off. They are buttons now, because answering one is how the
+   diagram is walked: click “Yes” and the route lights up to the step it
+   leads to, click the tick again and the answer comes back off. Same pill,
+   same place; it just does something when you press it. */
+.edgeLabelBtn,
+.edgeLabelBtnBack,
+.edgeLabelPicked {
   position: absolute;
   transform: translate(-50%, -50%);
+  z-index: 2;
   max-width: 9.5rem;
-  padding: 0.05rem 0.3rem;
+  padding: 0.1rem 0.4rem;
   border-radius: 999px;
+  border: 1px solid var(--color-border);
+  font-family: inherit;
   font-size: 0.62rem;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  pointer-events: none;
+  cursor: pointer;
   background: var(--color-bg);
   color: var(--color-text-secondary);
 }
 
-.edgeLabelBack {
+.edgeLabelBtn:hover,
+.edgeLabelBtnBack:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: var(--color-accent-light);
+}
+
+/* A loop back up the flow, dashed like the arrow it labels. */
+.edgeLabelBtnBack {
   color: #6D28D9;
+  border-style: dashed;
   font-style: italic;
+}
+
+/* The answer given. Filled, so the route reads off the diagram from across
+   the room, and ticked, so it reads as a thing that was decided rather than
+   a thing that is merely highlighted. */
+.edgeLabelPicked {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+
+.edgeLabelPicked:hover {
+  opacity: 0.85;
 }
 
 /* The box and the handle that adds what comes after it share one absolutely
