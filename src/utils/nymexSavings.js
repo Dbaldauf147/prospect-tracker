@@ -450,6 +450,26 @@ export function hedgeSummary(layers = []) {
 }
 
 /**
+ * The settle-then-quote-then-flat rule, as a lookup.
+ *
+ * Extracted so that everything on the page pricing a month goes through one
+ * implementation of the precedence. A second copy of it is how a table ends
+ * up quietly disagreeing with the chart above it.
+ */
+export function priceLookup(series, forward = [], flat = 0) {
+  const settled = new Map(series.map(p => [p.key, p.price]));
+  const quoted = new Map((forward || []).map(p => [p.key, p.price]));
+  return (year, month) => {
+    const key = monthKey(year, month);
+    const settle = settled.get(key);
+    if (settle != null) return { price: settle, source: 'settled' };
+    const quote = quoted.get(key);
+    if (quote != null) return { price: quote, source: 'forward' };
+    return { price: flat, source: 'assumed' };
+  };
+}
+
+/**
  * Price the term twice - at index, and at the contract - and hand back a row
  * per month plus the rollups the subtab draws.
  *
@@ -460,8 +480,7 @@ export function hedgeSummary(layers = []) {
  */
 export function buildSavings(scenario, series, forward = []) {
   const s = normalizeScenario(scenario, series);
-  const byKey = new Map(series.map(p => [p.key, p.price]));
-  const forwardByKey = new Map((forward || []).map(p => [p.key, p.price]));
+  const priceOf = priceLookup(series, forward, s.forwardPrice);
   const lastSettled = series.length ? series[series.length - 1] : null;
   const curveStart = forward?.length ? forward[0] : null;
   const curveEnd = forward?.length ? forward[forward.length - 1] : null;
@@ -476,10 +495,7 @@ export function buildSavings(scenario, series, forward = []) {
     const key = monthKey(year, month);
     // Settle, then quote, then the flat number. Never the other way round: a
     // month that settled is not an opinion any more.
-    const settled = byKey.get(key);
-    const quoted = settled == null ? forwardByKey.get(key) : undefined;
-    const source = settled != null ? 'settled' : quoted != null ? 'forward' : 'assumed';
-    const index = settled != null ? settled : quoted != null ? quoted : s.forwardPrice;
+    const { price: index, source } = priceOf(year, month);
     const assumed = source !== 'settled';
     const volume = s.annualVolumeDth * weights[month - 1];
     const commodity = hedgedShare * strike + (1 - hedgedShare) * index;
