@@ -1,0 +1,434 @@
+/* The pasted renewal comparison, at the foot of the Savings subtab. */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.7rem 0.85rem 0.85rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.note {
+  margin-top: 0.15rem;
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+  max-width: 48rem;
+  line-height: 1.5;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.empty {
+  padding: 0.7rem 0.8rem;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  background: var(--color-surface-alt);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  max-width: 48rem;
+  line-height: 1.5;
+}
+
+.pastePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem 0.7rem;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.fieldLabel {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+}
+
+.fieldHint {
+  font-size: 0.65rem;
+  font-weight: 400;
+  color: var(--color-text-muted);
+  max-width: 52rem;
+  line-height: 1.5;
+}
+
+.textarea {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7rem;
+  white-space: pre;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+}
+
+/* ── tiles ───────────────────────────────────────────────────────────── */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.5rem;
+}
+
+.tile {
+  padding: 0.45rem 0.6rem;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+
+.tileLabel {
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+}
+
+.tileValue,
+.tileValueGood,
+.tileValueBad,
+.tileValueMarket,
+.tileValueDeal {
+  margin-top: 0.1rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  color: var(--color-text);
+}
+
+.tileValueGood { color: #0F766E; }
+.tileValueBad { color: #B91C1C; }
+/* The same two hues the chart uses, so the tiles and the bars name the same
+   two things without a legend between them. */
+.tileValueMarket { color: #C2410C; }
+.tileValueDeal { color: #0369A1; }
+
+.tileSub {
+  margin-top: 0.05rem;
+  font-size: 0.66rem;
+  color: var(--color-text-secondary);
+}
+
+/* ── chart ───────────────────────────────────────────────────────────── */
+
+.card {
+  padding: 0.55rem 0.7rem 0.7rem;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.cardHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.cardTitle {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.cardNote {
+  margin-top: 0.15rem;
+  font-size: 0.68rem;
+  color: var(--color-text-secondary);
+  max-width: 46rem;
+}
+
+.chartBox {
+  margin-top: 0.4rem;
+  width: 100%;
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.legendSwatch {
+  width: 0.7rem;
+  height: 0.5rem;
+  border-radius: 2px;
+}
+
+.tip {
+  padding: 0.35rem 0.5rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  font-size: 0.72rem;
+  min-width: 11rem;
+}
+
+.tipHead {
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 0.15rem;
+}
+
+.tipRow,
+.tipTotal {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.tipTotal {
+  margin-top: 0.2rem;
+  padding-top: 0.2rem;
+  border-top: 1px solid var(--color-border);
+  font-weight: 700;
+}
+
+.tipSwatch {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.tipName { color: var(--color-text-secondary); }
+
+.tipValue {
+  margin-left: auto;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.tipNote {
+  margin-top: 0.15rem;
+  font-size: 0.66rem;
+  color: var(--color-text-muted);
+}
+
+/* ── the table ───────────────────────────────────────────────────────── */
+
+.tableWrap {
+  overflow: auto;
+  max-height: 30rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.dataTable {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.71rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.dataTable th,
+.dataTable td {
+  padding: 0.24rem 0.45rem;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.dataTable thead th {
+  position: sticky;
+  background: var(--color-surface-alt);
+  color: var(--color-text-secondary);
+  font-weight: 700;
+  z-index: 1;
+}
+
+.dataTable thead tr:first-child th { top: 0; }
+.dataTable thead tr:last-child th { top: 1.55rem; }
+
+/* The two deals and the change between them, banded so a row of eleven
+   numbers reads as three groups rather than as eleven numbers. */
+.thGroup,
+.thGroupAlt,
+.thGroupNet {
+  text-align: center !important;
+  border-left: 1px solid var(--color-border);
+  font-size: 0.68rem;
+}
+
+.thGroup { color: var(--color-text-muted); }
+.thGroupAlt { color: var(--color-text-muted); }
+.thGroupNet { color: var(--color-text); }
+
+.thSite {
+  text-align: left !important;
+  font-weight: 700;
+  color: var(--color-text);
+  position: sticky;
+  left: 0;
+  background: var(--color-surface);
+  z-index: 1;
+}
+
+.dataTable thead .thSite {
+  background: var(--color-surface-alt);
+  z-index: 2;
+}
+
+.volNote {
+  display: block;
+  font-size: 0.62rem;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.thNum,
+.tdNum {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.tdTerm {
+  display: table-cell;
+}
+
+.termMonths {
+  margin-left: 0.3rem;
+  font-size: 0.64rem;
+  color: var(--color-text-muted);
+}
+
+/* Where a term's months came from. Quiet unless some of them are the flat
+   assumption, which is the one worth catching an eye. */
+.mix {
+  display: block;
+  font-size: 0.62rem;
+  color: var(--color-text-muted);
+}
+
+.mixWarn {
+  display: block;
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: #B45309;
+}
+
+/* A number that came off the sheet rather than out of this page. Marked so
+   nobody has to wonder whose figure they are quoting. */
+.tdGiven {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+  font-style: italic;
+  color: var(--color-text);
+  background: #FFFBEB;
+}
+
+.tdNone {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.tdGood,
+.tdBad,
+.tdMarket,
+.tdDeal {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.tdGood { color: #0F766E; }
+.tdBad { color: #B91C1C; }
+.tdMarket { color: #C2410C; font-weight: 600; }
+.tdDeal { color: #0369A1; font-weight: 600; }
+
+/* ── odds and ends ───────────────────────────────────────────────────── */
+
+.smallBtn {
+  padding: 0.28rem 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--color-text-secondary);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.smallBtn:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+}
+
+.primaryBtn {
+  padding: 0.28rem 0.7rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #fff;
+  background: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.primaryBtn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.muted {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+}
+
+.warn {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #B45309;
+}
+
+.footNote {
+  font-size: 0.67rem;
+  color: var(--color-text-muted);
+  max-width: 62rem;
+  line-height: 1.5;
+}

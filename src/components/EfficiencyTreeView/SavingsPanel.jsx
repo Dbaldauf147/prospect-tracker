@@ -4,6 +4,7 @@ import {
   ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import styles from './SavingsPanel.module.css';
+import { SitePricingPanel } from './SitePricingPanel.jsx';
 import { NYMEX_MONTH_LABELS, NYMEX_UNIT } from '../../data/nymexHistory.js';
 import {
   SAVINGS_KEY, SHIPPED_FORWARD, SHIPPED_FORWARD_ASOF, SHIPPED_SETTLES, TERM_LADDER, VOLUME_SHAPES,
@@ -1176,6 +1177,19 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           </div>
         </div>
       )}
+
+      {/* A whole list of sites, against the one contract above it. Same
+          tables underneath, so the two always agree about what a month
+          costs. */}
+      <SitePricingPanel
+        settings={settings}
+        settingsLoaded={settingsLoaded}
+        updateSettings={updateSettings}
+        series={series}
+        forward={curve}
+        flatPrice={s.forwardPrice}
+        forwardAsOf={forwardAsOf}
+      />
 
       <div className={styles.footNote}>
         Savings are the same volume priced twice: once at the market price for the month, once at what this contract charges after its hedge layers. Basis and the retail adder sit on both legs, so they move the bill and not the saving. Each month takes the best price there is for it, in this order: the settle, then the forward curve, then one flat assumption where neither reaches. Every chart, table and tile says which, because a saving measured against a settle and a saving quoted off a curve are different claims. A curve also goes stale in a way a settle never does, so the date it was quoted at travels with it.
