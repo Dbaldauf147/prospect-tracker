@@ -1,14 +1,15 @@
 // Who, on a campaign's roster, is not to be emailed right now.
 //
-// A campaign's contact list is a fixed roster the user built by hand, and
-// "Add unsent to Draft" queues every one of them who hasn't had the email
-// yet. That is the right default and the wrong one for two people on every
-// list: the contact who asked to be left alone for a fortnight (they're on
-// leave, the deal is with legal, their colleague is handling it) and the
-// contact nobody should mail again at all (they asked not to be, they've
-// left, the address belongs to a competitor). Before this, the only way to
-// keep either out of the next draft was to delete them from the campaign —
-// which loses their send history, their replies and the reason.
+// A campaign's contact list is everybody it has reached plus everybody
+// somebody added ahead of the send, and "Add unsent to Draft" queues every
+// one of them who hasn't had the email yet. That is the right default and
+// the wrong one for two people on every list: the contact who asked to be
+// left alone for a fortnight (they're on leave, the deal is with legal,
+// their colleague is handling it) and the contact nobody should mail again
+// at all (they asked not to be, they've left, the address belongs to a
+// competitor). Before this, the only way to keep either out of the next
+// draft was to delete them from the campaign — which loses their send
+// history, their replies and the reason.
 //
 // So a roster member carries an outreach state:
 //
