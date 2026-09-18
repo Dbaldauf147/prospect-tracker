@@ -8,8 +8,12 @@ import {
   SITE_PRICING_KEY, getSitePricing, normalizeSitePricing, parseSitePricing, priceSitePricing,
 } from '../../utils/sitePricing.js';
 
-// The renewal comparison pasted in from Excel: a row per site, the deal it
-// was on and the deal it moved to.
+// The Site pricing subtab under Sourcing: the renewal comparison pasted in
+// from Excel, a row per site, the deal it was on and the deal it moved to.
+//
+// It shares SavingsPanel's settle table and forward curve - they sit above
+// this on the same subtab, and the props carry them in - so a month costs
+// the same here as it does on Contract savings.
 //
 // The sheet arrives with its NYMEX and Total columns empty, because working
 // those out is the tedious part and nobody had done it. That is exactly what
@@ -133,7 +137,7 @@ export function SitePricingPanel({
   // Adopt a table saved elsewhere: another device, another tab, or the
   // settings document arriving after this panel rendered.
   //
-  // `table` is a dependency here, which the panel above cannot afford but
+  // `table` is a dependency here, which SavingsPanel cannot afford but
   // this one can: the only things that change it are the paste and the
   // clear, and both mark a save owed in the same tick, so the guard is
   // already up before this could run against a snapshot that has not caught
@@ -273,9 +277,9 @@ export function SitePricingPanel({
 
       {!table && !pasteOpen && (
         <div className={styles.empty}>
-          Nothing pasted yet. The comparison above prices one contract in detail; this prices a
-          whole list of sites at once and says, for each, how much of the change was the market and
-          how much was the deal.
+          Nothing pasted yet. Contract savings prices one term in detail; this prices a whole list
+          of sites at once, off the same tables, and says for each how much of the change was the
+          market and how much was the deal.
         </div>
       )}
 

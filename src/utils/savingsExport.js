@@ -1,4 +1,4 @@
-// Take the Savings subtab's month by month table out as a workbook.
+// Take the Contract savings month by month table out as a workbook.
 //
 // The subtab already shows every month of the term, and the page it shows
 // them on is where the numbers stop: the next thing that happens to them is

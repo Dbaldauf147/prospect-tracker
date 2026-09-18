@@ -1,6 +1,6 @@
 // Assertion tests for the pasted renewal comparison - the Excel block on the
-// Savings subtab that carries a row per site, a previous deal and an updated
-// one.
+// Site pricing subtab that carries a row per site, a previous deal and an
+// updated one.
 // Plain Node - no test framework (the project has none). Run:
 //   node scripts/sitePricing.test.mjs
 //

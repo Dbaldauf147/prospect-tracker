@@ -1,5 +1,5 @@
 // Henry Hub NYMEX natural gas settlements, monthly, back to the first
-// contract month in 1990. The Savings subtab on Service Deep Dives opens on
+// contract month in 1990. The Sourcing area on Service Deep Dives opens on
 // this and prices every scenario against it.
 //
 // One row per year: the year, then twelve settles in $/Dth (MMBtu), with
@@ -10,7 +10,7 @@
 //
 // What the table is NOT is a forward curve. Everything here is history; a
 // scenario that runs past the last settle prices those months off the
-// forward assumption the user types in, and the Savings subtab says so.
+// flat assumption the user types in, and both Sourcing subtabs say so.
 //
 // This is the shipped copy. The user can paste their own table over it on
 // the subtab (it saves under their settings, not into this file) and put

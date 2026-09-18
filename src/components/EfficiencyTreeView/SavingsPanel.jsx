@@ -15,9 +15,22 @@ import {
 } from '../../utils/nymexSavings.js';
 import { downloadSavingsMonths } from '../../utils/savingsExport.js';
 
-// The Savings subtab on Service Deep Dives: load the NYMEX record, describe a
+// The Sourcing area on Service Deep Dives: load the NYMEX record, describe a
 // contract and its hedge layers, and see what the hedge is worth over the
 // term.
+//
+// Two subtabs, one component, because they are two readings of one set of
+// numbers rather than two pages. `section` picks which:
+//
+//   contract   one term, priced twice, as tiles, charts and tables
+//   sites      a pasted list of renewals, each priced off the same tables
+//
+// The settle record and the forward curve stay on screen in both, since
+// both readings price off them and the buttons that load them are here.
+// Everything below that is one section or the other. One component rather
+// than two because the tables, the curve date and the flat assumption have
+// to be the same numbers in both - split them and the two subtabs quietly
+// start disagreeing about what a month cost.
 //
 // The page is built around one comparison and shows it four ways, because
 // each way answers a question somebody actually asks in the room:
@@ -209,7 +222,7 @@ function ChartTip({ active, payload, label, format, footer }) {
   );
 }
 
-export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSettings }) {
+export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSettings, section = 'contract' }) {
   const [state, setState] = useState(() => getSavingsState(settings));
   const [status, setStatus] = useState('');
   // The paste box serves both tables. `pasteKind` is null when it is shut,
@@ -618,6 +631,15 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             {pasteKind === 'forward' ? 'Close' : 'Load curve'}
           </button>
           {customForward && <button type="button" className={styles.smallBtn} onClick={resetCurve}>Reset</button>}
+          {/* The third price source, beside the two tables it takes over
+              from rather than down among the contract terms. It is not a
+              term of anybody's deal: it is the number the page falls back
+              on when no table reaches the month, so both subtabs price off
+              it and both need it in reach. */}
+          <NumberField
+            label="Flat assumption" hint="past both tables" width="9.5rem" step="0.01" suffix={NYMEX_UNIT}
+            value={s.forwardPrice} onCommit={v => patchScenario({ forwardPrice: v })}
+          />
           {status && <span className={styles.muted}>{status}</span>}
         </div>
       </div>
@@ -674,7 +696,9 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
         </div>
       )}
 
-      {/* ── the contract ──────────────────────────────────────────────── */}
+      {/* ── one term, priced twice: the Contract savings subtab ───────── */}
+      {section === 'contract' && (
+      <>
       <div className={styles.inputs}>
         <div className={styles.inputGroup}>
           <div className={styles.groupTitle}>Contract</div>
@@ -741,10 +765,6 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             <NumberField
               label="Retail adder" hint="margin, transport, fees" width="9.5rem" step="0.01" suffix={NYMEX_UNIT}
               value={s.adder} onCommit={v => patchScenario({ adder: v })}
-            />
-            <NumberField
-              label="Forward assumption" hint="months with no settle yet" width="11rem" step="0.01" suffix={NYMEX_UNIT}
-              value={s.forwardPrice} onCommit={v => patchScenario({ forwardPrice: v })}
             />
             <div className={styles.fieldNote}>
               Basis and the adder are charged whether the volume is hedged or not, so they move the bill and drop out of the saving.
@@ -1375,9 +1395,18 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
         </div>
       )}
 
-      {/* A whole list of sites, against the one contract above it. Same
-          tables underneath, so the two always agree about what a month
-          costs. */}
+      <div className={styles.footNote}>
+        Savings are the same volume priced twice: once at the market price for the month, once at what this contract charges after its hedge layers. That volume is whatever you gave the month, and the annual number spread over the shape wherever you gave none, which every table says per month. Basis and the retail adder sit on both legs, so they move the bill and not the saving. Each month takes the best price there is for it, in this order: the settle, then the forward curve, then one flat assumption where neither reaches. Every chart, table and tile says which, because a saving measured against a settle and a saving quoted off a curve are different claims. A curve also goes stale in a way a settle never does, so the date it was quoted at travels with it.
+        {!hasSavedSavings(settings) && settingsLoaded && ' Nothing is saved yet, so this is the shipped table and a worked example. The first thing you change saves a copy of your own.'}
+      </div>
+      </>
+      )}
+
+      {/* ── a whole list of renewals: the Site pricing subtab ─────────── */}
+      {/* The same tables underneath as the contract subtab, so the two
+          always agree about what a month cost. */}
+      {section === 'sites' && (
+      <>
       <SitePricingPanel
         settings={settings}
         settingsLoaded={settingsLoaded}
@@ -1389,9 +1418,10 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       />
 
       <div className={styles.footNote}>
-        Savings are the same volume priced twice: once at the market price for the month, once at what this contract charges after its hedge layers. That volume is whatever you gave the month, and the annual number spread over the shape wherever you gave none, which every table says per month. Basis and the retail adder sit on both legs, so they move the bill and not the saving. Each month takes the best price there is for it, in this order: the settle, then the forward curve, then one flat assumption where neither reaches. Every chart, table and tile says which, because a saving measured against a settle and a saving quoted off a curve are different claims. A curve also goes stale in a way a settle never does, so the date it was quoted at travels with it.
-        {!hasSavedSavings(settings) && settingsLoaded && ' Nothing is saved yet, so this is the shipped table and a worked example. The first thing you change saves a copy of your own.'}
+        Every term in the sheet is priced off the tables at the top of this page: the settles wherever they reach, the forward curve past them, and the flat assumption past both. Each row says which mix it used, because a term averaged off settles and a term quoted off a curve are different claims. The split between market and deal is the number the sheet cannot produce on its own, and the two add back up to the net.
       </div>
+      </>
+      )}
     </div>
   );
 }
