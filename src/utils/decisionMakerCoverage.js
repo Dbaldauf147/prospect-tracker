@@ -42,9 +42,40 @@ export function isMappableContact(c) {
   return !isSchneiderContact(c);
 }
 
-/** Is this contact tagged Decision Maker, and still someone to ring? */
+/**
+ * The Decision Maker gate, as a function of which side of the Hide tag
+ * counts.
+ *
+ * `showHidden` inverts that one check the way the roster gates do, so the
+ * DMs page can be turned into a review of the decision makers somebody has
+ * hidden - the list you need to audit precisely because it is the one no
+ * other page shows. Everything else holds either way: a contact who has
+ * LEFT is the opposite of a decision maker who can be rung, and a coworker
+ * was never one.
+ */
+export function makeDecisionMakerGate({ showHidden = false } = {}) {
+  return (c) => {
+    const tags = tagsOf(c);
+    const hidden = tags.includes('hide');
+    if (showHidden ? !hidden : hidden) return false;
+    if (tags.includes('left')) return false;
+    if (isSchneiderContact(c)) return false;
+    return tags.includes('decision maker');
+  };
+}
+
+const VISIBLE_DECISION_MAKER = makeDecisionMakerGate();
+
+/**
+ * Is this contact tagged Decision Maker, and still someone to ring?
+ *
+ * The plain case of the gate above, and the one every caller but the DMs
+ * page's Show Hidden toggle wants. One definition, so the account mapping,
+ * the Key Prospects banner and the DMs page cannot come to different answers
+ * about who counts.
+ */
 export function isDecisionMakerContact(c) {
-  return isMappableContact(c) && tagsOf(c).includes('decision maker');
+  return VISIBLE_DECISION_MAKER(c);
 }
 
 /**
