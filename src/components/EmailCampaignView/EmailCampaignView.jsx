@@ -40,6 +40,7 @@ import {
   findContactRows, lookupSummary, lookupSuggestions, LOOKUP_MIN_CHARS,
 } from '../../utils/campaignContactLookup';
 import { contactName } from '../../utils/contactSuggest';
+import { mergeCampaignContacts, adoptedCount } from '../../utils/campaignRoster';
 
 // The contact table's columns, and how wide each one starts.
 //
@@ -241,8 +242,9 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   // somebody up, so a lookup is never a navigation you have to come back
   // from.
   const [lookupQuery, setLookupQuery] = useState('');
-  // Draft for the "add an email to this campaign" input. Manually-added
-  // addresses are the only way contacts enter a campaign's fixed list.
+  // Draft for the "add an email to this campaign" input. This is how
+  // somebody gets onto a campaign BEFORE the mail goes out; anybody the mail
+  // has already reached is pulled in on their own (campaignRoster.js).
   const [addEmail, setAddEmail] = useState('');
   const [refreshing, setRefreshing] = useState(false); // auto-refresh of an opened saved campaign in flight
   const [refreshingAll, setRefreshingAll] = useState(false); // "Refresh all" sweep in flight
@@ -393,60 +395,15 @@ export function EmailCampaignView({ openSubject, onOpened }) {
 
   const normEmail = (e) => String(e || '').toLowerCase().trim();
 
-  // Layer freshly-fetched HubSpot activity onto a campaign's own roster,
-  // matched by email. The roster is a FIXED, manually-curated list: every
-  // contact in the campaign is one the user put there. Fetched activity for
-  // the campaign's subject line is used ONLY to update the send/reply status
-  // of contacts already in the roster — recipients HubSpot returns that
-  // aren't in the roster are deliberately NOT pulled in. The campaign tracks
-  // the emails the user added, not everyone who happened to receive that
-  // subject line. Contacts the user manually removed (tombstoned in
-  // removedEmails) stay out.
+  // Layer freshly-fetched HubSpot activity onto a campaign's own roster, and
+  // pull in the recipients that aren't on it yet — anybody sent one of the
+  // campaign's subject lines belongs to the campaign whether or not somebody
+  // remembered to add them. Roster rows keep their own fields; contacts the
+  // user manually removed (tombstoned in removedEmails) stay out, which is
+  // what makes "not this one" stick against the pull-in. The rules live in
+  // src/utils/campaignRoster.js, with tests.
   function mergeContacts(savedContacts, fetchedContacts, removedEmails) {
-    const removed = new Set((removedEmails || []).map(normEmail).filter(Boolean));
-    // Index fetched activity by each individual recipient email.
-    const activityByEmail = new Map();
-    for (const fc of (fetchedContacts || [])) {
-      for (const e of String(fc.email || '').split(';').map(normEmail).filter(Boolean)) {
-        if (!activityByEmail.has(e)) activityByEmail.set(e, fc);
-      }
-    }
-    const merged = [];
-    for (const rc of (savedContacts || [])) {
-      const key = normEmail(rc.email);
-      if (key && removed.has(key)) continue; // manually removed — stay gone
-      const act = activityByEmail.get(key);
-      if (act) {
-        // Keep the roster entry's identity + event status; refresh send/reply.
-        merged.push({
-          ...rc,
-          sentDate: act.sentDate,
-          // How many sends this address has had under the campaign's subject
-          // lines, and the last few of them, so the Follow-up column survives
-          // a refresh the same way the reply detail does.
-          sendCount: act.sendCount ?? null,
-          firstSentDate: act.firstSentDate || act.sentDate || null,
-          sendHistory: Array.isArray(act.sendHistory) ? act.sendHistory : [],
-          replied: !!act.replied,
-          replyDate: act.replyDate,
-          repliedBy: act.repliedBy,
-          // Delivery outcome, classified out of the incoming mail the campaign
-          // was already suppressing (api/_lib/autoReply.js). A bounce is an
-          // address to fix; an out-of-office is a date to try again on.
-          bounced: !!act.bounced,
-          bounceDate: act.bounceDate || null,
-          outOfOffice: !!act.outOfOffice,
-          oooDate: act.oooDate || null,
-          oooSubject: act.oooSubject || '',
-          recipientCount: act.recipientCount || 1,
-        });
-      } else {
-        // No matching send for this subject → the contact stays in the fixed
-        // list as "Not Sent". Nothing new is appended from the search.
-        merged.push({ ...rc });
-      }
-    }
-    return merged;
+    return mergeCampaignContacts(savedContacts, fetchedContacts, removedEmails);
   }
 
   // Fold freshly-fetched activity into a saved campaign, preserving its own
@@ -566,9 +523,11 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   //
   // The search flow can only produce a campaign once mail has already gone out
   // for that subject; this is how one gets set up ahead of the send. The new
-  // campaign starts with an empty roster — the same fixed, manually-curated
-  // list every campaign has — is saved straight away, and is opened so contacts
-  // can be added with "Add an email to this campaign…".
+  // campaign starts with an empty roster, is saved straight away, and is
+  // opened so contacts can be added with "Add an email to this campaign…".
+  // Once mail starts going out under its subject lines the recipients are
+  // pulled in by themselves, so the manual list is the head start rather
+  // than the whole campaign.
   async function createCampaign() {
     const nextSubjects = parseSubjectLines(newSubject);
     if (nextSubjects.length === 0) {
@@ -677,9 +636,9 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     setTimeout(() => setNotice(''), 9000);
   }
 
-  // Manually add one or more emails to the campaign's fixed roster. This is
-  // how the user builds the list the campaign tracks — the subject search
-  // never adds contacts on its own (see mergeContacts). Accepts a string of
+  // Manually add one or more emails to the campaign's roster. This is how
+  // somebody gets onto the list ahead of the send — the ones the mail has
+  // already reached arrive on their own (see mergeContacts). Accepts a string of
   // one or more addresses separated by ; , or whitespace. Each new address is
   // appended as a "Not Sent" roster member (deduped against the current
   // roster) and un-tombstoned so a later refresh keeps it. Then the latest
@@ -1398,6 +1357,14 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     [displayResults?.contacts],
   );
 
+  // How many of the roster arrived on their own rather than being typed in.
+  // Worth a number on the stat line: it is the difference between a list
+  // somebody curated and a list that is mostly the send log.
+  const pulledIn = useMemo(
+    () => adoptedCount(displayResults?.contacts),
+    [displayResults?.contacts],
+  );
+
   // Campaign-level roll-up, counted over the contacts actually emailed so
   // the rates line up with the existing Response Rate denominator.
   const trackingStats = useMemo(() => {
@@ -1647,6 +1614,10 @@ export function EmailCampaignView({ openSubject, onOpened }) {
             <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0 }}>
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.email}>{c.email}</span>
               {isDup && <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: '#FDE68A', color: '#92400E', flexShrink: 0 }} title="This contact appears more than once in this campaign">Duplicate</span>}
+              {/* Nobody added this row - the campaign found it. Said quietly,
+                  because it is provenance rather than a problem, and the
+                  answer to "who is this and why are they on my list?". */}
+              {c.autoAdded && <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: 'var(--color-surface-alt)', color: 'var(--color-text-muted)', flexShrink: 0 }} title="Pulled in automatically: HubSpot says this address was sent one of this campaign's subject lines. Remove the row and it stays removed.">Pulled in</span>}
             </div>
             {c.recipientCount > 1 && <div style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>{c.recipientCount} recipients</div>}
           </>
@@ -2170,6 +2141,15 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 <strong style={{ color: '#7C3AED' }}>{displayResults.responseRate}%</strong> response
                 <span style={{ color: 'var(--color-text-muted)' }}> · </span>
                 <strong style={{ color: 'var(--color-text)' }}>{displayResults.totalContacts ?? displayResults.contacts?.length ?? displayResults.totalEmails}</strong> contacts
+                {pulledIn > 0 && (
+                  <>
+                    <span style={{ color: 'var(--color-text-muted)' }}> · </span>
+                    <strong
+                      style={{ color: 'var(--color-text-secondary)' }}
+                      title="Pulled in automatically: HubSpot says they were sent one of this campaign's subject lines. Remove one and it stays removed."
+                    >{pulledIn}</strong> pulled in
+                  </>
+                )}
                 {holdStats.onHold > 0 && (
                   <>
                     <span style={{ color: 'var(--color-text-muted)' }}> · </span>
@@ -2517,18 +2497,20 @@ export function EmailCampaignView({ openSubject, onOpened }) {
             </div>
           )}
 
-          {/* Manually add an email to the campaign's fixed list. The campaign
-              only tracks the emails added here; the subject line is used to
-              look up their send/reply status, never to pull in new addresses.
+          {/* Add an email to the campaign by hand. Anybody the campaign's
+              subject lines have already been sent to is pulled in without
+              this; what it is for is putting somebody on the list BEFORE the
+              mail goes out, so they sit there as "Not Sent" and get queued
+              by "Add unsent to Draft".
 
               Outside "Hide details" on purpose, and it is the one part of the
               roster block that is. Collapsing is for getting past a long
-              contact table to what is below it; this is the only way an
-              address ever enters a campaign, so hiding it with the table left
-              a campaign with nothing sent — one created here, or set up ahead
-              of the send — with no visible way to put anybody in it at all,
-              and the collapse is a saved preference, so it stayed that way
-              across every campaign until somebody thought to expand. */}
+              contact table to what is below it; this is the only way to put
+              an unsent contact in a campaign, so hiding it with the table
+              left a campaign with nothing sent — one created here, or set up
+              ahead of the send — with no visible way to put anybody in it at
+              all, and the collapse is a saved preference, so it stayed that
+              way across every campaign until somebody thought to expand. */}
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
             {/* Type any part of a name, an address or a company and the box
                 offers the HubSpot contacts this browser has cached — the
@@ -2555,7 +2537,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
             <button
               onClick={() => { addContacts(addEmail); setAddEmail(''); }}
               disabled={!addEmail.trim()}
-              title="Add this email to the campaign's fixed list. The subject line is only used to look up whether this address was sent or replied: it never pulls in addresses on its own."
+              title="Add this email to the campaign now, before the mail goes out, so it shows as Not Sent and gets queued for a draft. Anybody already sent one of the campaign's subject lines is pulled in without this."
               style={{
                 padding: '0.4rem 0.85rem', border: '1px solid var(--color-accent)', borderRadius: '6px',
                 background: addEmail.trim() ? 'var(--color-accent)' : 'var(--color-surface)',
