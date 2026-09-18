@@ -21,7 +21,7 @@
 //     and only that. Too eager and every remote keystroke re-ranks the
 //     table under the user; too shy and the row stays stuck.
 import { resolveSortSignal } from '../src/utils/tableSortSignal.js';
-import { remoteChangesCallInOrder } from '../src/utils/oppsCallIn.js';
+import { remoteChangesCallInOrder, sortByCallInAsc } from '../src/utils/oppsCallIn.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -151,6 +151,48 @@ check(
   'ids match across string and number forms',
   remoteChangesCallInOrder([row(7, isoOffset(2))], [row('7', isoOffset(2))]),
   false,
+);
+
+// --- sortByCallInAsc: the order the re-rank writes back --------------------
+// The re-rank also re-orders the records themselves now, not just the table's
+// view of them. The view's order lives in the DataTable's own state, so it
+// died with the component: switching to another Opps subtab and back remounted
+// the table, and the row a user had just re-dated came back at the top of the
+// order the page loaded in. Sorting the array is what makes the new place
+// survive a tab switch - so this is the rule the top row's move rests on.
+const ids = (rows) => sortByCallInAsc(rows).map(r => r._id);
+
+check(
+  'a re-dated row leaves the top',
+  ids([row(1, isoOffset(31)), row(2, isoOffset(-7)), row(3, isoOffset(-4))]),
+  [2, 3, 1],
+);
+check(
+  'most overdue first, furthest out last',
+  ids([row(1, isoOffset(5)), row(2, isoOffset(-30)), row(3, isoOffset(0))]),
+  [2, 3, 1],
+);
+check(
+  'a row with no callback date sinks below the ones that have one',
+  ids([row(1, ''), row(2, isoOffset(9)), row(3, isoOffset(-1))]),
+  [3, 2, 1],
+);
+check(
+  'a Call In cleared by hand sinks too, whatever the Follow Up says',
+  ids([row(1, isoOffset(-9), { 'Call In': '-' }), row(2, isoOffset(4))]),
+  [2, 1],
+);
+check(
+  'rows sharing a Call In keep the order they were in',
+  ids([row(1, isoOffset(2)), row(2, isoOffset(2)), row(3, isoOffset(2))]),
+  [1, 2, 3],
+);
+// Re-ranking an order that is already right must not shuffle it, or every
+// edit would move rows that had no reason to move.
+check(
+  'an order already by Call In comes back unchanged',
+  ids([row(1, isoOffset(-7)), row(2, isoOffset(-4)), row(3, isoOffset(31))]),
+  [1, 2, 3],
 );
 
 console.log(failures === 0 ? '\nAll passed.' : `\n${failures} failure(s).`);

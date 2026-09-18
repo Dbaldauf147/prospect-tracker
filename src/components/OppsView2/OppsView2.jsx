@@ -12910,6 +12910,35 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   const requestCallInSort = useCallback(() => {
     setCallInSortSignal({ key: 'Call In', direction: 'asc', nonce: Date.now() });
   }, []);
+  // The same re-rank, applied to the records themselves rather than only
+  // to the table's view of them. The DataTable's freeze-sort snapshot
+  // lives in that component's own state, so it dies with the component:
+  // switching to New Opps (or any other subtab) and back remounts the
+  // table, and the row came back wherever the records array still had it
+  // - which, for the opp just re-dated, is the top. That is the "stuck on
+  // the top row" this page keeps growing back, one tab switch later.
+  //
+  // Runs from an effect rather than inside requestCallInSort so it sees
+  // the edit that asked for it: some callers (undo) queue their write
+  // after firing the signal, and an effect lands after every one of them
+  // has committed. Ordering the array by the same rule the load-time sort
+  // uses means a reload, a remount and the live table all agree.
+  useEffect(() => {
+    if (callInSortSignal?.nonce == null) return;
+    setData(prev => {
+      const records = prev?.records || [];
+      const sorted = sortRecordsByCallInAsc(records);
+      // Nothing moved: keep the old array so no downstream memo
+      // recomputes and no save fires for an order that didn't change.
+      let same = sorted.length === records.length;
+      if (same) {
+        for (let i = 0; i < sorted.length; i += 1) {
+          if (sorted[i] !== records[i]) { same = false; break; }
+        }
+      }
+      return same ? prev : { ...prev, records: sorted };
+    });
+  }, [callInSortSignal?.nonce]);
   // _id of the opp whose info popup is open, or null when no popup
   // is showing. Resolved against the live records list on render so
   // the popup always reflects the latest cell edits.
