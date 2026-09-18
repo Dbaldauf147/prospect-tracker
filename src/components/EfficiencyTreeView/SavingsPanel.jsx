@@ -9,7 +9,8 @@ import { NYMEX_MONTH_LABELS, NYMEX_UNIT } from '../../data/nymexHistory.js';
 import {
   SAVINGS_KEY, SHIPPED_FORWARD, SHIPPED_FORWARD_ASOF, SHIPPED_SETTLES, TERM_LADDER, VOLUME_SHAPES,
   buildSavings, forwardSeries, getSavingsState, hasSavedSavings, monthlySeries, normalizeSavingsState,
-  parseForwardTable, parseNymexTable, percentileRank, priceStats, sourceSummary, termLadder, yearRows,
+  parseForwardTable, parseMonthlyVolumes, parseNymexTable, percentileRank, priceStats, sourceSummary,
+  termLadder, volumeSummary, yearRows,
   addMonths, monthKey,
 } from '../../utils/nymexSavings.js';
 import { downloadSavingsMonths } from '../../utils/savingsExport.js';
@@ -107,6 +108,37 @@ function NumberField({ label, hint, value, step = 'any', min, max, suffix, onCom
   );
 }
 
+// One month's consumption. Same draft-on-blur rule as NumberField, for the
+// same reason, with one addition: an EMPTY box is a month the user has not
+// given a volume for, and it prices off the annual number and the shape
+// instead. So the placeholder is that shaped volume - the box shows what it
+// would use, and typing over it is what asserts something.
+function VolumeCell({ month, value, shaped, onCommit }) {
+  const [draft, setDraft] = useState(null);
+  const shown = draft ?? (value == null ? '' : String(value));
+  const commit = () => {
+    if (draft !== null) onCommit(draft.trim() === '' ? null : draft);
+    setDraft(null);
+  };
+  return (
+    <label className={styles.volumeCell}>
+      <span className={value == null ? styles.volumeMonthShaped : styles.volumeMonth}>{month}</span>
+      <input
+        className={styles.inputSmall}
+        type="number"
+        step="1"
+        min="0"
+        inputMode="decimal"
+        value={shown}
+        placeholder={shaped == null ? '' : Math.round(shaped).toLocaleString('en-US')}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+      />
+    </label>
+  );
+}
+
 function Tile({ label, value, sub, tone = 'plain', title }) {
   return (
     <div className={styles.tile} title={title}>
@@ -188,6 +220,13 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   const [pasteError, setPasteError] = useState('');
   const [showHistory, setShowHistory] = useState(false);
   const [showMonths, setShowMonths] = useState(false);
+  // The consumption block: whether the month boxes are open, and the paste
+  // box that fills them. It gets a box of its own rather than sharing the one
+  // above: that one is aimed at whichever PRICE table it was opened for, and
+  // volumes are neither of them.
+  const [showVolumes, setShowVolumes] = useState(false);
+  const [volumePaste, setVolumePaste] = useState(null);
+  const [volumeError, setVolumeError] = useState('');
 
   // Same shape as the tree above it: local state is the truth while a save is
   // owed, so a snapshot echoing back from Firestore mid-edit cannot eat what
@@ -273,6 +312,15 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   const history = useMemo(() => yearRows(settles), [settles]);
   const s = run.scenario;
   const strikeRank = run.hedge.price == null ? null : percentileRank(series, run.hedge.price);
+
+  // What a month WOULD price at off the annual number and the shape. The
+  // month boxes show it as their placeholder, so an empty box says what it
+  // falls back to rather than looking like a zero.
+  const shapedVolume = (month) => s.annualVolumeDth * VOLUME_SHAPES[s.volumeShape].weights[month - 1];
+  const enteredVolumes = run.totals.enteredVolumeMonths;
+  // Values sitting past the end of the term: kept rather than trimmed, so
+  // shortening a term and lengthening it again does not lose what was typed.
+  const volumesPastTerm = Math.max(0, (s.monthlyVolumes || []).length - s.termMonths);
 
   const termStart = { year: s.startYear, month: s.startMonth };
   const termEnd = addMonths(s.startYear, s.startMonth, s.termMonths - 1);
@@ -439,6 +487,42 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   function removeLayer(i) {
     if (s.layers.length <= 1) { setStatus('A contract needs a layer. Set it to 0% to price the term at index.'); return; }
     patchScenario({ layers: s.layers.filter((_, j) => j !== i) });
+  }
+
+  // One month's volume. The list is indexed by month of the term, so a month
+  // being cleared leaves a hole rather than closing up - closing it up would
+  // slide every later month one earlier.
+  function setMonthVolume(i, raw) {
+    const next = [...(s.monthlyVolumes || [])];
+    while (next.length <= i) next.push(null);
+    next[i] = raw == null ? null : raw;
+    patchScenario({ monthlyVolumes: next });
+  }
+
+  function loadVolumes() {
+    const parsed = parseMonthlyVolumes(volumePaste);
+    if (!parsed.count) {
+      setVolumeError('No volumes read. One value per month of the term, a line each or a row across, and a label in front of each is fine.');
+      return;
+    }
+    patchScenario({ monthlyVolumes: parsed.volumes });
+    setVolumePaste(null);
+    setVolumeError('');
+    setShowVolumes(true);
+    const over = parsed.volumes.length - s.termMonths;
+    setStatus([
+      `Loaded ${parsed.count} monthly volume${parsed.count === 1 ? '' : 's'}`,
+      parsed.blanks ? `, leaving ${parsed.blanks} month${parsed.blanks === 1 ? '' : 's'} on the shape` : '',
+      skippedNote(parsed.skipped),
+      over > 0 ? `. ${over} more than the term runs, so ${over === 1 ? 'it sits' : 'they sit'} unused until you lengthen it.` : '.',
+    ].join(''));
+  }
+
+  function clearVolumes() {
+    if (!window.confirm('Clear the monthly volumes? Every month goes back to the annual volume spread over the shape.')) return;
+    patchScenario({ monthlyVolumes: [] });
+    setShowVolumes(false);
+    setStatus('Monthly volumes cleared. Every month is back on the annual volume and the shape.');
   }
 
   async function copySummary() {
@@ -665,6 +749,84 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             <div className={styles.fieldNote}>
               Basis and the adder are charged whether the volume is hedged or not, so they move the bill and drop out of the saving.
             </div>
+          </div>
+
+          {/* ── the volumes themselves ──────────────────────────────────
+              The annual number and the shape are an estimate of what burns
+              when. Real consumption, month by month, is the thing itself, so
+              it wins wherever it is given and the page says which months
+              have it. */}
+          <div className={styles.volumeBlock}>
+            <div className={styles.volumeHead}>
+              <span className={styles.groupTitle}>
+                Monthly consumption
+                <span className={styles.groupHint}>
+                  {enteredVolumes
+                    ? `${enteredVolumes} of ${s.termMonths} month${s.termMonths === 1 ? '' : 's'} burn a volume you gave. ${volumeSummary(run.totals)}, ${vol(run.totals.volume)} Dth over the term.`
+                    : `Every month prices off the annual volume spread over the ${VOLUME_SHAPES[s.volumeShape].label.toLowerCase()} shape. Give a month its own volume and it uses that instead.`}
+                </span>
+              </span>
+              <div className={styles.volumeActions}>
+                <button
+                  type="button"
+                  className={styles.smallBtn}
+                  onClick={() => { setVolumePaste(prev => (prev == null ? '' : null)); setVolumeError(''); }}
+                >{volumePaste == null ? 'Paste volumes' : 'Close'}</button>
+                <button type="button" className={styles.smallBtn} onClick={() => setShowVolumes(v => !v)}>
+                  {showVolumes ? 'Hide the months' : enteredVolumes ? 'Edit the months' : 'Enter them by month'}
+                </button>
+                {enteredVolumes > 0 && (
+                  <button type="button" className={styles.smallBtn} onClick={clearVolumes}>Clear</button>
+                )}
+              </div>
+            </div>
+
+            {volumePaste != null && (
+              <div className={styles.pastePanel}>
+                <div className={styles.fieldLabel}>
+                  Paste the term's volumes
+                  <span className={styles.fieldHint}>
+                    One value per month of the term, in the order it runs, starting at {run.months[0]?.label || 'the first month'}. A
+                    line each or one row copied across both work, a label in front of each number is ignored ("Jan 2027 3,100"), and so is
+                    a unit after it. A blank leaves that month on the shape rather than reading it as a zero. This replaces the whole list.
+                  </span>
+                </div>
+                <textarea
+                  className={styles.textarea}
+                  rows={6}
+                  value={volumePaste}
+                  placeholder={`Month\tDth\n${run.months.slice(0, 3).map((m, i) => `${m.label}\t${[3100, 2780, 2240][i].toLocaleString('en-US')}`).join('\n')}`}
+                  onChange={e => { setVolumePaste(e.target.value); setVolumeError(''); }}
+                />
+                {volumeError && <div className={styles.warn}>{volumeError}</div>}
+                <div className={styles.rowActions}>
+                  <button type="button" className={styles.primaryBtn} onClick={loadVolumes} disabled={!volumePaste.trim()}>Load them</button>
+                  <button type="button" className={styles.smallBtn} onClick={() => { setVolumePaste(null); setVolumeError(''); }}>Cancel</button>
+                </div>
+              </div>
+            )}
+
+            {showVolumes && (
+              <>
+                <div className={styles.volumeGrid}>
+                  {run.months.map((m, i) => (
+                    <VolumeCell
+                      key={m.key}
+                      month={m.short}
+                      value={(s.monthlyVolumes || [])[i] ?? null}
+                      shaped={shapedVolume(m.month)}
+                      onCommit={raw => setMonthVolume(i, raw)}
+                    />
+                  ))}
+                </div>
+                <div className={styles.fieldNote}>
+                  A box left empty prices off the annual volume and the shape, which is the number shown greyed in it. The list is tied to
+                  the term rather than to the calendar, so month one is always the month the term opens: re-dating the term moves these
+                  volumes with it.
+                  {volumesPastTerm > 0 && ` ${volumesPastTerm} more volume${volumesPastTerm === 1 ? '' : 's'} than the term runs ${volumesPastTerm === 1 ? 'is' : 'are'} held past its end, unused until the term is lengthened.`}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -1192,7 +1354,15 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                     <td className={styles.tdNum}>{price(m.index)}</td>
                     <td className={styles.tdNum}>{price(m.indexAllIn)}</td>
                     <td className={styles.tdNum}>{price(m.contractAllIn)}</td>
-                    <td className={styles.tdNum}>{vol(m.volume)}</td>
+                    <td className={styles.tdNum}>
+                      {vol(m.volume)}
+                      {/* Only where the term MIXES the two. With nothing
+                          entered every row would carry the same flag, which
+                          says less than the one line above the table does. */}
+                      {enteredVolumes > 0 && m.volumeSource === 'shape' && (
+                        <span className={styles.shapeFlag} title="No volume given for this month, so it prices off the annual volume spread over the shape">shape</span>
+                      )}
+                    </td>
                     <td className={styles.tdNum}>{usd(m.indexCost)}</td>
                     <td className={styles.tdNum}>{usd(m.contractCost)}</td>
                     <td className={m.saving >= 0 ? styles.tdGood : styles.tdBad}>{usd(m.saving)}</td>
@@ -1219,7 +1389,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       />
 
       <div className={styles.footNote}>
-        Savings are the same volume priced twice: once at the market price for the month, once at what this contract charges after its hedge layers. Basis and the retail adder sit on both legs, so they move the bill and not the saving. Each month takes the best price there is for it, in this order: the settle, then the forward curve, then one flat assumption where neither reaches. Every chart, table and tile says which, because a saving measured against a settle and a saving quoted off a curve are different claims. A curve also goes stale in a way a settle never does, so the date it was quoted at travels with it.
+        Savings are the same volume priced twice: once at the market price for the month, once at what this contract charges after its hedge layers. That volume is whatever you gave the month, and the annual number spread over the shape wherever you gave none, which every table says per month. Basis and the retail adder sit on both legs, so they move the bill and not the saving. Each month takes the best price there is for it, in this order: the settle, then the forward curve, then one flat assumption where neither reaches. Every chart, table and tile says which, because a saving measured against a settle and a saving quoted off a curve are different claims. A curve also goes stale in a way a settle never does, so the date it was quoted at travels with it.
         {!hasSavedSavings(settings) && settingsLoaded && ' Nothing is saved yet, so this is the shipped table and a worked example. The first thing you change saves a copy of your own.'}
       </div>
     </div>
