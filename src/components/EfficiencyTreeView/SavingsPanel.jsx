@@ -93,12 +93,12 @@ const ordinal = (n) => {
 // so the box follows the scenario without an effect syncing the two, and
 // dropping the draft on blur is what puts the CLEANED value on screen (a
 // term of "999" comes back as the 120 the scenario clamped it to).
-function NumberField({ label, hint, value, step = 'any', min, max, suffix, onCommit, width }) {
+function NumberField({ label, hint, title, value, step = 'any', min, max, suffix, onCommit, width }) {
   const [draft, setDraft] = useState(null);
   const shown = draft ?? String(value ?? '');
   const commit = () => { if (draft !== null) onCommit(draft); setDraft(null); };
   return (
-    <label className={styles.field} style={width ? { width } : undefined}>
+    <label className={styles.field} title={title} style={width ? { width } : undefined}>
       <span className={styles.fieldLabel}>
         {label}
         {hint && <span className={styles.fieldHint}>{hint}</span>}
@@ -588,9 +588,13 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       <div className={styles.bar}>
         <div className={styles.barMain}>
           <span className={styles.barTitle}>Settles</span>
-          <span className={styles.barFacts}>
+          <span
+            className={styles.barFacts}
+            title={stats
+              ? `${stats.count.toLocaleString('en-US')} settled months, ${series[0].label} to ${series[series.length - 1].label}. Low ${price(stats.min)}, median ${price(stats.median)}, high ${price(stats.max)}.`
+              : undefined}>
             {stats
-              ? `${stats.count.toLocaleString('en-US')} months, ${series[0].label} to ${series[series.length - 1].label} · low ${price(stats.min)} · median ${price(stats.median)} · high ${price(stats.max)}`
+              ? `${stats.count.toLocaleString('en-US')} mo, ${series[0].label} – ${series[series.length - 1].label} · ${price(stats.min)} / ${price(stats.median)} / ${price(stats.max)}`
               : 'No settles loaded.'}
           </span>
           <span className={custom ? styles.pillCustom : styles.pillShipped}>
@@ -598,12 +602,12 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           </span>
         </div>
         <div className={styles.barActions}>
-          <button type="button" className={styles.smallBtn} onClick={() => openPaste('settles')}>
-            {pasteKind === 'settles' ? 'Close' : 'Load settles'}
+          <button type="button" className={styles.smallBtn} title="Paste a settle table" onClick={() => openPaste('settles')}>
+            {pasteKind === 'settles' ? 'Close' : 'Load'}
           </button>
-          {custom && <button type="button" className={styles.smallBtn} onClick={resetTable}>Reset</button>}
-          <button type="button" className={styles.smallBtn} onClick={() => setShowHistory(v => !v)}>
-            {showHistory ? 'Hide the table' : 'Show the table'}
+          {custom && <button type="button" className={styles.smallBtn} title="Go back to the shipped settles" onClick={resetTable}>Reset</button>}
+          <button type="button" className={styles.smallBtn} title="The settle table, year by year" onClick={() => setShowHistory(v => !v)}>
+            {showHistory ? 'Hide' : 'Table'}
           </button>
         </div>
       </div>
@@ -614,30 +618,35 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       <div className={styles.bar}>
         <div className={styles.barMain}>
           <span className={styles.barTitle}>Forward curve</span>
-          <span className={styles.barFacts}>
+          <span
+            className={styles.barFacts}
+            title={curve.length
+              ? `${curve.length} quoted month${curve.length === 1 ? '' : 's'}, ${curve[0].label} to ${curve[curve.length - 1].label}. Low ${price(curveStats.min)}, average ${price(curveStats.mean)}, high ${price(curveStats.max)}.`
+              : 'Every month past the last settle prices at the flat assumption until a curve is loaded.'}>
             {curve.length
-              ? `${curve.length} month${curve.length === 1 ? '' : 's'}, ${curve[0].label} to ${curve[curve.length - 1].label} · low ${price(curveStats.min)} · avg ${price(curveStats.mean)} · high ${price(curveStats.max)}`
-              : 'No curve loaded, so every month past the last settle prices at the flat assumption.'}
+              ? `${curve.length} mo, ${curve[0].label} – ${curve[curve.length - 1].label} · ${price(curveStats.min)} / ${price(curveStats.mean)} / ${price(curveStats.max)}`
+              : 'No curve loaded.'}
           </span>
           <span className={customForward ? styles.pillCustom : styles.pillShipped}>{forwardAsOf}</span>
           {gapMonths > 0 && (
             <span className={styles.pillGap} title="Neither table covers these months, so they price at the flat assumption. Paste a curve that starts earlier to close the gap.">
-              {gapMonths} month{gapMonths === 1 ? '' : 's'} uncovered
+              {gapMonths} mo uncovered
             </span>
           )}
         </div>
         <div className={styles.barActions}>
-          <button type="button" className={styles.smallBtn} onClick={() => openPaste('forward')}>
-            {pasteKind === 'forward' ? 'Close' : 'Load curve'}
+          <button type="button" className={styles.smallBtn} title="Paste a forward curve" onClick={() => openPaste('forward')}>
+            {pasteKind === 'forward' ? 'Close' : 'Load'}
           </button>
-          {customForward && <button type="button" className={styles.smallBtn} onClick={resetCurve}>Reset</button>}
+          {customForward && <button type="button" className={styles.smallBtn} title="Go back to the shipped curve" onClick={resetCurve}>Reset</button>}
           {/* The third price source, beside the two tables it takes over
               from rather than down among the contract terms. It is not a
               term of anybody's deal: it is the number the page falls back
               on when no table reaches the month, so both subtabs price off
               it and both need it in reach. */}
           <NumberField
-            label="Flat assumption" hint="past both tables" width="9.5rem" step="0.01" suffix={NYMEX_UNIT}
+            label="Flat" title="The price a month falls back on when neither table reaches it"
+            width="9.5rem" step="0.01" suffix={NYMEX_UNIT}
             value={s.forwardPrice} onCommit={v => patchScenario({ forwardPrice: v })}
           />
           {status && <span className={styles.muted}>{status}</span>}
