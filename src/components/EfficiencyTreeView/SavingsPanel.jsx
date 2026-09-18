@@ -12,6 +12,7 @@ import {
   parseForwardTable, parseNymexTable, percentileRank, priceStats, sourceSummary, termLadder, yearRows,
   addMonths, monthKey,
 } from '../../utils/nymexSavings.js';
+import { downloadSavingsMonths } from '../../utils/savingsExport.js';
 
 // The Savings subtab on Service Deep Dives: load the NYMEX record, describe a
 // contract and its hedge layers, and see what the hedge is worth over the
@@ -464,6 +465,24 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
     }
   }
 
+  // The month by month table as a workbook, with the scenario on a second
+  // sheet so the savings arrive with the assumptions that produced them.
+  // The file is built in utils/savingsExport.js, which is where the shape of
+  // it is pinned by a test.
+  async function exportMonths() {
+    if (!run.months.length) { setStatus('No months in the term to export.'); return; }
+    try {
+      const n = await downloadSavingsMonths(run, {
+        forwardAsOf,
+        customSettles: custom,
+        customForward,
+      });
+      setStatus(`Exported ${n} month${n === 1 ? '' : 's'}.`);
+    } catch {
+      setStatus('The export failed. Copy the summary instead, or reload and try again.');
+    }
+  }
+
   const savingTone = run.totals.saving >= 0 ? 'good' : 'bad';
 
   return (
@@ -776,6 +795,14 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
         <button type="button" className={styles.smallBtn} onClick={() => setShowMonths(v => !v)}>
           {showMonths ? 'Hide the month by month' : 'Show the month by month'}
         </button>
+        {/* Next to the toggle rather than inside the table, so it is there
+            whether or not the months are open. */}
+        <button
+          type="button"
+          className={styles.smallBtn}
+          onClick={exportMonths}
+          title="Every month of the term as a spreadsheet: index and contract all-in, the volume, what each leg costs and the saving running, with the scenario on a second sheet."
+        >Export the months to Excel</button>
         {(run.totals.forwardMonths > 0 || run.totals.assumedMonths > 0) && (
           <span className={styles.muted}>
             The settles run out at {run.lastSettled?.label || 'the end of the table'}.
