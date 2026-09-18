@@ -1,4 +1,4 @@
-import { doc, getDoc, setDoc, updateDoc, deleteField, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, deleteField, onSnapshot, FieldPath } from 'firebase/firestore';
 import { db } from '../firebase';
 import { restGetDoc, restUpdateFields, dottedFieldEntries, keyFieldEntries } from './firestoreRest.js';
 import { isClientWedgedError, isClientWedged, noteClientWedged } from './firestoreClientHealth.js';
@@ -168,9 +168,51 @@ export async function saveUserSettings(userId, updates, opts = {}) {
   const { viaRest } = await writeSettingsFields(
     userId,
     keyFieldEntries(written),
-    () => setDoc(ref, written, { merge: true }),
+    () => writeWholeKeys(ref, written),
   );
   return { stale: false, writtenAt, viaRest };
+}
+
+// Write whole settings keys, each one REPLACING what the document holds
+// under it.
+//
+// This used to be setDoc(merge: true), and merge does not mean what a
+// caller here means by it: Firestore folds a map field in KEY BY KEY, so a
+// write of { ccMap: {…} } that leaves out the address somebody just removed
+// leaves that address sitting on the server. Every "clear this" in the app
+// is shaped that way - drop the entry from a copy of the map, save the map -
+// so none of them ever landed. The value came back on the next load, which
+// is what "I removed it and it's back the next day" was.
+//
+// updateDoc against a top-level field replaces that field's whole value,
+// which is what the callers mean and what the HTTPS fallback's update mask
+// has always done, so the two paths now agree rather than quietly differing
+// on whether a removal counts.
+//
+// FieldPath rather than a plain string: a settings key is free to contain a
+// dot, and updateDoc reads a dotted string as a path into a nested map.
+async function writeWholeKeys(ref, written) {
+  const args = [];
+  for (const [key, value] of Object.entries(written)) {
+    if (value === undefined) continue;
+    // null is how a caller spells "drop this key", the same thing it means
+    // to the REST fallback (in the mask, absent from the body).
+    args.push(new FieldPath(key), value === null ? deleteField() : value);
+  }
+  if (!args.length) return;
+  try {
+    await updateDoc(ref, ...args);
+  } catch (err) {
+    // updateDoc refuses a document that doesn't exist, which is exactly a
+    // user's first save. Nothing is there to replace, so a plain write is
+    // the same thing.
+    if (err?.code !== 'not-found') throw err;
+    const seed = {};
+    for (const [key, value] of Object.entries(written)) {
+      if (value != null) seed[key] = value;
+    }
+    await setDoc(ref, seed, { merge: true });
+  }
 }
 
 // The remote settings document with the site lists a write touches folded
