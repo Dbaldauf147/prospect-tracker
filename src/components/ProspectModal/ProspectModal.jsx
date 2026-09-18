@@ -3,6 +3,7 @@ import { apiFetch } from '../../utils/apiFetch';
 import { hasMetInPersonTag, metInPersonState, normalizeMetState, MET_STATE_OPTIONS, MET_YES, MET_ASKED, MET_HOLD } from '../../utils/metInPerson';
 import { contactDisplayName } from '../../utils/contactRosters';
 import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagVocabulary, saveTagReview, mergeTagEdit, tagListSignature, isStaleTagEcho, TAG_ECHO_WINDOW_MS } from '../../utils/contactTagReview';
+import { contactEditPropsEqual, contactTagString } from '../../utils/contactEditProps';
 import { createTagWriter } from '../../utils/tagWriteQueue';
 
 // Header cells for the tag table's two column groups (Answer / Status) and
@@ -845,14 +846,6 @@ function findPortfolioProspect(row, byName) {
 // fallback) now lives in ../../data/cities so the All Contacts table
 // can share the exact same auto-fill behavior as this modal.
 
-// The tag list off a contact record, whichever of the three spellings the
-// record happens to carry. Module scope because the component seeds its tag
-// state from it and the memo comparator below decides whether a changed one
-// is worth a re-render - and those two reading it differently is how a saved
-// tag never reaches the popup that saved it.
-function contactTagString(c) {
-  return (c && (c.dans_tags || c.dan_s_tags || c.dans_tag)) || '';
-}
 
 export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactSentiment = {}, onSaveSentiment, contactTagReview = {}, onSaveTagReview, events = [], onToggleContactEvent, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null }) {
   const rawTags = contactTagString(contact);
@@ -2924,31 +2917,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       </div>
     </div>
   );
-}, (prev, next) => {
-  const prevId = prev.contact.id || prev.contact.vid;
-  const nextId = next.contact.id || next.contact.vid;
-  const domainsEqual = (prev.emailDomains || []).join('|') === (next.emailDomains || []).join('|');
-  // Compare the reportsTo array for this specific contact so changes rerender the picker.
-  const prevMgrs = JSON.stringify((prev.contactReportsTo || {})[prevId] || []);
-  const nextMgrs = JSON.stringify((next.contactReportsTo || {})[nextId] || []);
-  const allContactsEqual = (prev.allContacts || []).length === (next.allContacts || []).length;
-  const companyContactsEqual = (prev.companyContacts || []).length === (next.companyContacts || []).length
-    && (prev.companyContacts || []).every((c, i) => (c.id || c.vid) === ((next.companyContacts || [])[i]?.id || (next.companyContacts || [])[i]?.vid));
-  // Re-render when this contact's event membership (or any event's
-  // id/name) changes, so the Events chips reflect toggles immediately.
-  const eventSig = (events, id) => JSON.stringify((events || []).map(e => [
-    e.id, e.name, (e.attendees || []).some(a => a.contactId && String(a.contactId) === String(id)),
-  ]));
-  const eventsEqual = eventSig(prev.events, prevId) === eventSig(next.events, nextId);
-  // The popup seeds its tag state from this prop and re-seeds when it
-  // changes, so a save coming back with a new tag list has to get through.
-  // Nothing else here looks at the contact's contents - the id alone is what
-  // the rule turns on - so without this a refreshed list could never reach
-  // the popup, and the only thing that ever re-rendered it was an unrelated
-  // prop changing identity, with the stale list still in hand.
-  const tagsEqual = contactTagString(prev.contact) === contactTagString(next.contact);
-  return prevId === nextId && tagsEqual && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && prev.onSaveOldCompany === next.onSaveOldCompany && prev.onSaveNickname === next.onSaveNickname && prev.onSaveReportsTo === next.onSaveReportsTo && prev.onOpenCompany === next.onOpenCompany && prevMgrs === nextMgrs && companyContactsEqual && allContactsEqual && domainsEqual && eventsEqual;
-});
+}, contactEditPropsEqual);
 
 function SearchableSelect({ options, value, onChange, placeholder = 'Select…', allowCustom = true }) {
   const [open, setOpen] = useState(false);
@@ -4554,6 +4523,14 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
 
 export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null, cdmName = '', initialEditContact = null, onSelectProspect = null }) {
   const { isAdmin, user } = useAuth();
+  // The settings as they are NOW, for the handlers that rewrite a whole
+  // settings map. The contact popup is memoised, so a callback it was handed
+  // can outlive the render that built it - and a callback like that,
+  // reaching for `settings` in its closure, would copy a map from before
+  // whatever has been saved since and write the copy back, undoing it. A ref
+  // cannot go stale; `settings` in the closure can.
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   const [fields, setFields] = useState(() => {
     if (prospect) return { ...EMPTY, ...prospect };
     return { ...EMPTY };
@@ -12110,7 +12087,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             // settings.contactLocalFields, the same map App.jsx reads to
             // make _companyOverride win over the HubSpot-synced company text
             // everywhere the contact is shown.
-            const next = withCompanyOverride(settings.contactLocalFields, contactId, value);
+            const next = withCompanyOverride(settingsRef.current.contactLocalFields, contactId, value);
             if (next) updateSettings({ contactLocalFields: next });
           }}
           contactNicknames={settings.contactNicknames || {}}
@@ -12123,9 +12100,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSaveCcMap={m => updateSettings({ ccMap: m })}
           toAlsoMap={settings.toAlsoMap || {}}
           onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
+          /* Both maps are rebuilt from the props above rather than from a
+             closure, so the comparator's check on them is what keeps these
+             two honest. */
           contactFamilies={settings.contactFamilies || {}}
           onSaveFamily={(contactId, info) => {
-            const current = settings.contactFamilies || {};
+            const current = settingsRef.current.contactFamilies || {};
             const next = { ...current };
             const partner = String(info?.partner || '').trim();
             const kids = String(info?.kids || '').trim();
@@ -12140,9 +12120,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           contactSentiment={settings.contactSentiment || {}}
           onSaveSentiment={handleSaveContactSentiment}
           contactTagReview={settings.contactTagReview || {}}
-          onSaveTagReview={(cid, map) => saveTagReview({ cid, map, settings, updateSettings, updateSettingsPath })}
+          onSaveTagReview={(cid, map) => saveTagReview({ cid, map, settings: settingsRef.current, updateSettings, updateSettingsPath })}
           events={settings.events || []}
-          onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings.events || [], eventId, c) })}
+          onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settingsRef.current.events || [], eventId, c) })}
           companyContacts={companyContacts}
           emailDomains={(fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)}
           companyNames={(prospects || []).map(p => p.company).filter(Boolean)}

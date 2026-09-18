@@ -120,12 +120,29 @@ export function getDoc(ref) {
   });
 }
 
-export function setDoc(ref, data) {
-  calls.push({ op: 'setDoc', path: ref.path, data });
+// How Firestore folds a set(merge: true) into what is already there: field
+// by field, and for a MAP field key by key, all the way down. A key absent
+// from the new data survives — which is the whole reason a settings write
+// that dropped an entry from a map never removed anything. A stub that
+// replaced the document instead made that bug untestable, so it models the
+// real rule.
+function mergeInto(existing, incoming) {
+  const isMap = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  if (!isMap(existing) || !isMap(incoming)) return incoming;
+  const out = { ...existing };
+  for (const [k, v] of Object.entries(incoming)) {
+    out[k] = k in existing ? mergeInto(existing[k], v) : v;
+  }
+  return out;
+}
+
+export function setDoc(ref, data, options) {
+  calls.push({ op: 'setDoc', path: ref.path, data, options });
   if (hangs(calls[calls.length - 1])) return NEVER();
   const failure = failureFor(calls[calls.length - 1]);
   if (failure) return Promise.reject(failure);
-  store.set(ref.path, data);
+  const prior = store.get(ref.path);
+  store.set(ref.path, options?.merge && prior !== undefined ? mergeInto(prior, data) : data);
   return answer(calls[calls.length - 1]);
 }
 
@@ -152,13 +169,55 @@ export function getDocs(ref) {
   return Promise.resolve({ docs, forEach: (fn) => docs.forEach(fn), size: docs.length, empty: !docs.length });
 }
 
-// Unused by the analysis save, but imported by the modules under test.
-export function updateDoc(ref, data) {
-  calls.push({ op: 'updateDoc', path: ref.path, data });
+// A field path, spelled the way the SDK does: FieldPath keeps a key that
+// contains a dot literal, where the string form would read it as a path
+// into a nested map.
+export class FieldPath {
+  constructor(...segments) { this.segments = segments; }
+}
+
+const NOT_FOUND = () => Object.assign(
+  new Error('No document to update'),
+  { code: 'not-found' },
+);
+
+// updateDoc in both shapes the SDK takes: one object of dotted paths, or
+// alternating field/value arguments. Unlike a merged set, each field named
+// here REPLACES what the document holds at that path, and deleteField()
+// removes it — which is what the settings writer needs and what the REST
+// fallback's update mask already did.
+export function updateDoc(ref, ...rest) {
+  const entries = [];
+  if (rest.length === 1 && rest[0] && typeof rest[0] === 'object' && !(rest[0] instanceof FieldPath)) {
+    for (const [path, value] of Object.entries(rest[0])) entries.push([path.split('.'), value]);
+  } else {
+    for (let i = 0; i < rest.length; i += 2) {
+      const field = rest[i];
+      entries.push([field instanceof FieldPath ? field.segments : String(field).split('.'), rest[i + 1]]);
+    }
+  }
+  const data = Object.fromEntries(entries.map(([segs, v]) => [segs.join('.'), v]));
+  calls.push({ op: 'updateDoc', path: ref.path, data, entries });
   if (hangs(calls[calls.length - 1])) return NEVER();
   const failure = failureFor(calls[calls.length - 1]);
   if (failure) return Promise.reject(failure);
-  store.set(ref.path, { ...(store.get(ref.path) || {}), ...data });
+  const current = store.get(ref.path);
+  if (current === undefined) return Promise.reject(NOT_FOUND());
+  const next = { ...current };
+  for (const [segments, value] of entries) {
+    let cur = next;
+    for (let i = 0; i < segments.length - 1; i += 1) {
+      const seg = segments[i];
+      cur[seg] = (cur[seg] !== null && typeof cur[seg] === 'object' && !Array.isArray(cur[seg]))
+        ? { ...cur[seg] }
+        : {};
+      cur = cur[seg];
+    }
+    const last = segments[segments.length - 1];
+    if (value && value.__deleteField) delete cur[last];
+    else cur[last] = value;
+  }
+  store.set(ref.path, next);
   return answer(calls[calls.length - 1]);
 }
 // A batch that actually applies on commit, and records the commit as one
