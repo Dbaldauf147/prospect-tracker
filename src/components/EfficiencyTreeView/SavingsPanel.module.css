@@ -595,6 +595,86 @@
   border: 1px solid #FDE68A;
 }
 
+/* ── monthly consumption ─────────────────────────────────────────────── */
+
+.volumeBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--color-border-light);
+}
+
+.volumeHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.volumeActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+/* A box per month of the term. It wraps rather than scrolls: a five year
+   term is sixty boxes, and a wall of them that has to be dragged sideways is
+   one nobody checks. The boxes stay wide enough for a six figure volume, so
+   how many land on a row is whatever the column can fit. */
+.volumeGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr));
+  gap: 0.3rem 0.4rem;
+}
+
+.volumeCell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.volumeMonth,
+.volumeMonthShaped {
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.volumeMonth {
+  color: var(--color-text);
+}
+
+/* A month still on the shape reads quieter than one somebody has answered
+   for, so the grid shows at a glance how much of the term is actually
+   filled in. */
+.volumeMonthShaped {
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+/* Same job as the curve and flat flags, and deliberately the quietest of
+   the three: a shaped volume is a derived number, but unlike the flat price
+   it is derived from something the user typed. */
+.shapeFlag {
+  margin-left: 0.3rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: 0.02rem 0.25rem;
+  border-radius: 3px;
+  white-space: nowrap;
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+
 /* ── odds and ends ───────────────────────────────────────────────────── */
 
 .rowActions {

@@ -21,7 +21,7 @@
 // shape of the file is pinned by scripts/savingsExport.test.mjs rather than
 // by clicking the button.
 
-import { VOLUME_SHAPES, sourceSummary } from './nymexSavings.js';
+import { VOLUME_SHAPES, sourceSummary, volumeSummary } from './nymexSavings.js';
 import { sanitizeSheetJsWorkbook, stripDashes } from './exportSanitize.js';
 
 const PRICE_FMT = '"$"#,##0.000';
@@ -38,6 +38,14 @@ const SOURCE_LABEL = {
   assumed: 'Flat assumption',
 };
 
+// Where a month's VOLUME came from, which is a separate question from where
+// its price came from and earns its own column for the same reason the page
+// gives it its own flag.
+const VOLUME_SOURCE_LABEL = {
+  entered: 'Entered',
+  shape: 'Annual volume and shape',
+};
+
 const UNIT = '$/Dth';
 
 export const SAVINGS_MONTH_HEADERS = [
@@ -47,6 +55,7 @@ export const SAVINGS_MONTH_HEADERS = [
   `Index all-in (${UNIT})`,
   `Contract all-in (${UNIT})`,
   'Volume (Dth)',
+  'Volume from',
   'At index',
   'On contract',
   'Saving',
@@ -55,7 +64,7 @@ export const SAVINGS_MONTH_HEADERS = [
 
 // One format per column of the month sheet, null where the column is text.
 export const SAVINGS_MONTH_FORMATS = [
-  null, null, PRICE_FMT, PRICE_FMT, PRICE_FMT, VOL_FMT, MONEY_FMT, MONEY_FMT, MONEY_FMT, MONEY_FMT,
+  null, null, PRICE_FMT, PRICE_FMT, PRICE_FMT, VOL_FMT, null, MONEY_FMT, MONEY_FMT, MONEY_FMT, MONEY_FMT,
 ];
 
 /**
@@ -76,6 +85,7 @@ export function savingsMonthAoa(run) {
     m.indexAllIn,
     m.contractAllIn,
     m.volume,
+    VOLUME_SOURCE_LABEL[m.volumeSource] || m.volumeSource || VOLUME_SOURCE_LABEL.shape,
     m.indexCost,
     m.contractCost,
     m.saving,
@@ -89,6 +99,7 @@ export function savingsMonthAoa(run) {
       t.avgIndexAllIn,
       t.avgContractAllIn,
       t.volume,
+      volumeSummary(t),
       t.indexCost,
       t.contractCost,
       t.saving,
@@ -124,6 +135,11 @@ export function savingsScenarioRows(run, meta = {}) {
     { label: 'Months', value: s.termMonths },
     { label: 'Annual volume (Dth)', value: s.annualVolumeDth, fmt: VOL_FMT },
     { label: 'Volume shape', value: `${shape.label}, ${shape.note}` },
+    // Which months carry a volume somebody gave, and which were spread off
+    // the annual number. A term that mixes the two makes two different
+    // claims about volume, the way a term mixing settles and quotes makes
+    // two about price.
+    { label: 'Monthly volumes', value: volumeSummary(t) },
     { label: 'Volume over the term (Dth)', value: t.volume, fmt: VOL_FMT },
     { label: 'Hedged share', value: (hedge.pct ?? 0) / 100, fmt: PCT_FMT },
     {

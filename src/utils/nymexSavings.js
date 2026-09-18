@@ -79,6 +79,102 @@ const num = (v, fallback = 0) => {
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const text = (v, max = MAX_NAME) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 
+/**
+ * The volumes somebody typed or pasted for the term, a value per month of
+ * it, indexed from the first month.
+ *
+ * A null is a month they have NOT given a volume for, and it is a different
+ * thing from a zero: a zero is an assertion that nothing burns that month,
+ * and a null falls back to the annual volume spread over the shape. Both
+ * have to survive a round trip through settings, so blanks are kept in place
+ * rather than compacted out - dropping them would slide December's volume
+ * onto November.
+ *
+ * Trailing nulls are trimmed, because they carry no information and they are
+ * what shortening the term leaves behind.
+ */
+export function normalizeMonthlyVolumes(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = raw.slice(0, MAX_TERM_MONTHS).map((v) => {
+    if (v === null || v === undefined || v === '') return null;
+    const n = num(v, NaN);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  });
+  while (out.length && out[out.length - 1] == null) out.pop();
+  return out;
+}
+
+/**
+ * Read pasted monthly consumption: one value per month of the term, in the
+ * order the term runs.
+ *
+ * What arrives is a column off a spreadsheet, and it comes in every shape
+ * that implies - bare numbers a line each, a label in front of each number
+ * ("Jan 2027  3,100", "Month 1: 3100"), a unit after it ("3100 Dth"), or one
+ * tab-separated row copied across instead of down. So each line is read for
+ * the LAST number on it, the same rule the forward curve parser follows, and
+ * a single line carrying several numbers is read as the whole run.
+ *
+ * A blank line is a month with NO volume of its own, not a zero: copying a
+ * column of twelve cells with March empty has to come back with March empty,
+ * because compacting it would slide April's volume onto March. A zero
+ * somebody typed is kept, since a month that burns nothing is a real answer.
+ * A line with no number at all (a header, a note) is skipped and reported,
+ * and skipping it shifts nothing because it never held a month.
+ *
+ * Returns { volumes, count, blanks, skipped }.
+ */
+export function parseMonthlyVolumes(input) {
+  const skipped = [];
+  const report = (line) => skipped.push(String(line).replace(/\s+/g, ' ').trim().slice(0, 120));
+
+  // "3,100" is one number and "3100,2780" is two, so a comma is a thousands
+  // separator only where exactly three digits follow it. Dropping those
+  // first is what lets the same line be split on commas afterwards.
+  const deComma = (s) => String(s).replace(/(\d),(?=\d{3}(?:\D|$))/g, '$1');
+  const numbersOn = (s) => deComma(s).match(/-?\d+(?:\.\d+)?/g) || [];
+
+  const lines = String(input ?? '').split(/\r?\n/);
+  const filled = lines.filter(l => l.trim());
+  // One line holding several numbers is a row copied across rather than a
+  // column copied down.
+  const asRow = filled.length === 1 && numbersOn(filled[0]).length > 1;
+  const cells = asRow
+    ? deComma(filled[0]).split(/\t|;|,|\s{2,}/)
+    : lines;
+
+  const values = [];
+  for (const cell of cells) {
+    const line = String(cell).trim();
+    // A month they have not given a volume for, holding its place.
+    if (!line) { values.push(null); continue; }
+    const found = numbersOn(line);
+    if (!found.length) { report(line); continue; }
+    const n = Number(found[found.length - 1]);
+    if (!Number.isFinite(n) || n < 0) { report(line); values.push(null); continue; }
+    values.push(n);
+  }
+
+  const volumes = normalizeMonthlyVolumes(values);
+  return {
+    volumes,
+    count: volumes.filter(v => v != null).length,
+    blanks: volumes.filter(v => v == null).length,
+    skipped,
+  };
+}
+
+/**
+ * One line saying where the term's volumes came from, for the tile and the
+ * export - the same job sourceSummary does for the prices.
+ */
+export function volumeSummary(totals) {
+  const parts = [];
+  if (totals.enteredVolumeMonths) parts.push(`${totals.enteredVolumeMonths} entered`);
+  if (totals.shapedVolumeMonths) parts.push(`${totals.shapedVolumeMonths} off the shape`);
+  return parts.join(', ') || 'no months';
+}
+
 /** Jan is 1. A key that sorts as a string sorts as a date. */
 export const monthKey = (year, month) => `${year}-${String(month).padStart(2, '0')}`;
 export const monthLabel = (year, month) => `${NYMEX_MONTH_LABELS[month - 1]} ${year}`;
@@ -369,7 +465,7 @@ export function defaultScenario(series = monthlySeries(SHIPPED_SETTLES), forward
   if (!series.length && !curve.length) {
     return {
       name: '', startYear: today.getFullYear() - 3, startMonth: 1, termMonths: 36,
-      annualVolumeDth: 250000, volumeShape: 'even', basis: 0, adder: 0.35,
+      annualVolumeDth: 250000, volumeShape: 'even', monthlyVolumes: [], basis: 0, adder: 0.35,
       forwardPrice: 3.5,
       layers: [{ id: 'L1', label: 'Layer 1', pct: 40, price: 3.5 }, { id: 'L2', label: 'Layer 2', pct: 25, price: 3.7 }],
     };
@@ -402,6 +498,9 @@ export function defaultScenario(series = monthlySeries(SHIPPED_SETTLES), forward
     termMonths,
     annualVolumeDth: 250000,
     volumeShape: 'even',
+    // Nobody has given the term its own volumes yet, so every month prices
+    // off the annual number and the shape.
+    monthlyVolumes: [],
     basis: 0,
     adder: 0.35,
     forwardPrice: Math.round(flat * 100) / 100,
@@ -426,6 +525,7 @@ export function normalizeScenario(raw, series = null, forward = null) {
     termMonths: clamp(Math.trunc(num(raw.termMonths, base.termMonths)), 1, MAX_TERM_MONTHS),
     annualVolumeDth: Math.max(0, num(raw.annualVolumeDth, base.annualVolumeDth)),
     volumeShape: VOLUME_SHAPES[raw.volumeShape] ? raw.volumeShape : 'even',
+    monthlyVolumes: normalizeMonthlyVolumes(raw.monthlyVolumes),
     basis: clamp(num(raw.basis, base.basis), -20, 20),
     adder: clamp(num(raw.adder, base.adder), -20, 20),
     forwardPrice: clamp(num(raw.forwardPrice, base.forwardPrice), 0, 1000),
@@ -486,6 +586,10 @@ export function buildSavings(scenario, series, forward = []) {
   const curveEnd = forward?.length ? forward[forward.length - 1] : null;
   const hedge = hedgeSummary(s.layers);
   const weights = VOLUME_SHAPES[s.volumeShape].weights;
+  // A volume the user gave this month, if they gave one. Same precedence
+  // idea the prices follow: the number somebody asserted beats the number
+  // the page derived, and the page says which it used.
+  const entered = s.monthlyVolumes || [];
   const hedgedShare = hedge.pct / 100;
   const strike = hedge.price ?? 0;
 
@@ -497,7 +601,11 @@ export function buildSavings(scenario, series, forward = []) {
     // month that settled is not an opinion any more.
     const { price: index, source } = priceOf(year, month);
     const assumed = source !== 'settled';
-    const volume = s.annualVolumeDth * weights[month - 1];
+    // A zero somebody typed is a month that burns nothing, which is a real
+    // answer; only a null falls through to the annual volume and the shape.
+    const given = entered[i];
+    const volume = given == null ? s.annualVolumeDth * weights[month - 1] : given;
+    const volumeSource = given == null ? 'shape' : 'entered';
     const commodity = hedgedShare * strike + (1 - hedgedShare) * index;
     const indexAllIn = index + s.basis + s.adder;
     const contractAllIn = commodity + s.basis + s.adder;
@@ -515,6 +623,7 @@ export function buildSavings(scenario, series, forward = []) {
       indexAllIn,
       contractAllIn,
       volume,
+      volumeSource,
       indexCost: indexAllIn * volume,
       contractCost: contractAllIn * volume,
       saving: (indexAllIn - contractAllIn) * volume,
@@ -530,6 +639,7 @@ export function buildSavings(scenario, series, forward = []) {
   const indexCost = months.reduce((n, m) => n + m.indexCost, 0);
   const contractCost = months.reduce((n, m) => n + m.contractCost, 0);
   const saving = indexCost - contractCost;
+  const enteredVolumeMonths = months.filter(m => m.volumeSource === 'entered').length;
   const settledMonths = months.filter(m => m.source === 'settled').length;
   const forwardMonths = months.filter(m => m.source === 'forward').length;
   const assumedMonths = months.filter(m => m.source === 'assumed').length;
@@ -539,10 +649,11 @@ export function buildSavings(scenario, series, forward = []) {
   const yearMap = new Map();
   for (const m of months) {
     const row = yearMap.get(m.year) || {
-      year: m.year, months: 0, settled: 0, forward: 0, assumed: 0,
+      year: m.year, months: 0, settled: 0, forward: 0, assumed: 0, enteredVolume: 0,
       volume: 0, indexCost: 0, contractCost: 0, saving: 0, indexSum: 0,
     };
     row.months += 1;
+    row.enteredVolume += m.volumeSource === 'entered' ? 1 : 0;
     row.settled += m.source === 'settled' ? 1 : 0;
     row.forward += m.source === 'forward' ? 1 : 0;
     row.assumed += m.source === 'assumed' ? 1 : 0;
@@ -580,6 +691,11 @@ export function buildSavings(scenario, series, forward = []) {
       settledMonths,
       forwardMonths,
       assumedMonths,
+      // Volumes are counted the same way the prices are, and kept apart from
+      // them: a term priced off settles and shaped from an annual number is
+      // measured on one leg and derived on the other.
+      enteredVolumeMonths,
+      shapedVolumeMonths: months.length - enteredVolumeMonths,
       // Months with a real market price behind them, settled or quoted. The
       // rest is the flat number, which is the only one of the three that is
       // nobody's price.

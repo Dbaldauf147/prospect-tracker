@@ -63,6 +63,20 @@ const scenario = {
 const run = buildSavings(scenario, series, curve);
 const aoa = savingsMonthAoa(run);
 const [header, ...rows] = aoa;
+// Columns are looked up by name rather than counted: the last time a column
+// was added in the middle, every index below it pointed one place left and
+// five assertions failed for a reason that had nothing to do with them.
+const col = (name) => {
+  const i = header.findIndex(h => h === name || h.startsWith(`${name} (`));
+  if (i < 0) throw new Error(`no column named ${name}`);
+  return i;
+};
+const C = {
+  month: col('Month'), from: col('Priced from'), index: col('Index'),
+  volume: col('Volume (Dth)'), volumeFrom: col('Volume from'),
+  atIndex: col('At index'), onContract: col('On contract'),
+  saving: col('Saving'), running: col('Running saving'),
+};
 const monthRows = rows.slice(0, -1);
 const totalRow = rows[rows.length - 1];
 
@@ -72,7 +86,7 @@ check('a row per month of the term, plus the total', rows.length, run.months.len
 check('a format for every column', SAVINGS_MONTH_FORMATS.length, SAVINGS_MONTH_HEADERS.length);
 check('the months come out in term order', monthRows.map(r => r[0]).slice(0, 3),
   run.months.slice(0, 3).map(m => m.label));
-check('the first month is the month the term starts', monthRows[0][0], run.months[0].label);
+check('the first month is the month the term starts', monthRows[0][C.month], run.months[0].label);
 
 // ── numbers stay numbers ─────────────────────────────────────────────────
 const numericCols = SAVINGS_MONTH_FORMATS.map((f, i) => (f ? i : -1)).filter(i => i >= 0);
@@ -85,35 +99,58 @@ ok('nothing leaked a dollar sign into a cell',
 
 // ── the total row totals ─────────────────────────────────────────────────
 const sumCol = (c) => monthRows.reduce((n, r) => n + r[c], 0);
-check('the total row is labelled', totalRow[0], 'Term total');
-near('volume on the total row is the sum of the months', totalRow[5], sumCol(5), 0.5);
-near('at index likewise', totalRow[6], sumCol(6), 0.5);
-near('on contract likewise', totalRow[7], sumCol(7), 0.5);
-near('and the saving', totalRow[8], sumCol(8), 0.5);
+check('the total row is labelled', totalRow[C.month], 'Term total');
+near('volume on the total row is the sum of the months', totalRow[C.volume], sumCol(C.volume), 0.5);
+near('at index likewise', totalRow[C.atIndex], sumCol(C.atIndex), 0.5);
+near('on contract likewise', totalRow[C.onContract], sumCol(C.onContract), 0.5);
+near('and the saving', totalRow[C.saving], sumCol(C.saving), 0.5);
 // The three price columns average rather than sum - a summed $/Dth is a
 // number that means nothing, and the Year by year table does the same.
 near('the price columns carry the term average, not a sum',
-  totalRow[2], monthRows.reduce((n, r) => n + r[2], 0) / monthRows.length, 1e-6);
+  totalRow[C.index], monthRows.reduce((n, r) => n + r[C.index], 0) / monthRows.length, 1e-6);
 near('the running column ends where the saving does',
-  monthRows[monthRows.length - 1][9], totalRow[8], 0.5);
-near('the saving is index minus contract', totalRow[8], totalRow[6] - totalRow[7], 0.5);
+  monthRows[monthRows.length - 1][C.running], totalRow[C.saving], 0.5);
+near('the saving is index minus contract', totalRow[C.saving], totalRow[C.atIndex] - totalRow[C.onContract], 0.5);
 
 // ── provenance, month by month ───────────────────────────────────────────
-const sources = new Set(monthRows.map(r => r[1]));
+const sources = new Set(monthRows.map(r => r[C.from]));
 ok('this term really does hit all three states', sources.size === 3);
 check('and they are named in full', [...sources].sort(),
   ['Flat assumption', 'Forward curve', 'Settled']);
 check('the settled months are the ones the run settled',
-  monthRows.filter(r => r[1] === 'Settled').length, run.totals.settledMonths);
+  monthRows.filter(r => r[C.from] === 'Settled').length, run.totals.settledMonths);
 check('the curve months likewise',
-  monthRows.filter(r => r[1] === 'Forward curve').length, run.totals.forwardMonths);
+  monthRows.filter(r => r[C.from] === 'Forward curve').length, run.totals.forwardMonths);
 check('and the flat ones',
-  monthRows.filter(r => r[1] === 'Flat assumption').length, run.totals.assumedMonths);
+  monthRows.filter(r => r[C.from] === 'Flat assumption').length, run.totals.assumedMonths);
 ok('the total row says where the term was priced from',
-  /settled/.test(totalRow[1]) && /flat assumption/.test(totalRow[1]));
+  /settled/.test(totalRow[C.from]) && /flat assumption/.test(totalRow[C.from]));
+
+const meta = { forwardAsOf: 'quoted 2026-09-12', customSettles: false, customForward: true };
+
+// ── provenance, volume by volume ─────────────────────────────────────────
+// A volume somebody gave and a volume the page spread off an annual number
+// are different claims too, and the file has to keep them apart the same way
+// the prices are kept apart.
+check('a term with no volumes of its own says so on every row',
+  new Set(monthRows.map(r => r[C.volumeFrom])), new Set(['Annual volume and shape']));
+
+const mixed = buildSavings({ ...scenario, monthlyVolumes: [3100, 2780, null, 0] }, series, curve);
+const mixedRows = savingsMonthAoa(mixed).slice(1, -1);
+check('an entered volume is used as given', mixedRows[0][C.volume], 3100);
+check('and named as entered', mixedRows[0][C.volumeFrom], 'Entered');
+check('a blank month falls back to the shape', mixedRows[2][C.volumeFrom], 'Annual volume and shape');
+check('a typed zero is a volume, not a blank', mixedRows[3][C.volume], 0);
+check('and it counts as entered', mixedRows[3][C.volumeFrom], 'Entered');
+check('past the end of the list every month is shaped',
+  new Set(mixedRows.slice(4).map(r => r[C.volumeFrom])), new Set(['Annual volume and shape']));
+check('the total row counts both kinds',
+  savingsMonthAoa(mixed).slice(-1)[0][C.volumeFrom], '3 entered, 57 off the shape');
+check('and the scenario sheet says the same',
+  savingsScenarioRows(mixed, meta).find(n => n.label === 'Monthly volumes').value,
+  '3 entered, 57 off the shape');
 
 // ── the scenario sheet ───────────────────────────────────────────────────
-const meta = { forwardAsOf: 'quoted 2026-09-12', customSettles: false, customForward: true };
 const notes = savingsScenarioRows(run, meta);
 const noteOf = (label) => notes.find(n => n.label === label);
 check('the scenario is named', noteOf('Scenario').value, 'Midwest plants, 2027 renewal');
@@ -136,7 +173,7 @@ check('a shipped settle table says so too',
   noteOf('Settles table').value, 'shipped with the app');
 check('the saving is on the sheet as a number', typeof noteOf('Saving').value, 'number');
 near('and it is the same saving the months add up to',
-  noteOf('Saving').value, totalRow[8], 0.5);
+  noteOf('Saving').value, totalRow[C.saving], 0.5);
 
 const noteAoa = savingsScenarioAoa(run, meta);
 check('the scenario sheet is two columns', noteAoa[0], ['Assumption', 'Value']);
@@ -149,7 +186,7 @@ check('an unhedged term says so rather than showing an empty strike',
   savingsScenarioRows(atIndex, meta).find(n => n.label === 'Blended strike ($/Dth)').value,
   'nothing locked');
 near('and it saves nothing, because it is the index twice',
-  savingsMonthAoa(atIndex).slice(1).pop()[8], 0, 0.5);
+  savingsMonthAoa(atIndex).slice(1).pop()[C.saving], 0, 0.5);
 
 // ── widths and the filename ──────────────────────────────────────────────
 const widths = columnWidths(aoa, { min: 14, max: 28 });
