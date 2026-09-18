@@ -1,7 +1,7 @@
 // The forward curve: what Henry Hub is quoted at for months that have not
 // settled yet.
 //
-// The Savings subtab prices a term off the settle table first, this second,
+// Contract savings prices a term off the settle table first, this second,
 // and a single flat number only where neither reaches. That order matters
 // and the page shows which of the three every month came from, because a
 // saving measured against a settle and a saving measured against a quote

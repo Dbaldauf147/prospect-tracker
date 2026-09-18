@@ -1,4 +1,4 @@
-// Assertion tests for monthly consumption on the Savings subtab: the paste
+// Assertion tests for monthly consumption on Contract savings: the paste
 // that reads it, the normalizing that stores it, and what it does to the
 // priced term.
 // Plain Node - no test framework (the project has none). Run:

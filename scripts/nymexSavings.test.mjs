@@ -1,4 +1,4 @@
-// Assertion tests for the Savings subtab's arithmetic - the NYMEX settle
+// Assertion tests for the Sourcing arithmetic - the NYMEX settle
 // table, the paste that loads one, and the hedge/index comparison the whole
 // subtab is built on.
 // Plain Node - no test framework (the project has none). Run:

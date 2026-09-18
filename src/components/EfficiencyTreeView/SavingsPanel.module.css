@@ -1,5 +1,7 @@
-/* The Savings subtab. Scrolls as one page: the settle record at the top, the
-   contract under it, then the answer as tiles, charts and tables. */
+/* Both Sourcing subtabs, which share this stylesheet because they share the
+   component. Each scrolls as one page: the settle record and the curve at
+   the top, then either the contract and its answer as tiles, charts and
+   tables, or the pasted list of site renewals. */
 
 .wrap {
   flex: 1;

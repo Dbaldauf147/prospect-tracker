@@ -1334,7 +1334,56 @@
   white-space: nowrap;
 }
 
-/* ── the tree subtabs ────────────────────────────────────────────────── */
+/* ── the two areas ───────────────────────────────────────────────────── */
+
+/* Efficiency and Sourcing. Pills on the page background rather than folder
+   tabs, because the folder tabs are the level below: two strips drawn the
+   same way would read as one strip that wrapped. */
+.areaTabs {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 1rem 0.15rem;
+  background: var(--color-surface);
+}
+
+.areaTab,
+.areaTabActive {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.3rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  font-family: inherit;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  cursor: pointer;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+}
+
+.areaTab:hover {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+}
+
+.areaTabActive {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+
+/* What is behind the pill, without a click: how many trees, or what kind of
+   numbers. Quieter than the name so it reads as the gloss it is. */
+.areaTabNote {
+  font-size: 0.66rem;
+  font-weight: 600;
+  opacity: 0.72;
+}
+
+/* ── the subtabs within an area ──────────────────────────────────────── */
 
 .treeTabs {
   display: flex;
@@ -1423,15 +1472,4 @@
 
 .treeTabs .smallBtn {
   margin-bottom: 0.3rem;
-}
-
-/* Between the trees and Savings. Savings is a subtab of this page but not a
-   tree, and the rule says so without needing a word for it. */
-/* An explicit height rather than `align-self: stretch`: the strip is
-   centre-aligned and wraps, so a stretched divider comes out as nothing. */
-.tabDivider {
-  width: 1px;
-  height: 1.3rem;
-  margin: 0 0.3rem 0.3rem;
-  background: var(--color-border);
 }

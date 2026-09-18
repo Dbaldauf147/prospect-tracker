@@ -1,4 +1,4 @@
-// Assertion tests for the Savings subtab's month by month export.
+// Assertion tests for the Contract savings month by month export.
 // Plain Node - no test framework (the project has none). Run:
 //   node scripts/savingsExport.test.mjs
 //

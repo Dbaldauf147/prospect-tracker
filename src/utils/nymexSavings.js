@@ -1,4 +1,4 @@
-// The arithmetic behind the Savings subtab on Service Deep Dives.
+// The arithmetic behind the Sourcing area on Service Deep Dives.
 //
 // The question the subtab answers is the one every gas conversation ends on:
 // "what did the hedge save?" So everything here prices the SAME volume twice

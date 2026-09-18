@@ -479,7 +479,7 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
         <button
           className={view === 'efficiency' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('efficiency')}
-          title="Walk a service decision tree or edit the flow, and price a gas contract against the NYMEX settles and forward curve on Savings"
+          title="Two areas: Efficiency walks the service decision trees, Sourcing prices gas against the NYMEX settles and forward curve"
         >
           <span className={styles.navIcon}>&#127795;</span>
           Service Deep Dives
