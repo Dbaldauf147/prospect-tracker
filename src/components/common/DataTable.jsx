@@ -653,7 +653,12 @@ export function DataTable({
     const col = colByKey.get(key);
     if (col?.freezeSortOrder) {
       const sortGetter = col.getSortValue;
-      const sorted = [...filteredRows].sort((a, b) => {
+      // Snapshot every row, not just the ones passing the column filters.
+      // The filters are applied on top of this order anyway, and a
+      // snapshot taken through a filter has no place for the rows it
+      // hid - they all tie on the fallback index and pile up at the
+      // bottom the moment the filter comes off.
+      const sorted = [...rows].sort((a, b) => {
         let aVal = sortGetter ? sortGetter(a) : a[key];
         let bVal = sortGetter ? sortGetter(b) : b[key];
         if (aVal == null && bVal == null) return 0;
