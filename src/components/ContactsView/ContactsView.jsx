@@ -19,6 +19,7 @@ const ChangedJobsContactsView = lazyView(() => import('../ChangedJobsContactsVie
 const DedupeView = lazyView(() => import('../DedupeView/DedupeView'), 'DedupeView');
 const ZoomInfoView = lazyView(() => import('../ZoomInfoView/ZoomInfoView'), 'ZoomInfoView');
 const AllContactsView = lazyView(() => import('../AllContactsView/AllContactsView'), 'AllContactsView');
+const DecisionMakersView = lazyView(() => import('../DecisionMakersView/DecisionMakersView'), 'DecisionMakersView');
 const KeyProspectsView = lazyView(() => import('../KeyProspectsView/KeyProspectsView'), 'KeyProspectsView');
 const EventsView = lazyView(() => import('../EventsView/EventsView'), 'EventsView');
 const MarketingLeadsView = lazyView(() => import('../MarketingLeadsView/MarketingLeadsView'), 'MarketingLeadsView');
@@ -35,6 +36,9 @@ const ALL_SUBTABS = [
   // qualifier is the whole of what distinguishes them. The keys are
   // untouched: they are what the saved tab is remembered by.
   { key: 'all',        label: 'All' },
+  // The same page over the one tag that decides who can sign, so it sits
+  // next to All rather than at the end of the roster tabs.
+  { key: 'dms',        label: 'DMs' },
   { key: 'key',        label: 'Key Contacts' },
   { key: 'keyprospects', label: 'Key Prospects' },
   { key: 'active',     label: 'Active' },
@@ -185,6 +189,16 @@ export function ContactsView({
         {subtab === 'titles' && <ContactTitlesView settings={settings} updateSettings={updateSettings} />}
         {subtab === 'all' && (
           <AllContactsView
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
+            settings={settings}
+            updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
+            cdmName={cdmName}
+          />
+        )}
+        {subtab === 'dms' && (
+          <DecisionMakersView
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             settings={settings}

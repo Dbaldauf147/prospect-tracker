@@ -477,8 +477,13 @@ export function makeRosterGates({
  * under `cancelling` and `untracked`, and left out of every roster, for the
  * same reason they're off the rosters themselves. A roster with no contacts
  * reports `pct: null` — "nothing to answer for" is not 0%.
+ *
+ * `countAll` puts every contact handed in into the `all` bucket, roster or
+ * no roster, for a caller that has already selected its own list. Off by
+ * default, so `all` stays the union of the four rosters for everybody else.
+ * The account exclusions apply either way.
  */
-export function rosterTagCoverage({ contacts = [], gates, tagReviewMap = {}, localFields = null }) {
+export function rosterTagCoverage({ contacts = [], gates, tagReviewMap = {}, localFields = null, countAll = false }) {
   const empty = () => ({ contacts: 0, answered: 0, slots: 0, done: 0, people: [] });
   const buckets = { all: empty() };
   for (const { key } of ROSTER_CATEGORIES) buckets[key] = empty();
@@ -488,7 +493,13 @@ export function rosterTagCoverage({ contacts = [], gates, tagReviewMap = {}, loc
   for (const baseC of contacts) {
     const c = localFields ? applyCompanyOverride(baseC, localFields) : baseC;
     const hits = ROSTER_CATEGORIES.filter(({ key }) => gates.gateFor[key](c));
-    if (!hits.length) continue;
+    // `countAll` is for a page that has already chosen its own list - the
+    // DMs page hands in the contacts tagged Decision Maker - where `all` has
+    // to mean "everyone this page shows" rather than "everyone on a roster".
+    // A decision maker at an account on none of the four rosters is still a
+    // decision maker, and a total that quietly left them out would be a
+    // different number from the one in the table under it.
+    if (!hits.length && !countAll) continue;
     // Counted, not tallied into the rosters: how many each account exclusion
     // took out. A page that quietly shrinks is worse than one that says what
     // it left behind.

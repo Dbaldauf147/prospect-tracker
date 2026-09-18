@@ -496,6 +496,19 @@ export function KeyContactsView(props) {
   );
 }
 
+// The Contacts subtabs that carry the FULL feature set of this table: the
+// Custom, To / CC, Tagged % and Email Campaigns columns, the Travel and By
+// Location views, and the campaign membership filter.
+//
+// All Contacts was the only one for a long time, so the condition was
+// written out as a string compare in nine places. DMs is the same page over
+// a narrower list rather than a cut-down copy of it, so it gets the same
+// furniture, and the nine places now ask one question.
+const FULL_TABLE_PREFIXES = new Set(['all-contacts', 'dm-contacts']);
+function hasFullTable(storagePrefix) {
+  return FULL_TABLE_PREFIXES.has(storagePrefix);
+}
+
 // Every column the flat contacts table can show, in its default order.
 //
 // Module-level and pure so the picker, the header, the filter row and the
@@ -525,16 +538,16 @@ function buildContactColumns({ categorizeContact, showSuggestedCompany, showNewC
     // Custom free-text column — only on the All Contacts page.
     // Reads/writes the same per-contact `settings.customField`
     // value used by the {custom} email variable.
-    ...(storagePrefix === 'all-contacts' ? [{ key: 'custom', label: 'Custom', sortable: false }] : []),
+    ...(hasFullTable(storagePrefix) ? [{ key: 'custom', label: 'Custom', sortable: false }] : []),
     // Combined To / CC recipients from the contact popup — All Contacts only.
-    ...(storagePrefix === 'all-contacts' ? [{ key: 'toCc', label: 'To / CC', sortable: false }] : []),
+    ...(hasFullTable(storagePrefix) ? [{ key: 'toCc', label: 'To / CC', sortable: false }] : []),
     { key: 'tags',     label: 'Tags', sortable: false },
     // How much of this contact's tag review is done, from the
     // popup's Yes / No / Not sure table. All Contacts only, like
     // the other columns that report on the popup's local fields.
-    ...(storagePrefix === 'all-contacts' ? [{ key: 'taggedPct', label: 'Tagged %' }] : []),
+    ...(hasFullTable(storagePrefix) ? [{ key: 'taggedPct', label: 'Tagged %' }] : []),
     { key: 'lastOutreach', label: 'Last Outreach' },
-    ...(storagePrefix === 'all-contacts' ? [{ key: 'emailCampaigns', label: 'Email Campaigns' }] : []),
+    ...(hasFullTable(storagePrefix) ? [{ key: 'emailCampaigns', label: 'Email Campaigns' }] : []),
   ].filter(Boolean);
 }
 
@@ -1325,7 +1338,12 @@ function KeyContactsViewInner({
     const a = document.createElement('a');
     a.href = url;
     const date = new Date().toISOString().slice(0, 10);
-    a.download = `${categorizeContact ? 'all-contacts' : 'contacts-combined'}-${date}.xlsx`;
+    // Named after the page it came off, the same way the CSV download below
+    // is. It used to key off `categorizeContact`, which meant "the page has a
+    // Category column" and happened to be true of All Contacts alone - so a
+    // second page with that column would have downloaded its people in a file
+    // called all-contacts.
+    a.download = `${storagePrefix || 'contacts-combined'}-${date}.xlsx`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1674,7 +1692,7 @@ function KeyContactsViewInner({
   // By Company. Pick a state and/or city and the flat contacts table
   // narrows to people in that area, so a trip can be planned around who's
   // nearby. The chosen location persists alongside the other view prefs.
-  const travelEnabled = storagePrefix === 'all-contacts';
+  const travelEnabled = hasFullTable(storagePrefix);
   const isTravel = travelEnabled && viewMode === 'travel';
   // "By Location" rollup - contacts counted by State and City. Like
   // Travel, it's an All Contacts–only view.
@@ -1731,7 +1749,7 @@ function KeyContactsViewInner({
   // keys removes the guess: anything not on the list shows, so the next
   // column to ship here needs none of this. They stay only to convert a
   // layout saved under the old model, once.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(storagePrefix === 'all-contacts' ? ['custom', 'toCc'] : []), 'tags', ...(storagePrefix === 'all-contacts' ? ['taggedPct'] : []), 'lastOutreach', ...(storagePrefix === 'all-contacts' ? ['emailCampaigns'] : [])];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(hasFullTable(storagePrefix) ? ['custom', 'toCc'] : []), 'tags', ...(hasFullTable(storagePrefix) ? ['taggedPct'] : []), 'lastOutreach', ...(hasFullTable(storagePrefix) ? ['emailCampaigns'] : [])];
   function loadLegacyVisibleCols() {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -1779,7 +1797,7 @@ function KeyContactsViewInner({
         // Same one-time migration for the All Contacts "custom" column -
         // existing users have a saved set that predates it, so inject it
         // once (just before tags, to match DEFAULT_VISIBLE_COLS order).
-        if (storagePrefix === 'all-contacts') {
+        if (hasFullTable(storagePrefix)) {
           const customMigKey = lsKey('visible-cols-mig-custom');
           if (!localStorage.getItem(customMigKey) && !next.includes('custom')) {
             try { localStorage.setItem(customMigKey, '1'); } catch {}
@@ -2091,7 +2109,7 @@ function KeyContactsViewInner({
   // page renders that column, so we skip the Firestore read elsewhere.
   const [savedCampaigns, setSavedCampaigns] = useState([]);
   useEffect(() => {
-    if (storagePrefix !== 'all-contacts' || !user?.uid) return;
+    if (!hasFullTable(storagePrefix) || !user?.uid) return;
     let cancelled = false;
     (async () => {
       try {
@@ -3611,7 +3629,7 @@ function KeyContactsViewInner({
             }}>{locationFlaggedCount}</span>
           </label>
         )}
-        {storagePrefix === 'all-contacts' && isContactList && campaignRecipientOptions.length > 0 && (
+        {hasFullTable(storagePrefix) && isContactList && campaignRecipientOptions.length > 0 && (
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span
               title="Pick a saved email campaign (from Draft Emails → Email Campaigns) to see which of these contacts are already in it vs. still missing."
