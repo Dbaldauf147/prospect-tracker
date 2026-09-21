@@ -2084,10 +2084,19 @@ function toggleUnpricedService(opp, name, onChangeOppField) {
 // typed into the box beside it is only the fallback for a scope with nothing
 // else in it to manage.
 //
+// `charged` is the ticked subset, for a deal that is not billing for all of
+// its scope. What it is not billing for it is not managing either, so
+// unticking a service takes it out of that base and the management fee
+// recalculates without it. The percentage rows are priced off the same base
+// whether they are ticked or not, so one that is switched off goes on saying
+// what it would be worth.
+//
 // A plain function rather than only a hook: the Refresh button below prices
 // the scope a second time against the card it has just fetched, and has to
 // do that inside the click rather than a render later.
-function scopeFeeEstimate({ scopeNames, pricing, pricingBases, serviceOverrides, sites, counts, dealSize }) {
+function scopeFeeEstimate({
+  scopeNames, pricing, pricingBases, serviceOverrides, sites, counts, dealSize, charged = null,
+}) {
   const names = scopeNames || EMPTY_SCOPE;
   if (!names.length) return null;
   const rows = names.map(name => ({
@@ -2105,12 +2114,17 @@ function scopeFeeEstimate({ scopeNames, pricing, pricingBases, serviceOverrides,
     counts: counts || { sites: parsePricingMoney(sites) ?? 0 },
     dealSize: parsePricingMoney(dealSize),
     percentOfScope: true,
+    percentBase: charged || null,
   });
   // Each line says where its fee came from, so a number that moves has a
   // reason on the row — and a percentage one says which deal it is a cut
   // of, since the scope it was struck from is not the box above it and a
   // row reading "3% of deal size" would send a reader to the wrong figure.
-  const cutOfScope = (name) => (est.percentBases?.has(name) ? 'the rest of this scope' : '');
+  // Where the deal is charging for only some of its scope it says that too,
+  // because then the base is not the scope in front of you either.
+  const narrowed = !!charged && names.some(name => !charged.has(name));
+  const base = narrowed ? 'the rest of what this deal charges for' : 'the rest of this scope';
+  const cutOfScope = (name) => (est.percentBases?.has(name) ? base : '');
   return {
     ...est,
     lines: est.lines.map(line => ({
@@ -2151,13 +2165,17 @@ function repriceNote(before, after) {
 // The same estimate, memoized for a popup. `active` is what stops it running
 // per rendered row: the answer is only ever looked at inside a popup that is
 // open.
-function useScopeFeeEstimate({ active, scopeNames, pricing, pricingBases, serviceOverrides, sites, counts, dealSize }) {
+function useScopeFeeEstimate({
+  active, scopeNames, pricing, pricingBases, serviceOverrides, sites, counts, dealSize, charged = null,
+}) {
   const names = scopeNames || EMPTY_SCOPE;
   return useMemo(
     () => (active
-      ? scopeFeeEstimate({ scopeNames: names, pricing, pricingBases, serviceOverrides, sites, counts, dealSize })
+      ? scopeFeeEstimate({
+        scopeNames: names, pricing, pricingBases, serviceOverrides, sites, counts, dealSize, charged,
+      })
       : null),
-    [active, names, pricing, pricingBases, serviceOverrides, sites, counts, dealSize],
+    [active, names, pricing, pricingBases, serviceOverrides, sites, counts, dealSize, charged],
   );
 }
 
@@ -3355,6 +3373,21 @@ function QuotedAmountCell({
   );
   const dealCounts = useMemo(() => oppDealCounts({ opp, company, units }), [opp, company, units]);
 
+  // What this deal is not charging for, and so what the total is struck
+  // from. Read off the opp (see UNPRICED_SERVICES_FIELD), so the answer is
+  // the same one the Lead prompt was given and is still here next time.
+  //
+  // Ahead of the estimates because it is an input to both of them: a
+  // management fee is a cut of the services this deal is charging for, so
+  // unticking one has to reach the pricing and not only the sum at the
+  // bottom.
+  const unpricedKeys = useMemo(() => unpricedServiceKeys(opp), [opp]);
+  const chargedNames = useMemo(
+    () => (scopeNames || EMPTY_SCOPE).filter(n => !unpricedKeys.has(String(n ?? '').trim().toLowerCase())),
+    [scopeNames, unpricedKeys],
+  );
+  const chargedServices = useMemo(() => new Set(chargedNames), [chargedNames]);
+
   // The scope priced out, for the table below the amount box — see
   // useScopeFeeEstimate. Only while the popup is open, and off the card
   // Refresh fetched when there is one.
@@ -3366,6 +3399,7 @@ function QuotedAmountCell({
     serviceOverrides: freshCard ? freshCard.overrides : serviceOverrides,
     counts: dealCounts.counts,
     dealSize: draftAmount,
+    charged: chargedServices,
   });
 
   // A box per count, for the ones this scope charges on and the ones the
@@ -3388,20 +3422,14 @@ function QuotedAmountCell({
     [countRows],
   );
 
-  // What this deal is not charging for, and so what the total is struck
-  // from. Read off the opp (see UNPRICED_SERVICES_FIELD), so the answer is
-  // the same one the Lead prompt was given and is still here next time.
+  // The same scope with what this deal is not charging for struck out.
   //
   // Priced twice when anything is marked: once over the whole scope for the
   // rows, once over the charged ones for the totals and the red notes. A
   // service nobody is billing for should not be holding the estimate open
-  // for a rate card, and it should still show what it is worth.
-  const unpricedKeys = useMemo(() => unpricedServiceKeys(opp), [opp]);
-  const chargedNames = useMemo(
-    () => (scopeNames || EMPTY_SCOPE).filter(n => !unpricedKeys.has(String(n ?? '').trim().toLowerCase())),
-    [scopeNames, unpricedKeys],
-  );
-  const chargedServices = useMemo(() => new Set(chargedNames), [chargedNames]);
+  // for a rate card, and it should still show what it is worth. Both passes
+  // strike the management fee from the same base, so the row and the total
+  // agree on what it is a cut of.
   const chargedEstimate = useScopeFeeEstimate({
     active: open && unpricedKeys.size > 0,
     scopeNames: chargedNames,
@@ -3498,6 +3526,10 @@ function QuotedAmountCell({
         serviceOverrides: card.overrides,
         counts: dealCounts.counts,
         dealSize: draftAmount,
+        // The same base the estimate on screen was struck from, or the
+        // comparison would report a management fee moving because the
+        // ticks are being read differently on the two sides of it.
+        charged: chargedServices,
       });
       setFetchedCard({
         ...card,
@@ -6534,6 +6566,13 @@ function LeadQuotedAmountModal({
   // without it" a question you can answer by looking.
   const units = useMemo(() => pricingUnits(pricingBases || undefined), [pricingBases]);
   const dealCounts = useMemo(() => oppDealCounts({ opp, company, units }), [opp, company, units]);
+  // The ticked subset first: it is what a management fee in this scope is a
+  // cut of, so both passes below need it rather than only the total.
+  const pickedNames = useMemo(
+    () => (scopeNames || EMPTY_SCOPE).filter(n => !excluded.has(String(n ?? '').trim().toLowerCase())),
+    [scopeNames, excluded],
+  );
+  const selectedServices = useMemo(() => new Set(pickedNames), [pickedNames]);
   const scopeEstimate = useScopeFeeEstimate({
     active: true,
     scopeNames,
@@ -6542,11 +6581,8 @@ function LeadQuotedAmountModal({
     serviceOverrides,
     counts: dealCounts.counts,
     dealSize: quotedAmount,
+    charged: selectedServices,
   });
-  const pickedNames = useMemo(
-    () => (scopeNames || EMPTY_SCOPE).filter(n => !excluded.has(String(n ?? '').trim().toLowerCase())),
-    [scopeNames, excluded],
-  );
   const pickedEstimate = useScopeFeeEstimate({
     active: excluded.size > 0,
     scopeNames: pickedNames,
@@ -6556,7 +6592,6 @@ function LeadQuotedAmountModal({
     counts: dealCounts.counts,
     dealSize: quotedAmount,
   });
-  const selectedServices = useMemo(() => new Set(pickedNames), [pickedNames]);
   // A box per count rather than a readout of them: the counts are the other
   // half of this question. Every per-unit fee below is one of these numbers
   // times a rate, so a missing one is why a line reads $0 - and the record

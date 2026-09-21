@@ -1723,6 +1723,17 @@ export function estimateScope({
   // already worked out what each cut is of - the bundles on Account
   // Potential - is answering the same question better.
   percentOfScope = false,
+  // Which of the scope's services that base is added up from, as a Set or a
+  // list of names. Left out, all of them are.
+  //
+  // For the deal that is charging for only some of what is in its scope: a
+  // service this deal is not billing for is not one the management fee is
+  // being charged on either, so unticking it takes it out of the base and
+  // the fee comes down with it. The percentage services themselves are
+  // never in the base whatever this says - see scopeDealSizes - so a cut
+  // that is itself unticked still reports what it would be worth if the
+  // deal charged for it.
+  percentBase = null,
 }) {
   // Priced twice when the scope is its own deal: once to find out what the
   // rest of it bills, once to take the cut. The first pass prices every
@@ -1732,7 +1743,7 @@ export function estimateScope({
   if (percentOfScope && !dealSizeByService) {
     const flat = { rows, services, pricing, counts, dealSize, bases, serviceUnits };
     const first = estimateScope(flat);
-    const cuts = scopeDealSizes(first.lines);
+    const cuts = scopeDealSizes(first.lines, percentBase);
     // Nothing to be a cut of: no percentage service in the scope, or
     // nothing else in it with a price. The shared deal size stays the
     // answer, and where there isn't one the row says so - which is the
@@ -1870,9 +1881,15 @@ export function estimateScope({
  * nothing. A scope whose only service is the percentage one lands here, and
  * lands there deliberately: there is no deal under it.
  *
+ * `baseNames` narrows what the base is added up from to the services a deal
+ * is actually charging for; left out, the whole scope counts. It never
+ * narrows which services GET a base: a management fee the deal has switched
+ * off still reports what it would be worth, which is the figure somebody
+ * switching it back on is deciding about.
+ *
  * Takes estimateScope() lines with their `breakdown` still attached.
  */
-export function scopeDealSizes(lines = []) {
+export function scopeDealSizes(lines = [], baseNames = null) {
   // Priced on a percentage somewhere on its card. Read off the breakdown
   // the estimate just produced rather than the card, so a line that came to
   // nothing for want of a deal is still recognised as the cut it is.
@@ -1880,10 +1897,14 @@ export function scopeDealSizes(lines = []) {
     && line.breakdown.some(part => part?.kind === 'percent');
   const cuts = (lines || []).filter(isCut);
   if (cuts.length === 0) return new Map();
+  const counted = baseNames === null || baseNames === undefined
+    ? null
+    : (baseNames instanceof Set ? baseNames : new Set(baseNames));
   let low = 0;
   let high = 0;
   for (const line of lines || []) {
     if (isCut(line) || !line?.priced) continue;
+    if (counted && !counted.has(line.name)) continue;
     low += Number(line.fee) || 0;
     high += Number(line.feeHigh) || 0;
   }
