@@ -153,7 +153,10 @@ import { DealTimelineModal } from './DealTimelineModal';
 // and the rate card's numbers have to be read the way the Services Pricing
 // tab reads them.
 import { getServicePricing, resolvePricingBases, estimateScope, feeBasisLabel, feeLinePhrase, pricingUnits, parseMoney as parsePricingMoney, formatMoney as formatPricingMoney } from '../../utils/servicePricing';
-import { oppDealCounts, dealCountRows, COUNT_SOURCE_OPP, COUNT_SOURCE_COMPANY } from '../../utils/oppDealCounts';
+import {
+  oppDealCounts, dealCountRows, projectCountRows, serviceUnitsForScope, setServiceUnitValue,
+  COUNT_SOURCE_OPP, COUNT_SOURCE_COMPANY, COUNT_SOURCE_SERVICE, SERVICE_UNITS_FIELD,
+} from '../../utils/oppDealCounts';
 // One read of the saved rate card, for the Deal Size popup's Refresh button.
 import { fetchUserSettings } from '../../utils/userSettingsSync';
 import { companiesMatch } from '../../utils/listFlags';
@@ -2096,6 +2099,11 @@ function toggleUnpricedService(opp, name, onChangeOppField) {
 // do that inside the click rather than a render later.
 function scopeFeeEstimate({
   scopeNames, pricing, pricingBases, serviceOverrides, sites, counts, dealSize, charged = null,
+  // The counts that belong to a SERVICE rather than to the account: how
+  // many projects this deal carries of each service priced per project.
+  // See oppDealCounts - they get their own boxes and live on the opp,
+  // because no single account number can answer them.
+  serviceUnits = null,
 }) {
   const names = scopeNames || EMPTY_SCOPE;
   if (!names.length) return null;
@@ -2113,6 +2121,7 @@ function scopeFeeEstimate({
     // a per-account service prices there instead of coming back at nothing.
     counts: counts || { sites: parsePricingMoney(sites) ?? 0 },
     dealSize: parsePricingMoney(dealSize),
+    serviceUnits,
     percentOfScope: true,
     percentBase: charged || null,
   });
@@ -2167,15 +2176,17 @@ function repriceNote(before, after) {
 // open.
 function useScopeFeeEstimate({
   active, scopeNames, pricing, pricingBases, serviceOverrides, sites, counts, dealSize, charged = null,
+  serviceUnits = null,
 }) {
   const names = scopeNames || EMPTY_SCOPE;
   return useMemo(
     () => (active
       ? scopeFeeEstimate({
         scopeNames: names, pricing, pricingBases, serviceOverrides, sites, counts, dealSize, charged,
+        serviceUnits,
       })
       : null),
-    [active, names, pricing, pricingBases, serviceOverrides, sites, counts, dealSize, charged],
+    [active, names, pricing, pricingBases, serviceOverrides, sites, counts, dealSize, charged, serviceUnits],
   );
 }
 
@@ -2188,6 +2199,19 @@ const GAP_BORDER = '#FCA5A5';
 // Where a count typed here is saved, in words. dealCountRows knows WHICH
 // record; only the screen knows what the user calls it.
 function countTargetNote(row, companyName, account) {
+  // A project count is the odd one out: it belongs to the SERVICE and to
+  // this deal, so it saves to the opp however the rest of the row is
+  // routed, and the sentence has to say which service it is counting.
+  if (row.service) {
+    return {
+      short: row.target
+        ? (row.value == null ? `blank prices ${row.placeholder}` : 'saves to this opp')
+        : 'nowhere to record it',
+      full: row.target
+        ? `How many ${row.service} projects this deal carries. Saved on this opp rather than on the company card: a project count is a fact about the work being sold, not about the account, so no other deal prices off it. Left blank it prices ${row.placeholder === '1' ? 'a single project' : row.placeholder}.`
+        : `How many ${row.service} projects this deal carries. There is nowhere to save an answer from this screen, so it prices ${row.placeholder === '1' ? 'a single project' : row.placeholder}.`,
+    };
+  }
   // Two lengths of the same fact. The short one sits under the box, where
   // the column is 150px wide and a sentence would set the width of the
   // whole row; the long one is the tooltip, because "no company card" is
@@ -2260,13 +2284,17 @@ function DealCountField({ row, note, onSave }) {
       <span style={{
         fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em',
         color: wanting ? GAP_INK : '#94A3B8',
+        // A service name wraps where "Sites" never does, so the boxes that
+        // carry one keep room for a second line and stay in line with each
+        // other rather than stepping down the row.
+        ...(row.service ? { display: 'flex', alignItems: 'flex-end', minHeight: '2.2em' } : null),
       }}>{row.label}</span>
       <input
         type="text"
         inputMode="numeric"
         value={shown}
         disabled={!editable}
-        placeholder={editable ? 'none yet' : '-'}
+        placeholder={editable ? (row.placeholder || 'none yet') : '-'}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={() => {
           if (editable && !cancelled.current) commit(shown);
@@ -2319,8 +2347,16 @@ function DealCountField({ row, note, onSave }) {
 // the card is open and the account's meters are known now, so the rest are
 // one click away rather than two screens away. `onToggleAll` of null is
 // simply no link.
-function DealCountEditor({ rows, companyName, account, onSave, showAll = false, onToggleAll = null }) {
-  if (!rows || !rows.length) return null;
+function DealCountEditor({
+  rows, companyName, account, onSave, showAll = false, onToggleAll = null,
+  // A box per service priced per project. Kept apart from the row above
+  // because they are a different kind of number: the counts up there are
+  // the account's and answer every service that reads them, these belong
+  // to one service and to this deal. See oppDealCounts.
+  projectRows = EMPTY_SCOPE,
+}) {
+  const hasCounts = !!rows?.length;
+  if (!hasCounts && !projectRows.length) return null;
   return (
     <div style={{
       padding: '0.5rem 0.6rem', background: '#F8FAFC',
@@ -2329,7 +2365,7 @@ function DealCountEditor({ rows, companyName, account, onSave, showAll = false, 
     }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
         <div style={{ fontWeight: 600, color: '#1E293B' }}>
-          Counts these fees are priced on{' '}
+          {hasCounts ? 'Counts these fees are priced on' : 'What this deal is priced on'}{' '}
           <span style={{ color: '#94A3B8', fontWeight: 400 }}>
             &middot; type one in and the estimate below re-prices
           </span>
@@ -2350,16 +2386,53 @@ function DealCountEditor({ rows, companyName, account, onSave, showAll = false, 
           >{showAll ? 'Only what this prices on' : 'Show every count'}</button>
         ) : null}
       </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-        {rows.map(row => (
-          <DealCountField
-            key={row.unit}
-            row={row}
-            note={countTargetNote(row, companyName, account)}
-            onSave={onSave}
-          />
-        ))}
-      </div>
+      {hasCounts ? (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+          {rows.map(row => (
+            <DealCountField
+              key={row.unit}
+              row={row}
+              note={countTargetNote(row, companyName, account)}
+              onSave={onSave}
+            />
+          ))}
+        </div>
+      ) : null}
+      {/* Projects, one service at a time.
+          Every other count on this panel is a fact about the account: 29
+          sites is 29 sites, whichever service reads it. A project count is
+          not - a scope with three lighting retrofits and one chiller
+          replacement is four projects and neither service is priced on
+          four - so there is no single number to type, and the box that
+          asks has to be per service. Blank is not a gap here either: the
+          ordinary shape of the sale is one of them, so a service nobody
+          has counted prices one. */}
+      {projectRows.length > 0 ? (
+        <div style={{
+          marginTop: hasCounts ? 10 : 0,
+          paddingTop: hasCounts ? 8 : 0,
+          borderTop: hasCounts ? '1px solid var(--color-border-light)' : 'none',
+        }}>
+          <div style={{ fontWeight: 600, color: '#1E293B', marginBottom: 6 }}>
+            Projects, per service{' '}
+            <span style={{ color: '#94A3B8', fontWeight: 400 }}>
+              ({projectRows.length}) &middot; how many of each this deal carries. A project
+              count is about the work being sold rather than about the account, so it is
+              asked per service and saved on this opp.
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+            {projectRows.map(row => (
+              <DealCountField
+                key={row.service}
+                row={row}
+                note={countTargetNote(row, companyName, account)}
+                onSave={onSave}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -3657,6 +3730,14 @@ function QuotedAmountCell({
   );
   const chargedServices = useMemo(() => new Set(chargedNames), [chargedNames]);
 
+  // How many projects this deal carries of each service priced per project,
+  // as typed into the boxes below. Also ahead of the estimates, for the
+  // same reason: it is one of the numbers they price against.
+  const serviceUnits = useMemo(
+    () => serviceUnitsForScope(opp, scopeNames || EMPTY_SCOPE),
+    [opp, scopeNames],
+  );
+
   // The scope priced out, for the table below the amount box — see
   // useScopeFeeEstimate. Only while the popup is open, and off the card
   // Refresh fetched when there is one.
@@ -3669,6 +3750,7 @@ function QuotedAmountCell({
     counts: dealCounts.counts,
     dealSize: draftAmount,
     charged: chargedServices,
+    serviceUnits,
   });
 
   // A box per count, for the ones this scope charges on and the ones the
@@ -3683,12 +3765,23 @@ function QuotedAmountCell({
     offer: allCounts ? units.map(u => u.unit) : null,
   }), [opp, company, units, scopeEstimate, allCounts]);
 
+  // A box per service the rate card charges per project. Off the estimate
+  // as well, because the rate card decides which services those are - and
+  // a service that stops being project work stops being asked about
+  // without anybody maintaining a list of them.
+  const projectRows = useMemo(() => projectCountRows({
+    lines: scopeEstimate?.lines,
+    opp,
+    bases: (freshCard ? freshCard.bases : pricingBases) || undefined,
+    canWrite: !!onChangeOppField,
+  }), [scopeEstimate, opp, freshCard, pricingBases, onChangeOppField]);
+
   // The counts that can actually be answered from here. A row whose Account
   // matches no company card still shows - the missing count is why a fee
   // reads $0 - but it is not somewhere the note below should send anybody.
   const typeableCountUnits = useMemo(
-    () => new Set(countRows.filter(r => r.target).map(r => r.unit)),
-    [countRows],
+    () => new Set([...countRows, ...projectRows].filter(r => r.target).map(r => r.unit)),
+    [countRows, projectRows],
   );
 
   // The same scope with what this deal is not charging for struck out.
@@ -3707,13 +3800,20 @@ function QuotedAmountCell({
     serviceOverrides: freshCard ? freshCard.overrides : serviceOverrides,
     counts: dealCounts.counts,
     dealSize: draftAmount,
+    serviceUnits,
   });
 
   // A typed count goes to the record the row says it goes to, and nowhere
   // else. `null` clears it: a box emptied is "nobody has recorded one",
   // which is what both records already mean by blank.
   const saveCount = (row, n) => {
-    if (row.target === COUNT_SOURCE_OPP && row.column && onChangeOppField) {
+    if (row.target === COUNT_SOURCE_SERVICE && row.service && onChangeOppField) {
+      // A project count is about the work this deal sells, so it goes on
+      // the opp beside the services it is not charging for - never on the
+      // company card, which would price every other deal on the account
+      // off this one's retrofit.
+      onChangeOppField(SERVICE_UNITS_FIELD, setServiceUnitValue(opp, row.service, n));
+    } else if (row.target === COUNT_SOURCE_OPP && row.column && onChangeOppField) {
       onChangeOppField(row.column, n == null ? '' : String(n));
     } else if (row.target === COUNT_SOURCE_COMPANY && row.field && company?.id && updateProspect) {
       updateProspect(company.id, { [row.field]: n });
@@ -4037,9 +4137,10 @@ function QuotedAmountCell({
                 first thing to fix: the rates are the rate card's, the counts
                 are this account's, and a wrong or missing one is a wrong
                 deal no total will reveal. */}
-            {scopeEstimate && countRows.length > 0 && (
+            {scopeEstimate && (countRows.length > 0 || projectRows.length > 0) && (
               <DealCountEditor
                 rows={countRows}
+                projectRows={projectRows}
                 companyName={company?.company || ''}
                 account={String(opp?.['Account'] ?? '').trim()}
                 onSave={saveCount}
@@ -6842,6 +6943,13 @@ function LeadQuotedAmountModal({
     [scopeNames, excluded],
   );
   const selectedServices = useMemo(() => new Set(pickedNames), [pickedNames]);
+  // How many projects this deal carries of each service priced per project,
+  // typed into the boxes above the table and kept on the opp - so the
+  // answer given here is the one the Deal Size cell prices off later.
+  const serviceUnits = useMemo(
+    () => serviceUnitsForScope(opp, scopeNames || EMPTY_SCOPE),
+    [opp, scopeNames],
+  );
   const scopeEstimate = useScopeFeeEstimate({
     active: true,
     scopeNames,
@@ -6851,6 +6959,7 @@ function LeadQuotedAmountModal({
     counts: dealCounts.counts,
     dealSize: quotedAmount,
     charged: selectedServices,
+    serviceUnits,
   });
   const pickedEstimate = useScopeFeeEstimate({
     active: excluded.size > 0,
@@ -6860,6 +6969,7 @@ function LeadQuotedAmountModal({
     serviceOverrides,
     counts: dealCounts.counts,
     dealSize: quotedAmount,
+    serviceUnits,
   });
   // A box per count rather than a readout of them: the counts are the other
   // half of this question. Every per-unit fee below is one of these numbers
@@ -6875,13 +6985,22 @@ function LeadQuotedAmountModal({
     offer: allCounts ? units.map(u => u.unit) : null,
   }), [opp, company, units, scopeEstimate, allCounts]);
 
+  // A box per service the rate card charges per project: the one count no
+  // single account number can answer, so it is asked service by service.
+  const projectRows = useMemo(() => projectCountRows({
+    lines: scopeEstimate?.lines,
+    opp,
+    bases: pricingBases || undefined,
+    canWrite: !!onChangeOppField,
+  }), [scopeEstimate, opp, pricingBases, onChangeOppField]);
+
   // The counts that can actually be answered from here. A row whose Account
   // matches no company card still shows - the missing count is why a fee
   // reads $0 - but it is not somewhere the note under the table should send
   // anybody.
   const typeableCountUnits = useMemo(
-    () => new Set(countRows.filter(r => r.target).map(r => r.unit)),
-    [countRows],
+    () => new Set([...countRows, ...projectRows].filter(r => r.target).map(r => r.unit)),
+    [countRows, projectRows],
   );
 
   // A typed count goes to the record the row says it goes to, and nowhere
@@ -6892,7 +7011,13 @@ function LeadQuotedAmountModal({
   // this prompt's answer - the deal size is. An account's meter count is a
   // fact about the account, and Skip for now should not throw it away.
   const saveCount = (row, n) => {
-    if (row.target === COUNT_SOURCE_OPP && row.column && onChangeOppField) {
+    if (row.target === COUNT_SOURCE_SERVICE && row.service && onChangeOppField) {
+      // A project count is about the work this deal sells, so it goes on
+      // the opp beside the services it is not charging for - never on the
+      // company card, which would price every other deal on the account
+      // off this one's retrofit.
+      onChangeOppField(SERVICE_UNITS_FIELD, setServiceUnitValue(opp, row.service, n));
+    } else if (row.target === COUNT_SOURCE_OPP && row.column && onChangeOppField) {
       onChangeOppField(row.column, n == null ? '' : String(n));
     } else if (row.target === COUNT_SOURCE_COMPANY && row.field && company?.id && updateProspect) {
       updateProspect(company.id, { [row.field]: n });
@@ -7021,9 +7146,10 @@ function LeadQuotedAmountModal({
               thing to check and the first thing to fix: the rates are the
               rate card's, but the counts are this account's, and a wrong or
               missing count is a wrong deal no total will reveal. */}
-          {countRows.length > 0 && (
+          {(countRows.length > 0 || projectRows.length > 0) && (
             <DealCountEditor
               rows={countRows}
+              projectRows={projectRows}
               companyName={company?.company || ''}
               account={String(opp?.['Account'] ?? '').trim()}
               onSave={saveCount}
