@@ -1673,6 +1673,20 @@ export function feeBasisLabel(line, bases = PRICING_BASES, { percentOf = '' } = 
   return `${partPhrase(parts[0], many, percentOf)} + ${parts.length - 1} more lines`;
 }
 
+/**
+ * One line of a fee breakdown as a phrase, for a panel that prints the
+ * lines out rather than summing them up: "$450 per site × 819", "3% of
+ * deal size", "Recurring annual $42,000 - $84,000".
+ *
+ * The same phrasing feeBasisLabel joins together, so a breakdown read line
+ * by line and the one-liner over it can't describe the fee differently.
+ * Always with its amount: a line in a list of lines has to say what it
+ * charges, or a reader can't tell which of them the money came from.
+ */
+export function feeLinePhrase(part) {
+  return partPhrase(part, true);
+}
+
 // One line of a breakdown as a phrase: "$450 per site × 819", "3% of deal
 // size", "Recurring annual".
 function partPhrase(part, withAmount = false, percentOf = '') {
