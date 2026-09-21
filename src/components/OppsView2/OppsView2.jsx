@@ -152,7 +152,7 @@ import { DealTimelineModal } from './DealTimelineModal';
 // Aliased: this module already has a parseMoney of its own (oppsMetrics),
 // and the rate card's numbers have to be read the way the Services Pricing
 // tab reads them.
-import { getServicePricing, resolvePricingBases, estimateScope, feeBasisLabel, pricingUnits, parseMoney as parsePricingMoney, formatMoney as formatPricingMoney } from '../../utils/servicePricing';
+import { getServicePricing, resolvePricingBases, estimateScope, feeBasisLabel, feeLinePhrase, pricingUnits, parseMoney as parsePricingMoney, formatMoney as formatPricingMoney } from '../../utils/servicePricing';
 import { oppDealCounts, dealCountRows, COUNT_SOURCE_OPP, COUNT_SOURCE_COMPANY } from '../../utils/oppDealCounts';
 // One read of the saved rate card, for the Deal Size popup's Refresh button.
 import { fetchUserSettings } from '../../utils/userSettingsSync';
@@ -2494,6 +2494,230 @@ function ScopeGapNotes({ gaps, typeableUnits = null }) {
   );
 }
 
+// How one service's fee was worked out, on demand.
+//
+// The row used to carry this as a grey line under the name ("$32-$46 per
+// account × 131 · per year"). That is the right answer to a question you
+// ask about one service, and twenty-two other rows of it is a wall of
+// arithmetic to read past on the way to the money. So the row keeps the
+// name and the warning, and the workings move in here - where there is
+// room to show the fee as the sum it actually is: a line per rate on the
+// card, what each one multiplies, and what each one comes to.
+//
+// Escape is caught on the way down and stopped there: this popup opens on
+// top of a dialog that closes on Escape itself, and dismissing both with
+// one key would shut the deal behind the answer.
+function ScopeFeeDetail({ line, off, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
+  if (!line) return null;
+
+  const money = (v) => fmtMoneyWhole(Math.round(v || 0)) || '$0';
+  const parts = line.breakdown?.length ? line.breakdown : [];
+  const setupParts = line.setupBreakdown?.length ? line.setupBreakdown : [];
+  const ranged = (line.feeHigh || 0) > (line.fee || 0);
+  // Setup money is one-time and sits OUTSIDE the fee, which is why the
+  // table's row shows the fee alone while the Year 1 total under it counts
+  // the setup too. Both figures are named here rather than one of them
+  // quietly standing for the other.
+  const setup = (line.setup || 0) + (line.setupHigh || 0) > 0;
+  const year1 = (line.fee || 0) + (line.setup || 0);
+  const year1High = (line.feeHigh || 0) + (line.setupHigh || 0);
+  const head = {
+    padding: '0 6px 3px', fontSize: '0.64rem', fontWeight: 700, textTransform: 'uppercase',
+    letterSpacing: '0.03em', color: '#94A3B8',
+  };
+  const cell = { padding: '3px 6px', verticalAlign: 'top', border: '1px solid var(--color-border-light)' };
+  const num = { ...cell, textAlign: 'right', whiteSpace: 'nowrap' };
+  const foot = { borderTop: '2px solid var(--color-border)' };
+
+  const feeRow = (part, key, prefix = '') => (
+    <tr key={key}>
+      <td style={cell}>
+        {prefix}{feeLinePhrase(part)}
+        {part.note ? (
+          <div style={{ color: GAP_INK, fontSize: '0.7rem', fontWeight: 600 }}>
+            <span aria-hidden="true">&#9888; </span>{part.note}
+          </div>
+        ) : null}
+      </td>
+      <td style={num}><strong style={{ color: '#1E293B' }}>{money(part.fee)}</strong></td>
+      <td style={num}>
+        <strong style={{ color: part.feeHigh > part.fee ? '#1E293B' : '#94A3B8' }}>
+          {part.feeHigh > part.fee ? money(part.feeHigh) : '-'}
+        </strong>
+      </td>
+    </tr>
+  );
+
+  return createPortal(
+    <div
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9200,
+        background: 'rgba(15, 23, 42, 0.35)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onMouseDown={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff', borderRadius: 8, padding: '0.9rem 1.1rem',
+          width: 540, maxWidth: '92vw', maxHeight: '86vh', overflowY: 'auto',
+          boxShadow: '0 10px 30px rgba(0,0,0,0.18)',
+          display: 'flex', flexDirection: 'column', gap: '0.6rem',
+          fontSize: '0.78rem', color: '#475569',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '0.92rem', color: '#1E293B' }}>{line.name}</div>
+            <div style={{ color: '#94A3B8', fontSize: '0.72rem' }}>
+              How this fee is worked out
+              {line.recurring ? ' · billed every year' : ' · billed once'}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px',
+              fontSize: '1rem', lineHeight: 1, color: '#94A3B8',
+            }}
+          >×</button>
+        </div>
+
+        {/* The blocker first, where there is one: the arithmetic below is
+            the answer to "how much", and this is the answer to why it
+            isn't one. */}
+        {line.note ? (
+          <div style={{
+            display: 'flex', gap: 6, alignItems: 'baseline',
+            padding: '5px 8px', borderRadius: 4,
+            background: GAP_BG, border: `1px solid ${GAP_BORDER}`,
+            fontSize: '0.74rem', color: GAP_INK, lineHeight: 1.45,
+          }}>
+            <span aria-hidden="true">&#9888;</span>
+            <span>
+              <strong style={{ fontWeight: 700 }}>{line.note}.</strong>{' '}
+              {line.priced
+                ? 'This service is in the scope but not in the Year 1 total.'
+                : 'Nothing on the rate card prices it, so it is counted as unpriced.'}
+            </span>
+          </div>
+        ) : null}
+        {off ? (
+          <div style={{
+            padding: '5px 8px', borderRadius: 4, background: '#F1F5F9',
+            border: '1px solid var(--color-border-light)', fontSize: '0.74rem',
+          }}>
+            <strong style={{ color: '#1E293B' }}>Already in scope, not charged.</strong>{' '}
+            The figures below are what this service would have been worth. This deal is
+            not billing for it, so it sits outside the Year 1 total.
+          </div>
+        ) : null}
+
+        {parts.length || setupParts.length ? (
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={{ ...head, textAlign: 'left' }}>Line</th>
+                <th style={{ ...head, textAlign: 'right', width: 96 }}>Low</th>
+                <th style={{ ...head, textAlign: 'right', width: 96 }}>High</th>
+              </tr>
+            </thead>
+            <tbody>
+              {parts.map((part, i) => feeRow(part, `fee-${i}`))}
+              {/* Setup money is one-time and sits outside the annual fee,
+                  so it is named rather than folded in - it is in the Year 1
+                  total and in no year after it. */}
+              {setupParts.map((part, i) => feeRow(part, `setup-${i}`, 'Setup: '))}
+            </tbody>
+            <tfoot>
+              {/* The fee first, and named as the row's own figure: this
+                  popup explains a row, so the number it ends on has to be
+                  the number that row shows. */}
+              <tr>
+                <td
+                  style={{ ...cell, ...foot, fontWeight: 700, color: '#1E293B' }}
+                  title="The figure this service shows in the table."
+                >Fee{line.recurring ? ', every year' : ''}</td>
+                <td style={{ ...num, ...foot, fontWeight: 700, color: '#1E293B' }}>{money(line.fee)}</td>
+                <td style={{ ...num, ...foot, fontWeight: 700, color: ranged ? '#1E293B' : '#94A3B8' }}>
+                  {ranged ? money(line.feeHigh) : '-'}
+                </td>
+              </tr>
+              {ranged ? (
+                <tr>
+                  <td style={{ ...cell, color: '#94A3B8' }}>Avg</td>
+                  <td style={{ ...num, color: '#94A3B8' }}>{money(((line.fee || 0) + (line.feeHigh || 0)) / 2)}</td>
+                  <td style={{ ...num, color: '#94A3B8' }}>-</td>
+                </tr>
+              ) : null}
+              {setup ? (
+                <>
+                  <tr>
+                    <td style={cell}>Setup, billed once</td>
+                    <td style={num}>{money(line.setup)}</td>
+                    <td style={{ ...num, color: line.setupHigh > line.setup ? '#1E293B' : '#94A3B8' }}>
+                      {line.setupHigh > line.setup ? money(line.setupHigh) : '-'}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td
+                      style={{ ...cell, ...foot, fontWeight: 700, color: '#1E293B' }}
+                      title="The fee plus the setup: what this service adds to the Year 1 total under the table."
+                    >Year 1</td>
+                    <td style={{ ...num, ...foot, fontWeight: 700, color: '#1E293B' }}>{money(year1)}</td>
+                    <td style={{ ...num, ...foot, fontWeight: 700, color: year1High > year1 ? '#1E293B' : '#94A3B8' }}>
+                      {year1High > year1 ? money(year1High) : '-'}
+                    </td>
+                  </tr>
+                </>
+              ) : null}
+            </tfoot>
+          </table>
+        ) : (
+          // No lines to add up: a service given away, a fee typed straight
+          // in, or one the card has nothing on. The one-liner the row used
+          // to carry says all there is to say - unless the red block above
+          // has already said it, and then saying it twice is not detail.
+          (line.noFee || !line.note) ? (
+            <div style={{ fontSize: '0.8rem', color: '#1E293B' }}>
+              {line.noFee
+                ? 'No fee: the rate card gives this service away, so it adds nothing to the deal.'
+                : (line.how || 'Nothing on the rate card prices this service yet.')}
+            </div>
+          ) : null
+        )}
+
+        {setup ? (
+          <div style={{ fontSize: '0.7rem', color: '#64748B', lineHeight: 1.45 }}>
+            The row in the table shows the fee alone. Setup is one-time money, so it
+            is counted once in the Year 1 total under the table and in no year after it.
+          </div>
+        ) : null}
+
+        <div style={{ fontSize: '0.7rem', color: '#94A3B8', lineHeight: 1.45 }}>
+          Rates come from the rate card on Dropdowns › Services Pricing; the counts
+          they are multiplied by are the boxes above this table. Change either and the
+          estimate re-prices.
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // The columns the estimate table can show, in the order it shows them.
 //
 // Service always shows: it is what every other column on the row is about,
@@ -2600,6 +2824,10 @@ function ScopeFeeTable({
     updateSettings,
   });
   const show = cols.isVisible;
+  // The service whose workings are open, by name rather than by row: the
+  // estimate is rebuilt whenever a count or the deal size moves, and a
+  // captured row would go on showing the fee it was opened with.
+  const [detailName, setDetailName] = useState(null);
 
   if (!estimate || !estimate.lines.length) return null;
   // The totals can be struck from a smaller set than the rows: a service
@@ -2610,12 +2838,20 @@ function ScopeFeeTable({
   const picking = !!selected && !!onToggle;
   const isOn = (name) => (picking ? selected.has(name) : true);
   const onCount = picking ? estimate.lines.filter(l => isOn(l.name)).length : estimate.lines.length;
-  const cell = { padding: '2px 0', verticalAlign: 'top' };
-  const num = { ...cell, textAlign: 'right', whiteSpace: 'nowrap', paddingLeft: 10 };
+  // Ruled, rather than laid out on whitespace alone. Twenty-three services
+  // against three columns of money is a lot of row to track across, and the
+  // eye slid a line on the way from a service to its figure - which is the
+  // one mistake this table cannot afford to invite.
+  const rule = '1px solid var(--color-border-light)';
+  const cell = { padding: '3px 6px', verticalAlign: 'top', border: rule };
+  const num = { ...cell, textAlign: 'right', whiteSpace: 'nowrap' };
   const head = {
-    padding: '0 0 3px', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase',
-    letterSpacing: '0.03em', color: '#94A3B8',
+    padding: '3px 6px', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase',
+    letterSpacing: '0.03em', color: '#94A3B8', border: rule, background: '#F1F5F9',
   };
+  // The total is ruled off from the services above it rather than merely
+  // gridded like the rest: it is a different kind of row.
+  const foot = { borderTop: '2px solid var(--color-border)' };
   const useLink = {
     background: 'none', border: 'none', color: '#2563eb', textDecoration: 'underline',
     cursor: 'pointer', padding: 0, font: 'inherit', fontSize: '0.7rem',
@@ -2725,7 +2961,20 @@ function ScopeFeeTable({
                   </td>
                 ) : null}
                 <td style={cell}>
-                  {line.name}
+                  {/* The name is the way in to the workings. The breakdown
+                      that used to sit under it is one service's answer, and
+                      on twenty-three rows at once it was a wall to read
+                      past rather than an explanation. */}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setDetailName(line.name); }}
+                    title={`How ${line.name} is priced: the rate card lines behind this figure, what each multiplies, and what each comes to.`}
+                    style={{
+                      background: 'none', border: 'none', padding: 0, font: 'inherit',
+                      textAlign: 'left', cursor: 'pointer', color: '#2563eb',
+                      textDecoration: 'underline', textDecorationStyle: 'dotted',
+                    }}
+                  >{line.name}</button>
                   {/* An unticked row is a decision, and one that outlives the
                       popup, so it says what it is rather than leaving a
                       half-faded row to be puzzled over a week later. */}
@@ -2735,28 +2984,21 @@ function ScopeFeeTable({
                       title="In the scope, not on this deal's bill: already in the contract, or bundled into another service here."
                     >already in scope, not charged</div>
                   ) : null}
-                  {/* Where the fee came from, and — when a priced service
-                      still came out at nothing — the count it needed that
-                      the opp doesn't carry. */}
-                  {((off ? line.how : (line.note || line.how))) ? (
+                  {/* What is MISSING stays on the row. The workings are
+                      something you go and ask for; a rate card with nothing
+                      on it, or a count nobody has entered, is something the
+                      table has to volunteer - it is why the figure beside
+                      it is not a price. */}
+                  {!off && line.note ? (
                     <div style={{
                       color: gapped ? GAP_INK : '#94A3B8',
                       fontSize: '0.7rem',
                       fontWeight: gapped ? 600 : 400,
                     }}>
                       {gapped ? <span aria-hidden="true">&#9888; </span> : null}
-                      {off ? line.how : (line.note || line.how)}
-                      {/* The billing period stays grey on a blocked row: it is
-                          a fact about the service, not part of what is wrong,
-                          and in red it reads as though the year were the
-                          problem. */}
-                      {line.recurring
-                        ? <span style={{ color: '#94A3B8', fontWeight: 400 }}>{' · per year'}</span>
-                        : null}
+                      {line.note}
                     </div>
-                  ) : (line.recurring ? (
-                    <div style={{ color: '#94A3B8', fontSize: '0.7rem' }}>per year</div>
-                  ) : null)}
+                  ) : null}
                 </td>
                 {/* What the account already says about this service. A deal
                     is sized differently when the service beside the figure
@@ -2849,7 +3091,7 @@ function ScopeFeeTable({
           <tr>
             <td
               colSpan={labelSpan}
-              style={{ ...cell, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}
+              style={{ ...cell, ...foot }}
             >
               Year 1 total
               {(() => {
@@ -2885,7 +3127,7 @@ function ScopeFeeTable({
               })()}
             </td>
             {show('low') ? (
-              <td style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}>
+              <td style={{ ...num, ...foot }}>
                 <strong style={{ color: '#1E293B' }}>{money(sums.year1Total)}</strong>
                 {onUse ? (
                   <div>
@@ -2901,7 +3143,7 @@ function ScopeFeeTable({
             ) : null}
             {show('high') ? (
               <td
-                style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}
+                style={{ ...num, ...foot }}
                 title={sums.ranged ? undefined : 'No service in this scope is priced as a range, so the total is one figure.'}
               >
                 <strong style={{ color: sums.ranged ? '#1E293B' : '#94A3B8' }}>
@@ -2926,7 +3168,7 @@ function ScopeFeeTable({
                 of money nobody is billing is not this deal's average. */}
             {show('avg') ? (
               <td
-                style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}
+                style={{ ...num, ...foot }}
                 title={sums.ranged
                   ? 'Halfway between the low and high totals, over the services counted above'
                   : 'No service in this scope is priced as a range, so the average is the total itself.'}
@@ -2955,6 +3197,15 @@ function ScopeFeeTable({
           the total was already admitting to. */}
       <ScopeGapNotes gaps={sums.gaps} typeableUnits={typeableUnits} />
       <ScopeRefreshNote refresh={refresh} />
+      {/* Read off the current estimate by name, so a count typed above
+          while it is open re-prices what it is showing. */}
+      {detailName ? (
+        <ScopeFeeDetail
+          line={estimate.lines.find(l => l.name === detailName) || null}
+          off={picking && !isOn(detailName)}
+          onClose={() => setDetailName(null)}
+        />
+      ) : null}
     </div>
   );
 }
