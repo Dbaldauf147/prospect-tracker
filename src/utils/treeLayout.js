@@ -18,6 +18,8 @@
 
 export const LAYOUT = {
   nodeWidth: 212,
+  // The floor, not the fixed size: a step that lists the services delivered
+  // at it asks for more through `heightOf`.
   nodeHeight: 68,
   hGap: 30,
   vGap: 60,
@@ -30,6 +32,8 @@ export const LAYOUT = {
 };
 
 /**
+ * @param {object} [opts] - LAYOUT overrides, plus `heightOf(node, id)`: the
+ *   height that step's box needs, never taken below `nodeHeight`.
  * @returns {{ width, height, nodes: Array, edges: Array, byId: Map }}
  *   nodes: { id, x, y, w, h, layer, column, orphan }
  *   edges: { fromId, toId, branchId, label, back, x1, y1, x2, y2, labelX, labelY }
@@ -111,6 +115,27 @@ export function layoutTree(tree, opts = {}) {
 
   // 3. Coordinates. Rows are centred against the widest one, so a single
   //    step sits over the middle of the five below it.
+  //
+  //    Height is per step rather than fixed: a box that lists what it
+  //    delivers needs the room to list it, and the caller knows how much
+  //    that is (`heightOf`). A row is as tall as its tallest box and the
+  //    boxes hang from its top, so the titles still line up across it, and
+  //    a row below is pushed down by whatever the row above actually took.
+  const heightOf = typeof cfg.heightOf === 'function' ? cfg.heightOf : null;
+  const heights = new Map();
+  for (const id of discovered) {
+    const asked = heightOf ? Number(heightOf(nodes[id], id)) : cfg.nodeHeight;
+    heights.set(id, Number.isFinite(asked) ? Math.max(cfg.nodeHeight, asked) : cfg.nodeHeight);
+  }
+  const rowTop = new Map();
+  const rowHeight = new Map();
+  let nextTop = cfg.padding;
+  for (const l of orderedRows) {
+    rowTop.set(l, nextTop);
+    rowHeight.set(l, Math.max(...rows.get(l).map(id => heights.get(id))));
+    nextTop += rowHeight.get(l) + cfg.vGap;
+  }
+
   const widest = Math.max(...orderedRows.map(l => rows.get(l).length));
   const spanOf = (count) => count * cfg.nodeWidth + (count - 1) * cfg.hGap;
   const fullSpan = spanOf(widest);
@@ -125,9 +150,9 @@ export function layoutTree(tree, opts = {}) {
         layer: l,
         column: i,
         x: left + i * (cfg.nodeWidth + cfg.hGap),
-        y: cfg.padding + l * (cfg.nodeHeight + cfg.vGap),
+        y: rowTop.get(l),
         w: cfg.nodeWidth,
-        h: cfg.nodeHeight,
+        h: heights.get(id),
         orphan: orphans.has(id),
       };
       placed.push(box);
@@ -174,7 +199,7 @@ export function layoutTree(tree, opts = {}) {
   }
 
   const width = cfg.padding * 2 + fullSpan + cfg.backBulge * 2;
-  const height = cfg.padding * 2 + (orderedRows.length * (cfg.nodeHeight + cfg.vGap)) - cfg.vGap;
+  const height = nextTop - cfg.vGap + cfg.padding;
   return { width, height, nodes: placed, edges, byId };
 }
 

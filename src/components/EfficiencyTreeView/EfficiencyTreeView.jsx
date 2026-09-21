@@ -8,7 +8,7 @@ import {
   treeStats, updateBranch, updateNode,
 } from '../../utils/decisionTree';
 import { answeredArrows, answerTrail } from '../../utils/decisionWalk';
-import { edgePath, layoutTree } from '../../utils/treeLayout';
+import { edgePath, LAYOUT, layoutTree } from '../../utils/treeLayout';
 import { SavingsPanel } from './SavingsPanel.jsx';
 import { pricedServiceRows } from '../../utils/serviceRows';
 import {
@@ -83,6 +83,29 @@ const END_NO_NEXT = 'This step is an End, so nothing comes after it. Change its 
 // to a hundred and fifty services, and a dropdown that long is scrolled
 // rather than read — so it shows a window and the search box narrows it.
 const PICKER_ROWS = 10;
+
+// A box in the diagram names the services delivered at the step rather than
+// counting them: the diagram gets read out in front of a customer, and "4
+// services" is a number you then have to click to use.
+//
+// Five names is what a box this wide carries before the flow disappears
+// under a service catalogue; past that it says how many are left, and the
+// popup and the side panel carry the full list either way.
+const BOX_SERVICE_LINES = 5;
+// One line per name, in step with .boxService's line-height, plus the gap
+// above the list. The layout has to know the height before the browser has
+// laid anything out, so the two are kept level by hand - change one and
+// change the other.
+const BOX_SERVICE_LINE_H = 15;
+const BOX_SERVICE_GAP = 4;
+
+/** How tall the box for one step has to be to list what it delivers. */
+function boxHeight(node) {
+  const count = node?.services?.length || 0;
+  if (count === 0) return LAYOUT.nodeHeight;
+  const lines = Math.min(count, BOX_SERVICE_LINES) + (count > BOX_SERVICE_LINES ? 1 : 0);
+  return LAYOUT.nodeHeight + BOX_SERVICE_GAP + lines * BOX_SERVICE_LINE_H;
+}
 
 // The services tagged onto a step, as chips.
 //
@@ -734,7 +757,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   const stats = useMemo(() => treeStats(tree), [tree]);
   const rows = useMemo(() => outlineRows(tree), [tree]);
   const orphans = useMemo(() => orphanIds(tree), [tree]);
-  const layout = useMemo(() => layoutTree(tree), [tree]);
+  const layout = useMemo(() => layoutTree(tree, { heightOf: boxHeight }), [tree]);
 
   // How many arrows leave each box. An arrow with no label is readable when
   // it is the only way out - it just continues the flow - but two blank
@@ -1357,6 +1380,31 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                     title={node.detail ? `${node.title}\n\nClick for the detail` : node.title}
                   >
                     <span className={styles.boxTitle}>{node.title || '(untitled step)'}</span>
+                    {/* What we deliver here, named. The box was measured for
+                        exactly these lines, so anything past the fifth is a
+                        count with the rest in its tooltip. */}
+                    {node.services.length > 0 && (
+                      <span className={styles.boxServices}>
+                        {node.services.slice(0, BOX_SERVICE_LINES).map(name => {
+                          const gone = !knownServices.has(name);
+                          return (
+                            <span
+                              key={name}
+                              className={gone ? styles.boxServiceGone : styles.boxService}
+                              title={gone
+                                ? `${name} - not on the Solutions list any more. Open the step in Edit to swap or remove it.`
+                                : name}
+                            >{name}</span>
+                          );
+                        })}
+                        {node.services.length > BOX_SERVICE_LINES && (
+                          <span
+                            className={styles.boxServiceMore}
+                            title={`Also delivered here:\n${node.services.slice(BOX_SERVICE_LINES).join('\n')}`}
+                          >+{node.services.length - BOX_SERVICE_LINES} more</span>
+                        )}
+                      </span>
+                    )}
                     <span className={styles.boxMeta}>
                       {/* Checked off: a step the route has been through, and
                           the one it is standing on. The tick is the record of
@@ -1369,16 +1417,6 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                       {box.id === tree.rootId && <span className={styles.rootChip}>start</span>}
                       {box.orphan && <span className={styles.repeatChip}>unreachable</span>}
                       {node.branches.length === 0 && !box.orphan && <span className={styles.repeatChip}>end</span>}
-                      {/* The count, not the names: the box has room for a
-                          title and little else, and the names are one click
-                          away in the popup. The tooltip lists them for the
-                          scan that doesn't want to click. */}
-                      {node.services.length > 0 && (
-                        <span
-                          className={styles.serviceChip}
-                          title={`Services delivered here:\n${node.services.join('\n')}`}
-                        >{node.services.length} service{node.services.length === 1 ? '' : 's'}</span>
-                      )}
                     </span>
                   </button>
                   {/* Below and to the right of the box, on hover: where you

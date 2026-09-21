@@ -924,9 +924,15 @@
 /* The flowchart terminator: a stadium, so "the route stops here" is the
    shape of the box rather than a chip you have to read. The rounded ends eat
    into the text, so the side padding grows to match, and the accent bar the
-   other two carry on their left edge has nowhere flat to sit. */
+   other two carry on their left edge has nowhere flat to sit.
+
+   Half the standard box height rather than 999px: an end that lists what it
+   delivers is a taller box, and a radius with no ceiling turns that into an
+   ellipse whose curve closes over its own title. Capped, an untagged end is
+   the same stadium it always was and a tall one keeps the softest corners
+   on the canvas. */
 .boxEnd {
-  border-radius: 999px;
+  border-radius: 34px;
   padding-left: 1rem;
   padding-right: 1rem;
   background: var(--color-surface-alt);
@@ -984,6 +990,52 @@
   align-items: center;
   gap: 0.25rem;
   flex-wrap: wrap;
+}
+
+/* What the step delivers, named on the box itself. Teal, the same teal the
+   chips in the popup use: the flow is the customer's process and these are
+   ours, and the two shouldn't read as the same kind of thing.
+
+   One name per line, clipped rather than wrapped — the layout works the
+   box's height out from the count before the browser draws anything, so a
+   name that took two lines would push the row of chips under it out of the
+   box. The full name is in the tooltip. */
+.boxServices {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.boxService,
+.boxServiceGone,
+.boxServiceMore {
+  /* 15px, matching BOX_SERVICE_LINE_H in the view. Not em-based: the two
+     have to agree exactly or the boxes come out the wrong height. */
+  line-height: 15px;
+  font-size: 0.62rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.boxService {
+  color: #0F766E;
+  font-weight: 600;
+}
+
+/* Tagged, but the Solutions list no longer has it. Marked the same way the
+   popup marks it rather than dropped, for the same reason. */
+.boxServiceGone {
+  color: var(--color-text-muted);
+  font-weight: 600;
+  font-style: italic;
+}
+
+.boxServiceMore {
+  color: var(--color-text-muted);
+  font-size: 0.58rem;
+  font-weight: 700;
 }
 
 .boxMore {
@@ -1318,20 +1370,6 @@
   color: var(--color-text-muted);
   background: var(--color-surface-alt);
   border-top: 1px solid var(--color-border);
-}
-
-/* On a box in the diagram there is room for the count and nothing else —
-   the names are in the popup, and in the tooltip for a scan that doesn't
-   want to open one. */
-.serviceChip {
-  font-size: 0.6rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  border-radius: 999px;
-  padding: 0.05rem 0.4rem;
-  background: #CCFBF1;
-  color: #0F766E;
-  white-space: nowrap;
 }
 
 /* ── the two areas ───────────────────────────────────────────────────── */
