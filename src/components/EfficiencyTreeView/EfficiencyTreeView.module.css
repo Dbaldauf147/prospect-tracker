@@ -167,6 +167,17 @@
   padding: 0.9rem 1rem 2rem;
 }
 
+/* The pathway switcher above the walk: which of the picked routes this
+   screen is walking. A row rather than a dropdown, because two or three of
+   them is the usual number and a list you can see is one fewer click. */
+.routeBar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.6rem;
+}
+
 .trail {
   display: flex;
   align-items: center;
