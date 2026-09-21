@@ -2842,16 +2842,30 @@ function ScopeFeeTable({
   // against three columns of money is a lot of row to track across, and the
   // eye slid a line on the way from a service to its figure - which is the
   // one mistake this table cannot afford to invite.
-  const rule = '1px solid var(--color-border-light)';
+  //
+  // So the grid is drawn in a line you can actually see (the border tokens
+  // are a hairline meant for a table half this tall), and the rows alternate
+  // underneath it. Two answers to the same question: the rule catches the
+  // eye travelling across a row, the banding catches it dropping a line.
+  const rule = '1px solid #CBD5E1';
   const cell = { padding: '3px 6px', verticalAlign: 'top', border: rule };
   const num = { ...cell, textAlign: 'right', whiteSpace: 'nowrap' };
+  // White and a slate tint, in step rather than nearly the same: banding you
+  // have to look for is banding that does not do the job.
+  const bandOdd = '#FFFFFF';
+  const bandEven = '#F1F5F9';
   const head = {
     padding: '3px 6px', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase',
-    letterSpacing: '0.03em', color: '#94A3B8', border: rule, background: '#F1F5F9',
+    letterSpacing: '0.03em', color: '#64748B', border: rule, background: '#E2E8F0',
+    // Darker than either band, and sitting on a heavier line: the header has
+    // to stay the top of the table rather than read as the first row of it.
+    borderBottom: '2px solid #94A3B8',
   };
   // The total is ruled off from the services above it rather than merely
-  // gridded like the rest: it is a different kind of row.
-  const foot = { borderTop: '2px solid var(--color-border)' };
+  // gridded like the rest: it is a different kind of row. Carrying the
+  // header's tint closes the table at the bottom the way the header opens it
+  // at the top, which is what keeps it out of the banding.
+  const foot = { borderTop: '2px solid #94A3B8', background: '#E2E8F0' };
   const useLink = {
     background: 'none', border: 'none', color: '#2563eb', textDecoration: 'underline',
     cursor: 'pointer', padding: 0, font: 'inherit', fontSize: '0.7rem',
@@ -2935,7 +2949,7 @@ function ScopeFeeTable({
           </tr>
         </thead>
         <tbody>
-          {estimate.lines.map((line) => {
+          {estimate.lines.map((line, i) => {
             // A service this deal is not charging for, and a service the
             // estimate could not work out. They look the same on the row -
             // no figure in the money columns - and they are opposite
@@ -2944,8 +2958,12 @@ function ScopeFeeTable({
             // service nobody is billing for is not missing.
             const off = picking && !isOn(line.name);
             const gapped = !!line.gap && !off;
+            // The band is the row's own, not the position it happens to be
+            // drawn at: an unticked row fades but keeps its place in the
+            // alternation, so nothing shifts as services go on and off.
+            const band = i % 2 ? bandEven : bandOdd;
             return (
-              <tr key={line.name} style={off ? { opacity: 0.55 } : undefined}>
+              <tr key={line.name} style={off ? { opacity: 0.55, background: band } : { background: band }}>
                 {picking ? (
                   <td style={{ ...cell, paddingTop: 3 }}>
                     <input
