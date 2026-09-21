@@ -12,7 +12,8 @@
 // got to, answering somewhere else entirely, and a loop that puts the same
 // step on a route twice.
 import {
-  answerRoutes, answeredArrows, answeredSteps, rewindRoute, routeArrows, routeEnds, routeSteps,
+  answerRoutes, answeredArrows, answeredSteps, prunedTree, rewindRoute, routeArrows, routeEnds,
+  routeSteps,
 } from '../src/utils/decisionWalk.js';
 import { normalizeTree } from '../src/utils/decisionTree.js';
 
@@ -146,6 +147,50 @@ const answer = (routes, nodeId, branchId, active = 0) => (
     'and back to the top drops it, since it has answered nothing');
   eq(rewindRoute(routes, 1, 1), null, 'standing where you already are is nothing to do');
   eq(rewindRoute(routes, 0, 9), null, 'nor is a step the pathway hasn’t got to');
+}
+
+// --- what the diagram is left showing ----------------------------------------
+//
+// Answering closes the flow up around the pathway picked: the way out you
+// didn't take goes, and so does everything hanging off it.
+{
+  const shown = routes => Object.keys(prunedTree(tree, routes).nodes).sort();
+  const waysOut = (routes, id) => prunedTree(tree, routes).nodes[id].branches.map(b => b.label);
+
+  ok(prunedTree(tree, []) === tree, 'nothing answered, nothing hidden - the same tree comes back');
+  ok(prunedTree(tree, [['gate1']]) === tree, 'and a walk standing at the start has answered nothing');
+
+  eq(shown([['gate1', 'choice']]), ['choice', 'gate1'],
+    'answering No drops the Yes side and the two steps that hang off it');
+  eq(waysOut([['gate1', 'choice']], 'gate1'), ['No'],
+    'and the step that drove it keeps only the answer given');
+
+  eq(shown([['gate1', 'forced']]), ['forced', 'gate1', 'gate2'],
+    'answering Yes drops the No side, and keeps what Yes leads on to');
+
+  // Two pathways out of one question is what picking both means, so neither
+  // side is a road not taken.
+  eq(shown([['gate1', 'forced'], ['gate1', 'choice']]), ['choice', 'forced', 'gate1', 'gate2'],
+    'both answers picked keeps both sides');
+  eq(waysOut([['gate1', 'forced'], ['gate1', 'choice']], 'gate1'), ['Yes', 'No'],
+    'and the question keeps both its ways out');
+
+  // gate2 loops back to gate1, so answering it rules nothing out: everything
+  // it could have hidden is still reached the way the walk came in.
+  eq(shown([['gate1', 'forced', 'gate2', 'gate1']]), ['forced', 'gate1', 'gate2'],
+    'a loop back to the start hides nothing it is still standing on');
+
+  // A step nothing points at is the user's unwired work, not a road not
+  // taken, so an answer elsewhere leaves it alone.
+  const withStray = normalizeTree({
+    rootId: 'gate1',
+    nodes: {
+      ...tree.nodes,
+      stray: { id: 'stray', kind: 'outcome', title: 'Not wired in', branches: [] },
+    },
+  });
+  eq(Object.keys(prunedTree(withStray, [['gate1', 'choice']]).nodes).sort(), ['choice', 'gate1', 'stray'],
+    'a step the start never reached stays put');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

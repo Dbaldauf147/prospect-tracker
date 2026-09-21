@@ -34,7 +34,7 @@
 // back to pick the next measure) can have a step on a route twice, and the
 // answer belongs to the visit you are on.
 
-import { getNode, pathFromRoot } from './decisionTree.js';
+import { getNode, pathFromRoot, reachableIds } from './decisionTree.js';
 
 /** Whether a route goes straight from `from` to `to` anywhere along it. */
 function hasArrow(route, from, to) {
@@ -190,6 +190,74 @@ export function routeSteps(routes = []) {
   const out = new Set();
   for (const route of routes || []) for (const id of route) out.add(id);
   return out;
+}
+
+/**
+ * The tree as the diagram should draw it, given what has been answered.
+ *
+ * Answering a step rules out its OTHER ways out: you said No, so the Yes
+ * side is not work this account is going to see, and neither is anything
+ * hanging off it. Those arrows go, and every step reachable only through one
+ * of them goes with them, so the diagram closes up around the pathways
+ * actually picked instead of carrying the whole catalogue of what might have
+ * been. That is the difference between a flowchart and the one flow you are
+ * walking somebody through.
+ *
+ * Two things are deliberately left where they are:
+ *
+ *   a step the start never reached - somebody's unwired work rather than a
+ *     road not taken, and it still has to be findable to get wired in.
+ *   a step another pathway still reaches - picking two answers out of one
+ *     question keeps both sides, which is what picking two of them means.
+ *
+ * The tree itself comes back untouched when nothing is ruled out, so the
+ * diagram is only re-laid-out when the walk has actually narrowed it.
+ */
+export function prunedTree(tree, routes = []) {
+  const nodes = tree?.nodes;
+  if (!nodes) return tree;
+  const answered = answeredSteps(routes);
+  if (!answered.size) return tree;
+
+  // The ways out of an answered step that no pathway took.
+  const picked = routeArrows(routes);
+  const ruled = new Set();
+  for (const id of answered) {
+    for (const b of nodes[id]?.branches || []) {
+      const arrow = `${id}->${b.to}`;
+      if (b.to && nodes[b.to] && !picked.has(arrow)) ruled.add(arrow);
+    }
+  }
+  if (!ruled.size) return tree;
+
+  // What the start can still get to with those arrows gone. Breadth-first
+  // from the root, the same way the layout decides what is reachable at all.
+  const live = new Set();
+  const rootId = nodes[tree.rootId] ? tree.rootId : null;
+  if (rootId) {
+    live.add(rootId);
+    const queue = [rootId];
+    while (queue.length) {
+      const id = queue.shift();
+      for (const b of nodes[id].branches || []) {
+        if (!b.to || !nodes[b.to] || live.has(b.to) || ruled.has(`${id}->${b.to}`)) continue;
+        live.add(b.to);
+        queue.push(b.to);
+      }
+    }
+  }
+  const reached = reachableIds(tree);
+  const keep = id => live.has(id) || !reached.has(id);
+
+  const out = {};
+  for (const [id, node] of Object.entries(nodes)) {
+    if (!keep(id)) continue;
+    const branches = (node.branches || []).filter(b => (
+      !ruled.has(`${id}->${b.to}`) && (!b.to || keep(b.to))
+    ));
+    out[id] = branches.length === (node.branches || []).length ? node : { ...node, branches };
+  }
+  return { ...tree, nodes: out };
 }
 
 /**
