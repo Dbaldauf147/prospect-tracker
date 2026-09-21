@@ -1247,6 +1247,23 @@
   gap: 0.25rem;
 }
 
+/* A row in the popup's Reached from / Leads to lists, plus whatever Edit
+   mode hangs off the end of it. The row itself is still one button that
+   navigates; the delete controls sit beside it rather than inside it,
+   because a button cannot live in a button. */
+.linkRowWrap {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.linkRowWrap .linkRow,
+.linkRowWrap .linkRowDead {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
 .linkRow,
 .linkRowDead {
   display: flex;
@@ -1284,6 +1301,26 @@
   font-size: 0.68rem;
   color: var(--color-text-muted);
   text-align: right;
+}
+
+/* The one irreversible button on the page, so it looks like one and is
+   pushed away from the buttons beside it. */
+.dangerBtn {
+  padding: 0.32rem 0.75rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #B91C1C;
+  background: var(--color-danger-light);
+  border: 1px solid #FECACA;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  margin-right: auto;
+}
+
+.dangerBtn:hover {
+  background: #FEE2E2;
+  border-color: #FCA5A5;
 }
 
 .modalFoot {
