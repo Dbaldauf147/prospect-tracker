@@ -148,6 +148,31 @@
   color: var(--color-text-muted);
 }
 
+/* "3 steps ruled out - show them", in the status bar. A count with a verb on
+   it rather than a button that looks like the toolbar's: the bar is a line
+   of readings, and this is one of them that happens to be clickable. */
+.ruledOutBtn {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.ruledOutDo {
+  color: var(--color-accent);
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.ruledOutBtn:hover .ruledOutDo {
+  text-decoration: none;
+}
+
 .importPanel {
   padding: 0.6rem 1rem;
   border-bottom: 1px solid var(--color-border);
@@ -960,6 +985,25 @@
 
 .boxOnTrail {
   background: var(--color-accent-light);
+}
+
+/* Answered, and the walk has moved on past it. The step that drove the
+   answer recedes so the box you are standing on is the one the eye lands on,
+   and the arrow out of it keeps its tick so the answer is still readable.
+
+   Dimmed rather than repainted flat grey: the accent bar on the left edge
+   and the kind of step it is are still worth being able to make out at a
+   glance, and hovering brings the whole box back for anyone reading it.
+
+   After .boxOnTrail, so it wins the background on a step that is both. */
+.boxSpent {
+  background: var(--color-surface-alt);
+  opacity: 0.5;
+  box-shadow: none;
+}
+
+.boxSpent:hover {
+  opacity: 1;
 }
 
 .boxHere {

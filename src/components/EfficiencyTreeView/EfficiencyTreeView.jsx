@@ -8,7 +8,7 @@ import {
   treeStats, updateBranch, updateNode,
 } from '../../utils/decisionTree';
 import {
-  answerRoutes, answeredSteps, rewindRoute, routeArrows, routeEnds, routeSteps,
+  answerRoutes, answeredSteps, prunedTree, rewindRoute, routeArrows, routeEnds, routeSteps,
 } from '../../utils/decisionWalk';
 import { edgePath, LAYOUT, layoutTree } from '../../utils/treeLayout';
 import { SavingsPanel } from './SavingsPanel.jsx';
@@ -690,6 +690,11 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   const [importText, setImportText] = useState('');
   const [importName, setImportName] = useState('');
   const [importError, setImportError] = useState('');
+  // Whether the ways out the answers ruled out are being shown anyway. Off,
+  // which is the point of narrowing the diagram; on, it is the whole tree
+  // again, which is how a second pathway out of a step already answered is
+  // picked after the first one hid it.
+  const [showRuledOut, setShowRuledOut] = useState(false);
   const [zoom, setZoom] = useState(0.8);
   const [popupId, setPopupId] = useState(null);   // the box whose detail is open
   // The add-step dialog: which step the new one comes after, and - when the
@@ -764,7 +769,24 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   const stats = useMemo(() => treeStats(tree), [tree]);
   const rows = useMemo(() => outlineRows(tree), [tree]);
   const orphans = useMemo(() => orphanIds(tree), [tree]);
-  const layout = useMemo(() => layoutTree(tree, { heightOf: boxHeight }), [tree]);
+  // What the diagram is drawing. Answering a question rules out its other
+  // ways out, and the diagram closes up around what is left: the arrow you
+  // didn't take goes, and so does every step that hung off it. In front of a
+  // customer that is the point - the flow on the screen is the one they are
+  // being walked through, not the whole catalogue of what might have been.
+  //
+  // Nothing is lost by it: the status bar counts what went and puts it back,
+  // which is how a second pathway out of a step already answered gets picked
+  // once the first answer hid the other way out.
+  //
+  // Not while Edit is on either: the rearranging is done by wiring branches
+  // between boxes, and a box you can't see is a box you can't wire up. So
+  // ticking Edit brings the whole tree back, and the walk is undisturbed
+  // underneath it.
+  const pruned = useMemo(() => prunedTree(tree, routes), [tree, routes]);
+  const ruledOutCount = Object.keys(tree.nodes).length - Object.keys(pruned.nodes).length;
+  const shownTree = editing || showRuledOut ? tree : pruned;
+  const layout = useMemo(() => layoutTree(shownTree, { heightOf: boxHeight }), [shownTree]);
 
   // How many arrows leave each box. An arrow with no label is readable when
   // it is the only way out - it just continues the flow - but two blank
@@ -926,6 +948,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   function startOver() {
     setRoutes([]);
     setActiveRoute(0);
+    setShowRuledOut(false);
   }
 
   // Scale the diagram so the whole flow fits the window it's shown in. The
@@ -1286,7 +1309,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
         )}
         {mode === 'diagram' && (
           <span className={styles.muted}>
-            Click Yes or No on an arrow to answer it and carry on down · answer a second way out of a step to open another pathway beside the first, as many as the account needs · click a ticked answer to take it back · click a box for the detail · drag to pan · hover a box for the + that adds the step after it
+            Click Yes or No on an arrow to answer it and carry on down · what the answer rules out leaves the diagram, and “show them” in this bar brings it back · answer a second way out of a step to open another pathway beside the first, as many as the account needs · click a ticked answer to take it back · click a box for the detail · drag to pan · hover a box for the + that adds the step after it
           </span>
         )}
         {/* How far down the flow the answers have got you. The routes are
@@ -1299,6 +1322,24 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
             {answerCount} answered · {routeList.length > 1 ? `${routeList.length} pathways · ` : ''}
             standing on {endTitles}
           </span>
+        )}
+        {/* What the answers took off the diagram, and the way to have it
+            back. Counted rather than silent: a step that disappeared is
+            still the user's flow, and the second pathway out of a question
+            already answered is picked on the arrow this hid. */}
+        {mode === 'diagram' && !editing && ruledOutCount > 0 && (
+          <button
+            type="button"
+            className={styles.ruledOutBtn}
+            aria-pressed={showRuledOut}
+            title={showRuledOut
+              ? 'Hide the steps your answers ruled out, and leave the diagram on the pathways you picked.'
+              : 'Show the steps your answers ruled out. Answer another way out of a step to open a second pathway beside the first.'}
+            onClick={() => setShowRuledOut(v => !v)}
+          >
+            {ruledOutCount} step{ruledOutCount === 1 ? '' : 's'} ruled out
+            <span className={styles.ruledOutDo}>{showRuledOut ? 'hide them' : 'show them'}</span>
+          </button>
         )}
         {status && <span className={styles.muted}>{status}</span>}
       </div>
@@ -1400,10 +1441,15 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                 if (!node) return null;
                 const onTrail = walkedIds.has(box.id);
                 const here = endIds.has(box.id);
+                // Answered and behind you: the box that drove the answer has
+                // done its job, so it greys out and lets the step you are
+                // standing on carry the eye.
+                const spent = answeredIds.has(box.id) && !here;
                 const cls = [
                   kindUi(node.kind).box,
                   box.orphan ? styles.boxOrphan : '',
                   onTrail ? styles.boxOnTrail : '',
+                  spent ? styles.boxSpent : '',
                   here ? styles.boxHere : '',
                   popupId === box.id ? styles.boxOpen : '',
                   freshId === box.id ? styles.boxFresh : '',
@@ -1458,7 +1504,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                           the one it is standing on. The tick is the record of
                           the answers given - take one back on the arrow above
                           it and the tick goes with it. */}
-                      {answeredIds.has(box.id) && !here && (
+                      {spent && (
                         <span className={styles.doneChip} title="Answered. Click the ticked answer on an arrow to take it back.">&#10003; done</span>
                       )}
                       {/* One per pathway: with two picked, two boxes say it,
