@@ -12,7 +12,7 @@
 // older version.
 import {
   addBranch, addNextStep, addNode, deleteNode, detailBlocks, makeId, moveBranch, normalizeTree,
-  orphanIds, outlineRows, pathFromRoot, removeBranch, setRoot, treeStats,
+  orphanIds, outlineRows, pathFromRoot, removeBranch, setRoot, strandedByDelete, treeStats,
   updateBranch, updateNode, childIds, reachableIds,
 } from '../src/utils/decisionTree.js';
 import { DEFAULT_EFFICIENCY_TREE } from '../src/data/efficiencyDecisionTree.js';
@@ -137,6 +137,43 @@ eq(Object.keys(pruned.nodes).sort(), ['a', 'd'], 'a cascading delete takes the l
 ok(pruned.nodes.d, 'and leaves the limb reached another way alone');
 eq(deleteNode(chain, 'a'), chain, 'the starting step cannot be deleted - the page would have nothing to open on');
 eq(deleteNode(chain, 'ghost'), chain, 'deleting something that is not there changes nothing');
+
+// What a delete is about to strand, so the confirmation can name it rather
+// than asking about a limb that may not exist.
+eq(strandedByDelete(chain, 'b'), ['c'], 'deleting B would strand the step only it reached');
+eq(strandedByDelete(chain, 'd'), [], 'deleting a leaf strands nobody, so there is nothing to ask about');
+eq(strandedByDelete(chain, 'a'), [], 'the starting step cannot be deleted, so it strands nothing');
+eq(strandedByDelete(chain, 'ghost'), [], 'nor can one that is not there');
+// A step already unreachable is not this delete's doing and is not counted.
+const withOrphan = normalizeTree({
+  rootId: 'a',
+  nodes: {
+    a: { id: 'a', title: 'A', branches: [{ id: 'b1', label: 'Yes', to: 'b' }] },
+    b: { id: 'b', title: 'B', branches: [{ id: 'b1', label: 'on', to: 'c' }] },
+    c: { id: 'c', title: 'C', branches: [] },
+    z: { id: 'z', title: 'Z', branches: [] },
+  },
+});
+eq(orphanIds(withOrphan), ['z'], 'Z is stranded before anything is deleted');
+eq(strandedByDelete(withOrphan, 'b'), ['c'], 'so the delete is only charged with what it actually strands');
+// A step reached two ways is not stranded when one of them goes.
+const rejoin = normalizeTree({
+  rootId: 'a',
+  nodes: {
+    a: { id: 'a', title: 'A', branches: [{ id: 'b1', label: 'Yes', to: 'b' }, { id: 'b2', label: 'No', to: 'c' }] },
+    b: { id: 'b', title: 'B', branches: [{ id: 'b1', label: 'on', to: 'c' }] },
+    c: { id: 'c', title: 'C', branches: [] },
+  },
+});
+eq(strandedByDelete(rejoin, 'b'), [], 'a step the flow rejoins by another route survives, so nothing is stranded');
+// A cascade takes what this delete strands and nothing else, so the count the
+// confirmation quotes is the count that actually goes.
+const sweep = deleteNode(withOrphan, 'b', { cascade: true });
+eq(Object.keys(sweep.nodes).sort(), ['a', 'z'],
+  'a cascade takes the limb it stranded and leaves the step that was already unreachable alone');
+eq(strandedByDelete(withOrphan, 'b').length,
+  Object.keys(withOrphan.nodes).length - Object.keys(sweep.nodes).length - 1,
+  'and what it takes is exactly what was counted, plus the step itself');
 
 // An unreachable step can be adopted as the new start, which is the way back
 // from deleting the root's only route.

@@ -389,7 +389,11 @@ export function moveBranch(tree, nodeId, branchId, delta) {
  * be deleted — there'd be nothing to open the page on.
  *
  * `cascade` also deletes whatever the node led to that nothing else reaches,
- * for throwing away a whole wrong limb.
+ * for throwing away a whole wrong limb. Only what THIS delete strands: a
+ * step that was already unreachable is one the user chose to keep when they
+ * were last asked, and an unrelated delete quietly taking it with them is
+ * not a thing they asked for. It is also what lets the confirmation name a
+ * number and have the delete honour it (see strandedByDelete).
  */
 export function deleteNode(tree, id, { cascade = false } = {}) {
   if (!getNode(tree, id) || id === tree.rootId) return tree;
@@ -402,8 +406,11 @@ export function deleteNode(tree, id, { cascade = false } = {}) {
   if (cascade) {
     // Anything the deleted node was the only route to goes with it. Repeated
     // until nothing new is stranded, since a limb strands one layer at a time.
+    // The steps already unreachable before any of this are left where they
+    // are: they are not this delete's doing.
+    const alreadyStranded = new Set(orphanIds(tree));
     for (;;) {
-      const stranded = orphanIds(next);
+      const stranded = orphanIds(next).filter(id2 => !alreadyStranded.has(id2));
       if (stranded.length === 0) break;
       const pruned = { ...next.nodes };
       for (const orphan of stranded) delete pruned[orphan];
@@ -411,6 +418,26 @@ export function deleteNode(tree, id, { cascade = false } = {}) {
     }
   }
   return next;
+}
+
+/**
+ * The steps that would be left stranded by deleting `id` — the ones it is
+ * the only route to, and the ones only THEY lead to, all the way down.
+ *
+ * What a delete needs in order to ask a fair question. "Delete this step"
+ * and "delete this step and the six under it" are different acts, and which
+ * one is on offer depends entirely on the shape of the tree below the step,
+ * which is the one thing somebody looking at a single box cannot see. The
+ * steps already stranded before the delete are not counted: they were not
+ * reachable to begin with, so they are nothing this delete is doing.
+ *
+ * Sorted, and empty when the delete strands nobody — which is the common
+ * case and the one worth not asking about.
+ */
+export function strandedByDelete(tree, id) {
+  if (!getNode(tree, id) || id === tree?.rootId) return [];
+  const before = new Set(orphanIds(tree));
+  return orphanIds(deleteNode(tree, id)).filter(x => !before.has(x));
 }
 
 /** Make `id` the node the walk starts from. */

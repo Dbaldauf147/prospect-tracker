@@ -4,8 +4,8 @@ import styles from './EfficiencyTreeView.module.css';
 import { DEFAULT_EFFICIENCY_TREE } from '../../data/efficiencyDecisionTree';
 import {
   addBranch, addNextStep, deleteNode, detailBlocks, getNode, moveBranch, normalizeTree,
-  orphanIds, outlineRows, pathFromRoot, removeBranch, setRoot, toggleNodeService,
-  treeStats, updateBranch, updateNode,
+  orphanIds, outlineRows, pathFromRoot, removeBranch, setRoot, strandedByDelete,
+  toggleNodeService, treeStats, updateBranch, updateNode,
 } from '../../utils/decisionTree';
 import {
   answerRoutes, answeredSteps, prunedTree, rewindRoute, routeArrows, routeEnds, routeSteps,
@@ -382,6 +382,35 @@ function NodeEditor({ tree, nodeId, catalog, onChange, onAddStep }) {
   );
 }
 
+// Deleting a step, asked properly.
+//
+// Two questions, and the second one only when it is a real one: is this step
+// to go, and then - if it is the only route to anything - do the steps under
+// it go too. They used to be one prompt, with OK and Cancel both meaning
+// delete and neither meaning stop, which is a dialog you can't answer wrong
+// slowly enough. It also asked about a limb on every delete, including the
+// leaf steps that have nothing under them at all.
+//
+// Returns the options to hand deleteNode, or null when the answer was no.
+function confirmDeleteStep(tree, id) {
+  const node = getNode(tree, id);
+  if (!node) return null;
+  const name = node.title || '(untitled step)';
+  if (!window.confirm(
+    `Delete "${name}"?\n\nBranches that point at it keep their label and stop pointing anywhere.`,
+  )) return null;
+  const stranded = strandedByDelete(tree, id);
+  if (stranded.length === 0) return { cascade: false };
+  const many = stranded.length > 1;
+  return {
+    cascade: window.confirm(
+      `"${name}" is the only route to ${stranded.length} other step${many ? 's' : ''}.\n\n`
+      + `OK deletes ${many ? 'them' : 'it'} as well.\n`
+      + `Cancel keeps ${many ? 'them' : 'it'}, listed under "Nothing reaches these".`,
+    ),
+  };
+}
+
 // The popup behind a box in the diagram. A box only has room for a title, so
 // this is where the detail lives — plus the two questions you actually have
 // when you click one: what leads here, and where does it go next. Both lists
@@ -401,11 +430,21 @@ function NodeDetailModal({ tree, nodeId, catalog, knownServices, editing, onClos
     const out = [];
     for (const other of Object.values(tree.nodes)) {
       for (const b of other.branches) {
-        if (b.to === node.id) out.push({ id: other.id, title: other.title, label: b.label });
+        // branchId so the row can unlink the arrow it stands for: two steps
+        // can be joined by more than one branch, and "the one this row is"
+        // is the only one it may remove.
+        if (b.to === node.id) out.push({ id: other.id, title: other.title, label: b.label, branchId: b.id });
       }
     }
     return out;
   }, [tree, node]);
+
+  // Delete a step from one of the lists below, then leave the popup where it
+  // is: the step it is about has not gone, only one of its neighbours.
+  const deleteStep = (id) => {
+    const opts = confirmDeleteStep(tree, id);
+    if (opts) onChange(deleteNode(tree, id, opts));
+  };
 
   if (!node) return null;
 
@@ -438,10 +477,32 @@ function NodeDetailModal({ tree, nodeId, catalog, knownServices, editing, onClos
             <div className={styles.modalSection}>
               <div className={styles.fieldLabel}>Reached from</div>
               {parents.map(p => (
-                <button key={`${p.id}-${p.label}`} type="button" className={styles.linkRow} onClick={() => onGoTo(p.id)}>
-                  <span className={styles.linkRowLabel}>{p.title || '(untitled step)'}</span>
-                  <span className={styles.linkRowNote}>{p.label || '(unlabelled branch)'}</span>
-                </button>
+                <div key={`${p.id}-${p.branchId}`} className={styles.linkRowWrap}>
+                  <button type="button" className={styles.linkRow} onClick={() => onGoTo(p.id)}>
+                    <span className={styles.linkRowLabel}>{p.title || '(untitled step)'}</span>
+                    <span className={styles.linkRowNote}>{p.label || '(unlabelled branch)'}</span>
+                  </button>
+                  {editing && (
+                    <>
+                      <button
+                        type="button"
+                        className={styles.iconBtn}
+                        title={`Unlink: the arrow from "${p.title || '(untitled step)'}" goes, both steps stay`}
+                        aria-label="Unlink this arrow"
+                        onClick={() => onChange(removeBranch(tree, p.id, p.branchId))}
+                      >✕</button>
+                      {p.id !== tree.rootId && (
+                        <button
+                          type="button"
+                          className={styles.iconBtnDanger}
+                          title={`Delete the step "${p.title || '(untitled step)'}"`}
+                          aria-label="Delete this step"
+                          onClick={() => deleteStep(p.id)}
+                        >🗑</button>
+                      )}
+                    </>
+                  )}
+                </div>
               ))}
             </div>
           )}
@@ -452,24 +513,75 @@ function NodeDetailModal({ tree, nodeId, catalog, knownServices, editing, onClos
             {node.branches.map(b => {
               const target = b.to ? getNode(tree, b.to) : null;
               return (
-                <button
-                  key={b.id}
-                  type="button"
-                  className={target ? styles.linkRow : styles.linkRowDead}
-                  disabled={!target}
-                  onClick={() => target && onGoTo(b.to)}
-                >
-                  <span className={styles.linkRowLabel}>{b.label || '(unlabelled branch)'}</span>
-                  <span className={styles.linkRowNote}>{target ? target.title : 'not linked yet'}</span>
-                </button>
+                <div key={b.id} className={styles.linkRowWrap}>
+                  <button
+                    type="button"
+                    className={target ? styles.linkRow : styles.linkRowDead}
+                    disabled={!target}
+                    onClick={() => target && onGoTo(b.to)}
+                  >
+                    <span className={styles.linkRowLabel}>{b.label || '(unlabelled branch)'}</span>
+                    <span className={styles.linkRowNote}>{target ? target.title : 'not linked yet'}</span>
+                  </button>
+                  {/* Two different things to throw away, so two buttons. The
+                      arrow out of this step is one; the step on the end of
+                      it, which other branches may also reach, is another. */}
+                  {editing && (
+                    <>
+                      <button
+                        type="button"
+                        className={styles.iconBtn}
+                        title={target
+                          ? `Remove this branch: the arrow goes, "${target.title || '(untitled step)'}" stays`
+                          : 'Remove this branch. It points nowhere, so nothing else changes.'}
+                        aria-label="Remove this branch"
+                        onClick={() => onChange(removeBranch(tree, node.id, b.id))}
+                      >✕</button>
+                      {target && target.id !== tree.rootId && (
+                        <button
+                          type="button"
+                          className={styles.iconBtnDanger}
+                          title={`Delete the step "${target.title || '(untitled step)'}"`}
+                          aria-label="Delete this step"
+                          onClick={() => deleteStep(target.id)}
+                        >🗑</button>
+                      )}
+                    </>
+                  )}
+                </div>
               );
             })}
+            {!editing && (
+              <div className={styles.fieldHint}>
+                Turn on Edit to delete steps or remove branches from here.
+              </div>
+            )}
           </div>
 
           {editing && <NodeEditor tree={tree} nodeId={node.id} catalog={catalog} onChange={onChange} onAddStep={onAddStep} />}
         </div>
 
         <div className={styles.modalFoot}>
+          {/* The step this popup is about. Deleting it closes the popup,
+              because there is nothing left for it to be about. The start of
+              the tree has no button at all: the page would have nothing to
+              open on, and deleteNode refuses it anyway.
+
+              Far left, away from the two buttons that get clicked by habit -
+              this is the only thing in the popup that cannot be undone. */}
+          {editing && node.id !== tree.rootId && (
+            <button
+              type="button"
+              className={styles.dangerBtn}
+              title={`Delete "${node.title || '(untitled step)'}" from this tree`}
+              onClick={() => {
+                const opts = confirmDeleteStep(tree, node.id);
+                if (!opts) return;
+                onChange(deleteNode(tree, node.id, opts));
+                onClose();
+              }}
+            >Delete this step</button>
+          )}
           <button type="button" className={styles.primaryBtn} onClick={() => onWalkFrom(node.id)}>Walk from here</button>
           <button type="button" className={styles.smallBtn} onClick={onClose}>Close</button>
         </div>
@@ -1765,9 +1877,11 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                               className={styles.iconBtnDanger}
                               title="Delete this step"
                               onClick={() => {
-                                const cascade = window.confirm(`Delete "${node.title || 'this step'}".\n\nOK also deletes the steps only it led to.\nCancel keeps them - they'll be listed as unreachable.`);
-                                applyTree(deleteNode(tree, node.id, { cascade }));
+                                const opts = confirmDeleteStep(tree, node.id);
+                                if (!opts) return;
+                                applyTree(deleteNode(tree, node.id, opts));
                                 if (selectedId === node.id) setSelectedId(null);
+                                if (popupId === node.id) setPopupId(null);
                               }}
                             >🗑</button>
                           )}
