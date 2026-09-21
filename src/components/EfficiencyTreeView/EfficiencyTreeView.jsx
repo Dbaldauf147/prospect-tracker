@@ -7,7 +7,9 @@ import {
   orphanIds, outlineRows, pathFromRoot, removeBranch, setRoot, toggleNodeService,
   treeStats, updateBranch, updateNode,
 } from '../../utils/decisionTree';
-import { answeredArrows, answerTrail } from '../../utils/decisionWalk';
+import {
+  answerRoutes, answeredSteps, rewindRoute, routeArrows, routeEnds, routeSteps,
+} from '../../utils/decisionWalk';
 import { edgePath, LAYOUT, layoutTree } from '../../utils/treeLayout';
 import { SavingsPanel } from './SavingsPanel.jsx';
 import { pricedServiceRows } from '../../utils/serviceRows';
@@ -676,7 +678,12 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   const onSourcing = area === 'sourcing';
   const [mode, setMode] = useState('diagram');
   const [editing, setEditing] = useState(false);
-  const [trail, setTrail] = useState([]);           // node ids answered through, root first
+  // The pathways picked through the tree: each one a list of node ids
+  // answered through, root first, and several of them at once because one
+  // account is several pathways. `active` is the one Walk it is walking and
+  // the one an answer carries on; every one of them lights up the diagram.
+  const [routes, setRoutes] = useState([]);
+  const [activeRoute, setActiveRoute] = useState(0);
   const [selectedId, setSelectedId] = useState(null); // the step the map is inspecting
   const [status, setStatus] = useState('');
   const [importOpen, setImportOpen] = useState(false);
@@ -822,11 +829,29 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
     setFreshId(id);
   }
 
-  // Where the walk is standing. The trail holds the ids answered through; an
-  // empty trail means the root, and a trail whose last step has been deleted
-  // falls back to the root rather than showing nothing.
-  const currentId = trail.length ? trail[trail.length - 1] : tree.rootId;
+  // Where the walk is standing. No routes at all means the root, and the
+  // active index is clamped so a pathway dropped out from under it falls
+  // back to the first rather than to nothing.
+  const routeList = routes.length ? routes : [[tree.rootId]];
+  const activeIdx = Math.min(activeRoute, routeList.length - 1);
+  const trailSteps = routeList[activeIdx];
+  const currentId = trailSteps[trailSteps.length - 1];
   const current = getNode(tree, currentId) || getNode(tree, tree.rootId);
+  // What the diagram draws: every arrow any pathway has answered, every step
+  // one of them has gone past, and where each is standing. Unions, so two
+  // pathways sharing their first half light it once and the step they part
+  // at reads as answered rather than as two places you are at the same time.
+  const pickedArrows = routeArrows(routeList);
+  const answeredIds = answeredSteps(routeList);
+  const endIds = routeEnds(routeList);
+  const walkedIds = routeSteps(routeList);
+  const answerCount = pickedArrows.size;
+  // Where the picked pathways have got to, in words. Three of them read; past
+  // that the line is longer than the toolbar it sits in and the rest are
+  // counted, since the boxes themselves say it on the diagram below.
+  const endList = [...endIds].map(id => `“${getNode(tree, id)?.title || '(untitled step)'}”`);
+  const endTitles = endList.slice(0, 3).join(', ')
+    + (endList.length > 3 ? ` +${endList.length - 3} more` : '');
 
   // Answering on the diagram moves you down the flow, and on a tree of any
   // size the step you land on is off the bottom of the window. Bring it into
@@ -834,7 +859,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   // it already is, so answering a question in the middle of the screen
   // doesn't jerk the whole diagram under the pointer.
   useEffect(() => {
-    if (mode !== 'diagram' || trail.length === 0) return;
+    if (mode !== 'diagram' || routes.length === 0) return;
     const wrap = canvasWrapRef.current;
     const box = layout.byId.get(currentId);
     if (!wrap || !box) return;
@@ -850,30 +875,57 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
       top: Math.max(0, (box.y + box.h / 2) * zoom - wrap.clientHeight / 2),
       behavior: 'smooth',
     });
-  }, [currentId, mode, trail.length, layout, zoom]);
+  }, [currentId, mode, routes.length, layout, zoom]);
 
   // Answering one question, from either screen: the walk's big buttons and
-  // the diagram's Yes / No labels both land here. What the trail becomes -
-  // carry on, take the answer back, or move the route to the step being
-  // answered - is decided in utils/decisionWalk, where it can be tested.
+  // the diagram's Yes / No labels both land here. What the routes become -
+  // carry on, take the answer back, or open a second pathway from a step
+  // already answered - is decided in utils/decisionWalk, where it can be
+  // tested.
   function answerBranch(fromId, branch) {
-    const next = answerTrail(tree, trail, fromId, branch);
-    if (next) setTrail(next);
+    const next = answerRoutes(tree, routeList, fromId, branch, activeIdx);
+    if (!next) return;
+    setRoutes(next.routes);
+    setActiveRoute(next.active);
   }
 
   function choose(branch) {
     answerBranch(currentId, branch);
   }
 
+  // Back up the pathway being walked, leaving the others where they are.
   function rewindTo(index) {
-    setTrail(prev => prev.slice(0, index + 1));
+    const next = rewindRoute(routeList, activeIdx, index);
+    if (!next) return;
+    setRoutes(next.routes);
+    setActiveRoute(next.active);
   }
 
+  // "Walk from here": the way in to that step as a pathway of its own,
+  // alongside anything already picked rather than instead of it. Already on
+  // one of them, and that one is simply the one walked.
   function walkFrom(nodeId) {
-    const path = pathFromRoot(tree, nodeId);
-    setTrail(path ? path.map(p => p.nodeId) : [nodeId]);
+    const at = routeList.findIndex(route => route[route.length - 1] === nodeId);
+    if (at !== -1) setActiveRoute(at);
+    else {
+      const path = pathFromRoot(tree, nodeId);
+      const route = path ? path.map(p => p.nodeId) : [nodeId];
+      if (route.length > 1) {
+        const next = [...routes, route];
+        setRoutes(next);
+        setActiveRoute(next.length - 1);
+      } else {
+        setRoutes([]);
+        setActiveRoute(0);
+      }
+    }
     setPopupId(null);
     setMode('walk');
+  }
+
+  function startOver() {
+    setRoutes([]);
+    setActiveRoute(0);
   }
 
   // Scale the diagram so the whole flow fits the window it's shown in. The
@@ -914,7 +966,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   function resetToTemplate() {
     if (!window.confirm(`Replace "${entry.name}" with the built-in C&I efficiency template? Your edits to this tree will be lost.\n\nYour other trees are untouched.`)) return;
     const next = normalizeTree(DEFAULT_EFFICIENCY_TREE);
-    setTrail([]);
+    startOver();
     setSelectedId(null);
     setPopupId(null);
     applyTree(next);
@@ -928,7 +980,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   function switchTree(id) {
     setArea('efficiency');
     if (id === library.activeId) return;
-    setTrail([]);
+    startOver();
     setSelectedId(null);
     setPopupId(null);
     setStatus('');
@@ -945,7 +997,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
     if (!label) return;
     const { library: next, id } = addTree(library, { name: label, tree: blankTree() });
     if (!id) { setStatus(`That is as many trees as this page holds (${library.trees.length}).`); return; }
-    setTrail([]);
+    startOver();
     setPopupId(null);
     setSelectedId(blankTree().rootId);
     setMode('map');
@@ -959,7 +1011,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
     setArea('efficiency');
     const { library: next, id } = duplicateTree(library, entry.id);
     if (!id) { setStatus(`That is as many trees as this page holds (${library.trees.length}).`); return; }
-    setTrail([]);
+    startOver();
     setSelectedId(null);
     setPopupId(null);
     applyLibrary(setActiveTree(next, id));
@@ -977,7 +1029,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
       return;
     }
     if (!window.confirm(`Delete "${entry.name}" and its ${stats.nodes} step${stats.nodes === 1 ? '' : 's'}? This can't be undone.`)) return;
-    setTrail([]);
+    startOver();
     setSelectedId(null);
     setPopupId(null);
     applyLibrary(removeTree(library, entry.id));
@@ -1004,7 +1056,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
       if (Object.keys(imported.nodes).length === 0) throw new Error('no steps found');
       const { library: next, id } = addTree(library, { name: importName.trim() || 'Imported tree', tree: imported });
       if (!id) throw new Error(`that is as many trees as this page holds (${library.trees.length})`);
-      setTrail([]);
+      startOver();
       setSelectedId(null);
       setPopupId(null);
       applyLibrary(setActiveTree(next, id));
@@ -1016,16 +1068,6 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
       setImportError(err?.message || 'That isn\'t a decision tree');
     }
   }
-
-  const trailSteps = trail.length ? trail : [tree.rootId];
-  // The arrows that have been answered, as from → to pairs. Pairs rather
-  // than a branch id because the trail stores where you went, not which way
-  // out you took: on the rare step with two arrows to the same box both read
-  // as picked, which is the truth anyway - either answer put you there.
-  const pickedArrows = answeredArrows(trailSteps);
-  // Everything answered through: the trail minus the step you are standing
-  // on, which is the one still waiting for an answer.
-  const answeredSteps = new Set(trailSteps.slice(0, -1));
 
   return (
     <div className={styles.wrapper}>
@@ -1082,14 +1124,17 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
               find without hunting for the arrow it was given on. Only there
               once something has been answered, since neither does anything
               from the top of the flow. */}
-          {mode === 'diagram' && trailSteps.length > 1 && (
+          {mode === 'diagram' && routes.length > 0 && (
             <div className={styles.zoomBar}>
               <button type="button" className={styles.smallBtn}
-                onClick={() => setTrail(trailSteps.slice(0, -1))}
-                title="Take back the last answer">Back</button>
+                onClick={() => rewindTo(trailSteps.length - 2)}
+                disabled={trailSteps.length < 2}
+                title={routeList.length > 1
+                  ? `Take back the last answer on the pathway to “${current?.title || 'here'}”`
+                  : 'Take back the last answer'}>Back</button>
               <button type="button" className={styles.smallBtn}
-                onClick={() => setTrail([])}
-                title="Clear every answer and start again at the top">Start over</button>
+                onClick={startOver}
+                title="Clear every answer on every pathway and start again at the top">Start over</button>
             </div>
           )}
           <label className={styles.editToggle} title="Show the editor for each step">
@@ -1241,15 +1286,18 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
         )}
         {mode === 'diagram' && (
           <span className={styles.muted}>
-            Click Yes or No on an arrow to answer it and carry on down · click a ticked answer to take it back · click a box for the detail · drag to pan · hover a box for the + that adds the step after it
+            Click Yes or No on an arrow to answer it and carry on down · answer a second way out of a step to open another pathway beside the first, as many as the account needs · click a ticked answer to take it back · click a box for the detail · drag to pan · hover a box for the + that adds the step after it
           </span>
         )}
-        {/* How far down the flow the answers have got you. The trail is the
-            same one Walk it keeps, so a route answered here is the route that
-            page opens on, and the other way round. */}
-        {mode === 'diagram' && trailSteps.length > 1 && (
+        {/* How far down the flow the answers have got you. The routes are
+            the same ones Walk it keeps, so a pathway answered here is a
+            pathway that page can walk, and the other way round. With more
+            than one picked it says where each of them has got to, because
+            "standing on" is then several places at once. */}
+        {mode === 'diagram' && routes.length > 0 && (
           <span className={styles.muted}>
-            {trailSteps.length - 1} answered · standing on “{current?.title || '(untitled step)'}”
+            {answerCount} answered · {routeList.length > 1 ? `${routeList.length} pathways · ` : ''}
+            standing on {endTitles}
           </span>
         )}
         {status && <span className={styles.muted}>{status}</span>}
@@ -1350,8 +1398,8 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
               {layout.nodes.map(box => {
                 const node = getNode(tree, box.id);
                 if (!node) return null;
-                const onTrail = trailSteps.includes(box.id);
-                const here = trailSteps[trailSteps.length - 1] === box.id;
+                const onTrail = walkedIds.has(box.id);
+                const here = endIds.has(box.id);
                 const cls = [
                   kindUi(node.kind).box,
                   box.orphan ? styles.boxOrphan : '',
@@ -1410,10 +1458,19 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                           the one it is standing on. The tick is the record of
                           the answers given - take one back on the arrow above
                           it and the tick goes with it. */}
-                      {answeredSteps.has(box.id) && !here && (
+                      {answeredIds.has(box.id) && !here && (
                         <span className={styles.doneChip} title="Answered. Click the ticked answer on an arrow to take it back.">&#10003; done</span>
                       )}
-                      {here && trailSteps.length > 1 && <span className={styles.hereChip}>you are here</span>}
+                      {/* One per pathway: with two picked, two boxes say it,
+                          which is what having picked two of them means. */}
+                      {here && routes.length > 0 && (
+                        <span
+                          className={styles.hereChip}
+                          title={routeList.length > 1
+                            ? 'Where one of the pathways you have picked has got to'
+                            : 'Where the walk has got to'}
+                        >you are here</span>
+                      )}
                       {box.id === tree.rootId && <span className={styles.rootChip}>start</span>}
                       {box.orphan && <span className={styles.repeatChip}>unreachable</span>}
                       {node.branches.length === 0 && !box.orphan && <span className={styles.repeatChip}>end</span>}
@@ -1451,6 +1508,33 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
         </div>
       ) : mode === 'walk' ? (
         <div className={styles.body}>
+          {/* Which pathway this screen is walking. Only once there are two:
+              with one picked it is the walk, and a switcher offering a
+              choice of one is a control that does nothing. The tooltip reads
+              the whole route out, because the button has room for where it
+              ended and that is not always enough to tell two apart. */}
+          {routeList.length > 1 && (
+            <div className={styles.routeBar}>
+              <span className={styles.fieldLabel}>Pathways</span>
+              <div className={styles.modeSwitch}>
+                {routeList.map((route, i) => {
+                  const end = getNode(tree, route[route.length - 1]);
+                  return (
+                    <button
+                      key={`route-${i}-${route.join('>')}`}
+                      type="button"
+                      className={i === activeIdx ? styles.modeBtnActive : styles.modeBtn}
+                      onClick={() => setActiveRoute(i)}
+                      title={route.map(id => getNode(tree, id)?.title || '(untitled step)').join(' → ')}
+                    >{i + 1}. {end?.title || '(untitled step)'}</button>
+                  );
+                })}
+              </div>
+              <span className={styles.muted}>
+                {routeList.length} pathways picked · {answerCount} answered across them
+              </span>
+            </div>
+          )}
           <div className={styles.trail}>
             {trailSteps.map((id, i) => {
               const node = getNode(tree, id);
@@ -1464,8 +1548,15 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
                 </span>
               );
             })}
-            {trail.length > 1 && (
-              <button type="button" className={styles.smallBtn} onClick={() => setTrail([])}>Start over</button>
+            {routes.length > 0 && (
+              <button
+                type="button"
+                className={styles.smallBtn}
+                onClick={startOver}
+                title={routeList.length > 1
+                  ? 'Clear every answer on every pathway and start again at the top'
+                  : 'Clear every answer and start again at the top'}
+              >Start over</button>
             )}
           </div>
 
