@@ -20,7 +20,7 @@
 // Pure — records in, plain numbers out — so the rules can be tested without
 // a browser.
 
-import { parseMoney, PROJECT_UNIT } from './servicePricing.js';
+import { parseMoney, PROJECT_UNIT, projectServiceLines } from './servicePricing.js';
 import { CLIENT_COUNT_FIELDS } from './clientDealSizing.js';
 
 // Where a count can come from, in the order the answer is taken.
@@ -198,4 +198,132 @@ export function dealCountRows({ opp, company, units = null, needed = null, offer
   for (const unit of want) push(unit);
   for (const unit of offered) push(unit);
   return rows;
+}
+
+// ── Per-service counts ───────────────────────────────────────────────────
+//
+// One unit is not a fact about the account at all. Sites, accounts and
+// meters answer the same number whichever service reads them; PROJECTS do
+// not - a scope of three lighting retrofits and one chiller replacement is
+// four projects, and neither service is priced on four. So a project count
+// is asked per service, and kept on the opp beside the other answers this
+// deal carries: it is a fact about the work being sold, not about the
+// portfolio, and writing it to the company card would price every other
+// deal on the account off this one's retrofit.
+//
+// Stored as a JSON object of service name -> count on the opp. Names are
+// matched without case, so a service that comes back capitalised
+// differently still finds the number somebody typed for it.
+export const COUNT_SOURCE_SERVICE = 'service';
+export const SERVICE_UNITS_FIELD = '_serviceUnits';
+
+/** The raw stored map, keyed lowercase. Anything unparseable reads empty. */
+export function serviceUnitsMap(opp) {
+  const raw = opp?.[SERVICE_UNITS_FIELD];
+  if (!raw) return {};
+  let obj = raw;
+  if (typeof raw === 'string') {
+    try { obj = JSON.parse(raw); } catch { return {}; }
+  }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+  const out = {};
+  for (const [name, value] of Object.entries(obj)) {
+    const key = String(name || '').trim().toLowerCase();
+    const n = parseMoney(value);
+    // A typed zero is an answer ("this deal carries none"), so it is kept;
+    // anything that isn't a number at all never was one.
+    if (!key || n === null || n < 0) continue;
+    out[key] = n;
+  }
+  return out;
+}
+
+/**
+ * The same counts spelled the way the scope spells its services, which is
+ * the shape estimateScope's `serviceUnits` is read in (it looks a name up
+ * exactly). A scope that has since re-cased a name still prices off the
+ * number typed against it.
+ */
+export function serviceUnitsForScope(opp, names) {
+  const stored = serviceUnitsMap(opp);
+  if (Object.keys(stored).length === 0) return null;
+  const out = {};
+  for (const name of names || []) {
+    const n = stored[String(name || '').trim().toLowerCase()];
+    if (n !== undefined) out[name] = n;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * The stored map with one service's count set or cleared, as the string the
+ * opp field holds. `n` of null clears it - "nobody has said", which is what
+ * a blank box means, and which prices the service on its fallback again.
+ *
+ * Returns '' when nothing is left, so an opp that carries no answers carries
+ * no field either rather than an empty object nobody can see.
+ */
+export function setServiceUnitValue(opp, name, n) {
+  const key = String(name || '').trim();
+  if (!key) return opp?.[SERVICE_UNITS_FIELD] ?? '';
+  const lower = key.toLowerCase();
+  const raw = opp?.[SERVICE_UNITS_FIELD];
+  let current = raw;
+  if (typeof raw === 'string') {
+    try { current = JSON.parse(raw); } catch { current = {}; }
+  }
+  const next = {};
+  for (const [k, v] of Object.entries((current && typeof current === 'object' && !Array.isArray(current)) ? current : {})) {
+    // Drop whatever spelling this service was stored under, so setting a
+    // count can't leave a second copy of it behind under the old casing.
+    if (String(k || '').trim().toLowerCase() === lower) continue;
+    next[k] = v;
+  }
+  if (n !== null && n !== undefined && Number.isFinite(n) && n >= 0) next[key] = n;
+  return Object.keys(next).length ? JSON.stringify(next) : '';
+}
+
+/**
+ * A box per service in the scope that is priced per project.
+ *
+ * `lines` is the estimate's own lines, so the list is whatever the rate card
+ * actually charges per project today - a service that stops being project
+ * work stops being asked about, and one that starts being it appears without
+ * anybody listing it anywhere.
+ *
+ * Rows are the shape dealCountRows returns, so the same box renders them:
+ *
+ *   { unit, service, label, value, placeholder, needed, target, blocked }
+ *
+ *   value       what somebody typed for this deal, or null
+ *   placeholder the count the estimate is using while the box is blank,
+ *               which is the shared Projects count where there is one and
+ *               otherwise a single project
+ *   needed      the line priced to nothing for want of this count
+ *
+ * `canWrite` false means the caller has nowhere to save an answer, and the
+ * row says so rather than offering a box that swallows what is typed in it.
+ */
+export function projectCountRows({ lines, opp = null, bases = undefined, canWrite = true } = {}) {
+  const stored = serviceUnitsMap(opp);
+  return projectServiceLines(lines, bases).map((line) => {
+    const typed = stored[String(line.name || '').trim().toLowerCase()];
+    return {
+      unit: PROJECT_UNIT,
+      service: line.name,
+      label: line.name,
+      value: typed === undefined ? null : typed,
+      // What the estimate is pricing on right now. `units` is the count the
+      // line actually used, so a blank box says what it is falling back to
+      // rather than making the reader guess at it.
+      placeholder: line.units === null || line.units === undefined ? '1' : String(line.units),
+      source: typed === undefined ? null : COUNT_SOURCE_SERVICE,
+      from: 'this opp',
+      needed: !!line.gap && line.gap.kind === 'units',
+      target: canWrite ? COUNT_SOURCE_SERVICE : null,
+      column: null,
+      field: null,
+      blocked: canWrite ? null : 'no-field',
+    };
+  });
 }
