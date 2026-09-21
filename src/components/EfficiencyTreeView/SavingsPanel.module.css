@@ -1029,3 +1029,98 @@
   appearance: textfield;
   -moz-appearance: textfield;
 }
+
+/* ── where a pasted column lands ────────────────────────────────────────
+   The mapping, shown while the box is being typed into rather than after
+   the values have replaced the list. Set inside the paste panel rather
+   than beside it, so it reads as part of the same decision. */
+.preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.previewHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.previewTitle {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+}
+
+/* Capped and scrolled rather than truncated: a paste of four hundred
+   months is a real paste, and "and 380 more" is exactly the part somebody
+   opened this to check. */
+.previewWrap {
+  max-height: 16rem;
+  overflow-y: auto;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+}
+
+.previewTable {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.68rem;
+}
+
+.previewTable th,
+.previewTable td {
+  padding: 0.12rem 0.4rem;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.previewTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-surface-alt);
+  font-weight: 700;
+  text-align: left;
+  color: var(--color-text-secondary);
+}
+
+.previewTable tbody th {
+  font-weight: 600;
+  text-align: left;
+  color: var(--color-text);
+}
+
+.previewTable tbody tr:last-child th,
+.previewTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* A value with no month to land on: past the end of the term, or older
+   than the look-back reaches. Kept in the list rather than dropped from
+   it, because a row that is not going anywhere is the one worth seeing. */
+.previewOff th,
+.previewOff td {
+  background: #FFFBEB;
+  color: #92400E;
+  font-style: italic;
+}
+
+.previewShape {
+  text-align: right;
+  color: var(--color-text-muted);
+}
+
+.previewNotes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+}

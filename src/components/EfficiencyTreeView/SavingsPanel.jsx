@@ -98,6 +98,13 @@ const usdShort = (n) => {
 const price = (n, dp = 3) => (n == null || !Number.isFinite(n) ? '-' : `$${n.toFixed(dp)}`);
 const pct = (n, dp = 1) => (n == null || !Number.isFinite(n) ? '-' : `${(n * 100).toFixed(dp)}%`);
 const vol = (n) => (n == null || !Number.isFinite(n) ? '-' : Math.round(n).toLocaleString('en-US'));
+// The same, but keeping the decimals somebody typed. Rounding is right for a
+// total nobody re-enters and wrong for a preview of the exact value about to
+// be stored: "4,372" where the box will hold 4371.8 is a preview disagreeing
+// with itself.
+const volExact = (n) => (n == null || !Number.isFinite(n)
+  ? '-'
+  : n.toLocaleString('en-US', { maximumFractionDigits: 6 }));
 const ordinal = (n) => {
   const v = Math.round(n);
   const tens = v % 100;
@@ -432,6 +439,51 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   // Worked out whether or not the table is expanded, so the button knows
   // there is something to expand INTO rather than deciding from what is
   // currently on screen.
+  // ── what a paste would do, before it does it ───────────────────────────
+  // Worked out as the box is typed into rather than after the values land.
+  // The two anchors read from opposite ends and a column of bills is rarely
+  // exactly as long as the thing it is going into, so "which month does the
+  // first number land on" is a real question with a non-obvious answer - and
+  // the answer arriving after the paste has already replaced the list is the
+  // answer arriving too late.
+  const volumePreview = useMemo(() => {
+    if (volumePaste == null || !volumePaste.trim()) return null;
+    const toHistory = volumeAnchor === 'history' && back > 0;
+    const parsed = parseMonthlyVolumes(volumePaste, toHistory ? MAX_LOOKBACK_MONTHS : undefined);
+    const stored = toHistory ? (s.historyVolumes || []) : (s.monthlyVolumes || []);
+    const n = parsed.volumes.length;
+    const rows = parsed.volumes.map((value, i) => {
+      // The term reads forwards from the month it opens. The look-back reads
+      // oldest first and ENDS at the month before it, so where its first
+      // value lands depends on how many there are.
+      const at = toHistory ? back - n + i : i;
+      const month = toHistory ? run.history[at] : run.months[at];
+      // Same arithmetic the load does, so the preview cannot disagree with
+      // it: reversing the parsed list is what puts value i in slot n-1-i.
+      const slot = toHistory ? n - 1 - i : i;
+      return {
+        key: month ? month.key : `off-${i}`,
+        label: month ? month.label : null,
+        value,
+        was: month ? (stored[slot] ?? null) : null,
+      };
+    });
+    const landed = rows.filter(r => r.label);
+    return {
+      parsed,
+      toHistory,
+      rows,
+      first: landed[0] || null,
+      last: landed[landed.length - 1] || null,
+      off: rows.length - landed.length,
+      // Numbers, not rows: a blank holds a month's place in the run but it
+      // is not a volume anybody gave, and counting it as one would have the
+      // line disagree with the note under it.
+      landedValues: landed.filter(r => r.value != null).length,
+      replacing: stored.filter(v => v != null).length,
+    };
+  }, [volumePaste, volumeAnchor, back, run.history, run.months, s.historyVolumes, s.monthlyVolumes]);
+
   const collapsedYears = windowYears.filter(y => y >= firstTermYear - CALENDAR_LOOKBACK_YEARS);
   const shownYears = allVolumeYears ? windowYears : collapsedYears;
   const moreYears = windowYears.length - collapsedYears.length;
@@ -1143,8 +1195,118 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           onChange={e => { setVolumePaste(e.target.value); setVolumeError(''); }}
         />
         {volumeError && <div className={styles.warn}>{volumeError}</div>}
+
+        {/* ── where these land ────────────────────────────────────────
+            The mapping, month by month, before the button is pressed. A
+            paste replaces the whole list, so the row that matters most is
+            often one that is NOT in the paste - a month that has a volume
+            today and goes back on the shape - and the "was" column is
+            what makes that visible rather than discoverable afterwards. */}
+        {volumePreview && (
+          <div className={styles.preview}>
+            <div className={styles.previewHead}>
+              <span className={styles.previewTitle}>Where these land</span>
+              <span className={styles.fieldHint}>
+                {/* The count and the span are two different numbers the
+                    moment anything falls off the end, so the line says both
+                    rather than putting a span next to a count that does not
+                    fit inside it. */}
+                {volumePreview.parsed.count === 0
+                  ? 'Nothing here reads as a volume yet.'
+                  : `${volumePreview.parsed.count} value${volumePreview.parsed.count === 1 ? '' : 's'}`
+                    + (volumePreview.first
+                      ? (volumePreview.off > 0
+                        ? `, ${volumePreview.landedValues} landing on ${volumePreview.first.label} to ${volumePreview.last.label}.`
+                        : `, ${volumePreview.first.label} to ${volumePreview.last.label}.`)
+                      : ', none of them on a month this window reaches.')}
+              </span>
+            </div>
+
+            {volumePreview.rows.length > 0 && (
+              <div className={styles.previewWrap}>
+                <table className={styles.previewTable}>
+                  <thead>
+                    <tr>
+                      <th>Month</th>
+                      <th className={styles.thNum}>Dth</th>
+                      {volumePreview.replacing > 0 && <th className={styles.thNum}>Now</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {volumePreview.rows.map(r => (
+                      <tr key={r.key} className={r.label ? undefined : styles.previewOff}>
+                        <th scope="row">
+                          {r.label || (volumePreview.toHistory
+                            ? 'older than the look-back reaches'
+                            : 'past the end of the term')}
+                        </th>
+                        <td className={r.value == null ? styles.previewShape : styles.tdNum}>
+                          {r.value == null ? 'off the shape' : volExact(r.value)}
+                        </td>
+                        {volumePreview.replacing > 0 && (
+                          <td className={r.was == null ? styles.previewShape : styles.tdNum}>
+                            {r.was == null ? 'off the shape' : volExact(r.was)}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className={styles.previewNotes}>
+              {volumePreview.parsed.blanks > 0 && (
+                <div>
+                  {volumePreview.parsed.blanks === 1
+                    ? 'One blank holds its month\u2019s place and leaves it on the shape.'
+                    : `${volumePreview.parsed.blanks} blanks hold their months\u2019 places and leave them on the shape.`}
+                </div>
+              )}
+              {volumePreview.parsed.labels.length > 0 && (
+                <div>
+                  {volumePreview.parsed.labels.length === 1
+                    ? 'One month label read as a label, not as a volume.'
+                    : `${volumePreview.parsed.labels.length} month labels read as labels, not as volumes.`}
+                </div>
+              )}
+              {volumePreview.off > 0 && (
+                <div className={styles.warn}>
+                  {volumePreview.off} value{volumePreview.off === 1 ? '' : 's'} {volumePreview.off === 1 ? 'falls' : 'fall'}{' '}
+                  {volumePreview.toHistory
+                    ? `older than the ${back} months the look-back reaches, and ${volumePreview.off === 1 ? 'is' : 'are'} held until you look further back.`
+                    : `past the ${s.termMonths} months the term runs, and ${volumePreview.off === 1 ? 'is' : 'are'} held until you lengthen it.`}
+                </div>
+              )}
+              {volumePreview.parsed.skipped.length > 0 && (
+                <div className={styles.warn}>
+                  {volumePreview.parsed.skipped.length} line{volumePreview.parsed.skipped.length === 1 ? '' : 's'} could not be read and{' '}
+                  {volumePreview.parsed.skipped.length === 1 ? 'was' : 'were'} skipped: {volumePreview.parsed.skipped.slice(0, 3).map(l => `"${l}"`).join(', ')}
+                  {volumePreview.parsed.skipped.length > 3 && ` and ${volumePreview.parsed.skipped.length - 3} more`}.
+                </div>
+              )}
+              {volumePreview.replacing > 0 && (
+                <div className={styles.warn}>
+                  This replaces the whole list. {volumePreview.replacing} month{volumePreview.replacing === 1 ? '' : 's'} already{' '}
+                  {volumePreview.replacing === 1 ? 'carries a volume' : 'carry volumes'}, and any the paste does not cover
+                  {volumePreview.replacing === 1 ? ' goes' : ' go'} back on the shape.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className={styles.rowActions}>
-          <button type="button" className={styles.primaryBtn} onClick={loadVolumes} disabled={!volumePaste.trim()}>Load them</button>
+          <button
+            type="button"
+            className={styles.primaryBtn}
+            onClick={loadVolumes}
+            disabled={!volumePreview || volumePreview.parsed.count === 0}
+          >
+            {volumePreview?.first
+              ? `Load them into ${volumePreview.first.label}${volumePreview.last && volumePreview.last !== volumePreview.first ? ` – ${volumePreview.last.label}` : ''}`
+              : 'Load them'}
+          </button>
           <button type="button" className={styles.smallBtn} onClick={() => { setVolumePaste(null); setVolumeError(''); }}>Cancel</button>
         </div>
           </div>
