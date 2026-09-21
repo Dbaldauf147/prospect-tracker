@@ -349,19 +349,25 @@ check('null snapshot → no crash', headlineKpis(null).coverageRatio.actual, nul
     cards.some(c => /projected/i.test(c.label)), false);
   check('email: the progress card leads with the dollars sold',
     cards[0].value, '$1,200,000');
-  check('email: the percentage follows, with the target',
-    cards[0].lines[0], '40.0% sold of the $3,000,000 target');
+  // The share sits beside the figure, in the chip slot, and the line under
+  // it is left saying only what the share is of.
+  check('email: the percentage sits beside the dollars', cards[0].chip, '40.0%');
+  check('email: the line under it says what the share is of',
+    cards[0].lines[0], 'sold of the $3,000,000 target');
   check('email: one line under the figure, not four', cards[0].lines.length, 1);
-  // The tab grades both figures with a chip; the email prints them bare.
-  // A verdict on a number the reader can already see was the loudest thing
-  // in the mail, and the scale line says the same thing without it.
-  check('email: no pace verdict on the progress card', cards[0].chip, null);
+  // The tab grades both figures with a verdict chip; the email's chip
+  // carries the percentage instead. A verdict on a number the reader can
+  // already see was the loudest thing in the mail.
+  check('email: no pace verdict on the progress card',
+    /pace|behind|ahead/i.test(cards[0].chip), false);
   check('email: no status rule on the progress card either', cards[0].status, null);
   check('email: the coverage ratio keeps its number', cards[1].value, '2.74×');
-  check('email: no goal verdict on the coverage card', cards[1].chip, null);
+  check('email: the coverage share sits beside the ratio', cards[1].chip, '85.4%');
+  check('email: no goal verdict on the coverage card',
+    /goal|below|at goal/i.test(cards[1].chip), false);
   check('email: no status rule on the coverage card either', cards[1].status, null);
   check('email: the coverage ratio says what it is a share of',
-    cards[1].lines[0], '85.4% of the 3.21× goal');
+    cards[1].lines[0], 'of the 3.21× goal');
   check('email: one line under the ratio, not three', cards[1].lines.length, 1);
 }
 // No goal set: the ratio still prints, with nothing claimed about it.
@@ -369,6 +375,7 @@ check('null snapshot → no crash', headlineKpis(null).coverageRatio.actual, nul
   const cards = emailKpiCards(headlineKpis(snap({ coverage: { goal: null } })));
   check('email: no coverage goal → the ratio stands alone', cards[1].value, '2.74×');
   check('email: no coverage goal → no share line', cards[1].lines.length, 0);
+  check('email: no coverage goal → no share beside the ratio', cards[1].chip, null);
 }
 
 // A missing figure still has to say what to open: an em dash on its own is a
@@ -378,6 +385,7 @@ check('null snapshot → no crash', headlineKpis(null).coverageRatio.actual, nul
   check('email: no target → the progress card says what to set',
     bare[0].lines[0], 'Set an annual target on Charts → Pipeline.');
   check('email: no sold figure → an em dash, not a zero', bare[0].value, '-');
+  check('email: no sold figure → no percentage beside it', bare[0].chip, null);
   check('email: no target → the coverage card says that too, not "paste BFO"',
     bare[1].lines[0], 'Set an annual target on Charts → Pipeline.');
   // A target with no pipeline behind it is the other half: the fix is a
@@ -393,6 +401,8 @@ check('null snapshot → no crash', headlineKpis(null).coverageRatio.actual, nul
     cards[0].lines[0].includes('open Opps 2'), true);
   check('email: target but no closes → still prints the target',
     cards[0].lines[0].includes('$3,000,000'), true);
+  check('email: target but no closes → no percentage to show beside it',
+    cards[0].chip, null);
 }
 
 console.log(failures === 0 ? '\nAll headlineKpis tests passed.' : `\n${failures} test(s) failed.`);

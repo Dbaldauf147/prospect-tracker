@@ -381,7 +381,12 @@ export function headlineKpis(snapshot) {
 // compared rather than read.
 //
 // Dollars lead the progress card: the money sold is the thing being
-// reported, and the percentage is a way of reading it, so it follows.
+// reported, and the percentage is a way of reading it, so it follows -
+// beside the figure rather than under it. Both cards print a share of
+// something (dollars of a target, a ratio of a goal) and the share is the
+// first thing looked for, so it sits on the headline row where one glance
+// takes both, and the line underneath is left saying only what the share
+// is of.
 //
 // The lines that say *why* a figure is missing stay, on both cards. A blank
 // card is a claim about the cache, not about the pipeline, and an emailed
@@ -392,13 +397,22 @@ export function emailKpiCards(kpis) {
   const p = kpis?.progressToTarget || {};
   const c = kpis?.coverageRatio || {};
 
+  // The share beside each headline figure. Not a verdict, so no status
+  // colour goes with it: it is the same arithmetic the line underneath
+  // spells out, lifted to where the number is.
+  let progressPct = null;
+  let coveragePct = null;
+
   const progressLines = [];
   if (p.target == null) {
     progressLines.push('Set an annual target on Charts → Pipeline.');
   } else if (p.soldYTD == null) {
     progressLines.push(`Target ${emailDollars(p.target)} · open Opps 2 so this year’s closes are cached.`);
   } else if (p.pct != null) {
-    progressLines.push(`${p.pct.toFixed(1)}% sold of the ${emailDollars(p.target)} target`);
+    progressPct = `${p.pct.toFixed(1)}%`;
+    // Reads on from the dollars above it: "$484,616 / 36.6% / sold of the
+    // $1,325,000 target".
+    progressLines.push(`sold of the ${emailDollars(p.target)} target`);
   }
 
   const coverageLines = [];
@@ -407,32 +421,33 @@ export function emailKpiCards(kpis) {
       ? 'Set an annual target on Charts → Pipeline.'
       : 'Paste BFO Activity so open pipeline can be measured.');
   } else if (Number.isFinite(c.goal) && c.goal > 0) {
-    // The same shape as the progress card's line: the figure above, then
-    // what it is a share of. Coverage carried no scale line at all before,
-    // which left the ratio to be read against a goal the reader had to
-    // remember.
-    coverageLines.push(`${((c.actual / c.goal) * 100).toFixed(1)}% of the ${c.goal.toFixed(2)}× goal`);
+    // The same shape as the progress card: the share beside the figure,
+    // then what it is a share of. Coverage carried no scale line at all
+    // before, which left the ratio to be read against a goal the reader
+    // had to remember.
+    coveragePct = `${((c.actual / c.goal) * 100).toFixed(1)}%`;
+    coverageLines.push(`of the ${c.goal.toFixed(2)}× goal`);
   }
 
-  // No verdict chip and no status rule on either card, unlike the tab.
-  // "Behind pace" and "Below goal" are a judgement on a figure the reader
-  // is looking straight at, and in an inbox they landed as the loudest
-  // thing in the mail. The scale line under each number says the same
-  // thing without grading it: the percentage against the target, and the
-  // ratio against its goal.
+  // No status rule on either card and no verdict in the chip, unlike the
+  // tab. "Behind pace" and "Below goal" are a judgement on a figure the
+  // reader is looking straight at, and in an inbox they landed as the
+  // loudest thing in the mail. The percentage says where the figure stands
+  // without grading it, which is why it can sit in the chip slot the
+  // verdict used to have: a neutral chip, on a card with no status colour.
   return [
     {
       label: 'Progress to target',
       value: p.soldYTD == null ? '-' : emailDollars(p.soldYTD),
       status: null,
-      chip: null,
+      chip: progressPct,
       lines: progressLines,
     },
     {
       label: 'Coverage ratio',
       value: c.actual == null ? '-' : `${c.actual.toFixed(2)}×`,
       status: null,
-      chip: null,
+      chip: coveragePct,
       lines: coverageLines,
     },
   ];
