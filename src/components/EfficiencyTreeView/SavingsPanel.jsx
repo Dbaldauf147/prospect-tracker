@@ -11,7 +11,7 @@ import {
   buildSavings, forwardSeries, getSavingsState, hasSavedSavings, monthlySeries, normalizeSavingsState,
   parseForwardTable, parseMonthlyVolumes, parseNymexTable, percentileRank, priceStats, sourceSummary,
   termLadder, volumeSummary, yearRows,
-  addMonths, monthKey,
+  addMonths, monthKey, historySlot, LOOKBACK_ALL, MAX_LOOKBACK_MONTHS,
 } from '../../utils/nymexSavings.js';
 import { downloadSavingsMonths } from '../../utils/savingsExport.js';
 
@@ -48,6 +48,17 @@ import { downloadSavingsMonths } from '../../utils/savingsExport.js';
 // claims even when they come to the same number.
 
 const SAVE_DELAY_MS = 800;
+
+// How far back the page looks, as the handful of answers anybody gives.
+// "All of the record" is the one that matters and it is not a number: it
+// follows whatever settle table is loaded, so pasting a longer one reaches
+// further without anybody re-picking it.
+const LOOKBACK_CHOICES = [12, 24, 36, 60, 120];
+
+// How long a stretch of look-back month boxes opens before it has to be
+// asked for. Four hundred number inputs is a real list somebody may want,
+// and it is not what they want on the way to editing last December.
+const HISTORY_GRID_PREVIEW = 36;
 
 // Two series, one job each: what the market did, and what the contract
 // charges for it. Warm against cool so the pair survives colour blindness
@@ -240,6 +251,19 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   const [showVolumes, setShowVolumes] = useState(false);
   const [volumePaste, setVolumePaste] = useState(null);
   const [volumeError, setVolumeError] = useState('');
+  // Which end of the window a pasted column of volumes lands on. 'term'
+  // starts at the month the term opens, which is what the box did before the
+  // look-back existed; 'history' ENDS at the month before it, because "here
+  // are my last eighteen months of bills" is the shape history arrives in
+  // and it must not depend on how deep the look-back happens to be set.
+  const [volumeAnchor, setVolumeAnchor] = useState('term');
+  // Whether the whole look-back is open in the month boxes, or the tail of
+  // it. Purely about how much is on screen; nothing is discarded either way.
+  const [allHistoryBoxes, setAllHistoryBoxes] = useState(false);
+  // Whether the cost and saving charts draw the whole window or the term
+  // alone. The term is still the deal being decided, so it stays one click
+  // away from a look-back that runs for decades.
+  const [chartSpan, setChartSpan] = useState('window');
 
   // Same shape as the tree above it: local state is the truth while a save is
   // owed, so a snapshot echoing back from Firestore mid-edit cannot eat what
@@ -335,6 +359,50 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   // shortening a term and lengthening it again does not lose what was typed.
   const volumesPastTerm = Math.max(0, (s.monthlyVolumes || []).length - s.termMonths);
 
+  // ── the look-back ──────────────────────────────────────────────────────
+  // How many months of it there actually are, which is not what the scenario
+  // asked for when it asked for the whole record: that answer comes out of
+  // the settle table, and changes the moment somebody pastes a longer one.
+  const back = run.lookback;
+  const hasBack = back > 0;
+  const backEntered = run.historyTotals.enteredVolumeMonths;
+  const volumesPastBack = Math.max(0, (s.historyVolumes || []).length - back);
+  const backStart = run.history[0];
+  const backEnd = run.history[run.history.length - 1];
+  const backSpan = hasBack ? `${backStart.label} – ${backEnd.label}` : '';
+  // What the control says under its own label. The three cases are worth
+  // spelling out: a look-back that is running, one asked for but with no
+  // record in front of the term to give it, and one switched off.
+  const lookbackHint = hasBack
+    ? `${back} month${back === 1 ? '' : 's'} before it, ${backSpan}`
+    : s.lookback === LOOKBACK_ALL
+      ? 'the record does not reach behind this term'
+      : 'the term only';
+  // The list offered, plus whatever number is already stored if it is not
+  // one of them - a saved scenario must not lose its setting to a dropdown.
+  const lookbackOptions = useMemo(() => {
+    const set = new Set(LOOKBACK_CHOICES);
+    if (typeof s.lookback === 'number' && s.lookback > 0) set.add(s.lookback);
+    return [...set].sort((a, b) => a - b);
+  }, [s.lookback]);
+
+  // Which months the cost and saving charts draw. The whole window once
+  // there is a look-back, because that is what including history means; the
+  // term alone is a click away, and the term is shaded either way so the
+  // deal never gets lost inside thirty years of record.
+  // Which look-back months get a box, and where in the look-back the first
+  // of them sits - the offset is what turns a position in the slice back
+  // into a slot in the stored list, so the tail view writes to the same
+  // boxes the full one does.
+  const historyBoxFrom = allHistoryBoxes || back <= HISTORY_GRID_PREVIEW
+    ? 0
+    : Math.max(0, back - HISTORY_GRID_PREVIEW);
+  const historyBoxes = run.history.slice(historyBoxFrom);
+
+  const wholeWindow = hasBack && chartSpan === 'window';
+  const chartMonths = wholeWindow ? run.all : run.months;
+  const backTone = run.historyTotals.saving >= 0 ? 'good' : 'bad';
+
   const termStart = { year: s.startYear, month: s.startMonth };
   const termEnd = addMonths(s.startYear, s.startMonth, s.termMonths - 1);
   const termStartKey = monthKey(termStart.year, termStart.month);
@@ -369,10 +437,16 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
     return rows.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   }, [series, curve]);
 
-  const termData = run.months.map(m => ({
+  // The running total shown is the one that matches the span on screen:
+  // across the whole window when the whole window is drawn, and the term's
+  // own - which opens at zero on the month the term opens - when it is not.
+  // Drawing the term alone off a total that already carries a backtest would
+  // put the line somewhere it never was.
+  const chartData = chartMonths.map(m => ({
     key: m.key, label: m.label, short: m.short, assumed: m.assumed, source: m.source,
+    phase: m.phase,
     index: m.indexAllIn, contract: m.contractAllIn,
-    saving: m.saving, cumulative: m.cumulative, volume: m.volume,
+    saving: m.saving, cumulative: wholeWindow ? m.cumulativeAll : m.cumulative, volume: m.volume,
   }));
 
   // Where the term sits inside the history chart, so the strip of market the
@@ -393,13 +467,35 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   // guessed.
   const sourceBands = useMemo(() => {
     const bands = [];
-    for (const m of run.months) {
+    for (const m of chartMonths) {
       const last = bands[bands.length - 1];
       if (last && last.source === m.source) { last.x2 = m.key; last.count += 1; continue; }
       bands.push({ source: m.source, x1: m.key, x2: m.key, count: 1 });
     }
     return bands.filter(band => band.source !== 'settled');
-  }, [run.months]);
+  }, [chartMonths]);
+
+  // Where the term begins inside a chart that is drawing the whole window.
+  // Without it a reader cannot tell which end of a thirty-year line is the
+  // deal, and the deal is the point.
+  // The element itself rather than a component wrapping it: Recharts reads
+  // the type of each child to decide what to draw, so a ReferenceLine hidden
+  // inside a component of ours is a child it does not recognise and never
+  // renders.
+  const termMarkKey = wholeWindow ? run.months[0]?.key : null;
+  const termMark = termMarkKey ? (
+    <ReferenceLine
+      x={termMarkKey}
+      stroke={CONTRACT_COLOR}
+      strokeWidth={1.5}
+      strokeDasharray="4 3"
+      // To the LEFT of the rule, over the look-back. To its right is where
+      // the forward-curve band puts its own label and where the plot runs
+      // out on a term that ends the chart, so a label on that side lands on
+      // top of one or gets clipped by the other.
+      label={{ value: 'term', position: 'insideTopLeft', fill: CONTRACT_COLOR, fontSize: 9, fontWeight: 700 }}
+    />
+  ) : null;
 
   const BAND_STYLE = {
     forward: { fill: INDEX_COLOR, fillOpacity: 0.06, text: 'forward curve' },
@@ -409,7 +505,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   // whole term - a label on a one-month run lands on its neighbour, and a
   // label on the whole term lands on the y axis while saying nothing the
   // note above the chart does not.
-  const bandLabel = (band) => (band.count >= 5 && band.count < run.months.length
+  const bandLabel = (band) => (band.count >= 5 && band.count < chartMonths.length
     ? { value: BAND_STYLE[band.source].text, position: 'insideTop', fill: AXIS_TEXT, fontSize: 9, fontWeight: 700 }
     : undefined);
 
@@ -417,21 +513,21 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   // January is the only label carrying a year. So the ticks are chosen
   // rather than sampled: the Januaries, plus the first month of the term so
   // that a term shorter than a year still says when it runs.
-  const termTicks = useMemo(() => {
+  const chartTicks = useMemo(() => {
     // A short label carries a year only in January, so those are the anchors.
     // The first month of the term joins them only when the term holds no
     // January at all, because a term opening in October would otherwise put
     // its label hard against the one three months later.
-    const januaries = run.months.filter(m => m.month === 1);
-    const picks = januaries.length ? januaries : run.months.slice(0, 1);
+    const januaries = chartMonths.filter(m => m.month === 1);
+    const picks = januaries.length ? januaries : chartMonths.slice(0, 1);
     // Still too many to read on a long term, so thin them evenly.
     const stride = Math.ceil(picks.length / 8) || 1;
     return picks.filter((_, i) => i % stride === 0).map(m => m.key);
-  }, [run.months]);
+  }, [chartMonths]);
 
   // Key to the label shown under it. The axis plots the unique month; this
   // turns it back into something short enough to read.
-  const shortByKey = useMemo(() => new Map(run.months.map(m => [m.key, m.short])), [run.months]);
+  const shortByKey = useMemo(() => new Map(chartMonths.map(m => [m.key, m.short])), [chartMonths]);
 
   function openPaste(kind) {
     setPasteKind(prev => (prev === kind ? null : kind));
@@ -502,38 +598,57 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
     patchScenario({ layers: s.layers.filter((_, j) => j !== i) });
   }
 
-  // One month's volume. The list is indexed by month of the term, so a month
-  // being cleared leaves a hole rather than closing up - closing it up would
-  // slide every later month one earlier.
-  function setMonthVolume(i, raw) {
-    const next = [...(s.monthlyVolumes || [])];
+  // One month's volume. Either list is indexed from the term - forwards for
+  // the term's own months, backwards for the look-back - so a month being
+  // cleared leaves a hole rather than closing up. Closing it up would slide
+  // every neighbouring month one place along.
+  function setMonthVolume(list, i, raw) {
+    const key = list === 'history' ? 'historyVolumes' : 'monthlyVolumes';
+    const next = [...(s[key] || [])];
     while (next.length <= i) next.push(null);
     next[i] = raw == null ? null : raw;
-    patchScenario({ monthlyVolumes: next });
+    patchScenario({ [key]: next });
   }
 
   function loadVolumes() {
-    const parsed = parseMonthlyVolumes(volumePaste);
+    const toHistory = volumeAnchor === 'history';
+    const room = toHistory ? MAX_LOOKBACK_MONTHS : undefined;
+    const parsed = parseMonthlyVolumes(volumePaste, room);
     if (!parsed.count) {
-      setVolumeError('No volumes read. One value per month of the term, a line each or a row across, and a label in front of each is fine.');
+      setVolumeError(toHistory
+        ? 'No volumes read. One value per month before the term, oldest first, a line each or a row across.'
+        : 'No volumes read. One value per month of the term, a line each or a row across, and a label in front of each is fine.');
       return;
     }
-    patchScenario({ monthlyVolumes: parsed.volumes });
+    // A history paste is read oldest first, the way a column of bills comes
+    // off a spreadsheet, and stored backwards from the term - so the LAST
+    // value given is the month before the term opens whether they pasted
+    // eighteen months or eighty, and the look-back's depth never moves it.
+    patchScenario(toHistory
+      ? { historyVolumes: [...parsed.volumes].reverse() }
+      : { monthlyVolumes: parsed.volumes });
     setVolumePaste(null);
     setVolumeError('');
     setShowVolumes(true);
-    const over = parsed.volumes.length - s.termMonths;
+    if (toHistory) setAllHistoryBoxes(true);
+    const over = parsed.volumes.length - (toHistory ? back : s.termMonths);
     setStatus([
       `Loaded ${parsed.count} monthly volume${parsed.count === 1 ? '' : 's'}`,
+      toHistory ? ' for the months before the term' : '',
       parsed.blanks ? `, leaving ${parsed.blanks} month${parsed.blanks === 1 ? '' : 's'} on the shape` : '',
       skippedNote(parsed.skipped),
-      over > 0 ? `. ${over} more than the term runs, so ${over === 1 ? 'it sits' : 'they sit'} unused until you lengthen it.` : '.',
+      over > 0
+        ? `. ${over} more than the ${toHistory ? 'look-back reaches' : 'term runs'}, so ${over === 1 ? 'it sits' : 'they sit'} unused until you ${toHistory ? 'look further back' : 'lengthen it'}.`
+        : '.',
     ].join(''));
   }
 
   function clearVolumes() {
-    if (!window.confirm('Clear the monthly volumes? Every month goes back to the annual volume spread over the shape.')) return;
-    patchScenario({ monthlyVolumes: [] });
+    const both = backEntered > 0 && enteredVolumes > 0;
+    if (!window.confirm(both
+      ? 'Clear the monthly volumes, the look-back ones as well as the term\u2019s? Every month goes back to the annual volume spread over the shape.'
+      : 'Clear the monthly volumes? Every month goes back to the annual volume spread over the shape.')) return;
+    patchScenario({ monthlyVolumes: [], historyVolumes: [] });
     setShowVolumes(false);
     setStatus('Monthly volumes cleared. Every month is back on the annual volume and the shape.');
   }
@@ -548,6 +663,18 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       `On contract: ${usd(run.totals.contractCost)} (${price(run.totals.avgContractAllIn)} all-in)`,
       `Saving: ${usd(run.totals.saving)} (${pct(run.totals.savingPct)}, ${price(run.totals.savingPerDth)} a Dth)`,
       `Priced from: ${sourceSummary(run.totals)}.`,
+      // The look-back goes out as its own block, never added into the term's
+      // saving: one is a deal being decided and the other is market that has
+      // already settled, and a pasted summary travels further than the page.
+      ...(hasBack ? [
+        '',
+        `Look back: ${backSpan} (${back} months)`,
+        `Volume: ${vol(run.historyTotals.volume)} Dth`,
+        `The same hedge over those months: ${usd(run.historyTotals.saving)} (${price(run.historyTotals.savingPerDth)} a Dth)`,
+        `Priced from: ${sourceSummary(run.historyTotals)}.`,
+        `Look-back and term together: ${usd(run.allTotals.saving)} over ${vol(run.allTotals.volume)} Dth.`,
+        '',
+      ] : []),
       run.totals.assumedMonths
         ? `${run.totals.assumedMonths} month${run.totals.assumedMonths === 1 ? '' : 's'} sit past both tables and price flat at ${price(s.forwardPrice)}.`
         : run.totals.forwardMonths
@@ -744,6 +871,32 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
               label="Term" hint="how long it runs" width="7.5rem" step="1" min="1" suffix="mo"
               value={s.termMonths} onCommit={v => patchScenario({ termMonths: v })}
             />
+            {/* The months BEFORE the term, run through the same hedge. A
+                second reading rather than a longer term, so it sits beside
+                the term rather than inside it and its saving is reported
+                apart from the term's everywhere on the page. */}
+            <label className={styles.field} style={{ width: '11rem' }}>
+              <span className={styles.fieldLabel}>
+                Look back
+                <span className={styles.fieldHint}>{lookbackHint}</span>
+              </span>
+              <span className={styles.inputWrap}>
+                <select
+                  className={styles.input}
+                  value={s.lookback === LOOKBACK_ALL ? LOOKBACK_ALL : String(s.lookback)}
+                  onChange={e => patchScenario({
+                    lookback: e.target.value === LOOKBACK_ALL ? LOOKBACK_ALL : Number(e.target.value),
+                  })}
+                >
+                  {/* Not a number, and it must not become one: it follows
+                      whatever settle table is loaded, so a longer paste
+                      reaches further back without anybody re-picking it. */}
+                  <option value={LOOKBACK_ALL}>All of the record</option>
+                  <option value="0">None, the term only</option>
+                  {lookbackOptions.map(n => <option key={n} value={String(n)}>{n} months</option>)}
+                </select>
+              </span>
+            </label>
             <NumberField
               label="Annual volume" hint="burned in a year" width="9.5rem" step="1000" suffix="Dth"
               value={s.annualVolumeDth} onCommit={v => patchScenario({ annualVolumeDth: v })}
@@ -793,6 +946,14 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                   {enteredVolumes
                     ? `${enteredVolumes} of ${s.termMonths} month${s.termMonths === 1 ? '' : 's'} burn a volume you gave. ${volumeSummary(run.totals)}, ${vol(run.totals.volume)} Dth over the term.`
                     : `Every month prices off the annual volume spread over the ${VOLUME_SHAPES[s.volumeShape].label.toLowerCase()} shape. Give a month its own volume and it uses that instead.`}
+                  {/* The look-back's volumes are counted apart from the
+                      term's, the way its saving is: real consumption behind
+                      the term is the thing worth entering there, and how
+                      much of it there is says how much of the look-back is
+                      measured rather than spread off an annual number. */}
+                  {hasBack && (backEntered
+                    ? ` Behind it, ${backEntered} of ${back} look-back month${back === 1 ? '' : 's'} do too: ${volumeSummary(run.historyTotals)}, ${vol(run.historyTotals.volume)} Dth over ${backSpan}.`
+                    : ` The ${back} month${back === 1 ? '' : 's'} of look-back behind it price the same way. Paste what actually burned and they use that instead.`)}
                 </span>
               </span>
               <div className={styles.volumeActions}>
@@ -812,19 +973,55 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
 
             {volumePaste != null && (
               <div className={styles.pastePanel}>
+                {/* Which end of the window the column lands on. Two buttons
+                    rather than a dropdown, because it is the one thing about
+                    this box that can be got wrong and it has to be readable
+                    without being opened. Only offered when there is a
+                    look-back to paste into. */}
+                {hasBack && (
+                  <div className={styles.anchorRow}>
+                    <button
+                      type="button"
+                      className={volumeAnchor === 'term' ? styles.anchorBtnOn : styles.anchorBtn}
+                      onClick={() => { setVolumeAnchor('term'); setVolumeError(''); }}
+                    >The term</button>
+                    <button
+                      type="button"
+                      className={volumeAnchor === 'history' ? styles.anchorBtnOn : styles.anchorBtn}
+                      onClick={() => { setVolumeAnchor('history'); setVolumeError(''); }}
+                    >The months before it</button>
+                  </div>
+                )}
                 <div className={styles.fieldLabel}>
-                  Paste the term's volumes
+                  {volumeAnchor === 'history' && hasBack
+                    ? 'Paste what burned before the term'
+                    : "Paste the term's volumes"}
                   <span className={styles.fieldHint}>
-                    One value per month of the term, in the order it runs, starting at {run.months[0]?.label || 'the first month'}. A
-                    line each or one row copied across both work, a label in front of each number is ignored ("Jan 2027 3,100"), and so is
-                    a unit after it. A blank leaves that month on the shape rather than reading it as a zero. This replaces the whole list.
+                    {volumeAnchor === 'history' && hasBack ? (
+                      <>
+                        One value per month, oldest first, ending at {backEnd.label} - the month before the term opens. Paste as many
+                        months as you have and they fill backwards from there, so eighteen months of bills land on the eighteen months
+                        behind the term whatever the look-back is set to. Anything older than {backStart.label} is held until you look
+                        further back.
+                      </>
+                    ) : (
+                      <>
+                        One value per month of the term, in the order it runs, starting at {run.months[0]?.label || 'the first month'}.
+                      </>
+                    )}
+                    {' '}A line each or one row copied across both work, a label in front of each number is ignored ("Jan 2027 3,100"), and
+                    so is a unit after it. A blank leaves that month on the shape rather than reading it as a zero. This replaces the
+                    whole list.
                   </span>
                 </div>
                 <textarea
                   className={styles.textarea}
                   rows={6}
                   value={volumePaste}
-                  placeholder={`Month\tDth\n${run.months.slice(0, 3).map((m, i) => `${m.label}\t${[3100, 2780, 2240][i].toLocaleString('en-US')}`).join('\n')}`}
+                  placeholder={`Month\tDth\n${(volumeAnchor === 'history' && hasBack
+                    ? run.history.slice(-3)
+                    : run.months.slice(0, 3)
+                  ).map((m, i) => `${m.label}\t${[3100, 2780, 2240][i].toLocaleString('en-US')}`).join('\n')}`}
                   onChange={e => { setVolumePaste(e.target.value); setVolumeError(''); }}
                 />
                 {volumeError && <div className={styles.warn}>{volumeError}</div>}
@@ -837,6 +1034,56 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
 
             {showVolumes && (
               <>
+                {/* The look-back's months first, so the boxes read in
+                    calendar order straight into the term. A long look-back
+                    opens on its tail rather than on all of it: four hundred
+                    number inputs is a list somebody may want and never the
+                    one they want on the way to editing last December. */}
+                {hasBack && (
+                  <>
+                    <div className={styles.volumeSection}>
+                      <span className={styles.volumeSectionTitle}>
+                        Before the term
+                        <span className={styles.volumeSectionHint}>
+                          {' '}{backSpan}, {back} month{back === 1 ? '' : 's'}
+                        </span>
+                      </span>
+                      {back > HISTORY_GRID_PREVIEW && (
+                        <button
+                          type="button"
+                          className={styles.smallBtn}
+                          onClick={() => setAllHistoryBoxes(v => !v)}
+                        >
+                          {allHistoryBoxes
+                            ? `Show the last ${HISTORY_GRID_PREVIEW}`
+                            : `Show all ${back}`}
+                        </button>
+                      )}
+                    </div>
+                    <div className={styles.volumeGrid}>
+                      {historyBoxes.map((m, j) => {
+                        const slot = historySlot(back, historyBoxFrom + j);
+                        return (
+                          <VolumeCell
+                            key={m.key}
+                            month={m.short}
+                            value={(s.historyVolumes || [])[slot] ?? null}
+                            shaped={shapedVolume(m.month)}
+                            onCommit={raw => setMonthVolume('history', slot, raw)}
+                          />
+                        );
+                      })}
+                    </div>
+                    <div className={styles.volumeSection}>
+                      <span className={styles.volumeSectionTitle}>
+                        The term
+                        <span className={styles.volumeSectionHint}>
+                          {' '}{run.months[0]?.label} – {run.months[run.months.length - 1]?.label}, {s.termMonths} month{s.termMonths === 1 ? '' : 's'}
+                        </span>
+                      </span>
+                    </div>
+                  </>
+                )}
                 <div className={styles.volumeGrid}>
                   {run.months.map((m, i) => (
                     <VolumeCell
@@ -844,7 +1091,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                       month={m.short}
                       value={(s.monthlyVolumes || [])[i] ?? null}
                       shaped={shapedVolume(m.month)}
-                      onCommit={raw => setMonthVolume(i, raw)}
+                      onCommit={raw => setMonthVolume('term', i, raw)}
                     />
                   ))}
                 </div>
@@ -852,7 +1099,9 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                   A box left empty prices off the annual volume and the shape, which is the number shown greyed in it. The list is tied to
                   the term rather than to the calendar, so month one is always the month the term opens: re-dating the term moves these
                   volumes with it.
+                  {hasBack && ' The look-back\u2019s boxes are tied to the term from the other end, so the last of them is always the month before it opens: looking further back adds months at the old end and moves nothing you have typed.'}
                   {volumesPastTerm > 0 && ` ${volumesPastTerm} more volume${volumesPastTerm === 1 ? '' : 's'} than the term runs ${volumesPastTerm === 1 ? 'is' : 'are'} held past its end, unused until the term is lengthened.`}
+                  {volumesPastBack > 0 && ` ${volumesPastBack} more look-back volume${volumesPastBack === 1 ? '' : 's'} than the look-back reaches ${volumesPastBack === 1 ? 'is' : 'are'} held behind it, unused until you look further back.`}
                 </div>
               </>
             )}
@@ -979,6 +1228,35 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           tone={run.totals.assumedMonths ? 'warn' : 'plain'}
           title={`Months with a settle or a quote behind them. The rest price at the flat assumption of ${price(s.forwardPrice)}, which is the only one of the three that is nobody's price.`}
         />
+        {/* The look-back, reported apart from the term rather than added to
+            it. The two are different claims - one is a deal being decided,
+            the other is market that already settled - and a headline that
+            ran them together would let a forward deal take the credit for a
+            backtest. The third tile adds them, once, and says so. */}
+        {hasBack && (
+          <>
+            <Tile
+              label="Over the look-back"
+              value={usd(run.historyTotals.saving)}
+              sub={`${back} mo, ${backSpan}`}
+              tone={backTone}
+              title="What the same hedge, the same layers and the same basis and adder would have done over the months before the term. A backtest, not part of the deal."
+            />
+            <Tile
+              label="Measured, not quoted"
+              value={`${run.historyTotals.settledMonths} of ${back}`}
+              sub={sourceSummary(run.historyTotals)}
+              tone={run.historyTotals.assumedMonths ? 'warn' : 'plain'}
+              title="Look-back months with a settle behind them. A look-back that runs past the last settle is quoted off the curve like any other month, and then it is a forecast rather than a measurement."
+            />
+            <Tile
+              label="Look-back and term"
+              value={usd(run.allTotals.saving)}
+              sub={`${run.allTotals.months} months, ${vol(run.allTotals.volume)} Dth`}
+              tone={run.allTotals.saving >= 0 ? 'good' : 'bad'}
+            />
+          </>
+        )}
       </div>
 
       <div className={styles.rowActions}>
@@ -986,6 +1264,19 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
         <button type="button" className={styles.smallBtn} onClick={() => setShowMonths(v => !v)}>
           {showMonths ? 'Hide the month by month' : 'Show the month by month'}
         </button>
+        {/* A look-back can run for decades, and the term is still the thing
+            being decided, so the charts below stay one click from showing it
+            on its own. */}
+        {hasBack && (
+          <button
+            type="button"
+            className={styles.smallBtn}
+            onClick={() => setChartSpan(v => (v === 'window' ? 'term' : 'window'))}
+            title="Whether the three charts below draw the look-back and the term together, or the term on its own."
+          >
+            {wholeWindow ? 'Chart the term on its own' : 'Chart the whole window'}
+          </button>
+        )}
         {/* Next to the toggle rather than inside the table, so it is there
             whether or not the months are open. */}
         <button
@@ -994,6 +1285,13 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           onClick={exportMonths}
           title="Every month of the term as a spreadsheet: index and contract all-in, the volume, what each leg costs and the saving running, with the scenario on a second sheet."
         >Export the months to Excel</button>
+        {hasBack && (
+          <span className={styles.muted}>
+            The look-back runs {backSpan}, priced off the same tables: {sourceSummary(run.historyTotals)}.
+            {' '}Its saving is what this hedge would have done over months that have already happened, so it is reported beside the
+            term rather than inside it.
+          </span>
+        )}
         {(run.totals.forwardMonths > 0 || run.totals.assumedMonths > 0) && (
           <span className={styles.muted}>
             The settles run out at {run.lastSettled?.label || 'the end of the table'}.
@@ -1084,20 +1382,20 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       {/* ── the term, priced twice ────────────────────────────────────── */}
       <div className={styles.chartGrid}>
         <ChartCard
-          title="Over the term: index against this contract"
-          note={`All-in ${NYMEX_UNIT}, basis and adder included on both. Priced from: ${sourceSummary(run.totals)}.`}
+          title={wholeWindow ? 'Look-back and term: index against this contract' : 'Over the term: index against this contract'}
+          note={`All-in ${NYMEX_UNIT}, basis and adder included on both. Priced from: ${sourceSummary(wholeWindow ? run.allTotals : run.totals)}.${wholeWindow ? ' The rule marks where the term opens; everything left of it is settled record.' : ''}`}
           legend={<LegendKey items={[{ label: 'At index', color: INDEX_COLOR }, { label: 'This contract', color: CONTRACT_COLOR }]} />}
         >
           <div className={styles.chartBox}>
             <ResponsiveContainer width="100%" height={230}>
-              <LineChart data={termData} margin={{ top: 8, right: 32, bottom: 4, left: 4 }}>
+              <LineChart data={chartData} margin={{ top: 8, right: 32, bottom: 4, left: 4 }}>
                 <CartesianGrid stroke={GRID} strokeDasharray="2 4" vertical={false} />
                 <XAxis
                   dataKey="key"
                   tick={{ fontSize: 10, fill: AXIS_TEXT }}
                   tickLine={false}
                   axisLine={{ stroke: GRID }}
-                  ticks={termTicks}
+                  ticks={chartTicks}
                   interval={0}
                   tickFormatter={k => shortByKey.get(k) || k}
                 />
@@ -1134,6 +1432,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                   )}
                   cursor={{ stroke: AXIS_TEXT, strokeDasharray: '3 3' }}
                 />
+                {termMark}
                 <Legend wrapperStyle={{ display: 'none' }} />
                 <Line type="monotone" dataKey="index" name="At index" stroke={INDEX_COLOR} strokeWidth={2} dot={false} activeDot={{ r: 4, strokeWidth: 2, stroke: '#fff' }} isAnimationActive={false} />
                 <Line type="monotone" dataKey="contract" name="This contract" stroke={CONTRACT_COLOR} strokeWidth={2} dot={false} activeDot={{ r: 4, strokeWidth: 2, stroke: '#fff' }} isAnimationActive={false} />
@@ -1144,11 +1443,13 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
 
         <ChartCard
           title="What it has saved, running total"
-          note="Index bill less contract bill, accumulated across the term."
+          note={wholeWindow
+            ? 'Index bill less contract bill, accumulated across the look-back and on through the term. The rule marks where the term opens.'
+            : 'Index bill less contract bill, accumulated across the term.'}
         >
           <div className={styles.chartBox}>
             <ResponsiveContainer width="100%" height={230}>
-              <AreaChart data={termData} margin={{ top: 8, right: 32, bottom: 4, left: 4 }}>
+              <AreaChart data={chartData} margin={{ top: 8, right: 32, bottom: 4, left: 4 }}>
                 <defs>
                   <linearGradient id="savings-fill" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={SAVED_COLOR} stopOpacity={0.35} />
@@ -1161,7 +1462,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                   tick={{ fontSize: 10, fill: AXIS_TEXT }}
                   tickLine={false}
                   axisLine={{ stroke: GRID }}
-                  ticks={termTicks}
+                  ticks={chartTicks}
                   interval={0}
                   tickFormatter={k => shortByKey.get(k) || k}
                 />
@@ -1173,6 +1474,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                   tickFormatter={usdShort}
                 />
                 <ReferenceLine y={0} stroke={AXIS_TEXT} strokeWidth={1} />
+                {termMark}
                 <Tooltip
                   content={<ChartTip format={v => usd(v)} />}
                   cursor={{ stroke: AXIS_TEXT, strokeDasharray: '3 3' }}
@@ -1193,19 +1495,19 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
 
         <ChartCard
           title="Which months paid for it"
-          note="One bar per month. Below the line is a month the market came in under the strike and the hedge cost money."
+          note={`One bar per month${wholeWindow ? ' of the look-back and the term' : ''}. Below the line is a month the market came in under the strike and the hedge cost money.`}
           legend={<LegendKey items={[{ label: 'Hedge saved', color: SAVED_COLOR }, { label: 'Hedge cost', color: COST_COLOR }]} />}
         >
           <div className={styles.chartBox}>
             <ResponsiveContainer width="100%" height={230}>
-              <BarChart data={termData} margin={{ top: 8, right: 32, bottom: 4, left: 4 }}>
+              <BarChart data={chartData} margin={{ top: 8, right: 32, bottom: 4, left: 4 }}>
                 <CartesianGrid stroke={GRID} strokeDasharray="2 4" vertical={false} />
                 <XAxis
                   dataKey="key"
                   tick={{ fontSize: 10, fill: AXIS_TEXT }}
                   tickLine={false}
                   axisLine={{ stroke: GRID }}
-                  ticks={termTicks}
+                  ticks={chartTicks}
                   interval={0}
                   tickFormatter={k => shortByKey.get(k) || k}
                 />
@@ -1217,12 +1519,22 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                   tickFormatter={usdShort}
                 />
                 <ReferenceLine y={0} stroke={AXIS_TEXT} strokeWidth={1} />
+                {termMark}
                 <Tooltip
                   content={<ChartTip format={v => usd(v)} />}
                   cursor={{ fill: 'rgba(15, 23, 42, 0.05)' }}
                 />
-                <Bar dataKey="saving" name="Saving" radius={[4, 4, 0, 0]} isAnimationActive={false}>
-                  {termData.map(row => (
+                {/* The corner radius is dropped once the bars are hairlines,
+                    which is what four hundred months of look-back makes them:
+                    rounding a one-pixel bar turns the chart into a row of
+                    dots that all read as the same height. */}
+                <Bar
+                  dataKey="saving"
+                  name="Saving"
+                  radius={chartData.length > 72 ? 0 : [4, 4, 0, 0]}
+                  isAnimationActive={false}
+                >
+                  {chartData.map(row => (
                     <Cell key={row.key} fill={row.saving >= 0 ? SAVED_COLOR : COST_COLOR} />
                   ))}
                 </Bar>
@@ -1313,10 +1625,17 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
               </tr>
             </thead>
             <tbody>
-              {run.years.map(y => (
-                <tr key={y.year}>
+              {(hasBack ? run.allYears : run.years).map(y => (
+                <tr key={y.year} className={hasBack && y.term === 0 ? styles.backRow : undefined}>
                   <th scope="row">
                     {y.year}
+                    {/* Only on a year that holds both readings. A year wholly
+                        one or the other is already said by where it sits and
+                        by how the row is shaded, and a flag on every row of
+                        a thirty-year table says nothing at all. */}
+                    {hasBack && y.history > 0 && y.term > 0 && (
+                      <span className={styles.backFlag} title={`${y.history} of this year's ${y.months} months sit before the term opens`}>{y.history} look-back</span>
+                    )}
                     {y.forward > 0 && (
                       <span className={styles.curveFlag} title={`${y.forward} of this year's ${y.months} months are priced off the forward curve`}>{y.forward} curve</span>
                     )}
@@ -1333,7 +1652,24 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                   <td className={y.saving >= 0 ? styles.tdGood : styles.tdBad}>{price(y.savingPerDth)}</td>
                 </tr>
               ))}
-              <tr className={styles.totalRow}>
+              {/* Three totals rather than one, because the look-back and
+                  the term are two claims and the sum of them is a third. A
+                  single total row over a table that holds both would be the
+                  one on the end, and every reader would take it for the
+                  term. */}
+              {hasBack && (
+                <tr className={styles.subTotalRow}>
+                  <th scope="row">Look-back</th>
+                  <td className={styles.tdNum}>{back}</td>
+                  <td className={styles.tdNum}>{vol(run.historyTotals.volume)}</td>
+                  <td className={styles.tdNum}>{price(run.historyTotals.avgIndex)}</td>
+                  <td className={styles.tdNum}>{usd(run.historyTotals.indexCost)}</td>
+                  <td className={styles.tdNum}>{usd(run.historyTotals.contractCost)}</td>
+                  <td className={run.historyTotals.saving >= 0 ? styles.tdGood : styles.tdBad}>{usd(run.historyTotals.saving)}</td>
+                  <td className={run.historyTotals.saving >= 0 ? styles.tdGood : styles.tdBad}>{price(run.historyTotals.savingPerDth)}</td>
+                </tr>
+              )}
+              <tr className={hasBack ? styles.subTotalRow : styles.totalRow}>
                 <th scope="row">Term</th>
                 <td className={styles.tdNum}>{run.months.length}</td>
                 <td className={styles.tdNum}>{vol(run.totals.volume)}</td>
@@ -1343,6 +1679,18 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                 <td className={run.totals.saving >= 0 ? styles.tdGood : styles.tdBad}>{usd(run.totals.saving)}</td>
                 <td className={run.totals.saving >= 0 ? styles.tdGood : styles.tdBad}>{price(run.totals.savingPerDth)}</td>
               </tr>
+              {hasBack && (
+                <tr className={styles.totalRow}>
+                  <th scope="row">Both</th>
+                  <td className={styles.tdNum}>{run.allTotals.months}</td>
+                  <td className={styles.tdNum}>{vol(run.allTotals.volume)}</td>
+                  <td className={styles.tdNum}>{price(run.allTotals.avgIndex)}</td>
+                  <td className={styles.tdNum}>{usd(run.allTotals.indexCost)}</td>
+                  <td className={styles.tdNum}>{usd(run.allTotals.contractCost)}</td>
+                  <td className={run.allTotals.saving >= 0 ? styles.tdGood : styles.tdBad}>{usd(run.allTotals.saving)}</td>
+                  <td className={run.allTotals.saving >= 0 ? styles.tdGood : styles.tdBad}>{price(run.allTotals.savingPerDth)}</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -1353,6 +1701,13 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           <div className={styles.cardHead}>
             <div className={styles.cardTitle}>Month by month</div>
           </div>
+          {hasBack && (
+            <div className={styles.cardNote}>
+              The look-back first, then the term, with the term&rsquo;s opening month marked. The running column carries straight
+              across both, so the figure on the last row is the pair rather than the term on its own; the term&rsquo;s own saving is
+              in the tiles above and on the Term row of the table before this one.
+            </div>
+          )}
           <div className={styles.tableWrap}>
             <table className={styles.dataTable}>
               <thead>
@@ -1369,10 +1724,22 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                 </tr>
               </thead>
               <tbody>
-                {run.months.map(m => (
-                  <tr key={m.key} className={m.source === 'assumed' ? styles.assumedRow : undefined}>
+                {(hasBack ? run.all : run.months).map(m => (
+                  <tr
+                    key={m.key}
+                    className={m.source === 'assumed'
+                      ? styles.assumedRow
+                      : (hasBack && m.phase === 'history' ? styles.backRow : undefined)}
+                  >
                     <th scope="row">
                       {m.label}
+                      {/* Named once, on the month the term opens, rather than
+                          on every row: a flag on four hundred rows is
+                          wallpaper, and the one place a reader needs to find
+                          is where one reading becomes the other. */}
+                      {hasBack && m.key === run.months[0]?.key && (
+                        <span className={styles.backFlag} title="The term opens here. Everything above is the look-back.">term opens</span>
+                      )}
                       {m.source === 'forward' && (
                         <span className={styles.curveFlag} title={`No settle for this month yet, so it is priced off the forward curve (${forwardAsOf})`}>curve</span>
                       )}
@@ -1388,14 +1755,14 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                       {/* Only where the term MIXES the two. With nothing
                           entered every row would carry the same flag, which
                           says less than the one line above the table does. */}
-                      {enteredVolumes > 0 && m.volumeSource === 'shape' && (
+                      {(enteredVolumes > 0 || backEntered > 0) && m.volumeSource === 'shape' && (
                         <span className={styles.shapeFlag} title="No volume given for this month, so it prices off the annual volume spread over the shape">shape</span>
                       )}
                     </td>
                     <td className={styles.tdNum}>{usd(m.indexCost)}</td>
                     <td className={styles.tdNum}>{usd(m.contractCost)}</td>
                     <td className={m.saving >= 0 ? styles.tdGood : styles.tdBad}>{usd(m.saving)}</td>
-                    <td className={styles.tdNum}>{usd(m.cumulative)}</td>
+                    <td className={styles.tdNum}>{usd(hasBack ? m.cumulativeAll : m.cumulative)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1405,6 +1772,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       )}
 
       <div className={styles.footNote}>
+        {hasBack && `The look-back is the months before the term run through the same hedge, the same layers and the same basis and adder, as far back as the settle table reaches. It is a backtest: what this contract would have done against market that has already settled, which is a different claim from what it will do against market that has not. So it is counted, charted and exported beside the term rather than inside it, and the term's own saving means exactly what it meant before there was a look-back. `}
         Savings are the same volume priced twice: once at the market price for the month, once at what this contract charges after its hedge layers. That volume is whatever you gave the month, and the annual number spread over the shape wherever you gave none, which every table says per month. Basis and the retail adder sit on both legs, so they move the bill and not the saving. Each month takes the best price there is for it, in this order: the settle, then the forward curve, then one flat assumption where neither reaches. Every chart, table and tile says which, because a saving measured against a settle and a saving quoted off a curve are different claims. A curve also goes stale in a way a settle never does, so the date it was quoted at travels with it.
         {!hasSavedSavings(settings) && settingsLoaded && ' Nothing is saved yet, so this is the shipped table and a worked example. The first thing you change saves a copy of your own.'}
       </div>
