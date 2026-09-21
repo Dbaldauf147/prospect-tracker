@@ -19,6 +19,12 @@
 //      ahead of the scope.
 //   5. Ticking a service out of the scope moves the base, because the base
 //      is the scope.
+//   6. Unticking a service the deal is not charging for does the same
+//      WITHOUT dropping its row: it leaves the base, the management fee
+//      recalculates without it, and both rows go on saying what they are
+//      worth. A management fee that is itself unticked is still struck
+//      from the charged services, because that is what switching it back
+//      on would be worth.
 //
 // Run: node scripts/scopePercentOfScope.test.mjs
 import { estimateScope, feeBasisLabel, scopeDealSizes, PRICING_BASES } from '../src/utils/servicePricing.js';
@@ -56,6 +62,11 @@ const pricing = {
 const counts = { sites: 100 };
 const price = (services, dealSize = '') => estimateScope({
   rows, services, pricing, counts, bases, dealSize, percentOfScope: true,
+});
+// The same scope with only some of it charged for: every service keeps its
+// row, and only the ticked ones count towards the management fee.
+const priceCharged = (services, charged, dealSize = '') => estimateScope({
+  rows, services, pricing, counts, bases, dealSize, percentOfScope: true, percentBase: charged,
 });
 const lineFor = (est, name) => est.lines.find(l => l.name === name);
 
@@ -135,6 +146,75 @@ const lineFor = (est, name) => est.lines.find(l => l.name === name);
     lineFor(all, 'Client management').fee > lineFor(fewer, 'Client management').fee, true);
 }
 
+// ---- unticking a service recalculates the fee without dropping its row ---
+{
+  const services = ['Bill payment', 'Client management', 'Strategic sourcing'];
+  const all = price(services);
+  // Strategic sourcing is in the scope but this deal is not charging for
+  // it, so it is not being managed either.
+  const some = priceCharged(services, ['Bill payment', 'Client management']);
+  check('the whole scope makes it a cut of $65,000', all.percentBases.get('Client management').low, 65000);
+  check('unticking one leaves $40,000 to manage', some.percentBases.get('Client management').low, 40000);
+  check('and the fee comes down with it', lineFor(some, 'Client management').fee, 4000);
+  check('at the top of the range too', lineFor(some, 'Client management').feeHigh, 16000);
+  check('the unticked service keeps its row', !!lineFor(some, 'Strategic sourcing'), true);
+  check('and what it would have been worth', lineFor(some, 'Strategic sourcing').fee, 25000);
+
+  // Ticking it back on puts it back in the base, with nothing to reset.
+  check('ticking it back on restores the fee',
+    lineFor(priceCharged(services, services), 'Client management').fee,
+    lineFor(all, 'Client management').fee);
+}
+
+// ---- a management fee this deal is not charging for ----------------------
+{
+  const services = ['Bill payment', 'Client management', 'Strategic sourcing'];
+  // Client management itself unticked: it is out of the base anyway, so
+  // what it reports is what charging for it would be worth.
+  const off = priceCharged(services, ['Bill payment', 'Strategic sourcing']);
+  check('an unticked management fee still says what it is worth',
+    lineFor(off, 'Client management').fee, 6500);
+  check('rather than going back to "No deal to price on"',
+    lineFor(off, 'Client management').note, '');
+}
+
+// ---- nothing charged for is nothing to manage ----------------------------
+{
+  const services = ['Bill payment', 'Client management'];
+  const alone = priceCharged(services, ['Client management']);
+  check('a deal charging for the management fee alone has nothing under it',
+    lineFor(alone, 'Client management').note, 'No deal to price on');
+  check('and the service it was a cut of still shows its own figure',
+    lineFor(alone, 'Bill payment').fee, 40000);
+}
+
+// ---- the totals over the charged services agree with those rows ----------
+{
+  const services = ['Bill payment', 'Client management', 'Strategic sourcing'];
+  const charged = ['Bill payment', 'Client management'];
+  // What the panel shows on the rows, and what it adds up underneath: the
+  // same scope priced over all of it and over the charged part of it. The
+  // management fee has to come out the same on both or the table would not
+  // foot to its own rows.
+  const rowsEst = priceCharged(services, charged);
+  const totals = price(charged);
+  check('the row and the total are the same fee',
+    lineFor(totals, 'Client management').fee, lineFor(rowsEst, 'Client management').fee);
+  check('at the top as well',
+    lineFor(totals, 'Client management').feeHigh, lineFor(rowsEst, 'Client management').feeHigh);
+  check('and the total is the charged services plus the cut of them',
+    totals.year1Total, 40000 + 4000);
+}
+
+// ---- the base can be handed in as a Set ----------------------------------
+{
+  const services = ['Bill payment', 'Client management', 'Strategic sourcing'];
+  const asSet = priceCharged(services, new Set(['Bill payment', 'Client management']));
+  const asList = priceCharged(services, ['Bill payment', 'Client management']);
+  check('a Set and a list say the same thing',
+    lineFor(asSet, 'Client management').fee, lineFor(asList, 'Client management').fee);
+}
+
 // ---- a caller that already knows the deal keeps its answer ---------------
 {
   const est = estimateScope({
@@ -172,6 +252,16 @@ const lineFor = (est, name) => est.lines.find(l => l.name === name);
   check('junk is tolerated', scopeDealSizes([null, undefined, {}]).size, 0);
   check('a scope with no percentage service has no base to work out',
     scopeDealSizes([{ name: 'A', priced: true, fee: 10, feeHigh: 20, breakdown: [{ kind: 'unit' }] }]).size, 0);
+  const some = [
+    { name: 'A', priced: true, fee: 10, feeHigh: 20, breakdown: [{ kind: 'unit' }] },
+    { name: 'B', priced: true, fee: 30, feeHigh: 40, breakdown: [{ kind: 'unit' }] },
+    { name: 'C', priced: true, fee: 0, feeHigh: 0, breakdown: [{ kind: 'percent' }] },
+  ];
+  check('the base is every service by default', scopeDealSizes(some).get('C').low, 40);
+  check('and only the named ones when it is narrowed',
+    scopeDealSizes(some, ['B']).get('C').low, 30);
+  check('naming none of them leaves nothing to be a cut of',
+    scopeDealSizes(some, []).size, 0);
 }
 
 console.log(failures === 0 ? '\nAll checks passed.' : `\n${failures} check(s) failed.`);
