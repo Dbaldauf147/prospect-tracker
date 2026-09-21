@@ -1642,7 +1642,13 @@ export function scopeGaps(lines) {
 // Takes a line from estimateScope (or anything with `entry`, `typed` and
 // `units`). Returns '' for a service with nothing to say — an unpriced one,
 // whose own `note` says that instead.
-export function feeBasisLabel(line, bases = PRICING_BASES) {
+//
+// `percentOf` names what a percentage line took its cut of, for a caller
+// that knows and whose reader would otherwise be sent looking for a deal
+// size box that had nothing to do with the figure. Left out, a percentage
+// reads as a cut of the deal size, which is what it is everywhere the
+// caller hasn't said otherwise.
+export function feeBasisLabel(line, bases = PRICING_BASES, { percentOf = '' } = {}) {
   // The mark, said in the one place a reader asks why the fee is $0. It has
   // no breakdown to describe, so without this the row would carry a zero
   // with nothing beside it.
@@ -1663,13 +1669,13 @@ export function feeBasisLabel(line, bases = PRICING_BASES) {
   // Two lines read out in full; past that the phrase runs longer than the
   // row it sits under, so the rest are counted rather than listed and the
   // fee breakdown in the pricing panel carries the detail.
-  if (parts.length <= 2) return parts.map(p => partPhrase(p, many)).join(' + ');
-  return `${partPhrase(parts[0], many)} + ${parts.length - 1} more lines`;
+  if (parts.length <= 2) return parts.map(p => partPhrase(p, many, percentOf)).join(' + ');
+  return `${partPhrase(parts[0], many, percentOf)} + ${parts.length - 1} more lines`;
 }
 
 // One line of a breakdown as a phrase: "$450 per site × 819", "3% of deal
 // size", "Recurring annual".
-function partPhrase(part, withAmount = false) {
+function partPhrase(part, withAmount = false, percentOf = '') {
   const rate = formatRate(
     { basis: 'x', rate: part.rate, rateHigh: part.rateHigh },
     [{ key: 'x', kind: part.kind }],
@@ -1678,7 +1684,7 @@ function partPhrase(part, withAmount = false) {
     const unit = String(part.unitLabel || 'unit').toLowerCase().replace(/s$/, '');
     return `${rate} per ${unit}${part.units ? ` × ${part.units}` : ''}`;
   }
-  if (part.kind === 'percent') return `${rate} of deal size`;
+  if (part.kind === 'percent') return `${rate} of ${percentOf || 'deal size'}`;
   return withAmount ? `${part.basisLabel} ${rate}` : part.basisLabel;
 }
 
@@ -1706,7 +1712,35 @@ export function estimateScope({
   // auto-added into, say - says so here rather than through the one shared
   // figure, which cannot be two different deals at once.
   dealSizeByService = null,
+  // Let the scope itself be the deal each percentage service takes its cut
+  // of. For a caller whose scope IS the deal - the services ticked on an
+  // opp - that is what the fee is actually quoted on: Client management is
+  // a management fee on the services being managed, so it is a cut of what
+  // the rest of this scope bills in year one rather than of a figure typed
+  // into a box beside it. See scopeDealSizes for what counts towards it.
+  //
+  // Ignored when dealSizeByService says otherwise: a caller that has
+  // already worked out what each cut is of - the bundles on Account
+  // Potential - is answering the same question better.
+  percentOfScope = false,
 }) {
+  // Priced twice when the scope is its own deal: once to find out what the
+  // rest of it bills, once to take the cut. The first pass prices every
+  // percentage service at nothing (it has no deal yet) and every other
+  // service exactly as the second will, which is what makes the base the
+  // second pass reads a real figure rather than a guess.
+  if (percentOfScope && !dealSizeByService) {
+    const flat = { rows, services, pricing, counts, dealSize, bases, serviceUnits };
+    const first = estimateScope(flat);
+    const cuts = scopeDealSizes(first.lines);
+    // Nothing to be a cut of: no percentage service in the scope, or
+    // nothing else in it with a price. The shared deal size stays the
+    // answer, and where there isn't one the row says so - which is the
+    // honest reading of a management fee on nothing.
+    if (cuts.size === 0) return first;
+    return estimateScope({ ...flat, dealSizeByService: cuts });
+  }
+
   const inScope = new Set(services || []);
   const lines = [];
   let recurringAnnual = 0;
@@ -1807,7 +1841,54 @@ export function estimateScope({
     // recorded a count is NOT in `unpriced`, and it is the one this exists
     // to surface.
     gaps: scopeGaps(lines),
+    // What each percentage service took its cut of, by name, or null where
+    // no service was priced that way. Handed back rather than kept private
+    // because the deal a percentage bites on is very often not the one on
+    // the bar, and a row saying "3% of deal size" beside a fee worked out
+    // from something else is a sentence a reader cannot check.
+    percentBases: dealSizeByService || null,
   };
+}
+
+/**
+ * What each percentage-priced service in a scope is a cut OF: the rest of
+ * that scope.
+ *
+ * A management fee is charged on the services being managed. Where the
+ * scope IS the deal - the services ticked on an opp - that base is sitting
+ * right there in the estimate, so it is added up rather than asked for: the
+ * year one fee of every other priced service in the same scope, at both
+ * ends, because a cut of "$73k to $126k" is itself a range.
+ *
+ * Percentage services are kept out of the base, their own included. A
+ * service cannot be a percentage of itself, and two of them would each be a
+ * cut of a figure containing the other, which has no answer.
+ *
+ * Returns an empty Map when there is nothing to report - no percentage
+ * service, or nothing else in the scope with a price - so a caller can fall
+ * back to whatever deal size it already had rather than quoting a cut of
+ * nothing. A scope whose only service is the percentage one lands here, and
+ * lands there deliberately: there is no deal under it.
+ *
+ * Takes estimateScope() lines with their `breakdown` still attached.
+ */
+export function scopeDealSizes(lines = []) {
+  // Priced on a percentage somewhere on its card. Read off the breakdown
+  // the estimate just produced rather than the card, so a line that came to
+  // nothing for want of a deal is still recognised as the cut it is.
+  const isCut = (line) => Array.isArray(line?.breakdown)
+    && line.breakdown.some(part => part?.kind === 'percent');
+  const cuts = (lines || []).filter(isCut);
+  if (cuts.length === 0) return new Map();
+  let low = 0;
+  let high = 0;
+  for (const line of lines || []) {
+    if (isCut(line) || !line?.priced) continue;
+    low += Number(line.fee) || 0;
+    high += Number(line.feeHigh) || 0;
+  }
+  if (low <= 0 && high <= 0) return new Map();
+  return new Map(cuts.map(line => [line.name, { low, high }]));
 }
 
 /**

@@ -2065,8 +2065,14 @@ function toggleUnpricedService(opp, name, onChangeOppField) {
 // shows: the basis and rate worked against the counts. The only count an opp
 // carries is its Sites, so a service priced per meter or per invoice comes
 // back priced but at nothing, and says which count it was missing rather than
-// showing a confident $0. A percentage-of-deal service reads the amount being
-// typed into the box beside it, which is what it is a percentage of.
+// showing a confident $0.
+//
+// A percentage-of-deal service - Client management - is a cut of the REST OF
+// THIS SCOPE, because that is what it is actually quoted on: a management fee
+// on the services being managed. The scope here is the deal, so the base is
+// the year one fee of everything else ticked into it, and the amount being
+// typed into the box beside it is only the fallback for a scope with nothing
+// else in it to manage.
 //
 // A plain function rather than only a hook: the Refresh button below prices
 // the scope a second time against the card it has just fetched, and has to
@@ -2088,11 +2094,20 @@ function scopeFeeEstimate({ scopeNames, pricing, pricingBases, serviceOverrides,
     // a per-account service prices there instead of coming back at nothing.
     counts: counts || { sites: parsePricingMoney(sites) ?? 0 },
     dealSize: parsePricingMoney(dealSize),
+    percentOfScope: true,
   });
   // Each line says where its fee came from, so a number that moves has a
-  // reason on the row — the percentage ones move with the amount being
-  // typed beside them, which is the deal size they are a cut of.
-  return { ...est, lines: est.lines.map(line => ({ ...line, how: feeBasisLabel(line, pricingBases || undefined) })) };
+  // reason on the row — and a percentage one says which deal it is a cut
+  // of, since the scope it was struck from is not the box above it and a
+  // row reading "3% of deal size" would send a reader to the wrong figure.
+  const cutOfScope = (name) => (est.percentBases?.has(name) ? 'the rest of this scope' : '');
+  return {
+    ...est,
+    lines: est.lines.map(line => ({
+      ...line,
+      how: feeBasisLabel(line, pricingBases || undefined, { percentOf: cutOfScope(line.name) }),
+    })),
+  };
 }
 
 // What a Refresh turned out to say: the same scope priced off the card that
