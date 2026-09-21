@@ -787,3 +787,88 @@
   max-width: 62rem;
   line-height: 1.5;
 }
+
+/* ── the look-back: the months before the term ──────────────────────────
+   A second reading rather than a longer term, so it is marked wherever it
+   sits beside the term rather than blending into it. Cool against the warm
+   flags the pricing sources use, because it answers a different question:
+   those say where a price came from, this says which reading a row is in. */
+.backFlag {
+  margin-left: 0.3rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: 0.02rem 0.25rem;
+  border-radius: 3px;
+  white-space: nowrap;
+  background: #F0F9FF;
+  color: #075985;
+  border: 1px solid #BAE6FD;
+}
+
+/* A row that is wholly look-back. Quieter than the term rows under it
+   rather than a colour of its own: the term is what the page is about. */
+.backRow td,
+.backRow th {
+  background: color-mix(in srgb, var(--color-surface-alt) 55%, transparent);
+}
+
+.subTotalRow th,
+.subTotalRow td {
+  border-top: 1px solid var(--color-border-light);
+  font-weight: 700;
+  color: var(--color-text-secondary);
+}
+
+/* The heading over one stretch of the month boxes, so the look-back months
+   and the term's own are told apart at a glance rather than by counting. */
+.volumeSection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin-top: 0.2rem;
+}
+
+.volumeSectionTitle {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+}
+
+.volumeSectionHint {
+  font-size: 0.65rem;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+/* The two anchors a pasted column of volumes can land on. A segmented pair
+   rather than a dropdown, because the choice is the whole point of the box
+   and it has to be readable without being opened. */
+.anchorRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.anchorBtn,
+.anchorBtnOn {
+  padding: 0.18rem 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.anchorBtnOn {
+  border-color: #0369A1;
+  background: #F0F9FF;
+  color: #075985;
+  font-weight: 700;
+}

@@ -43,6 +43,11 @@ export const SAVINGS_KEY = 'deepDiveSavings';
 const MAX_YEARS = 120;
 const MAX_LAYERS = 12;
 const MAX_TERM_MONTHS = 120;
+// The look-back is measured in months of settled record rather than in
+// months of contract, so it gets a cap of its own and a far looser one: the
+// shipped table alone is 437 months, and somebody pasting thirty years of
+// their own is the case the feature exists for.
+export const MAX_LOOKBACK_MONTHS = 720;
 // A curve this long is somebody pasting a settle table into the wrong box.
 const MAX_FORWARD_MONTHS = 240;
 const MAX_NAME = 80;
@@ -93,9 +98,9 @@ const text = (v, max = MAX_NAME) => String(v ?? '').replace(/\s+/g, ' ').trim().
  * Trailing nulls are trimmed, because they carry no information and they are
  * what shortening the term leaves behind.
  */
-export function normalizeMonthlyVolumes(raw) {
+export function normalizeMonthlyVolumes(raw, max = MAX_TERM_MONTHS) {
   if (!Array.isArray(raw)) return [];
-  const out = raw.slice(0, MAX_TERM_MONTHS).map((v) => {
+  const out = raw.slice(0, max).map((v) => {
     if (v === null || v === undefined || v === '') return null;
     const n = num(v, NaN);
     return Number.isFinite(n) && n >= 0 ? n : null;
@@ -103,6 +108,65 @@ export function normalizeMonthlyVolumes(raw) {
   while (out.length && out[out.length - 1] == null) out.pop();
   return out;
 }
+
+/**
+ * How far back before the term the page looks.
+ *
+ * `'all'` is the whole settled record - back to the first month the settle
+ * table has a price for, which is what "as far back as the data I gave you"
+ * means and what it keeps meaning after somebody pastes a longer table. A
+ * number is that many months and stays that many months.
+ *
+ * It is a separate reading from the term rather than a longer term, and the
+ * distinction is the point: the term is a deal somebody is deciding about,
+ * and the look-back is what the same hedge WOULD have done against market
+ * that has already settled. Adding the two into one saving would hand the
+ * forward deal credit for a backtest.
+ */
+export const LOOKBACK_ALL = 'all';
+
+function normalizeLookback(raw, fallback) {
+  if (raw === LOOKBACK_ALL) return LOOKBACK_ALL;
+  if (typeof raw === 'string' && raw.trim().toLowerCase() === LOOKBACK_ALL) return LOOKBACK_ALL;
+  if (raw === null || raw === undefined || raw === '') return fallback;
+  const n = num(raw, NaN);
+  if (!Number.isFinite(n)) return fallback;
+  return clamp(Math.trunc(n), 0, MAX_LOOKBACK_MONTHS);
+}
+
+/**
+ * The look-back as a COUNT of months, resolved against the record.
+ *
+ * `'all'` cannot be a number until there is a settle table to measure it
+ * against, and the answer moves the moment somebody pastes a different one,
+ * so it is resolved here at build time rather than frozen into the saved
+ * scenario. A term that opens before the record starts looks back over
+ * nothing, which is the honest answer rather than an error.
+ */
+export function lookbackMonths(scenario, series = []) {
+  const back = scenario?.lookback;
+  const startIdx = (Math.trunc(num(scenario?.startYear, 0)) * 12)
+    + (clamp(Math.trunc(num(scenario?.startMonth, 1)), 1, 12) - 1);
+  if (back !== LOOKBACK_ALL) return clamp(Math.trunc(num(back, 0)), 0, MAX_LOOKBACK_MONTHS);
+  if (!series.length) return 0;
+  const first = series[0];
+  return clamp(startIdx - (first.year * 12 + (first.month - 1)), 0, MAX_LOOKBACK_MONTHS);
+}
+
+/**
+ * Where a look-back month's volume lives in `historyVolumes`.
+ *
+ * The list is indexed BACKWARDS from the term: slot 0 is the month right
+ * before the term opens, slot 1 the one before that. `i` is the month's
+ * position in the run the page draws, which is oldest first.
+ *
+ * Backwards because the anchor has to be the thing that does not move.
+ * Indexing history forwards from its own first month would make every
+ * volume slide the moment the look-back got a month deeper, which is a
+ * control somebody will drag - and the whole list would quietly be one
+ * month out of step with itself.
+ */
+export const historySlot = (lookback, i) => lookback - 1 - i;
 
 /**
  * Read pasted monthly consumption: one value per month of the term, in the
@@ -124,7 +188,7 @@ export function normalizeMonthlyVolumes(raw) {
  *
  * Returns { volumes, count, blanks, skipped }.
  */
-export function parseMonthlyVolumes(input) {
+export function parseMonthlyVolumes(input, max = MAX_TERM_MONTHS) {
   const skipped = [];
   const report = (line) => skipped.push(String(line).replace(/\s+/g, ' ').trim().slice(0, 120));
 
@@ -155,7 +219,7 @@ export function parseMonthlyVolumes(input) {
     values.push(n);
   }
 
-  const volumes = normalizeMonthlyVolumes(values);
+  const volumes = normalizeMonthlyVolumes(values, max);
   return {
     volumes,
     count: volumes.filter(v => v != null).length,
@@ -465,7 +529,9 @@ export function defaultScenario(series = monthlySeries(SHIPPED_SETTLES), forward
   if (!series.length && !curve.length) {
     return {
       name: '', startYear: today.getFullYear() - 3, startMonth: 1, termMonths: 36,
-      annualVolumeDth: 250000, volumeShape: 'even', monthlyVolumes: [], basis: 0, adder: 0.35,
+      lookback: LOOKBACK_ALL,
+      annualVolumeDth: 250000, volumeShape: 'even', monthlyVolumes: [], historyVolumes: [],
+      basis: 0, adder: 0.35,
       forwardPrice: 3.5,
       layers: [{ id: 'L1', label: 'Layer 1', pct: 40, price: 3.5 }, { id: 'L2', label: 'Layer 2', pct: 25, price: 3.7 }],
     };
@@ -496,11 +562,16 @@ export function defaultScenario(series = monthlySeries(SHIPPED_SETTLES), forward
     startYear,
     startMonth,
     termMonths,
+    // The whole record behind the term, because the question the subtab is
+    // asked next is always "and how does that compare with what we have
+    // been paying?" - and the table to answer it off is already loaded.
+    lookback: LOOKBACK_ALL,
     annualVolumeDth: 250000,
     volumeShape: 'even',
     // Nobody has given the term its own volumes yet, so every month prices
     // off the annual number and the shape.
     monthlyVolumes: [],
+    historyVolumes: [],
     basis: 0,
     adder: 0.35,
     forwardPrice: Math.round(flat * 100) / 100,
@@ -523,9 +594,14 @@ export function normalizeScenario(raw, series = null, forward = null) {
     startYear: clamp(Math.trunc(num(raw.startYear, base.startYear)), 1900, 2400),
     startMonth: clamp(Math.trunc(num(raw.startMonth, base.startMonth)), 1, 12),
     termMonths: clamp(Math.trunc(num(raw.termMonths, base.termMonths)), 1, MAX_TERM_MONTHS),
+    // A scenario saved before the look-back existed has no opinion about it,
+    // so it takes the default rather than nothing: the months it gains are
+    // measured market, and none of them move the term's own totals.
+    lookback: normalizeLookback(raw.lookback, base.lookback),
     annualVolumeDth: Math.max(0, num(raw.annualVolumeDth, base.annualVolumeDth)),
     volumeShape: VOLUME_SHAPES[raw.volumeShape] ? raw.volumeShape : 'even',
     monthlyVolumes: normalizeMonthlyVolumes(raw.monthlyVolumes),
+    historyVolumes: normalizeMonthlyVolumes(raw.historyVolumes, MAX_LOOKBACK_MONTHS),
     basis: clamp(num(raw.basis, base.basis), -20, 20),
     adder: clamp(num(raw.adder, base.adder), -20, 20),
     forwardPrice: clamp(num(raw.forwardPrice, base.forwardPrice), 0, 1000),
@@ -570,6 +646,86 @@ export function priceLookup(series, forward = [], flat = 0) {
 }
 
 /**
+ * Sum a run of priced months into the figures the tiles and the totals rows
+ * draw.
+ *
+ * One implementation, used for the term, for the look-back and for the two
+ * together, because the three are the same arithmetic over different months
+ * and a second copy of it is how a tile ends up disagreeing with the table
+ * under it.
+ */
+function rollup(months) {
+  const volume = months.reduce((n, m) => n + m.volume, 0);
+  const indexCost = months.reduce((n, m) => n + m.indexCost, 0);
+  const contractCost = months.reduce((n, m) => n + m.contractCost, 0);
+  const saving = indexCost - contractCost;
+  const settledMonths = months.filter(m => m.source === 'settled').length;
+  const forwardMonths = months.filter(m => m.source === 'forward').length;
+  const assumedMonths = months.filter(m => m.source === 'assumed').length;
+  const enteredVolumeMonths = months.filter(m => m.volumeSource === 'entered').length;
+  return {
+    months: months.length,
+    volume,
+    indexCost,
+    contractCost,
+    saving,
+    savingPct: indexCost ? saving / indexCost : 0,
+    savingPerDth: volume ? saving / volume : 0,
+    avgIndex: months.length ? months.reduce((n, m) => n + m.index, 0) / months.length : null,
+    avgIndexAllIn: volume ? indexCost / volume : null,
+    avgContractAllIn: volume ? contractCost / volume : null,
+    settledMonths,
+    forwardMonths,
+    assumedMonths,
+    // Volumes are counted the same way the prices are, and kept apart from
+    // them: a term priced off settles and shaped from an annual number is
+    // measured on one leg and derived on the other.
+    enteredVolumeMonths,
+    shapedVolumeMonths: months.length - enteredVolumeMonths,
+    // Months with a real market price behind them, settled or quoted. The
+    // rest is the flat number, which is the only one of the three that is
+    // nobody's price.
+    pricedMonths: settledMonths + forwardMonths,
+  };
+}
+
+/**
+ * One row per calendar year a run of months touches, which is how a customer
+ * budgets and how the savings get reported internally.
+ */
+function yearRollup(months) {
+  const yearMap = new Map();
+  for (const m of months) {
+    const row = yearMap.get(m.year) || {
+      year: m.year, months: 0, settled: 0, forward: 0, assumed: 0, enteredVolume: 0,
+      history: 0, term: 0,
+      volume: 0, indexCost: 0, contractCost: 0, saving: 0, indexSum: 0,
+    };
+    row.months += 1;
+    row.enteredVolume += m.volumeSource === 'entered' ? 1 : 0;
+    row.settled += m.source === 'settled' ? 1 : 0;
+    row.forward += m.source === 'forward' ? 1 : 0;
+    row.assumed += m.source === 'assumed' ? 1 : 0;
+    // A year the term opens or closes in holds months of both readings, so
+    // the row says how many of each rather than picking one and being wrong
+    // about the other eleven.
+    row.history += m.phase === 'history' ? 1 : 0;
+    row.term += m.phase === 'term' ? 1 : 0;
+    row.volume += m.volume;
+    row.indexCost += m.indexCost;
+    row.contractCost += m.contractCost;
+    row.saving += m.saving;
+    row.indexSum += m.index;
+    yearMap.set(m.year, row);
+  }
+  return [...yearMap.values()].map(r => ({
+    ...r,
+    avgIndex: r.months ? r.indexSum / r.months : null,
+    savingPerDth: r.volume ? r.saving / r.volume : null,
+  }));
+}
+
+/**
  * Price the term twice - at index, and at the contract - and hand back a row
  * per month plus the rollups the subtab draws.
  *
@@ -577,6 +733,15 @@ export function priceLookup(series, forward = [], flat = 0) {
  * assumption and marked `assumed`, because a term that runs into the future
  * is the normal case and refusing to price it would make the page useless
  * exactly when somebody is deciding whether to sign.
+ *
+ * The same hedge is also run BACKWARDS over the months before the term, as
+ * far as the look-back reaches, and those come back separately on `history`
+ * with their own totals. Separately rather than folded in, because they are
+ * a different claim: the term is a deal being decided and the look-back is
+ * settled market the deal never covered. `all` is the two in order for the
+ * charts and tables that draw the whole window, and `totals` still means the
+ * term alone - every tile, export and ladder that read it before this
+ * existed go on meaning what they meant.
  */
 export function buildSavings(scenario, series, forward = []) {
   const s = normalizeScenario(scenario, series);
@@ -586,121 +751,94 @@ export function buildSavings(scenario, series, forward = []) {
   const curveEnd = forward?.length ? forward[forward.length - 1] : null;
   const hedge = hedgeSummary(s.layers);
   const weights = VOLUME_SHAPES[s.volumeShape].weights;
-  // A volume the user gave this month, if they gave one. Same precedence
-  // idea the prices follow: the number somebody asserted beats the number
-  // the page derived, and the page says which it used.
-  const entered = s.monthlyVolumes || [];
   const hedgedShare = hedge.pct / 100;
   const strike = hedge.price ?? 0;
 
-  const months = [];
-  for (let i = 0; i < s.termMonths; i++) {
-    const { year, month } = addMonths(s.startYear, s.startMonth, i);
-    const key = monthKey(year, month);
+  // One month, priced twice. `given` is the volume somebody typed for it, if
+  // they typed one: same precedence idea the prices follow, where the number
+  // somebody asserted beats the number the page derived and the page says
+  // which it used. A zero somebody typed is a month that burns nothing,
+  // which is a real answer; only a null falls through to the annual volume
+  // and the shape.
+  const priceMonth = (year, month, given, phase) => {
     // Settle, then quote, then the flat number. Never the other way round: a
     // month that settled is not an opinion any more.
     const { price: index, source } = priceOf(year, month);
-    const assumed = source !== 'settled';
-    // A zero somebody typed is a month that burns nothing, which is a real
-    // answer; only a null falls through to the annual volume and the shape.
-    const given = entered[i];
     const volume = given == null ? s.annualVolumeDth * weights[month - 1] : given;
-    const volumeSource = given == null ? 'shape' : 'entered';
     const commodity = hedgedShare * strike + (1 - hedgedShare) * index;
     const indexAllIn = index + s.basis + s.adder;
     const contractAllIn = commodity + s.basis + s.adder;
-    months.push({
-      key,
+    return {
+      key: monthKey(year, month),
       year,
       month,
       label: monthLabel(year, month),
       short: shortMonthLabel(year, month),
+      // Which reading this month belongs to: 'history' for the look-back,
+      // 'term' for the contract itself.
+      phase,
       source,
       // "Not a settle" - what the charts shade and the tables flag. The
       // three-way `source` says which kind of not-a-settle it is.
-      assumed,
+      assumed: source !== 'settled',
       index,
       indexAllIn,
       contractAllIn,
       volume,
-      volumeSource,
+      volumeSource: given == null ? 'shape' : 'entered',
       indexCost: indexAllIn * volume,
       contractCost: contractAllIn * volume,
       saving: (indexAllIn - contractAllIn) * volume,
-    });
-  }
-
-  // Running total, so the chart can show the saving accumulating rather than
-  // only the month it happened in.
-  let running = 0;
-  for (const m of months) { running += m.saving; m.cumulative = running; }
-
-  const volume = months.reduce((n, m) => n + m.volume, 0);
-  const indexCost = months.reduce((n, m) => n + m.indexCost, 0);
-  const contractCost = months.reduce((n, m) => n + m.contractCost, 0);
-  const saving = indexCost - contractCost;
-  const enteredVolumeMonths = months.filter(m => m.volumeSource === 'entered').length;
-  const settledMonths = months.filter(m => m.source === 'settled').length;
-  const forwardMonths = months.filter(m => m.source === 'forward').length;
-  const assumedMonths = months.filter(m => m.source === 'assumed').length;
-
-  // One row per calendar year the term touches, which is how a customer
-  // budgets and how the savings get reported internally.
-  const yearMap = new Map();
-  for (const m of months) {
-    const row = yearMap.get(m.year) || {
-      year: m.year, months: 0, settled: 0, forward: 0, assumed: 0, enteredVolume: 0,
-      volume: 0, indexCost: 0, contractCost: 0, saving: 0, indexSum: 0,
     };
-    row.months += 1;
-    row.enteredVolume += m.volumeSource === 'entered' ? 1 : 0;
-    row.settled += m.source === 'settled' ? 1 : 0;
-    row.forward += m.source === 'forward' ? 1 : 0;
-    row.assumed += m.source === 'assumed' ? 1 : 0;
-    row.volume += m.volume;
-    row.indexCost += m.indexCost;
-    row.contractCost += m.contractCost;
-    row.saving += m.saving;
-    row.indexSum += m.index;
-    yearMap.set(m.year, row);
+  };
+
+  // The look-back, oldest first, ending at the month before the term opens.
+  const back = lookbackMonths(s, series);
+  const priorVolumes = s.historyVolumes || [];
+  const history = [];
+  for (let i = 0; i < back; i++) {
+    const { year, month } = addMonths(s.startYear, s.startMonth, i - back);
+    history.push(priceMonth(year, month, priorVolumes[historySlot(back, i)], 'history'));
   }
-  const years = [...yearMap.values()].map(r => ({
-    ...r,
-    avgIndex: r.months ? r.indexSum / r.months : null,
-    savingPerDth: r.volume ? r.saving / r.volume : null,
-  }));
+
+  const entered = s.monthlyVolumes || [];
+  const months = [];
+  for (let i = 0; i < s.termMonths; i++) {
+    const { year, month } = addMonths(s.startYear, s.startMonth, i);
+    months.push(priceMonth(year, month, entered[i], 'term'));
+  }
+
+  // Running totals, so a chart can show the saving accumulating rather than
+  // only the month it happened in. Each reading accumulates within itself -
+  // the term's running saving still starts at zero on the month the term
+  // opens, whatever the look-back did before it - and `cumulativeAll` runs
+  // across both for the chart that draws the whole window.
+  let running = 0;
+  for (const m of history) { running += m.saving; m.cumulative = running; }
+  running = 0;
+  for (const m of months) { running += m.saving; m.cumulative = running; }
+  const all = [...history, ...months];
+  running = 0;
+  for (const m of all) { running += m.saving; m.cumulativeAll = running; }
 
   return {
     scenario: s,
     hedge,
+    // How many months the look-back actually reached, which is not what the
+    // scenario asked for when it asked for the whole record.
+    lookback: back,
+    history,
     months,
-    years,
+    all,
+    years: yearRollup(months),
+    historyYears: yearRollup(history),
+    allYears: yearRollup(all),
     lastSettled,
     curveStart,
     curveEnd,
-    totals: {
-      volume,
-      indexCost,
-      contractCost,
-      saving,
-      savingPct: indexCost ? saving / indexCost : 0,
-      savingPerDth: volume ? saving / volume : 0,
-      avgIndex: months.length ? months.reduce((n, m) => n + m.index, 0) / months.length : null,
-      avgIndexAllIn: volume ? indexCost / volume : null,
-      avgContractAllIn: volume ? contractCost / volume : null,
-      settledMonths,
-      forwardMonths,
-      assumedMonths,
-      // Volumes are counted the same way the prices are, and kept apart from
-      // them: a term priced off settles and shaped from an annual number is
-      // measured on one leg and derived on the other.
-      enteredVolumeMonths,
-      shapedVolumeMonths: months.length - enteredVolumeMonths,
-      // Months with a real market price behind them, settled or quoted. The
-      // rest is the flat number, which is the only one of the three that is
-      // nobody's price.
-      pricedMonths: settledMonths + forwardMonths,
-    },
+    totals: rollup(months),
+    historyTotals: rollup(history),
+    allTotals: rollup(all),
   };
 }
 
@@ -728,7 +866,12 @@ export function sourceSummary(totals) {
  */
 export function termLadder(scenario, series, forward = [], terms = TERM_LADDER) {
   return terms.map(termMonths => {
-    const run = buildSavings({ ...scenario, termMonths }, series, forward);
+    // No look-back on the rungs. The question the ladder answers is how long
+    // to sign for, and the months before the term are the same months
+    // whichever rung you take - carrying them would add an identical
+    // constant to all five bars and make the one thing being compared
+    // harder to see.
+    const run = buildSavings({ ...scenario, termMonths, lookback: 0 }, series, forward);
     return {
       termMonths,
       saving: run.totals.saving,

@@ -48,8 +48,19 @@ const VOLUME_SOURCE_LABEL = {
 
 const UNIT = '$/Dth';
 
+// Which reading a row belongs to. The look-back and the term are two
+// different claims about the same hedge - one measured against market that
+// settled, one about a deal still being decided - and a sheet that ran them
+// together as one block of months would lose the distinction the page is
+// built on. A column rather than a gap, so the rows still filter and sort.
+const PERIOD_LABEL = {
+  history: 'Look-back',
+  term: 'Term',
+};
+
 export const SAVINGS_MONTH_HEADERS = [
   'Month',
+  'Period',
   'Priced from',
   `Index (${UNIT})`,
   `Index all-in (${UNIT})`,
@@ -64,22 +75,29 @@ export const SAVINGS_MONTH_HEADERS = [
 
 // One format per column of the month sheet, null where the column is text.
 export const SAVINGS_MONTH_FORMATS = [
-  null, null, PRICE_FMT, PRICE_FMT, PRICE_FMT, VOL_FMT, null, MONEY_FMT, MONEY_FMT, MONEY_FMT, MONEY_FMT,
+  null, null, null, PRICE_FMT, PRICE_FMT, PRICE_FMT, VOL_FMT, null, MONEY_FMT, MONEY_FMT, MONEY_FMT, MONEY_FMT,
 ];
 
 /**
- * Header row, a row per month of the term, then the term total: the same
- * rows the Month by month table draws, in the same order.
+ * Header row, the look-back months and their total, then a row per month of
+ * the term and the term total, then the two added up: the same rows the
+ * Month by month table draws, in the same order.
  *
- * The total row averages the three price columns and sums the rest, which is
- * what the Year by year table's own total row does - a summed $/Dth would be
- * a number that means nothing.
+ * Each total row averages the three price columns and sums the rest, which
+ * is what the Year by year table's own total row does - a summed $/Dth would
+ * be a number that means nothing.
+ *
+ * The look-back only appears when there is one, and it never runs into the
+ * term: each block carries its own total and the whole-window row comes last
+ * and is labelled, so nobody totals the sheet and gets every figure twice.
  */
 export function savingsMonthAoa(run) {
+  const history = run?.history || [];
   const months = run?.months || [];
-  const t = run?.totals || {};
-  const rows = months.map(m => ([
+
+  const monthRow = (m) => ([
     m.label,
+    PERIOD_LABEL[m.phase] || PERIOD_LABEL.term,
     SOURCE_LABEL[m.source] || m.source,
     m.index,
     m.indexAllIn,
@@ -90,21 +108,34 @@ export function savingsMonthAoa(run) {
     m.contractCost,
     m.saving,
     m.cumulative,
-  ]));
+  ]);
+
+  const totalRow = (label, t) => ([
+    label,
+    '',
+    sourceSummary(t),
+    t.avgIndex,
+    t.avgIndexAllIn,
+    t.avgContractAllIn,
+    t.volume,
+    volumeSummary(t),
+    t.indexCost,
+    t.contractCost,
+    t.saving,
+    t.saving,
+  ]);
+
+  const rows = [];
+  if (history.length) {
+    rows.push(...history.map(monthRow));
+    rows.push(totalRow('Look-back total', run?.historyTotals || {}));
+  }
   if (months.length) {
-    rows.push([
-      'Term total',
-      sourceSummary(t),
-      t.avgIndex,
-      t.avgIndexAllIn,
-      t.avgContractAllIn,
-      t.volume,
-      volumeSummary(t),
-      t.indexCost,
-      t.contractCost,
-      t.saving,
-      t.saving,
-    ]);
+    rows.push(...months.map(monthRow));
+    rows.push(totalRow('Term total', run?.totals || {}));
+  }
+  if (history.length && months.length) {
+    rows.push(totalRow('Look-back and term', run?.allTotals || {}));
   }
   return [SAVINGS_MONTH_HEADERS.map(stripDashes), ...rows];
 }
@@ -120,8 +151,10 @@ export function savingsMonthAoa(run) {
 export function savingsScenarioRows(run, meta = {}) {
   const s = run?.scenario || {};
   const t = run?.totals || {};
+  const h = run?.historyTotals || {};
   const hedge = run?.hedge || {};
   const months = run?.months || [];
+  const history = run?.history || [];
   const shape = VOLUME_SHAPES[s.volumeShape] || VOLUME_SHAPES.even;
   const layers = Array.isArray(s.layers) ? s.layers : [];
   return [
@@ -133,6 +166,19 @@ export function savingsScenarioRows(run, meta = {}) {
         : 'no months',
     },
     { label: 'Months', value: s.termMonths },
+    // The look-back, named as its own reading rather than as more term. A
+    // reader who only sees the saving wants to know at once that those
+    // months are settled market the contract never covered.
+    ...(history.length ? [
+      {
+        label: 'Look-back',
+        value: `${history[0].label} to ${history[history.length - 1].label}`,
+      },
+      { label: 'Look-back months', value: history.length },
+      { label: 'Look-back priced from', value: sourceSummary(h) },
+      { label: 'Look-back volume (Dth)', value: h.volume, fmt: VOL_FMT },
+      { label: 'Look-back saving', value: h.saving, fmt: MONEY_FMT },
+    ] : [{ label: 'Look-back', value: 'none, the term only' }]),
     { label: 'Annual volume (Dth)', value: s.annualVolumeDth, fmt: VOL_FMT },
     { label: 'Volume shape', value: `${shape.label}, ${shape.note}` },
     // Which months carry a volume somebody gave, and which were spread off
@@ -250,5 +296,5 @@ export async function downloadSavingsMonths(run, meta = {}, date = new Date()) {
   XLSX.utils.book_append_sheet(wb, monthSheet, 'Month by month');
   XLSX.utils.book_append_sheet(wb, scenarioSheet, 'Scenario');
   XLSX.writeFile(sanitizeSheetJsWorkbook(wb), savingsFilename(run?.scenario?.name, date));
-  return (run?.months || []).length;
+  return (run?.months || []).length + (run?.history || []).length;
 }
