@@ -144,3 +144,54 @@ export function outreachPatch(c, state, nowMs = Date.now()) {
     holdUntil: existing && !Number.isNaN(holdEndMs(existing)) ? existing : contactHoldUntil(nowMs),
   };
 }
+
+/**
+ * The figures a campaign's percentages are measured over, with the contacts
+ * on hold left out: { counted, sent, replies, onHold, onHoldSent }.
+ *
+ * A contact on "Hold off" is parked. Nobody is waiting for them to be
+ * emailed and nobody is waiting for them to reply, so counting them reports
+ * a send owed that isn't and a silence that was never asked for: a campaign
+ * of fourteen that has sent to its other thirteen reads 93% sent and stays
+ * on the Prospecting ladder's list of unfinished work forever. Taking the
+ * held contact out of both sides makes it what it is, 100% sent, and the
+ * moment the hold lifts they are back in the denominator with nothing to
+ * undo - the hold is a date, so this moves on its own.
+ *
+ * `onHoldSent` is the held contacts who were already emailed, which is the
+ * ordinary case of somebody who asked to be left alone after the first mail
+ * went out. They leave the percentages too: the campaign is not waiting on
+ * them either way.
+ *
+ * "Avoid" is deliberately NOT excluded. It is the same button and a
+ * different decision - a person nobody should mail again is still somebody
+ * this campaign was meant to reach, and a list half marked Avoid should
+ * read as the half-finished send it is rather than as 100%.
+ *
+ * The raw counts the summary prints (sent, replies, contacts) are untouched
+ * by any of this: they are what happened, and a held contact who was mailed
+ * still was.
+ */
+export function rateBase(contacts, nowMs = Date.now()) {
+  let counted = 0, sent = 0, replies = 0, onHold = 0, onHoldSent = 0;
+  for (const c of (contacts || [])) {
+    if (isContactOnHold(c, nowMs)) {
+      onHold += 1;
+      if (c?.sentDate) onHoldSent += 1;
+      continue;
+    }
+    counted += 1;
+    if (c?.sentDate) sent += 1;
+    if (c?.replied) replies += 1;
+  }
+  return { counted, sent, replies, onHold, onHoldSent };
+}
+
+/**
+ * A campaign's response rate as the screen prints it: one decimal, measured
+ * over the contacts that count (see rateBase).
+ */
+export function responseRateOf(contacts, nowMs = Date.now()) {
+  const { sent, replies } = rateBase(contacts, nowMs);
+  return sent > 0 ? parseFloat(((replies / sent) * 100).toFixed(1)) : 0;
+}

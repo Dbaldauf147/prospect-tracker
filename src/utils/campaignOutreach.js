@@ -12,6 +12,7 @@
 // rows out, with the clock passed in (scripts/campaignOutreach.test.mjs).
 
 import { campaignSubjects, primarySubject } from './campaignSubjects.js';
+import { rateBase } from './campaignContactHold.js';
 
 // A saved campaign goes Inactive once it has had no activity — neither a
 // save nor a refresh — for 60 days. A campaign with no usable date stays
@@ -81,20 +82,35 @@ export function campaignStatus(c, nowMs = Date.now()) {
 }
 
 /**
- * How far one campaign's send has got: { sent, total, remaining, pct }.
+ * How far one campaign's send has got:
+ * { sent, total, remaining, pct, onHold, countedSent, countedTotal }.
  *
- * The same two figures the Saved Campaigns table shows, read the same
- * tolerant way — `totalContacts` is what the campaign was saved against,
- * and older campaigns fall back to the contact list itself (and finally to
- * the recipients, which reads as "everyone we know of has been sent to").
+ * `sent` and `total` are the campaign's own figures, read the same tolerant
+ * way — `totalContacts` is what the campaign was saved against, and older
+ * campaigns fall back to the contact list itself (and finally to the
+ * recipients, which reads as "everyone we know of has been sent to").
+ *
+ * The percentage is measured over a smaller base: the contacts on "Hold
+ * off" come out of both sides of it, because a parked contact is not a send
+ * owed (see rateBase in campaignContactHold.js). So `countedTotal` and
+ * `countedSent` are what `pct` and `remaining` are built from, and on a
+ * campaign with nobody held they are just `total` and `sent`. Holds lift on
+ * their own, hence the clock.
+ *
  * `pct` carries one decimal, like the table's % Sent column.
  */
-export function campaignSendStats(c) {
+export function campaignSendStats(c, nowMs = Date.now()) {
   const sent = Number(c?.uniqueRecipients) || 0;
   const total = Number(c?.totalContacts ?? c?.contacts?.length ?? c?.uniqueRecipients) || 0;
-  const remaining = Math.max(0, total - sent);
-  const pct = total > 0 ? Math.round((sent / total) * 1000) / 10 : 0;
-  return { sent, total, remaining, pct };
+  const { onHold, onHoldSent } = rateBase(c?.contacts, nowMs);
+  // Clamped, because the stored roll-ups and the roster can disagree: a
+  // campaign saved before a refresh can report fewer recipients than the
+  // contacts now say were held and sent.
+  const countedSent = Math.max(0, sent - onHoldSent);
+  const countedTotal = Math.max(0, total - onHold);
+  const remaining = Math.max(0, countedTotal - countedSent);
+  const pct = countedTotal > 0 ? Math.round((countedSent / countedTotal) * 1000) / 10 : 0;
+  return { sent, total, remaining, pct, onHold, countedSent, countedTotal };
 }
 
 export function campaignOutreachLabel(c) {
@@ -109,8 +125,8 @@ export function campaignOutreachLabel(c) {
  * saved to be sent and 0% has gone out, which is the campaign at its least
  * done rather than its most.
  */
-export function isCampaignFullySent(c) {
-  const { total, remaining } = campaignSendStats(c);
+export function isCampaignFullySent(c, nowMs = Date.now()) {
+  const { total, remaining } = campaignSendStats(c, nowMs);
   return total > 0 && remaining <= 0;
 }
 
@@ -145,7 +161,7 @@ export function campaignsAllSent(campaigns, nowMs = Date.now()) {
   for (const c of campaigns) {
     if (!c || typeof c !== 'object') continue;
     real += 1;
-    if (!isCampaignFullySent(c) && !isCampaignPaused(c, nowMs)) return false;
+    if (!isCampaignFullySent(c, nowMs) && !isCampaignPaused(c, nowMs)) return false;
   }
   return real > 0;
 }
@@ -186,10 +202,10 @@ export function unfinishedCampaigns(campaigns, nowMs = Date.now()) {
   const rows = [];
   (Array.isArray(campaigns) ? campaigns : []).forEach((c, index) => {
     if (!c || typeof c !== 'object') return;
-    const stats = campaignSendStats(c);
+    const stats = campaignSendStats(c, nowMs);
     // The same two exclusions the step's status makes, so the list under it
     // and the pill beside it can never describe different work.
-    if (isCampaignFullySent(c) || isCampaignPaused(c, nowMs)) return;
+    if (isCampaignFullySent(c, nowMs) || isCampaignPaused(c, nowMs)) return;
     rows.push({
       index,
       label: campaignOutreachLabel(c),

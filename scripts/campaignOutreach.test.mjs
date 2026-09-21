@@ -10,6 +10,7 @@
 import {
   isCampaignFresh, isCampaignActive, campaignSendStats, campaignOutreachLabel, unfinishedCampaigns,
   isCampaignPaused, campaignStatus, campaignPauseUntil, CAMPAIGN_PAUSE_DAYS, campaignsAllSent,
+  isCampaignFullySent,
 } from '../src/utils/campaignOutreach.js';
 
 let passed = 0, failed = 0;
@@ -27,20 +28,59 @@ const inDays = (n) => new Date(NOW + n * 24 * 60 * 60 * 1000).toISOString();
 
 // --- one campaign's figures -----------------------------------------
 // The two campaigns as the Saved Campaigns table shows them.
-check('13 of 33', campaignSendStats({ uniqueRecipients: 13, totalContacts: 33 }),
-  { sent: 13, total: 33, remaining: 20, pct: 39.4 });
-check('20 of 27', campaignSendStats({ uniqueRecipients: 20, totalContacts: 27 }),
-  { sent: 20, total: 27, remaining: 7, pct: 74.1 });
-check('finished', campaignSendStats({ uniqueRecipients: 10, totalContacts: 10 }),
-  { sent: 10, total: 10, remaining: 0, pct: 100 });
-check('nobody in it', campaignSendStats({}), { sent: 0, total: 0, remaining: 0, pct: 0 });
+// With nobody held, the counted figures ARE the campaign's own figures.
+check('13 of 33', campaignSendStats({ uniqueRecipients: 13, totalContacts: 33 }, NOW),
+  { sent: 13, total: 33, remaining: 20, pct: 39.4, onHold: 0, countedSent: 13, countedTotal: 33 });
+check('20 of 27', campaignSendStats({ uniqueRecipients: 20, totalContacts: 27 }, NOW),
+  { sent: 20, total: 27, remaining: 7, pct: 74.1, onHold: 0, countedSent: 20, countedTotal: 27 });
+check('finished', campaignSendStats({ uniqueRecipients: 10, totalContacts: 10 }, NOW),
+  { sent: 10, total: 10, remaining: 0, pct: 100, onHold: 0, countedSent: 10, countedTotal: 10 });
+check('nobody in it', campaignSendStats({}, NOW),
+  { sent: 0, total: 0, remaining: 0, pct: 0, onHold: 0, countedSent: 0, countedTotal: 0 });
 // An older campaign saved before totalContacts existed.
-check('falls back to the contact list', campaignSendStats({ uniqueRecipients: 2, contacts: [1, 2, 3, 4] }),
-  { sent: 2, total: 4, remaining: 2, pct: 50 });
+check('falls back to the contact list', campaignSendStats({ uniqueRecipients: 2, contacts: [1, 2, 3, 4] }, NOW),
+  { sent: 2, total: 4, remaining: 2, pct: 50, onHold: 0, countedSent: 2, countedTotal: 4 });
 // More sent than the list holds (a contact removed after the send) is
 // finished, not negative.
-check('over-sent is not negative', campaignSendStats({ uniqueRecipients: 12, totalContacts: 10 }),
-  { sent: 12, total: 10, remaining: 0, pct: 120 });
+check('over-sent is not negative', campaignSendStats({ uniqueRecipients: 12, totalContacts: 10 }, NOW),
+  { sent: 12, total: 10, remaining: 0, pct: 120, onHold: 0, countedSent: 12, countedTotal: 10 });
+
+// --- contacts on hold leave the percentage ---------------------------
+// The campaign from the screenshot this rule came from: fourteen contacts,
+// thirteen sent, and the fourteenth parked on "Hold off". That is a send
+// finished, not one owed, so it reads 100% rather than 92.9%.
+const held = (holdUntil, extra = {}) => ({ outreach: 'hold', holdUntil, ...extra });
+const sentTo = (extra = {}) => ({ sentDate: '2026-09-16', ...extra });
+const thirteenSent = [...Array(13)].map(() => sentTo());
+check('a held contact is not a send owed',
+  campaignSendStats({ uniqueRecipients: 13, totalContacts: 14, contacts: [...thirteenSent, held('2026-09-30')] }, NOW),
+  { sent: 13, total: 14, remaining: 0, pct: 100, onHold: 1, countedSent: 13, countedTotal: 13 });
+check('and the campaign counts as finished',
+  isCampaignFullySent({ uniqueRecipients: 13, totalContacts: 14, contacts: [...thirteenSent, held('2026-09-30')] }, NOW),
+  true);
+// A hold that has run out is over: the contact is back in the denominator
+// with nothing rewritten, and the campaign owes that send again.
+check('an expired hold is back in the figures',
+  campaignSendStats({ uniqueRecipients: 13, totalContacts: 14, contacts: [...thirteenSent, held('2026-09-01')] }, NOW),
+  { sent: 13, total: 14, remaining: 1, pct: 92.9, onHold: 0, countedSent: 13, countedTotal: 14 });
+// Held AFTER the mail went out: they leave both sides, so a campaign that
+// has sent to everyone still reads 100%.
+check('a held contact who was already sent leaves both sides',
+  campaignSendStats({ uniqueRecipients: 10, totalContacts: 10, contacts: [...Array(9)].map(() => sentTo()).concat([sentTo(held('2026-09-30'))]) }, NOW),
+  { sent: 10, total: 10, remaining: 0, pct: 100, onHold: 1, countedSent: 9, countedTotal: 9 });
+// "Avoid" is a decision about a person rather than a wait, so it stays in:
+// a list half marked Avoid is still a half-finished send.
+check('avoid stays in the percentage',
+  campaignSendStats({ uniqueRecipients: 1, totalContacts: 2, contacts: [sentTo(), { outreach: 'avoid' }] }, NOW),
+  { sent: 1, total: 2, remaining: 1, pct: 50, onHold: 0, countedSent: 1, countedTotal: 2 });
+// Everybody held: nothing is owed today, and the campaign drops off the
+// ladder's list until a hold lifts.
+check('a wholly held campaign owes nothing',
+  campaignSendStats({ uniqueRecipients: 0, totalContacts: 2, contacts: [held('2026-09-30'), held('2026-09-30')] }, NOW),
+  { sent: 0, total: 2, remaining: 0, pct: 0, onHold: 2, countedSent: 0, countedTotal: 0 });
+check('the unfinished list leaves it out',
+  unfinishedCampaigns([{ title: 'All held', uniqueRecipients: 0, totalContacts: 2, contacts: [held('2026-09-30'), held('2026-09-30')] }], NOW).length,
+  0);
 
 check('the title names it', campaignOutreachLabel({ title: 'Data Center', subject: 'x' }), 'Data Center');
 check('falls back to the subject', campaignOutreachLabel({ subject: 'Q3 update' }), 'Q3 update');

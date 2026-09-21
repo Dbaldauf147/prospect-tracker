@@ -10,7 +10,7 @@
 import {
   CONTACT_HOLD_DAYS, contactHoldUntil, isContactAvoided, isContactOnHold,
   contactOutreach, canEmailContact, contactOutreachLabel, outreachCounts,
-  outreachPatch,
+  outreachPatch, rateBase, responseRateOf,
 } from '../src/utils/campaignContactHold.js';
 
 let passed = 0, failed = 0;
@@ -91,6 +91,35 @@ const roster = [
 check('the roll-up counts each once', outreachCounts(roster, now), { onHold: 1, avoided: 1, blocked: 2, open: 3 });
 check('an empty roster', outreachCounts([], now), { onHold: 0, avoided: 0, blocked: 0, open: 0 });
 check('no roster at all', outreachCounts(undefined, now), { onHold: 0, avoided: 0, blocked: 0, open: 0 });
+
+// --- what the percentages are measured over -------------------------------
+// A held contact is out of both sides: not a send owed, not a reply missing.
+const campaign = [
+  { email: 'a@x.com', sentDate: '2026-09-01', replied: true },
+  { email: 'b@x.com', sentDate: '2026-09-01' },
+  { email: 'c@x.com', outreach: 'hold', holdUntil: '2026-09-25' },   // never sent
+  { email: 'd@x.com', sentDate: '2026-09-01', replied: true, outreach: 'hold', holdUntil: '2026-09-25' },
+  { email: 'e@x.com', outreach: 'hold', holdUntil: '2026-08-01' },   // lifted, unsent
+  { email: 'f@x.com', outreach: 'avoid', sentDate: '2026-09-01' },   // avoid still counts
+];
+check('the base leaves the held contacts out', rateBase(campaign, now),
+  { counted: 4, sent: 3, replies: 1, onHold: 2, onHoldSent: 1 });
+check('and the rate is measured over it', responseRateOf(campaign, now), 33.3);
+// The same roster with nothing held: every contact counts, which is what
+// every campaign that has never used the column looks like.
+const plain = [
+  { email: 'a@x.com', sentDate: '2026-09-01', replied: true },
+  { email: 'b@x.com', sentDate: '2026-09-01' },
+  { email: 'c@x.com' },
+];
+check('nothing held changes nothing', rateBase(plain, now),
+  { counted: 3, sent: 2, replies: 1, onHold: 0, onHoldSent: 0 });
+check('half of two replied', responseRateOf(plain, now), 50);
+// Nobody emailed yet is 0%, not a division by zero.
+check('nothing sent is zero', responseRateOf([{ email: 'a@x.com' }], now), 0);
+check('a wholly held campaign is zero', responseRateOf([{ outreach: 'hold', holdUntil: '2026-09-25' }], now), 0);
+check('no roster at all', rateBase(undefined, now),
+  { counted: 0, sent: 0, replies: 0, onHold: 0, onHoldSent: 0 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

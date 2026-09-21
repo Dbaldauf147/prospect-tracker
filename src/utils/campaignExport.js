@@ -164,7 +164,7 @@ export const CAMPAIGN_SUMMARY_HEADERS = [
 // One saved campaign's row: the Saved Campaigns table's own figures, read
 // through campaignSendStats so the percentages match to the decimal.
 export function campaignSummaryRow(c, nowMs = Date.now()) {
-  const { sent, total, remaining, pct } = campaignSendStats(c);
+  const { sent, total, remaining, pct } = campaignSendStats(c, nowMs);
   return [
     campaignOutreachLabel(c),
     campaignSubjects(c).join(' | '),
