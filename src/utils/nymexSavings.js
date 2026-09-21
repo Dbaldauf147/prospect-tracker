@@ -179,6 +179,16 @@ export const historySlot = (lookback, i) => lookback - 1 - i;
  * the LAST number on it, the same rule the forward curve parser follows, and
  * a single line carrying several numbers is read as the whole run.
  *
+ * A line that is NOTHING BUT a month label is a label, even when it carries
+ * a year. This is the one the month boxes walk straight into: copying them
+ * off the page gives a label and a value on alternate lines, every label but
+ * January holds no number and is skipped, and "Jan 2027" holds 2027 - so
+ * January silently becomes a burn of two thousand Dth and every month after
+ * it slides one place. A label is recognised and reported as a label rather
+ * than read for its year. "Jan 2027  3,100" is untouched by this: it carries
+ * a number past the label, so the label is ignored and the 3,100 is the
+ * month's volume, exactly as before.
+ *
  * A blank line is a month with NO volume of its own, not a zero: copying a
  * column of twelve cells with March empty has to come back with March empty,
  * because compacting it would slide April's volume onto March. A zero
@@ -186,11 +196,26 @@ export const historySlot = (lookback, i) => lookback - 1 - i;
  * A line with no number at all (a header, a note) is skipped and reported,
  * and skipping it shifts nothing because it never held a month.
  *
- * Returns { volumes, count, blanks, skipped }.
+ * Returns { volumes, count, blanks, labels, skipped }. `labels` and
+ * `skipped` are both lines that held no volume, kept apart because they mean
+ * different things to somebody reading the result back: a month label is
+ * expected and carries no information, and a line the parser could not read
+ * is a line worth looking at.
  */
 export function parseMonthlyVolumes(input, max = MAX_TERM_MONTHS) {
   const skipped = [];
+  const labels = [];
   const report = (line) => skipped.push(String(line).replace(/\s+/g, ' ').trim().slice(0, 120));
+
+  // A month name on its own, with or without a year after it: "Nov",
+  // "January", "Jan 2027", "Jan 27", "Jan '27", "Feb.". Nothing else on the
+  // line, because anything else on it is the volume.
+  const monthLabelOnly = (line) => {
+    const m = /^([A-Za-z]{3,9})\.?(?:\s+'?\d{2}|\s+\d{4})?$/.exec(line);
+    if (!m) return false;
+    const word = m[1].toLowerCase();
+    return MONTH_NUMBER.has(word) || MONTH_NUMBER.has(word.slice(0, 3));
+  };
 
   // "3,100" is one number and "3100,2780" is two, so a comma is a thousands
   // separator only where exactly three digits follow it. Dropping those
@@ -212,6 +237,9 @@ export function parseMonthlyVolumes(input, max = MAX_TERM_MONTHS) {
     const line = String(cell).trim();
     // A month they have not given a volume for, holding its place.
     if (!line) { values.push(null); continue; }
+    // A label, not a value. Nothing is pushed: it never held a month, so
+    // skipping it shifts nothing.
+    if (monthLabelOnly(line)) { labels.push(line); continue; }
     const found = numbersOn(line);
     if (!found.length) { report(line); continue; }
     const n = Number(found[found.length - 1]);
@@ -224,6 +252,7 @@ export function parseMonthlyVolumes(input, max = MAX_TERM_MONTHS) {
     volumes,
     count: volumes.filter(v => v != null).length,
     blanks: volumes.filter(v => v == null).length,
+    labels,
     skipped,
   };
 }

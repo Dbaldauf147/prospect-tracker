@@ -632,10 +632,15 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
     setShowVolumes(true);
     if (toHistory) setAllHistoryBoxes(true);
     const over = parsed.volumes.length - (toHistory ? back : s.termMonths);
+    const labels = parsed.labels?.length || 0;
     setStatus([
       `Loaded ${parsed.count} monthly volume${parsed.count === 1 ? '' : 's'}`,
       toHistory ? ' for the months before the term' : '',
       parsed.blanks ? `, leaving ${parsed.blanks} month${parsed.blanks === 1 ? '' : 's'} on the shape` : '',
+      // Named rather than counted among the lines it could not read: a month
+      // label is expected, and copying the boxes off the page produces one
+      // per month.
+      labels ? `, reading past ${labels} month label${labels === 1 ? '' : 's'}` : '',
       skippedNote(parsed.skipped),
       over > 0
         ? `. ${over} more than the ${toHistory ? 'look-back reaches' : 'term runs'}, so ${over === 1 ? 'it sits' : 'they sit'} unused until you ${toHistory ? 'look further back' : 'lengthen it'}.`
@@ -1010,8 +1015,9 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                       </>
                     )}
                     {' '}A line each or one row copied across both work, a label in front of each number is ignored ("Jan 2027 3,100"), and
-                    so is a unit after it. A blank leaves that month on the shape rather than reading it as a zero. This replaces the
-                    whole list.
+                    so is a unit after it. A month label on a line of its own is read as a label rather than as a volume, so the boxes
+                    below copy back in as they stand. A blank leaves that month on the shape rather than reading it as a zero. This
+                    replaces the whole list.
                   </span>
                 </div>
                 <textarea
@@ -1299,6 +1305,149 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             {run.totals.assumedMonths > 0 && ` ${run.totals.assumedMonths} month${run.totals.assumedMonths === 1 ? '' : 's'} neither table reaches, priced flat at ${price(s.forwardPrice)}.`}
           </span>
         )}
+      </div>
+
+      {/* ── the numbers, above the pictures ───────────────────────────── */}
+      {/* Ahead of the charts rather than under them: this is the table
+          somebody reads off to a customer, and a year row is the unit both
+          sides of that conversation budget in. The charts argue the case;
+          this is the case. */}
+      <div className={styles.card}>
+        <div className={styles.cardHead}>
+          <div className={styles.cardTitle}>Year by year</div>
+        </div>
+        {hasBack && (
+          <div className={styles.cardNote}>
+            The term first, then the record behind it. A year the term opens or closes in appears in both, counting only the months it
+            holds in each, so the two blocks add up to the pair on the last row.
+          </div>
+        )}
+        <div className={styles.tableWrap}>
+          <table className={styles.dataTable}>
+            <thead>
+              <tr>
+                <th>Year</th>
+                <th className={styles.thNum}>Months</th>
+                <th className={styles.thNum}>Volume (Dth)</th>
+                <th className={styles.thNum}>Avg index</th>
+                <th className={styles.thNum}>At index</th>
+                <th className={styles.thNum}>On contract</th>
+                <th className={styles.thNum}>Saving</th>
+                <th className={styles.thNum}>Per Dth</th>
+              </tr>
+            </thead>
+            <tbody>
+              {/* The term first, with its own total under it. Chronological
+                  order across the whole window would open this table on 1990
+                  and bury the two or three years of the deal thirty-seven
+                  rows down a scroll, which is the opposite of what a table
+                  at the top of the page is for.
+
+                  A year the term opens or closes in appears in BOTH groups,
+                  because it genuinely holds months of both: `years` counts
+                  only its term months and `historyYears` only its look-back
+                  ones, so the two groups add up to the pair exactly and
+                  neither row carries months it is not about. One row with
+                  combined figures and a flag would be a number that belongs
+                  to neither reading. */}
+              {hasBack && (
+                <tr className={styles.groupRow}>
+                  <th scope="row" colSpan={8}>
+                    The term
+                    <span className={styles.groupRowHint}>
+                      {run.months[0]?.label} – {run.months[run.months.length - 1]?.label}, {s.termMonths} month{s.termMonths === 1 ? '' : 's'}
+                    </span>
+                  </th>
+                </tr>
+              )}
+              {run.years.map(y => (
+                <tr key={`term-${y.year}`} className={hasBack ? styles.termRow : undefined}>
+                  <th scope="row">
+                    {y.year}
+                    {y.forward > 0 && (
+                      <span className={styles.curveFlag} title={`${y.forward} of this year's ${y.months} months are priced off the forward curve`}>{y.forward} curve</span>
+                    )}
+                    {y.assumed > 0 && (
+                      <span className={styles.assumedFlag} title={`${y.assumed} of this year's ${y.months} months are priced at the flat assumption`}>{y.assumed} flat</span>
+                    )}
+                  </th>
+                  <td className={styles.tdNum}>{y.months}</td>
+                  <td className={styles.tdNum}>{vol(y.volume)}</td>
+                  <td className={styles.tdNum}>{price(y.avgIndex)}</td>
+                  <td className={styles.tdNum}>{usd(y.indexCost)}</td>
+                  <td className={styles.tdNum}>{usd(y.contractCost)}</td>
+                  <td className={y.saving >= 0 ? styles.tdGood : styles.tdBad}>{usd(y.saving)}</td>
+                  <td className={y.saving >= 0 ? styles.tdGood : styles.tdBad}>{price(y.savingPerDth)}</td>
+                </tr>
+              ))}
+              <tr className={hasBack ? styles.subTotalRow : styles.totalRow}>
+                <th scope="row">Term</th>
+                <td className={styles.tdNum}>{run.months.length}</td>
+                <td className={styles.tdNum}>{vol(run.totals.volume)}</td>
+                <td className={styles.tdNum}>{price(run.totals.avgIndex)}</td>
+                <td className={styles.tdNum}>{usd(run.totals.indexCost)}</td>
+                <td className={styles.tdNum}>{usd(run.totals.contractCost)}</td>
+                <td className={run.totals.saving >= 0 ? styles.tdGood : styles.tdBad}>{usd(run.totals.saving)}</td>
+                <td className={run.totals.saving >= 0 ? styles.tdGood : styles.tdBad}>{price(run.totals.savingPerDth)}</td>
+              </tr>
+
+              {hasBack && (
+                <tr className={styles.groupRow}>
+                  <th scope="row" colSpan={8}>
+                    Before the term
+                    <span className={styles.groupRowHint}>
+                      {backSpan}, {back} month{back === 1 ? '' : 's'}, the same hedge against market that has already settled
+                    </span>
+                  </th>
+                </tr>
+              )}
+              {hasBack && run.historyYears.map(y => (
+                <tr key={`back-${y.year}`} className={styles.backRow}>
+                  <th scope="row">
+                    {y.year}
+                    {y.forward > 0 && (
+                      <span className={styles.curveFlag} title={`${y.forward} of this year's ${y.months} months are priced off the forward curve`}>{y.forward} curve</span>
+                    )}
+                    {y.assumed > 0 && (
+                      <span className={styles.assumedFlag} title={`${y.assumed} of this year's ${y.months} months are priced at the flat assumption`}>{y.assumed} flat</span>
+                    )}
+                  </th>
+                  <td className={styles.tdNum}>{y.months}</td>
+                  <td className={styles.tdNum}>{vol(y.volume)}</td>
+                  <td className={styles.tdNum}>{price(y.avgIndex)}</td>
+                  <td className={styles.tdNum}>{usd(y.indexCost)}</td>
+                  <td className={styles.tdNum}>{usd(y.contractCost)}</td>
+                  <td className={y.saving >= 0 ? styles.tdGood : styles.tdBad}>{usd(y.saving)}</td>
+                  <td className={y.saving >= 0 ? styles.tdGood : styles.tdBad}>{price(y.savingPerDth)}</td>
+                </tr>
+              ))}
+              {hasBack && (
+                <tr className={styles.subTotalRow}>
+                  <th scope="row">Look-back</th>
+                  <td className={styles.tdNum}>{back}</td>
+                  <td className={styles.tdNum}>{vol(run.historyTotals.volume)}</td>
+                  <td className={styles.tdNum}>{price(run.historyTotals.avgIndex)}</td>
+                  <td className={styles.tdNum}>{usd(run.historyTotals.indexCost)}</td>
+                  <td className={styles.tdNum}>{usd(run.historyTotals.contractCost)}</td>
+                  <td className={run.historyTotals.saving >= 0 ? styles.tdGood : styles.tdBad}>{usd(run.historyTotals.saving)}</td>
+                  <td className={run.historyTotals.saving >= 0 ? styles.tdGood : styles.tdBad}>{price(run.historyTotals.savingPerDth)}</td>
+                </tr>
+              )}
+              {hasBack && (
+                <tr className={styles.totalRow}>
+                  <th scope="row">Both</th>
+                  <td className={styles.tdNum}>{run.allTotals.months}</td>
+                  <td className={styles.tdNum}>{vol(run.allTotals.volume)}</td>
+                  <td className={styles.tdNum}>{price(run.allTotals.avgIndex)}</td>
+                  <td className={styles.tdNum}>{usd(run.allTotals.indexCost)}</td>
+                  <td className={styles.tdNum}>{usd(run.allTotals.contractCost)}</td>
+                  <td className={run.allTotals.saving >= 0 ? styles.tdGood : styles.tdBad}>{usd(run.allTotals.saving)}</td>
+                  <td className={run.allTotals.saving >= 0 ? styles.tdGood : styles.tdBad}>{price(run.allTotals.savingPerDth)}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* ── the record, and where this contract sits in it ────────────── */}
@@ -1603,97 +1752,6 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             </ResponsiveContainer>
           </div>
         </ChartCard>
-      </div>
-
-      {/* ── the numbers behind the pictures ───────────────────────────── */}
-      <div className={styles.card}>
-        <div className={styles.cardHead}>
-          <div className={styles.cardTitle}>Year by year</div>
-        </div>
-        <div className={styles.tableWrap}>
-          <table className={styles.dataTable}>
-            <thead>
-              <tr>
-                <th>Year</th>
-                <th className={styles.thNum}>Months</th>
-                <th className={styles.thNum}>Volume (Dth)</th>
-                <th className={styles.thNum}>Avg index</th>
-                <th className={styles.thNum}>At index</th>
-                <th className={styles.thNum}>On contract</th>
-                <th className={styles.thNum}>Saving</th>
-                <th className={styles.thNum}>Per Dth</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(hasBack ? run.allYears : run.years).map(y => (
-                <tr key={y.year} className={hasBack && y.term === 0 ? styles.backRow : undefined}>
-                  <th scope="row">
-                    {y.year}
-                    {/* Only on a year that holds both readings. A year wholly
-                        one or the other is already said by where it sits and
-                        by how the row is shaded, and a flag on every row of
-                        a thirty-year table says nothing at all. */}
-                    {hasBack && y.history > 0 && y.term > 0 && (
-                      <span className={styles.backFlag} title={`${y.history} of this year's ${y.months} months sit before the term opens`}>{y.history} look-back</span>
-                    )}
-                    {y.forward > 0 && (
-                      <span className={styles.curveFlag} title={`${y.forward} of this year's ${y.months} months are priced off the forward curve`}>{y.forward} curve</span>
-                    )}
-                    {y.assumed > 0 && (
-                      <span className={styles.assumedFlag} title={`${y.assumed} of this year's ${y.months} months are priced at the flat assumption`}>{y.assumed} flat</span>
-                    )}
-                  </th>
-                  <td className={styles.tdNum}>{y.months}</td>
-                  <td className={styles.tdNum}>{vol(y.volume)}</td>
-                  <td className={styles.tdNum}>{price(y.avgIndex)}</td>
-                  <td className={styles.tdNum}>{usd(y.indexCost)}</td>
-                  <td className={styles.tdNum}>{usd(y.contractCost)}</td>
-                  <td className={y.saving >= 0 ? styles.tdGood : styles.tdBad}>{usd(y.saving)}</td>
-                  <td className={y.saving >= 0 ? styles.tdGood : styles.tdBad}>{price(y.savingPerDth)}</td>
-                </tr>
-              ))}
-              {/* Three totals rather than one, because the look-back and
-                  the term are two claims and the sum of them is a third. A
-                  single total row over a table that holds both would be the
-                  one on the end, and every reader would take it for the
-                  term. */}
-              {hasBack && (
-                <tr className={styles.subTotalRow}>
-                  <th scope="row">Look-back</th>
-                  <td className={styles.tdNum}>{back}</td>
-                  <td className={styles.tdNum}>{vol(run.historyTotals.volume)}</td>
-                  <td className={styles.tdNum}>{price(run.historyTotals.avgIndex)}</td>
-                  <td className={styles.tdNum}>{usd(run.historyTotals.indexCost)}</td>
-                  <td className={styles.tdNum}>{usd(run.historyTotals.contractCost)}</td>
-                  <td className={run.historyTotals.saving >= 0 ? styles.tdGood : styles.tdBad}>{usd(run.historyTotals.saving)}</td>
-                  <td className={run.historyTotals.saving >= 0 ? styles.tdGood : styles.tdBad}>{price(run.historyTotals.savingPerDth)}</td>
-                </tr>
-              )}
-              <tr className={hasBack ? styles.subTotalRow : styles.totalRow}>
-                <th scope="row">Term</th>
-                <td className={styles.tdNum}>{run.months.length}</td>
-                <td className={styles.tdNum}>{vol(run.totals.volume)}</td>
-                <td className={styles.tdNum}>{price(run.totals.avgIndex)}</td>
-                <td className={styles.tdNum}>{usd(run.totals.indexCost)}</td>
-                <td className={styles.tdNum}>{usd(run.totals.contractCost)}</td>
-                <td className={run.totals.saving >= 0 ? styles.tdGood : styles.tdBad}>{usd(run.totals.saving)}</td>
-                <td className={run.totals.saving >= 0 ? styles.tdGood : styles.tdBad}>{price(run.totals.savingPerDth)}</td>
-              </tr>
-              {hasBack && (
-                <tr className={styles.totalRow}>
-                  <th scope="row">Both</th>
-                  <td className={styles.tdNum}>{run.allTotals.months}</td>
-                  <td className={styles.tdNum}>{vol(run.allTotals.volume)}</td>
-                  <td className={styles.tdNum}>{price(run.allTotals.avgIndex)}</td>
-                  <td className={styles.tdNum}>{usd(run.allTotals.indexCost)}</td>
-                  <td className={styles.tdNum}>{usd(run.allTotals.contractCost)}</td>
-                  <td className={run.allTotals.saving >= 0 ? styles.tdGood : styles.tdBad}>{usd(run.allTotals.saving)}</td>
-                  <td className={run.allTotals.saving >= 0 ? styles.tdGood : styles.tdBad}>{price(run.allTotals.savingPerDth)}</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
       </div>
 
       {showMonths && (

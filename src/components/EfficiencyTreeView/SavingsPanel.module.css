@@ -872,3 +872,55 @@
   color: #075985;
   font-weight: 700;
 }
+
+/* ── the term's own years, inside a table that now holds the record ─────
+   Once the look-back puts thirty years in this table, the two or three
+   rows the contract actually covers have to be findable without counting.
+   A rule down the left in the contract's own colour, and weight on the
+   figures: the same pair the charts use for "this contract", so the table
+   and the pictures name the same thing the same way. */
+.termRow th,
+.termRow td {
+  background: #F8FBFE;
+  font-weight: 600;
+}
+
+.termRow th[scope="row"] {
+  box-shadow: inset 3px 0 0 #0369A1;
+}
+
+.termFlag {
+  margin-left: 0.3rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: 0.02rem 0.25rem;
+  border-radius: 3px;
+  white-space: nowrap;
+  background: #0369A1;
+  color: #fff;
+  border: 1px solid #0369A1;
+}
+
+/* A band naming the block of years under it. Full-width rather than a
+   column, because it is a heading inside the table rather than a row of
+   figures, and the eye has to stop at it. */
+.groupRow th {
+  background: var(--color-surface-alt);
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border-light);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-align: left;
+  color: var(--color-text);
+  padding-top: 0.3rem;
+  padding-bottom: 0.3rem;
+}
+
+.groupRowHint {
+  margin-left: 0.4rem;
+  font-size: 0.66rem;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
