@@ -269,7 +269,6 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   // box that fills them. It gets a box of its own rather than sharing the one
   // above: that one is aimed at whichever PRICE table it was opened for, and
   // volumes are neither of them.
-  const [showVolumes, setShowVolumes] = useState(false);
   const [volumePaste, setVolumePaste] = useState(null);
   const [volumeError, setVolumeError] = useState('');
   // Which end of the window a pasted column of volumes lands on. 'term'
@@ -435,6 +434,28 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
     return [...years].sort((a, b) => a - b);
   }, [run.all]);
   const termYears = useMemo(() => new Set(run.months.map(m => m.year)), [run.months]);
+
+  // What each year of the window burns, which is the figure anybody reading
+  // a consumption schedule looks for first and the one they have on a bill
+  // to check it against.
+  //
+  // It totals the volume the page PRICES on, not the volume somebody typed:
+  // a month left empty still burns, off the annual number and the shape, and
+  // a total that counted only the entered months would be a year's
+  // consumption missing the months nobody had a figure for. How many of each
+  // went into it is on the cell's title, because that is the difference
+  // between a year measured and a year estimated.
+  const yearTotals = useMemo(() => {
+    const map = new Map();
+    for (const m of run.all) {
+      const row = map.get(m.year) || { volume: 0, months: 0, entered: 0 };
+      row.volume += m.volume;
+      row.months += 1;
+      row.entered += m.volumeSource === 'entered' ? 1 : 0;
+      map.set(m.year, row);
+    }
+    return map;
+  }, [run.all]);
   const firstTermYear = run.months[0]?.year ?? windowYears[0];
   // Worked out whether or not the table is expanded, so the button knows
   // there is something to expand INTO rather than deciding from what is
@@ -718,7 +739,6 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       : { monthlyVolumes: parsed.volumes });
     setVolumePaste(null);
     setVolumeError('');
-    setShowVolumes(true);
     // A history paste reaches years the table is not showing, so it opens
     // them: loading volumes and not seeing where they went is worse than a
     // wide table.
@@ -746,7 +766,6 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       ? 'Clear the monthly volumes, the look-back ones as well as the term\u2019s? Every month goes back to the annual volume spread over the shape.'
       : 'Clear the monthly volumes? Every month goes back to the annual volume spread over the shape.')) return;
     patchScenario({ monthlyVolumes: [], historyVolumes: [] });
-    setShowVolumes(false);
     setStatus('Monthly volumes cleared. Every month is back on the annual volume and the shape.');
   }
 
@@ -930,176 +949,27 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       )}
 
       {/* ── one term, priced twice: the Contract savings subtab ───────── */}
-      {section === 'contract' && (
+      {/* ── the Consumption subtab ─────────────────────────────────────
+          What the term burns. It reads off the same scenario Contract
+          savings describes - the term's dates, the annual volume, the shape
+          and the look-back all come from there - so this subtab changes none
+          of them and says where they are set instead. A second set of term
+          fields here would be a second place to disagree about when the term
+          opens. */}
+      {section === 'consumption' && (
       <>
-      <div className={styles.inputs}>
-        <div className={styles.inputGroup}>
-          <div className={styles.groupTitle}>Contract</div>
-          <div className={styles.fieldRow}>
-            <label className={styles.field} style={{ width: '13rem' }}>
-              <span className={styles.fieldLabel}>Name<span className={styles.fieldHint}>what this scenario is</span></span>
-              <span className={styles.inputWrap}>
-                <input
-                  className={styles.input}
-                  type="text"
-                  value={s.name}
-                  placeholder="e.g. Midwest plants, 2027 renewal"
-                  onChange={e => patchScenario({ name: e.target.value })}
-                />
-              </span>
-            </label>
-            <label className={styles.field} style={{ width: '7rem' }}>
-              <span className={styles.fieldLabel}>Starts<span className={styles.fieldHint}>first month</span></span>
-              <span className={styles.inputWrap}>
-                <select
-                  className={styles.input}
-                  value={s.startMonth}
-                  onChange={e => patchScenario({ startMonth: Number(e.target.value) })}
-                >
-                  {NYMEX_MONTH_LABELS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
-                </select>
-              </span>
-            </label>
-            <NumberField
-              label="Year" hint="term opens in" width="6rem" step="1"
-              value={s.startYear} onCommit={v => patchScenario({ startYear: v })}
-            />
-            <NumberField
-              label="Term" hint="how long it runs" width="7.5rem" step="1" min="1" suffix="mo"
-              value={s.termMonths} onCommit={v => patchScenario({ termMonths: v })}
-            />
-            {/* The months BEFORE the term, run through the same hedge. A
-                second reading rather than a longer term, so it sits beside
-                the term rather than inside it and its saving is reported
-                apart from the term's everywhere on the page. */}
-            <label className={styles.field} style={{ width: '11rem' }}>
-              <span className={styles.fieldLabel}>
-                Look back
-                <span className={styles.fieldHint}>{lookbackHint}</span>
-              </span>
-              <span className={styles.inputWrap}>
-                <select
-                  className={styles.input}
-                  value={s.lookback === LOOKBACK_ALL ? LOOKBACK_ALL : String(s.lookback)}
-                  onChange={e => patchScenario({
-                    lookback: e.target.value === LOOKBACK_ALL ? LOOKBACK_ALL : Number(e.target.value),
-                  })}
-                >
-                  {/* Not a number, and it must not become one: it follows
-                      whatever settle table is loaded, so a longer paste
-                      reaches further back without anybody re-picking it. */}
-                  <option value={LOOKBACK_ALL}>All of the record</option>
-                  <option value="0">None, the term only</option>
-                  {lookbackOptions.map(n => <option key={n} value={String(n)}>{n} months</option>)}
-                </select>
-              </span>
-            </label>
-            <NumberField
-              label="Annual volume" hint="burned in a year" width="9.5rem" step="1000" suffix="Dth"
-              value={s.annualVolumeDth} onCommit={v => patchScenario({ annualVolumeDth: v })}
-            />
-            <label className={styles.field} style={{ width: '10rem' }}>
-              <span className={styles.fieldLabel}>
-                Volume shape
-                <span className={styles.fieldHint}>{VOLUME_SHAPES[s.volumeShape].note}</span>
-              </span>
-              <span className={styles.inputWrap}>
-                <select
-                  className={styles.input}
-                  value={s.volumeShape}
-                  onChange={e => patchScenario({ volumeShape: e.target.value })}
-                >
-                  {Object.entries(VOLUME_SHAPES).map(([key, shape]) => (
-                    <option key={key} value={key}>{shape.label}</option>
-                  ))}
-                </select>
-              </span>
-            </label>
-          </div>
-          <div className={styles.fieldRow}>
-            <NumberField
-              label="Basis" hint="delivered point vs Henry Hub" width="9rem" step="0.01" suffix={NYMEX_UNIT}
-              value={s.basis} onCommit={v => patchScenario({ basis: v })}
-            />
-            <NumberField
-              label="Retail adder" hint="margin, transport, fees" width="9.5rem" step="0.01" suffix={NYMEX_UNIT}
-              value={s.adder} onCommit={v => patchScenario({ adder: v })}
-            />
-            <div className={styles.fieldNote}>
-              Basis and the adder are charged whether the volume is hedged or not, so they move the bill and drop out of the saving.
-            </div>
-          </div>
-
-        </div>
-
-        <div className={styles.inputGroup}>
-          <div className={styles.groupTitle}>
-            Hedge positions
-            <span className={styles.groupHint}>
-              Each layer locks a slice of the volume at a price. Whatever is left floats at the index.
-            </span>
-          </div>
-          <table className={styles.layerTable}>
-            <thead>
-              <tr>
-                <th>Layer</th>
-                <th className={styles.thNum}>% of volume</th>
-                <th className={styles.thNum}>Price ({NYMEX_UNIT})</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {s.layers.map((l, i) => (
-                <tr key={i}>
-                  <td>
-                    <input
-                      className={styles.inputSmall}
-                      type="text"
-                      value={l.label}
-                      onChange={e => setLayer(i, { label: e.target.value })}
-                    />
-                  </td>
-                  <td className={styles.tdNum}>
-                    <NumberField
-                      label="" value={l.pct} step="1" min="0" max="100" suffix="%"
-                      onCommit={v => setLayer(i, { pct: v })}
-                    />
-                  </td>
-                  <td className={styles.tdNum}>
-                    <NumberField
-                      label="" value={l.price} step="0.01" min="0"
-                      onCommit={v => setLayer(i, { price: v })}
-                    />
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className={styles.iconBtn}
-                      onClick={() => removeLayer(i)}
-                      title={`Remove ${l.label}`}
-                    >&#215;</button>
-                  </td>
-                </tr>
-              ))}
-              <tr className={styles.layerTotal}>
-                <th scope="row">Hedged</th>
-                <td className={styles.tdNum}>{run.hedge.pct.toFixed(0)}%</td>
-                <td className={styles.tdNum}>{price(run.hedge.price)}</td>
-                <td />
-              </tr>
-              <tr className={styles.layerFloat}>
-                <th scope="row">At index</th>
-                <td className={styles.tdNum}>{(100 - run.hedge.pct).toFixed(0)}%</td>
-                <td className={styles.tdNum}>market</td>
-                <td />
-              </tr>
-            </tbody>
-          </table>
-          <div className={styles.rowActions}>
-            <button type="button" className={styles.smallBtn} onClick={addLayer}>+ Add a layer</button>
-            {run.hedge.over && <span className={styles.warn}>The layers add up to more than the volume, so they are clipped at 100%.</span>}
-          </div>
-        </div>
+      <div className={styles.termLine}>
+        <span className={styles.termLineMain}>
+          {run.months[0]?.label} – {run.months[run.months.length - 1]?.label}
+          <span className={styles.termLineHint}>
+            {' '}the term, {s.termMonths} month{s.termMonths === 1 ? '' : 's'}
+            {hasBack && `, with ${back} month${back === 1 ? '' : 's'} of look-back behind it`}
+          </span>
+        </span>
+        <span className={styles.termLineHint}>
+          Empty months fall back on {vol(s.annualVolumeDth)} Dth a year over the {VOLUME_SHAPES[s.volumeShape].label.toLowerCase()} shape.
+          The term, the volume, the shape and the look-back are all set on Contract savings.
+        </span>
       </div>
 
 {/* ── the volumes themselves ──────────────────────────────────
@@ -1131,9 +1001,6 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           className={styles.smallBtn}
           onClick={() => { setVolumePaste(prev => (prev == null ? '' : null)); setVolumeError(''); }}
         >{volumePaste == null ? 'Paste volumes' : 'Close'}</button>
-        <button type="button" className={styles.smallBtn} onClick={() => setShowVolumes(v => !v)}>
-          {showVolumes ? 'Hide the months' : enteredVolumes ? 'Edit the months' : 'Enter them by month'}
-        </button>
         {enteredVolumes > 0 && (
           <button type="button" className={styles.smallBtn} onClick={clearVolumes}>Clear</button>
         )}
@@ -1312,8 +1179,6 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           </div>
         )}
 
-        {showVolumes && (
-          <>
         {/* A calendar rather than a run of boxes: a row per month, a
             column per year, which is the shape consumption arrives
             in off a bill and off every spreadsheet anybody keeps it
@@ -1382,6 +1247,26 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                 );
               })}
             </tbody>
+            {/* A foot rather than a thirteenth row: it is a different kind of
+                number from the twelve above it, and it stays put when the
+                table is scrolled. */}
+            <tfoot>
+              <tr>
+                <th scope="row" className={styles.calendarTotalHead}>Total</th>
+                {shownYears.map(y => {
+                  const t = yearTotals.get(y);
+                  return (
+                    <td
+                      key={y}
+                      className={termYears.has(y) ? styles.calendarTotalTerm : styles.calendarTotal}
+                      title={t
+                        ? `${t.entered} of this year's ${t.months} month${t.months === 1 ? '' : 's'} ${t.entered === 1 ? 'carries' : 'carry'} a volume you gave; the rest price off the annual volume and the shape.`
+                        : undefined}
+                    >{t ? vol(t.volume) : ''}</td>
+                  );
+                })}
+              </tr>
+            </tfoot>
           </table>
         </div>
         <div className={styles.fieldNote}>
@@ -1393,8 +1278,187 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           {volumesPastTerm > 0 && ` ${volumesPastTerm} more volume${volumesPastTerm === 1 ? '' : 's'} than the term runs ${volumesPastTerm === 1 ? 'is' : 'are'} held past its end, unused until the term is lengthened.`}
           {volumesPastBack > 0 && ` ${volumesPastBack} more look-back volume${volumesPastBack === 1 ? '' : 's'} than the look-back reaches ${volumesPastBack === 1 ? 'is' : 'are'} held behind it, unused until you look further back.`}
         </div>
-          </>
-        )}
+      </div>
+
+      <div className={styles.footNote}>
+        This is the volume both legs of every saving on Contract savings are priced on: the market price for the month times what burned,
+        against what the contract charges for the same month times the same figure. So a month given its real consumption is a month
+        measured rather than estimated, and the page says per month, per year and per tile which it used. Nothing here is a price, and
+        changing it moves the bill on both legs rather than the saving per Dth.
+      </div>
+      </>
+      )}
+
+      {section === 'contract' && (
+      <>
+      <div className={styles.inputs}>
+        <div className={styles.inputGroup}>
+          <div className={styles.groupTitle}>Contract</div>
+          <div className={styles.fieldRow}>
+            <label className={styles.field} style={{ width: '13rem' }}>
+              <span className={styles.fieldLabel}>Name<span className={styles.fieldHint}>what this scenario is</span></span>
+              <span className={styles.inputWrap}>
+                <input
+                  className={styles.input}
+                  type="text"
+                  value={s.name}
+                  placeholder="e.g. Midwest plants, 2027 renewal"
+                  onChange={e => patchScenario({ name: e.target.value })}
+                />
+              </span>
+            </label>
+            <label className={styles.field} style={{ width: '7rem' }}>
+              <span className={styles.fieldLabel}>Starts<span className={styles.fieldHint}>first month</span></span>
+              <span className={styles.inputWrap}>
+                <select
+                  className={styles.input}
+                  value={s.startMonth}
+                  onChange={e => patchScenario({ startMonth: Number(e.target.value) })}
+                >
+                  {NYMEX_MONTH_LABELS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                </select>
+              </span>
+            </label>
+            <NumberField
+              label="Year" hint="term opens in" width="6rem" step="1"
+              value={s.startYear} onCommit={v => patchScenario({ startYear: v })}
+            />
+            <NumberField
+              label="Term" hint="how long it runs" width="7.5rem" step="1" min="1" suffix="mo"
+              value={s.termMonths} onCommit={v => patchScenario({ termMonths: v })}
+            />
+            {/* The months BEFORE the term, run through the same hedge. A
+                second reading rather than a longer term, so it sits beside
+                the term rather than inside it and its saving is reported
+                apart from the term's everywhere on the page. */}
+            <label className={styles.field} style={{ width: '11rem' }}>
+              <span className={styles.fieldLabel}>
+                Look back
+                <span className={styles.fieldHint}>{lookbackHint}</span>
+              </span>
+              <span className={styles.inputWrap}>
+                <select
+                  className={styles.input}
+                  value={s.lookback === LOOKBACK_ALL ? LOOKBACK_ALL : String(s.lookback)}
+                  onChange={e => patchScenario({
+                    lookback: e.target.value === LOOKBACK_ALL ? LOOKBACK_ALL : Number(e.target.value),
+                  })}
+                >
+                  {/* Not a number, and it must not become one: it follows
+                      whatever settle table is loaded, so a longer paste
+                      reaches further back without anybody re-picking it. */}
+                  <option value={LOOKBACK_ALL}>All of the record</option>
+                  <option value="0">None, the term only</option>
+                  {lookbackOptions.map(n => <option key={n} value={String(n)}>{n} months</option>)}
+                </select>
+              </span>
+            </label>
+            <NumberField
+              label="Annual volume" hint="burned in a year" width="9.5rem" step="1000" suffix="Dth"
+              value={s.annualVolumeDth} onCommit={v => patchScenario({ annualVolumeDth: v })}
+            />
+            <label className={styles.field} style={{ width: '10rem' }}>
+              <span className={styles.fieldLabel}>
+                Volume shape
+                <span className={styles.fieldHint}>{VOLUME_SHAPES[s.volumeShape].note}</span>
+              </span>
+              <span className={styles.inputWrap}>
+                <select
+                  className={styles.input}
+                  value={s.volumeShape}
+                  onChange={e => patchScenario({ volumeShape: e.target.value })}
+                >
+                  {Object.entries(VOLUME_SHAPES).map(([key, shape]) => (
+                    <option key={key} value={key}>{shape.label}</option>
+                  ))}
+                </select>
+              </span>
+            </label>
+          </div>
+          <div className={styles.fieldRow}>
+            <NumberField
+              label="Basis" hint="delivered point vs Henry Hub" width="9rem" step="0.01" suffix={NYMEX_UNIT}
+              value={s.basis} onCommit={v => patchScenario({ basis: v })}
+            />
+            <NumberField
+              label="Retail adder" hint="margin, transport, fees" width="9.5rem" step="0.01" suffix={NYMEX_UNIT}
+              value={s.adder} onCommit={v => patchScenario({ adder: v })}
+            />
+            <div className={styles.fieldNote}>
+              Basis and the adder are charged whether the volume is hedged or not, so they move the bill and drop out of the saving.
+            </div>
+          </div>
+
+        </div>
+
+        <div className={styles.inputGroup}>
+          <div className={styles.groupTitle}>
+            Hedge positions
+            <span className={styles.groupHint}>
+              Each layer locks a slice of the volume at a price. Whatever is left floats at the index.
+            </span>
+          </div>
+          <table className={styles.layerTable}>
+            <thead>
+              <tr>
+                <th>Layer</th>
+                <th className={styles.thNum}>% of volume</th>
+                <th className={styles.thNum}>Price ({NYMEX_UNIT})</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {s.layers.map((l, i) => (
+                <tr key={i}>
+                  <td>
+                    <input
+                      className={styles.inputSmall}
+                      type="text"
+                      value={l.label}
+                      onChange={e => setLayer(i, { label: e.target.value })}
+                    />
+                  </td>
+                  <td className={styles.tdNum}>
+                    <NumberField
+                      label="" value={l.pct} step="1" min="0" max="100" suffix="%"
+                      onCommit={v => setLayer(i, { pct: v })}
+                    />
+                  </td>
+                  <td className={styles.tdNum}>
+                    <NumberField
+                      label="" value={l.price} step="0.01" min="0"
+                      onCommit={v => setLayer(i, { price: v })}
+                    />
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className={styles.iconBtn}
+                      onClick={() => removeLayer(i)}
+                      title={`Remove ${l.label}`}
+                    >&#215;</button>
+                  </td>
+                </tr>
+              ))}
+              <tr className={styles.layerTotal}>
+                <th scope="row">Hedged</th>
+                <td className={styles.tdNum}>{run.hedge.pct.toFixed(0)}%</td>
+                <td className={styles.tdNum}>{price(run.hedge.price)}</td>
+                <td />
+              </tr>
+              <tr className={styles.layerFloat}>
+                <th scope="row">At index</th>
+                <td className={styles.tdNum}>{(100 - run.hedge.pct).toFixed(0)}%</td>
+                <td className={styles.tdNum}>market</td>
+                <td />
+              </tr>
+            </tbody>
+          </table>
+          <div className={styles.rowActions}>
+            <button type="button" className={styles.smallBtn} onClick={addLayer}>+ Add a layer</button>
+            {run.hedge.over && <span className={styles.warn}>The layers add up to more than the volume, so they are clipped at 100%.</span>}
+          </div>
+        </div>
       </div>
 
       {/* ── the answer ────────────────────────────────────────────────── */}

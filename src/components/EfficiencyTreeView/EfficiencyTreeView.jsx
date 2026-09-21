@@ -24,7 +24,8 @@ import {
 //   EFFICIENCY   the decision trees that sequence a service. One subtab per
 //                tree the user keeps, including the shipped C&I flow.
 //   SOURCING     what the gas behind it costs. Contract savings prices one
-//                term against the NYMEX record; Site pricing runs a whole
+//                term against the NYMEX record; Consumption is the volume
+//                that term burns, month by month; Site pricing runs a whole
 //                pasted list of renewals through the same tables.
 //
 // Two levels rather than one long strip, because the two areas answer
@@ -50,20 +51,36 @@ import {
 const SAVE_DELAY_MS = 800;
 
 // Sourcing's subtabs, in the order they get used: price the one term first,
-// then run the list of renewals through the same tables. The ids are what
-// SavingsPanel reads as its `section`.
+// give it the volume it actually burns, then run the list of renewals
+// through the same tables. The ids are what SavingsPanel reads as its
+// `section`.
+//
+// Consumption earns a subtab rather than a block inside Contract savings
+// because of what it is: a year of somebody's meter reads, entered a cell at
+// a time off a stack of bills. That is a sitting-down job with a spreadsheet
+// open, and it was happening in a box wedged between the hedge layers and
+// the savings tiles.
 const SOURCING_TABS = [
   {
     id: 'contract',
     label: 'Contract savings',
     title: 'Historical NYMEX settles, contract pricing, hedge layers and term length, and what the hedge is worth',
+    blurb: 'What a gas contract and its hedge layers are worth against the NYMEX record: load the settles and the forward curve, describe the term, and see the saving month by month.',
+  },
+  {
+    id: 'consumption',
+    label: 'Consumption',
+    title: 'What the term burns, month by month and year by year, against the annual volume and the shape it falls back on',
+    blurb: 'What the term actually burns: a cell per month and a column per year, with a total under each. Every month left empty prices off the annual volume and the shape, and the page says per month which it used.',
   },
   {
     id: 'sites',
     label: 'Site pricing',
     title: 'A pasted renewal comparison, every term priced off the same tables, with the change split into market and deal',
+    blurb: 'A whole list of renewals against the same record: paste the comparison out of Excel and every term is priced, with the change split into what the market did and what the deal did.',
   },
 ];
+const sourcingBlurb = (id) => (SOURCING_TABS.find(t => t.id === id) || SOURCING_TABS[0]).blurb;
 
 // What each kind of step looks like, in one place: the diagram box, the dot
 // on an outline row, the badge in Walk it, and what that badge says. Five
@@ -1243,9 +1260,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
           <div className={styles.subtitle}>
             {!onSourcing
               ? 'C&I efficiency work, sequenced: what to fix in what order, and what gets funded with whose money.'
-              : sourcingTab === 'sites'
-                ? 'A whole list of renewals against the same record: paste the comparison out of Excel and every term is priced, with the change split into what the market did and what the deal did.'
-                : 'What a gas contract and its hedge layers are worth against the NYMEX record: load the settles and the forward curve, describe the term, and see the saving month by month.'}
+              : sourcingBlurb(sourcingTab)}
           </div>
         </div>
         {/* Every control up here acts on the tree in front of you, so in
@@ -1419,8 +1434,10 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
       </div>
       )}
 
-      {/* Sourcing's subtabs: two readings of one set of numbers. Both price
-          off the settles and the curve, which stay on screen in each. */}
+      {/* Sourcing's subtabs: three readings of one set of numbers. All of
+          them sit on the settles and the curve, which stay on screen in
+          each - Consumption included, because how far back the look-back
+          reaches comes out of the settle table. */}
       {onSourcing && (
       <div className={styles.treeTabs} role="tablist" aria-label="Sourcing">
         {SOURCING_TABS.map(t => {
