@@ -299,22 +299,6 @@ export function summarizeSeries(points, { now = Date.now() } = {}) {
   };
 }
 
-// Collapse the daily series into one close per calendar week (the last
-// trading day of each), which is what the chart and the table show: 90
-// daily bars is a wall, 13 weekly ones is a shape.
-export function weeklyCloses(points) {
-  const byWeek = new Map();
-  for (const p of points) {
-    const d = new Date(`${p.date}T00:00:00Z`);
-    // Monday-anchored week key, so a week reads Mon–Sun however the
-    // trading days fall inside it.
-    const dow = (d.getUTCDay() + 6) % 7;
-    const monday = isoDay(d.getTime() - dow * 86400000);
-    byWeek.set(monday, { weekOf: monday, ...p });
-  }
-  return [...byWeek.values()].sort((a, b) => a.weekOf.localeCompare(b.weekOf));
-}
-
 // ---- email ------------------------------------------------------------
 
 function esc(s) {
@@ -393,30 +377,7 @@ function lineChartHtml({ chart, stats, src, windowDays, name, unit }) {
       </td>
     </tr>
   </table>
-  <div style="font-size:11px;color:#94A3B8;margin:0 0 18px">Daily closes, ${esc(stats.days)} trading days. The axis is scaled to the window, not to $0.</div>`;
-}
-
-function weeklyTableHtml(weeks) {
-  const rows = weeks.slice().reverse().map((w, i, arr) => {
-    const prev = arr[i + 1];
-    const delta = prev ? w.close - prev.close : null;
-    const color = delta == null ? FLAT : delta > 0 ? UP : delta < 0 ? DOWN : FLAT;
-    return `<tr>
-      <td style="padding:5px 10px;border-bottom:1px solid #F1F5F9;font-size:13px">Week of ${esc(fmtDay(w.weekOf))}</td>
-      <td style="padding:5px 10px;border-bottom:1px solid #F1F5F9;font-size:13px;text-align:right">${esc(fmtDay(w.date))}</td>
-      <td style="padding:5px 10px;border-bottom:1px solid #F1F5F9;font-size:13px;text-align:right;font-weight:700">${esc(money(w.close))}</td>
-      <td style="padding:5px 10px;border-bottom:1px solid #F1F5F9;font-size:13px;text-align:right;color:${color}">${delta == null ? '-' : esc(signed(delta))}</td>
-    </tr>`;
-  }).join('');
-  return `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;border:1px solid #E2E8F0;border-radius:6px">
-    <tr style="background:#F8FAFC">
-      <th style="padding:6px 10px;text-align:left;font-size:11px;color:#475569;text-transform:uppercase;letter-spacing:.04em">Week</th>
-      <th style="padding:6px 10px;text-align:right;font-size:11px;color:#475569;text-transform:uppercase;letter-spacing:.04em">Close date</th>
-      <th style="padding:6px 10px;text-align:right;font-size:11px;color:#475569;text-transform:uppercase;letter-spacing:.04em">Close</th>
-      <th style="padding:6px 10px;text-align:right;font-size:11px;color:#475569;text-transform:uppercase;letter-spacing:.04em">vs prior</th>
-    </tr>
-    ${rows}
-  </table>`;
+  <div style="font-size:11px;color:#94A3B8;margin:0">Daily closes, ${esc(stats.days)} trading days. The axis is scaled to the window, not to $0.</div>`;
 }
 
 /**
@@ -435,8 +396,8 @@ export function commodityEmailSubject(sections, { windowDays = WINDOW_DAYS } = {
 }
 
 // One commodity's block: headline, the three changes, the window's
-// high/low/average, the chart, and the week-by-week table.
-export function commoditySectionHtml({ spec, stats, weeks, source, label, windowDays, chart, chartSrc }) {
+// high/low/average, and the chart.
+export function commoditySectionHtml({ spec, stats, source, label, windowDays, chart, chartSrc }) {
   const wk = stats.changeWeek;
   const headlineColor = !wk ? FLAT : wk.abs > 0 ? UP : wk.abs < 0 ? DOWN : FLAT;
   return `
@@ -463,7 +424,6 @@ export function commoditySectionHtml({ spec, stats, weeks, source, label, window
     </table>
 
     ${lineChartHtml({ chart, stats, src: chartSrc, windowDays, name: spec.name, unit: spec.unit })}
-    ${weeklyTableHtml(weeks)}
 
     <p style="font-size:11px;color:#94A3B8;margin:10px 0 0">Source: ${esc(source)}. Prices in dollars per ${esc(spec.unit)}.</p>`;
 }
@@ -507,7 +467,6 @@ export function buildCommodityEmail(seriesList, { now = Date.now(), inlineImage 
   const sections = list.map((series) => {
     const spec = series.spec;
     const stats = summarizeSeries(series.points, { now });
-    const weeks = weeklyCloses(series.points);
 
     let chart = null;
     try {
@@ -528,7 +487,6 @@ export function buildCommodityEmail(seriesList, { now = Date.now(), inlineImage 
     return {
       spec,
       stats,
-      weeks,
       source: series.source,
       label: series.label,
       chart,

@@ -2,7 +2,7 @@
 // emails the rolling 90-day price of the commodities the report covers —
 // WTI crude and Henry Hub natural gas: the latest close, how it moved
 // over the week / month / window, the window's high, low and average, and
-// a week-by-week chart and table for each.
+// a chart for each.
 //
 // The path still says "oil" because it is a cron entry in vercel.json and
 // the URL anyone tests by hand; gas was added underneath it rather than

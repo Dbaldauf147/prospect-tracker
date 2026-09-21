@@ -16,7 +16,7 @@
 // are a barrel and a million BTU, not a collapse.
 import {
   COMMODITIES, commodityByKey, fetchCommoditySeries, fetchAllSeries,
-  summarizeSeries, weeklyCloses, buildCommodityEmail, commodityEmailSubject,
+  summarizeSeries, buildCommodityEmail, commodityEmailSubject,
 } from '../api/_lib/commodityPrices.js';
 
 let failures = 0;
@@ -172,6 +172,10 @@ const gas = commodityByKey('henryHub');
     && mail.html.includes('Stooq - Henry Hub front-month future (NG.F)'), true);
   check('no failure banner when nothing failed',
     mail.html.includes("Not in this week's mail"), false);
+  // The week-by-week table was dropped: the headline, the three changes
+  // and the chart carry the week now, and the table repeated them.
+  check('no week-by-week table', mail.html.includes('Week of'), false);
+  check('nor its header', mail.html.includes('vs prior'), false);
 }
 
 // One commodity down: the other still goes, and the mail says what is
@@ -229,20 +233,6 @@ const gas = commodityByKey('henryHub');
   const single = summarizeSeries([{ date: '2026-09-11', close: 66 }], { now: NOW });
   check('a single close has no week change', single.changeWeek, null);
   check('and no window change', single.changeWindow, null);
-}
-
-// Weekly collapse: one row per Monday-anchored week, the last trading day
-// of each.
-{
-  const weeks = weeklyCloses([
-    { date: '2026-09-01', close: 10 },
-    { date: '2026-09-04', close: 12 },  // same week — later, so it wins
-    { date: '2026-09-07', close: 14 },
-  ]);
-  check('one row per week', weeks.length, 2);
-  check('anchored on the Monday', weeks[0].weekOf, '2026-08-31');
-  check('keeping the last close of the week', weeks[0].close, 12);
-  check('and the next week starts its own row', weeks[1].weekOf, '2026-09-07');
 }
 
 // ---- the preview --------------------------------------------------------
