@@ -14,8 +14,8 @@ import { edgePath, LAYOUT, layoutTree } from '../../utils/treeLayout';
 import { SavingsPanel } from './SavingsPanel.jsx';
 import { pricedServiceRows } from '../../utils/serviceRows';
 import {
-  LEGACY_KEY, LIBRARY_KEY, activeEntry, addTree, blankTree, duplicateTree, getTreeLibrary,
-  hasSavedTrees, putTree, removeTree, renameTree, setActiveTree,
+  LEGACY_KEY, LIBRARY_KEY, MAX_NAME, activeEntry, addTree, blankTree, duplicateTree,
+  getTreeLibrary, hasSavedTrees, putTree, removeTree, renameTree, setActiveTree,
 } from '../../utils/treeLibrary';
 
 // Service Deep Dives: two areas under one sidebar entry, each with its own
@@ -701,6 +701,12 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   // press already said so - which way out of it leads there.
   const [addAfter, setAddAfter] = useState(null);
   const [freshId, setFreshId] = useState(null);   // the step just added, to scroll to and mark
+  // Renaming a tree happens in its own subtab: the label turns into an input
+  // where it sits, so the name is edited in the place it is read rather than
+  // in a prompt box floating over the page. `renamingId` is the tree being
+  // renamed, `renameDraft` what has been typed so far.
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameDraft, setRenameDraft] = useState('');
   const canvasWrapRef = useRef(null);
 
   // A save is owed (debounce running) or in the air. While that's true a
@@ -1040,10 +1046,35 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
     applyLibrary(setActiveTree(next, id));
   }
 
+  // Start, keep, or drop an in-place rename. Double-clicking a subtab starts
+  // one, as does the Rename button on the tree that's open and F2 on a
+  // focused tab; Enter or clicking away keeps what was typed, Escape puts the
+  // old name back. An empty name is a cancel rather than an error, because a
+  // tab with no label is not a thing the strip can show.
+  function startRename(id) {
+    const target = library.trees.find(t => t.id === id);
+    if (!target) return;
+    setRenamingId(id);
+    setRenameDraft(target.name);
+  }
+
+  function commitRename() {
+    if (!renamingId) return;
+    const target = library.trees.find(t => t.id === renamingId);
+    const label = renameDraft.trim();
+    setRenamingId(null);
+    setRenameDraft('');
+    if (!target || !label || label === target.name) return;
+    applyLibrary(renameTree(library, renamingId, label));
+  }
+
+  function cancelRename() {
+    setRenamingId(null);
+    setRenameDraft('');
+  }
+
   function renameActiveTree() {
-    const label = (window.prompt('Rename this decision tree:', entry.name) || '').trim();
-    if (!label || label === entry.name) return;
-    applyLibrary(renameTree(library, entry.id, label));
+    startRename(entry.id);
   }
 
   function deleteActiveTree() {
@@ -1211,6 +1242,29 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
         {library.trees.map(t => {
           const count = Object.keys(t.tree.nodes).length;
           const open = t.id === entry.id;
+          // Being renamed: the tab is the input, sized to what's in it so the
+          // strip doesn't jump when the editing starts.
+          if (t.id === renamingId) {
+            return (
+              <input
+                key={t.id}
+                type="text"
+                className={styles.treeTabInput}
+                value={renameDraft}
+                size={Math.max(10, renameDraft.length + 1)}
+                maxLength={MAX_NAME}
+                aria-label={`Rename "${t.name}"`}
+                autoFocus
+                onFocus={(e) => e.target.select()}
+                onChange={(e) => setRenameDraft(e.target.value)}
+                onBlur={commitRename}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+                  else if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+                }}
+              />
+            );
+          }
           return (
             <button
               key={t.id}
@@ -1219,7 +1273,9 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
               aria-selected={open}
               className={open ? styles.treeTabActive : styles.treeTab}
               onClick={() => switchTree(t.id)}
-              title={`${t.name} - ${count} step${count === 1 ? '' : 's'}`}
+              onDoubleClick={() => startRename(t.id)}
+              onKeyDown={(e) => { if (e.key === 'F2') { e.preventDefault(); startRename(t.id); } }}
+              title={`${t.name} - ${count} step${count === 1 ? '' : 's'} - double-click to rename`}
             >
               {t.name}
               <span className={styles.treeTabCount}>{count}</span>
@@ -1240,7 +1296,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
             They live in this strip rather than the one above because every
             one of them is a tree verb. */}
         <button type="button" className={styles.smallBtn} onClick={renameActiveTree}
-          title={`Rename "${entry.name}"`}>Rename</button>
+          title={`Rename "${entry.name}" - or double-click its tab`}>Rename</button>
         <button type="button" className={styles.smallBtn} onClick={copyTree}
           title={`Copy "${entry.name}" into a tree of its own`}>Duplicate</button>
         <button type="button" className={styles.smallBtn} onClick={deleteActiveTree}

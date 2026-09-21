@@ -1539,6 +1539,25 @@
   color: var(--color-text-secondary);
 }
 
+/* The open tab while its name is being typed. It keeps the active tab's
+   shape and colours so the strip doesn't move when editing starts, with an
+   accent ring to say the text is live. */
+.treeTabInput {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: inherit;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  margin-bottom: -1px;
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+  outline: none;
+  min-width: 6rem;
+}
+
 .treeTabAdd {
   padding: 0.35rem 0.6rem;
   font-size: 0.76rem;

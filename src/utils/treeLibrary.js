@@ -31,7 +31,7 @@ export const TEMPLATE_TREE_NAME = 'C&I efficiency';
 // the subtab strip stays a strip. Everything here lives in one size-limited
 // settings document, which is the real ceiling.
 const MAX_TREES = 20;
-const MAX_NAME = 60;
+export const MAX_NAME = 60;
 
 const name = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_NAME);
 
