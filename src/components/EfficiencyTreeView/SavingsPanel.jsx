@@ -55,10 +55,19 @@ const SAVE_DELAY_MS = 800;
 // further without anybody re-picking it.
 const LOOKBACK_CHOICES = [12, 24, 36, 60, 120];
 
-// How long a stretch of look-back month boxes opens before it has to be
-// asked for. Four hundred number inputs is a real list somebody may want,
-// and it is not what they want on the way to editing last December.
-const HISTORY_GRID_PREVIEW = 36;
+// The consumption table is a calendar: a row per month, a column per year.
+// It opens on the term's years plus this many behind them, because a
+// thirty-seven column table is a real thing somebody may want and never the
+// one they want on the way to editing last December.
+const CALENDAR_LOOKBACK_YEARS = 3;
+
+// Spelled out down the side of that table, the way a consumption schedule
+// off a utility bill spells them. The short labels stay on the charts, where
+// there is no room for these.
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
 
 // Two series, one job each: what the market did, and what the contract
 // charges for it. Warm against cool so the pair survives colour blindness
@@ -137,7 +146,13 @@ function NumberField({ label, hint, title, value, step = 'any', min, max, suffix
 // given a volume for, and it prices off the annual number and the shape
 // instead. So the placeholder is that shaped volume - the box shows what it
 // would use, and typing over it is what asserts something.
-function VolumeCell({ month, value, shaped, onCommit }) {
+// One month's volume, as a box in the consumption calendar. The row and the
+// column already say which month it is, so the box is the box alone.
+//
+// Same draft-while-typing rule as NumberField: an emptied box has to stay
+// empty under the cursor, because emptying it is how somebody puts a month
+// back on the shape and a value snapping back mid-edit would fight them.
+function VolumeCell({ value, shaped, title, onCommit }) {
   const [draft, setDraft] = useState(null);
   const shown = draft ?? (value == null ? '' : String(value));
   const commit = () => {
@@ -145,21 +160,20 @@ function VolumeCell({ month, value, shaped, onCommit }) {
     setDraft(null);
   };
   return (
-    <label className={styles.volumeCell}>
-      <span className={value == null ? styles.volumeMonthShaped : styles.volumeMonth}>{month}</span>
-      <input
-        className={styles.inputSmall}
-        type="number"
-        step="1"
-        min="0"
-        inputMode="decimal"
-        value={shown}
-        placeholder={shaped == null ? '' : Math.round(shaped).toLocaleString('en-US')}
-        onChange={e => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-      />
-    </label>
+    <input
+      className={styles.volumeInput}
+      type="number"
+      step="1"
+      min="0"
+      inputMode="decimal"
+      title={title}
+      aria-label={title}
+      value={shown}
+      placeholder={shaped == null ? '' : Math.round(shaped).toLocaleString('en-US')}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+    />
   );
 }
 
@@ -257,9 +271,10 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   // are my last eighteen months of bills" is the shape history arrives in
   // and it must not depend on how deep the look-back happens to be set.
   const [volumeAnchor, setVolumeAnchor] = useState('term');
-  // Whether the whole look-back is open in the month boxes, or the tail of
-  // it. Purely about how much is on screen; nothing is discarded either way.
-  const [allHistoryBoxes, setAllHistoryBoxes] = useState(false);
+  // Whether every year of the window has a column in the consumption table,
+  // or only the term's and a few behind it. Purely about how much is on
+  // screen; nothing is discarded either way.
+  const [allVolumeYears, setAllVolumeYears] = useState(false);
   // Whether the cost and saving charts draw the whole window or the term
   // alone. The term is still the deal being decided, so it stays one click
   // away from a look-back that runs for decades.
@@ -390,14 +405,36 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   // there is a look-back, because that is what including history means; the
   // term alone is a click away, and the term is shaded either way so the
   // deal never gets lost inside thirty years of record.
-  // Which look-back months get a box, and where in the look-back the first
-  // of them sits - the offset is what turns a position in the slice back
-  // into a slot in the stored list, so the tail view writes to the same
-  // boxes the full one does.
-  const historyBoxFrom = allHistoryBoxes || back <= HISTORY_GRID_PREVIEW
-    ? 0
-    : Math.max(0, back - HISTORY_GRID_PREVIEW);
-  const historyBoxes = run.history.slice(historyBoxFrom);
+  // ── the consumption calendar ───────────────────────────────────────────
+  // Every month of the window, found by its place on the calendar rather
+  // than by its place in the term. The table is a pivot: the rows and
+  // columns are a year and a month, and this is what turns that pair back
+  // into the slot it is stored in. Both lists are indexed off the term - the
+  // term's forwards, the look-back's backwards - so the map is built once
+  // from the run rather than computed per cell.
+  const volumeSlots = useMemo(() => {
+    const map = new Map();
+    run.history.forEach((m, i) => map.set(m.key, { list: 'history', slot: historySlot(run.lookback, i), month: m }));
+    run.months.forEach((m, i) => map.set(m.key, { list: 'term', slot: i, month: m }));
+    return map;
+  }, [run.history, run.months, run.lookback]);
+
+  // A column per calendar year the window touches, oldest first. A year is
+  // whole in the table even where the window only holds part of it: the
+  // months it does not reach come back as empty cells, which is what says
+  // the window stops there.
+  const windowYears = useMemo(() => {
+    const years = new Set(run.all.map(m => m.year));
+    return [...years].sort((a, b) => a - b);
+  }, [run.all]);
+  const termYears = useMemo(() => new Set(run.months.map(m => m.year)), [run.months]);
+  const firstTermYear = run.months[0]?.year ?? windowYears[0];
+  // Worked out whether or not the table is expanded, so the button knows
+  // there is something to expand INTO rather than deciding from what is
+  // currently on screen.
+  const collapsedYears = windowYears.filter(y => y >= firstTermYear - CALENDAR_LOOKBACK_YEARS);
+  const shownYears = allVolumeYears ? windowYears : collapsedYears;
+  const moreYears = windowYears.length - collapsedYears.length;
 
   const wholeWindow = hasBack && chartSpan === 'window';
   const chartMonths = wholeWindow ? run.all : run.months;
@@ -630,7 +667,10 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
     setVolumePaste(null);
     setVolumeError('');
     setShowVolumes(true);
-    if (toHistory) setAllHistoryBoxes(true);
+    // A history paste reaches years the table is not showing, so it opens
+    // them: loading volumes and not seeing where they went is worse than a
+    // wide table.
+    if (toHistory) setAllVolumeYears(true);
     const over = parsed.volumes.length - (toHistory ? back : s.termMonths);
     const labels = parsed.labels?.length || 0;
     setStatus([
@@ -938,180 +978,6 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             </div>
           </div>
 
-          {/* ── the volumes themselves ──────────────────────────────────
-              The annual number and the shape are an estimate of what burns
-              when. Real consumption, month by month, is the thing itself, so
-              it wins wherever it is given and the page says which months
-              have it. */}
-          <div className={styles.volumeBlock}>
-            <div className={styles.volumeHead}>
-              <span className={styles.groupTitle}>
-                Monthly consumption
-                <span className={styles.groupHint}>
-                  {enteredVolumes
-                    ? `${enteredVolumes} of ${s.termMonths} month${s.termMonths === 1 ? '' : 's'} burn a volume you gave. ${volumeSummary(run.totals)}, ${vol(run.totals.volume)} Dth over the term.`
-                    : `Every month prices off the annual volume spread over the ${VOLUME_SHAPES[s.volumeShape].label.toLowerCase()} shape. Give a month its own volume and it uses that instead.`}
-                  {/* The look-back's volumes are counted apart from the
-                      term's, the way its saving is: real consumption behind
-                      the term is the thing worth entering there, and how
-                      much of it there is says how much of the look-back is
-                      measured rather than spread off an annual number. */}
-                  {hasBack && (backEntered
-                    ? ` Behind it, ${backEntered} of ${back} look-back month${back === 1 ? '' : 's'} do too: ${volumeSummary(run.historyTotals)}, ${vol(run.historyTotals.volume)} Dth over ${backSpan}.`
-                    : ` The ${back} month${back === 1 ? '' : 's'} of look-back behind it price the same way. Paste what actually burned and they use that instead.`)}
-                </span>
-              </span>
-              <div className={styles.volumeActions}>
-                <button
-                  type="button"
-                  className={styles.smallBtn}
-                  onClick={() => { setVolumePaste(prev => (prev == null ? '' : null)); setVolumeError(''); }}
-                >{volumePaste == null ? 'Paste volumes' : 'Close'}</button>
-                <button type="button" className={styles.smallBtn} onClick={() => setShowVolumes(v => !v)}>
-                  {showVolumes ? 'Hide the months' : enteredVolumes ? 'Edit the months' : 'Enter them by month'}
-                </button>
-                {enteredVolumes > 0 && (
-                  <button type="button" className={styles.smallBtn} onClick={clearVolumes}>Clear</button>
-                )}
-              </div>
-            </div>
-
-            {volumePaste != null && (
-              <div className={styles.pastePanel}>
-                {/* Which end of the window the column lands on. Two buttons
-                    rather than a dropdown, because it is the one thing about
-                    this box that can be got wrong and it has to be readable
-                    without being opened. Only offered when there is a
-                    look-back to paste into. */}
-                {hasBack && (
-                  <div className={styles.anchorRow}>
-                    <button
-                      type="button"
-                      className={volumeAnchor === 'term' ? styles.anchorBtnOn : styles.anchorBtn}
-                      onClick={() => { setVolumeAnchor('term'); setVolumeError(''); }}
-                    >The term</button>
-                    <button
-                      type="button"
-                      className={volumeAnchor === 'history' ? styles.anchorBtnOn : styles.anchorBtn}
-                      onClick={() => { setVolumeAnchor('history'); setVolumeError(''); }}
-                    >The months before it</button>
-                  </div>
-                )}
-                <div className={styles.fieldLabel}>
-                  {volumeAnchor === 'history' && hasBack
-                    ? 'Paste what burned before the term'
-                    : "Paste the term's volumes"}
-                  <span className={styles.fieldHint}>
-                    {volumeAnchor === 'history' && hasBack ? (
-                      <>
-                        One value per month, oldest first, ending at {backEnd.label} - the month before the term opens. Paste as many
-                        months as you have and they fill backwards from there, so eighteen months of bills land on the eighteen months
-                        behind the term whatever the look-back is set to. Anything older than {backStart.label} is held until you look
-                        further back.
-                      </>
-                    ) : (
-                      <>
-                        One value per month of the term, in the order it runs, starting at {run.months[0]?.label || 'the first month'}.
-                      </>
-                    )}
-                    {' '}A line each or one row copied across both work, a label in front of each number is ignored ("Jan 2027 3,100"), and
-                    so is a unit after it. A month label on a line of its own is read as a label rather than as a volume, so the boxes
-                    below copy back in as they stand. A blank leaves that month on the shape rather than reading it as a zero. This
-                    replaces the whole list.
-                  </span>
-                </div>
-                <textarea
-                  className={styles.textarea}
-                  rows={6}
-                  value={volumePaste}
-                  placeholder={`Month\tDth\n${(volumeAnchor === 'history' && hasBack
-                    ? run.history.slice(-3)
-                    : run.months.slice(0, 3)
-                  ).map((m, i) => `${m.label}\t${[3100, 2780, 2240][i].toLocaleString('en-US')}`).join('\n')}`}
-                  onChange={e => { setVolumePaste(e.target.value); setVolumeError(''); }}
-                />
-                {volumeError && <div className={styles.warn}>{volumeError}</div>}
-                <div className={styles.rowActions}>
-                  <button type="button" className={styles.primaryBtn} onClick={loadVolumes} disabled={!volumePaste.trim()}>Load them</button>
-                  <button type="button" className={styles.smallBtn} onClick={() => { setVolumePaste(null); setVolumeError(''); }}>Cancel</button>
-                </div>
-              </div>
-            )}
-
-            {showVolumes && (
-              <>
-                {/* The look-back's months first, so the boxes read in
-                    calendar order straight into the term. A long look-back
-                    opens on its tail rather than on all of it: four hundred
-                    number inputs is a list somebody may want and never the
-                    one they want on the way to editing last December. */}
-                {hasBack && (
-                  <>
-                    <div className={styles.volumeSection}>
-                      <span className={styles.volumeSectionTitle}>
-                        Before the term
-                        <span className={styles.volumeSectionHint}>
-                          {' '}{backSpan}, {back} month{back === 1 ? '' : 's'}
-                        </span>
-                      </span>
-                      {back > HISTORY_GRID_PREVIEW && (
-                        <button
-                          type="button"
-                          className={styles.smallBtn}
-                          onClick={() => setAllHistoryBoxes(v => !v)}
-                        >
-                          {allHistoryBoxes
-                            ? `Show the last ${HISTORY_GRID_PREVIEW}`
-                            : `Show all ${back}`}
-                        </button>
-                      )}
-                    </div>
-                    <div className={styles.volumeGrid}>
-                      {historyBoxes.map((m, j) => {
-                        const slot = historySlot(back, historyBoxFrom + j);
-                        return (
-                          <VolumeCell
-                            key={m.key}
-                            month={m.short}
-                            value={(s.historyVolumes || [])[slot] ?? null}
-                            shaped={shapedVolume(m.month)}
-                            onCommit={raw => setMonthVolume('history', slot, raw)}
-                          />
-                        );
-                      })}
-                    </div>
-                    <div className={styles.volumeSection}>
-                      <span className={styles.volumeSectionTitle}>
-                        The term
-                        <span className={styles.volumeSectionHint}>
-                          {' '}{run.months[0]?.label} – {run.months[run.months.length - 1]?.label}, {s.termMonths} month{s.termMonths === 1 ? '' : 's'}
-                        </span>
-                      </span>
-                    </div>
-                  </>
-                )}
-                <div className={styles.volumeGrid}>
-                  {run.months.map((m, i) => (
-                    <VolumeCell
-                      key={m.key}
-                      month={m.short}
-                      value={(s.monthlyVolumes || [])[i] ?? null}
-                      shaped={shapedVolume(m.month)}
-                      onCommit={raw => setMonthVolume('term', i, raw)}
-                    />
-                  ))}
-                </div>
-                <div className={styles.fieldNote}>
-                  A box left empty prices off the annual volume and the shape, which is the number shown greyed in it. The list is tied to
-                  the term rather than to the calendar, so month one is always the month the term opens: re-dating the term moves these
-                  volumes with it.
-                  {hasBack && ' The look-back\u2019s boxes are tied to the term from the other end, so the last of them is always the month before it opens: looking further back adds months at the old end and moves nothing you have typed.'}
-                  {volumesPastTerm > 0 && ` ${volumesPastTerm} more volume${volumesPastTerm === 1 ? '' : 's'} than the term runs ${volumesPastTerm === 1 ? 'is' : 'are'} held past its end, unused until the term is lengthened.`}
-                  {volumesPastBack > 0 && ` ${volumesPastBack} more look-back volume${volumesPastBack === 1 ? '' : 's'} than the look-back reaches ${volumesPastBack === 1 ? 'is' : 'are'} held behind it, unused until you look further back.`}
-                </div>
-              </>
-            )}
-          </div>
         </div>
 
         <div className={styles.inputGroup}>
@@ -1182,6 +1048,191 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             {run.hedge.over && <span className={styles.warn}>The layers add up to more than the volume, so they are clipped at 100%.</span>}
           </div>
         </div>
+      </div>
+
+{/* ── the volumes themselves ──────────────────────────────────
+          The annual number and the shape are an estimate of what burns
+          when. Real consumption, month by month, is the thing itself, so
+          it wins wherever it is given and the page says which months
+          have it. */}
+      <div className={styles.volumeBlock}>
+        <div className={styles.volumeHead}>
+          <span className={styles.groupTitle}>
+        Monthly consumption
+        <span className={styles.groupHint}>
+          {enteredVolumes
+            ? `${enteredVolumes} of ${s.termMonths} month${s.termMonths === 1 ? '' : 's'} burn a volume you gave. ${volumeSummary(run.totals)}, ${vol(run.totals.volume)} Dth over the term.`
+            : `Every month prices off the annual volume spread over the ${VOLUME_SHAPES[s.volumeShape].label.toLowerCase()} shape. Give a month its own volume and it uses that instead.`}
+          {/* The look-back's volumes are counted apart from the
+              term's, the way its saving is: real consumption behind
+              the term is the thing worth entering there, and how
+              much of it there is says how much of the look-back is
+              measured rather than spread off an annual number. */}
+          {hasBack && (backEntered
+            ? ` Behind it, ${backEntered} of ${back} look-back month${back === 1 ? '' : 's'} do too: ${volumeSummary(run.historyTotals)}, ${vol(run.historyTotals.volume)} Dth over ${backSpan}.`
+            : ` The ${back} month${back === 1 ? '' : 's'} of look-back behind it price the same way. Paste what actually burned and they use that instead.`)}
+        </span>
+          </span>
+          <div className={styles.volumeActions}>
+        <button
+          type="button"
+          className={styles.smallBtn}
+          onClick={() => { setVolumePaste(prev => (prev == null ? '' : null)); setVolumeError(''); }}
+        >{volumePaste == null ? 'Paste volumes' : 'Close'}</button>
+        <button type="button" className={styles.smallBtn} onClick={() => setShowVolumes(v => !v)}>
+          {showVolumes ? 'Hide the months' : enteredVolumes ? 'Edit the months' : 'Enter them by month'}
+        </button>
+        {enteredVolumes > 0 && (
+          <button type="button" className={styles.smallBtn} onClick={clearVolumes}>Clear</button>
+        )}
+          </div>
+        </div>
+
+        {volumePaste != null && (
+          <div className={styles.pastePanel}>
+        {/* Which end of the window the column lands on. Two buttons
+            rather than a dropdown, because it is the one thing about
+            this box that can be got wrong and it has to be readable
+            without being opened. Only offered when there is a
+            look-back to paste into. */}
+        {hasBack && (
+          <div className={styles.anchorRow}>
+            <button
+              type="button"
+              className={volumeAnchor === 'term' ? styles.anchorBtnOn : styles.anchorBtn}
+              onClick={() => { setVolumeAnchor('term'); setVolumeError(''); }}
+            >The term</button>
+            <button
+              type="button"
+              className={volumeAnchor === 'history' ? styles.anchorBtnOn : styles.anchorBtn}
+              onClick={() => { setVolumeAnchor('history'); setVolumeError(''); }}
+            >The months before it</button>
+          </div>
+        )}
+        <div className={styles.fieldLabel}>
+          {volumeAnchor === 'history' && hasBack
+            ? 'Paste what burned before the term'
+            : "Paste the term's volumes"}
+          <span className={styles.fieldHint}>
+            {volumeAnchor === 'history' && hasBack ? (
+              <>
+                One value per month, oldest first, ending at {backEnd.label} - the month before the term opens. Paste as many
+                months as you have and they fill backwards from there, so eighteen months of bills land on the eighteen months
+                behind the term whatever the look-back is set to. Anything older than {backStart.label} is held until you look
+                further back.
+              </>
+            ) : (
+              <>
+                One value per month of the term, in the order it runs, starting at {run.months[0]?.label || 'the first month'}.
+              </>
+            )}
+            {' '}A line each or one row copied across both work, a label in front of each number is ignored ("Jan 2027 3,100"), and
+            so is a unit after it. A month label on a line of its own is read as a label rather than as a volume, so the boxes
+            below copy back in as they stand. A blank leaves that month on the shape rather than reading it as a zero. This
+            replaces the whole list.
+          </span>
+        </div>
+        <textarea
+          className={styles.textarea}
+          rows={6}
+          value={volumePaste}
+          placeholder={`Month\tDth\n${(volumeAnchor === 'history' && hasBack
+            ? run.history.slice(-3)
+            : run.months.slice(0, 3)
+          ).map((m, i) => `${m.label}\t${[3100, 2780, 2240][i].toLocaleString('en-US')}`).join('\n')}`}
+          onChange={e => { setVolumePaste(e.target.value); setVolumeError(''); }}
+        />
+        {volumeError && <div className={styles.warn}>{volumeError}</div>}
+        <div className={styles.rowActions}>
+          <button type="button" className={styles.primaryBtn} onClick={loadVolumes} disabled={!volumePaste.trim()}>Load them</button>
+          <button type="button" className={styles.smallBtn} onClick={() => { setVolumePaste(null); setVolumeError(''); }}>Cancel</button>
+        </div>
+          </div>
+        )}
+
+        {showVolumes && (
+          <>
+        {/* A calendar rather than a run of boxes: a row per month, a
+            column per year, which is the shape consumption arrives
+            in off a bill and off every spreadsheet anybody keeps it
+            in. Reading last February against the February before it
+            is then a glance sideways instead of a count of twelve.
+
+            The term's columns are marked, because the table is laid
+            out by the calendar while the volumes underneath are tied
+            to the term, and which cells are the deal is the one
+            thing the calendar cannot say by itself. */}
+        <div className={styles.volumeSection}>
+          <span className={styles.volumeSectionTitle}>
+            Dth by month
+            <span className={styles.volumeSectionHint}>
+              {' '}{run.all[0]?.label} – {run.all[run.all.length - 1]?.label}
+              {hasBack && ', the term ruled'}
+            </span>
+          </span>
+          {moreYears > 0 && (
+            <button
+              type="button"
+              className={styles.smallBtn}
+              onClick={() => setAllVolumeYears(v => !v)}
+            >
+              {allVolumeYears
+                ? `Show ${collapsedYears.length} years`
+                : `Show all ${windowYears.length} years`}
+            </button>
+          )}
+        </div>
+        <div className={styles.calendarWrap}>
+          <table className={styles.calendarTable}>
+            <thead>
+              <tr>
+                <th className={styles.calendarCorner} />
+                {shownYears.map(y => (
+                  <th key={y} className={termYears.has(y) ? styles.calendarYearTerm : styles.calendarYear}>{y}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {MONTH_NAMES.map((name, i) => {
+                const month = i + 1;
+                return (
+                  <tr key={name}>
+                    <th scope="row" className={styles.calendarMonth}>{name}</th>
+                    {shownYears.map(y => {
+                      const at = volumeSlots.get(monthKey(y, month));
+                      // A month the window does not reach. Left
+                      // blank rather than given a box: a box would
+                      // invite a volume for a month nothing prices.
+                      if (!at) return <td key={y} className={styles.calendarEmpty} />;
+                      const list = at.list === 'history' ? (s.historyVolumes || []) : (s.monthlyVolumes || []);
+                      return (
+                        <td key={y} className={at.list === 'term' ? styles.calendarCellTerm : styles.calendarCell}>
+                          <VolumeCell
+                            value={list[at.slot] ?? null}
+                            shaped={shapedVolume(month)}
+                            title={`${name} ${y}, ${at.list === 'term' ? 'in the term' : 'in the look-back'}`}
+                            onCommit={raw => setMonthVolume(at.list, at.slot, raw)}
+                          />
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className={styles.fieldNote}>
+          A box left empty prices off the annual volume and the shape, which is the number shown greyed in it. A month the window
+          does not reach has no box at all. The table is laid out by the calendar, but what it holds is still tied to the term:
+          month one is always the month the term opens, so re-dating the term carries these volumes with it and they land on
+          different cells.
+          {hasBack && ' The look-back\u2019s are tied to the term from the other end, so the last of them is always the month before it opens: looking further back adds months at the old end and moves nothing you have typed.'}
+          {volumesPastTerm > 0 && ` ${volumesPastTerm} more volume${volumesPastTerm === 1 ? '' : 's'} than the term runs ${volumesPastTerm === 1 ? 'is' : 'are'} held past its end, unused until the term is lengthened.`}
+          {volumesPastBack > 0 && ` ${volumesPastBack} more look-back volume${volumesPastBack === 1 ? '' : 's'} than the look-back reaches ${volumesPastBack === 1 ? 'is' : 'are'} held behind it, unused until you look further back.`}
+        </div>
+          </>
+        )}
       </div>
 
       {/* ── the answer ────────────────────────────────────────────────── */}
