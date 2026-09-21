@@ -61,6 +61,30 @@ check('a bare column reads straight through',
   parseMonthlyVolumes('3100\n2780\n2240\n1490').volumes, [3100, 2780, 2240, 1490]);
 check('a row copied across reads as the run, blanks and all',
   parseMonthlyVolumes('3100\t2780\t2240\t\t1070').volumes, [3100, 2780, 2240, null, 1070]);
+// ── the month boxes copy back in ─────────────────────────────────────────
+// The obvious thing to do with a grid of month boxes is copy it and paste it
+// back, and off the page that gives a label and a value on alternate lines.
+// Every label but January holds no number; "Jan 2027" holds 2027. Read as a
+// volume it is a burn of two thousand Dth in January AND a shift of every
+// month after it, which is the worst kind of wrong: plausible, and silent.
+const roundTrip = parseMonthlyVolumes('Nov\n20,833\nDec\n4371.8\nJan 2027\n8205.2\nFeb\n20,833');
+check('a month label on its own is a label, year and all',
+  roundTrip.volumes, [20833, 4371.8, 8205.2, 20833]);
+check('so January does not become its own year', roundTrip.volumes.includes(2027), false);
+check('the labels are reported as labels',
+  roundTrip.labels, ['Nov', 'Dec', 'Jan 2027', 'Feb']);
+check('and not as lines nothing could be made of', roundTrip.skipped, []);
+check('every way a month gets written reads as one',
+  parseMonthlyVolumes("January\nJan\nJan.\nJan 27\nJan '27\nJan 2027\nSEPT").labels.length, 7);
+// The label only wins when it is the WHOLE line. A label with a volume past
+// it is the format the box has always documented and must not change.
+check('a label with a number past it still gives up the number',
+  parseMonthlyVolumes('Jan 2027\t3,100\nFeb 2027\t2,780').volumes, [3100, 2780]);
+check('and a word that is not a month is still a line it could not read',
+  parseMonthlyVolumes('Total\n500\nDth').skipped, ['Total', 'Dth']);
+check('a bare year is a number, because nothing says otherwise',
+  parseMonthlyVolumes('2027').volumes, [2027]);
+
 check('a label in front is ignored and the number taken from the end',
   parseMonthlyVolumes('Month 1: 3100 Dth\nMonth 2: 2,780 Dth').volumes, [3100, 2780]);
 check('so is a unit after it', parseMonthlyVolumes('3,100 Dth').volumes, [3100]);
