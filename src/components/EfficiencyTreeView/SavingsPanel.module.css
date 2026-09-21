@@ -636,8 +636,11 @@
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--color-border-light);
+  padding: 0.6rem 0.75rem 0.75rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  min-width: 0;
 }
 
 .volumeHead {
@@ -658,41 +661,9 @@
    term is sixty boxes, and a wall of them that has to be dragged sideways is
    one nobody checks. The boxes stay wide enough for a six figure volume, so
    how many land on a row is whatever the column can fit. */
-.volumeGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr));
-  gap: 0.3rem 0.4rem;
-}
-
-.volumeCell {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-  min-width: 0;
-}
-
-.volumeMonth,
-.volumeMonthShaped {
-  font-size: 0.64rem;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.volumeMonth {
-  color: var(--color-text);
-}
-
 /* A month still on the shape reads quieter than one somebody has answered
    for, so the grid shows at a glance how much of the term is actually
    filled in. */
-.volumeMonthShaped {
-  color: var(--color-text-muted);
-  font-weight: 600;
-}
-
 /* Same job as the curve and flat flags, and deliberately the quietest of
    the three: a shaped volume is a derived number, but unlike the flat price
    it is derived from something the user typed. */
@@ -923,4 +894,130 @@
   font-size: 0.66rem;
   font-weight: 400;
   color: var(--color-text-muted);
+}
+
+/* ── the consumption calendar ───────────────────────────────────────────
+   A row per month and a column per year, which is the shape consumption
+   arrives in off a bill. It scrolls sideways rather than wrapping, because
+   a year that wrapped onto a second line would stop being a column, and
+   the month names stay put while it does - a box of figures with the
+   month scrolled off the side is a box of figures nobody can read. */
+.calendarWrap {
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.calendarTable {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.7rem;
+}
+
+.calendarTable th,
+.calendarTable td {
+  padding: 0.15rem 0.3rem;
+  white-space: nowrap;
+}
+
+.calendarCorner,
+.calendarMonth {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--color-surface);
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  border-right: 1px solid var(--color-border);
+  min-width: 5.5rem;
+}
+
+.calendarCorner {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.calendarYear,
+.calendarYearTerm {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border);
+  min-width: 6rem;
+}
+
+/* The years the term runs through. The table is laid out by the calendar
+   while the volumes under it are tied to the term, so which columns are the
+   deal is the one thing the calendar cannot say on its own. Same blue the
+   charts and the year table use for "this contract". */
+.calendarYearTerm {
+  color: #075985;
+  border-bottom: 2px solid #0369A1;
+}
+
+.calendarCell,
+.calendarCellTerm,
+.calendarEmpty {
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+/* The term's own cells. Enough tint to read as a block at a glance - the
+   run from the month the term opens to the month it closes - because on a
+   calendar the deal is a diagonal rather than a column and nothing else on
+   the table says where it starts. */
+.calendarCellTerm {
+  background: #EFF6FF;
+}
+
+.calendarEmpty {
+  background: var(--color-surface-alt);
+}
+
+.calendarTable tbody tr:last-child td,
+.calendarTable tbody tr:last-child th {
+  border-bottom: none;
+}
+
+.volumeInput {
+  width: 100%;
+  min-width: 5rem;
+  padding: 0.15rem 0.3rem;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+}
+
+.volumeInput::placeholder {
+  color: var(--color-text-muted);
+  opacity: 0.75;
+}
+
+.volumeInput:hover {
+  border-color: var(--color-border);
+}
+
+.volumeInput:focus {
+  outline: none;
+  border-color: #0369A1;
+  background: var(--color-surface);
+  box-shadow: 0 0 0 2px rgba(3, 105, 161, 0.12);
+}
+
+/* Chromium puts spinners on a number input the moment it is hovered, and
+   they eat the last digit of a six-figure volume. */
+.volumeInput::-webkit-outer-spin-button,
+.volumeInput::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.volumeInput {
+  appearance: textfield;
+  -moz-appearance: textfield;
 }
