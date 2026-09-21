@@ -56,6 +56,48 @@ eq(overlaps, [], 'no two boxes overlap');
 const outside = layout.nodes.filter(n => n.x < 0 || n.y < 0 || n.x + n.w > layout.width || n.y + n.h > layout.height);
 eq(outside.map(n => n.id), [], 'every box is inside the canvas');
 
+// ── a box is as tall as what it has to say ───────────────────────────────
+
+// Boxes list the services tagged onto the step, so a step with six of them
+// needs a taller box than its neighbours — and the row below has to be
+// pushed down by the difference rather than drawn over.
+const tagged = normalizeTree({
+  rootId: 'a',
+  nodes: {
+    a: { id: 'a', title: 'A', branches: [{ id: 'b1', label: 'go', to: 'b' }, { id: 'b2', label: 'or', to: 'c' }] },
+    b: { id: 'b', title: 'B', services: ['One', 'Two', 'Three'], branches: [{ id: 'b1', label: 'on', to: 'd' }] },
+    c: { id: 'c', title: 'C', branches: [{ id: 'b1', label: 'on', to: 'd' }] },
+    d: { id: 'd', title: 'D', branches: [] },
+  },
+});
+const tall = layoutTree(tagged, { heightOf: (node) => LAYOUT.nodeHeight + (node.services?.length || 0) * 15 });
+eq(tall.byId.get('b').h, LAYOUT.nodeHeight + 45, 'a step that lists three services gets the room for them');
+eq(tall.byId.get('c').h, LAYOUT.nodeHeight, 'and a step with none keeps the standard height');
+eq(tall.byId.get('b').y, tall.byId.get('c').y, 'boxes in a row hang from the same top edge');
+eq(tall.byId.get('d').y, tall.byId.get('b').y + tall.byId.get('b').h + LAYOUT.vGap,
+  'the row below clears the tallest box above it, not the standard one');
+ok(tall.height >= tall.byId.get('d').y + tall.byId.get('d').h + LAYOUT.padding,
+  'and the canvas grows to hold it');
+ok(tall.edges.filter(e => !e.back).every(e => e.y1 === tall.byId.get(e.fromId).y + tall.byId.get(e.fromId).h),
+  'arrows still leave the bottom edge of the box they belong to');
+
+const tallOverlaps = [];
+for (let i = 0; i < tall.nodes.length; i += 1) {
+  for (let j = i + 1; j < tall.nodes.length; j += 1) {
+    const a = tall.nodes[i], b = tall.nodes[j];
+    const apart = a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y;
+    if (!apart) tallOverlaps.push(`${a.id}/${b.id}`);
+  }
+}
+eq(tallOverlaps, [], 'and no two boxes overlap once the heights differ');
+
+// A height the caller got wrong can't be allowed to shrink a box to nothing.
+const floored = layoutTree(tagged, { heightOf: () => 4 });
+ok(floored.nodes.every(n => n.h === LAYOUT.nodeHeight), 'a height below the standard one is ignored');
+const broken = layoutTree(tagged, { heightOf: () => NaN });
+ok(broken.nodes.every(n => n.h === LAYOUT.nodeHeight), 'and so is one that is not a number');
+eq(layoutTree(tagged).byId.get('b').h, LAYOUT.nodeHeight, 'no heightOf at all leaves every box standard');
+
 // ── arrows ───────────────────────────────────────────────────────────────
 
 eq(layout.edges.length, Object.values(tree.nodes).reduce((n, node) => n + node.branches.filter(b => b.to).length, 0),
