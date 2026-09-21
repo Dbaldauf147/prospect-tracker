@@ -159,7 +159,8 @@ function chipHtml(text, status) {
 }
 
 // One headline KPI - the tab's KpiTile: uppercase label, big number, the
-// status chip beside it, then the arithmetic behind the figure.
+// chip beside it (the tab's status verdict; in the email, the figure's
+// share of its target), then the arithmetic behind the figure.
 function kpiCardHtml(card) {
   const c = statusOf(card.status);
   const lines = (card.lines || []).map(

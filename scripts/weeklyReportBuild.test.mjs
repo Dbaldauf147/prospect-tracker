@@ -241,7 +241,8 @@ function fakeFetch(emails) {
   check('progress leads with the dollars sold', p.kpiCards[0].value, '$400,000');
   check('coverage divides the same stage totals the dashboard holds',
     p.kpiCards[1].value, '1.78×');
-  check('and says what it is a share of', p.kpiCards[1].lines[0], '55.5% of the 3.21× goal');
+  check('with its share of the goal beside it', p.kpiCards[1].chip, '55.5%');
+  check('and says what it is a share of', p.kpiCards[1].lines[0], 'of the 3.21× goal');
 
   // The two history series. The reported week is the last point in each,
   // so the figures the email leads with are the same ones the change lists
