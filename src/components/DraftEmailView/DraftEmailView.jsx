@@ -29,6 +29,7 @@ import { useOppsRecords, useClientFlagMaps } from '../../utils/rosterHooks';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import styles from './DraftEmailView.module.css';
 import { primarySubject, withSubjects } from '../../utils/campaignSubjects';
+import { responseRateOf } from '../../utils/campaignContactHold';
 
 // Register an <hr> divider blot once so the editor can hold a horizontal
 // page-break line (inserted from the Insert menu). Quill drops any tag that
@@ -1870,12 +1871,14 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
 
   // Recompute the campaign summary counts from its roster after a merge,
   // mirroring EmailCampaignView.deriveCounts so both places agree. totalEmails
-  // (real emails found by subject search) is left untouched.
+  // (real emails found by subject search) is left untouched. The rate comes
+  // from the shared helper for the same reason: contacts on "Hold off" are
+  // out of it there, so they have to be out of it here too.
   function deriveCampaignCounts(contacts) {
     const list = contacts || [];
     const sent = list.filter(c => !!c.sentDate).length;
     const replies = list.filter(c => c.replied).length;
-    const responseRate = sent > 0 ? parseFloat(((replies / sent) * 100).toFixed(1)) : 0;
+    const responseRate = responseRateOf(list);
     return { totalContacts: list.length, sent, replies, uniqueRecipients: sent, uniqueRepliers: replies, responseRate };
   }
 

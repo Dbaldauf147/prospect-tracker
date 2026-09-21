@@ -20,6 +20,7 @@ import { brandFromDomain } from '../../utils/companyGuess';
 import { deliveryStatus, DELIVERY, DELIVERY_LABEL, DELIVERY_TITLE } from '../../utils/deliveryStatus';
 import {
   isCampaignActive, isCampaignPaused, campaignPauseUntil, CAMPAIGN_PAUSE_DAYS,
+  campaignSendStats,
 } from '../../utils/campaignOutreach';
 import {
   campaignContactsCsv, campaignsSummaryCsv, contactStatusLabel, eventStatusLabel,
@@ -35,6 +36,7 @@ import {
 import { followUpInfo, followUpLabel } from '../../utils/campaignFollowUp';
 import {
   contactOutreach, canEmailContact, outreachCounts, outreachPatch, CONTACT_HOLD_DAYS,
+  rateBase, responseRateOf,
 } from '../../utils/campaignContactHold';
 import {
   findContactRows, lookupSummary, lookupSuggestions, LOOKUP_MIN_CHARS,
@@ -76,7 +78,7 @@ const CONTACT_COLUMNS = [
     label: 'Outreach',
     sortKey: 'outreach',
     width: 120,
-    title: 'Whether this contact is to be emailed. "Hold off" parks them until a date and then lifts on its own; "Avoid" keeps them off every send until you clear it. Either way they stay in the campaign with their history - they are just left out of "Add unsent to Draft".',
+    title: 'Whether this contact is to be emailed. "Hold off" parks them until a date and then lifts on its own; "Avoid" keeps them off every send until you clear it. Either way they stay in the campaign with their history - they are just left out of "Add unsent to Draft". A held contact also comes out of the campaign\u2019s % Sent and Response Rate while the hold lasts, so parking somebody never counts as a send owed or a reply missing.',
   },
   {
     key: 'tracking',
@@ -383,13 +385,19 @@ export function EmailCampaignView({ openSubject, onOpened }) {
 
   // Derive the summary counts from the campaign's own roster so the numbers
   // reflect everyone in the campaign, not just whoever the live search
-  // returned. Response rate is measured against the contacts actually emailed.
+  // returned.
+  //
+  // The counts are the whole roster: sent is everybody emailed, replies is
+  // everybody who wrote back. The RATE is not - it is measured over the
+  // contacts this campaign is actually working, with anybody on "Hold off"
+  // left out of both sides of it, because a parked contact is neither a
+  // send owed nor a silence to answer for (rateBase, campaignContactHold).
   function deriveCounts(contacts) {
     const list = contacts || [];
     const totalContacts = list.length;
     const sent = list.filter(wasSent).length;
     const replies = list.filter(c => c.replied).length;
-    const responseRate = sent > 0 ? parseFloat(((replies / sent) * 100).toFixed(1)) : 0;
+    const responseRate = responseRateOf(list);
     return { totalContacts, sent, replies, uniqueRecipients: sent, uniqueRepliers: replies, responseRate };
   }
 
@@ -739,12 +747,21 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   // row rather than the things HubSpot reports. Stored on the contact and
   // preserved across refreshes (mergeContacts keeps the roster entry and only
   // refreshes its send/reply detail); persisted for saved campaigns.
-  function patchContact(index, patch) {
+  //
+  // `recount` re-derives the campaign's summary figures from the patched
+  // roster. Most of what this function writes (a note, an RSVP) says nothing
+  // about the numbers, but the outreach state does: the response rate is
+  // measured with the held contacts taken out, so parking somebody has to
+  // move the rate then and there rather than waiting for the next refresh.
+  function patchContact(index, patch, { recount = false } = {}) {
     if (!results) return;
     const updated = results.contacts.map((c, i) => (i === index ? { ...c, ...patch } : c));
-    setResults({ ...results, contacts: updated });
+    const counts = recount ? deriveCounts(updated) : null;
+    setResults({ ...results, contacts: updated, ...counts });
     if (viewingSaved != null) {
-      saveCampaigns(savedCampaigns.map((c, i) => (i === viewingSaved ? { ...c, contacts: updated } : c)));
+      saveCampaigns(savedCampaigns.map((c, i) => (i === viewingSaved
+        ? { ...c, contacts: updated, ...counts }
+        : c)));
     }
   }
 
@@ -760,7 +777,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   function setContactOutreach(index, state) {
     const c = results?.contacts?.[index];
     if (!c) return;
-    patchContact(index, outreachPatch(c, state));
+    patchContact(index, outreachPatch(c, state), { recount: true });
   }
 
   // Move the date a hold lifts on. Clearing the box holds the contact until
@@ -768,7 +785,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   // "no end yet", and a contact quietly rejoining the next send because a
   // date got deleted is the one outcome worth ruling out.
   function setContactHoldUntil(index, value) {
-    patchContact(index, { outreach: 'hold', holdUntil: value || '' });
+    patchContact(index, { outreach: 'hold', holdUntil: value || '' }, { recount: true });
   }
 
   // The free-text note on a row. Committed on blur, not per keystroke: each
@@ -1356,6 +1373,24 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     () => outreachCounts(displayResults?.contacts),
     [displayResults?.contacts],
   );
+
+  // What the percentages are measured over: the same roster with the held
+  // contacts taken out of both sides. Live, like holdStats, so a hold that
+  // ran out overnight is back in the figures this morning.
+  const rateStats = useMemo(
+    () => rateBase(displayResults?.contacts),
+    [displayResults?.contacts],
+  );
+
+  // One sentence, written once, for both places the response rate is
+  // printed. A rate whose denominator is not the "sent" figure beside it
+  // has to say so, or it reads as a bug.
+  const responseRateTitle = useMemo(() => {
+    const plural = (n) => (n === 1 ? '' : 's');
+    const head = `${rateStats.replies} of the ${rateStats.sent} contact${plural(rateStats.sent)} counted here replied.`;
+    if (rateStats.onHold === 0) return head;
+    return `${head} ${rateStats.onHold} contact${plural(rateStats.onHold)} on "Hold off" ${rateStats.onHold === 1 ? 'is' : 'are'} left out of the rate: nobody is waiting on a parked contact to reply. They rejoin it on their own when the hold lifts.`;
+  }, [rateStats]);
 
   // How many of the roster arrived on their own rather than being typed in.
   // Worth a number on the stat line: it is the difference between a list
@@ -2138,7 +2173,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 <span style={{ color: 'var(--color-text-muted)' }}> · </span>
                 <strong style={{ color: '#10B981' }}>{displayResults.uniqueRepliers}</strong> replies
                 <span style={{ color: 'var(--color-text-muted)' }}> · </span>
-                <strong style={{ color: '#7C3AED' }}>{displayResults.responseRate}%</strong> response
+                <strong style={{ color: '#7C3AED' }} title={responseRateTitle}>{displayResults.responseRate}%</strong> response
                 <span style={{ color: 'var(--color-text-muted)' }}> · </span>
                 <strong style={{ color: 'var(--color-text)' }}>{displayResults.totalContacts ?? displayResults.contacts?.length ?? displayResults.totalEmails}</strong> contacts
                 {pulledIn > 0 && (
@@ -2187,7 +2222,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
             </div>
             <div style={{ padding: '0.75rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', borderLeft: '3px solid #7C3AED' }}>
               <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Response Rate</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: displayResults.responseRate >= 20 ? '#10B981' : displayResults.responseRate >= 10 ? '#F59E0B' : '#DC2626' }}>{displayResults.responseRate}%</div>
+              <div title={responseRateTitle} style={{ fontSize: '1.4rem', fontWeight: 700, color: displayResults.responseRate >= 20 ? '#10B981' : displayResults.responseRate >= 10 ? '#F59E0B' : '#DC2626' }}>{displayResults.responseRate}%</div>
             </div>
             <div style={{ padding: '0.75rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', borderLeft: '3px solid #94A3B8' }}>
               <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total Contacts</div>
@@ -2201,7 +2236,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Not To Email</div>
                 <div
                   style={{ fontSize: '1.4rem', fontWeight: 700, color: '#B45309' }}
-                  title={`${holdStats.blocked} contact${holdStats.blocked === 1 ? '' : 's'} left out of "Add unsent to Draft": ${holdStats.onHold} on hold, ${holdStats.avoided} marked Avoid. A hold lifts on its own on the date it names.`}
+                  title={`${holdStats.blocked} contact${holdStats.blocked === 1 ? '' : 's'} left out of "Add unsent to Draft": ${holdStats.onHold} on hold, ${holdStats.avoided} marked Avoid. A hold lifts on its own on the date it names, and while it lasts that contact is out of the % Sent and Response Rate figures too. Avoid is a decision about a person rather than a wait, so it leaves the percentages alone.`}
                 >
                   {holdStats.blocked}{' '}
                   <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>
@@ -2809,7 +2844,12 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               const subs = campaignSubjects(c);
               const sent = c.uniqueRecipients ?? 0;
               const total = c.totalContacts ?? c.contacts?.length ?? c.uniqueRecipients ?? 0;
-              const pctSent = total > 0 ? Math.round((sent / total) * 1000) / 10 : 0;
+              // One function for the percentage, shared with the Prospecting
+              // ladder and the CSV, so the held contacts come out of all
+              // three the same way.
+              const {
+                pct: pctSent, onHold: rowHeld, countedSent: rowSent, countedTotal: rowBase,
+              } = campaignSendStats(c);
               const paused = isCampaignPaused(c);
               const active = effectiveActive(c);
               const manualStatus = typeof c.manualActive === 'boolean';
@@ -2928,7 +2968,12 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                   <td colSpan={3} />
                 ) : (
                   <>
-                    <td style={{ padding: '0.5rem 0.6rem', textAlign: 'right', fontWeight: 600, color: 'var(--color-text)', whiteSpace: 'nowrap', verticalAlign: 'top' }}>{pctSent}%</td>
+                    <td
+                      title={rowHeld > 0
+                        ? `${rowSent} of the ${rowBase} contact${rowBase === 1 ? '' : 's'} this campaign is working have been sent to. ${rowHeld} on "Hold off" ${rowHeld === 1 ? 'is' : 'are'} left out until the hold lifts.`
+                        : `${sent} of the ${total} contact${total === 1 ? '' : 's'} on this campaign have been sent to.`}
+                      style={{ padding: '0.5rem 0.6rem', textAlign: 'right', fontWeight: 600, color: 'var(--color-text)', whiteSpace: 'nowrap', verticalAlign: 'top' }}
+                    >{pctSent}%</td>
                     <td style={{ padding: '0.5rem 0.6rem', textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap', verticalAlign: 'top', color: c.responseRate >= 20 ? '#10B981' : c.responseRate >= 10 ? '#F59E0B' : '#DC2626' }}>{c.responseRate}%</td>
                     <td style={{ padding: '0.5rem 0.6rem', textAlign: 'center', whiteSpace: 'nowrap', verticalAlign: 'top' }}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
