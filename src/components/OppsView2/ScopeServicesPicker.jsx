@@ -26,8 +26,8 @@ import { SERVICE_STATUS_COLORS } from '../../utils/serviceStatusColors';
 import { parseMulti } from '../common/columnLinks';
 import { splitServiceNames } from '../../utils/serviceNameList';
 import { collectAutoAdds } from '../../utils/serviceAutoAdd';
-import { collectAutoNa, isSoldStatus, autoNaTitle } from '../../utils/serviceAutoNa';
-import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
+import { collectAutoNa, isSoldStatus } from '../../utils/serviceAutoNa';
+import { buildAutoStatuses, scopeStatusTitle } from '../../utils/scopeServiceStatus';
 import { scopeCopyText } from '../../utils/scopeCopyText';
 import { scopeCopyHtml } from '../../utils/scopeCopyRich';
 import { writeRichCopy } from '../../utils/clipboardCopy';
@@ -157,13 +157,6 @@ function CommodityRow({ value, onChange, settings, updateSettings }) {
   );
 }
 
-// Which stage wins when several of an account's opps name the same service.
-// Mirrors the company card's ordering: closed-won beats in-flight beats lost.
-const STAGE_PRIORITY = {
-  'Sold': 4, 'Verbal': 3, 'Quoted': 3, 'Quoting': 2,
-  'Qualifying': 2, 'Lead': 1, 'Not Started': 1, 'Not Sold': 0,
-};
-
 // Bucket in the selection summary for anything in Scope that the board
 // doesn't offer — a hidden service, or free text typed straight into the cell.
 const OFF_BOARD = 'Not on the board';
@@ -171,35 +164,6 @@ const OFF_BOARD = 'Not on the board';
 // Scope → service matching lives in src/utils/scopeMatch.js, shared with
 // the company card and the Pipeline coverage table so all three boards
 // agree on which services a Scope names.
-
-// The automatic status per service: the best stage among the account's opps
-// that name it. This is the fallback the company card shows when no manual
-// status has been set, so the two agree on what "auto" means.
-function buildAutoStatuses({ account, oppRows, items, currentOppId }) {
-  const out = new Map();
-  const name = String(account || '').trim();
-  if (!name) return out;
-
-  for (const row of oppRows || []) {
-    // The opp being edited is excluded: its own Scope is what this board is
-    // choosing, so counting it would echo the current selection back as if
-    // it were history.
-    if (currentOppId != null && row?._id === currentOppId) continue;
-    if (!companiesMatch(row?.Account, name)) continue;
-    const stage = String(row?.Stage || '').trim();
-    if (!stage) continue;
-    for (const token of scopeTokens(row?.Scope)) {
-      for (const item of items) {
-        if (!scopeTokenMatchesService(token, item)) continue;
-        const existing = out.get(item);
-        const pri = STAGE_PRIORITY[stage] ?? 1;
-        const existingPri = existing ? (STAGE_PRIORITY[existing] ?? 1) : -1;
-        if (pri > existingPri) out.set(item, stage);
-      }
-    }
-  }
-  return out;
-}
 
 // The board's cards: the user's own category layout (falling back to the
 // seed catalog), plus a trailing card for anything in the column's linked
@@ -233,15 +197,12 @@ function StatusSelect({ item, manual, auto, autoNa, onSet, disabled, disabledRea
   const naBySale = !manual && !auto && autoNa?.length > 0;
   const effective = manual || auto || (naBySale ? 'N/A' : '-');
   const colors = STATUS_COLORS[effective] || {};
-  const title = disabled
-    ? disabledReason
-    : manual
-      ? `Manual override: ${manual}.${auto ? ` Automatic status from another opp: ${auto}.` : ' No matching opp, so the automatic status is blank.'} Pick "- (auto)" to revert.`
-      : auto
-        ? `Automatic status from another opp on this account: ${auto}. Pick a status to set a manual override.`
-        : naBySale
-          ? autoNaTitle(item, autoNa)
-          : 'No status yet. Pick one to set it on the company card.';
+  // The wording lives in utils/scopeServiceStatus, with the layering rule
+  // it describes, so the estimate table's status column explains the same
+  // answer in the same words.
+  const title = scopeStatusTitle({
+    item, manual, auto, autoNa, disabledReason: disabled ? disabledReason : '',
+  });
 
   return (
     <select

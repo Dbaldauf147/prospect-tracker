@@ -119,7 +119,7 @@ import {
 import { computeListFlags } from '../../utils/listFlags';
 import { isActiveOppStage } from '../../utils/targetAccountOpps';
 import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
-import { FRAMEWORKS } from '../../data/enums';
+import { FRAMEWORKS, SERVICE_STATUSES } from '../../data/enums';
 import { buildTypeOptions } from '../../utils/prospectOptions';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
 import { STAGE_BANDS } from '../../utils/stageBands';
@@ -157,6 +157,16 @@ import { oppDealCounts, dealCountRows, COUNT_SOURCE_OPP, COUNT_SOURCE_COMPANY } 
 // One read of the saved rate card, for the Deal Size popup's Refresh button.
 import { fetchUserSettings } from '../../utils/userSettingsSync';
 import { companiesMatch } from '../../utils/listFlags';
+// Where this account stands on each service in the scope, read the same way
+// the Scope services board reads it - see utils/scopeServiceStatus for the
+// layering (a picked status, then another opp's stage, then an N/A implied
+// by a sale).
+import { scopeServiceStatuses, scopeStatusTitle } from '../../utils/scopeServiceStatus';
+import { SERVICE_STATUS_COLORS } from '../../utils/serviceStatusColors';
+// The Columns menu every other table on the site carries, and the layout it
+// saves, so the estimate table's columns are picked the same way.
+import { ColumnToggle } from '../common/ColumnToggle';
+import { useTableColumnPrefs } from '../../hooks/useTableColumnPrefs';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -2466,12 +2476,113 @@ function ScopeGapNotes({ gaps, typeableUnits = null }) {
   );
 }
 
+// The columns the estimate table can show, in the order it shows them.
+//
+// Service always shows: it is what every other column on the row is about,
+// and a table of money with nothing saying what the money is for is not a
+// table. The rest are the user's to switch off - a deal being sized off the
+// middle of the range has no use for the two ends of it, and the status
+// column is history rather than price.
+const SCOPE_FEE_COLUMNS = [
+  { key: 'service', label: 'Service' },
+  { key: 'status', label: 'Scope status' },
+  { key: 'low', label: 'Low' },
+  { key: 'high', label: 'High' },
+  { key: 'avg', label: 'Avg' },
+];
+const SCOPE_FEE_LOCKED = ['service'];
+// Without an account's statuses to show there is no such column to offer,
+// so the picker doesn't list one.
+const SCOPE_FEE_COLUMNS_NO_STATUS = SCOPE_FEE_COLUMNS.filter(c => c.key !== 'status');
+
+// Where the account stands on this service, on the row that prices it.
+//
+// The same control the Scope services board carries, in a table cell: the
+// effective status, "- (auto)" to drop a manual override back to whatever
+// the account's opps imply, and an accent border marking a row that carries
+// an override rather than a derived value. Derived statuses are italic, as
+// they are on the board.
+//
+// Read-only where there is no company record to write to - the status is the
+// card's, so with no card there is nothing to save against, and saying why
+// beats silently dropping the edit.
+function ScopeStatusCell({ item, reading, onSet, disabledReason }) {
+  const manual = reading?.manual || '';
+  const auto = reading?.auto || '';
+  const autoNa = reading?.autoNa || null;
+  const effective = reading?.status || '-';
+  const colors = SERVICE_STATUS_COLORS[effective] || {};
+  const derived = !!reading?.derived;
+  const title = scopeStatusTitle({
+    item, manual, auto, autoNa, disabledReason: onSet ? '' : disabledReason,
+  });
+  const paint = {
+    fontSize: '0.62rem', fontWeight: 700, borderRadius: 3,
+    fontFamily: 'inherit',
+    background: colors.bg || 'var(--color-surface)',
+    color: colors.color || '#94A3B8',
+    fontStyle: derived ? 'italic' : 'normal',
+  };
+
+  if (!onSet) {
+    return (
+      <span
+        title={title}
+        style={{ ...paint, display: 'inline-block', padding: '1px 5px', border: '1px solid var(--color-border)' }}
+      >{effective}</span>
+    );
+  }
+  return (
+    <select
+      value={effective}
+      title={title}
+      onChange={(e) => { e.stopPropagation(); onSet(item, e.target.value); }}
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        ...paint, width: '100%', maxWidth: 104, padding: '0 1px', cursor: 'pointer',
+        border: `1px solid ${manual ? 'var(--color-accent)' : 'var(--color-border)'}`,
+      }}
+    >
+      {SERVICE_STATUSES.map(s => (
+        <option key={s} value={s}>{s === '-' ? '- (auto)' : s}</option>
+      ))}
+    </select>
+  );
+}
+
 function ScopeFeeTable({
   estimate, totals = null, selected = null, onToggle = null, onUse, refresh = null,
   // The units the caller has put a working box for above this table, which
   // is what decides where each red note sends you to fill one in.
   typeableUnits = null,
+  // Where this account stands on each of these services (see
+  // utils/scopeServiceStatus): service name -> reading. Null where the
+  // caller has no account to read, and then the column isn't offered at all.
+  statuses = null,
+  // Saves a picked status to the company card. Null leaves the column
+  // read-only, and `statusHelp` is what it says instead.
+  onSetStatus = null,
+  statusHelp = '',
+  // For the Columns menu's saved layout: which columns are on, which are
+  // starred as the user's own default view. Local either way, and synced to
+  // the user's other machine when the caller passes settings through.
+  settings = null,
+  updateSettings = null,
 }) {
+  const hasStatus = !!statuses;
+  const columns = hasStatus ? SCOPE_FEE_COLUMNS : SCOPE_FEE_COLUMNS_NO_STATUS;
+  // One layout for both screens that draw this table (the Deal Size cell and
+  // the Lead prompt): it is the same table asking the same question, so
+  // hiding a column on one is hiding it on the other.
+  const cols = useTableColumnPrefs({
+    tableId: 'opps2-scope-fees',
+    columns,
+    alwaysVisible: SCOPE_FEE_LOCKED,
+    settings,
+    updateSettings,
+  });
+  const show = cols.isVisible;
+
   if (!estimate || !estimate.lines.length) return null;
   // The totals can be struck from a smaller set than the rows: a service
   // this deal is not charging for is still in the scope, and an off service
@@ -2502,6 +2613,9 @@ function ScopeFeeTable({
   // deal is usually neither - so it is worth a column of its own rather
   // than being worked out in somebody's head one row at a time.
   const mid = (lo, hi) => ((lo || 0) + (hi || 0)) / 2;
+  // What the Year 1 total's label runs under: everything to the left of the
+  // money, whichever of those columns is showing.
+  const labelSpan = (picking ? 1 : 0) + 1 + (show('status') ? 1 : 0);
 
   return (
     <div style={{
@@ -2529,16 +2643,41 @@ function ScopeFeeTable({
             </span>
           ) : null}
         </span>
-        <ScopeRefreshButton refresh={refresh} />
+        <span style={{ display: 'flex', alignItems: 'center', gap: 10, flex: '0 0 auto' }}>
+          <ScopeRefreshButton refresh={refresh} />
+          {/* The same Columns menu the rest of the site carries: star the
+              columns you work from, hide the ones you don't, and Reset puts
+              your starred set back. */}
+          <ColumnToggle
+            align="right"
+            columns={cols.columns}
+            visibleCols={cols.visibleCols}
+            starredCols={cols.starredCols}
+            removedColumns={cols.removedColumns}
+            alwaysVisible={SCOPE_FEE_LOCKED}
+            colNames={{}}
+            onToggle={cols.toggle}
+            onStar={cols.star}
+            onRemove={cols.remove}
+            onRestore={cols.restore}
+            onResetColumns={cols.reset}
+          />
+        </span>
       </div>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
             {picking ? <th style={{ ...head, width: 20 }} aria-label="In the total" /> : null}
             <th style={{ ...head, textAlign: 'left' }}>Service</th>
-            <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="The bottom of what the rate card says this service comes to">Low</th>
-            <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="The top of what the rate card says this service comes to">High</th>
-            <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="Halfway between the low and the high. Blank where the card charges one fee whatever the deal, because then there is no spread to take the middle of.">Avg</th>
+            {show('status') ? (
+              <th
+                style={{ ...head, textAlign: 'left', paddingLeft: 10, width: 112 }}
+                title="Where this account already stands on the service, from the company card: a status somebody picked, or the stage of another opp that names it, or an N/A implied by something the account has already bought. Derived ones show in italic."
+              >Scope status</th>
+            ) : null}
+            {show('low') ? <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="The bottom of what the rate card says this service comes to">Low</th> : null}
+            {show('high') ? <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="The top of what the rate card says this service comes to">High</th> : null}
+            {show('avg') ? <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="Halfway between the low and the high. Blank where the card charges one fee whatever the deal, because then there is no spread to take the middle of.">Avg</th> : null}
           </tr>
         </thead>
         <tbody>
@@ -2601,64 +2740,87 @@ function ScopeFeeTable({
                     <div style={{ color: '#94A3B8', fontSize: '0.7rem' }}>per year</div>
                   ) : null)}
                 </td>
+                {/* What the account already says about this service. A deal
+                    is sized differently when the service beside the figure
+                    was lost last year, or is already sold and in the
+                    contract - and that answer lived two screens away on the
+                    company card. */}
+                {show('status') ? (
+                  <td style={{ ...cell, paddingLeft: 10, paddingTop: 3 }}>
+                    <ScopeStatusCell
+                      item={line.name}
+                      reading={statuses?.get(line.name)}
+                      onSet={onSetStatus}
+                      disabledReason={statusHelp}
+                    />
+                  </td>
+                ) : null}
                 {line.priced ? (
                   <>
-                    <td style={num}>
-                      {/* A $0 standing in for a fee nobody could work out is
-                          the whole problem this colour solves: it looks
-                          exactly like a service that is free. */}
-                      <strong
-                        style={{ color: gapped ? GAP_INK : '#1E293B' }}
-                        title={gapped
-                          ? `Not a price: ${line.note}. This service is missing from the total below.`
-                          : (off
-                            ? 'What this service would have been worth. This deal is not charging for it, so it is not in the total.'
-                            : 'Worked out from this service’s basis and rate')}
+                    {show('low') ? (
+                      <td style={num}>
+                        {/* A $0 standing in for a fee nobody could work out is
+                            the whole problem this colour solves: it looks
+                            exactly like a service that is free. */}
+                        <strong
+                          style={{ color: gapped ? GAP_INK : '#1E293B' }}
+                          title={gapped
+                            ? `Not a price: ${line.note}. This service is missing from the total below.`
+                            : (off
+                              ? 'What this service would have been worth. This deal is not charging for it, so it is not in the total.'
+                              : 'Worked out from this service’s basis and rate')}
+                        >
+                          {money(line.fee)}
+                        </strong>
+                      </td>
+                    ) : null}
+                    {show('high') ? (
+                      <td
+                        style={num}
+                        title={line.feeHigh > line.fee ? undefined : 'One fee, not a range: the card charges this whatever the deal.'}
                       >
-                        {money(line.fee)}
-                      </strong>
-                    </td>
-                    <td
-                      style={num}
-                      title={line.feeHigh > line.fee ? undefined : 'One fee, not a range: the card charges this whatever the deal.'}
-                    >
-                      <strong style={{ color: line.feeHigh > line.fee ? '#1E293B' : '#94A3B8' }}>
-                        {line.feeHigh > line.fee ? money(line.feeHigh) : '-'}
-                      </strong>
-                    </td>
+                        <strong style={{ color: line.feeHigh > line.fee ? '#1E293B' : '#94A3B8' }}>
+                          {line.feeHigh > line.fee ? money(line.feeHigh) : '-'}
+                        </strong>
+                      </td>
+                    ) : null}
                     {/* The middle of this service's range, on the row that
                         states the two ends of it, so the figure a quote
                         actually lands on doesn't have to be worked out
                         from the two beside it. */}
-                    <td
-                      style={num}
-                      title={line.feeHigh > line.fee
-                        ? (gapped
-                          ? `Not a price: ${line.note}. This service is missing from the total below.`
-                          : 'Halfway between this service\u2019s low and high')
-                        : 'One fee, not a range: the average is the figure under Low.'}
-                    >
-                      <strong style={{
-                        color: line.feeHigh > line.fee
-                          ? (gapped ? GAP_INK : '#1E293B')
-                          : '#94A3B8',
-                      }}>
-                        {line.feeHigh > line.fee ? money(mid(line.fee, line.feeHigh)) : '-'}
-                      </strong>
-                    </td>
+                    {show('avg') ? (
+                      <td
+                        style={num}
+                        title={line.feeHigh > line.fee
+                          ? (gapped
+                            ? `Not a price: ${line.note}. This service is missing from the total below.`
+                            : 'Halfway between this service’s low and high')
+                          : 'One fee, not a range: the average is the figure under Low.'}
+                      >
+                        <strong style={{
+                          color: line.feeHigh > line.fee
+                            ? (gapped ? GAP_INK : '#1E293B')
+                            : '#94A3B8',
+                        }}>
+                          {line.feeHigh > line.fee ? money(mid(line.fee, line.feeHigh)) : '-'}
+                        </strong>
+                      </td>
+                    ) : null}
                   </>
                 ) : (
                   <>
-                    <td
-                      style={{ ...num, color: gapped ? GAP_INK : '#94A3B8' }}
-                      title={gapped
-                        ? `${line.note}. This service is missing from the total below.`
-                        : (off
-                          ? 'This deal is not charging for it, so it needs no price.'
-                          : 'No price on the Services Pricing tab yet')}
-                    >-</td>
-                    <td style={{ ...num, color: gapped ? GAP_INK : '#94A3B8' }}>-</td>
-                    <td style={{ ...num, color: gapped ? GAP_INK : '#94A3B8' }}>-</td>
+                    {show('low') ? (
+                      <td
+                        style={{ ...num, color: gapped ? GAP_INK : '#94A3B8' }}
+                        title={gapped
+                          ? `${line.note}. This service is missing from the total below.`
+                          : (off
+                            ? 'This deal is not charging for it, so it needs no price.'
+                            : 'No price on the Services Pricing tab yet')}
+                      >-</td>
+                    ) : null}
+                    {show('high') ? <td style={{ ...num, color: gapped ? GAP_INK : '#94A3B8' }}>-</td> : null}
+                    {show('avg') ? <td style={{ ...num, color: gapped ? GAP_INK : '#94A3B8' }}>-</td> : null}
                   </>
                 )}
               </tr>
@@ -2668,7 +2830,7 @@ function ScopeFeeTable({
         <tfoot>
           <tr>
             <td
-              colSpan={picking ? 2 : 1}
+              colSpan={labelSpan}
               style={{ ...cell, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}
             >
               Year 1 total
@@ -2704,62 +2866,68 @@ function ScopeFeeTable({
                 );
               })()}
             </td>
-            <td style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}>
-              <strong style={{ color: '#1E293B' }}>{money(sums.year1Total)}</strong>
-              {onUse ? (
-                <div>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); onUse(sums.year1Total); }}
-                    title="Put the low end of this estimate in the Deal Size box"
-                    style={useLink}
-                  >Use low</button>
-                </div>
-              ) : null}
-            </td>
-            <td
-              style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}
-              title={sums.ranged ? undefined : 'No service in this scope is priced as a range, so the total is one figure.'}
-            >
-              <strong style={{ color: sums.ranged ? '#1E293B' : '#94A3B8' }}>
-                {sums.ranged ? money(sums.year1TotalHigh) : '-'}
-              </strong>
-              {onUse && sums.ranged ? (
-                <div>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); onUse(sums.year1TotalHigh); }}
-                    title="Put the high end of this estimate in the Deal Size box"
-                    style={useLink}
-                  >Use high</button>
-                </div>
-              ) : null}
-            </td>
+            {show('low') ? (
+              <td style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}>
+                <strong style={{ color: '#1E293B' }}>{money(sums.year1Total)}</strong>
+                {onUse ? (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); onUse(sums.year1Total); }}
+                      title="Put the low end of this estimate in the Deal Size box"
+                      style={useLink}
+                    >Use low</button>
+                  </div>
+                ) : null}
+              </td>
+            ) : null}
+            {show('high') ? (
+              <td
+                style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}
+                title={sums.ranged ? undefined : 'No service in this scope is priced as a range, so the total is one figure.'}
+              >
+                <strong style={{ color: sums.ranged ? '#1E293B' : '#94A3B8' }}>
+                  {sums.ranged ? money(sums.year1TotalHigh) : '-'}
+                </strong>
+                {onUse && sums.ranged ? (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); onUse(sums.year1TotalHigh); }}
+                      title="Put the high end of this estimate in the Deal Size box"
+                      style={useLink}
+                    >Use high</button>
+                  </div>
+                ) : null}
+              </td>
+            ) : null}
             {/* The middle of the range, struck from the same services the
                 two totals beside it are struck from: whatever is ticked.
                 Untick a service this deal is not charging for and the
                 average moves with the low and the high, because an average
                 of money nobody is billing is not this deal's average. */}
-            <td
-              style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}
-              title={sums.ranged
-                ? 'Halfway between the low and high totals, over the services counted above'
-                : 'No service in this scope is priced as a range, so the average is the total itself.'}
-            >
-              <strong style={{ color: sums.ranged ? '#1E293B' : '#94A3B8' }}>
-                {sums.ranged ? money(mid(sums.year1Total, sums.year1TotalHigh)) : '-'}
-              </strong>
-              {onUse && sums.ranged ? (
-                <div>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); onUse(mid(sums.year1Total, sums.year1TotalHigh)); }}
-                    title="Put the middle of this estimate in the Deal Size box"
-                    style={useLink}
-                  >Use avg</button>
-                </div>
-              ) : null}
-            </td>
+            {show('avg') ? (
+              <td
+                style={{ ...num, borderTop: '1px solid var(--color-border-light)', paddingTop: 4 }}
+                title={sums.ranged
+                  ? 'Halfway between the low and high totals, over the services counted above'
+                  : 'No service in this scope is priced as a range, so the average is the total itself.'}
+              >
+                <strong style={{ color: sums.ranged ? '#1E293B' : '#94A3B8' }}>
+                  {sums.ranged ? money(mid(sums.year1Total, sums.year1TotalHigh)) : '-'}
+                </strong>
+                {onUse && sums.ranged ? (
+                  <div>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); onUse(mid(sums.year1Total, sums.year1TotalHigh)); }}
+                      title="Put the middle of this estimate in the Deal Size box"
+                      style={useLink}
+                    >Use avg</button>
+                  </div>
+                ) : null}
+              </td>
+            ) : null}
           </tr>
         </tfoot>
       </table>
@@ -3109,6 +3277,13 @@ function QuotedAmountCell({
   scopeNames = [], pricing = null, pricingBases = null, serviceOverrides = null,
   opp = null, prospects = null, updateProspect = null, onChangeOppField = null,
   onRefreshPricing = null,
+  // The account's other opps, for the status column in the estimate table:
+  // a service another deal has already quoted or sold carries that stage
+  // here, the same way the Scope services board reads it.
+  oppRows = EMPTY_SCOPE,
+  // The estimate table's own column layout rides in the user's settings
+  // like every other table's.
+  settings = null, updateSettings = null,
 }) {
   const [open, setOpen] = useState(false);
   const [draftAmount, setDraftAmount] = useState(value ?? '');
@@ -3248,6 +3423,51 @@ function QuotedAmountCell({
     }
   };
 
+  // Where this account already stands on each service in the scope. The
+  // same reading the Scope services board shows, on the rows that price
+  // them: a deal is sized differently when the service beside the figure
+  // was lost last year or is already sold and inside the contract, and that
+  // answer lived on a company card two screens from the number being typed.
+  //
+  // Only while the popup is open: it walks every opp on the account, and
+  // that is work a cell sitting in a table has no reason to do.
+  const scopeStatuses = useMemo(() => (open && scopeEstimate
+    ? scopeServiceStatuses({
+      services: scopeEstimate.lines.map(l => l.name),
+      account: String(opp?.['Account'] ?? '').trim(),
+      oppRows,
+      currentOppId: opp?._id,
+      manualStatuses: company?.servicesExplored,
+      serviceOverrides: freshCard ? freshCard.overrides : serviceOverrides,
+    })
+    : null), [open, scopeEstimate, opp, oppRows, company, freshCard, serviceOverrides]);
+
+  // A status belongs to the account, not to this deal, so it saves to the
+  // company card - the same record the services board writes to, so a status
+  // set here is the one that board shows.
+  const canSetStatus = !!company?.id && !!updateProspect;
+  const setScopeStatus = (name, next) => {
+    if (!canSetStatus) return;
+    const current = { ...(company.servicesExplored || {}) };
+    // The card can hold this service under a different spelling from the
+    // scope's ("bill payment" against "Bill payment"). Clear whichever key
+    // it is actually under, so "- (auto)" cannot leave an override behind
+    // that the row goes on showing.
+    const key = String(name || '').trim().toLowerCase();
+    for (const k of Object.keys(current)) {
+      if (k.trim().toLowerCase() === key) delete current[k];
+    }
+    // "- (auto)" removes the override rather than storing a dash, matching
+    // how the company card stores it.
+    if (next && next !== '-') current[name] = next;
+    updateProspect(company.id, { servicesExplored: current });
+  };
+  const statusHelp = !String(opp?.['Account'] ?? '').trim()
+    ? 'This opp has no Account, so there is no company record to save a status against.'
+    : !company
+      ? `No company record matches \u201c${String(opp?.['Account'] ?? '').trim()}\u201d: add the company on the Table view to set statuses here.`
+      : 'Status editing is unavailable on this screen.';
+
   // Price this scope again off the saved rate card.
   //
   // Everything the estimate reads arrives on a Firestore listener, so the
@@ -3385,10 +3605,16 @@ function QuotedAmountCell({
               // and the grey line under it are what get squeezed first
               // when the money columns take their share.
               //
+              // And once more for the scope status beside each service,
+              // for the same reason: a column that is 104px of dropdown
+              // comes out of the names unless the dialog finds it
+              // elsewhere. Hide it in the Columns menu and the width is
+              // simply room the names keep.
+              //
               // The vw ceiling is what makes it a size rather than a
               // number: on a laptop it is the figure, on anything smaller
               // it is the window minus a margin.
-              width: comparePerService ? 1280 : 1100,
+              width: comparePerService ? 1280 : 1180,
               maxWidth: '94vw',
               maxHeight: '92vh', overflowY: 'auto',
               boxShadow: '0 10px 30px rgba(0,0,0,0.18)',
@@ -3542,6 +3768,14 @@ function QuotedAmountCell({
                   onUse={(n) => setDraftAmount(formatQuotedAmountLive(String(Math.round(n))))}
                   refresh={refreshControl}
                   typeableUnits={typeableCountUnits}
+                  // Where the account stands on each of these services, and
+                  // - where there is a company card to write to - the pick
+                  // that changes it.
+                  statuses={scopeStatuses}
+                  onSetStatus={canSetStatus ? setScopeStatus : null}
+                  statusHelp={statusHelp}
+                  settings={settings}
+                  updateSettings={updateSettings}
                 />
                 <SiaTotalsOnlyCompare compare={scopeCompare} />
               </>
@@ -6247,6 +6481,10 @@ function LeadQuotedAmountModal({
   opp, onSave, onClose,
   scopeNames = null, pricing = null, pricingBases = null, serviceOverrides = null, prospects = null,
   updateProspect = null, onChangeOppField = null,
+  // The account's other opps, and the user's settings: the first is what
+  // the estimate table's status column reads a service's standing from, the
+  // second is where its column layout is kept.
+  oppRows = EMPTY_SCOPE, settings = null, updateSettings = null,
 }) {
   const [quotedAmount, setQuotedAmount] = useState(String(opp?.['Quoted Amount'] ?? ''));
   // Services this deal is not charging for. Held on the opp rather than in
@@ -6357,6 +6595,42 @@ function LeadQuotedAmountModal({
     }
   };
 
+  // Where this account already stands on each service being priced - the
+  // same reading the Scope services board shows. Worth having at exactly
+  // this moment: the figure being asked for is smaller when half the scope
+  // is already sold, and that was two screens away from this prompt.
+  const scopeStatuses = useMemo(() => (scopeEstimate
+    ? scopeServiceStatuses({
+      services: scopeEstimate.lines.map(l => l.name),
+      account: String(opp?.['Account'] ?? '').trim(),
+      oppRows,
+      currentOppId: opp?._id,
+      manualStatuses: company?.servicesExplored,
+      serviceOverrides,
+    })
+    : null), [scopeEstimate, opp, oppRows, company, serviceOverrides]);
+
+  // A status is the account's, so it saves to the company card rather than
+  // to this deal - the same record the services board writes to.
+  const canSetStatus = !!company?.id && !!updateProspect;
+  const setScopeStatus = (name, next) => {
+    if (!canSetStatus) return;
+    const current = { ...(company.servicesExplored || {}) };
+    // Cleared under whatever spelling the card holds it, so "- (auto)"
+    // can't leave an override behind that the row goes on showing.
+    const key = String(name || '').trim().toLowerCase();
+    for (const k of Object.keys(current)) {
+      if (k.trim().toLowerCase() === key) delete current[k];
+    }
+    if (next && next !== '-') current[name] = next;
+    updateProspect(company.id, { servicesExplored: current });
+  };
+  const statusHelp = !String(opp?.['Account'] ?? '').trim()
+    ? 'This opp has no Account, so there is no company record to save a status against.'
+    : !company
+      ? `No company record matches \u201c${String(opp?.['Account'] ?? '').trim()}\u201d: add the company on the Table view to set statuses here.`
+      : 'Status editing is unavailable on this screen.';
+
   function handleSave() {
     onSave({ quotedAmount: quotedAmount.trim() });
   }
@@ -6397,8 +6671,10 @@ function LeadQuotedAmountModal({
           // input and a sentence and the width would be empty. The same
           // table's Avg column buys the rest: the money columns grew by
           // one, and the service names are what they would have taken it
-          // from.
-          width: scopeEstimate ? 1060 : 560, maxWidth: '94vw',
+          // from. The scope status column is the latest to be paid for the
+          // same way - and the Columns menu hands the width back to the
+          // names on the deals that don't want it.
+          width: scopeEstimate ? 1140 : 560, maxWidth: '94vw',
           maxHeight: '92vh',
           background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
@@ -6463,6 +6739,13 @@ function LeadQuotedAmountModal({
             onToggle={onChangeOppField ? toggleService : null}
             onUse={(n) => setQuotedAmount(formatQuotedAmountLive(String(Math.round(n))))}
             typeableUnits={typeableCountUnits}
+            // What the account already says about each service, and - where
+            // there is a company card to write to - the pick that changes it.
+            statuses={scopeStatuses}
+            onSetStatus={canSetStatus ? setScopeStatus : null}
+            statusHelp={statusHelp}
+            settings={settings}
+            updateSettings={updateSettings}
           />
           {/* A deal with nothing in Scope has nothing to price, and saying so
               is more use than an empty panel — the scope is where the figure
@@ -14944,6 +15227,13 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 updateProspect={updateProspect}
                 onChangeOppField={(field, v) => updateOppField(row._id, field, v)}
                 onRefreshPricing={refreshRateCard}
+                // The rest of the page's opps, for the status column beside
+                // each service: what another deal on this account has
+                // already quoted, sold or lost is the context the figure is
+                // being decided in.
+                oppRows={records}
+                settings={settings}
+                updateSettings={updateSettings}
               />
             );
           }
@@ -16551,6 +16841,11 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             prospects={prospects}
             updateProspect={updateProspect}
             onChangeOppField={(column, v) => updateOppField(opp._id, column, v)}
+            // The account's other opps, for the standing each service
+            // already has, and the settings the table's columns are kept in.
+            oppRows={records}
+            settings={settings}
+            updateSettings={updateSettings}
             onSave={({ quotedAmount }) => {
               // Only push when the value actually changed so the undo
               // stack stays uncluttered with no-op snapshots.
