@@ -585,7 +585,7 @@ function recordToSave(fields) {
 }
 
 const EMPTY = {
-  company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
+  company: '', cdm: '', status: 'Inside Sales', type: '', vertical: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, numberOfAccounts: null,
   numberOfMeters: null, equipmentCount: null, annualMwh: null, sitesWithMandate: null,
   // The three headline figures off the Utility Lookup analysis: how much of
@@ -4992,6 +4992,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // added or renamed there shows up here, and a company keeps whatever
   // Type it already carries even if that one has since left the list.
   const typeOptions = useMemo(() => buildTypeOptions(prospects, settings), [prospects, settings]);
+  // Vertical's choices are the Dropdowns › Vertical list. A value no longer
+  // on that list (renamed or removed there) stays selectable on the company
+  // that already carries it, so opening the card doesn't blank it.
+  const verticalOptions = useMemo(() => {
+    const opts = getEffectiveDropdownLists(settings).find(l => l.key === 'vertical')?.options || [];
+    const current = String(fields.vertical || '').trim();
+    return current && !opts.includes(current) ? [...opts, current] : opts;
+  }, [settings, fields.vertical]);
 
   // Company name (lowercased) → the tracker record's status, so the
   // Portfolio Companies Status column can show where a mapped company
@@ -7669,6 +7677,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         <div class="info-item"><div class="info-label">Tier</div><div class="info-val">${f.tier || '-'}</div></div>
         <div class="info-item"><div class="info-label">Type</div><div class="info-val">${f.type || '-'}</div></div>
         <div class="info-item"><div class="info-label">Geography</div><div class="info-val">${f.geography || '-'}</div></div>
+        <div class="info-item"><div class="info-label">Vertical</div><div class="info-val">${f.vertical || '-'}</div></div>
         <div class="info-item"><div class="info-label">Public/Private</div><div class="info-val">${f.publicPrivate || '-'}</div></div>
         <div class="info-item"><div class="info-label">CDM</div><div class="info-val">${f.cdm || '-'}</div></div>
         <div class="info-item"><div class="info-label">RE AUM</div><div class="info-val">${f.reAum != null ? '$' + f.reAum + 'B' : '-'}</div></div>
@@ -8334,6 +8343,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <select className={styles.select} value={fields.type} onChange={e => set('type', e.target.value)}>
                 <option value="">-</option>
                 {typeOptions.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className={styles.label}>Vertical</label>
+              <select
+                className={styles.select}
+                value={fields.vertical || ''}
+                onChange={e => set('vertical', e.target.value)}
+                title="Options come from Dropdowns › Vertical"
+              >
+                <option value="">-</option>
+                {verticalOptions.map(v => <option key={v} value={v}>{v}</option>)}
               </select>
             </div>
 

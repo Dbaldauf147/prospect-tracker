@@ -13,7 +13,7 @@ import { companyDedupeKey } from './companyKey.js';
 // lost when the extra copies are deleted.
 export const MERGE_FIELDS = [
   'tier', 'status', 'notes', 'website', 'emailDomain', 'zoomCompanyName',
-  'hqRegion', 'type', 'cdm', 'geography', 'publicPrivate', 'rank',
+  'hqRegion', 'type', 'vertical', 'cdm', 'geography', 'publicPrivate', 'rank',
   'peAum', 'reAum', 'numberOfSites', 'numberOfAccounts', 'assetTypes', 'frameworks',
   'numberOfMeters', 'equipmentCount', 'annualMwh', 'sitesWithMandate',
 ];

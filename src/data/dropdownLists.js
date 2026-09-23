@@ -28,6 +28,13 @@ export const DROPDOWN_LISTS = [
     options: ['Electric', 'Natural Gas', 'Water', 'Waste'],
   },
   {
+    // The company's vertical, picked on the Company tab under
+    // Classification. Seeded with two; the list is the user's to grow.
+    key: 'vertical',
+    label: 'Vertical',
+    options: ['Industrial', 'Retail'],
+  },
+  {
     key: 'chance',
     label: 'Chance?',
     options: ['Expected', 'OK', 'Weak'],
