@@ -39,6 +39,7 @@ import {
   loadCoaItemOptions, addCoaItemOption, COA_ITEM_OPTIONS_EVENT,
 } from '../../utils/coaItemOptions';
 import { KeithAgenda } from './KeithAgenda';
+import { buildPeOverlapDeals } from '../../utils/keithPeDeals';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { getEffectiveServiceMetadata, formatRolloutWeeks } from '../../data/serviceCatalog';
 import { dbGet } from '../../utils/db';
@@ -16441,6 +16442,14 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       .sort((a, b) => (b.amount ?? -Infinity) - (a.amount ?? -Infinity) || a.name.localeCompare(b.name));
   }, [records]);
 
+  // The deals behind the "PE overlap deals" line: every Private Equity or
+  // Portfolio Company opp at Stage 3 or later. Off every opp, not the tab's
+  // filtered rows, for the same reason as the Stage 6 list above.
+  const peOverlapDeals = useMemo(
+    () => buildPeOverlapDeals(records, { parseAmount: parseMoney, fmtAmount: fmtMoneyWhole }),
+    [records],
+  );
+
   // Mass Edit → "Email table": the selected opps to feed the preview/copy
   // modal (which lets the user pick columns and copies a plain bordered
   // table). Null when closed.
@@ -18083,6 +18092,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             settings={settings}
             updateSettings={updateSettings}
             stage6Deals={stage6Deals}
+            peDeals={peOverlapDeals}
             onOpenOpp={setInfoOppId}
           />
           <div className={styles.searchRow}>
