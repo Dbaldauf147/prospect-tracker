@@ -361,6 +361,11 @@ function parseSourceDate(v) {
 // Used to hold those columns out of the price detection below.
 const notUom = (h) => !/\b(uom|unit\s*of\s*measure|units?)\b/i.test(String(h));
 
+// The header a City typed on the page is written under when the upload has
+// no City column of its own. Matches detectSitesMapping's /^city$/i, so it
+// maps itself back on the next load.
+const CITY_HEADER = 'City';
+
 // Auto-detect every Utility-Lookup target field on a fresh sites
 // header list. Ordered patterns inside each detectColumn call go from
 // most-specific to most-generic so that e.g. "Annual Electric Spend ($)"
@@ -2516,6 +2521,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // the file would.
   const siteStatusColumn = siteStatusOverride || SITE_STATUS_HEADER;
 
+  // The column a site's City is read from and typed into. Same idea as the
+  // status column above: a list that arrived without a City column (or had
+  // it dropped at import) still gets a City cell to type into, and the
+  // first value written creates a real "City" column in the uploaded rows.
+  // Compliance screening matches a site to its mandates by city, so a list
+  // with no city anywhere screens every site as unmatched - this is how
+  // somebody fixes that without re-uploading. On the next load the header
+  // is picked up by detectSitesMapping like any uploaded City column.
+  const cityColumn = cityOverride || CITY_HEADER;
+
   // Rows that don't carry a site name are junk for this analysis —
   // filter them out before anything else sees them.
   const cleanSitesData = useMemo(() => {
@@ -2680,7 +2695,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // removing the site.
   const allRows = useMemo(() => {
     return cleanSitesData.map((r, i) => {
-      const cityColInput = cityOverride ? String(r[cityOverride] || '').trim() : '';
+      const cityColInput = String(r[cityColumn] || '').trim();
       const stateColInput = stateColumnOverride ? String(r[stateColumnOverride] || '').trim() : '';
       const uploadedZip = zipColumn ? normalizeZip(r[zipColumn]) : '';
       // When the row has no zip of its own, estimate one from its city +
@@ -2994,6 +3009,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         __water__: lookupAllowed ? match?.water : undefined,
         __address__: addressOverride ? String(r[addressOverride] || '').trim() || null : null,
         __city__: cityColInput || match?.city,
+        // Where the city came from - the site list itself, or the utility
+        // lookup's zip. The City column shows the difference.
+        __citySource__: cityColInput ? 'file' : (match?.city ? 'lookup' : null),
         __country__: resolvedCountry || undefined,
         // Canonical US code when resolved (drives rates + deregulation
         // lookups); else the raw mapped value so non-US provinces still
@@ -3068,7 +3086,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, propertyTypeMap, segmentOverride, ownershipOverride, siteStatusColumn, siteStatusOptions, siteDescriptionOverride, divisionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, contractPriceUomColumns, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityColumn, stateColumnOverride, propertyTypeOverride, propertyTypeMap, segmentOverride, ownershipOverride, siteStatusColumn, siteStatusOptions, siteDescriptionOverride, divisionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, contractPriceUomColumns, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
   // The analysis set. The Division scope narrows it, so every consumer of
   // `rows` — the table, the stats, all four other tabs and every export —
@@ -3360,7 +3378,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       id: r.id ?? i,
       company: r.__companyName__ || '',
       siteName: siteNameColumn ? String(r[siteNameColumn] ?? '').trim() : (r.__siteName__ || ''),
-      city: String(r.__city__ || (cityOverride ? r[cityOverride] : '') || '').trim(),
+      city: String(r.__city__ || r[cityColumn] || '').trim(),
       state: String(r.__state__ || (stateColumnOverride ? r[stateColumnOverride] : '') || '').trim(),
       // Resolved country (mapped column, else zip/utility-derived) — the
       // Corporate Compliance subtab buckets sites into North America /
@@ -3389,7 +3407,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       gasUtility: r.__gas__ || '',
       waterUtility: r.__water__ || '',
     }));
-  }, [rows, siteNameColumn, cityOverride, stateColumnOverride]);
+  }, [rows, siteNameColumn, cityColumn, stateColumnOverride]);
 
   // Building Compliance Screening + Compliance Roadmap default to leaving
   // the leased buildings out and toggle back to the full list — these
@@ -3456,13 +3474,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   }, [search, rows, activeStatusFilter]);
 
   // ---- Mass edit: which columns, and writing them ----------------------
-  // The uploaded row's headers, with the status column added when the file
-  // didn't bring one — see siteStatusColumn.
+  // The uploaded row's headers, with the status and City columns added when
+  // the file didn't bring them — see siteStatusColumn and cityColumn.
   const siteStatusHeaders = useMemo(() => {
     const headers = sitesData.length ? Object.keys(sitesData[0]) : [];
-    if (!headers.length || headers.includes(siteStatusColumn)) return headers;
-    return [...headers, siteStatusColumn];
-  }, [sitesData, siteStatusColumn]);
+    if (!headers.length) return headers;
+    const extra = [siteStatusColumn, cityColumn].filter(h => !headers.includes(h));
+    return extra.length ? [...headers, ...extra] : headers;
+  }, [sitesData, siteStatusColumn, cityColumn]);
 
   // The page's live column mapping, as one object. Every one of these is
   // the header a field is currently read from, so an edit aimed at
@@ -3473,7 +3492,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     companyName: companyNameOverride,
     division: divisionOverride,
     address: addressOverride,
-    city: cityOverride,
+    city: cityColumn,
     state: stateColumnOverride,
     zip: zipColumn,
     country: countryOverride,
@@ -3502,7 +3521,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     gasContractName: gasContractNameOverride,
     gasProductType: gasProductTypeOverride,
   }), [
-    siteNameColumn, companyNameOverride, divisionOverride, addressOverride, cityOverride,
+    siteNameColumn, companyNameOverride, divisionOverride, addressOverride, cityColumn,
     stateColumnOverride, zipColumn, countryOverride, propertyTypeOverride, segmentOverride,
     ownershipOverride, siteStatusColumn, siteDescriptionOverride, propertySizeOverride, electricColOverride,
     electricUomOverride, gasColOverride, gasUomOverride, electricCostOverride, gasCostOverride,
@@ -3734,7 +3753,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     //
     // Unlike Ownership or Property Type, nothing is lost by hiding the
     // raw cell: a status is shown as it came, folded only for case.
-    const headers = Object.keys(sitesData[0]).filter(h => h !== siteStatusColumn);
+    // The City column is the same: the derived City column further down
+    // shows the uploaded value (falling back to the lookup's), so the raw
+    // header would be a second copy of it.
+    const headers = Object.keys(sitesData[0]).filter(h => h !== siteStatusColumn && h !== cityColumn);
     // Short-date formatter for any column the user mapped as a
     // contract start / end. Used by both the auto-pass-through base
     // columns (so the source header for that field stops showing the
@@ -3916,6 +3938,34 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       },
       exportValue: (row) => row[`__${key}__`] ?? '',
     });
+    // City: the site list's own value when it has one, else the city the
+    // utility lookup resolved from the zip (muted, so a fallback doesn't
+    // read as something the spreadsheet said). Typed into like any mapped
+    // field - see cityColumn.
+    const cityCol = {
+      key: 'city',
+      label: 'City',
+      defaultWidth: 130,
+      render: (row) => {
+        const val = row.__city__;
+        if (!val) {
+          return (
+            <span
+              title="No city for this site. Double-click to type one: compliance screening matches sites to mandates by city."
+              style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}
+            >-</span>
+          );
+        }
+        const fromLookup = row.__citySource__ === 'lookup';
+        return (
+          <span
+            title={fromLookup ? `${val}: from the utility lookup (zip ${row.__zipNorm__ || '?'}). Not in the site list.` : undefined}
+            style={{ fontSize: '0.72rem', color: fromLookup ? 'var(--color-text-muted)' : 'var(--color-text)', fontStyle: fromLookup ? 'italic' : 'normal' }}
+          >{val}</span>
+        );
+      },
+      exportValue: (row) => row.__city__ ?? '',
+    };
     const makeLocationCol = (key, label) => ({
       key,
       label,
@@ -4445,6 +4495,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       ...base,
       companyNameCol,
       divisionCol,
+      cityCol,
       makeStateCol(),
       isoCol,
       makeUtilityCol('electric', 'Electric Utility', { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }),
@@ -4466,7 +4517,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       makeDateCol('gasEnd', 'Gas Contract End', '#1E3A8A'),
       makeCostCol('totalCost', 'Total Est. Cost', { bg: '#EDE9FE', border: '#C4B5FD', text: '#5B21B6' }),
       makeUtilityCol('water', 'Water Utility', { bg: '#DCFCE7', border: '#86EFAC', text: '#166534' }),
-      makeLocationCol('city', 'Lookup City'),
       makeLocationCol('country', 'Lookup Country'),
       propertyTypeCol,
       segmentCol,
@@ -4583,7 +4633,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         ];
       })(),
     ];
-  }, [sitesData, zipColumn, utility, supplierOverrides, editingSupplier, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, siteStatusOptions, siteStatusColumn]);
+  }, [sitesData, zipColumn, utility, supplierOverrides, editingSupplier, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, siteStatusOptions, siteStatusColumn, cityColumn]);
 
   // The same columns, with the editable ones openable for typing.
   //
@@ -4648,6 +4698,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // mode whose entire job is picking rows.
       '__select__',
       columns[0].key,
+      // Compliance screening can't place a site without it, so a list
+      // with no city has to be visible as exactly that.
+      'city',
       'propertyType',
       'segment',
       'ownership',
@@ -12028,7 +12081,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           // Mapped City column when the upload has one, else the city the
           // utility-rates lookup resolved from the ZIP — the same
           // expression complianceSites uses.
-          city: String(r.__city__ || (cityOverride ? r[cityOverride] : '') || '').trim(),
+          city: String(r.__city__ || r[cityColumn] || '').trim(),
           state: stateProvince,
           zip: r.__zipNorm__ || '',
           country,
@@ -16756,7 +16809,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             { name: 'Total Natural Gas Cost', from: 'actual cost when mapped, else Dth × rate' },
             { name: 'Total Est. Cost', from: 'Electric + Gas cost' },
             { name: 'Water Utility', from: 'rates file × Zip' },
-            { name: 'Lookup City', from: 'rates file × Zip' },
+            { name: 'City', from: 'City column, else rates file × Zip' },
             { name: 'Lookup Country', from: 'rates file × Zip' },
           ];
           const active = sitesMappingModal.sheets[sitesMappingModal.selectedIdx];
