@@ -1,6 +1,6 @@
 // Assertion tests for the "PE overlap deals" list on the Keith agenda.
 //   node scripts/keithPeDeals.test.mjs
-import { buildPeOverlapDeals, isPeOpp, oppStageNumber } from '../src/utils/keithPeDeals.js';
+import { buildPeOverlapDeals, isPeOpp, oppStageNumber, peOwnerAndVertical, ownerFromAccountName } from '../src/utils/keithPeDeals.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -36,6 +36,34 @@ const deals = buildPeOverlapDeals(records, { parseAmount: v => (v == null ? null
 check('only PE at Stage 3+, furthest first, then biggest', deals.map(d => d.name), ['Eta', 'Gamma', 'Beta', 'Alpha']);
 check('stage label', deals[1].stageLabel, 'Stage 5 · Quoted');
 check('amount label', [deals[0].amountLabel, deals[1].amountLabel], ['', '$50']);
+
+// --- PE owner and vertical ------------------------------------------------
+const prospects = [
+  { company: 'Vibrantz Technology Inc', type: 'Portfolio Company', peOwner: 'American Securities' },
+  { company: 'Platinum Equity', type: 'Private Equity' },
+  { company: 'KKR', type: 'Private Equity', portfolioCompanies: [{ companyName: 'Kensing Solutions', sector: 'Chemicals' }] },
+];
+check('the opp\'s own PE Owner wins',
+  peOwnerAndVertical({ Account: 'Vibrantz Technology', 'PE Owner': 'Lone Star' }, prospects).peOwner, 'Lone Star');
+check('else the matched company\'s PE Owner',
+  peOwnerAndVertical({ Account: 'Vibrantz Technology' }, prospects).peOwner, 'American Securities');
+check('else the firm whose portfolio names it, with its sector as the vertical',
+  peOwnerAndVertical({ Account: 'Kensing Solutions' }, prospects),
+  { peOwner: 'KKR', vertical: 'Chemicals', verticalFromOpp: false });
+check('the opp\'s own vertical beats the sector',
+  peOwnerAndVertical({ Account: 'Kensing Solutions', Vertical: 'Specialty Chem' }, prospects),
+  { peOwner: 'KKR', vertical: 'Specialty Chem', verticalFromOpp: true });
+check('else the firm named in the account', ownerFromAccountName('Oxea (a SVP co.)'), 'SVP');
+check('longer form', ownerFromAccountName('Solenis (a Platinum Equity Co.)'), 'Platinum Equity');
+check('no parenthetical, no owner', ownerFromAccountName('Peranel'), '');
+check('a PE firm is its own owner',
+  peOwnerAndVertical({ Account: 'Platinum Equity', Type: 'Private Equity' }, prospects).peOwner, 'Platinum Equity');
+check('unknown stays blank',
+  peOwnerAndVertical({ Account: 'Peranel', Type: 'Portfolio Company' }, prospects),
+  { peOwner: '', vertical: '', verticalFromOpp: false });
+check('deals carry owner and vertical',
+  buildPeOverlapDeals([{ _id: 9, Account: 'Kensing Solutions', Type: 'Portfolio Company', Stage: 'Quoting' }], { prospects })
+    .map(d => [d.peOwner, d.vertical]), [['KKR', 'Chemicals']]);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

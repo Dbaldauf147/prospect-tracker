@@ -601,6 +601,68 @@
   color: var(--color-text-muted);
 }
 
+.agendaDealTableWrap {
+  margin: 0.15rem 0 0.4rem 1.1rem;
+  max-width: calc(100% - 1.1rem);
+  overflow-x: auto;
+}
+
+/* The PE overlap deals: sized to what they say, like the data summary. */
+.agendaDealTable {
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.agendaDealTable th {
+  padding: 0.1rem 0.6rem 0.2rem 0;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.agendaDealTable td {
+  padding: 0.05rem 0.6rem 0.05rem 0;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.agendaDealTable .agendaDealNum {
+  text-align: right;
+}
+
+.agendaVerticalBtn {
+  padding: 0.05rem 0.25rem;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: text;
+}
+
+.agendaVerticalBtn:hover {
+  background: var(--color-bg-hover, #F1F5F9);
+}
+
+.agendaVerticalMuted {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.agendaVerticalInput {
+  width: 10rem;
+  padding: 0.05rem 0.3rem;
+  font: inherit;
+  border: 1px solid var(--color-border, #CBD5E1);
+  border-radius: var(--radius-sm, 4px);
+}
+
 .agendaSubEmpty {
   margin: 0.1rem 0 0.35rem;
   padding-left: 1.1rem;
