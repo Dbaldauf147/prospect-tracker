@@ -38,6 +38,10 @@ import {
 import {
   loadCoaItemOptions, addCoaItemOption, COA_ITEM_OPTIONS_EVENT,
 } from '../../utils/coaItemOptions';
+import {
+  buildClientCoaIndex, clientCoaFor, clientCoaAnswer, catalogWithClientRequired,
+  clientRequiredCoaNotRequested, EMPTY_CLIENT_COA_INDEX,
+} from '../../utils/clientCoaFlags';
 import { KeithAgenda } from './KeithAgenda';
 import { buildPeOverlapDeals } from '../../utils/keithPeDeals';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
@@ -778,11 +782,32 @@ const COA_APPROVALS_DUE_STAGE = 'Agreement Sent';
 //
 // The list is read here rather than passed in: this is called per row while
 // the Flags column renders, and the store hands back a cached array.
+//
+// The client's required items (the company card's Contracts tab) count too,
+// even one that has since left the Dropdowns list.
 function coaApprovalsNeeded(row, catalog) {
   if (!row) return [];
   const stage = String(row['Stage'] ?? '').replace(ZERO_WIDTH_RE, '').trim();
   if (stage !== COA_APPROVALS_DUE_STAGE) return [];
-  return outstandingCoaItems(row, catalog || loadCoaItemOptions());
+  return outstandingCoaItems(row, catalogWithClientRequired(catalog || loadCoaItemOptions(), clientCoaForRow(row)));
+}
+
+// Which COA items each client's contracts need, as recorded on the company
+// card's Contracts tab, indexed by company name. Held at module level for the
+// same reason the COA list is read inside coaApprovalsNeeded: the flag tests
+// are plain row functions called per row while the Flags column renders.
+// OppsView2 rebuilds it whenever the prospects list changes.
+let clientCoaIndex = EMPTY_CLIENT_COA_INDEX;
+function setClientCoaIndex(index) { clientCoaIndex = index || EMPTY_CLIENT_COA_INDEX; }
+function clientCoaForRow(row) {
+  return row ? clientCoaFor(row['Account'], clientCoaIndex) : null;
+}
+
+// "Client requires COA" flag: the opp's client needs these COA items on its
+// contracts and this opp hasn't sent them for approval yet. Amber, and only
+// before Agreement Sent - from there the red flag above names them.
+function clientCoaNotRequested(row) {
+  return clientRequiredCoaNotRequested(row, clientCoaForRow(row), loadCoaItemOptions(), COA_APPROVALS_DUE_STAGE);
 }
 
 // Look up a row value by header name, tolerant to casing / zero-width /
@@ -8051,21 +8076,27 @@ function OppTicketLinksSection({ opp, onFieldChange }) {
 // mount, so without a remount the section would keep showing the previous
 // opp's items after moving to another record.
 function OppCoaItemsSection({ opp, onFieldChange }) {
+  // What this opp's client needs on its contracts (company card > Contracts),
+  // or null. Its required items are rows here even when the Dropdowns list no
+  // longer names them, and every row it answered carries a badge.
+  const account = opp?.['Account'];
+  const client = clientCoaFor(account, clientCoaIndex);
   // The COA list kept on the Dropdowns page: every item on it is a row here,
   // and it is what the item cell's dropdown offers. Re-read on the in-tab
   // event and on cross-tab storage writes, like the Timeline Type list.
   const [itemOptions, setItemOptions] = useState(loadCoaItemOptions);
-  const [rows, setRows] = useState(() => coaItemsForOpp(opp, loadCoaItemOptions()));
+  const catalog = catalogWithClientRequired(itemOptions, client);
+  const [rows, setRows] = useState(() => coaItemsForOpp(opp, catalogWithClientRequired(loadCoaItemOptions(), clientCoaForRow(opp))));
   // The list the rows on screen were built from, so a change can be told
   // from the list it replaced — which is what says whether a row now missing
   // from the list was this opp's own or only ever the list's.
-  const catalogRef = useRef(itemOptions);
+  const catalogRef = useRef(catalog);
   useEffect(() => {
     const refresh = () => {
       const prev = catalogRef.current;
-      const next = loadCoaItemOptions();
+      const next = catalogWithClientRequired(loadCoaItemOptions(), clientCoaFor(account, clientCoaIndex));
       catalogRef.current = next;
-      setItemOptions(next);
+      setItemOptions(loadCoaItemOptions());
       // Lay the new list over what is on screen rather than re-reading the
       // opp: an item added while this was open should appear, and a date
       // half-typed into another row should not be thrown away to show it.
@@ -8077,14 +8108,14 @@ function OppCoaItemsSection({ opp, onFieldChange }) {
       window.removeEventListener(COA_ITEM_OPTIONS_EVENT, refresh);
       window.removeEventListener('storage', refresh);
     };
-  }, []);
+  }, [account]);
 
   const commit = (next) => {
     setRows(next);
     // The list decides which rows are only being asked about: a row carrying
     // a list name and nothing else isn't written, so an opp nobody has
     // answered stays untouched however long the list grows.
-    if (onFieldChange) onFieldChange('_coaItems', coaItemsToStore(next, itemOptions));
+    if (onFieldChange) onFieldChange('_coaItems', coaItemsToStore(next, catalog));
   };
   const updateRow = (idx, key, value) =>
     commit(rows.map((r, i) => (i === idx ? { ...r, [key]: value } : r)));
@@ -8103,7 +8134,7 @@ function OppCoaItemsSection({ opp, onFieldChange }) {
 
   // `undefined` for the clock: the summary reads it itself, and a Date.now()
   // spelled out here would be an impure call in the render body.
-  const summary = coaItemsSummary(rows, undefined, itemOptions);
+  const summary = coaItemsSummary(rows, undefined, catalog);
   const listId = `coa-item-options-${opp?._id ?? 'new'}`;
   const cellInput = {
     width: '100%', boxSizing: 'border-box', padding: '0.35rem 0.45rem',
@@ -8144,6 +8175,26 @@ function OppCoaItemsSection({ opp, onFieldChange }) {
     return <span style={{ fontSize: '0.66rem', color: '#CBD5E1' }}>Not requested</span>;
   };
 
+  // How the client answered this item on its company card, as a chip beside
+  // the status. Nothing when the client has no answer for it.
+  const renderClientAnswer = (row) => {
+    const { required, notes } = clientCoaAnswer(client, row.item);
+    if (!required) return null;
+    const yes = required === 'yes';
+    const title = `${client.company}: ${yes ? 'required on its contracts' : 'not required on its contracts'}`
+      + (notes.trim() ? `. ${notes.trim()}` : '') + ' (company card, Contracts tab)';
+    return (
+      <span
+        title={title}
+        style={{
+          fontSize: '0.62rem', fontWeight: 700, padding: '0.05rem 0.4rem', borderRadius: 999, whiteSpace: 'nowrap',
+          border: `1px solid ${yes ? '#FDE68A' : '#E2E8F0'}`,
+          background: yes ? '#FFFBEB' : '#F8FAFC', color: yes ? '#92400E' : '#94A3B8',
+        }}
+      >{yes ? 'Client requires' : 'Client: not required'}</span>
+    );
+  };
+
   return (
     <div style={{ margin: '0.25rem 0 0.75rem' }}>
       <div style={{
@@ -8171,6 +8222,13 @@ function OppCoaItemsSection({ opp, onFieldChange }) {
           </div>
         )}
       </div>
+      {client && client.required.length > 0 && (
+        <div style={{ fontSize: '0.72rem', color: '#92400E', margin: '0 0 0.4rem' }}>
+          <strong>{client.company}</strong> requires on its contracts:{' '}
+          {client.required.map(r => r.item).join(', ')}.
+          <span style={{ color: '#94A3B8' }}> Set on the company card, Contracts tab.</span>
+        </div>
+      )}
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
@@ -8218,6 +8276,7 @@ function OppCoaItemsSection({ opp, onFieldChange }) {
               <td style={{ ...td, whiteSpace: 'nowrap', paddingTop: '0.4rem' }}>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
                   {!row.na && renderStatus(row)}
+                  {renderClientAnswer(row)}
                   <button
                     type="button"
                     onClick={() => updateRow(idx, 'na', !row.na)}
@@ -9495,6 +9554,20 @@ const OPP_FLAG_DEFS = [
     section: 'coa',
   },
   {
+    id: 'clientCoa',
+    tone: () => 'amber',
+    icon: '⚠',
+    test: (row) => clientCoaNotRequested(row).length > 0,
+    label: (row) => `Client requires COA (${clientCoaNotRequested(row).length})`,
+    title: (row) => {
+      const out = clientCoaNotRequested(row);
+      const client = clientCoaForRow(row)?.company || 'This client';
+      return `${client} requires ${out.length === 1 ? 'this COA item' : 'these COA items'} on its contracts, and ${out.length === 1 ? 'it has' : 'they have'} not been requested on this opp yet: ${out.map(r => r.item).join(', ')}. Record the requested date, or mark it N/A.`;
+    },
+    fields: () => [],
+    section: 'coa',
+  },
+  {
     id: 'budgetTimeline',
     tone: () => 'amber',
     icon: '⚠',
@@ -10354,6 +10427,31 @@ export function OppInfoModal({
                   neither approved nor marked N/A:{' '}
                   <strong>{outstanding.map(r => r.item).join(', ')}</strong>. Record the approval
                   date, or mark the item N/A, on the Stage 6 tab.
+                </span>
+              </div>
+            );
+          })()}
+          {clientCoaNotRequested(opp).length > 0 && (() => {
+            // The client's contracts need these COA exceptions (company card >
+            // Contracts) and nobody has sent them for approval on this opp.
+            const pending = clientCoaNotRequested(opp);
+            const client = clientCoaForRow(opp)?.company || 'This client';
+            return (
+              <div style={{
+                margin: '0.25rem 0 0.75rem',
+                padding: '0.6rem 0.8rem',
+                border: '1px solid #FDE68A', borderRadius: 6,
+                background: '#FFFBEB', fontSize: '0.8rem',
+                color: '#92400E', lineHeight: 1.4,
+                display: 'flex', alignItems: 'center', gap: 8,
+              }}>
+                <span style={{ fontSize: '1rem', flexShrink: 0 }}>⚠</span>
+                <span>
+                  <strong>Client requires COA.</strong> {client}'s contracts need{' '}
+                  {pending.length === 1 ? 'this COA item' : `these ${pending.length} COA items`}, and{' '}
+                  {pending.length === 1 ? 'it has' : 'they have'} not been requested on this opp yet:{' '}
+                  <strong>{pending.map(r => r.item).join(', ')}</strong>. Record the requested date on
+                  the Stage 6 tab, or mark it N/A if this deal is the exception.
                 </span>
               </div>
             );
@@ -13414,6 +13512,13 @@ function TodoBox() {
 export function OppsView2({ settings, updateSettings, updateSettingsPath, prospects = [], updateProspect, addProspect, onSelectProspect } = {}) {
   const { user, isAdmin } = useAuth();
 
+  // The clients' COA requirements (company card > Contracts) for the COA
+  // flags and the COA Approval Items table. Rebuilt with the prospects list,
+  // so an answer changed on a company card reaches its opps on the next
+  // render.
+  const clientCoaIdx = useMemo(() => buildClientCoaIndex(prospects), [prospects]);
+  setClientCoaIndex(clientCoaIdx);
+
   // Client Manager lookup for the status / notes popups. Managers are
   // typed on the Clients tab and stored per-company (keyed by the
   // lowercased/trimmed name). We only surface one for an opp whose
@@ -16137,6 +16242,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       if (needsUsdFlag(row)) parts.push('Missing USD value');
       if (needsCompetitionFlag(row)) parts.push('Missing Competition');
       if (coaApprovalsNeeded(row).length) parts.push('COA approvals needed');
+      if (clientCoaNotRequested(row).length) parts.push('Client requires COA');
       if (needsBudgetTimelineFlag(row)) parts.push('Budget delivery timeline');
       if (qualifyingStageFlagState(row) === 'active') parts.push('Move to Qualifying');
       if (oppMissingBfoAddress(row)) parts.push('Missing BFO Address');
