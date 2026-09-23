@@ -5109,6 +5109,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // ask twice.
   const [servicesOpen, setServicesOpen] = useState(true);
   const [servicesEditMode, setServicesEditMode] = useState(false);
+  // Narrow the Services board: a name search and a status filter. Both are
+  // view-only, nothing here is saved.
+  const [serviceSearch, setServiceSearch] = useState('');
+  const [serviceStatusFilter, setServiceStatusFilter] = useState('all');
   const [editingServiceName, setEditingServiceName] = useState(null);
   const [expandedServiceNote, setExpandedServiceNote] = useState(null);
   const [portfolioOpen, setPortfolioOpen] = useState(true);
@@ -9572,12 +9576,74 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   onClick={(e) => { e.stopPropagation(); setServicesEditMode(m => !m); }}
                   style={{ marginLeft: '0.4rem', padding: '0.15rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', background: servicesEditMode ? '#FEF3C7' : 'var(--color-surface)', fontSize: '0.62rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: servicesEditMode ? '#92400E' : 'var(--color-text-muted)' }}
                 >{servicesEditMode ? 'Done Editing' : 'Edit Services'}</button>
+                {servicesOpen && (
+                  <div
+                    onClick={e => e.stopPropagation()}
+                    style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'default' }}
+                  >
+                    <input
+                      type="search"
+                      value={serviceSearch}
+                      onChange={e => setServiceSearch(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Escape' && serviceSearch) { e.stopPropagation(); setServiceSearch(''); } }}
+                      placeholder="Search services..."
+                      aria-label="Search services"
+                      style={{ width: '180px', padding: '0.15rem 0.45rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.68rem', fontFamily: 'inherit', background: '#fff' }}
+                    />
+                    <select
+                      value={serviceStatusFilter}
+                      onChange={e => setServiceStatusFilter(e.target.value)}
+                      aria-label="Filter services by status"
+                      style={{ padding: '0.12rem 0.3rem', border: `1px solid ${serviceStatusFilter !== 'all' ? 'var(--color-accent)' : 'var(--color-border)'}`, borderRadius: '4px', fontSize: '0.68rem', fontFamily: 'inherit', background: '#fff', cursor: 'pointer' }}
+                    >
+                      <option value="all">All statuses</option>
+                      <option value="any">Has a status</option>
+                      <option value="none">No status</option>
+                      <option value="retry">Trying again</option>
+                      {SERVICE_STATUSES.filter(s => s !== '-').map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    {(serviceSearch || serviceStatusFilter !== 'all') && (
+                      <button
+                        onClick={() => { setServiceSearch(''); setServiceStatusFilter('all'); }}
+                        style={{ padding: '0.15rem 0.45rem', border: '1px solid var(--color-border)', borderRadius: '4px', background: 'var(--color-surface)', fontSize: '0.62rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text-muted)' }}
+                      >Clear</button>
+                    )}
+                  </div>
+                )}
               </div>
               {servicesOpen && (() => {
                 const serviceRenames = settings.serviceRenames || {};
                 const hiddenServices = new Set(settings.hiddenServices || []);
                 const hiddenCount = hiddenServices.size;
                 const getDisplayName = (item) => serviceRenames[item] || item;
+
+                // Search + status filter. A service matches the search on
+                // its shown name, its original name, or its box's name, and
+                // the status filter reads the same effective status the row
+                // paints (manual, else opp stage, else auto N/A).
+                const searchTerm = serviceSearch.trim().toLowerCase();
+                const filtering = !!searchTerm || serviceStatusFilter !== 'all';
+                const svcAll = fields.servicesExplored || {};
+                function effectiveStatusOf(item) {
+                  const manual = svcAll[item] || '-';
+                  if (manual !== '-') return manual;
+                  const opp = scopeMatchedServices.get(item);
+                  if (opp) return opp;
+                  if (autoNaServices.get(item)) return 'N/A';
+                  return '-';
+                }
+                function matchesFilter(item, catName) {
+                  if (searchTerm) {
+                    const hay = `${getDisplayName(item)} ${item} ${catName}`.toLowerCase();
+                    if (!hay.includes(searchTerm)) return false;
+                  }
+                  if (serviceStatusFilter === 'all') return true;
+                  if (serviceStatusFilter === 'retry') return isTryingAgain(svcAll[item] || '-', scopeMatchedServices.get(item));
+                  const eff = effectiveStatusOf(item);
+                  if (serviceStatusFilter === 'any') return eff !== '-';
+                  if (serviceStatusFilter === 'none') return eff === '-';
+                  return eff === serviceStatusFilter;
+                }
 
                 // The user's boxes plus the "Other services" card for
                 // anything on Dropdowns › Services that no box claims.
@@ -9635,8 +9701,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   if (next) saveCategories(next);
                 }
 
+                const matchCount = filtering
+                  ? categories.reduce((n, c) => n + c.items.filter(item => (servicesEditMode || !hiddenServices.has(item)) && matchesFilter(item, c.name)).length, 0)
+                  : null;
+
                 return (
                 <div>
+                  {filtering && (
+                    <div style={{ marginTop: '0.5rem', fontSize: '0.68rem', color: '#64748B' }}>
+                      {matchCount === 0
+                        ? 'No services match this search or filter.'
+                        : `Showing ${matchCount} matching service${matchCount !== 1 ? 's' : ''}`}
+                    </div>
+                  )}
                   {servicesEditMode && hiddenCount > 0 && (
                     <div style={{ marginTop: '0.5rem', marginBottom: '0.25rem', fontSize: '0.68rem', color: '#64748B' }}>
                       {hiddenCount} hidden service{hiddenCount !== 1 ? 's' : ''}
@@ -9665,8 +9742,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   </datalist>
                   {categories.map(cat => {
                     const svc = fields.servicesExplored || {};
-                    const visibleItems = servicesEditMode ? cat.items : cat.items.filter(item => !hiddenServices.has(item));
-                    if (visibleItems.length === 0 && !servicesEditMode) return null;
+                    const unfiltered = servicesEditMode ? cat.items : cat.items.filter(item => !hiddenServices.has(item));
+                    const visibleItems = filtering ? unfiltered.filter(item => matchesFilter(item, cat.name)) : unfiltered;
+                    if (visibleItems.length === 0 && (!servicesEditMode || filtering)) return null;
                     return (
                       <div key={cat.name} style={{ breakInside: 'avoid', border: '1px solid var(--color-border)', borderRadius: '5px', overflow: 'hidden', fontSize: '0.72rem', marginBottom: '0.4rem' }}>
                         <div style={{ padding: '0.2rem 0.4rem', background: '#EFF6FF', borderBottom: '1px solid var(--color-border)', fontWeight: 700, fontSize: '0.65rem', color: '#1E40AF', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
