@@ -25,6 +25,8 @@ import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
+import { ContractsTab } from './ContractsTab';
+import { useCompanyContracts } from '../../hooks/useCompanyContracts';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 import { STATUSES, STATUS_COLORS, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { peStageOf } from '../../utils/peStages';
@@ -128,6 +130,7 @@ import { onePagerModel, onePagerFileName } from '../../utils/companyOnePager';
 import { buildOnePagerDocx } from '../../utils/onePagerDocx';
 import { tagListHas } from '../../utils/contactTagReview';
 import { loadDealsList } from '../../utils/dealsStore';
+import { isInactiveAgreement } from '../../utils/dealsFormat';
 import { isDecisionMakerContact } from '../../utils/decisionMakerCoverage';
 import { ListsMatchPanel } from './ListsMatchPanel';
 import { AnalysisMenu } from './AnalysisMenu';
@@ -549,6 +552,11 @@ const PROSPECT_TABS = [
     key: 'opps',
     label: 'Opps',
     title: 'The opportunities whose Account is this company, and the note pages kept against them',
+  },
+  {
+    key: 'contracts',
+    label: 'Contracts',
+    title: "The client's agreements off the Deals subtab, its standing on the Clients tab, and which COA approval items its contracts need",
   },
   {
     key: 'potential',
@@ -5986,6 +5994,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // rest, off its own run of the same function.
   const biggestDeal = accountPotentialReading?.top || null;
 
+  // This company's agreements off the Deals subtab, for the Contracts tab and
+  // the count on its pill.
+  const companyContracts = useCompanyContracts(fields.company, fields.aliases);
+  const activeContractCount = useMemo(
+    () => companyContracts.filter(d => !isInactiveAgreement(d)).length,
+    [companyContracts],
+  );
+
   const tabCounts = useMemo(() => {
     const n = (v) => (v > 0 ? String(v) : '');
     return {
@@ -5995,6 +6011,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         ? `${servicesExploredCount.explored}/${servicesExploredCount.total}`
         : '',
       opps: n(companyOppsSummary.total),
+      contracts: n(activeContractCount),
       // What is on the Potential tab: the services still worth something,
       // which is the ones nobody has ruled on plus the ones somebody is
       // working on right now. The tab's own headline calls them untapped
@@ -6007,7 +6024,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       portfolio: n((fields.portfolioCompanies || []).length),
     };
   }, [companyContacts.length, servicesExploredCount, companyOppsSummary.total,
-    accountPotentialReading, fields.portfolioCompanies]);
+    accountPotentialReading, fields.portfolioCompanies, activeContractCount]);
 
   // What the Potential tab prices: the catalogue minus the services retired
   // on the Services tab.
@@ -10089,6 +10106,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               the account into a combo on another tab, when the card that
               holds the counts it prices from was already open. Locked to
               this company - there is nothing to pick here. */}
+          {!isNew && activeTab === 'contracts' && (
+            <ContractsTab
+              company={fields.company}
+              deals={companyContracts}
+              clientManager={clientManager}
+              coaRequirements={fields.coaRequirements}
+              onChangeCoaRequirements={next => setFields(f => ({ ...f, coaRequirements: next }))}
+            />
+          )}
           {!isNew && activeTab === 'potential' && fields.company?.trim() && (
             <div className={styles.potentialPane}>
             <AccountPotentialTab
