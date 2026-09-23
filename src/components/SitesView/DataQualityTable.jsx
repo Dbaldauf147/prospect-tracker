@@ -19,6 +19,8 @@
 // amber where it is working from an estimate, red where it has nothing. A
 // reader who never hovers a single row still sees the shape of the upload.
 
+import { SUMMARY_ROW_FIELDS } from '../../utils/siteColumnFill.js';
+
 const TONES = {
   good: { background: '#F0FDF4', bar: '#16A34A', text: '#166534' },
   warn: { background: '#FFFBEB', bar: '#F59E0B', text: '#92400E' },
@@ -60,7 +62,12 @@ const pillStyle = {
   borderRadius: 4,
 };
 
-function Cell({ row, right }) {
+// A row that can be updated reads as one: pointer, underline on hover, and a
+// title that says what the click does. Only rows the page has a column for
+// (SUMMARY_ROW_FIELDS) get it.
+const editableStyle = { cursor: 'pointer' };
+
+function Cell({ row, right, onEdit }) {
   const labelStyle = right ? rightLabelCellStyle : labelCellStyle;
   if (!row) {
     // The right-hand column runs out before the left one does. An empty
@@ -74,10 +81,13 @@ function Cell({ row, right }) {
     );
   }
   const tone = TONES[row.tone] || null;
+  const editable = onEdit && SUMMARY_ROW_FIELDS[row.key];
+  const click = editable ? { onClick: () => onEdit(row.key), className: 'dq-editable' } : {};
+  const title = editable ? `${row.title}\n\nClick to update this for all sites, a division or individual sites.` : row.title;
   return (
     <>
-      <td style={labelStyle} title={row.title}>{row.label}</td>
-      <td style={valueCellStyle} title={row.title}>
+      <td style={editable ? { ...labelStyle, ...editableStyle } : labelStyle} title={title} {...click}>{row.label}</td>
+      <td style={editable ? { ...valueCellStyle, ...editableStyle } : valueCellStyle} title={title} {...click}>
         {tone
           ? (
             <span style={{
@@ -94,7 +104,7 @@ function Cell({ row, right }) {
   );
 }
 
-export function DataQualityTable({ summary }) {
+export function DataQualityTable({ summary, onEdit }) {
   if (!summary) return null;
   const depth = Math.max(summary.left.length, summary.right.length);
   const lines = Array.from({ length: depth }, (_, i) => i);
@@ -124,6 +134,7 @@ export function DataQualityTable({ summary }) {
         Data summary
         <span style={{ fontWeight: 500, color: '#94A3B8', textTransform: 'none', letterSpacing: 0, marginLeft: '0.4rem' }}>
           {summary.total.toLocaleString()} site{summary.total === 1 ? '' : 's'}
+          {onEdit ? ' · click a row to update it' : ''}
         </span>
       </div>
       {/* Sized to what it says, not to the window. A four-column grid at
@@ -134,6 +145,7 @@ export function DataQualityTable({ summary }) {
           layout gives each column its widest cell and stops, so a row is
           as wide as the longest thing in it. maxWidth keeps a long
           sentence from pushing the table past the panel. */}
+      <style>{'.dq-editable:hover { text-decoration: underline; }'}</style>
       <table style={{
         width: 'auto',
         maxWidth: '100%',
@@ -143,8 +155,8 @@ export function DataQualityTable({ summary }) {
         <tbody>
           {lines.map(i => (
             <tr key={summary.left[i]?.key || summary.right[i]?.key || i}>
-              <Cell row={summary.left[i]} />
-              <Cell row={summary.right[i]} right />
+              <Cell row={summary.left[i]} onEdit={onEdit} />
+              <Cell row={summary.right[i]} right onEdit={onEdit} />
             </tr>
           ))}
         </tbody>

@@ -6,8 +6,9 @@
 // value the page reads, the created flag is what tells the user a column
 // is being added to their data, and the header created is one the mapping
 // detector picks back up on reload.
-import { fillHeaderFor, describeColumnFill, FILL_HEADERS } from '../src/utils/siteColumnFill.js';
-import { detectColumn } from '../src/utils/siteColumns.js';
+import { fillHeaderFor, describeColumnFill, FILL_HEADERS, applyColumnFill, SUMMARY_ROW_FIELDS } from '../src/utils/siteColumnFill.js';
+import { detectColumn, pickZipColumn } from '../src/utils/siteColumns.js';
+import { detectConsumptionColumns } from '../src/utils/utilityRates.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -63,6 +64,40 @@ check('one site reads as one',
 check('a big portfolio is grouped',
   describeColumnFill({ label: 'Property Type', value: 'X', count: 1204, header: 'Property Type', created: true }).includes('1,204 sites'),
   true);
+
+// --- scoped fills from the data summary --------------------------------
+{
+  const a = { SITE: 'A', DIV: 'East', SQFT: '' };
+  const b = { SITE: 'B', DIV: 'East', SQFT: 5000 };
+  const c = { SITE: 'C', DIV: 'West', SQFT: '' };
+  const rows = [a, b, c];
+  const r1 = applyColumnFill(rows, new Set([a, b]), 'SQFT', 1200);
+  check('fills only the targets', r1.rows.map(r => r.SQFT), [1200, 1200, '']);
+  check('counts what moved', [r1.changed, r1.skipped], [2, 0]);
+  check('untouched rows keep identity', r1.rows[2] === c, true);
+  const r2 = applyColumnFill(rows, new Set(rows), 'SQFT', 1200, { onlyBlank: true });
+  check('only-blank keeps an uploaded figure', r2.rows.map(r => r.SQFT), [1200, 5000, 1200]);
+  check('only-blank counts the kept one as skipped', [r2.changed, r2.skipped], [2, 1]);
+  const r3 = applyColumnFill(rows, new Set([c]), 'Division', 'West');
+  check('a created column lands on every row, so the first row carries the header',
+    r3.rows.map(r => r.Division), [undefined, undefined, 'West']);
+  const r4 = applyColumnFill(rows, new Set([c]), 'Division', 'West', { created: true });
+  check('with created, the other rows get it blank', r4.rows.map(r => r.Division), ['', '', 'West']);
+  const r5 = applyColumnFill(rows, new Set([b]), 'SQFT', 5000);
+  check('same value is not a change', [r5.changed, r5.rows === rows], [0, true]);
+}
+
+// Each created column must come back under its own field and no other on
+// reload, or a fill of one silently maps another.
+check('created zip is the zip column', pickZipColumn(['SITE', FILL_HEADERS.zip]), FILL_HEADERS.zip);
+check('created kWh is electric consumption',
+  detectConsumptionColumns(['SITE', FILL_HEADERS.electric, FILL_HEADERS.electricCost], 'electric'), [FILL_HEADERS.electric]);
+check('created therms is gas consumption',
+  detectConsumptionColumns(['SITE', FILL_HEADERS.gas, FILL_HEADERS.gasCost], 'gas'), [FILL_HEADERS.gas]);
+check('cost columns never read as consumption',
+  [detectConsumptionColumns([FILL_HEADERS.electricCost], 'electric'), detectConsumptionColumns([FILL_HEADERS.gasCost], 'gas')], [[], []]);
+check('every summary row that edits has a column name to create',
+  Object.values(SUMMARY_ROW_FIELDS).every(f => FILL_HEADERS[f]), true);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
