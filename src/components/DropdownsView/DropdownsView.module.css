@@ -1413,6 +1413,13 @@
   font-family: inherit;
 }
 
+.detailTextarea {
+  composes: detailInput;
+  min-height: 4.2rem;
+  resize: vertical;
+  line-height: 1.4;
+}
+
 .detailInput:focus {
   outline: none;
   border-color: var(--color-accent);

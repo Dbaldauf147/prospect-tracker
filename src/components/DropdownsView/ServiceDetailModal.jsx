@@ -77,6 +77,51 @@ function TextField({ label, value, placeholder, onCommit }) {
   );
 }
 
+// Notes. A multi-line box spanning the grid: Enter is a new line here, so
+// it commits on blur only, and Escape still reverts. Leading and trailing
+// blank space is trimmed but the line breaks inside are kept.
+function NotesField({ value, onCommit }) {
+  const [draft, setDraft] = useState(value || '');
+  const [seen, setSeen] = useState(value || '');
+  // Set by Escape so the blur that follows it doesn't save the draft it is
+  // throwing away: that blur still sees this render's `draft`.
+  const discardRef = useRef(false);
+  if ((value || '') !== seen) {
+    setSeen(value || '');
+    setDraft(value || '');
+  }
+
+  function commit() {
+    if (discardRef.current) { discardRef.current = false; return; }
+    const trimmed = draft.trim();
+    if (trimmed === (value || '')) return;
+    onCommit(trimmed);
+  }
+
+  return (
+    <label className={styles.detailFieldWide}>
+      <span className={styles.detailLabel}>Notes</span>
+      <textarea
+        className={styles.detailTextarea}
+        value={draft}
+        rows={3}
+        placeholder="Add notes about this service"
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            discardRef.current = true;
+            setDraft(value || '');
+            e.currentTarget.blur();
+          }
+        }}
+      />
+    </label>
+  );
+}
+
 // Timeline Driven. Same three states as the table's cell: unset, Yes, No.
 // A picker over a fixed vocabulary. A value that isn't in it (a box since
 // renamed, say) is kept as an option so opening the popup can't quietly
@@ -1220,6 +1265,7 @@ export function ServiceDetailModal({
             <WeeksField label="Rollout Time" value={meta?.rolloutTime} onCommit={save('rolloutTime')} />
             <TextField label="SME" value={meta?.sme} onCommit={save('sme')} />
             <TextField label="KTM" value={meta?.ktm} onCommit={save('ktm')} />
+            <NotesField value={meta?.notes} onCommit={save('notes')} />
           </div>
 
           {/* The steps of this service's own timeline. Sits above the
