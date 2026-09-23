@@ -23,6 +23,11 @@
 // not from the stored agenda — the deals in Stage 6 change between meetings and
 // a hand-typed copy would go stale. Their ticks are stored by opp id, beside
 // the agenda rather than in it, for the same reason.
+//
+// "PE overlap deals" works the same way over a different set: every PE or
+// Portfolio Company opp at Stage 3 or later (`peDeals`). Its ticks share the
+// map under a `pe:` prefix, so a Stage 6 PE deal ticked on one line isn't
+// silently ticked on the other.
 
 import { useEffect, useRef, useState } from 'react';
 import styles from './OppsView2.module.css';
@@ -44,6 +49,25 @@ const newId = () => `ka_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 function isStage6Line(text) {
   const t = String(text || '');
   return /stage\s*6/i.test(t) || /negotiate\s*to\s*win/i.test(t);
+}
+
+// The line the PE / Portfolio Company deals hang under: "PE overlap deals",
+// or any retyping that still says PE (or portfolio) and overlap.
+function isPeOverlapLine(text) {
+  const t = String(text || '');
+  return /overlap/i.test(t) && (/\bpe\b/i.test(t) || /private\s*equity/i.test(t) || /portfolio/i.test(t));
+}
+
+// Which deal list a line carries, if any: the tick-key prefix, the deals,
+// and what to say when there are none.
+function dealListFor(text, stage6Deals, peDeals) {
+  if (isStage6Line(text)) {
+    return { prefix: '', deals: stage6Deals, empty: 'No deals in Stage 6 (Agreement Sent) right now.' };
+  }
+  if (isPeOverlapLine(text)) {
+    return { prefix: 'pe:', deals: peDeals, empty: 'No PE or Portfolio Company deals at Stage 3 or later right now.' };
+  }
+  return null;
 }
 
 // Ticks for the deal sub-bullets: `{ [oppId]: true }`. Anything else in the
@@ -73,7 +97,7 @@ function readAgenda(settings) {
     .map((it, i) => ({ id: it.id || `ka_row_${i}`, text: it.text, done: it.done === true }));
 }
 
-export function KeithAgenda({ settings, updateSettings, stage6Deals = [], onOpenOpp }) {
+export function KeithAgenda({ settings, updateSettings, stage6Deals = [], peDeals = [], onOpenOpp }) {
   const items = readAgenda(settings);
   const dealTicks = readDealTicks(settings);
   // Which line is open for editing, and the text as it's being typed. Held
@@ -99,7 +123,8 @@ export function KeithAgenda({ settings, updateSettings, stage6Deals = [], onOpen
     keithAgenda: next.map(({ id, text, done }) => ({ id, text, done: done === true })),
   });
   const doneCount = items.filter(it => it.done).length;
-  const dealsDone = stage6Deals.filter(d => dealTicks[d.id]).length;
+  const dealsDone = stage6Deals.filter(d => dealTicks[d.id]).length
+    + peDeals.filter(d => dealTicks[`pe:${d.id}`]).length;
   // A tick is only worth storing while it's on: an untick drops the key so the
   // map stays the size of what's actually covered rather than of every deal
   // ever seen on the tab.
@@ -222,11 +247,16 @@ export function KeithAgenda({ settings, updateSettings, stage6Deals = [], onOpen
                     >
                       {item.text}
                     </button>
-                    {isStage6Line(item.text) && stage6Deals.length > 0 && (
-                      <span className={styles.agendaSubCount}>
-                        {dealsDone} of {stage6Deals.length}
-                      </span>
-                    )}
+                    {(() => {
+                      const list = dealListFor(item.text, stage6Deals, peDeals);
+                      if (!list || list.deals.length === 0) return null;
+                      const done = list.deals.filter(d => dealTicks[`${list.prefix}${d.id}`]).length;
+                      return (
+                        <span className={styles.agendaSubCount}>
+                          {done} of {list.deals.length}
+                        </span>
+                      );
+                    })()}
                     <button
                       type="button"
                       className={styles.agendaMove}
@@ -262,41 +292,50 @@ export function KeithAgenda({ settings, updateSettings, stage6Deals = [], onOpen
               {/* The deals that line is about. Rendered under the line, not
                   inside its row, so each keeps its own tick and the parent
                   line still reads as one agenda item. */}
-              {editingId !== item.id && isStage6Line(item.text) && (
-                stage6Deals.length > 0 ? (
-                  <ul className={styles.agendaSubList}>
-                    {stage6Deals.map(deal => (
-                      <li key={deal.id} className={styles.agendaSubItem}>
-                        <div className={styles.agendaSubRow}>
-                        <input
-                          type="checkbox"
-                          className={styles.agendaCheck}
-                          checked={!!dealTicks[deal.id]}
-                          onChange={() => toggleDeal(deal.id)}
-                          title={dealTicks[deal.id] ? `Mark "${deal.name}" not covered` : `Mark "${deal.name}" covered`}
-                          aria-label={`Covered: ${deal.name}`}
-                        />
-                        <button
-                          type="button"
-                          className={dealTicks[deal.id] ? `${styles.agendaSubText} ${styles.agendaTextDone}` : styles.agendaSubText}
-                          onClick={() => onOpenOpp?.(deal.id)}
-                          title={onOpenOpp ? `Open ${deal.name}` : deal.name}
-                        >
-                          {deal.name}
-                        </button>
-                        {deal.amountLabel && (
-                          <span className={styles.agendaSubMeta}>{deal.amountLabel}</span>
-                        )}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
+              {editingId !== item.id && (() => {
+                const list = dealListFor(item.text, stage6Deals, peDeals);
+                if (!list) return null;
+                if (list.deals.length === 0) {
                   // Said rather than left blank: no sub-bullets under a line
                   // that should have them otherwise reads as broken.
-                  <div className={styles.agendaSubEmpty}>No deals in Stage 6 (Agreement Sent) right now.</div>
-                )
-              )}
+                  return <div className={styles.agendaSubEmpty}>{list.empty}</div>;
+                }
+                return (
+                  <ul className={styles.agendaSubList}>
+                    {list.deals.map(deal => {
+                      const key = `${list.prefix}${deal.id}`;
+                      return (
+                        <li key={key} className={styles.agendaSubItem}>
+                          <div className={styles.agendaSubRow}>
+                            <input
+                              type="checkbox"
+                              className={styles.agendaCheck}
+                              checked={!!dealTicks[key]}
+                              onChange={() => toggleDeal(key)}
+                              title={dealTicks[key] ? `Mark "${deal.name}" not covered` : `Mark "${deal.name}" covered`}
+                              aria-label={`Covered: ${deal.name}`}
+                            />
+                            <button
+                              type="button"
+                              className={dealTicks[key] ? `${styles.agendaSubText} ${styles.agendaTextDone}` : styles.agendaSubText}
+                              onClick={() => onOpenOpp?.(deal.id)}
+                              title={onOpenOpp ? `Open ${deal.name}` : deal.name}
+                            >
+                              {deal.name}
+                            </button>
+                            {deal.amountLabel && (
+                              <span className={styles.agendaSubMeta}>{deal.amountLabel}</span>
+                            )}
+                            {deal.stageLabel && (
+                              <span className={styles.agendaSubMeta}>{deal.stageLabel}</span>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                );
+              })()}
             </li>
           ))}
         </ol>
