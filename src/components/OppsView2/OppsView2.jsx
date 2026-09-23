@@ -154,7 +154,7 @@ import { DealTimelineModal } from './DealTimelineModal';
 // tab reads them.
 import { getServicePricing, resolvePricingBases, estimateScope, feeBasisLabel, feeLinePhrase, pricingUnits, parseMoney as parsePricingMoney, formatMoney as formatPricingMoney } from '../../utils/servicePricing';
 import {
-  oppDealCounts, dealCountRows, projectCountRows, serviceUnitsForScope, setServiceUnitValue,
+  oppDealCounts, dealCountRows, projectCountRows, serviceUnitsForScope, setServiceUnitValue, serviceCountCell,
   COUNT_SOURCE_OPP, COUNT_SOURCE_COMPANY, COUNT_SOURCE_SERVICE, SERVICE_UNITS_FIELD,
 } from '../../utils/oppDealCounts';
 // One read of the saved rate card, for the Deal Size popup's Refresh button.
@@ -2806,6 +2806,7 @@ function ScopeFeeDetail({ line, off, onClose }) {
 const SCOPE_FEE_COLUMNS = [
   { key: 'service', label: 'Service' },
   { key: 'status', label: 'Scope status' },
+  { key: 'count', label: 'Count' },
   { key: 'low', label: 'Low' },
   { key: 'high', label: 'High' },
   { key: 'avg', label: 'Avg' },
@@ -2870,8 +2871,76 @@ function ScopeStatusCell({ item, reading, onSet, disabledReason }) {
   );
 }
 
+// The Count cell: how many of the service's own unit this deal covers, for
+// that service alone. Blank shows the count it is priced on anyway (the
+// shared box above, or the rate card's) as a placeholder, so emptying it is
+// "go back to that", never "none". See serviceCountCell.
+function ServiceCountInput({ name, cellInfo, typed, onSave }) {
+  const [draft, setDraft] = useState(null);
+  const cancelled = useRef(false);
+  const unitWord = String(cellInfo.unitLabel || '').toLowerCase();
+  const shown = draft ?? (typed === null || typed === undefined ? '' : String(typed));
+  const fallback = cellInfo.used === null ? '' : cellInfo.used.toLocaleString();
+  const commit = (text) => {
+    const trimmed = String(text || '').trim();
+    const n = trimmed === '' ? null : Number(trimmed.replace(/[,\s]/g, ''));
+    // Not a count: put the box back rather than save a NaN.
+    if (n !== null && (!Number.isFinite(n) || n < 0)) return;
+    if (n === (typed ?? null)) return;
+    onSave(name, n);
+  };
+  const title = onSave
+    ? `How many ${unitWord} this deal covers for ${name}. Prices this service only.${fallback ? ` Blank uses ${fallback}.` : ''}`
+    : `${name} is priced on ${fallback || 'no'} ${unitWord}.`;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
+      <input
+        type="text"
+        inputMode="numeric"
+        value={shown}
+        disabled={!onSave}
+        placeholder={fallback || '-'}
+        aria-label={`${unitWord} for ${name}`}
+        title={title}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          if (onSave && !cancelled.current && draft !== null) commit(draft);
+          cancelled.current = false;
+          setDraft(null);
+        }}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+          else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancelled.current = true;
+            e.currentTarget.blur();
+          }
+        }}
+        style={{
+          width: 70, boxSizing: 'border-box', padding: '1px 4px',
+          border: `1px solid ${typed !== null && typed !== undefined ? 'var(--color-accent)' : 'var(--color-border)'}`,
+          borderRadius: 3, background: onSave ? '#fff' : '#F8FAFC',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+          fontSize: '0.74rem', textAlign: 'right', color: '#1E293B',
+        }}
+      />
+      <span style={{ fontSize: '0.62rem', color: '#94A3B8', whiteSpace: 'nowrap' }}>{unitWord}</span>
+    </div>
+  );
+}
+
 function ScopeFeeTable({
   estimate, totals = null, selected = null, onToggle = null, onUse, refresh = null,
+  // A count per service (name -> number) typed for this deal, and the save
+  // that sets or clears one. A service charged per site, per site w/
+  // mandate, per meter... gets a box in the Count column; one priced flat
+  // or as a percentage gets none. Null onSetServiceCount shows the counts
+  // read-only. See serviceCountCell.
+  serviceCounts = null,
+  onSetServiceCount = null,
+  bases = undefined,
   // The units the caller has put a working box for above this table, which
   // is what decides where each red note sends you to fill one in.
   typeableUnits = null,
@@ -2961,7 +3030,7 @@ function ScopeFeeTable({
   const mid = (lo, hi) => ((lo || 0) + (hi || 0)) / 2;
   // What the Year 1 total's label runs under: everything to the left of the
   // money, whichever of those columns is showing.
-  const labelSpan = (picking ? 1 : 0) + 1 + (show('status') ? 1 : 0);
+  const labelSpan = (picking ? 1 : 0) + 1 + (show('status') ? 1 : 0) + (show('count') ? 1 : 0);
 
   return (
     <div style={{
@@ -3020,6 +3089,12 @@ function ScopeFeeTable({
                 style={{ ...head, textAlign: 'left', paddingLeft: 10, width: 112 }}
                 title="Where this account already stands on the service, from the company card: a status somebody picked, or the stage of another opp that names it, or an N/A implied by something the account has already bought. Derived ones show in italic."
               >Scope status</th>
+            ) : null}
+            {show('count') ? (
+              <th
+                style={{ ...head, textAlign: 'right', paddingLeft: 10, width: 86 }}
+                title="How many sites (or sites w/ mandate, meters, projects...) this deal covers for each service on its own. Blank uses the shared count above. Only services charged per unit have a box."
+              >Count</th>
             ) : null}
             {show('low') ? <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="The bottom of what the rate card says this service comes to">Low</th> : null}
             {show('high') ? <th style={{ ...head, textAlign: 'right', paddingLeft: 10 }} title="The top of what the rate card says this service comes to">High</th> : null}
@@ -3109,6 +3184,22 @@ function ScopeFeeTable({
                       onSet={onSetStatus}
                       disabledReason={statusHelp}
                     />
+                  </td>
+                ) : null}
+                {show('count') ? (
+                  <td style={{ ...cell, paddingLeft: 10, paddingTop: 3 }}>
+                    {(() => {
+                      const info = serviceCountCell(line, bases);
+                      if (!info) return <span style={{ display: 'block', textAlign: 'right', color: '#94A3B8' }}>-</span>;
+                      return (
+                        <ServiceCountInput
+                          name={line.name}
+                          cellInfo={info}
+                          typed={serviceCounts?.[line.name] ?? null}
+                          onSave={onSetServiceCount}
+                        />
+                      );
+                    })()}
                   </td>
                 ) : null}
                 {line.priced ? (
@@ -4175,6 +4266,11 @@ function QuotedAmountCell({
                   onUse={(n) => setDraftAmount(formatQuotedAmountLive(String(Math.round(n))))}
                   refresh={refreshControl}
                   typeableUnits={typeableCountUnits}
+                  serviceCounts={serviceUnits}
+                  onSetServiceCount={onChangeOppField
+                    ? ((name, n) => onChangeOppField(SERVICE_UNITS_FIELD, setServiceUnitValue(opp, name, n)))
+                    : null}
+                  bases={(freshCard ? freshCard.bases : pricingBases) || undefined}
                   // Where the account stands on each of these services, and
                   // - where there is a company card to write to - the pick
                   // that changes it.
@@ -7174,6 +7270,11 @@ function LeadQuotedAmountModal({
             onToggle={onChangeOppField ? toggleService : null}
             onUse={(n) => setQuotedAmount(formatQuotedAmountLive(String(Math.round(n))))}
             typeableUnits={typeableCountUnits}
+            serviceCounts={serviceUnits}
+            onSetServiceCount={onChangeOppField
+              ? ((name, n) => onChangeOppField(SERVICE_UNITS_FIELD, setServiceUnitValue(opp, name, n)))
+              : null}
+            bases={pricingBases || undefined}
             // What the account already says about each service, and - where
             // there is a company card to write to - the pick that changes it.
             statuses={scopeStatuses}

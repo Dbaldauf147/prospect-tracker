@@ -20,7 +20,7 @@
 // Pure — records in, plain numbers out — so the rules can be tested without
 // a browser.
 
-import { parseMoney, PROJECT_UNIT, projectServiceLines } from './servicePricing.js';
+import { parseMoney, PROJECT_UNIT, projectServiceLines, basisFor, PRICING_BASES } from './servicePricing.js';
 import { CLIENT_COUNT_FIELDS } from './clientDealSizing.js';
 
 // Where a count can come from, in the order the answer is taken.
@@ -326,4 +326,52 @@ export function projectCountRows({ lines, opp = null, bases = undefined, canWrit
       blocked: canWrite ? null : 'no-field',
     };
   });
+}
+
+/**
+ * The count box on one row of the Scope services table, or null where the
+ * service isn't charged on a count of its own.
+ *
+ * Projects are not the only count worth giving per service. A deal selling
+ * bill pay across 207 sites and BPS reporting across the 70 of them under a
+ * mandate is two different numbers, and the shared Sites box can only hold
+ * one. So any service charged per unit can carry its own count for this
+ * deal, kept in the same per-service map the project counts use, which
+ * estimateScope already prices against (`serviceUnits`).
+ *
+ * The count follows the service's own basis unit, because that is the unit
+ * the estimator lays a typed count over (see lineContext): a service billed
+ * per site takes a site count, one billed per site w/ mandate takes that.
+ * A service whose headline basis is not a count (flat, a percentage) has no
+ * box, even when a setup line under it is per site: the estimator would
+ * ignore the number, and a box that changes nothing is worse than none.
+ *
+ *   { unit, unitLabel, used }
+ *
+ *   used   the count the line is priced on right now, whichever answered it
+ *          (a count typed here, the rate card's own, or the shared box), or
+ *          null when nothing has. It is the box's placeholder while blank.
+ */
+export function serviceCountCell(line, bases = PRICING_BASES) {
+  const basis = basisFor(line?.entry?.basis, bases || PRICING_BASES);
+  if (!basis || basis.kind !== 'unit' || !basis.unit) return null;
+  // Every priced part of the service that is charged on this unit reads the
+  // same count, so the first one found says what it is.
+  const parts = [
+    ...(Array.isArray(line?.breakdown) ? line.breakdown : []),
+    ...(Array.isArray(line?.setupBreakdown) ? line.setupBreakdown : []),
+  ];
+  const part = parts.find(p => p?.unit === basis.unit && p.units !== undefined);
+  let used = null;
+  let typed = false;
+  if (part) { used = part.units; typed = !!part.unitsTyped; }
+  else if (line?.unit === basis.unit) { used = line.units; typed = !!line.unitsTyped; }
+  // An unanswered count prices at 0, which is "none yet", not a count: only
+  // a zero somebody typed is one.
+  if (!typed && Number(used) <= 0) used = null;
+  return {
+    unit: basis.unit,
+    unitLabel: basis.unitLabel || basis.unit,
+    used: used === null || used === undefined || !Number.isFinite(Number(used)) ? null : Number(used),
+  };
 }
