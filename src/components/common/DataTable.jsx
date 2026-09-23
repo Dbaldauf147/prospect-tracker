@@ -30,6 +30,7 @@ const loadColVisibleRaw = (tableId) => readColVisibleRaw(tablePrefsKeys(tableId)
 const loadColChosen = (tableId) => readColChosen(tablePrefsKeys(tableId));
 const saveColChosen = (tableId, chosen) => writeColChosen(tablePrefsKeys(tableId), chosen);
 import { resolveSortSignal } from '../../utils/tableSortSignal';
+import { tableRowKey } from '../../utils/tableRowKey';
 
 // The saved key order applied (see utils/tableColumnPrefs), plus one rule
 // of this table's own: a selection checkbox column always belongs at the
@@ -1359,7 +1360,7 @@ export function DataTable({
                     )}
                     {visibleRows.map((row, ri) => {
                       const absoluteIdx = startIdx + ri;
-                      const rowKey = row.id ?? absoluteIdx;
+                      const rowKey = tableRowKey(row, absoluteIdx);
                       // Compute the rowStyle once and apply it to both
                       // the <tr> AND every <td>: tr-level backgrounds
                       // can't tint cells whose CSS sets an explicit
