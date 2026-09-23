@@ -18264,7 +18264,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         </>
       )}
 
-      {activeTab === 'coverage' && <Coverage />}
+      {activeTab === 'coverage' && <Coverage settings={settings} updateSettings={updateSettings} />}
 
       {activeTab === 'notSold' && (
         <NotSoldAnalysis
