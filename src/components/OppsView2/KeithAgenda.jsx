@@ -27,7 +27,10 @@
 // "PE overlap deals" works the same way over a different set: every PE or
 // Portfolio Company opp at Stage 3 or later (`peDeals`). Its ticks share the
 // map under a `pe:` prefix, so a Stage 6 PE deal ticked on one line isn't
-// silently ticked on the other.
+// silently ticked on the other. That list is a small table rather than
+// bullets, because the point of walking it is who owns each company and
+// what vertical it is in: PE Owner and Vertical sit in their own columns,
+// and Vertical can be typed in place (it writes the opp's Vertical column).
 
 import { useEffect, useRef, useState } from 'react';
 import styles from './OppsView2.module.css';
@@ -65,7 +68,7 @@ function dealListFor(text, stage6Deals, peDeals) {
     return { prefix: '', deals: stage6Deals, empty: 'No deals in Stage 6 (Agreement Sent) right now.' };
   }
   if (isPeOverlapLine(text)) {
-    return { prefix: 'pe:', deals: peDeals, empty: 'No PE or Portfolio Company deals at Stage 3 or later right now.' };
+    return { prefix: 'pe:', deals: peDeals, table: true, empty: 'No PE or Portfolio Company deals at Stage 3 or later right now.' };
   }
   return null;
 }
@@ -97,7 +100,50 @@ function readAgenda(settings) {
     .map((it, i) => ({ id: it.id || `ka_row_${i}`, text: it.text, done: it.done === true }));
 }
 
-export function KeithAgenda({ settings, updateSettings, stage6Deals = [], peDeals = [], onOpenOpp }) {
+// The Vertical cell: shows the value, and turns into a box on click. A
+// sector borrowed from the owner's portfolio list reads muted, so it isn't
+// mistaken for something somebody set on the opp.
+function VerticalCell({ deal, onSetVertical }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  if (!onSetVertical) return <span>{deal.vertical || '-'}</span>;
+  if (editing) {
+    const save = () => {
+      setEditing(false);
+      const next = draft.trim();
+      if (next !== (deal.verticalFromOpp ? deal.vertical : '')) onSetVertical(deal.id, next);
+    };
+    return (
+      <input
+        autoFocus
+        className={styles.agendaVerticalInput}
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={save}
+        onKeyDown={e => {
+          if (e.key === 'Enter') { e.preventDefault(); save(); }
+          if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+        }}
+        aria-label={`Vertical for ${deal.name}`}
+      />
+    );
+  }
+  const borrowed = deal.vertical && !deal.verticalFromOpp;
+  return (
+    <button
+      type="button"
+      className={borrowed || !deal.vertical ? `${styles.agendaVerticalBtn} ${styles.agendaVerticalMuted}` : styles.agendaVerticalBtn}
+      onClick={() => { setDraft(deal.vertical || ''); setEditing(true); }}
+      title={borrowed
+        ? `Sector from ${deal.peOwner || 'the owner'}'s portfolio list. Click to set the vertical on this opp.`
+        : 'Click to set the vertical on this opp'}
+    >
+      {deal.vertical || '+ add'}
+    </button>
+  );
+}
+
+export function KeithAgenda({ settings, updateSettings, stage6Deals = [], peDeals = [], onOpenOpp, onSetVertical }) {
   const items = readAgenda(settings);
   const dealTicks = readDealTicks(settings);
   // Which line is open for editing, and the text as it's being typed. Held
@@ -299,6 +345,57 @@ export function KeithAgenda({ settings, updateSettings, stage6Deals = [], peDeal
                   // Said rather than left blank: no sub-bullets under a line
                   // that should have them otherwise reads as broken.
                   return <div className={styles.agendaSubEmpty}>{list.empty}</div>;
+                }
+                if (list.table) {
+                  return (
+                    <div className={styles.agendaDealTableWrap}>
+                      <table className={styles.agendaDealTable}>
+                        <thead>
+                          <tr>
+                            <th aria-label="Covered" />
+                            <th>Account</th>
+                            <th>PE Owner</th>
+                            <th>Vertical</th>
+                            <th className={styles.agendaDealNum}>Amount</th>
+                            <th>Stage</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {list.deals.map(deal => {
+                            const key = `${list.prefix}${deal.id}`;
+                            return (
+                              <tr key={key}>
+                                <td>
+                                  <input
+                                    type="checkbox"
+                                    className={styles.agendaCheck}
+                                    checked={!!dealTicks[key]}
+                                    onChange={() => toggleDeal(key)}
+                                    title={dealTicks[key] ? `Mark "${deal.name}" not covered` : `Mark "${deal.name}" covered`}
+                                    aria-label={`Covered: ${deal.name}`}
+                                  />
+                                </td>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className={dealTicks[key] ? `${styles.agendaSubText} ${styles.agendaTextDone}` : styles.agendaSubText}
+                                    onClick={() => onOpenOpp?.(deal.id)}
+                                    title={onOpenOpp ? `Open ${deal.name}` : deal.name}
+                                  >
+                                    {deal.name}
+                                  </button>
+                                </td>
+                                <td className={deal.peOwner ? undefined : styles.agendaSubMeta}>{deal.peOwner || '-'}</td>
+                                <td><VerticalCell deal={deal} onSetVertical={onSetVertical} /></td>
+                                <td className={`${styles.agendaSubMeta} ${styles.agendaDealNum}`}>{deal.amountLabel || '-'}</td>
+                                <td className={styles.agendaSubMeta}>{deal.stageLabel}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
                 }
                 return (
                   <ul className={styles.agendaSubList}>

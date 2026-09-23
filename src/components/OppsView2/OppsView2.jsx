@@ -674,6 +674,9 @@ const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'N
   'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name', 'PE Owner', 'Credit approval',
   'Target Signature Date', PULL_THROUGH_COLUMN, ESTIMATED_FEE_COLUMN, QUOTED_VARIANCE_COLUMN,
   'Margin Approval Date', 'Credit Approval Date',
+  // What the company does, set per opp (the Keith agenda's PE overlap list
+  // reads and writes it).
+  'Vertical',
   // Ticked in the Scope picker, never sent by BFO, so it only exists if it
   // is ensured here.
   COMMODITY_COLUMN];
@@ -16446,8 +16449,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // Portfolio Company opp at Stage 3 or later. Off every opp, not the tab's
   // filtered rows, for the same reason as the Stage 6 list above.
   const peOverlapDeals = useMemo(
-    () => buildPeOverlapDeals(records, { parseAmount: parseMoney, fmtAmount: fmtMoneyWhole }),
-    [records],
+    () => buildPeOverlapDeals(records, { parseAmount: parseMoney, fmtAmount: fmtMoneyWhole, prospects }),
+    [records, prospects],
   );
 
   // Mass Edit → "Email table": the selected opps to feed the preview/copy
@@ -18094,6 +18097,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             stage6Deals={stage6Deals}
             peDeals={peOverlapDeals}
             onOpenOpp={setInfoOppId}
+            onSetVertical={(id, v) => updateOppField(id, 'Vertical', v)}
           />
           <div className={styles.searchRow}>
             <span className={styles.resultCount}>
