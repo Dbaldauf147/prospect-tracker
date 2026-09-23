@@ -74,6 +74,7 @@ import {
 } from '../../utils/oppRfpTemplate';
 import { fmtMarginPct, fmtMoneyWhole, pricingSnapshotYear1 } from '../../utils/pricingOptionCalc';
 import { parseMoney, closeReasonOf, summarizeOppsMoneyAndReasons } from '../../utils/oppsMetrics';
+import { Coverage } from './Coverage';
 import { NotSoldAnalysis } from './NotSoldAnalysis';
 import { PricingAnalysisModal } from './PricingAnalysisModal';
 import { ANALYSIS_FIELD, ESTIMATED_FEE_COLUMN, normalizePricingAnalysis } from '../../utils/pricingAnalysis';
@@ -17842,6 +17843,10 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           className={activeTab === 'waitingKeith' ? styles.tabActive : styles.tab}
           onClick={() => setActiveTab('waitingKeith')}
         >Keith{waitingOnKeith.length ? ` (${waitingOnKeith.length})` : ''}</button>
+        <button
+          className={activeTab === 'coverage' ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab('coverage')}
+        >Coverage</button>
       </div>
 
       {/* Filter row. The Show / Start Date / Status filters and the
@@ -18258,6 +18263,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           />
         </>
       )}
+
+      {activeTab === 'coverage' && <Coverage />}
 
       {activeTab === 'notSold' && (
         <NotSoldAnalysis
