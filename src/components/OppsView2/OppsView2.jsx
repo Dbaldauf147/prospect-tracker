@@ -340,6 +340,11 @@ function isScheduledRowId(id) {
 function scheduledOppRow(entry) {
   return {
     _id: `${SCHEDULED_ROW_PREFIX}${entry.id}`,
+    // Mirrored into `id` like every real opp, because DataTable keys rows
+    // on it. Without it the placeholder was keyed by list position, which
+    // collided with the numeric id of a real opp and left a stale, dead
+    // copy of that opp on screen.
+    id: `${SCHEDULED_ROW_PREFIX}${entry.id}`,
     __scheduledOpp: entry,
     Account: entry.company || '',
     Stage: 'Scheduled',
