@@ -243,7 +243,7 @@ export function getEffectiveServiceMetadata(name, overrides) {
       name, bfoTag: '', region: '', years: '',
       productLine: '', serviceType: '', localProjectName: '',
       timelineDriven: '', rolloutTime: '', dependsOn: '', autoAdd: '', autoNa: '',
-      sme: '', ktm: '',
+      sme: '', ktm: '', notes: '',
     };
   }
   const bfoTag = mergedBfoTag(seed, override);
@@ -279,6 +279,9 @@ export function getEffectiveServiceMetadata(name, overrides) {
     // Free text, same as SME and with no seed value: whatever the user
     // records as this service's KTM on the Services tab.
     ktm:              override?.ktm              ?? seed?.ktm              ?? '',
+    // Free-form notes about the service, typed in the Services popup. No
+    // seed value; may run to several lines.
+    notes:            override?.notes            ?? seed?.notes            ?? '',
     graveyard: seed?.graveyard || false,
   };
 }

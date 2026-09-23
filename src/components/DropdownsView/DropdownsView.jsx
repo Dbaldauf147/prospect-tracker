@@ -1379,7 +1379,7 @@ export function DropdownsView({ settings, updateSettings }) {
       if (name.toLowerCase().includes(term)) return true;
       if (bucket.toLowerCase().includes(term)) return true;
       if (!meta) return false;
-      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.timelineDriven, meta.rolloutTime, meta.dependsOn, meta.autoAdd, meta.autoNa, meta.sme, meta.ktm]
+      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.timelineDriven, meta.rolloutTime, meta.dependsOn, meta.autoAdd, meta.autoNa, meta.sme, meta.ktm, meta.notes]
         .some(v => String(v || '').toLowerCase().includes(term));
     });
   }, [serviceRows, serviceSearch, hiddenServices, showHiddenServices]);
