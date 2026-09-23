@@ -26,6 +26,37 @@
  */
 export const FILL_HEADERS = {
   propertyType: 'Property Type',
+  division: 'Division',
+  propertySize: 'Sq Ft',
+  ownership: 'Ownership',
+  zip: 'Zip Code',
+  // The unit sits in the consumption names so detectConsumptionColumns
+  // reads them as its strongest tier, and the cost names carry "Cost" so
+  // the consumption detector's exclude list keeps them out of it.
+  electric: 'Electric kWh',
+  gas: 'Gas Therms',
+  electricCost: 'Electric Cost ($)',
+  gasCost: 'Gas Cost ($)',
+};
+
+/**
+ * Data summary row → the site field clicking it edits.
+ *
+ * Accounts and equipment are never on an upload; both are worked out from
+ * the property type, so that is the field their rows open.
+ */
+export const SUMMARY_ROW_FIELDS = {
+  electricCost: 'electricCost',
+  electricUse: 'electric',
+  gasCost: 'gasCost',
+  gasUse: 'gas',
+  zip: 'zip',
+  division: 'division',
+  sqft: 'propertySize',
+  propertyType: 'propertyType',
+  ownership: 'ownership',
+  accounts: 'propertyType',
+  equipment: 'propertyType',
 };
 
 /**
@@ -64,4 +95,40 @@ export function describeColumnFill({ label, value, count, header, created }) {
   return created
     ? `Add a “${header}” column to your uploaded sites and set it to “${value}” on all ${sites}?`
     : `Set ${label || header} to “${value}” on all ${sites}, replacing whatever the “${header}” column holds now?`;
+}
+
+const isBlank = (v) => v === null || v === undefined || String(v).trim() === '';
+
+/**
+ * One value written into one column on a chosen set of sites: every site,
+ * one division, or a handful picked by hand.
+ *
+ *   targets    row objects (identity, as in applySiteColumnEdit)
+ *   onlyBlank  leave a site that already has a value alone, so "fill the
+ *              gaps" never overwrites a figure off the upload
+ *   created    the column is new; every row outside the targets gets it
+ *              blank, because the page reads its headers off the first row
+ *              and a column missing there is a column the reload never sees
+ *
+ *   { rows, changed, skipped }
+ */
+export function applyColumnFill(sitesData, targets, header, value, { onlyBlank = false, created = false } = {}) {
+  const rows = Array.isArray(sitesData) ? sitesData : [];
+  const set = targets instanceof Set ? targets : new Set(targets || []);
+  if (!header || set.size === 0) return { rows, changed: 0, skipped: 0 };
+  let changed = 0;
+  let skipped = 0;
+  const next = rows.map(row => {
+    if (!set.has(row)) {
+      return created && row && !(header in row) ? { ...row, [header]: '' } : row;
+    }
+    const current = row?.[header];
+    if ((onlyBlank && !isBlank(current)) || String(current ?? '').trim() === String(value ?? '').trim()) {
+      skipped += 1;
+      return created && row && !(header in row) ? { ...row, [header]: '' } : row;
+    }
+    changed += 1;
+    return { ...row, [header]: value };
+  });
+  return { rows: changed > 0 ? next : rows, changed, skipped };
 }

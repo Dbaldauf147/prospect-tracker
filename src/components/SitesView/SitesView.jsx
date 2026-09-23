@@ -34,8 +34,9 @@ import {
 import { isCaliforniaSite } from '../../utils/siteRegion';
 import {
   siteEditableColumns, coerceSiteValue, applySiteColumnEdit, describeSiteEdit,
-  siteCellEditors, describeSiteCellEdit,
+  siteCellEditors, describeSiteCellEdit, SITE_EDIT_FIELDS,
 } from '../../utils/siteMassEdit';
+import { SummaryFieldEditModal } from './SummaryFieldEditModal.jsx';
 import { mergeIntoSiteList } from '../../utils/siteListMerge';
 import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripState, isIndicativeSavingsExport, readSheetNames } from '../../utils/xlsxParse';
 import { salvageWorkbook, looksLikeZipDamage, describeLostEntries } from '../../utils/salvageWorkbook';
@@ -79,7 +80,7 @@ import {
   SITE_STATUS_HEADER, SITE_STATUS_OPTIONS, activeSites, inactiveSiteNote,
   normalizeSiteStatus, pickSiteStatusColumn, siteStatusCounts,
 } from '../../utils/siteStatus';
-import { fillHeaderFor, describeColumnFill, FILL_HEADERS } from '../../utils/siteColumnFill';
+import { fillHeaderFor, describeColumnFill, FILL_HEADERS, SUMMARY_ROW_FIELDS, applyColumnFill } from '../../utils/siteColumnFill';
 import { bulkMapDraft, bulkMapSummary } from '../../utils/propertyTypeBulkMap';
 import { appendIntervalDataSummary } from '../../utils/intervalDataSummary';
 import { buildDivisionsSheet, summarizeDivisions, divisionLabel } from '../../utils/divisionsSummary';
@@ -4794,6 +4795,110 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     () => buildDataQualitySummary({ analysis: analysisSummary, rows }),
     [analysisSummary, rows],
   );
+
+  // --- updating an input from the data summary ------------------------
+  //
+  // Clicking a summary row opens SummaryFieldEditModal for the site field
+  // behind it (SUMMARY_ROW_FIELDS). The value goes into the uploaded column
+  // the page is reading for that field, or into a new column named so the
+  // mapping detector picks it back up on reload, and is saved the same way
+  // a mass edit is.
+  const [summaryEditKey, setSummaryEditKey] = useState(null);
+  const summaryEditField = summaryEditKey ? SUMMARY_ROW_FIELDS[summaryEditKey] : null;
+
+  // Which uploaded column holds a field right now, or '' for none. The
+  // consumption fields are the odd ones: with no explicit pick the page
+  // reads whatever detectConsumptionColumns found, so that is the column.
+  const summaryEditTarget = useMemo(() => {
+    if (!summaryEditField || !sitesData.length) return null;
+    const headers = Object.keys(sitesData[0]);
+    let mapped = siteFieldMapping[summaryEditField] || '';
+    if (summaryEditField === 'electric' || summaryEditField === 'gas') {
+      const pick = consumption[summaryEditField] || [];
+      mapped = pick[0]?.header || '';
+    }
+    if (mapped === '__none__') mapped = '';
+    return fillHeaderFor(mapped, headers, FILL_HEADERS[summaryEditField]);
+  }, [summaryEditField, sitesData, siteFieldMapping, consumption]);
+
+  const summaryEditSites = useMemo(() => {
+    if (!summaryEditTarget?.header) return [];
+    return allRows.map(r => ({
+      id: r.id,
+      name: siteNameColumn ? String(r[siteNameColumn] ?? '').trim() : String(r.__siteName__ || '').trim(),
+      division: String(r.__division__ || '').trim(),
+      current: cleanSitesData[r.id]?.[summaryEditTarget.header] ?? '',
+    }));
+  }, [summaryEditTarget, allRows, siteNameColumn, cleanSitesData]);
+
+  const summaryEditDef = useMemo(() => {
+    if (!summaryEditField) return null;
+    const def = SITE_EDIT_FIELDS.find(f => f.key === summaryEditField) || { label: summaryEditField };
+    const row = [...(dataQuality?.left || []), ...(dataQuality?.right || [])].find(r => r.key === summaryEditKey);
+    let note = '';
+    if (summaryEditKey === 'accounts' || summaryEditKey === 'equipment') {
+      note = `${row?.label || 'This'} is estimated from the property type, so updating the property type is what moves it.`;
+    } else if ((summaryEditField === 'electric' || summaryEditField === 'gas') && summaryEditTarget && !summaryEditTarget.created) {
+      note = 'Enter the figure in the unit that column is in.';
+    } else if (summaryEditField === 'electric' || summaryEditField === 'gas') {
+      note = `Enter annual ${summaryEditField === 'electric' ? 'kWh' : 'therms'}.`;
+    } else if (summaryEditField === 'electricCost' || summaryEditField === 'gasCost') {
+      note = 'Enter the annual cost in dollars.';
+    }
+    return {
+      label: row && summaryEditKey !== 'accounts' && summaryEditKey !== 'equipment' ? row.label : def.label,
+      type: def.type || 'text',
+      options: def.options || null,
+      suggestions: summaryEditField === 'division'
+        ? divisionOptions.filter(d => d.value !== NO_DIVISION).map(d => d.value)
+        : null,
+      note,
+    };
+  }, [summaryEditField, summaryEditKey, summaryEditTarget, dataQuality, divisionOptions]);
+
+  // Point the page at a column it wasn't reading, for this session. A
+  // reload finds it again by name through detectSitesMapping.
+  const summaryFieldSetters = {
+    electric: setElectricColOverride,
+    gas: setGasColOverride,
+    electricCost: setElectricCostOverride,
+    gasCost: setGasCostOverride,
+    zip: setZipColOverride,
+    division: setDivisionOverride,
+    propertySize: setPropertySizeOverride,
+    propertyType: setPropertyTypeOverride,
+    ownership: setOwnershipOverride,
+  };
+
+  async function applySummaryEdit({ ids, value, onlyBlank }) {
+    const target = summaryEditTarget;
+    if (!target?.header || !summaryEditField) return { error: 'There is no column to write this into.' };
+    const coerced = coerceSiteValue({ type: summaryEditDef?.type }, value);
+    if (!coerced.ok) return { error: coerced.error };
+    const targets = new Set(ids.map(id => cleanSitesData[id]).filter(Boolean));
+    if (targets.size === 0) return { error: 'No sites selected.' };
+    const { rows: next, changed, skipped } = applyColumnFill(
+      sitesData, targets, target.header, coerced.value, { onlyBlank, created: target.created },
+    );
+    const wasReading = summaryEditField === 'electric' || summaryEditField === 'gas'
+      ? (consumption[summaryEditField] || []).some(c => c.header === target.header)
+      : siteFieldMapping[summaryEditField] === target.header;
+    if (changed === 0) {
+      return { message: `Nothing to change: ${skipped.toLocaleString()} site${skipped === 1 ? '' : 's'} already had a value${onlyBlank ? '' : ' matching that'}.` };
+    }
+    try {
+      // Saved before the state swap, matching the mass edit.
+      await saveListToIDB(SITES_STORAGE_KEY, next);
+      setSitesData(next);
+      if (!wasReading) summaryFieldSetters[summaryEditField]?.(target.header);
+    } catch (err) {
+      return { error: `Couldn’t save the update: ${err?.message || err}` };
+    }
+    return {
+      message: `Updated ${changed.toLocaleString()} site${changed === 1 ? '' : 's'}`
+        + `${skipped > 0 ? ` (${skipped.toLocaleString()} left as they were)` : ''}.`,
+    };
+  }
 
   const matchStats = useMemo(() => {
     if (!utility?.zipMap || !rows.length) return null;
@@ -16401,7 +16506,19 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           six numbers per card and work out the shares themselves. The
           fixes those banners offered are still one click away, on Update
           Column Mapping and Data sources in the toolbar above. */}
-      <DataQualityTable summary={dataQuality} />
+      <DataQualityTable summary={dataQuality} onEdit={sitesData.length ? setSummaryEditKey : undefined} />
+      {summaryEditDef && summaryEditTarget?.header && (
+        <SummaryFieldEditModal
+          key={summaryEditKey}
+          field={summaryEditDef}
+          header={summaryEditTarget.header}
+          created={summaryEditTarget.created}
+          sites={summaryEditSites}
+          divisions={divisionOptions}
+          onApply={applySummaryEdit}
+          onClose={() => setSummaryEditKey(null)}
+        />
+      )}
 
       <div className={styles.searchRow}>
         <input
