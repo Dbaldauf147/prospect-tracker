@@ -36,7 +36,16 @@ function keepIfSame(prev, next) {
 //
 // Each returned issue carries a `snoozed` flag. `openCount` is the number
 // of issues that are NOT snoozed — that's the number shown on the sidebar.
-export function useIssues({ prospects = [], cdmName, user, marketingLeads = [], serviceOverrides = {}, settings = {} }) {
+// Shared fallbacks for the settings keys a user may never have written. A
+// `= []` default is a new array on every call, which reads to the memos
+// below as a change, so computeIssues (every detector over every prospect,
+// deal and opp) re-ran on each App render: every keystroke, modal open
+// and view switch.
+const NO_LEADS = [];
+const NO_OVERRIDES = {};
+const NO_PROSPECTS = [];
+
+export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLeads = NO_LEADS, serviceOverrides = NO_OVERRIDES, settings = {} }) {
   const [dealsList, setDealsList] = useState(() => loadDealsList().data);
   const [clientMap, setClientMap] = useState(() => loadDealClientMap());
   const [untrackedMap, setUntrackedMap] = useState(() => loadClientUntrackedMap());
