@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback, memo, Suspense } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { hasMetInPersonTag, metInPersonState, normalizeMetState, MET_STATE_OPTIONS, MET_YES, MET_ASKED, MET_HOLD } from '../../utils/metInPerson';
 import { contactDisplayName } from '../../utils/contactRosters';
@@ -21,8 +21,7 @@ const COL_HEAD = {
 };
 import { stripDashes, sanitizeExcelWorkbook } from '../../utils/exportSanitize.js';
 import { createPortal } from 'react-dom';
-import ReactQuill from 'react-quill-new';
-import 'react-quill-new/dist/quill.snow.css';
+import { lazyView } from '../../utils/lazyView';
 import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { ContractsTab } from './ContractsTab';
@@ -126,8 +125,6 @@ import { companyOppRows, summarizeCompanyOpps } from '../../utils/companyOppList
 import {
   subscribeIndicativeAnalysisMeta, loadIndicativeAnalysis, deleteIndicativeAnalysis,
 } from '../../utils/firestoreSync';
-import { onePagerModel, onePagerFileName } from '../../utils/companyOnePager';
-import { buildOnePagerDocx } from '../../utils/onePagerDocx';
 import { tagListHas } from '../../utils/contactTagReview';
 import { loadDealsList } from '../../utils/dealsStore';
 import { isInactiveAgreement } from '../../utils/dealsFormat';
@@ -135,6 +132,10 @@ import { isDecisionMakerContact } from '../../utils/decisionMakerCoverage';
 import { ListsMatchPanel } from './ListsMatchPanel';
 import { AnalysisMenu } from './AnalysisMenu';
 import styles from './ProspectModal.module.css';
+
+// The notes editor is fetched the first time an opportunity's notes open,
+// not with the card (see QuillEditor.js).
+const ReactQuill = lazyView(() => import('./QuillEditor'));
 
 async function loadOppsFromIndexedDB() {
   try { return await loadOppsFromCache(); }
@@ -6166,6 +6167,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       // heading with ruled lines under it, to fill in on the printed copy
       // or in Word before sending. A box on this popup asked for the same
       // thing a week early, out of the room the note is about.
+      // Loaded on click: the Word builder is only ever needed here.
+      const [{ onePagerModel, onePagerFileName }, { buildOnePagerDocx }] = await Promise.all([
+        import('../../utils/companyOnePager'),
+        import('../../utils/onePagerDocx'),
+      ]);
       const model = onePagerModel({
         company: fields.company,
         cdm: fields.cdm,
@@ -9231,6 +9237,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         />
                       ) : (
                         <div className="opportunity-notes-editor">
+                          <Suspense fallback={<div style={{ minHeight: 522, border: '1px solid #ccc', borderRadius: 4, padding: '0.75rem', color: '#94A3B8', fontSize: '0.8rem' }}>Loading editor...</div>}>
                           <ReactQuill
                             ref={oppQuillRef}
                             theme="snow"
@@ -9249,6 +9256,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             }}
                             formats={['header', 'bold', 'italic', 'underline', 'strike', 'list', 'indent', 'link', 'blockquote', 'code-block']}
                           />
+                          </Suspense>
                         </div>
                       )}
                     </div>
