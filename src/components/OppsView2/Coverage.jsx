@@ -13,6 +13,7 @@ import styles from './OppsView2.module.css';
 // tidied draft to settings.salesCoverage, Cancel drops it. Until the first
 // save the list is the default in data/salesCoverage.js.
 const th = {
+  zIndex: 1,
   textAlign: 'left',
   padding: '0.45rem 0.75rem',
   background: '#1F4E79',
@@ -147,7 +148,10 @@ export function Coverage({ settings, updateSettings }) {
           </>
         )}
       </div>
-      <div style={{ padding: '0 1.25rem 1.25rem' }}>
+      {/* The Opps wrapper clips its overflow (every other tab scrolls inside
+          its own DataTable), so this list needs its own scroll box or the
+          bottom teams are unreachable. */}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0 1.25rem 1.25rem' }}>
         <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem', minWidth: 720 }}>
           <thead>
             <tr>
