@@ -3,12 +3,12 @@
 //
 // "Next Steps" is the column Opps 2 renders as **Notes** — the bulleted
 // checklist a rep works off. It is stored as one newline-joined string
-// (so search, sort, and export keep working on a plain field) with two
+// (so search, sort, and export keep working on a plain field) with three
 // parallel arrays, one entry per line, index-aligned: `_nextStepsWaiting`
-// holding each step's Waiting On, and `_nextStepsDone` holding the day it
-// was last ticked off. That alignment is the whole reason this file
-// exists: anything appending to the list has to extend every half
-// together, or every step below the insertion point starts showing
+// holding each step's Waiting On, `_nextStepsDone` holding the day it
+// was last ticked off, and `_nextStepsHold` whether it is on hold. That
+// alignment is the whole reason this file exists: anything appending to
+// the list has to extend every part together, or every step below the insertion point starts showing
 // somebody else's Waiting On.
 //
 // The format helpers were Opps 2's own until a call's follow-ups needed
@@ -85,6 +85,25 @@ export function readStepsDone(opp) {
 /** How many of a list of stamps are today's. */
 export function countStepsDoneToday(stamps, today) {
   return (Array.isArray(stamps) ? stamps : []).filter(s => isStepDoneToday(s, today)).length;
+}
+
+// ---- on hold -----------------------------------------------------------
+
+/** The opp field holding each step's "on hold" flag, index-aligned. */
+export const NEXT_STEPS_HOLD_FIELD = '_nextStepsHold';
+
+/**
+ * A step put on hold stays greyed out until somebody unticks it.
+ *
+ * The other half of "done today": that tick is a DAY and lapses overnight,
+ * which is right for "I worked this today" and wrong for "nothing to do
+ * here until they come back to me", where the step should stay out of the
+ * way for as long as it takes. So this one is a plain flag that nothing
+ * clears on its own.
+ */
+export function readStepsHold(opp) {
+  const raw = opp?.[NEXT_STEPS_HOLD_FIELD];
+  return Array.isArray(raw) ? raw.map(v => v === true || v === 'true' || v === 1 || v === '1') : [];
 }
 
 // ---- a call's follow-ups as next steps --------------------------------
