@@ -8,8 +8,10 @@
 // number, not a string; the adder split adds back up to the saving.
 import {
   categoryRuns, categoryMonthAoa, categoryHeaders, categoryFormats, summaryRows, summaryAoa,
-  categoriesFilename, CATEGORY_SHEET, BASELINE_LABEL,
+  categoriesFilename, CATEGORY_SHEET, BASELINE_LABEL, buildSavingsCategoriesWorkbook, SE,
 } from '../src/utils/savingsCategoriesExport.js';
+import ExcelJS from 'exceljs';
+import { writeFileSync } from 'node:fs';
 import {
   normalizeScenario, monthlySeries, forwardSeries, normalizeSettles, SHIPPED_SETTLES, SHIPPED_FORWARD,
 } from '../src/utils/nymexSavings.js';
@@ -93,6 +95,52 @@ for (const key of Object.keys(runs)) {
 
 eq(categoriesFilename('Syracuse Main (SYR)', new Date('2026-09-24T12:00:00Z')), 'Syracuse_Main_SYR_savings_by_category_2026-09-24.xlsx', 'a safe, dated filename');
 eq(categoriesFilename('', new Date('2026-09-24T12:00:00Z')), 'site_savings_by_category_2026-09-24.xlsx', 'an unnamed site still gets one');
+
+// ── The Schneider Electric formatted workbook ──
+{
+  const wb = buildSavingsCategoriesWorkbook(ExcelJS.Workbook, categoryRuns({ ...scenario, currentAdder: 0.1 }, series, curve));
+  eq(wb.worksheets.map(w => w.name), ['Summary', 'Against the index', 'Contract Over Contract', 'Cost Avoidance'], 'Summary first, then a tab per category');
+  eq(wb.creator, 'Schneider Electric · Prospect Tracker', 'authored as the other branded exports are');
+  for (const ws of wb.worksheets) {
+    const title = ws.getCell(1, 1);
+    eq(title.value, 'Schneider Electric', `${ws.name}: the title band`);
+    eq(title.fill?.fgColor?.argb, SE.GREEN, `${ws.name}: in Life Is On green`);
+    eq(ws.getCell(3, 1).fill?.fgColor?.argb, SE.GREEN_DARK, `${ws.name}: dark green header row`);
+    eq(ws.getCell(3, 1).font?.color?.argb, SE.WHITE, `${ws.name}: with white header text`);
+    eq(ws.properties.tabColor?.argb, SE.GREEN, `${ws.name}: a green tab`);
+    eq(ws.views[0].showGridLines, false, `${ws.name}: no gridlines`);
+    eq(ws.views[0].ySplit, 3, `${ws.name}: frozen under the header`);
+    ok(String(ws.getCell(2, 1).value).startsWith('Syracuse Main (SYR)'), `${ws.name}: the subtitle names the site`);
+    // Every populated cell is left-aligned, headers and numbers alike.
+    const notLeft = [];
+    ws.eachRow((row) => row.eachCell((cell) => {
+      if (cell.alignment?.horizontal !== 'left') notLeft.push(cell.address);
+    }));
+    eq(notLeft, [], `${ws.name}: every cell is left-aligned`);
+    let wrongFont = 0;
+    ws.eachRow((row) => row.eachCell((cell) => { if (cell.font?.name !== SE.FONT) wrongFont++; }));
+    eq(wrongFont, 0, `${ws.name}: Nunito Sans throughout`);
+  }
+
+  const coc = wb.getWorksheet('Contract Over Contract');
+  const head = coc.getRow(3).values.slice(1);
+  const savingCol = head.indexOf('Saving') + 1;
+  eq(typeof coc.getCell(4, savingCol).value, 'number', 'savings stay numbers');
+  ok(String(coc.getCell(4, savingCol).numFmt).includes('[Red]'), 'with losses shown in red');
+  ok(head.includes('Retail adder saving'), 'the adder split carries into the branded tab');
+  const lastRow = coc.actualRowCount;
+  eq(coc.getCell(lastRow, 1).value, 'Term total', 'the tab ends on the term total');
+  eq(coc.getCell(lastRow, 1).fill?.fgColor?.argb, SE.GREEN_TINT, 'which is tinted green');
+  eq(coc.getCell(lastRow, 1).font?.bold, true, 'and bold');
+
+  const sum = wb.getWorksheet('Summary');
+  const labels = [];
+  sum.eachRow((row) => labels.push(row.getCell(1).value));
+  ok(labels.includes('Saving over the term') && labels.includes('Assumptions'), 'the summary carries the savings and the assumptions');
+
+  // Leave a copy for eyeballing when asked to (SAVINGS_XLSX_OUT=path).
+  if (process.env.SAVINGS_XLSX_OUT) writeFileSync(process.env.SAVINGS_XLSX_OUT, Buffer.from(await wb.xlsx.writeBuffer()));
+}
 
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
