@@ -62,6 +62,7 @@ import { pushOpps2Backup } from '../../utils/opps2Backup';
 import { isClientWedged, subscribeToClientWedged } from '../../utils/firestoreClientHealth';
 import { remoteChangesCallInOrder } from '../../utils/oppsCallIn';
 import { loadOptionLinks, setOppOptionLink, optionLinkName, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
+import { suggestedFinalMargin } from '../../utils/closeOutMargin';
 import { PULL_THROUGH_COLUMN, isPullThroughOpp, pullThroughSource } from '../../utils/pullThrough';
 import { COMMODITY_COLUMN, COMMODITY_LIST_KEY, formatCommodities } from '../../utils/commodities';
 import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
@@ -6520,23 +6521,40 @@ function ScheduledOppsModal({ entries = [], onChangeEntry, onCreateNow, onCancel
 // a quoted margin that got negotiated down is the normal case. Writing the
 // quoted number into a saved field unasked would be a number the user has
 // to notice to correct — offering it is one click and no lie.
-function TrackedMarginHint({ opp, current, onUse }) {
-  const snapshot = opp?._pricingOption;
-  const tracked = fmtMarginPct(snapshot?.finalMargin);
-  // Nothing quoted through Pricing (or a hand-built option, which has no
-  // cost side and so no margin): there is nothing to suggest, and a line
-  // explaining the absence would show on most close-outs.
-  if (!tracked) return null;
-  const optionName = String(snapshot?.name || '').trim();
+//
+// The suggestion shows in two places: inside the empty box as its
+// placeholder ("Suggested 46.2%"), and on the line under it, naming the option,
+// with a Use button. When an option is attached but carries no margin, the
+// line says why rather than leaving the box looking like it forgot.
+function marginPlaceholder(suggestion) {
+  if (!suggestion?.text) return 'e.g. 22% or $4,500';
+  // Short, to fit the narrow box; the line under it names the option.
+  return `Suggested ${suggestion.text}`;
+}
+
+function TrackedMarginHint({ suggestion, current, onUse }) {
+  if (!suggestion) return null;
+  const lineStyle = {
+    marginTop: 5, display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap',
+    fontSize: '0.7rem', color: 'var(--color-text-muted)', lineHeight: 1.4,
+  };
+  const optionName = suggestion.optionName;
+  if (!suggestion.text) {
+    return (
+      <div style={lineStyle}>
+        {suggestion.reason === 'handBuilt'
+          ? <span>{optionName ? <em>{optionName}</em> : 'The attached option'} is hand-built, so it has no cost side and no margin to suggest.</span>
+          : <span>{optionName ? <em>{optionName}</em> : 'The attached SIA option'} has no margin saved. Re-save it to this opp from Pricing to suggest one.</span>}
+      </div>
+    );
+  }
+  const tracked = suggestion.text;
   const matches = String(current || '').trim() === tracked;
   return (
-    <div style={{
-      marginTop: 5, display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap',
-      fontSize: '0.7rem', color: 'var(--color-text-muted)', lineHeight: 1.4,
-    }}>
+    <div style={lineStyle}>
       <span>
-        Quoted at <strong style={{ color: 'var(--color-text)' }}>{tracked}</strong>
-        {optionName ? <> on <em>{optionName}</em></> : null} over the term
+        Suggested <strong style={{ color: 'var(--color-text)' }}>{tracked}</strong>
+        {optionName ? <> from the SIA option <em>{optionName}</em></> : ' from the attached SIA option'} (margin over the term)
       </span>
       {matches ? (
         <span style={{ color: '#15803D', fontWeight: 600 }}>- in the box</span>
@@ -6576,7 +6594,8 @@ const requiredFieldLook = { border: '1px solid #FCA5A5', background: '#FEF2F2' }
 // values via updateOppField (skipping fields the user left
 // untouched). Skip leaves the row as-is — Stage is still set to Not
 // Sold and the stamped Close Date stays.
-function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solutionOptions, onSave, onClose }) {
+function NotSoldFollowUpModal({ opp, optionLink = null, reasonOptions, competitionOptions, solutionOptions, onSave, onClose }) {
+  const marginSuggestion = useMemo(() => suggestedFinalMargin(opp, optionLink), [opp, optionLink]);
   const [closeDate, setCloseDate] = useState(toISODate(opp?.['Close Date']) || '');
   const [reason, setReason] = useState(String(opp?.['Reason Not Sold'] ?? ''));
   const [finalMargin, setFinalMargin] = useState(String(opp?.['Final Margin'] ?? ''));
@@ -6786,10 +6805,11 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solution
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
                 }}
-                placeholder="e.g. 22% or $4,500"
+                placeholder={marginPlaceholder(marginSuggestion)}
+                title={marginSuggestion?.text ? `Suggested from the SIA option: ${marginSuggestion.text}. Leave it or type what the deal closed at.` : undefined}
                 style={inputStyle}
               />
-              <TrackedMarginHint opp={opp} current={finalMargin} onUse={setFinalMargin} />
+              <TrackedMarginHint suggestion={marginSuggestion} current={finalMargin} onUse={setFinalMargin} />
             </div>
           </div>
           {/* What the two fields above just decided. The Competition /
@@ -6857,7 +6877,8 @@ function NotSoldFollowUpModal({ opp, reasonOptions, competitionOptions, solution
 // Competition). The Close Date is set automatically to the date of the
 // status change (see updateOppField) and shown here read-only so the
 // user knows it was captured. Mirrors the NotSoldFollowUpModal pattern.
-function SoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onClose }) {
+function SoldFollowUpModal({ opp, optionLink = null, reasonOptions, competitionOptions, onSave, onClose }) {
+  const marginSuggestion = useMemo(() => suggestedFinalMargin(opp, optionLink), [opp, optionLink]);
   const [reason, setReason] = useState(String(opp?.['Reason Not Sold'] ?? ''));
   const [finalMargin, setFinalMargin] = useState(String(opp?.['Final Margin'] ?? ''));
   const [competition, setCompetition] = useState(String(opp?.['Competition'] ?? ''));
@@ -6952,10 +6973,11 @@ function SoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onC
               autoFocus
               value={finalMargin}
               onChange={(e) => setFinalMargin(e.target.value)}
-              placeholder="e.g. 22% or $4,500"
+              placeholder={marginPlaceholder(marginSuggestion)}
+              title={marginSuggestion?.text ? `Suggested from the SIA option: ${marginSuggestion.text}. Leave it or type what the deal closed at.` : undefined}
               style={inputStyle}
             />
-            <TrackedMarginHint opp={opp} current={finalMargin} onUse={setFinalMargin} />
+            <TrackedMarginHint suggestion={marginSuggestion} current={finalMargin} onUse={setFinalMargin} />
           </div>
           <div>
             <label style={labelStyle}>
@@ -17459,6 +17481,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         return (
           <NotSoldFollowUpModal
             opp={opp}
+            optionLink={optionLinks[String(opp._id)] || null}
             reasonOptions={listRegistry.get('reasonNotSold')?.options || []}
             competitionOptions={listRegistry.get('competition')?.options || []}
             solutionOptions={listRegistry.get('solutions')?.options || []}
@@ -17507,6 +17530,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         return (
           <SoldFollowUpModal
             opp={opp}
+            optionLink={optionLinks[String(opp._id)] || null}
             reasonOptions={listRegistry.get('reasonNotSold')?.options || []}
             competitionOptions={listRegistry.get('competition')?.options || []}
             onSave={({ reason, finalMargin, competition }) => {
