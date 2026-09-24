@@ -21,7 +21,7 @@
 // shape of the file is pinned by scripts/savingsExport.test.mjs rather than
 // by clicking the button.
 
-import { VOLUME_SHAPES, sourceSummary, volumeSummary } from './nymexSavings.js';
+import { VOLUME_SHAPES, CONTRACT_TYPES, DEFAULT_CONTRACT_TYPE, sourceSummary, volumeSummary } from './nymexSavings.js';
 import { sanitizeSheetJsWorkbook, stripDashes } from './exportSanitize.js';
 
 const PRICE_FMT = '"$"#,##0.000';
@@ -156,7 +156,9 @@ export function savingsScenarioRows(run, meta = {}) {
   const months = run?.months || [];
   const history = run?.history || [];
   const shape = VOLUME_SHAPES[s.volumeShape] || VOLUME_SHAPES.even;
-  const layers = Array.isArray(s.layers) ? s.layers : [];
+  const type = CONTRACT_TYPES[s.contractType] ? s.contractType : DEFAULT_CONTRACT_TYPE;
+  // The layers only price a Layered contract, so only it lists them.
+  const layers = type === 'layered' && Array.isArray(s.layers) ? s.layers : [];
   return [
     { label: 'Scenario', value: s.name || 'Hedge savings' },
     {
@@ -187,6 +189,8 @@ export function savingsScenarioRows(run, meta = {}) {
     // two about price.
     { label: 'Monthly volumes', value: volumeSummary(t) },
     { label: 'Volume over the term (Dth)', value: t.volume, fmt: VOL_FMT },
+    { label: 'Contract type', value: CONTRACT_TYPES[type].label },
+    ...(type === 'fixed' ? [{ label: `Fixed all-in rate (${UNIT})`, value: s.fixedRate, fmt: PRICE_FMT }] : []),
     { label: 'Hedged share', value: (hedge.pct ?? 0) / 100, fmt: PCT_FMT },
     {
       label: `Blended strike (${UNIT})`,

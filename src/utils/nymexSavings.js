@@ -125,6 +125,39 @@ export function normalizeMonthlyVolumes(raw, max = MAX_TERM_MONTHS) {
  */
 export const LOOKBACK_ALL = 'all';
 
+// How the contract is bought: the three purchasing strategies the Henry Hub,
+// basis and retail adder pieces combine into, from least risk to most.
+//
+// All three price through the same formula in buildSavings - a locked share
+// at a strike, the rest at the index, basis and adder on top of both - and
+// differ only in what is locked:
+//   fixed    - everything, at one all-in rate. The strike is that rate less
+//              the basis and adder, so the all-in comes back out exactly.
+//   index    - nothing. Henry Hub floats month by month; basis and the adder
+//              are the fixed part.
+//   layered  - the hedge layers: a share at a price, the rest at the index.
+export const CONTRACT_TYPES = {
+  fixed: {
+    label: 'Fixed All-In Rate',
+    formula: 'Henry Hub + Basis + Retail Adder, locked',
+    note: 'Henry Hub, basis and the retail adder are all locked into a single fixed $/Dth rate for the full term.',
+    risk: 'Lowest risk',
+  },
+  index: {
+    label: 'Index + Fixed Basis',
+    formula: 'Henry Hub floats; Basis + Retail Adder fixed',
+    note: 'Basis and the retail adder are fixed for the term, while the Henry Hub commodity component floats monthly on the NYMEX settlement price.',
+    risk: 'Most market exposure',
+  },
+  layered: {
+    label: 'Block & Index (Layered)',
+    formula: 'Blocks locked, the rest at the index',
+    note: 'A percentage of expected volume (e.g. 50%) is locked for the term, with the remaining volume settled on the floating index.',
+    risk: 'In between, set by the blocks',
+  },
+};
+export const DEFAULT_CONTRACT_TYPE = 'layered';
+
 function normalizeLookback(raw, fallback) {
   if (raw === LOOKBACK_ALL) return LOOKBACK_ALL;
   if (typeof raw === 'string' && raw.trim().toLowerCase() === LOOKBACK_ALL) return LOOKBACK_ALL;
@@ -562,6 +595,7 @@ export function defaultScenario(series = monthlySeries(SHIPPED_SETTLES), forward
       annualVolumeDth: 250000, volumeShape: 'even', monthlyVolumes: [], historyVolumes: [],
       basis: 0, adder: 0.35,
       forwardPrice: 3.5,
+      contractType: DEFAULT_CONTRACT_TYPE, fixedRate: 3.85,
       layers: [{ id: 'L1', label: 'Layer 1', pct: 40, price: 3.5 }, { id: 'L2', label: 'Layer 2', pct: 25, price: 3.7 }],
     };
   }
@@ -604,6 +638,12 @@ export function defaultScenario(series = monthlySeries(SHIPPED_SETTLES), forward
     basis: 0,
     adder: 0.35,
     forwardPrice: Math.round(flat * 100) / 100,
+    // Layered is what the page did before there was a choice, so a scenario
+    // saved before then keeps pricing the way it did.
+    contractType: DEFAULT_CONTRACT_TYPE,
+    // A fixed all-in quote to start from: the strike with the default adder
+    // on top, i.e. what the whole volume would cost locked today.
+    fixedRate: Math.round((strike + 0.35) * 100) / 100,
     layers: [
       { id: 'L1', label: 'Layer 1', pct: 40, price: strike },
       { id: 'L2', label: 'Layer 2', pct: 25, price: Math.round((strike + 0.2) * 100) / 100 },
@@ -634,8 +674,31 @@ export function normalizeScenario(raw, series = null, forward = null) {
     basis: clamp(num(raw.basis, base.basis), -20, 20),
     adder: clamp(num(raw.adder, base.adder), -20, 20),
     forwardPrice: clamp(num(raw.forwardPrice, base.forwardPrice), 0, 1000),
+    contractType: CONTRACT_TYPES[raw.contractType] ? raw.contractType : DEFAULT_CONTRACT_TYPE,
+    // `num` reads a missing value as 0, and a free contract is not a
+    // default anybody wants, so an unset rate takes the base one.
+    fixedRate: raw.fixedRate == null || raw.fixedRate === ''
+      ? base.fixedRate
+      : clamp(num(raw.fixedRate, base.fixedRate), 0, 1000),
+    // Kept whatever the type, so switching away from Layered and back
+    // doesn't lose the blocks somebody set up.
     layers: layers.length ? layers : base.layers.map(normalizeLayer),
   };
+}
+
+/**
+ * What the contract locks, by its type: { type, pct, price, over, allIn }.
+ * `price` is the Henry Hub strike the locked share prices at (null when
+ * nothing is locked); `allIn` is the fixed rate for a Fixed All-In contract.
+ */
+export function contractHedge(scenario) {
+  const type = CONTRACT_TYPES[scenario?.contractType] ? scenario.contractType : DEFAULT_CONTRACT_TYPE;
+  if (type === 'index') return { type, pct: 0, price: null, over: false, allIn: null };
+  if (type === 'fixed') {
+    const allIn = num(scenario.fixedRate, 0);
+    return { type, pct: 100, price: allIn - num(scenario.basis, 0) - num(scenario.adder, 0), over: false, allIn };
+  }
+  return { type, ...hedgeSummary(scenario.layers), allIn: null };
 }
 
 /** The hedged share of volume and what it is locked at, across the layers. */
@@ -778,7 +841,7 @@ export function buildSavings(scenario, series, forward = []) {
   const lastSettled = series.length ? series[series.length - 1] : null;
   const curveStart = forward?.length ? forward[0] : null;
   const curveEnd = forward?.length ? forward[forward.length - 1] : null;
-  const hedge = hedgeSummary(s.layers);
+  const hedge = contractHedge(s);
   const weights = VOLUME_SHAPES[s.volumeShape].weights;
   const hedgedShare = hedge.pct / 100;
   const strike = hedge.price ?? 0;

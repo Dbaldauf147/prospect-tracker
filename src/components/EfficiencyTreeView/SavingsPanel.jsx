@@ -14,6 +14,7 @@ import {
   termLadder, volumeSummary, yearRows,
   syncActiveSite, switchSite, addSite, removeSite, MAX_SITES,
   addMonths, monthKey, historySlot, LOOKBACK_ALL, MAX_LOOKBACK_MONTHS,
+  CONTRACT_TYPES,
 } from '../../utils/nymexSavings.js';
 import { downloadSavingsMonths } from '../../utils/savingsExport.js';
 
@@ -828,6 +829,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       s.name ? `${s.name} - hedge savings` : 'Hedge savings',
       `Term: ${run.months[0]?.label || '-'} to ${run.months[run.months.length - 1]?.label || '-'} (${s.termMonths} months)`,
       `Volume: ${vol(run.totals.volume)} Dth over the term`,
+      `Contract: ${CONTRACT_TYPES[s.contractType].label}${s.contractType === 'fixed' ? ` at ${price(s.fixedRate)} ${NYMEX_UNIT} all-in` : ''}`,
       `Hedged: ${run.hedge.pct.toFixed(0)}% at ${price(run.hedge.price)} ${NYMEX_UNIT}`,
       `At index: ${usd(run.totals.indexCost)} (${price(run.totals.avgIndexAllIn)} all-in)`,
       `On contract: ${usd(run.totals.contractCost)} (${price(run.totals.avgContractAllIn)} all-in)`,
@@ -879,8 +881,43 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
 
   const savingTone = run.totals.saving >= 0 ? 'good' : 'bad';
 
-  // The hedge layers table, shared by Contract savings and step 3 of Step by
-  // step, so the two can't drift into editing the layers differently.
+  // What the contract locks, by its type. Shared by Contract savings and the
+  // last step of Step by step, so the two can't drift apart. Only a Layered
+  // contract has layers to edit; the other two lock all or nothing.
+  const fixedRateGroup = (
+    <div className={styles.inputGroup}>
+      <div className={styles.groupTitle}>
+        Fixed all-in rate
+        <span className={styles.groupHint}>{CONTRACT_TYPES.fixed.note}</span>
+      </div>
+      <div className={styles.fieldRow}>
+        <NumberField
+          label="All-in rate" hint="Henry Hub + basis + adder" width="10rem" step="0.01" min="0" suffix={NYMEX_UNIT}
+          value={s.fixedRate} onCommit={v => patchScenario({ fixedRate: v })}
+        />
+        <div className={styles.fieldNote}>
+          Every month of the term bills {price(s.fixedRate)} a Dth. Less the {price(s.basis)} basis and {price(s.adder)} adder,
+          that locks <span className={styles.hasTip} title={HENRY_HUB_TIP}>Henry Hub</span> at {price(run.hedge.price)}.
+          The saving is measured against the index plus the same basis and adder.
+        </div>
+      </div>
+    </div>
+  );
+  const indexGroup = (
+    <div className={styles.inputGroup}>
+      <div className={styles.groupTitle}>
+        Index + fixed basis
+        <span className={styles.groupHint}>{CONTRACT_TYPES.index.note}</span>
+      </div>
+      <div className={styles.fieldNote}>
+        Nothing is locked: every month's <span className={styles.hasTip} title={HENRY_HUB_TIP}>Henry Hub</span> price
+        is that month's NYMEX settle, with the {price(s.basis)} basis and {price(s.adder)} adder fixed on top. It
+        prices the same as the index, so the saving here is zero: the protection is on the basis and adder, not the
+        commodity. Pick Fixed All-In or Block &amp; Index to lock some of the commodity too.
+      </div>
+    </div>
+  );
+  // The hedge layers table, for a Block & Index (Layered) contract.
   const hedgeLayersGroup = (
     <div className={styles.inputGroup}>
       <div className={styles.groupTitle}>
@@ -951,23 +988,58 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       </div>
     </div>
   );
+  const contractGroup = s.contractType === 'fixed'
+    ? fixedRateGroup
+    : s.contractType === 'index' ? indexGroup : hedgeLayersGroup;
+
+  // Picking the contract type: a card per strategy, least risk first.
+  const contractTypePicker = (
+    <div className={styles.typeCards} role="radiogroup" aria-label="Contract type">
+      {Object.entries(CONTRACT_TYPES).map(([key, t]) => {
+        const on = s.contractType === key;
+        return (
+          <button
+            key={key}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            className={on ? styles.typeCardActive : styles.typeCard}
+            onClick={() => patchScenario({ contractType: key })}
+          >
+            <span className={styles.typeCardHead}>
+              <span className={on ? styles.typeRadioOn : styles.typeRadio} aria-hidden="true" />
+              <span className={styles.typeCardTitle}>{t.label}</span>
+            </span>
+            <span className={styles.typeFormula}>{t.formula}</span>
+            <span className={styles.typeNote}>{t.note}</span>
+            <span className={styles.typeRisk}>{t.risk}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
 
 
   // ── Step by step ───────────────────────────────────────────────────
-  // Three steps over the one scenario the other subtabs read: the site, what
-  // it burns, and the contract. Every field writes the same scenario the
+  // Four steps over the one scenario the other subtabs read: the site, how
+  // the contract is bought, what it burns, and the contract's details. Every field writes the same scenario the
   // Contract savings and Consumption subtabs show, so there is nothing to
   // carry across when the steps are done.
   const stepDone = {
     1: !!String(s.name || '').trim(),
-    2: visited.has(2) && (s.annualVolumeDth > 0 || enteredVolumes > 0),
-    3: visited.has(3),
+    // A type is always selected (Layered by default), so the step counts as
+    // done once somebody has been to it.
+    2: visited.has(2),
+    3: visited.has(3) && (s.annualVolumeDth > 0 || enteredVolumes > 0),
+    4: visited.has(4),
   };
   const STEPS = [
     { n: 1, label: 'Site', hint: 'Name the site' },
-    { n: 2, label: 'Consumption', hint: 'What it burns' },
-    { n: 3, label: 'Contract details', hint: 'Term, pricing and hedge' },
+    { n: 2, label: 'Contract type', hint: 'How the gas is bought' },
+    { n: 3, label: 'Consumption', hint: 'What it burns' },
+    { n: 4, label: 'Contract details', hint: 'Term, pricing and hedge' },
   ];
+  const LAST_STEP = STEPS.length;
   // The site list: open one, add one, delete the open one. A new or
   // switched-to site starts on step 1 with nothing ticked.
   const sites = state.sites || [];
@@ -1082,6 +1154,19 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       {step === 2 && (
         <div className={`${styles.inputGroup} ${styles.stepPanel}`}>
           <div className={styles.groupTitle}>
+            Contract type{s.name ? ` for ${s.name}` : ''}
+            <span className={styles.groupHint}>
+              Depending on your risk tolerance, Henry Hub, basis and the retail adder are combined into different
+              purchasing strategies. Pick the one this contract uses: step 4 asks for what it locks.
+            </span>
+          </div>
+          {contractTypePicker}
+        </div>
+      )}
+
+      {step === 3 && (
+        <div className={`${styles.inputGroup} ${styles.stepPanel}`}>
+          <div className={styles.groupTitle}>
             Consumption{s.name ? ` for ${s.name}` : ''}
             <span className={styles.groupHint}>
               Give the annual volume and how it falls across the year. If you have the real monthly bills, enter or paste them in the table below and those months use them instead.
@@ -1113,11 +1198,13 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
         </div>
       )}
 
-      {step === 3 && (
+      {step === 4 && (
         <div className={`${styles.inputGroup} ${styles.stepPanel}`}>
           <div className={styles.groupTitle}>
             Contract details{s.name ? ` for ${s.name}` : ''}
-            <span className={styles.groupHint}>When the term starts, how long it runs, and what is charged on top of the index.</span>
+            <span className={styles.groupHint}>
+              {CONTRACT_TYPES[s.contractType].label}: when the term starts, how long it runs, and what is charged on top of the index.
+            </span>
           </div>
           <div className={styles.fieldRow}>
             <label className={styles.field} style={{ width: '7rem' }}>
@@ -1156,9 +1243,9 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   );
   const stepFooter = (
     <>
-      {step === 3 && (
+      {step === LAST_STEP && (
         <>
-          <div className={`${styles.inputs} ${styles.stepPanel}`}>{hedgeLayersGroup}</div>
+          <div className={`${styles.inputs} ${styles.stepPanel}`}>{contractGroup}</div>
           <div className={styles.tiles}>
             <Tile
               label="Saving over the term"
@@ -1197,15 +1284,15 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
         >Back</button>
         {status && <span className={styles.muted}>{status}</span>}
         <span className={styles.stepNavSpacer} />
-        {step < 3 ? (
-          <button type="button" className={styles.primaryBtn} onClick={() => setStep(Math.min(3, step + 1))}>
+        {step < LAST_STEP ? (
+          <button type="button" className={styles.primaryBtn} onClick={() => setStep(Math.min(LAST_STEP, step + 1))}>
             Next: {STEPS[step].label}
           </button>
         ) : (
           <button
             type="button"
             className={styles.primaryBtn}
-            onClick={() => { setVisited(v => new Set(v).add(3)); if (onOpenSection) onOpenSection('contract'); }}
+            onClick={() => { setVisited(v => new Set(v).add(LAST_STEP)); if (onOpenSection) onOpenSection('contract'); }}
             title="Open Contract savings: the same numbers with the charts, the month-by-month table and the export"
           >See the full analysis</button>
         )}
@@ -1353,7 +1440,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           of them and says where they are set instead. A second set of term
           fields here would be a second place to disagree about when the term
           opens. */}
-      {(section === 'consumption' || (inSteps && step === 2)) && (
+      {(section === 'consumption' || (inSteps && step === 3)) && (
       <>
       {!inSteps && (
       <div className={styles.termLine}>
@@ -1731,6 +1818,21 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
               value={s.termMonths} onCommit={v => patchScenario({ termMonths: v })}
             />
             <TermEndFields scenario={s} onTermMonths={v => patchScenario({ termMonths: v })} />
+            <label className={styles.field} style={{ width: '12rem' }} title={CONTRACT_TYPES[s.contractType].note}>
+              <span className={styles.fieldLabel}>
+                Contract type
+                <span className={styles.fieldHint}>{CONTRACT_TYPES[s.contractType].formula}</span>
+              </span>
+              <span className={styles.inputWrap}>
+                <select
+                  className={styles.input}
+                  value={s.contractType}
+                  onChange={e => patchScenario({ contractType: e.target.value })}
+                >
+                  {Object.entries(CONTRACT_TYPES).map(([key, t]) => <option key={key} value={key}>{t.label}</option>)}
+                </select>
+              </span>
+            </label>
             {/* The months BEFORE the term, run through the same hedge. A
                 second reading rather than a longer term, so it sits beside
                 the term rather than inside it and its saving is reported
@@ -1795,7 +1897,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
 
         </div>
 
-        {hedgeLayersGroup}
+        {contractGroup}
       </div>
 
       {/* ── the answer ────────────────────────────────────────────────── */}
