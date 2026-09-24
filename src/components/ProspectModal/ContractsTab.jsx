@@ -3,14 +3,14 @@ import {
   loadClientStatusMap, CLIENT_STATUS_EVENT,
   loadClientNotesMap, CLIENT_NOTES_EVENT,
 } from '../../utils/clientManagerStore';
-import { loadCoaItemOptions, COA_ITEM_OPTIONS_EVENT } from '../../utils/coaItemOptions';
+import { loadCoaItemOptions, saveCoaItemOptions, COA_ITEM_OPTIONS_EVENT } from '../../utils/coaItemOptions';
 import {
   asDate, fmtCurrency, fmtPercent, fmtDate, isTruthy, isInactiveAgreement,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
 } from '../../utils/dealsFormat';
 import {
   contractsSummary, coaRequirementRows, setCoaRequirement,
-  coaRequirementsSummary, COA_REQUIRED_OPTIONS,
+  coaRequirementsSummary, renameCoaRequirement, COA_REQUIRED_OPTIONS,
 } from '../../utils/clientContracts';
 
 // The company card's Contracts tab: the client's standing on the Clients tab,
@@ -120,6 +120,39 @@ function NotesInput({ value, onCommit }) {
   );
 }
 
+// The item name while the list is being edited: rename in place (blur or
+// Enter commits, Escape reverts, emptying removes). Same feel as a row on the
+// Dropdowns COA Items tab, since it edits that same list.
+function ItemNameInput({ value, onCommit }) {
+  const [draft, setDraft] = useState(value);
+  const [prev, setPrev] = useState(value);
+  if (value !== prev) { setPrev(value); setDraft(value); }
+  return (
+    <input
+      type="text"
+      value={draft}
+      aria-label={`Rename ${value}`}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={() => onCommit(draft)}
+      onKeyDown={e => {
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') { e.preventDefault(); setDraft(value); setTimeout(() => e.target.blur(), 0); }
+      }}
+      style={{ flex: 1, minWidth: 0, fontSize: '0.72rem', fontWeight: 600, color: '#1E293B', padding: '0.2rem 0.35rem', border: '1px solid #CBD5E1', borderRadius: 4, fontFamily: 'inherit' }}
+    />
+  );
+}
+
+const iconBtn = {
+  flex: '0 0 auto', width: 20, height: 20, lineHeight: 1, padding: 0,
+  background: 'transparent', border: '1px solid transparent', borderRadius: 4,
+  color: '#94A3B8', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit',
+};
+const smallBtn = {
+  padding: '0.2rem 0.55rem', borderRadius: 6, fontSize: '0.68rem', fontWeight: 600,
+  cursor: 'pointer', fontFamily: 'inherit',
+};
+
 export function ContractsTab({ company, deals, clientManager, coaRequirements, onChangeCoaRequirements }) {
   const status = useClientMapValue(loadClientStatusMap, CLIENT_STATUS_EVENT, company);
   const clientNotes = useClientMapValue(loadClientNotesMap, CLIENT_NOTES_EVENT, company);
@@ -140,6 +173,60 @@ export function ContractsTab({ company, deals, clientManager, coaRequirements, o
   const coaSummary = coaRequirementsSummary(coaRows);
 
   const update = (item, patch) => onChangeCoaRequirements(setCoaRequirement(coaRequirements, item, patch));
+
+  // Editing the list itself. It is the one shared list (Dropdowns, COA
+  // Items), so every change here shows on every company card and every opp.
+  const [editingList, setEditingList] = useState(false);
+  const [addDraft, setAddDraft] = useState('');
+
+  function commitList(next) {
+    saveCoaItemOptions(next);
+    setCatalog(loadCoaItemOptions());
+  }
+  function renameItem(idx, next) {
+    const from = catalog[idx];
+    const trimmed = String(next || '').trim();
+    if (!trimmed) { removeItem(idx); return; }
+    if (trimmed === from) return;
+    // A rename onto a name already on the list would merge two rows; refuse
+    // it rather than silently dropping one.
+    if (catalog.some((o, i) => i !== idx && o.toLowerCase() === trimmed.toLowerCase())) {
+      window.alert(`"${trimmed}" is already on the COA list.`);
+      setCatalog([...catalog]);
+      return;
+    }
+    commitList(catalog.map((it, i) => (i === idx ? trimmed : it)));
+    // Carry this company's own answer across. Other companies keep theirs
+    // under the old name, shown as "removed from list" until re-answered.
+    const moved = renameCoaRequirement(coaRequirements, from, trimmed);
+    if (JSON.stringify(moved) !== JSON.stringify(coaRequirements || {})) onChangeCoaRequirements(moved);
+  }
+  function removeItem(idx) {
+    const name = catalog[idx];
+    if (!window.confirm(
+      `Remove "${name}" from the COA list?\n\n`
+      + 'It stops appearing on every company card and every opp. '
+      + 'Companies and opps that already recorded an answer for it keep it.'
+    )) { setCatalog([...catalog]); return; }
+    commitList(catalog.filter((_, i) => i !== idx));
+  }
+  function moveItem(idx, delta) {
+    const to = idx + delta;
+    if (to < 0 || to >= catalog.length) return;
+    const next = [...catalog];
+    [next[idx], next[to]] = [next[to], next[idx]];
+    commitList(next);
+  }
+  function addItem(value) {
+    const v = String(value || '').trim();
+    if (!v) return;
+    if (catalog.some(o => o.toLowerCase() === v.toLowerCase())) return;
+    commitList([...catalog, v]);
+  }
+  function commitAdd() {
+    addItem(addDraft);
+    setAddDraft('');
+  }
 
   const endColor = summary.soonestEndDays == null ? undefined
     : summary.soonestEndDays < 0 ? '#B91C1C'
@@ -177,13 +264,28 @@ export function ContractsTab({ company, deals, clientManager, coaRequirements, o
       </section>
 
       <section>
-        <h3 style={sectionTitle}>COA Requirements</h3>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+          <h3 style={sectionTitle}>COA Requirements</h3>
+          <button
+            type="button"
+            onClick={() => { setEditingList(v => !v); setAddDraft(''); }}
+            title="Add, rename, reorder or remove COA items. The list is shared by every company and every opp."
+            style={editingList
+              ? { ...smallBtn, border: '1px solid #2563EB', background: '#2563EB', color: '#FFFFFF' }
+              : { ...smallBtn, border: '1px solid #CBD5E1', background: '#FFFFFF', color: '#334155' }}
+          >{editingList ? 'Done' : 'Edit list'}</button>
+        </div>
         <p style={hint}>
-          Which COA approval items this client's contracts need. The list comes from Dropdowns, COA Items.
+          Which COA approval items this client's contracts need. The items are the same on every company.
           {' '}{coaSummary.required} required, {coaSummary.notRequired} not required, {coaSummary.unset} not set.
         </p>
-        {coaRows.length === 0 ? (
-          <div style={{ ...hint, fontStyle: 'italic' }}>The COA Items list is empty. Add items on the Dropdowns page.</div>
+        {editingList && (
+          <div style={{ ...hint, padding: '0.35rem 0.6rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6, color: '#1E40AF' }}>
+            Editing the shared COA list. Changes apply to every company card and every opp (it is the same list as Dropdowns, COA Items).
+          </div>
+        )}
+        {coaRows.length === 0 && !editingList ? (
+          <div style={{ ...hint, fontStyle: 'italic' }}>The COA list is empty. Press Edit list to add items.</div>
         ) : (
           <table style={{ borderCollapse: 'collapse', fontSize: '0.72rem', width: '100%' }}>
             <thead>
@@ -199,7 +301,23 @@ export function ContractsTab({ company, deals, clientManager, coaRequirements, o
                 return (
                   <tr key={r.key} style={{ background: r.required === 'yes' ? '#FFFBEB' : undefined }}>
                     <td style={{ ...td, fontWeight: 600, color: '#1E293B' }}>
-                      {r.item}
+                      {editingList && r.inCatalog ? (() => {
+                        const idx = catalog.findIndex(o => o.toLowerCase() === r.key);
+                        return (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <ItemNameInput value={r.item} onCommit={v => renameItem(idx, v)} />
+                            <button type="button" style={iconBtn} disabled={idx <= 0} onClick={() => moveItem(idx, -1)} title="Move up">▲</button>
+                            <button type="button" style={iconBtn} disabled={idx >= catalog.length - 1} onClick={() => moveItem(idx, 1)} title="Move down">▼</button>
+                            <button type="button" style={{ ...iconBtn, fontSize: '0.9rem', color: '#B91C1C' }} onClick={() => removeItem(idx)} title="Remove from the COA list">×</button>
+                          </div>
+                        );
+                      })() : r.item}
+                      {editingList && !r.inCatalog && (
+                        <button type="button" onClick={() => addItem(r.item)} title="Put this item back on the shared COA list"
+                          style={{ ...smallBtn, marginLeft: 6, padding: '0.05rem 0.4rem', fontSize: '0.6rem', border: '1px solid #CBD5E1', background: '#FFFFFF', color: '#334155' }}>
+                          Add back to list
+                        </button>
+                      )}
                       {!r.inCatalog && (
                         <span title="No longer on the Dropdowns COA Items list. Kept because it has an answer." style={{ marginLeft: 6, fontSize: '0.6rem', fontWeight: 600, color: '#94A3B8' }}>
                           (removed from list)
@@ -222,6 +340,25 @@ export function ContractsTab({ company, deals, clientManager, coaRequirements, o
                   </tr>
                 );
               })}
+              {editingList && (
+                <tr>
+                  <td style={td} colSpan={3}>
+                    <input
+                      type="text"
+                      value={addDraft}
+                      placeholder="+ Add a COA item, e.g. Non-standard payment terms"
+                      aria-label="Add a COA item"
+                      onChange={e => setAddDraft(e.target.value)}
+                      onBlur={commitAdd}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') { e.preventDefault(); commitAdd(); }
+                        else if (e.key === 'Escape') { e.preventDefault(); setAddDraft(''); }
+                      }}
+                      style={{ width: '30%', minWidth: 220, boxSizing: 'border-box', fontSize: '0.72rem', padding: '0.25rem 0.4rem', border: '1px dashed #94A3B8', borderRadius: 4, fontFamily: 'inherit' }}
+                    />
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         )}
