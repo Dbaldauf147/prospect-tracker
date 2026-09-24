@@ -61,16 +61,31 @@ export function termSummary(s) {
 }
 
 /**
- * One line per step, in step order, for the summary strip: { n, label, value }.
- * `run` is buildSavings' result for the same scenario.
+ * The saving under every category at once, short enough for one line:
+ * "Index $143,445 · Contract $9,299 · Avoided $52,371". `byBasis` is
+ * compareOption's result over the savings bases.
  */
-export function stepSummaries(s, run) {
+export function savingsCategoriesSummary(byBasis) {
+  if (!byBasis) return '-';
+  const short = { index: 'Index', contract: 'Contract', avoided: 'Avoided' };
+  return Object.keys(SAVINGS_BASES)
+    .filter(k => byBasis[k])
+    .map(k => `${short[k]} ${fmtUsd(byBasis[k].saving)}`)
+    .join(' · ');
+}
+
+/**
+ * One line per step, in step order, for the summary strip: { n, label, value }.
+ * `run` is buildSavings' result for the same scenario, and `byBasis` the
+ * saving under each category (see savingsCategoriesSummary).
+ */
+export function stepSummaries(s, run, byBasis = null) {
   return [
     { n: 1, label: 'Site', value: String(s.name || '').trim() || 'Not named yet' },
     { n: 2, label: 'Contract type', value: contractTypeSummary(s, run?.hedge) },
     { n: 3, label: 'Consumption', value: consumptionSummary(s, run?.totals) },
-    { n: 4, label: 'Savings analysis', value: savingsBasisSummary(s) },
-    { n: 5, label: 'Contract details', value: termSummary(s) },
+    { n: 4, label: 'Contract details', value: termSummary(s) },
+    { n: 5, label: 'Savings', value: savingsCategoriesSummary(byBasis) },
   ];
 }
 
