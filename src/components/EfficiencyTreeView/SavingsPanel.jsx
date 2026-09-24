@@ -17,6 +17,7 @@ import {
   CONTRACT_TYPES, SAVINGS_BASES,
 } from '../../utils/nymexSavings.js';
 import { downloadSavingsMonths } from '../../utils/savingsExport.js';
+import { categoryRuns, downloadSavingsCategories } from '../../utils/savingsCategoriesExport.js';
 import { compareOption, stepSummaries, resultSummary, contractComparison } from '../../utils/sourcingSteps.js';
 
 // The Sourcing area on Service Deep Dives: load the NYMEX record, describe a
@@ -901,6 +902,18 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
     }
   }
 
+  // Step 5 as a workbook: a Summary tab and a tab per savings category,
+  // month by month over the term.
+  async function exportCategories() {
+    if (!run.months.length) { setStatus('No months in the term to export.'); return; }
+    try {
+      const n = await downloadSavingsCategories(categoryRuns(state.scenario, series, curve));
+      setStatus(`Exported ${n} month${n === 1 ? '' : 's'} under each savings category.`);
+    } catch {
+      setStatus('The export failed. Reload and try again.');
+    }
+  }
+
   const savingTone = run.totals.saving >= 0 ? 'good' : 'bad';
   // What the saving is taken from, in the words the tiles use.
   const baselineLabel = s.savingsBasis === 'contract'
@@ -1551,12 +1564,20 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             Next: {STEPS[step].label}
           </button>
         ) : (
+          <>
+          <button
+            type="button"
+            className={styles.smallBtn}
+            onClick={exportCategories}
+            title="Download a workbook: a Summary tab, then a tab for each savings category with the saving month by month"
+          >Export to Excel</button>
           <button
             type="button"
             className={styles.primaryBtn}
             onClick={() => { setVisited(v => new Set(v).add(LAST_STEP)); if (onOpenSection) onOpenSection('contract'); }}
             title="Open Contract savings: the same numbers with the charts, the month-by-month table and the export"
           >See the full analysis</button>
+          </>
         )}
       </div>
     </>
