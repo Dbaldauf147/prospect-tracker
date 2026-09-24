@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { loadOpps2Cache, loadOpps2Newest } from '../utils/opps2Store';
+import { useMemo } from 'react';
+import { useOpps2Data } from './useOpps2Data';
 import { missingTagRosters } from '../utils/contactRosters';
 import { useRosterTagCoverage } from './useRosterTagCoverage';
 
@@ -23,22 +23,8 @@ export function useProspectingTagDebt({ prospects, cdmName, settings, userId }) 
   // as a Key Prospect. Read the way the sidebar's Opps badge reads them —
   // newest of the two stores on mount, the local cache on every later
   // refresh, since that is what every Opps 2 edit writes first.
-  const [oppsRecords, setOppsRecords] = useState(null);
-  useEffect(() => {
-    let cancelled = false;
-    const apply = (recs) => { if (!cancelled && Array.isArray(recs)) setOppsRecords(recs); };
-    loadOpps2Newest(userId).then(d => apply(d?.records)).catch(() => {});
-    const readCache = () => { loadOpps2Cache().then(d => apply(d?.records)).catch(() => {}); };
-    const timer = setInterval(readCache, 10 * 60 * 1000);
-    window.addEventListener('focus', readCache);
-    window.addEventListener('opps2-cache-updated', readCache);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-      window.removeEventListener('focus', readCache);
-      window.removeEventListener('opps2-cache-updated', readCache);
-    };
-  }, [userId]);
+  const oppsData = useOpps2Data(userId);
+  const oppsRecords = oppsData?.records ?? null;
 
   const coverage = useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings, userId });
 

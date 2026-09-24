@@ -5,7 +5,7 @@ import { loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT, loadClientStatusMap, CL
 import { loadIssueSnoozedMap, issueSnoozeState, pruneExpiredSnoozes, ISSUE_SNOOZED_EVENT } from '../utils/issueSnoozeStore';
 import { loadMyAccountsFlags, MY_ACCOUNTS_FLAGS_EVENT, MY_ACCOUNTS_FLAGS_KEY } from '../utils/myAccountsFlagsStore';
 import { dbGet } from '../utils/db';
-import { loadOppsFromCache } from '../utils/oppsCache';
+import { useOpps2Data } from './useOpps2Data';
 import { computeIssues, computeServiceCoverageGaps } from '../utils/clientIssues';
 import { loadPipelineDashboard, coverageServicesOf, PIPELINE_DASHBOARD_EVENT } from '../utils/pipelineDashboardStore';
 // BFO Activity rows are pasted on the BFO Activity tab and persisted in that
@@ -55,7 +55,15 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   // BFO Activity rows + Opps cache (both IndexedDB) drive the "BFO
   // Opportunity Name not tagged to an opp" issue. Loaded async below.
   const [bfoActivity, setBfoActivity] = useState(null);
-  const [oppsCache, setOppsCache] = useState(null);
+  // The Opps 2 records, off the reader the other App-level hooks share, so
+  // a focus or an Opps save is one IndexedDB read rather than one per hook,
+  // and an unchanged record doesn't re-run computeIssues.
+  const oppsData = useOpps2Data(user?.uid);
+  const oppsCache = useMemo(() => (oppsData ? {
+    headers: Array.isArray(oppsData.headers) ? oppsData.headers : [],
+    records: Array.isArray(oppsData.records) ? oppsData.records : [],
+    fetchedAt: oppsData.fetchedAt || null,
+  } : null), [oppsData]);
   // Services tracked in the Pipeline page's "Service Exploration Coverage"
   // table (persisted with the rest of the Pipeline dashboard), so a row
   // under 100% can be surfaced here.
@@ -80,7 +88,6 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
     setSnoozedMap(loadIssueSnoozedMap());
     setMyAccountsFlags(loadMyAccountsFlags());
     dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY).then(d => setBfoActivity(d || null)).catch(() => {});
-    loadOppsFromCache().then(o => setOppsCache(o)).catch(() => {});
     loadPipelineDashboard().then(p => setCoverageServices(prev => keepIfSame(prev, coverageServicesOf(p)))).catch(() => {});
   }, [user?.uid]);
 
@@ -99,17 +106,16 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
     function onClientStatus() { setClientStatusMap(loadClientStatusMap()); }
     function onSnoozed() { setSnoozedMap(loadIssueSnoozedMap()); }
     function onMaFlags() { setMyAccountsFlags(loadMyAccountsFlags()); }
-    // BFO Activity (IndexedDB) + Opps cache (IndexedDB): refresh on window
-    // focus (a fresh paste on either tab), on the BFO Activity store's own
-    // change event, and on the opps2 cache-updated event, mirroring how the
-    // BFO Activity / Agents pages reload them. The store event covers what
+    // BFO Activity (IndexedDB): refresh on window focus (a fresh paste) and
+    // on the BFO Activity store's own change event, mirroring how the BFO
+    // Activity / Agents pages reload it. (The Opps cache comes off
+    // useOpps2Data above.) The store event covers what
     // focus can't: the mirror landing a cloud copy locally — another
     // device's paste, or first hydration on a browser that didn't hold the
     // record — while this hook is already mounted and the window focused.
     // Until it does, the Close Not Sold detector has no BFO rows to check
     // against and reports nothing.
     function refreshBfo() { dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY).then(d => setBfoActivity(d || null)).catch(() => {}); }
-    function refreshOpps() { loadOppsFromCache().then(o => setOppsCache(o)).catch(() => {}); }
     // Pipeline dashboard (IndexedDB): the tracked coverage services. Refreshed
     // on the Pipeline page's own save event and on focus, same as the above.
     function refreshPipeline() { loadPipelineDashboard().then(p => setCoverageServices(prev => keepIfSame(prev, coverageServicesOf(p)))).catch(() => {}); }
@@ -119,17 +125,14 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
     // minute, so an issue comes back without a reload.
     function pruneSnoozes() { pruneExpiredSnoozes(); }
     refreshBfo();
-    refreshOpps();
     refreshPipeline();
     pruneSnoozes();
     const snoozeTimer = setInterval(pruneSnoozes, 60 * 1000);
     window.addEventListener('focus', pruneSnoozes);
     window.addEventListener('focus', refreshBfo);
-    window.addEventListener('focus', refreshOpps);
     window.addEventListener('focus', refreshPipeline);
     window.addEventListener(PIPELINE_DASHBOARD_EVENT, refreshPipeline);
     window.addEventListener(BFO_ACTIVITY_EVENT, refreshBfo);
-    window.addEventListener('opps2-cache-updated', refreshOpps);
     window.addEventListener('storage', onStorage);
     window.addEventListener(DEALS_LIST_EVENT, onDealsList);
     window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
@@ -141,11 +144,9 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
       clearInterval(snoozeTimer);
       window.removeEventListener('focus', pruneSnoozes);
       window.removeEventListener('focus', refreshBfo);
-      window.removeEventListener('focus', refreshOpps);
       window.removeEventListener('focus', refreshPipeline);
       window.removeEventListener(PIPELINE_DASHBOARD_EVENT, refreshPipeline);
       window.removeEventListener(BFO_ACTIVITY_EVENT, refreshBfo);
-      window.removeEventListener('opps2-cache-updated', refreshOpps);
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(DEALS_LIST_EVENT, onDealsList);
       window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
