@@ -521,3 +521,11 @@ tr:hover .removeBtn,
     padding-bottom: 0;
   }
 }
+
+/* A label with hover text explaining it: the dotted underline says so. */
+.hasTip {
+  text-decoration: underline dotted;
+  text-decoration-color: var(--color-text-muted);
+  text-underline-offset: 2px;
+  cursor: help;
+}

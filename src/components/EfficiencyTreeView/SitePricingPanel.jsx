@@ -4,6 +4,7 @@ import {
 } from 'recharts';
 import styles from './SitePricingPanel.module.css';
 import { NYMEX_UNIT } from '../../data/nymexHistory.js';
+import { HENRY_HUB_TIP } from '../../data/gasPriceComponents.js';
 import {
   SITE_PRICING_KEY, getSitePricing, normalizeSitePricing, parseSitePricing, priceSitePricing,
   buildSite, addSite, renameSite, removeSite,
@@ -506,11 +507,11 @@ export function SitePricingPanel({
                 </tr>
                 <tr>
                   <th>Term</th>
-                  <th className={styles.thNum}>NYMEX</th>
+                  <th className={styles.thNum}><span className={styles.hasTip} title={HENRY_HUB_TIP}>NYMEX</span></th>
                   <th className={styles.thNum}>$/Dth</th>
                   <th className={styles.thNum}>All-in</th>
                   <th>Term</th>
-                  <th className={styles.thNum}>NYMEX</th>
+                  <th className={styles.thNum}><span className={styles.hasTip} title={HENRY_HUB_TIP}>NYMEX</span></th>
                   <th className={styles.thNum}>$/Dth</th>
                   <th className={styles.thNum}>All-in</th>
                   <th className={styles.thNum}>Net</th>
