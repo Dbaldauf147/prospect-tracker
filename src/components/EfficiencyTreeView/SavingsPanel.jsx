@@ -12,6 +12,7 @@ import {
   buildSavings, forwardSeries, getSavingsState, hasSavedSavings, monthlySeries, normalizeSavingsState,
   parseForwardTable, parseMonthlyVolumes, parseNymexTable, percentileRank, priceStats, sourceSummary,
   termLadder, volumeSummary, yearRows,
+  syncActiveSite, switchSite, addSite, removeSite, MAX_SITES,
   addMonths, monthKey, historySlot, LOOKBACK_ALL, MAX_LOOKBACK_MONTHS,
 } from '../../utils/nymexSavings.js';
 import { downloadSavingsMonths } from '../../utils/savingsExport.js';
@@ -148,6 +149,38 @@ function NumberField({ label, hint, title, tip, value, step = 'any', min, max, s
         {suffix && <span className={styles.inputSuffix}>{suffix}</span>}
       </span>
     </label>
+  );
+}
+
+// The last month of the term, as a month + year pair beside the Term box.
+// The scenario stores only the start and the length, so the end is derived
+// from them and picking an end rewrites the length. An end before the start
+// collapses to a one-month term rather than going negative.
+function TermEndFields({ scenario: s, onTermMonths }) {
+  const end = addMonths(s.startYear, s.startMonth, s.termMonths - 1);
+  const setEnd = (year, month) => {
+    const months = (year - s.startYear) * 12 + (month - s.startMonth) + 1;
+    onTermMonths(Math.max(1, months));
+  };
+  return (
+    <>
+      <label className={styles.field} style={{ width: '7rem' }}>
+        <span className={styles.fieldLabel}>Ends<span className={styles.fieldHint}>last month</span></span>
+        <span className={styles.inputWrap}>
+          <select
+            className={styles.input}
+            value={end.month}
+            onChange={e => setEnd(end.year, Number(e.target.value))}
+          >
+            {NYMEX_MONTH_LABELS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+          </select>
+        </span>
+      </label>
+      <NumberField
+        label="Year" hint="term closes in" width="6rem" step="1"
+        value={end.year} onCommit={v => { const y = Math.trunc(Number(v)); if (Number.isFinite(y)) setEnd(y, end.month); }}
+      />
+    </>
   );
 }
 
@@ -331,7 +364,13 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
 
   useEffect(() => () => clearTimeout(timerRef.current), []);
 
-  const apply = useCallback((next) => { setState(next); save(next); }, [save]);
+  // Every write goes through here, so the open site's copy in the site list
+  // is brought up to date on every edit rather than only on a switch.
+  const apply = useCallback((raw) => {
+    const next = syncActiveSite(raw);
+    setState(next);
+    save(next);
+  }, [save]);
   const patchScenario = useCallback((patch) => {
     const prev = stateRef.current;
     apply({ ...prev, scenario: { ...prev.scenario, ...patch } });
@@ -929,8 +968,68 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
     { n: 2, label: 'Consumption', hint: 'What it burns' },
     { n: 3, label: 'Contract details', hint: 'Term, pricing and hedge' },
   ];
+  // The site list: open one, add one, delete the open one. A new or
+  // switched-to site starts on step 1 with nothing ticked.
+  const sites = state.sites || [];
+  const siteLabel = (sc) => String(sc?.name || '').trim() || 'Untitled site';
+  function openSite(id) {
+    if (id === state.activeSiteId) return;
+    apply(switchSite(stateRef.current, id));
+    setVisited(new Set());
+    setStepRaw(1);
+  }
+  function newSite() {
+    if (sites.length >= MAX_SITES) return;
+    apply(addSite(stateRef.current, series, curve));
+    setVisited(new Set());
+    setStepRaw(1);
+  }
+  function deleteSite() {
+    const id = state.activeSiteId;
+    if (!window.confirm(`Delete "${siteLabel(s)}" and everything entered for it?`)) return;
+    apply(removeSite(stateRef.current, id, series, curve));
+    setVisited(new Set());
+    setStepRaw(1);
+  }
+  const siteBar = (
+    <div className={styles.siteBar}>
+      <span className={styles.siteBarTitle}>Sites <span className={styles.siteBarCount}>{sites.length}</span></span>
+      <div className={styles.siteList} role="tablist" aria-label="Sites">
+        {sites.map(x => {
+          const open = x.id === state.activeSiteId;
+          const sc = open ? s : x.scenario;
+          return (
+            <button
+              key={x.id}
+              type="button"
+              role="tab"
+              aria-selected={open}
+              className={open ? styles.siteChipActive : styles.siteChip}
+              onClick={() => openSite(x.id)}
+              title={`${siteLabel(sc)} - ${vol(sc.annualVolumeDth)} Dth a year, ${sc.termMonths} month term`}
+            >{siteLabel(sc)}</button>
+          );
+        })}
+        <button
+          type="button"
+          className={styles.siteAdd}
+          onClick={newSite}
+          disabled={sites.length >= MAX_SITES}
+          title={sites.length >= MAX_SITES ? `The list holds up to ${MAX_SITES} sites. Delete one to add another.` : 'Start a new site at step 1'}
+        >+ New site</button>
+      </div>
+      <button
+        type="button"
+        className={styles.smallBtn}
+        onClick={deleteSite}
+        title={`Delete "${siteLabel(s)}"`}
+      >Delete site</button>
+    </div>
+  );
+
   const stepHeader = (
     <>
+      {siteBar}
       <ol className={styles.stepper} aria-label="Steps">
         {STEPS.map(st => {
           const current = step === st.n;
@@ -1041,6 +1140,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
               label="Term" hint="how long it runs" width="7.5rem" step="1" min="1" suffix="mo"
               value={s.termMonths} onCommit={v => patchScenario({ termMonths: v })}
             />
+            <TermEndFields scenario={s} onTermMonths={v => patchScenario({ termMonths: v })} />
             <NumberField
               label="Basis" hint="delivered point vs Henry Hub" tip={BASIS_TIP} width="9rem" step="0.01" suffix={NYMEX_UNIT}
               value={s.basis} onCommit={v => patchScenario({ basis: v })}
@@ -1630,6 +1730,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
               label="Term" hint="how long it runs" width="7.5rem" step="1" min="1" suffix="mo"
               value={s.termMonths} onCommit={v => patchScenario({ termMonths: v })}
             />
+            <TermEndFields scenario={s} onTermMonths={v => patchScenario({ termMonths: v })} />
             {/* The months BEFORE the term, run through the same hedge. A
                 second reading rather than a longer term, so it sits beside
                 the term rather than inside it and its saving is reported
