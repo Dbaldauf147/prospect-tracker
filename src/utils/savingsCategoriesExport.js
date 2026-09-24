@@ -23,6 +23,7 @@ import {
   SAVINGS_BASES, CONTRACT_TYPES, CURRENT_CONTRACT_TYPES, VOLUME_SHAPES, buildSavings, sourceSummary,
 } from './nymexSavings.js';
 import { sanitizeExcelWorkbook, stripDashes } from './exportSanitize.js';
+import { addNativeCharts, colRef } from './xlsxNativeCharts.js';
 
 const PRICE_FMT = '"$"#,##0.000';
 const MONEY_FMT = '"$"#,##0';
@@ -77,58 +78,132 @@ export const INDEX_KIND_LABEL = {
   assumed: 'Flat assumption',
 };
 
+// The Charts tab: the charts down the left, the tables they plot from on
+// the right. Native Excel charts (utils/xlsxNativeCharts.js) point at those
+// cells, so the numbers under every point are there to read, and a chart
+// can be restyled or re-ranged in Excel like any other.
+export const CHARTS_SHEET = 'Charts';
+const CHART_COLS = 12;      // columns A:L hold the charts
+const CHART_ROWS = 19;      // each chart is this many rows tall
+const TABLE_ROW = 3;        // table headings sit on the header row
+
+// Colours: checked with the dataviz palette validator on a light surface.
+const C_GREEN = '009530';
+const C_GREEN_LIGHT = '7FCA97';
+const C_BLUE = '2563EB';
+const C_ORANGE = 'C2410C';
+const C_INK = '1E293B';
+const C_GREY = '64748B';
+
+const INDEX_LINE = {
+  settled: { color: C_INK, dash: 'solid' },
+  forward: { color: C_BLUE, dash: 'dash' },
+  assumed: { color: C_GREY, dash: 'dot' },
+};
+
 /**
- * The three pictures on the Charts tab, as data: consumption per month,
- * the all-in prices per month, and the index per month with each point
- * marked settled or forecast. Pure, so what the charts plot is pinned by
- * the test; utils/savingsChartImage.js is what draws them.
+ * Everything on the Charts tab, as data: three tables (placed by column)
+ * and three chart specs whose ranges point into them. Pure, so the test
+ * pins both what is plotted and where it is read from.
+ *
+ * The index table carries a hidden column per kind of month (settled,
+ * forecast, flat assumption), each holding only its own months, so the chart
+ * can draw a line per kind in its own style. A month is also written into
+ * the next kind's column when that kind starts on the month after it, so
+ * the line runs on unbroken where one kind hands over to the next.
  */
-export function chartData(runs, leadIn = []) {
+export function chartsLayout(runs, leadIn = []) {
   const idx = runs?.index || runs?.[Object.keys(SAVINGS_BASES).find(k => runs?.[k])];
   const months = idx?.months || [];
-  const s = idx?.scenario || {};
-  const contract1 = runs?.contract?.months;
-  const allInSeries = [
-    { key: 'contract2', name: 'Contract 2 all-in', values: months.map(m => m.contractAllIn) },
-    { key: 'index', name: 'Index all-in', values: months.map(m => m.indexAllIn) },
-  ];
-  if (contract1?.length === months.length && Number.isFinite(s.currentRate)) {
-    allInSeries.push({ key: 'contract1', name: 'Contract 1 all-in', values: contract1.map(m => m.baselineAllIn) });
-  }
-  const indexMonths = [...leadIn, ...months];
-  return {
-    consumption: {
-      title: 'Consumption by month',
-      unit: 'Dth',
-      labels: months.map(m => m.short || m.label),
-      bars: months.map(m => ({ value: m.volume, kind: m.volumeSource === 'entered' ? 'entered' : 'shape' })),
-    },
-    allIn: {
-      title: `All-in price by month (${UNIT})`,
-      unit: UNIT,
-      labels: months.map(m => m.short || m.label),
-      series: allInSeries,
-    },
-    index: {
-      title: `Index price by month, settled and forecast (${UNIT})`,
-      unit: UNIT,
-      labels: indexMonths.map(m => m.short || m.label),
-      points: indexMonths.map(m => ({ value: m.index, kind: m.source })),
-      termStart: leadIn.length,
-    },
-  };
-}
+  const labels = months.map(m => m.label);
+  const hasC1 = months.length > 0 && months.every(m => Number.isFinite(m.contract1AllIn));
 
-/** The index chart's months as a table: month, index, what it is. */
-export function indexTableAoa(runs, leadIn = []) {
-  const idx = runs?.index || runs?.[Object.keys(SAVINGS_BASES).find(k => runs?.[k])];
-  const rows = [...leadIn, ...(idx?.months || [])].map(m => [
-    m.label,
-    m.phase === 'history' ? 'Before the term' : 'Term',
-    m.index,
-    INDEX_KIND_LABEL[m.source] || m.source,
-  ]);
-  return [['Month', 'Period', `Index (${UNIT})`, 'Index is'], ...rows];
+  const consumption = {
+    col: CHART_COLS + 1,
+    head: ['Month', 'Entered (Dth)', 'Annual volume and shape (Dth)'],
+    fmts: [null, VOL_FMT, VOL_FMT],
+    widths: [12, 14, 18],
+    rows: months.map(m => [
+      m.label,
+      m.volumeSource === 'entered' ? m.volume : null,
+      m.volumeSource === 'entered' ? null : m.volume,
+    ]),
+  };
+  const allIn = {
+    col: consumption.col + consumption.head.length + 1,
+    head: ['Month', `Contract 2 all-in (${UNIT})`, `Index all-in (${UNIT})`, ...(hasC1 ? [`Contract 1 all-in (${UNIT})`] : [])],
+    fmts: [null, PRICE_FMT, PRICE_FMT, PRICE_FMT],
+    widths: [12, 16, 16, 16],
+    rows: months.map(m => [m.label, m.contractAllIn, m.indexAllIn, ...(hasC1 ? [m.contract1AllIn] : [])]),
+  };
+
+  const all = [...leadIn, ...months];
+  const kinds = all.map(m => m.source);
+  const KINDS = ['settled', 'forward', 'assumed'];
+  const present = KINDS.filter(k => kinds.includes(k));
+  const index = {
+    col: allIn.col + allIn.head.length + 1,
+    head: ['Month', 'Period', `Index (${UNIT})`, 'Index is', ...present.map(k => INDEX_KIND_LABEL[k])],
+    fmts: [null, null, PRICE_FMT, null, ...present.map(() => PRICE_FMT)],
+    widths: [12, 16, 12, 24, ...present.map(() => 12)],
+    hiddenFrom: 4,
+    kinds,
+    rows: all.map((m, i) => [
+      m.label,
+      m.phase === 'history' ? 'Before the term' : 'Term',
+      m.index,
+      INDEX_KIND_LABEL[m.source] || m.source,
+      ...present.map(k => (kinds[i] === k || kinds[i + 1] === k ? m.index : null)),
+    ]),
+  };
+
+  const first = TABLE_ROW + 1;
+  const ref = (t, c) => colRef(CHARTS_SHEET, t.col - 1 + c, first, first + t.rows.length - 1);
+  const pick = (t, c) => t.rows.map(r => r[c]);
+  const at = (n) => ({ from: { col: 0, row: TABLE_ROW - 1 + n * (CHART_ROWS + 1) }, to: { col: CHART_COLS, row: TABLE_ROW - 1 + n * (CHART_ROWS + 1) + CHART_ROWS } });
+  const termStart = months[0]?.label;
+
+  const charts = [
+    {
+      type: 'bar',
+      title: 'Consumption by month (Dth)',
+      anchor: at(0),
+      yFormat: '#,##0',
+      categories: { ref: ref(consumption, 0), values: labels },
+      series: [
+        { name: 'Entered', ref: ref(consumption, 1), values: pick(consumption, 1), color: C_GREEN },
+        { name: 'Annual volume and shape', ref: ref(consumption, 2), values: pick(consumption, 2), color: C_GREEN_LIGHT },
+      ],
+    },
+    {
+      type: 'line',
+      title: `All-in price by month (${UNIT})`,
+      anchor: at(1),
+      yFormat: '"$"#,##0.00',
+      categories: { ref: ref(allIn, 0), values: labels },
+      series: [
+        // Wider and underneath, so where it runs on the index (an unhedged
+        // index deal) it shows as a green edge rather than vanishing.
+        { name: 'Contract 2 all-in', ref: ref(allIn, 1), values: pick(allIn, 1), color: C_GREEN, width: 4.5 },
+        { name: 'Index all-in', ref: ref(allIn, 2), values: pick(allIn, 2), color: C_BLUE },
+        ...(hasC1 ? [{ name: 'Contract 1 all-in', ref: ref(allIn, 3), values: pick(allIn, 3), color: C_ORANGE }] : []),
+      ],
+    },
+    {
+      type: 'line',
+      title: `Index price, settled and forecast (${UNIT})${leadIn.length && termStart ? `. Term starts ${termStart}` : ''}`,
+      anchor: at(2),
+      yFormat: '"$"#,##0.00',
+      categories: { ref: ref(index, 0), values: all.map(m => m.label) },
+      series: present.map((k, j) => ({
+        name: INDEX_KIND_LABEL[k],
+        ref: ref(index, 4 + j),
+        values: pick(index, 4 + j),
+        ...INDEX_LINE[k],
+      })),
+    },
+  ];
+  return { tables: [consumption, allIn, index], charts };
 }
 
 // Contract Over Contract only, and only once Contract 1's retail adder is
@@ -355,7 +430,7 @@ function markIndexKind(cell, kind) {
  * class handed in (so it can be built and inspected in a test without a
  * browser). Summary first, then a tab per category.
  */
-export function buildSavingsCategoriesWorkbook(Workbook, runs, { charts = null, leadIn = [] } = {}) {
+export function buildSavingsCategoriesWorkbook(Workbook, runs, { charts = false, leadIn = [] } = {}) {
   const wb = new Workbook();
   wb.creator = 'Schneider Electric · Prospect Tracker';
   wb.created = new Date();
@@ -403,32 +478,31 @@ export function buildSavingsCategoriesWorkbook(Workbook, runs, { charts = null, 
   }
 
   // ── Charts ──
-  // Pictures rather than native Excel charts, which ExcelJS cannot write.
-  // The numbers behind them are all in the tabs, and the index months,
-  // which reach back before the term, get a table of their own here.
-  if (charts?.length) {
-    const CHART_SPAN = 12;
-    const chs = addBrandedSheet(wb, 'Charts', CHART_SPAN + 5, `${site}  ·  Consumption, all-in price and index over time`);
-    chs.columns = [...Array(CHART_SPAN).fill({ width: 10 }), { width: 3 }, { width: 14 }, { width: 16 }, { width: 14 }, { width: 24 }];
-    // Rows are the default 15pt, which is 20px.
-    const ROW_PX = 20;
-    let row = 4;
-    for (const c of charts) {
-      const id = wb.addImage({ base64: c.dataUrl, extension: 'png' });
-      chs.addImage(id, { tl: { col: 0.2, row: row - 1 + 0.2 }, ext: { width: c.width, height: c.height } });
-      row += Math.ceil(c.height / ROW_PX) + 2;
+  // The tables the charts plot from. The charts themselves are added once
+  // the file is written (savingsCategoriesBuffer), since ExcelJS cannot.
+  if (charts) {
+    const { tables } = chartsLayout(runs, leadIn);
+    const last = tables[tables.length - 1];
+    const span = last.col + last.head.length - 1;
+    const chs = addBrandedSheet(wb, CHARTS_SHEET, span, `${site}  ·  Consumption, all-in price and index over time. Forecast index months in blue italics`);
+    const widths = Array(span).fill(10);
+    for (const t of tables) t.widths.forEach((w, i) => { widths[t.col - 1 + i] = w; });
+    chs.columns = widths.map(width => ({ width }));
+    for (const t of tables) {
+      t.head.forEach((h, i) => headerCell(chs.getCell(TABLE_ROW, t.col + i), h));
+      t.rows.forEach((r, j) => {
+        r.forEach((v, i) => bodyCell(chs.getCell(TABLE_ROW + 1 + j, t.col + i), v, { fmt: t.fmts[i], zebra: j % 2 === 1 }));
+        if (t.kinds) {
+          markIndexKind(chs.getCell(TABLE_ROW + 1 + j, t.col + 2), t.kinds[j]);
+          markIndexKind(chs.getCell(TABLE_ROW + 1 + j, t.col + 3), t.kinds[j]);
+        }
+      });
+      // The per-kind helper columns only exist for the chart to read.
+      if (t.hiddenFrom != null) {
+        for (let i = t.hiddenFrom; i < t.head.length; i++) chs.getColumn(t.col + i).hidden = true;
+      }
     }
-
-    const [ih, ...ib] = indexTableAoa(runs, leadIn);
-    const C0 = CHART_SPAN + 2;
-    ih.forEach((h, i) => headerCell(chs.getCell(3, C0 + i), h));
-    chs.getRow(3).height = 24;
-    const kinds = [...leadIn, ...(runs?.index?.months || [])].map(m => m.source);
-    ib.forEach((r, j) => {
-      r.forEach((v, i) => bodyCell(chs.getCell(4 + j, C0 + i), v, { fmt: i === 2 ? PRICE_FMT : null, zebra: j % 2 === 1 }));
-      markIndexKind(chs.getCell(4 + j, C0 + 2), kinds[j]);
-      markIndexKind(chs.getCell(4 + j, C0 + 3), kinds[j]);
-    });
+    chs.getRow(TABLE_ROW).height = 32;
   }
 
   // ── A tab per category ──
@@ -462,17 +536,24 @@ export function buildSavingsCategoriesWorkbook(Workbook, runs, { charts = null, 
 }
 
 /**
+ * The finished file as bytes: the workbook ExcelJS writes, with the native
+ * charts added to its Charts tab. The two libraries are handed in so a test
+ * can build it without a browser.
+ */
+export async function savingsCategoriesBuffer(Workbook, JSZip, runs, { leadIn = [] } = {}) {
+  const wb = buildSavingsCategoriesWorkbook(Workbook, runs, { charts: true, leadIn });
+  const buf = await wb.xlsx.writeBuffer();
+  return addNativeCharts(JSZip, buf, CHARTS_SHEET, chartsLayout(runs, leadIn).charts);
+}
+
+/**
  * Build and download the workbook. Returns the number of months per tab.
  * `leadIn` is the settled year the index chart opens with (indexLeadIn).
  */
 export async function downloadSavingsCategories(runs, { leadIn = [] } = {}, date = new Date()) {
-  const [mod, { renderSavingsCharts }] = await Promise.all([import('exceljs'), import('./savingsChartImage.js')]);
+  const [mod, zipMod] = await Promise.all([import('exceljs'), import('jszip')]);
   const Workbook = mod.Workbook || mod.default?.Workbook;
-  const wb = buildSavingsCategoriesWorkbook(Workbook, runs, {
-    charts: renderSavingsCharts(chartData(runs, leadIn)),
-    leadIn,
-  });
-  const buf = await wb.xlsx.writeBuffer();
+  const buf = await savingsCategoriesBuffer(Workbook, zipMod.default || zipMod, runs, { leadIn });
   const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
   const any = runs?.[Object.keys(SAVINGS_BASES).find(k => runs?.[k])];
