@@ -190,6 +190,20 @@ export const SAVINGS_BASES = {
 };
 export const DEFAULT_SAVINGS_BASIS = 'index';
 
+// How Contract 1 (the contract the site is on today) is priced.
+//   fixed - one all-in $/Dth for every month (currentRate).
+//   index - no all-in to enter: each month is that month's index plus the
+//           basis and Contract 1's own retail adder (currentAdder), the same
+//           way an index contract 2 is built, so the two compare like for
+//           like. The basis is the delivery point's, so it is shared.
+export const CURRENT_CONTRACT_TYPES = {
+  fixed: { label: 'Fixed all-in', note: 'One all-in $/Dth for every month' },
+  index: { label: 'Index + adder', note: 'Each month\'s index plus basis and the retail adder' },
+};
+// Fixed is what Contract 1 was before it had a type: a saved all-in rate
+// keeps meaning what it meant.
+export const DEFAULT_CURRENT_TYPE = 'fixed';
+
 function normalizeLookback(raw, fallback) {
   if (raw === LOOKBACK_ALL) return LOOKBACK_ALL;
   if (typeof raw === 'string' && raw.trim().toLowerCase() === LOOKBACK_ALL) return LOOKBACK_ALL;
@@ -628,7 +642,7 @@ export function defaultScenario(series = monthlySeries(SHIPPED_SETTLES), forward
       basis: 0, adder: 0.35,
       forwardPrice: 3.5,
       contractType: DEFAULT_CONTRACT_TYPE, fixedRate: 3.85,
-      savingsBasis: DEFAULT_SAVINGS_BASIS, currentRate: 4.1, currentAdder: null, noActionPct: 4, strategyPct: 1,
+      savingsBasis: DEFAULT_SAVINGS_BASIS, currentType: DEFAULT_CURRENT_TYPE, currentRate: 4.1, currentAdder: null, noActionPct: 4, strategyPct: 1,
       layers: [{ id: 'L1', label: 'Layer 1', pct: 40, price: 3.5 }, { id: 'L2', label: 'Layer 2', pct: 25, price: 3.7 }],
     };
   }
@@ -681,6 +695,7 @@ export function defaultScenario(series = monthlySeries(SHIPPED_SETTLES), forward
     // Placeholders for the two other bases, until somebody types theirs: a
     // current contract a quarter above the fixed quote, and the percentages
     // from the cost-avoidance example.
+    currentType: DEFAULT_CURRENT_TYPE,
     currentRate: Math.round((strike + 0.6) * 100) / 100,
     // Contract 1's retail adder. Unknown until somebody types it: the adder
     // on the contract a site is leaving is often buried in an all-in rate,
@@ -725,6 +740,7 @@ export function normalizeScenario(raw, series = null, forward = null) {
       ? base.fixedRate
       : clamp(num(raw.fixedRate, base.fixedRate), 0, 1000),
     savingsBasis: SAVINGS_BASES[raw.savingsBasis] ? raw.savingsBasis : DEFAULT_SAVINGS_BASIS,
+    currentType: CURRENT_CONTRACT_TYPES[raw.currentType] ? raw.currentType : DEFAULT_CURRENT_TYPE,
     currentRate: raw.currentRate == null || raw.currentRate === ''
       ? base.currentRate
       : clamp(num(raw.currentRate, base.currentRate), 0, 1000),
@@ -811,6 +827,9 @@ function rollup(months) {
   // otherwise the current contract or the no-action cost.
   const baselineCost = months.reduce((n, m) => n + m.baselineCost, 0);
   const saving = baselineCost - contractCost;
+  // Contract 1 over the same months, whatever the saving is measured
+  // against, so Contract details can compare the two on any basis.
+  const contract1Cost = months.reduce((n, m) => n + (m.contract1Cost ?? 0), 0);
   const settledMonths = months.filter(m => m.source === 'settled').length;
   const forwardMonths = months.filter(m => m.source === 'forward').length;
   const assumedMonths = months.filter(m => m.source === 'assumed').length;
@@ -828,6 +847,8 @@ function rollup(months) {
     avgIndexAllIn: volume ? indexCost / volume : null,
     avgContractAllIn: volume ? contractCost / volume : null,
     avgBaselineAllIn: volume ? baselineCost / volume : null,
+    contract1Cost,
+    avgContract1AllIn: volume ? contract1Cost / volume : null,
     settledMonths,
     forwardMonths,
     assumedMonths,
@@ -923,8 +944,13 @@ export function buildSavings(scenario, series, forward = []) {
     const indexAllIn = index + s.basis + s.adder;
     const contractAllIn = commodity + s.basis + s.adder;
     // The rate the saving is measured against. See SAVINGS_BASES.
+    // Contract 1, the contract the site is on today, priced this month: its
+    // fixed all-in, or the index plus basis and its own adder.
+    const contract1AllIn = s.currentType === 'index'
+      ? index + s.basis + (s.currentAdder ?? 0)
+      : s.currentRate;
     const baselineAllIn = s.savingsBasis === 'contract'
-      ? s.currentRate
+      ? contract1AllIn
       : s.savingsBasis === 'avoided'
         ? contractAllIn * (1 + (s.noActionPct - s.strategyPct) / 100)
         : indexAllIn;
@@ -947,6 +973,8 @@ export function buildSavings(scenario, series, forward = []) {
       volume,
       volumeSource: given == null ? 'shape' : 'entered',
       baselineAllIn,
+      contract1AllIn,
+      contract1Cost: contract1AllIn * volume,
       indexCost: indexAllIn * volume,
       baselineCost: baselineAllIn * volume,
       contractCost: contractAllIn * volume,

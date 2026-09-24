@@ -38,7 +38,11 @@ export function contractTypeSummary(s, hedge) {
 
 /** What the saving is measured against, with the number that sets it. */
 export function savingsBasisSummary(s) {
-  if (s.savingsBasis === 'contract') return `${SAVINGS_BASES.contract.label}, vs ${fmtPrice(s.currentRate)} today`;
+  if (s.savingsBasis === 'contract') {
+    return s.currentType === 'index'
+      ? `${SAVINGS_BASES.contract.label}, vs index + ${fmtPrice(s.currentAdder ?? 0)} today`
+      : `${SAVINGS_BASES.contract.label}, vs ${fmtPrice(s.currentRate)} today`;
+  }
   if (s.savingsBasis === 'avoided') {
     return `${SAVINGS_BASES.avoided.label}, ${(s.noActionPct - s.strategyPct).toFixed(1)}% avoided`;
   }
@@ -104,19 +108,24 @@ export function resultSummary(run) {
  * the saving split into what the retail adder did and what everything else
  * did. `totals` is buildSavings' term totals for Contract 2.
  *
- * Contract 1 is an all-in rate; its adder is inside that rate. So the
- * adder's share of the saving is (adder 1 - adder 2) x volume, and the rest
- * (commodity and basis) is the whole saving less that. The two add back up to
- * the whole. Null adder split when Contract 1's adder hasn't been given.
+ * Contract 1 is either a fixed all-in rate (its adder inside it) or the index
+ * plus basis and its adder, priced month by month (see currentType). Either
+ * way the adder's share of the saving is (adder 1 - adder 2) x volume, and
+ * the rest (commodity and basis) is the whole saving less that; the two add
+ * back up to the whole. With both contracts on the index the rest is zero:
+ * the same index and basis on both sides, so only the adders differ. Null
+ * adder split when Contract 1's adder hasn't been given.
  */
 export function contractComparison(s, totals) {
   const volume = totals?.volume || 0;
-  const cost1 = s.currentRate * volume;
+  // Contract 1 month by month (a fixed rate, or the index plus basis and its
+  // adder), totalled over the same volume as Contract 2.
+  const cost1 = totals?.contract1Cost ?? s.currentRate * volume;
   const cost2 = totals?.contractCost || 0;
   const saving = cost1 - cost2;
   const out = {
     volume,
-    rate1: s.currentRate,
+    rate1: totals?.avgContract1AllIn ?? s.currentRate,
     rate2: totals?.avgContractAllIn ?? null,
     cost1,
     cost2,

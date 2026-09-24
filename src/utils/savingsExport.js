@@ -194,7 +194,11 @@ export function savingsScenarioRows(run, meta = {}) {
     { label: 'Volume over the term (Dth)', value: t.volume, fmt: VOL_FMT },
     { label: 'Contract type', value: CONTRACT_TYPES[type].label },
     { label: 'Savings analysis', value: SAVINGS_BASES[basis].label },
-    ...(basis === 'contract' ? [{ label: `Current contract rate (${UNIT})`, value: s.currentRate, fmt: PRICE_FMT }] : []),
+    ...(basis === 'contract' ? [
+      s.currentType === 'index'
+        ? { label: `Contract 1 all-in, index + adder, average (${UNIT})`, value: t.avgContract1AllIn, fmt: PRICE_FMT }
+        : { label: `Current contract rate (${UNIT})`, value: s.currentRate, fmt: PRICE_FMT },
+    ] : []),
     ...(basis === 'avoided' ? [
       { label: 'Increase with no action', value: s.noActionPct / 100, fmt: PCT_FMT },
       { label: 'Increase on the strategy', value: s.strategyPct / 100, fmt: PCT_FMT },
