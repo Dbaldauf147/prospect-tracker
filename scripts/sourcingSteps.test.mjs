@@ -3,7 +3,7 @@
 //   node scripts/sourcingSteps.test.mjs
 import {
   compareOption, contractTypeSummary, savingsBasisSummary, consumptionSummary,
-  termSummary, stepSummaries, resultSummary, savingsCategoriesSummary,
+  termSummary, stepSummaries, resultSummary, savingsCategoriesSummary, contractComparison,
 } from '../src/utils/sourcingSteps.js';
 import {
   buildSavings, normalizeScenario, monthlySeries, forwardSeries, normalizeSettles,
@@ -64,6 +64,28 @@ eq(savingsCategoriesSummary(null), '-', 'with nothing worked out yet it says so'
   eq(stepSummaries(scenario, run, byBasis)[4].value, savingsCategoriesSummary(byBasis), 'and the strip uses it');
 }
 eq(resultSummary({ totals: { saving: -1234.4, savingPerDth: -0.01 } }), { saving: '-$1,234', perDth: '-$0.010', good: false }, 'a loss reads as one');
+
+// Contract 1 vs Contract 2, and what the retail adder did.
+{
+  eq(normalizeScenario({}, series, curve).currentAdder, null, 'Contract 1\'s adder is unknown until given');
+  eq(normalizeScenario({ currentAdder: '0.4' }, series, curve).currentAdder, 0.4, 'and reads as typed');
+  eq(normalizeScenario({ currentAdder: '' }, series, curve).currentAdder, null, 'a cleared box is unknown again');
+
+  const totals = { volume: 100000, contractCost: 330000, avgContractAllIn: 3.3 };
+  const noAdder = contractComparison({ currentRate: 3.5, adder: 0.25, currentAdder: null }, totals);
+  near(noAdder.saving, 20000, 1e-6, 'contract over contract: ($3.50 - $3.30) x 100,000 = $20,000');
+  near(noAdder.savingPct, 20000 / 350000, 1e-12, 'as a share of Contract 1');
+  eq(noAdder.adder, null, 'with no Contract 1 adder there is nothing to split');
+
+  const split = contractComparison({ currentRate: 3.5, adder: 0.25, currentAdder: 0.4 }, totals);
+  near(split.adder.perDth, 0.15, 1e-12, 'the adder went from $0.40 to $0.25, $0.15 a Dth');
+  near(split.adder.saving, 15000, 1e-6, 'which is $15,000 of the saving');
+  near(split.adder.rest, 5000, 1e-6, 'and commodity and basis did the other $5,000');
+  near(split.adder.saving + split.adder.rest, split.saving, 1e-9, 'the two add back up to the whole');
+
+  const worse = contractComparison({ currentRate: 3.5, adder: 0.5, currentAdder: 0.3 }, totals);
+  near(worse.adder.saving, -20000, 1e-6, 'a higher adder on Contract 2 is a cost, and says so');
+}
 
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
