@@ -17,7 +17,7 @@ import {
   CONTRACT_TYPES, SAVINGS_BASES,
 } from '../../utils/nymexSavings.js';
 import { downloadSavingsMonths } from '../../utils/savingsExport.js';
-import { categoryRuns, downloadSavingsCategories } from '../../utils/savingsCategoriesExport.js';
+import { categoryRuns, indexLeadIn, downloadSavingsCategories } from '../../utils/savingsCategoriesExport.js';
 import { compareOption, stepSummaries, resultSummary, contractComparison } from '../../utils/sourcingSteps.js';
 
 // The Sourcing area on Service Deep Dives: load the NYMEX record, describe a
@@ -902,12 +902,14 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
     }
   }
 
-  // Step 5 as a workbook: a Summary tab and a tab per savings category,
-  // month by month over the term.
+  // Step 5 as a workbook: a Summary tab, a Charts tab, and a tab per savings
+  // category, month by month over the term.
   async function exportCategories() {
     if (!run.months.length) { setStatus('No months in the term to export.'); return; }
     try {
-      const n = await downloadSavingsCategories(categoryRuns(state.scenario, series, curve));
+      const n = await downloadSavingsCategories(categoryRuns(state.scenario, series, curve), {
+        leadIn: indexLeadIn(state.scenario, series, curve),
+      });
       setStatus(`Exported ${n} month${n === 1 ? '' : 's'} under each savings category.`);
     } catch {
       setStatus('The export failed. Reload and try again.');
