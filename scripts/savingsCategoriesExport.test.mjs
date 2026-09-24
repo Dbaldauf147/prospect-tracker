@@ -7,6 +7,7 @@
 // sum to the total the page shows for that category; every figure is a
 // number, not a string; the adder split adds back up to the saving.
 import {
+  categoryFormulas, summaryInputs, summaryFormulas,
   categoryRuns, categoryMonthAoa, categoryHeaders, categoryFormats, summaryRows, summaryAoa,
   categoriesFilename, CATEGORY_SHEET, BASELINE_LABEL, buildSavingsCategoriesWorkbook, SE,
   chartsLayout, indexLeadIn, savingsCategoriesBuffer, CHARTS_SHEET, INDEX_CHART_LOOKBACK, INDEX_KIND_COLOR,
@@ -102,6 +103,27 @@ for (const key of Object.keys(runs)) {
   ok(summaryAoa(runs).every(r => r.every(v => typeof v !== 'string' || !v.includes('—'))), 'no em dashes in the summary');
 }
 
+// ── Formulas: the workbook works its figures out rather than pasting them ──
+{
+  const withAdder = categoryRuns({ ...scenario, currentType: 'index', currentAdder: 0.1 }, series, curve);
+  const inp = summaryInputs(withAdder);
+  ok(/^'Summary'!\$B\$\d+$/.test(inp.basis) && /^'Summary'!\$B\$\d+$/.test(inp.adder), 'the inputs are the Summary\'s assumption cells');
+  const f = categoryFormulas('contract', withAdder.contract, inp);
+  const h = categoryHeaders('contract', withAdder.contract.scenario);
+  eq(f.length, 13, 'a formula row per month and the total');
+  eq(f[0][h.indexOf('Contract 2 all-in ($/Dth)')], `E4+${inp.basis}-${inp.adder}`, 'Contract 2 on the index is index + basis - adder');
+  eq(f[0][h.indexOf('Contract 1 ($/Dth)')], `E4+${inp.basis}-N(${inp.c1Adder})`, 'Contract 1 on the index is index + basis - its adder');
+  eq(f[0][h.indexOf('Index ($/Dth)')], null, 'the index itself is data, not a formula');
+  eq(f[12][h.indexOf('Saving')], 'SUM(L4:L15)', 'the total sums the months');
+  const fixed = categoryRuns({ ...scenario, contractType: 'fixed', fixedRate: 3.9, currentType: 'fixed' }, series, curve);
+  const fi = summaryInputs(fixed);
+  const ff = categoryFormulas('contract', fixed.contract, fi);
+  eq(ff[0][h.indexOf('Contract 2 all-in ($/Dth)')], fi.fixed, 'a fixed Contract 2 reads its all-in off the Summary');
+  eq(ff[0][h.indexOf('Contract 1 ($/Dth)')], fi.c1Rate, 'and so does a fixed Contract 1');
+  const sf = summaryFormulas(withAdder);
+  eq(sf['Saving over the term'][1], "'Contract Over Contract'!$L$16", 'the Summary\'s saving reads the tab total');
+}
+
 eq(categoriesFilename('Syracuse Main (SYR)', new Date('2026-09-24T12:00:00Z')), 'Syracuse_Main_SYR_savings_by_category_2026-09-24.xlsx', 'a safe, dated filename');
 eq(categoriesFilename('', new Date('2026-09-24T12:00:00Z')), 'site_savings_by_category_2026-09-24.xlsx', 'an unnamed site still gets one');
 
@@ -134,7 +156,8 @@ eq(categoriesFilename('', new Date('2026-09-24T12:00:00Z')), 'site_savings_by_ca
   const coc = wb.getWorksheet('Contract Over Contract');
   const head = coc.getRow(3).values.slice(1);
   const savingCol = head.indexOf('Saving') + 1;
-  eq(typeof coc.getCell(4, savingCol).value, 'number', 'savings stay numbers');
+  eq(typeof coc.getCell(4, savingCol).value.result, 'number', 'savings are formulas with the number cached');
+  eq(coc.getCell(4, savingCol).value.formula, 'J4-K4', 'the saving is baseline cost less contract cost');
   ok(String(coc.getCell(4, savingCol).numFmt).includes('[Red]'), 'with losses shown in red');
   ok(head.includes('Retail adder saving'), 'the adder split carries into the branded tab');
   const lastRow = coc.actualRowCount;

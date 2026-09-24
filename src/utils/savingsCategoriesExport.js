@@ -23,7 +23,7 @@ import {
   SAVINGS_BASES, CONTRACT_TYPES, CURRENT_CONTRACT_TYPES, VOLUME_SHAPES, buildSavings, sourceSummary,
 } from './nymexSavings.js';
 import { sanitizeExcelWorkbook, stripDashes } from './exportSanitize.js';
-import { addNativeCharts, colRef } from './xlsxNativeCharts.js';
+import { addNativeCharts, colRef, colName } from './xlsxNativeCharts.js';
 
 const PRICE_FMT = '"$"#,##0.000';
 const MONEY_FMT = '"$"#,##0';
@@ -325,6 +325,12 @@ export function summaryRows(runs) {
     { label: 'Volume shape', values: [`${shape.label}, ${shape.note}`] },
     { label: 'Contract 2 type', values: [CONTRACT_TYPES[s.contractType]?.label || ''] },
     ...(s.contractType === 'fixed' ? [{ label: `Contract 2 fixed all-in (${UNIT})`, values: [s.fixedRate], fmt: PRICE_FMT }] : []),
+    // What the layers lock, as the two numbers the contract's all-in is
+    // worked out from on every tab.
+    ...(s.contractType === 'layered' ? [
+      { label: 'Contract 2 hedged share', values: [(first?.hedge?.pct ?? 0) / 100], fmt: PCT_FMT },
+      { label: `Contract 2 hedge price (${UNIT})`, values: [first?.hedge?.price ?? 0], fmt: PRICE_FMT },
+    ] : []),
     { label: `Contract 2 basis (${UNIT})`, values: [s.basis], fmt: PRICE_FMT },
     { label: `Contract 2 retail adder (${UNIT})`, values: [s.adder], fmt: PRICE_FMT },
     { label: 'Contract 1 priced as', values: [(CURRENT_CONTRACT_TYPES[s.currentType] || CURRENT_CONTRACT_TYPES.fixed).label] },
@@ -343,6 +349,192 @@ export function summaryRows(runs) {
     { label: 'Priced from', values: [sourceSummary(first?.totals || {})] },
   ];
 }
+
+/**
+ * The sheet row each Summary label lands on, laid out the way the workbook
+ * writes it: the category header on row 3, then a row per label with a
+ * blank label skipping one.
+ */
+export function summaryRowNumbers(rows) {
+  const at = {};
+  let r = 4;
+  for (const row of rows.slice(1)) {
+    if (row.label !== '') at[row.label] = r;
+    r += 1;
+  }
+  return at;
+}
+
+// ── Formulas ──
+// Every figure the workbook derives is written as the Excel formula that
+// derives it, with the number the page came to cached as its result: the
+// month rows work from the Summary's assumptions, the Summary's headline
+// rows read each tab's totals, and the Charts tables read the tabs. Change
+// the basis, an adder or a rate on the Summary and the whole file follows.
+// What is data rather than arithmetic (the index, the volumes, the labels)
+// stays a plain value.
+
+const sheetRef = (sheet) => `'${String(sheet).replace(/'/g, "''")}'`;
+const abs = (sheet, col, row) => `${sheetRef(sheet)}!$${col}$${row}`;
+
+/** Absolute references to the Summary's assumption cells, null where absent. */
+export function summaryInputs(runs) {
+  const rows = summaryRows(runs);
+  const at = summaryRowNumbers(rows);
+  const ref = (label) => (at[label] ? abs('Summary', 'B', at[label]) : null);
+  return {
+    basis: ref(`Contract 2 basis (${UNIT})`),
+    adder: ref(`Contract 2 retail adder (${UNIT})`),
+    fixed: ref(`Contract 2 fixed all-in (${UNIT})`),
+    share: ref('Contract 2 hedged share'),
+    strike: ref(`Contract 2 hedge price (${UNIT})`),
+    c1Rate: ref(`Contract 1 all-in rate (${UNIT})`),
+    c1Adder: ref(`Contract 1 retail adder (${UNIT})`),
+    noAction: ref('Increase with no action'),
+    strategy: ref('Increase on the strategy'),
+  };
+}
+
+/**
+ * One category tab's formulas, the same shape as categoryMonthAoa without
+ * its heading row: a formula string (no leading =) or null for a value.
+ */
+export function categoryFormulas(key, run, inp) {
+  const s = run?.scenario || {};
+  const head = categoryHeaders(key, s);
+  const base = BASELINE_LABEL[key];
+  const L = (h) => colName(head.indexOf(h));
+  const C = L('Volume (Dth)'), E = L(`Index (${UNIT})`), F = L(`Contract 2 all-in (${UNIT})`), G = L(`${base} (${UNIT})`);
+  const H = L(`Contract 2 adder (${UNIT})`), I = L(`Contract 1 adder (${UNIT})`);
+  const BC = L(`${base} cost`), CC = L('Contract 2 cost'), SV = L('Saving'), RS = L('Running saving');
+  const AS = L('Retail adder saving'), RE = L('Commodity and basis saving');
+  const n = (run?.months || []).length;
+  const first = 4;
+  const T = first + n;
+  const range = (c) => `${c}${first}:${c}${T - 1}`;
+
+  const contract2 = (r) => {
+    if (s.contractType === 'fixed') return inp.fixed;
+    const tail = `+${inp.basis}-${inp.adder}`;
+    if (s.contractType === 'layered') return `${inp.share}*${inp.strike}+(1-${inp.share})*${E}${r}${tail}`;
+    return `${E}${r}${tail}`;
+  };
+  const baseline = (r) => {
+    if (key === 'index') return `${E}${r}+${inp.basis}-${inp.adder}`;
+    if (key === 'avoided') return `${F}${r}*(1+${inp.noAction}-${inp.strategy})`;
+    // N() reads a Contract 1 adder that is 'not given' as the $0 the page takes it as.
+    return s.currentType === 'index' ? `${E}${r}+${inp.basis}-N(${inp.c1Adder})` : inp.c1Rate;
+  };
+
+  const row = (cells) => head.map((h, i) => cells[colName(i)] ?? null);
+  const rows = [];
+  for (let j = 0; j < n; j++) {
+    const r = first + j;
+    rows.push(row({
+      [F]: contract2(r),
+      [G]: baseline(r),
+      ...(head.includes(`Contract 2 adder (${UNIT})`) ? { [H]: inp.adder, [I]: inp.c1Adder } : {}),
+      [BC]: `${C}${r}*${G}${r}`,
+      [CC]: `${C}${r}*${F}${r}`,
+      [SV]: `${BC}${r}-${CC}${r}`,
+      [RS]: j === 0 ? `${SV}${r}` : `${RS}${r - 1}+${SV}${r}`,
+      ...(head.includes('Retail adder saving') ? { [AS]: `(${H}${r}-${I}${r})*${C}${r}`, [RE]: `${SV}${r}-${AS}${r}` } : {}),
+    }));
+  }
+  const perDth = (c) => `IF(${C}${T}=0,0,${c}${T}/${C}${T})`;
+  rows.push(row({
+    [C]: `SUM(${range(C)})`,
+    [E]: n ? `AVERAGE(${range(E)})` : null,
+    [F]: perDth(CC),
+    [G]: perDth(BC),
+    ...(head.includes(`Contract 2 adder (${UNIT})`) ? { [H]: inp.adder, [I]: inp.c1Adder } : {}),
+    [BC]: `SUM(${range(BC)})`,
+    [CC]: `SUM(${range(CC)})`,
+    [SV]: `SUM(${range(SV)})`,
+    [RS]: n ? `${RS}${T - 1}` : `${SV}${T}`,
+    ...(head.includes('Retail adder saving') ? { [AS]: `SUM(${range(AS)})`, [RE]: `SUM(${range(RE)})` } : {}),
+  }));
+  return rows;
+}
+
+/** A category tab's totals row and the columns on it, for the Summary and Charts to read. */
+function tabCells(key, run) {
+  const head = categoryHeaders(key, run?.scenario || {});
+  const base = BASELINE_LABEL[key];
+  const sheet = CATEGORY_SHEET[key];
+  const L = (h) => colName(head.indexOf(h));
+  return {
+    total: 4 + (run?.months || []).length,
+    cell: (h, row) => abs(sheet, L(h), row),
+    col: {
+      volume: 'Volume (Dth)', index: `Index (${UNIT})`, contract: `Contract 2 all-in (${UNIT})`,
+      baseline: `${base} (${UNIT})`, baselineCost: `${base} cost`, contractCost: 'Contract 2 cost', saving: 'Saving',
+    },
+  };
+}
+
+/** The Summary's formulas by label: one per value, null for a plain value. */
+export function summaryFormulas(runs) {
+  const keys = Object.keys(SAVINGS_BASES).filter(k => runs?.[k]);
+  const tab = Object.fromEntries(keys.map(k => [k, tabCells(k, runs[k])]));
+  const each = (fn) => keys.map(k => {
+    const t = tab[k];
+    const at = (c) => t.cell(t.col[c], t.total);
+    return fn(at);
+  });
+  const out = {
+    'Saving over the term': each(at => at('saving')),
+    [`Saving per Dth (${UNIT})`]: each(at => `IF(${at('volume')}=0,0,${at('saving')}/${at('volume')})`),
+    'Saving as a share of the baseline': each(at => `IF(${at('baselineCost')}=0,0,${at('saving')}/${at('baselineCost')})`),
+    'Baseline cost': each(at => at('baselineCost')),
+    'Contract 2 cost': each(at => at('contractCost')),
+    [`Baseline all-in (${UNIT})`]: each(at => at('baseline')),
+    [`Contract 2 all-in (${UNIT})`]: each(at => at('contract')),
+  };
+  const any = tab.index || tab[keys[0]];
+  if (any) out['Volume over the term (Dth)'] = [any.cell(any.col.volume, any.total)];
+  if (tab.contract) out[`Contract 1 all-in, average (${UNIT})`] = [tab.contract.cell(tab.contract.col.baseline, tab.contract.total)];
+  return out;
+}
+
+/**
+ * The Charts tables' formulas, table by table in the shape of their rows:
+ * the term's months read the category tabs; the lead-in months, which no
+ * tab carries, stay values.
+ */
+export function chartsFormulas(runs, layout) {
+  const idxKey = runs?.index ? 'index' : Object.keys(SAVINGS_BASES).find(k => runs?.[k]);
+  if (!idxKey) return layout.tables.map(t => t.rows.map(r => r.map(() => null)));
+  const it = tabCells(idxKey, runs[idxKey]);
+  const ct = runs.contract ? tabCells('contract', runs.contract) : null;
+  const [consumption, allIn, index] = layout.tables;
+  const monthRow = (j) => 4 + j;
+  const lead = index.rows.length - (runs[idxKey].months || []).length;
+  return [
+    consumption.rows.map((r, j) => [null, r[1] != null ? it.cell(it.col.volume, monthRow(j)) : null, r[2] != null ? it.cell(it.col.volume, monthRow(j)) : null]),
+    allIn.rows.map((r, j) => [
+      null,
+      it.cell(it.col.contract, monthRow(j)),
+      idxKey === 'index' ? it.cell(it.col.baseline, monthRow(j)) : null,
+      ...(r.length > 3 ? [ct ? ct.cell(ct.col.baseline, monthRow(j)) : null] : []),
+    ]),
+    index.rows.map((r, j) => {
+      const sheetRow = TABLE_ROW + 1 + j;
+      const own = `${colName(index.col - 1 + 2)}${sheetRow}`;
+      return r.map((v, i) => {
+        if (i === 2) return j >= lead ? it.cell(it.col.index, monthRow(j - lead)) : null;
+        if (i >= 4 && v != null) return own;
+        return null;
+      });
+    }),
+  ];
+}
+
+// A cell value with its formula, the number kept as the cached result so
+// the file reads right before Excel recalculates.
+const withFormula = (value, formula) => (formula
+  ? { formula, ...(value === '' || value == null ? {} : { result: value }) }
+  : value);
 
 export function summaryAoa(runs) {
   return summaryRows(runs).map(r => [stripDashes(r.label), ...r.values.map(v => stripDashes(v))]);
@@ -414,9 +606,10 @@ function headerCell(cell, value) {
 // Every cell, numbers included, is left-aligned: the house layout for these
 // workbooks reads down a column from its left edge.
 function bodyCell(cell, value, { fmt = null, zebra = false, bold = false, total = false, wrap = false } = {}) {
-  cell.value = value === '' || value == null ? null : stripDashes(value);
+  const isFormula = value != null && typeof value === 'object' && 'formula' in value;
+  cell.value = value === '' || value == null ? null : isFormula ? value : stripDashes(value);
   cell.font = { name: SE.FONT, size: 10, bold: bold || total, color: { argb: SE.TEXT } };
-  if (fmt && typeof value === 'number') cell.numFmt = signed(fmt);
+  if (fmt && (typeof value === 'number' || isFormula)) cell.numFmt = signed(fmt);
   if (total) cell.fill = fill(SE.GREEN_TINT);
   else if (zebra) cell.fill = fill(SE.SURFACE);
   cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: wrap, indent: 1 };
@@ -447,6 +640,9 @@ export function buildSavingsCategoriesWorkbook(Workbook, runs, { charts = false,
   const wb = new Workbook();
   wb.creator = 'Schneider Electric · Prospect Tracker';
   wb.created = new Date();
+  // The cells are formulas with the page's numbers cached on them; have
+  // Excel work them out afresh when the file opens.
+  wb.calcProperties.fullCalcOnLoad = true;
 
   const keys = Object.keys(SAVINGS_BASES).filter(k => runs?.[k]);
   const first = runs?.[keys[0]];
@@ -458,6 +654,7 @@ export function buildSavingsCategoriesWorkbook(Workbook, runs, { charts = false,
   const ws = addBrandedSheet(wb, 'Summary', span, `${site}  ·  Savings by category`);
   ws.columns = [{ width: 38 }, ...keys.map(() => ({ width: 34 }))];
   const [catRow, ...rest] = rows;
+  const sumF = summaryFormulas(runs);
   headerCell(ws.getCell(3, 1), 'Savings');
   catRow.values.forEach((v, i) => headerCell(ws.getCell(3, i + 2), v));
   ws.getRow(3).height = 24;
@@ -478,9 +675,9 @@ export function buildSavingsCategoriesWorkbook(Workbook, runs, { charts = false,
     if (row.values.length === 1 && keys.length > 1) {
       // An assumption: one value across the category columns.
       ws.mergeCells(r, 2, r, span);
-      bodyCell(ws.getCell(r, 2), row.values[0], { fmt: row.fmt, zebra });
+      bodyCell(ws.getCell(r, 2), withFormula(row.values[0], sumF[row.label]?.[0]), { fmt: row.fmt, zebra });
     } else {
-      row.values.forEach((v, i) => bodyCell(ws.getCell(r, i + 2), v, {
+      row.values.forEach((v, i) => bodyCell(ws.getCell(r, i + 2), withFormula(v, sumF[row.label]?.[i]), {
         fmt: row.fmt, zebra, total: isHeadline, wrap: row.label === 'What it is',
       }));
     }
@@ -494,17 +691,19 @@ export function buildSavingsCategoriesWorkbook(Workbook, runs, { charts = false,
   // The tables the charts plot from. The charts themselves are added once
   // the file is written (savingsCategoriesBuffer), since ExcelJS cannot.
   if (charts) {
-    const { tables } = chartsLayout(runs, leadIn);
+    const layout = chartsLayout(runs, leadIn);
+    const { tables } = layout;
+    const chartF = chartsFormulas(runs, layout);
     const last = tables[tables.length - 1];
     const span = last.col + last.head.length - 1;
     const chs = addBrandedSheet(wb, CHARTS_SHEET, span, `${site}  ·  Consumption, all-in price and index over time. Forecast index months in blue italics`);
     const widths = Array(span).fill(10);
     for (const t of tables) t.widths.forEach((w, i) => { widths[t.col - 1 + i] = w; });
     chs.columns = widths.map(width => ({ width }));
-    for (const t of tables) {
+    tables.forEach((t, ti) => {
       t.head.forEach((h, i) => headerCell(chs.getCell(TABLE_ROW, t.col + i), h));
       t.rows.forEach((r, j) => {
-        r.forEach((v, i) => bodyCell(chs.getCell(TABLE_ROW + 1 + j, t.col + i), v, { fmt: t.fmts[i], zebra: j % 2 === 1 }));
+        r.forEach((v, i) => bodyCell(chs.getCell(TABLE_ROW + 1 + j, t.col + i), withFormula(v, chartF[ti]?.[j]?.[i]), { fmt: t.fmts[i], zebra: j % 2 === 1 }));
         if (t.kinds) {
           markIndexKind(chs.getCell(TABLE_ROW + 1 + j, t.col + 2), t.kinds[j]);
           markIndexKind(chs.getCell(TABLE_ROW + 1 + j, t.col + 3), t.kinds[j]);
@@ -514,14 +713,16 @@ export function buildSavingsCategoriesWorkbook(Workbook, runs, { charts = false,
       if (t.hiddenFrom != null) {
         for (let i = t.hiddenFrom; i < t.head.length; i++) chs.getColumn(t.col + i).hidden = true;
       }
-    }
+    });
     chs.getRow(TABLE_ROW).height = 32;
   }
 
   // ── A tab per category ──
+  const inputs = summaryInputs(runs);
   for (const key of keys) {
     const run = runs[key];
     const aoa = categoryMonthAoa(key, run);
+    const formulas = categoryFormulas(key, run, inputs);
     const [head, ...body] = aoa;
     const formats = categoryFormats(key, run.scenario);
     const cws = addBrandedSheet(
@@ -533,7 +734,7 @@ export function buildSavingsCategoriesWorkbook(Workbook, runs, { charts = false,
     cws.getRow(3).height = 32;
     body.forEach((row, j) => {
       const total = j === body.length - 1;
-      row.forEach((v, i) => bodyCell(cws.getCell(4 + j, i + 1), v, {
+      row.forEach((v, i) => bodyCell(cws.getCell(4 + j, i + 1), withFormula(v, formulas[j]?.[i]), {
         fmt: formats[i], zebra: j % 2 === 1, total,
       }));
       if (!total) {
