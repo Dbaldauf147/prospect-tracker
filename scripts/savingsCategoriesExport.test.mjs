@@ -7,7 +7,7 @@
 // sum to the total the page shows for that category; every figure is a
 // number, not a string; the adder split adds back up to the saving.
 import {
-  categoryFormulas, summaryInputs, summaryFormulas,
+  categoryFormulas, tabInputs, tabInputsLayout, summaryFormulas,
   categoryRuns, categoryMonthAoa, categoryHeaders, categoryFormats, summaryRows, summaryAoa,
   categoriesFilename, CATEGORY_SHEET, BASELINE_LABEL, buildSavingsCategoriesWorkbook, SE,
   chartsLayout, indexLeadIn, savingsCategoriesBuffer, CHARTS_SHEET, INDEX_CHART_LOOKBACK, INDEX_KIND_COLOR,
@@ -106,8 +106,12 @@ for (const key of Object.keys(runs)) {
 // ── Formulas: the workbook works its figures out rather than pasting them ──
 {
   const withAdder = categoryRuns({ ...scenario, currentType: 'index', currentAdder: 0.1 }, series, curve);
-  const inp = summaryInputs(withAdder);
-  ok(/^'Summary'!\$B\$\d+$/.test(inp.basis) && /^'Summary'!\$B\$\d+$/.test(inp.adder), 'the inputs are the Summary\'s assumption cells');
+  const { rows: inRows, refs: inp } = tabInputs('contract', withAdder);
+  ok(/^\$[A-Z]+\$\d+$/.test(inp.basis) && /^\$[A-Z]+\$\d+$/.test(inp.adder), 'the inputs are cells on the tab itself, not the Summary');
+  eq(inRows.map(r => r.id), ['basis', 'adder', 'c1Adder'], 'and only the ones its formulas read');
+  eq(inRows.find(r => r.id === 'c1Adder').value, 0.1, 'valued as the Summary shows them');
+  eq(tabInputs('index', withAdder).rows.map(r => r.id), ['basis', 'adder'], 'Against the index needs only the basis and adder');
+  eq(tabInputs('avoided', withAdder).rows.map(r => r.id), ['basis', 'adder', 'noAction', 'strategy'], 'Cost Avoidance adds the two increases');
   const f = categoryFormulas('contract', withAdder.contract, inp);
   const h = categoryHeaders('contract', withAdder.contract.scenario);
   eq(f.length, 13, 'a formula row per month and the total');
@@ -116,9 +120,9 @@ for (const key of Object.keys(runs)) {
   eq(f[0][h.indexOf('Index ($/Dth)')], null, 'the index itself is data, not a formula');
   eq(f[12][h.indexOf('Saving')], 'SUM(L4:L15)', 'the total sums the months');
   const fixed = categoryRuns({ ...scenario, contractType: 'fixed', fixedRate: 3.9, currentType: 'fixed' }, series, curve);
-  const fi = summaryInputs(fixed);
+  const fi = tabInputs('contract', fixed).refs;
   const ff = categoryFormulas('contract', fixed.contract, fi);
-  eq(ff[0][h.indexOf('Contract 2 all-in ($/Dth)')], fi.fixed, 'a fixed Contract 2 reads its all-in off the Summary');
+  eq(ff[0][h.indexOf('Contract 2 all-in ($/Dth)')], fi.fixed, 'a fixed Contract 2 reads its all-in off its own tab');
   eq(ff[0][h.indexOf('Contract 1 ($/Dth)')], fi.c1Rate, 'and so does a fixed Contract 1');
   const sf = summaryFormulas(withAdder);
   eq(sf['Saving over the term'][1], "'Contract Over Contract'!$L$16", 'the Summary\'s saving reads the tab total');
@@ -164,6 +168,30 @@ eq(categoriesFilename('', new Date('2026-09-24T12:00:00Z')), 'site_savings_by_ca
   eq(coc.getCell(lastRow, 1).value, 'Term total', 'the tab ends on the term total');
   eq(coc.getCell(lastRow, 1).fill?.fgColor?.argb, SE.GREEN_TINT, 'which is tinted green');
   eq(coc.getCell(lastRow, 1).font?.bold, true, 'and bold');
+
+  // Each category tab is self-contained: no formula on it reaches another tab.
+  for (const name of ['Against the index', 'Contract Over Contract', 'Cost Avoidance']) {
+    const ws = wb.getWorksheet(name);
+    const crossing = [];
+    let formulas = 0;
+    ws.eachRow((row) => row.eachCell((cell) => {
+      const f = cell.value?.formula;
+      if (!f) return;
+      formulas++;
+      if (f.includes('!')) crossing.push(`${cell.address}: ${f}`);
+    }));
+    ok(formulas > 0, `${name}: carries formulas`);
+    eq(crossing, [], `${name}: every formula reads only its own tab`);
+  }
+  {
+    const runsA = categoryRuns({ ...scenario, currentAdder: 0.1 }, series, curve);
+    const box = tabInputsLayout('contract', runsA.contract);
+    eq(coc.getCell(box.headRow, box.labelCol).value, 'Assumptions', 'the tab lists its assumptions beside the table');
+    const { rows: inRows, refs } = tabInputs('contract', runsA);
+    eq(coc.getCell(refs.basis.replace(/\$/g, '')).value, inRows.find(r => r.id === 'basis').value, 'with the value its formulas read in the referenced cell');
+    const c2 = head.indexOf('Contract 2 all-in ($/Dth)') + 1;
+    ok(coc.getCell(4, c2).value.formula.includes(refs.basis), 'and the month rows point at it');
+  }
 
   const sum = wb.getWorksheet('Summary');
   const labels = [];

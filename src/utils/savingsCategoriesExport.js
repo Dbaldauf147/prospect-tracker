@@ -367,32 +367,78 @@ export function summaryRowNumbers(rows) {
 
 // ── Formulas ──
 // Every figure the workbook derives is written as the Excel formula that
-// derives it, with the number the page came to cached as its result: the
-// month rows work from the Summary's assumptions, the Summary's headline
-// rows read each tab's totals, and the Charts tables read the tabs. Change
-// the basis, an adder or a rate on the Summary and the whole file follows.
-// What is data rather than arithmetic (the index, the volumes, the labels)
-// stays a plain value.
+// derives it, with the number the page came to cached as its result. Each
+// category tab is self-contained: it carries the assumptions it prices from
+// in its own block beside the month table, and its month rows read only
+// cells on that tab, so a tab can be read (or copied out) on its own and
+// every formula points somewhere on the same page. Only what has to cross
+// pages does: the Summary's headline rows read each tab's totals, and the
+// Charts tables read the tabs. What is data rather than arithmetic (the
+// index, the volumes, the labels) stays a plain value.
 
 const sheetRef = (sheet) => `'${String(sheet).replace(/'/g, "''")}'`;
 const abs = (sheet, col, row) => `${sheetRef(sheet)}!$${col}$${row}`;
 
-/** Absolute references to the Summary's assumption cells, null where absent. */
-export function summaryInputs(runs) {
-  const rows = summaryRows(runs);
-  const at = summaryRowNumbers(rows);
-  const ref = (label) => (at[label] ? abs('Summary', 'B', at[label]) : null);
-  return {
-    basis: ref(`Contract 2 basis (${UNIT})`),
-    adder: ref(`Contract 2 retail adder (${UNIT})`),
-    fixed: ref(`Contract 2 fixed all-in (${UNIT})`),
-    share: ref('Contract 2 hedged share'),
-    strike: ref(`Contract 2 hedge price (${UNIT})`),
-    c1Rate: ref(`Contract 1 all-in rate (${UNIT})`),
-    c1Adder: ref(`Contract 1 retail adder (${UNIT})`),
-    noAction: ref('Increase with no action'),
-    strategy: ref('Increase on the strategy'),
-  };
+// The assumptions a tab can carry, in the order its block lists them, keyed
+// to the Summary label each takes its value from.
+const INPUT_LABELS = {
+  fixed: `Contract 2 fixed all-in (${UNIT})`,
+  share: 'Contract 2 hedged share',
+  strike: `Contract 2 hedge price (${UNIT})`,
+  basis: `Contract 2 basis (${UNIT})`,
+  adder: `Contract 2 retail adder (${UNIT})`,
+  c1Rate: `Contract 1 all-in rate (${UNIT})`,
+  c1Adder: `Contract 1 retail adder (${UNIT})`,
+  noAction: 'Increase with no action',
+  strategy: 'Increase on the strategy',
+};
+
+// Which of them one category's formulas read.
+function neededInputs(key, s) {
+  const need = new Set(
+    s.contractType === 'fixed' ? ['fixed']
+      : s.contractType === 'layered' ? ['share', 'strike', 'basis', 'adder']
+        : ['basis', 'adder'],
+  );
+  if (key === 'index') { need.add('basis'); need.add('adder'); }
+  if (key === 'avoided') { need.add('noAction'); need.add('strategy'); }
+  if (key === 'contract') {
+    if (s.currentType === 'index') { need.add('basis'); need.add('c1Adder'); } else need.add('c1Rate');
+    // The two adder columns.
+    need.add('adder'); need.add('c1Adder');
+  }
+  return Object.keys(INPUT_LABELS).filter(k => need.has(k));
+}
+
+// Where a tab's assumptions block sits: one blank column after the month
+// table, a label column and a value column, headed on the table's header row.
+export const TAB_INPUT_GAP = 1;
+export function tabInputsLayout(key, run) {
+  const head = categoryHeaders(key, run?.scenario || {});
+  const labelCol = head.length + 1 + TAB_INPUT_GAP;
+  return { labelCol, valueCol: labelCol + 1, headRow: 3, firstRow: 4 };
+}
+
+/**
+ * One category tab's own assumptions: the rows its block lists (label,
+ * value and format, the same as the Summary shows them) and an absolute
+ * same-tab reference to each value cell, null for one it doesn't use.
+ */
+export function tabInputs(key, runs) {
+  const run = runs?.[key];
+  const s = run?.scenario || {};
+  const byLabel = Object.fromEntries(summaryRows(runs).map(r => [r.label, r]));
+  const { valueCol, firstRow } = tabInputsLayout(key, run);
+  const col = colName(valueCol - 1);
+  const rows = [];
+  const refs = Object.fromEntries(Object.keys(INPUT_LABELS).map(k => [k, null]));
+  for (const id of neededInputs(key, s)) {
+    const src = byLabel[INPUT_LABELS[id]];
+    if (!src) continue;
+    refs[id] = `$${col}$${firstRow + rows.length}`;
+    rows.push({ id, label: src.label, value: src.values[0], fmt: src.fmt });
+  }
+  return { rows, refs };
 }
 
 /**
@@ -718,18 +764,22 @@ export function buildSavingsCategoriesWorkbook(Workbook, runs, { charts = false,
   }
 
   // ── A tab per category ──
-  const inputs = summaryInputs(runs);
   for (const key of keys) {
     const run = runs[key];
     const aoa = categoryMonthAoa(key, run);
-    const formulas = categoryFormulas(key, run, inputs);
+    const inputs = tabInputs(key, runs);
+    const box = tabInputsLayout(key, run);
+    const formulas = categoryFormulas(key, run, inputs.refs);
     const [head, ...body] = aoa;
     const formats = categoryFormats(key, run.scenario);
     const cws = addBrandedSheet(
-      wb, CATEGORY_SHEET[key], head.length,
+      wb, CATEGORY_SHEET[key], inputs.rows.length ? box.valueCol : head.length,
       `${site}  ·  ${SAVINGS_BASES[key].label}: ${SAVINGS_BASES[key].note}  ·  Forecast index months in blue italics`,
     );
-    cws.columns = head.map((h, i) => ({ width: i === 0 ? 14 : i === 1 || i === 3 ? 22 : 16 }));
+    cws.columns = [
+      ...head.map((h, i) => ({ width: i === 0 ? 14 : i === 1 || i === 3 ? 22 : 16 })),
+      ...(inputs.rows.length ? [...Array(TAB_INPUT_GAP).fill({ width: 3 }), { width: 34 }, { width: 16 }] : []),
+    ];
     head.forEach((h, i) => headerCell(cws.getCell(3, i + 1), h));
     cws.getRow(3).height = 32;
     body.forEach((row, j) => {
@@ -743,6 +793,15 @@ export function buildSavingsCategoriesWorkbook(Workbook, runs, { charts = false,
         markIndexKind(cws.getCell(4 + j, 5), kind);
       }
     });
+    // The assumptions this tab's formulas read, beside the table.
+    if (inputs.rows.length) {
+      headerCell(cws.getCell(box.headRow, box.labelCol), 'Assumptions');
+      headerCell(cws.getCell(box.headRow, box.valueCol), 'Value');
+      inputs.rows.forEach((row, j) => {
+        bodyCell(cws.getCell(box.firstRow + j, box.labelCol), row.label, { zebra: true, bold: true });
+        bodyCell(cws.getCell(box.firstRow + j, box.valueCol), row.value, { fmt: row.fmt, zebra: j % 2 === 1 });
+      });
+    }
     cws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: head.length } };
   }
 
