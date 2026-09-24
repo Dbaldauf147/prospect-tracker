@@ -210,6 +210,14 @@ export function chartsLayout(runs, leadIn = []) {
 // known: the month's saving split into what the adder did and the rest.
 const hasAdderSplit = (key, s) => key === 'contract' && s?.currentAdder != null && Number.isFinite(s.currentAdder);
 
+// Contract Over Contract also shows each contract's retail adder beside the
+// all-ins, so the adder saving can be read straight off the row. Contract 1's
+// is 'not given' until somebody types it, as on the Summary.
+const hasAdderColumns = (key) => key === 'contract';
+const adderCells = (key, s) => (hasAdderColumns(key)
+  ? [s.adder, hasAdderSplit(key, s) ? s.currentAdder : 'not given']
+  : []);
+
 /** Column headings for one category's tab. */
 export function categoryHeaders(key, s) {
   const base = BASELINE_LABEL[key];
@@ -221,6 +229,7 @@ export function categoryHeaders(key, s) {
     `Index (${UNIT})`,
     `Contract 2 all-in (${UNIT})`,
     `${base} (${UNIT})`,
+    ...(hasAdderColumns(key) ? [`Contract 2 adder (${UNIT})`, `Contract 1 adder (${UNIT})`] : []),
     `${base} cost`,
     'Contract 2 cost',
     'Saving',
@@ -232,7 +241,9 @@ export function categoryHeaders(key, s) {
 /** One number format per column of a category tab, null for text. */
 export function categoryFormats(key, s) {
   return [
-    null, null, VOL_FMT, null, PRICE_FMT, PRICE_FMT, PRICE_FMT, MONEY_FMT, MONEY_FMT, MONEY_FMT, MONEY_FMT,
+    null, null, VOL_FMT, null, PRICE_FMT, PRICE_FMT, PRICE_FMT,
+    ...(hasAdderColumns(key) ? [PRICE_FMT, hasAdderSplit(key, s) ? PRICE_FMT : null] : []),
+    MONEY_FMT, MONEY_FMT, MONEY_FMT, MONEY_FMT,
     ...(hasAdderSplit(key, s) ? [MONEY_FMT, MONEY_FMT] : []),
   ];
 }
@@ -254,6 +265,7 @@ export function categoryMonthAoa(key, run) {
     m.index,
     m.contractAllIn,
     m.baselineAllIn,
+    ...adderCells(key, s),
     m.baselineCost,
     m.contractCost,
     m.saving,
@@ -269,6 +281,7 @@ export function categoryMonthAoa(key, run) {
     t.avgIndex,
     t.avgContractAllIn,
     t.avgBaselineAllIn,
+    ...adderCells(key, s),
     t.baselineCost,
     t.contractCost,
     t.saving,
