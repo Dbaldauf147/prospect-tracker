@@ -78,17 +78,17 @@ eq(resultSummary({ totals: { saving: -1234.4, savingPerDth: -0.01 } }), { saving
   near(noAdder.savingPct, 20000 / 350000, 1e-12, 'as a share of Contract 1');
   eq(noAdder.adder, null, 'with no Contract 1 adder there is nothing to split');
 
-  const split = contractComparison({ currentRate: 3.5, adder: 0.25, currentAdder: 0.4 }, totals);
-  near(split.adder.perDth, 0.15, 1e-12, 'the adder went from $0.40 to $0.25, $0.15 a Dth');
+  const split = contractComparison({ currentRate: 3.5, adder: 0.4, currentAdder: 0.25 }, totals);
+  near(split.adder.perDth, 0.15, 1e-12, 'the adder off the index went from $0.25 to $0.40, $0.15 a Dth');
   near(split.adder.saving, 15000, 1e-6, 'which is $15,000 of the saving');
   near(split.adder.rest, 5000, 1e-6, 'and commodity and basis did the other $5,000');
   near(split.adder.saving + split.adder.rest, split.saving, 1e-9, 'the two add back up to the whole');
 
-  const worse = contractComparison({ currentRate: 3.5, adder: 0.5, currentAdder: 0.3 }, totals);
-  near(worse.adder.saving, -20000, 1e-6, 'a higher adder on Contract 2 is a cost, and says so');
+  const worse = contractComparison({ currentRate: 3.5, adder: 0.3, currentAdder: 0.5 }, totals);
+  near(worse.adder.saving, -20000, 1e-6, 'a smaller adder off the index on Contract 2 is a cost, and says so');
 }
 
-// Contract 1 on the index: no all-in to enter, index + basis + its adder.
+// Contract 1 on the index: no all-in to enter, index + basis - its adder.
 {
   const idx = normalizeScenario({
     startYear: 2025, startMonth: 12, termMonths: 12, annualVolumeDth: 53297,
@@ -98,13 +98,13 @@ eq(resultSummary({ totals: { saving: -1234.4, savingPerDth: -0.01 } }), { saving
   eq(idx.currentType, 'index', 'Contract 1 can be an index contract');
   eq(normalizeScenario({}, series, curve).currentType, 'fixed', 'and is fixed until told otherwise, as saved sites were');
   const r = buildSavings(idx, series, curve);
-  ok(r.months.every(m => Math.abs(m.contract1AllIn - (m.index + 0.05 - 0.276)) < 1e-12), 'each month is that month\'s index plus basis and Contract 1\'s adder');
+  ok(r.months.every(m => Math.abs(m.contract1AllIn - (m.index + 0.05 + 0.276)) < 1e-12), 'each month is that month\'s index plus basis, less Contract 1\'s adder');
   ok(r.months.every(m => m.contract1AllIn !== 9.99), 'the fixed all-in plays no part');
   const cmp = contractComparison(idx, r.totals);
-  near(cmp.saving, (-0.276 - -0.092) * r.totals.volume, 1e-6, 'two index contracts differ only by their adders');
+  near(cmp.saving, (-0.092 - -0.276) * r.totals.volume, 1e-6, 'two index contracts differ only by their adders');
   near(cmp.adder.rest, 0, 1e-6, 'so commodity and basis contribute nothing');
   near(r.totals.saving, cmp.saving, 1e-6, 'and contract over contract says the same');
-  eq(savingsBasisSummary(idx), 'Contract Over Contract, vs index + -$0.276 today', 'the strip names it as index plus the adder');
+  eq(savingsBasisSummary(idx), 'Contract Over Contract, vs index + $0.276 today', 'the strip names it as index less the adder');
 
   const fixed1 = buildSavings({ ...idx, currentType: 'fixed' }, series, curve);
   ok(fixed1.months.every(m => m.contract1AllIn === 9.99), 'a fixed Contract 1 still bills its all-in every month');

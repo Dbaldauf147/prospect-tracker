@@ -36,11 +36,18 @@ export function contractTypeSummary(s, hedge) {
     + (hedge?.price != null ? ` at ${fmtPrice(hedge.price)}` : '');
 }
 
+// The adder comes off the index, so a negative one reads as added back:
+// "- $0.276" or "+ $0.276", never "- -$0.276".
+export const lessAdder = (adder, fmt = fmtPrice) => {
+  const a = adder ?? 0;
+  return a < 0 ? `+ ${fmt(-a)}` : `- ${fmt(a)}`;
+};
+
 /** What the saving is measured against, with the number that sets it. */
 export function savingsBasisSummary(s) {
   if (s.savingsBasis === 'contract') {
     return s.currentType === 'index'
-      ? `${SAVINGS_BASES.contract.label}, vs index + ${fmtPrice(s.currentAdder ?? 0)} today`
+      ? `${SAVINGS_BASES.contract.label}, vs index ${lessAdder(s.currentAdder)} today`
       : `${SAVINGS_BASES.contract.label}, vs ${fmtPrice(s.currentRate)} today`;
   }
   if (s.savingsBasis === 'avoided') {
@@ -134,7 +141,8 @@ export function contractComparison(s, totals) {
     adder: null,
   };
   if (s.currentAdder == null || !Number.isFinite(s.currentAdder)) return out;
-  const perDth = s.currentAdder - s.adder;
+  // Adders come off the index, so the larger one is the cheaper contract.
+  const perDth = s.adder - s.currentAdder;
   const adderSaving = perDth * volume;
   out.adder = {
     adder1: s.currentAdder,

@@ -87,7 +87,7 @@ for (const key of Object.keys(runs)) {
   const last = aoa[aoa.length - 1];
   ok(aoa.slice(1).every(r => r[h.indexOf('Contract 1 adder ($/Dth)')] === 0.1), 'a known Contract 1 adder fills its column');
   eq(h.length, categoryFormats('contract', { ...scenario, currentAdder: 0.1 }).length, 'a format for every column with the split');
-  near(last[h.indexOf('Retail adder saving')], (0.1 - -0.276) * withAdder.contract.totals.volume, 1e-6, 'the adder saving is (adder 1 - adder 2) x volume');
+  near(last[h.indexOf('Retail adder saving')], (-0.276 - 0.1) * withAdder.contract.totals.volume, 1e-6, 'the adder saving is (adder 2 - adder 1) x volume, since both come off the index');
   near(last[h.indexOf('Retail adder saving')] + last[h.indexOf('Commodity and basis saving')], last[h.indexOf('Saving')], 1e-6, 'and the split adds back up');
   eq(categoryHeaders('index', { ...scenario, currentAdder: 0.1 }).includes('Retail adder saving'), false, 'the split is only on the contract tab');
 }
