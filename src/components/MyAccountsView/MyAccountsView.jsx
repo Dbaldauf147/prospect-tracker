@@ -10,7 +10,7 @@ import { statusColor, formatAum } from '../../utils/formatters';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
 import { buildTypeOptions } from '../../utils/prospectOptions';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
-import { buildCompanyIndex, findMatchesInIndex, findStrictMatchesInIndex, hasMatchInIndex } from '../../utils/companyIndex';
+import { buildCompanyIndex, findMatchesInIndex, findStrictMatchesInIndex, hasMatchInIndex, containsWholeWords } from '../../utils/companyIndex';
 import { getHubspotCache, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 import { slimHubspotContact } from '../../utils/hubspotContactFields';
 import { dbGet } from '../../utils/db';
@@ -343,7 +343,7 @@ function companiesMatch(a, b) {
   // One contains the other — but only if the shorter is at least 60% of the longer
   const longer = na.length >= nb.length ? na : nb;
   const shorter = na.length >= nb.length ? nb : na;
-  if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
+  if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && containsWholeWords(longer, shorter)) return true;
   // Strip common suffixes and compare
   const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
   const sa = strip(na);
@@ -352,7 +352,7 @@ function companiesMatch(a, b) {
   // After stripping, check containment with same length ratio
   const sLonger = sa.length >= sb.length ? sa : sb;
   const sShorter = sa.length >= sb.length ? sb : sa;
-  if (sShorter.length >= 4 && sShorter.length >= sLonger.length * 0.6 && sLonger.includes(sShorter)) return true;
+  if (sShorter.length >= 4 && sShorter.length >= sLonger.length * 0.6 && containsWholeWords(sLonger, sShorter)) return true;
   // Acronym / single-token match. Catches the case where one side is
   // a short company name like "TIAA" and the other carries that as a
   // parenthesized abbreviation or leading token, e.g.

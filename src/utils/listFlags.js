@@ -1,4 +1,5 @@
 import { userLsGet } from './userLs.js';
+import { containsWholeWords } from './companyIndex.js';
 
 // Shared helper for computing "which Lists-tab lists is this company
 // flagged on" across the app. Used by MyAccountsView's List Flags
@@ -54,14 +55,14 @@ export function companiesMatch(a, b) {
   if (na === nb) return true;
   const longer = na.length >= nb.length ? na : nb;
   const shorter = na.length >= nb.length ? nb : na;
-  if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
+  if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && containsWholeWords(longer, shorter)) return true;
   const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
   const sa = strip(na);
   const sb = strip(nb);
   if (sa === sb) return true;
   const sLonger = sa.length >= sb.length ? sa : sb;
   const sShorter = sa.length >= sb.length ? sb : sa;
-  if (sShorter.length >= 4 && sShorter.length >= sLonger.length * 0.6 && sLonger.includes(sShorter)) return true;
+  if (sShorter.length >= 4 && sShorter.length >= sLonger.length * 0.6 && containsWholeWords(sLonger, sShorter)) return true;
   return false;
 }
 

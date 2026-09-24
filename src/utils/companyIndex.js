@@ -61,13 +61,35 @@ function addTo(map, key, value) {
   set.add(value);
 }
 
+// Does `longer` contain `shorter` as whole words? The match has to start
+// and end on a word edge (string end or a non-alphanumeric neighbour), so
+// "Bank of America" is inside "Bank of America Holdings" but "sp global"
+// (S&P Global with its ampersand stripped) is NOT inside "wsp global".
+// Without the edge check an opp filed under WSP Global pulled S&P Global
+// onto My Accounts.
+const isWordChar = (c) => /[a-z0-9]/i.test(c || '');
+export function containsWholeWords(longer, shorter) {
+  if (!shorter) return false;
+  let from = 0;
+  for (;;) {
+    const i = longer.indexOf(shorter, from);
+    if (i < 0) return false;
+    const before = i > 0 ? longer[i - 1] : '';
+    const after = longer[i + shorter.length] || '';
+    const edgeStart = !isWordChar(before) || !isWordChar(shorter[0]);
+    const edgeEnd = !isWordChar(after) || !isWordChar(shorter[shorter.length - 1]);
+    if (edgeStart && edgeEnd) return true;
+    from = i + 1;
+  }
+}
+
 function substringMatch(a, b) {
   // Mirrors the substring + length-threshold rule from companiesMatch:
   // shorter must be ≥ 4 chars and ≥ 60% of longer.length, and longer
-  // must contain shorter as a substring.
+  // must contain shorter as whole words.
   const longer = a.length >= b.length ? a : b;
   const shorter = a.length >= b.length ? b : a;
-  return shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter);
+  return shorter.length >= 4 && shorter.length >= longer.length * 0.6 && containsWholeWords(longer, shorter);
 }
 
 export function buildCompanyIndex(strings) {
