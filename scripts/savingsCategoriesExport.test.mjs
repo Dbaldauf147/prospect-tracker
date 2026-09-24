@@ -9,9 +9,10 @@
 import {
   categoryRuns, categoryMonthAoa, categoryHeaders, categoryFormats, summaryRows, summaryAoa,
   categoriesFilename, CATEGORY_SHEET, BASELINE_LABEL, buildSavingsCategoriesWorkbook, SE,
-  chartData, indexLeadIn, indexTableAoa, INDEX_CHART_LOOKBACK, INDEX_KIND_COLOR,
+  chartsLayout, indexLeadIn, savingsCategoriesBuffer, CHARTS_SHEET, INDEX_CHART_LOOKBACK, INDEX_KIND_COLOR,
 } from '../src/utils/savingsCategoriesExport.js';
 import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
 import { writeFileSync } from 'node:fs';
 import {
   normalizeScenario, monthlySeries, forwardSeries, normalizeSettles, SHIPPED_SETTLES, SHIPPED_FORWARD,
@@ -143,53 +144,88 @@ eq(categoriesFilename('', new Date('2026-09-24T12:00:00Z')), 'site_savings_by_ca
   if (process.env.SAVINGS_XLSX_OUT) writeFileSync(process.env.SAVINGS_XLSX_OUT, Buffer.from(await wb.xlsx.writeBuffer()));
 }
 
-// ── The Charts tab ──
+// ── The Charts tab: native Excel charts over tables on the sheet ──
 {
   const runs = categoryRuns(scenario, series, curve);
   const leadIn = indexLeadIn(scenario, series, curve);
   eq(leadIn.length, INDEX_CHART_LOOKBACK, 'the index chart leads in with a year before the term');
   eq(leadIn.every(m => m.phase === 'history'), true, 'all of it before the term');
   const term = runs.index.months;
-  const d = chartData(runs, leadIn);
+  const all = [...leadIn, ...term];
+  const { tables, charts } = chartsLayout(runs, leadIn);
+  const [cons, allIn, idx] = tables;
 
-  eq(d.consumption.bars.map(b => b.value), term.map(m => m.volume), 'consumption plots the term volumes');
-  eq(d.consumption.labels.length, term.length, 'a label per term month');
-  eq(d.allIn.series.map(x => x.key), ['contract2', 'index', 'contract1'], 'all-in: Contract 2, the index, Contract 1');
-  eq(d.allIn.series[0].values, term.map(m => m.contractAllIn), 'Contract 2 all-in per month');
-  eq(d.allIn.series[1].values, term.map(m => m.indexAllIn), 'index all-in per month');
-  eq(d.allIn.series[2].values, runs.contract.months.map(m => m.baselineAllIn), 'Contract 1 all-in per month');
-  eq(d.index.points.length, leadIn.length + term.length, 'the index runs through the lead-in and the term');
-  eq(d.index.termStart, leadIn.length, 'with the term marked where it opens');
-  eq(d.index.points.map(p => p.kind), [...leadIn, ...term].map(m => m.source), 'every point says settled or forecast');
-  ok(d.index.points.some(p => p.kind === 'settled') && d.index.points.some(p => p.kind === 'forward'),
-    'this scenario has both settled and forecast months');
+  eq(charts.map(c => c.type), ['bar', 'line', 'line'], 'a column chart and two line charts');
+  // Consumption: each month's volume in exactly one of the two columns.
+  eq(cons.rows.map(r => r[1] ?? r[2]), term.map(m => m.volume), 'consumption plots the term volumes');
+  eq(cons.rows.every(r => (r[1] == null) !== (r[2] == null)), true, 'entered or shaped, never both');
+  eq(charts[1].series.map(x => x.name), ['Contract 2 all-in', 'Index all-in', 'Contract 1 all-in'], 'all-in: Contract 2, the index, Contract 1');
+  eq(charts[1].series[0].values, term.map(m => m.contractAllIn), 'Contract 2 all-in per month');
+  eq(charts[1].series[2].values, term.map(m => m.contract1AllIn), 'Contract 1 all-in per month');
+  eq(idx.rows.map(r => r[2]), all.map(m => m.index), 'the index table runs through the lead-in and the term');
+  eq(idx.rows[0][1], 'Before the term', 'lead-in rows are named as such');
 
-  const t = indexTableAoa(runs, leadIn);
-  eq(t.length, 1 + leadIn.length + term.length, 'the index table: a row per charted month');
-  eq(t[1][1], 'Before the term', 'lead-in rows are named as such');
+  // The index split into a line per kind: every month in its own kind's
+  // series, plus the hand-over month so the line does not break.
+  const kinds = charts[2].series.map(x => x.name);
+  ok(kinds.includes('Settled (past)') && kinds.includes('Forecast (forward curve)'), 'settled and forecast lines both drawn');
+  const settled = charts[2].series.find(x => x.name === 'Settled (past)');
+  const fcast = charts[2].series.find(x => x.name === 'Forecast (forward curve)');
+  eq(settled.dash, 'solid', 'settled is solid');
+  eq(fcast.dash, 'dash', 'forecast is dashed');
+  all.forEach((m, i) => {
+    if (m.source === 'settled' && settled.values[i] !== m.index) eq(settled.values[i], m.index, `settled ${m.label} plotted`);
+    if (m.source === 'forward' && fcast.values[i] !== m.index) eq(fcast.values[i], m.index, `forecast ${m.label} plotted`);
+  });
+  const handOver = all.findIndex((m, i) => m.source === 'settled' && all[i + 1]?.source === 'forward');
+  if (handOver >= 0) eq(fcast.values[handOver], all[handOver].index, 'the forecast line starts from the last settle');
+  eq(fcast.values.filter(v => v != null).length <= all.filter(m => m.source === 'forward').length + 2, true, 'and otherwise stays off settled months');
+  eq(charts[2].series[0].ref, `'Charts'!$${String.fromCharCode(64 + idx.col + 4)}$4:$${String.fromCharCode(64 + idx.col + 4)}$${3 + all.length}`, 'each series reads its own column');
 
-  // A 1x1 PNG stands in for the canvas renders, which need a browser.
-  const dot = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-  const charts = [1, 2, 3].map(() => ({ dataUrl: dot, width: 880, height: 300 }));
-  const wb = buildSavingsCategoriesWorkbook(ExcelJS.Workbook, runs, { charts, leadIn });
-  eq(wb.worksheets.map(w => w.name), ['Summary', 'Charts', 'Against the index', 'Contract Over Contract', 'Cost Avoidance'], 'Charts right after the Summary');
-  const chs = wb.getWorksheet('Charts');
-  eq(chs.getImages().length, 3, 'three charts on it');
+  const wb = buildSavingsCategoriesWorkbook(ExcelJS.Workbook, runs, { charts: true, leadIn });
+  eq(wb.worksheets.map(w => w.name), ['Summary', CHARTS_SHEET, 'Against the index', 'Contract Over Contract', 'Cost Avoidance'], 'Charts right after the Summary');
+  const chs = wb.getWorksheet(CHARTS_SHEET);
+  eq(chs.getCell(4, idx.col + 2).value, all[0].index, 'the index table is in cells');
+  eq(chs.getColumn(idx.col + 4).hidden, true, 'the per-kind helper columns are hidden');
+  eq(chs.getColumn(idx.col + 2).hidden, false, 'the index itself is not');
 
   // Forecast index months look different from settled ones, in the table
   // on the Charts tab and in the Index column of every category tab.
-  const firstFwd = [...leadIn, ...term].findIndex(m => m.source === 'forward');
-  const firstSettled = [...leadIn, ...term].findIndex(m => m.source === 'settled');
-  const idxCell = (r) => chs.getCell(4 + r, 16);
-  eq(idxCell(firstFwd).font?.italic, true, 'a forecast index is italic');
-  eq(idxCell(firstFwd).font?.color?.argb, INDEX_KIND_COLOR.forward, 'and blue');
-  ok(!idxCell(firstSettled).font?.italic, 'a settled index is not');
-
+  const firstFwd = all.findIndex(m => m.source === 'forward');
+  const firstSettled = all.findIndex(m => m.source === 'settled');
+  eq(chs.getCell(4 + firstFwd, idx.col + 2).font?.italic, true, 'a forecast index is italic');
+  eq(chs.getCell(4 + firstFwd, idx.col + 2).font?.color?.argb, INDEX_KIND_COLOR.forward, 'and blue');
+  ok(!chs.getCell(4 + firstSettled, idx.col + 2).font?.italic, 'a settled index is not');
   const tab = wb.getWorksheet('Against the index');
   const tFwd = term.findIndex(m => m.source === 'forward');
   eq(tab.getCell(4 + tFwd, 5).font?.color?.argb, INDEX_KIND_COLOR.forward, 'the Index column marks forecast months');
   eq(tab.getCell(4 + tFwd, 5).font?.name, SE.FONT, 'without losing the house font');
-  if (process.env.SAVINGS_XLSX_OUT) writeFileSync(process.env.SAVINGS_XLSX_OUT, Buffer.from(await wb.xlsx.writeBuffer()));
+
+  // The file itself: three chart parts, a drawing on the Charts sheet, and
+  // the content types and relationships that make Excel load them.
+  const buf = await savingsCategoriesBuffer(ExcelJS.Workbook, JSZip, runs, { leadIn });
+  const zip = await JSZip.loadAsync(buf);
+  const partNames = Object.keys(zip.files);
+  eq(partNames.filter(n => /^xl\/charts\/chart\d+\.xml$/.test(n)).length, 3, 'three native chart parts');
+  eq(partNames.some(n => n.startsWith('xl/media/')), false, 'and no pictures');
+  const types = await zip.file('[Content_Types].xml').async('string');
+  eq((types.match(/drawingml\.chart\+xml/g) || []).length, 3, 'each chart registered as a chart');
+  const wbXml = await zip.file('xl/workbook.xml').async('string');
+  const rid = wbXml.match(/<sheet\b[^>]*name="Charts"[^>]*>/)[0].match(/r:id="([^"]+)"/)[1];
+  const wbRels = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+  const sheetTarget = wbRels.match(new RegExp(`Id="${rid}"[^>]*Target="([^"]+)"`))?.[1]
+    || wbRels.match(new RegExp(`Target="([^"]+)"[^>]*Id="${rid}"`))[1];
+  const sheetXml = await zip.file(`xl/${sheetTarget}`).async('string');
+  ok(/<drawing r:id="[^"]+"\/>/.test(sheetXml), 'the Charts sheet carries the drawing');
+  ok(sheetXml.indexOf('<drawing') > sheetXml.indexOf('<pageMargins'), 'after its page margins, where Excel wants it');
+  const chart3 = await zip.file('xl/charts/chart3.xml').async('string');
+  ok(chart3.includes('<a:prstDash val="dash"/>') && chart3.includes('<c:plotVisOnly val="0"/>'), 'the index chart dashes the forecast and plots hidden columns');
+  ok(chart3.includes(`<c:f>${charts[2].series[0].ref}</c:f>`), 'and reads its range off the sheet');
+  // Round trip: ExcelJS reads the file back without complaint.
+  const back = new ExcelJS.Workbook();
+  await back.xlsx.load(buf);
+  eq(back.worksheets.length, 5, 'the finished file still opens');
+  if (process.env.SAVINGS_XLSX_OUT) writeFileSync(process.env.SAVINGS_XLSX_OUT, Buffer.from(buf));
 }
 
 console.log(`${passed} passed, ${failed} failed`);
