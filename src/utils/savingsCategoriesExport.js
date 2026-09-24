@@ -208,6 +208,12 @@ export function chartsLayout(runs, leadIn = []) {
 
 // Contract Over Contract only, and only once Contract 1's retail adder is
 // known: the month's saving split into what the adder did and the rest.
+// The commodity and basis part is the saving less the adder part. When the
+// adder is the whole saving the two cancel to float dust (-0.0000001), which
+// the signed money format shows as a red -$0; rounding to the cent gives a
+// true zero. Math.round(-0.4) is -0, so the + 0 folds that into 0 as well.
+const cents = (v) => Math.round(v * 100) / 100 + 0;
+
 const hasAdderSplit = (key, s) => key === 'contract' && s?.currentAdder != null && Number.isFinite(s.currentAdder);
 
 // Contract Over Contract also shows each contract's retail adder beside the
@@ -270,7 +276,7 @@ export function categoryMonthAoa(key, run) {
     m.contractCost,
     m.saving,
     m.cumulative,
-    ...(split ? [adderPerDth * m.volume, m.saving - adderPerDth * m.volume] : []),
+    ...(split ? [adderPerDth * m.volume, cents(m.saving - adderPerDth * m.volume)] : []),
   ]);
   const t = run?.totals || {};
   const total = [
@@ -286,7 +292,7 @@ export function categoryMonthAoa(key, run) {
     t.contractCost,
     t.saving,
     t.saving,
-    ...(split ? [adderPerDth * (t.volume || 0), (t.saving || 0) - adderPerDth * (t.volume || 0)] : []),
+    ...(split ? [adderPerDth * (t.volume || 0), cents((t.saving || 0) - adderPerDth * (t.volume || 0))] : []),
   ];
   return [categoryHeaders(key, s), ...rows, total];
 }
@@ -484,7 +490,7 @@ export function categoryFormulas(key, run, inp) {
       [CC]: `${C}${r}*${F}${r}`,
       [SV]: `${BC}${r}-${CC}${r}`,
       [RS]: j === 0 ? `${SV}${r}` : `${RS}${r - 1}+${SV}${r}`,
-      ...(head.includes('Retail adder saving') ? { [AS]: `(${H}${r}-${I}${r})*${C}${r}`, [RE]: `${SV}${r}-${AS}${r}` } : {}),
+      ...(head.includes('Retail adder saving') ? { [AS]: `(${H}${r}-${I}${r})*${C}${r}`, [RE]: `ROUND(${SV}${r}-${AS}${r},2)` } : {}),
     }));
   }
   const perDth = (c) => `IF(${C}${T}=0,0,${c}${T}/${C}${T})`;
