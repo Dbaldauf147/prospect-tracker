@@ -47,6 +47,7 @@ import { KeithAgenda } from './KeithAgenda';
 import { buildPeOverlapDeals } from '../../utils/keithPeDeals';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { getEffectiveServiceMetadata, formatRolloutWeeks } from '../../data/serviceCatalog';
+import { missingServiceTimelines, isServiceTimelineRow } from '../../utils/serviceTimelines';
 import { dbGet } from '../../utils/db';
 import {
   OPPS2_FIRESTORE_COLLECTION,
@@ -835,6 +836,35 @@ function needsBudgetTimelineFlag(row) {
     .replace(ZERO_WIDTH_RE, '')
     .replace(/[-\s\u2013\u2014\u2212]/g, ''); // em-dash-ok: reads pasted cells
   return timeline === '';
+}
+
+// The Solutions list and service overrides the timeline flag resolves Scope
+// against. The flags are plain row functions, so like the client COA index
+// above this is set by OppsView2 on each render.
+let timelineServiceCtx = { solutionOptions: [], serviceOverrides: null };
+function setTimelineServiceCtx(solutionOptions, serviceOverrides) {
+  timelineServiceCtx = { solutionOptions: solutionOptions || [], serviceOverrides: serviceOverrides || null };
+}
+function rowTimelineServices(row) {
+  return timelineDrivenServices(row, timelineServiceCtx.solutionOptions, timelineServiceCtx.serviceOverrides);
+}
+
+// Every timeline-driven service in the opp's Scope with nothing logged on its
+// timeline row (see utils/serviceTimelines). Budgets in Scope keeps its old
+// rule when no timeline-driven service covers it, so an opp that warned
+// before still does, unless a hidden Budgets row says it isn't needed.
+function missingTimelinesForRow(row) {
+  if (!row) return [];
+  const services = rowTimelineServices(row);
+  const { list } = readTimelines(row);
+  const missing = missingServiceTimelines(list, services);
+  const budgetRe = /\bbudgets?\b/i;
+  if (needsBudgetTimelineFlag(row)
+    && !services.some(s => budgetRe.test(s))
+    && !list.some(r => r?.hidden === true && budgetRe.test(String(r?.type ?? '')))) {
+    missing.unshift('Budgets');
+  }
+  return missing;
 }
 
 // "Move to Qualifying?" flag: the opp is still sitting at the Lead stage
@@ -8464,6 +8494,10 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
     [initialTimelines, opp, solutionOptions, serviceOverrides]
   );
   const [timelineList, setTimelineList] = useState(seededTimelines);
+  const timelineServices = useMemo(
+    () => timelineDrivenServices(opp, solutionOptions, serviceOverrides),
+    [opp, solutionOptions, serviceOverrides]
+  );
 
   // The "Timeline?" column is user-added, so its stored key can carry odd
   // casing / zero-width drift (hence the tolerant read). Write back to
@@ -8807,6 +8841,7 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
               list={timelineList}
               onChangeList={changeTimelineList}
               serviceOverrides={serviceOverrides}
+              scopeServices={timelineServices}
             />
           ) : tab === 'calls' ? (
             // Mounted only while the tab is showing: the log reads every
@@ -9607,13 +9642,21 @@ const OPP_FLAG_DEFS = [
     section: 'coa',
   },
   {
+    // Kept under its old id, which predates it covering every service.
     id: 'budgetTimeline',
     tone: () => 'amber',
     icon: '⚠',
-    test: (row) => needsBudgetTimelineFlag(row),
-    label: () => 'Budget delivery timeline?',
-    title: () => 'Budgets is in Scope but the Timeline? field is empty: set the budget delivery timeline.',
-    fields: (row) => [timelineKeyFor(row)],
+    test: (row) => missingTimelinesForRow(row).length > 0,
+    label: (row) => {
+      const missing = missingTimelinesForRow(row);
+      return missing.length === 1 ? `${missing[0]} timeline?` : `Timelines? (${missing.length})`;
+    },
+    title: (row) => {
+      const missing = missingTimelinesForRow(row);
+      return `No timeline logged for ${missing.join(', ')}. Add details or a kickoff date, or hide the ones this deal doesn't need.`;
+    },
+    fields: () => [],
+    section: 'timelines',
   },
   {
     id: 'qualifying',
@@ -9741,6 +9784,75 @@ function oppFlagsSuppressed(row) {
 function activeOppFlags(row) {
   if (!row || oppFlagsSuppressed(row)) return [];
   return OPP_FLAG_DEFS.filter(def => def.test(row));
+}
+
+// The fix for the timeline flag: each service in Scope with nothing logged,
+// with its Details and Kickoff Deadline to fill in, or "Not needed" to hide
+// it. Writes the whole list back and re-mirrors the kickoff and Timeline?
+// summary, the same way the follow-up popup's table does. Rows the popup
+// hasn't seeded yet are added here as they're answered.
+function OppMissingTimelinesEditor({ opp, onFieldChange }) {
+  const services = rowTimelineServices(opp);
+  const { list: stored } = readTimelines(opp);
+  const list = withServiceTimelines(stored, services);
+  const missing = missingServiceTimelines(list, services);
+  const [drafts, setDrafts] = useState({});
+  const commit = (name, patch) => {
+    const k = name.trim().toLowerCase();
+    const next = list.map(row => (String(row?.type ?? '').trim().toLowerCase() === k ? { ...row, ...patch } : row));
+    onFieldChange('_timelines', next);
+    onFieldChange('_kickoffDeadline', earliestKickoff(next));
+    onFieldChange(timelineKeyFor(opp), summarizeTimelines(next));
+  };
+  if (missing.length === 0) {
+    return (
+      <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
+        Budgets is in Scope with no timeline. Log it on the follow-up popup&apos;s Timelines tab.
+      </span>
+    );
+  }
+  const input = {
+    padding: '0.3rem 0.45rem', border: '1px solid #CBD5E1', borderRadius: 4,
+    fontSize: '0.78rem', fontFamily: 'inherit', minWidth: 0, flex: 1,
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+      {missing.map(name => {
+        const known = services.some(s => s.trim().toLowerCase() === name.trim().toLowerCase());
+        if (!known) return null;
+        return (
+          <div key={name} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span style={{ fontSize: '0.78rem', color: 'var(--color-text)', width: 170, flexShrink: 0 }}>{name}</span>
+            <input
+              type="text"
+              value={drafts[name] ?? ''}
+              placeholder="Details (e.g. 2026-08-01, Q3)"
+              onChange={(e) => setDrafts(d => ({ ...d, [name]: e.target.value }))}
+              onBlur={(e) => { if (e.target.value.trim()) commit(name, { value: e.target.value.trim() }); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && e.currentTarget.value.trim()) commit(name, { value: e.currentTarget.value.trim() }); }}
+              style={input}
+            />
+            <input
+              type="date"
+              aria-label={`${name} kickoff deadline`}
+              title="Kickoff Deadline"
+              onChange={(e) => { if (e.target.value) commit(name, { kickoff: e.target.value }); }}
+              style={{ ...input, flex: '0 0 auto' }}
+            />
+            <button
+              type="button"
+              onClick={() => commit(name, { hidden: true })}
+              title="This deal doesn't need this timeline: hide it"
+              style={{
+                border: 'none', background: 'none', cursor: 'pointer', padding: 0, whiteSpace: 'nowrap',
+                fontSize: '0.7rem', color: 'var(--color-accent)', fontFamily: 'inherit', textDecoration: 'underline',
+              }}
+            >Not needed</button>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 // The Kickoff Deadline lives on the timeline rows, not in a column of its
@@ -9901,6 +10013,11 @@ function OppFlagsFixModal({ opp, focusFlagId, onClose, onFieldChange, editorProp
                 {!cleared && def.section === 'coa' && (
                   <div style={{ marginTop: '0.5rem' }}>
                     <OppCoaItemsSection key={opp._id} opp={opp} onFieldChange={onFieldChange} />
+                  </div>
+                )}
+                {!cleared && def.section === 'timelines' && (
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <OppMissingTimelinesEditor opp={opp} onFieldChange={onFieldChange} />
                   </div>
                 )}
                 {!cleared && def.section === 'kickoff' && (
@@ -13033,7 +13150,7 @@ async function buildPreview(blob, sheetName) {
 // and the kickoff flag — that's the right move for the auto-seeded
 // timeline-driven service rows, which a delete would only re-seed on the next
 // open. Delete is still there for rows added by mistake.
-function TimelinesEditor({ list, onChangeList, serviceOverrides }) {
+function TimelinesEditor({ list, onChangeList, serviceOverrides, scopeServices = [] }) {
   const rows = Array.isArray(list) ? list : [];
   const updateRow = (idx, key, value) =>
     onChangeList(rows.map((r, i) => {
@@ -13051,8 +13168,14 @@ function TimelinesEditor({ list, onChangeList, serviceOverrides }) {
       return next;
     }));
   const addRow = () => onChangeList([...rows, { type: '', value: '', kickoff: '', leadTime: '', hidden: false }]);
-  const deleteRow = (idx) => onChangeList(rows.filter((_, i) => i !== idx));
   const setHidden = (idx, hidden) => updateRow(idx, 'hidden', hidden);
+  // A row for a timeline-driven service in Scope is put back on the next open
+  // if it's deleted, so removing one hides it instead: gone from the table
+  // and the flags, and it stays gone.
+  const isScopeRow = (row) => isServiceTimelineRow(row, scopeServices);
+  const deleteRow = (idx) => (isScopeRow(rows[idx])
+    ? setHidden(idx, true)
+    : onChangeList(rows.filter((_, i) => i !== idx)));
 
   // Hidden rows are folded away behind a "Show hidden" toggle so the table
   // stays short, while the rows themselves remain one click from coming back.
@@ -13211,16 +13334,18 @@ function TimelinesEditor({ list, onChangeList, serviceOverrides }) {
                         : 'Hide: keep this timeline on the opp but out of the list'}
                       style={rowActionButton}
                     >{hidden ? 'Unhide' : 'Hide'}</button>
-                    <button
+                    {!(hidden && isScopeRow(row)) && <button
                       type="button"
                       onClick={() => deleteRow(idx)}
-                      aria-label="Delete timeline"
-                      title="Delete timeline permanently"
+                      aria-label={isScopeRow(row) ? 'Remove timeline' : 'Delete timeline'}
+                      title={isScopeRow(row)
+                        ? 'Remove: this service is in Scope, so it is hidden rather than deleted and does not come back'
+                        : 'Delete timeline permanently'}
                       style={{
                         background: 'transparent', border: 'none', cursor: 'pointer',
                         color: '#94A3B8', fontSize: '1rem', padding: '0 4px', lineHeight: 1,
                       }}
-                    >×</button>
+                    >×</button>}
                   </td>
                 </tr>
               );
@@ -15667,6 +15792,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     [settings?.dropdownLists, settings?.customServiceCategories]
   );
   const listRegistry = useMemo(() => buildListRegistry(dropdownLists), [dropdownLists]);
+  setTimelineServiceCtx(listRegistry.get('solutions')?.options, settings?.serviceOverrides);
   const availableLists = useMemo(() => buildAvailableLists(dropdownLists), [dropdownLists]);
   // The Solutions list and the rate card behind Dropdowns › Services Pricing.
   // Both are read per row while the table renders — a Scope value is resolved
@@ -16315,7 +16441,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       if (needsCompetitionFlag(row)) parts.push('Missing Competition');
       if (coaApprovalsNeeded(row).length) parts.push('COA approvals needed');
       if (clientCoaNotRequested(row).length) parts.push('Client requires COA');
-      if (needsBudgetTimelineFlag(row)) parts.push('Budget delivery timeline');
+      if (missingTimelinesForRow(row).length) parts.push(`Timeline needed: ${missingTimelinesForRow(row).join(', ')}`);
       if (qualifyingStageFlagState(row) === 'active') parts.push('Move to Qualifying');
       if (oppMissingBfoAddress(row)) parts.push('Missing BFO Address');
       if (oppMissingQuotedAmount(row)) parts.push('Deal Size Missing');
