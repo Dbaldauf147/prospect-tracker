@@ -21,7 +21,9 @@
 // shape of the file is pinned by scripts/savingsExport.test.mjs rather than
 // by clicking the button.
 
-import { VOLUME_SHAPES, CONTRACT_TYPES, DEFAULT_CONTRACT_TYPE, sourceSummary, volumeSummary } from './nymexSavings.js';
+import {
+  VOLUME_SHAPES, CONTRACT_TYPES, DEFAULT_CONTRACT_TYPE, SAVINGS_BASES, DEFAULT_SAVINGS_BASIS, sourceSummary, volumeSummary,
+} from './nymexSavings.js';
 import { sanitizeSheetJsWorkbook, stripDashes } from './exportSanitize.js';
 
 const PRICE_FMT = '"$"#,##0.000';
@@ -157,6 +159,7 @@ export function savingsScenarioRows(run, meta = {}) {
   const history = run?.history || [];
   const shape = VOLUME_SHAPES[s.volumeShape] || VOLUME_SHAPES.even;
   const type = CONTRACT_TYPES[s.contractType] ? s.contractType : DEFAULT_CONTRACT_TYPE;
+  const basis = SAVINGS_BASES[s.savingsBasis] ? s.savingsBasis : DEFAULT_SAVINGS_BASIS;
   // The layers only price a Layered contract, so only it lists them.
   const layers = type === 'layered' && Array.isArray(s.layers) ? s.layers : [];
   return [
@@ -190,6 +193,12 @@ export function savingsScenarioRows(run, meta = {}) {
     { label: 'Monthly volumes', value: volumeSummary(t) },
     { label: 'Volume over the term (Dth)', value: t.volume, fmt: VOL_FMT },
     { label: 'Contract type', value: CONTRACT_TYPES[type].label },
+    { label: 'Savings analysis', value: SAVINGS_BASES[basis].label },
+    ...(basis === 'contract' ? [{ label: `Current contract rate (${UNIT})`, value: s.currentRate, fmt: PRICE_FMT }] : []),
+    ...(basis === 'avoided' ? [
+      { label: 'Increase with no action', value: s.noActionPct / 100, fmt: PCT_FMT },
+      { label: 'Increase on the strategy', value: s.strategyPct / 100, fmt: PCT_FMT },
+    ] : []),
     ...(type === 'fixed' ? [{ label: `Fixed all-in rate (${UNIT})`, value: s.fixedRate, fmt: PRICE_FMT }] : []),
     { label: 'Hedged share', value: (hedge.pct ?? 0) / 100, fmt: PCT_FMT },
     {
@@ -212,9 +221,14 @@ export function savingsScenarioRows(run, meta = {}) {
         .filter(Boolean).join(', '),
     },
     { label: 'At index', value: t.indexCost, fmt: MONEY_FMT },
+    // On any basis but the index, the saving is not At index less On
+    // contract, so the sheet names what it is taken from.
+    ...(basis === 'index' ? [] : [
+      { label: basis === 'contract' ? 'On the current contract' : 'With no action', value: t.baselineCost, fmt: MONEY_FMT },
+    ]),
     { label: 'On contract', value: t.contractCost, fmt: MONEY_FMT },
     { label: 'Saving', value: t.saving, fmt: MONEY_FMT },
-    { label: 'Saving against index', value: t.savingPct, fmt: PCT_FMT },
+    { label: basis === 'index' ? 'Saving against index' : `Saving against ${SAVINGS_BASES[basis].short}`, value: t.savingPct, fmt: PCT_FMT },
     { label: `Saving per Dth (${UNIT})`, value: t.savingPerDth, fmt: PRICE_FMT },
   ];
 }

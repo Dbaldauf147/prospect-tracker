@@ -1454,3 +1454,13 @@
   letter-spacing: 0.03em;
   color: var(--color-text-muted);
 }
+
+/* Step 4: the worked example under each savings analysis. */
+.typeExample {
+  margin-top: 0.15rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--color-border);
+  font-size: 0.66rem;
+  line-height: 1.45;
+  color: var(--color-text-muted);
+}

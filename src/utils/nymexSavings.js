@@ -158,6 +158,38 @@ export const CONTRACT_TYPES = {
 };
 export const DEFAULT_CONTRACT_TYPE = 'layered';
 
+// What the contract's saving is measured against: the baseline each month's
+// contract cost is taken away from.
+//   index     - the market: the index plus the same basis and adder. What
+//               the page measured before there was a choice, so the default.
+//   contract  - contract over contract: the customer's current third-party
+//               all-in rate, carried across the new term.
+//   avoided   - cost avoidance: what taking no action would cost. Both paths
+//               face an increase (legislation, renewable requirements); the
+//               no-action one faces a bigger one, and the gap between the two
+//               percentages, on the contract's rate, is the avoided cost.
+export const SAVINGS_BASES = {
+  index: {
+    label: 'Against the index',
+    short: 'the index bill',
+    note: 'The difference between the contract and paying the floating market price (Henry Hub plus the same basis and adder) for the same volume.',
+    example: '',
+  },
+  contract: {
+    label: 'Contract Over Contract',
+    short: 'the current contract',
+    note: 'The difference between the current third-party price and the recommended price for the following term.',
+    example: 'Current contracted rate is $0.06/kWh; new rate is $0.0525/kWh. Savings equal $0.0075/kWh multiplied by the usage over the contract term. Contract term is 24 months, projected usage over 24 months is 2,000,000 kWh. Savings is 2,000,000 x $0.0075/kWh = $15,000.',
+  },
+  avoided: {
+    label: 'Cost Avoidance',
+    short: 'the no-action cost',
+    note: 'The difference between a strategically purchased rate and the rate a customer would pay by taking no action.',
+    example: 'Customers not on third-party supply in a given market are subject to a 4% increase in energy costs due to legislation for renewable requirements. Customers on third-party supply are subject to a 1% increase. Schneider recommends extending third-party agreements, resulting in 3% avoided cost. Avoided cost = $0.005/kWh for the contract term. Contract volume is 50,000,000 kWh. Avoided cost is $0.005/kWh x 50,000,000 kWh = $250,000.',
+  },
+};
+export const DEFAULT_SAVINGS_BASIS = 'index';
+
 function normalizeLookback(raw, fallback) {
   if (raw === LOOKBACK_ALL) return LOOKBACK_ALL;
   if (typeof raw === 'string' && raw.trim().toLowerCase() === LOOKBACK_ALL) return LOOKBACK_ALL;
@@ -596,6 +628,7 @@ export function defaultScenario(series = monthlySeries(SHIPPED_SETTLES), forward
       basis: 0, adder: 0.35,
       forwardPrice: 3.5,
       contractType: DEFAULT_CONTRACT_TYPE, fixedRate: 3.85,
+      savingsBasis: DEFAULT_SAVINGS_BASIS, currentRate: 4.1, noActionPct: 4, strategyPct: 1,
       layers: [{ id: 'L1', label: 'Layer 1', pct: 40, price: 3.5 }, { id: 'L2', label: 'Layer 2', pct: 25, price: 3.7 }],
     };
   }
@@ -644,6 +677,13 @@ export function defaultScenario(series = monthlySeries(SHIPPED_SETTLES), forward
     // A fixed all-in quote to start from: the strike with the default adder
     // on top, i.e. what the whole volume would cost locked today.
     fixedRate: Math.round((strike + 0.35) * 100) / 100,
+    savingsBasis: DEFAULT_SAVINGS_BASIS,
+    // Placeholders for the two other bases, until somebody types theirs: a
+    // current contract a quarter above the fixed quote, and the percentages
+    // from the cost-avoidance example.
+    currentRate: Math.round((strike + 0.6) * 100) / 100,
+    noActionPct: 4,
+    strategyPct: 1,
     layers: [
       { id: 'L1', label: 'Layer 1', pct: 40, price: strike },
       { id: 'L2', label: 'Layer 2', pct: 25, price: Math.round((strike + 0.2) * 100) / 100 },
@@ -680,6 +720,16 @@ export function normalizeScenario(raw, series = null, forward = null) {
     fixedRate: raw.fixedRate == null || raw.fixedRate === ''
       ? base.fixedRate
       : clamp(num(raw.fixedRate, base.fixedRate), 0, 1000),
+    savingsBasis: SAVINGS_BASES[raw.savingsBasis] ? raw.savingsBasis : DEFAULT_SAVINGS_BASIS,
+    currentRate: raw.currentRate == null || raw.currentRate === ''
+      ? base.currentRate
+      : clamp(num(raw.currentRate, base.currentRate), 0, 1000),
+    noActionPct: raw.noActionPct == null || raw.noActionPct === ''
+      ? base.noActionPct
+      : clamp(num(raw.noActionPct, base.noActionPct), -100, 1000),
+    strategyPct: raw.strategyPct == null || raw.strategyPct === ''
+      ? base.strategyPct
+      : clamp(num(raw.strategyPct, base.strategyPct), -100, 1000),
     // Kept whatever the type, so switching away from Layered and back
     // doesn't lose the blocks somebody set up.
     layers: layers.length ? layers : base.layers.map(normalizeLayer),
@@ -750,7 +800,10 @@ function rollup(months) {
   const volume = months.reduce((n, m) => n + m.volume, 0);
   const indexCost = months.reduce((n, m) => n + m.indexCost, 0);
   const contractCost = months.reduce((n, m) => n + m.contractCost, 0);
-  const saving = indexCost - contractCost;
+  // What the saving is measured against: the index on the default basis,
+  // otherwise the current contract or the no-action cost.
+  const baselineCost = months.reduce((n, m) => n + m.baselineCost, 0);
+  const saving = baselineCost - contractCost;
   const settledMonths = months.filter(m => m.source === 'settled').length;
   const forwardMonths = months.filter(m => m.source === 'forward').length;
   const assumedMonths = months.filter(m => m.source === 'assumed').length;
@@ -760,12 +813,14 @@ function rollup(months) {
     volume,
     indexCost,
     contractCost,
+    baselineCost,
     saving,
-    savingPct: indexCost ? saving / indexCost : 0,
+    savingPct: baselineCost ? saving / baselineCost : 0,
     savingPerDth: volume ? saving / volume : 0,
     avgIndex: months.length ? months.reduce((n, m) => n + m.index, 0) / months.length : null,
     avgIndexAllIn: volume ? indexCost / volume : null,
     avgContractAllIn: volume ? contractCost / volume : null,
+    avgBaselineAllIn: volume ? baselineCost / volume : null,
     settledMonths,
     forwardMonths,
     assumedMonths,
@@ -860,6 +915,12 @@ export function buildSavings(scenario, series, forward = []) {
     const commodity = hedgedShare * strike + (1 - hedgedShare) * index;
     const indexAllIn = index + s.basis + s.adder;
     const contractAllIn = commodity + s.basis + s.adder;
+    // The rate the saving is measured against. See SAVINGS_BASES.
+    const baselineAllIn = s.savingsBasis === 'contract'
+      ? s.currentRate
+      : s.savingsBasis === 'avoided'
+        ? contractAllIn * (1 + (s.noActionPct - s.strategyPct) / 100)
+        : indexAllIn;
     return {
       key: monthKey(year, month),
       year,
@@ -878,9 +939,11 @@ export function buildSavings(scenario, series, forward = []) {
       contractAllIn,
       volume,
       volumeSource: given == null ? 'shape' : 'entered',
+      baselineAllIn,
       indexCost: indexAllIn * volume,
+      baselineCost: baselineAllIn * volume,
       contractCost: contractAllIn * volume,
-      saving: (indexAllIn - contractAllIn) * volume,
+      saving: (baselineAllIn - contractAllIn) * volume,
     };
   };
 
