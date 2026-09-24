@@ -89,7 +89,16 @@ for (const key of Object.keys(runs)) {
   ok(aoa.slice(1).every(r => r[h.indexOf('Contract 1 adder ($/Dth)')] === 0.1), 'a known Contract 1 adder fills its column');
   eq(h.length, categoryFormats('contract', { ...scenario, currentAdder: 0.1 }).length, 'a format for every column with the split');
   near(last[h.indexOf('Retail adder saving')], (-0.276 - 0.1) * withAdder.contract.totals.volume, 1e-6, 'the adder saving is (adder 2 - adder 1) x volume, since both come off the index');
-  near(last[h.indexOf('Retail adder saving')] + last[h.indexOf('Commodity and basis saving')], last[h.indexOf('Saving')], 1e-6, 'and the split adds back up');
+  near(last[h.indexOf('Retail adder saving')] + last[h.indexOf('Commodity and basis saving')], last[h.indexOf('Saving')], 0.005, 'and the split adds back up, to the cent');
+
+  // Both contracts on the index with the same basis: the adders are the whole
+  // saving, so the commodity and basis part is a true $0 every month, never
+  // float dust that the money format paints as a red -$0.
+  const same = categoryRuns({ ...scenario, contractType: 'index', currentType: 'index', currentAdder: 0.1 }, series, curve);
+  const sa = categoryMonthAoa('contract', same.contract);
+  const re = sa[0].indexOf('Commodity and basis saving');
+  ok(sa.slice(1).every(r => r[re] === 0 && !Object.is(r[re], -0)), 'a commodity and basis saving that cancels out is exactly $0');
+  ok(categoryFormulas('contract', same.contract, tabInputs('contract', same).refs).slice(0, -1).every(r => r[re].startsWith('ROUND(')), 'and the Excel formula rounds it to the cent');
   eq(categoryHeaders('index', { ...scenario, currentAdder: 0.1 }).includes('Retail adder saving'), false, 'the split is only on the contract tab');
 }
 
