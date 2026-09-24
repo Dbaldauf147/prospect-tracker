@@ -265,6 +265,75 @@ export function normalizeSitePricing(raw) {
   return { sites, loadedAt: text(raw?.loadedAt, 40) || null };
 }
 
+// ---- One site at a time --------------------------------------------------
+// Not every comparison starts as a sheet. A site can be typed in by name,
+// with the deal it was on and the deal it moved to, and it lands in the same
+// table the paste writes: nothing downstream knows or cares which way in a
+// row came.
+
+/** A month out of an <input type="month"> value ("2025-12"), or null. */
+export function monthFromInput(raw) {
+  const m = /^(\d{4})-(\d{1,2})$/.exec(String(raw ?? '').trim());
+  if (!m) return null;
+  const month = { year: Number(m[1]), month: Number(m[2]) };
+  return isMonth(month) ? month : null;
+}
+
+/**
+ * A site from the typed-in form: { name, previous, updated, volume }, each
+ * term { start, end, adder } as the inputs hold them (month strings and the
+ * $/Dth as typed, parentheses and all).
+ *
+ * Returns { site } or { error } naming what is missing. A term needs both
+ * ends; a term left entirely blank is simply not there, the way an empty
+ * block on the sheet is. At least one has to be there, or there is nothing
+ * to price.
+ */
+export function buildSite(form) {
+  const name = text(form?.name);
+  if (!name) return { error: 'Give the site a name.' };
+  const volume = parseMoney(form?.volume);
+  if (form?.volume && String(form.volume).trim() && !(volume > 0)) {
+    return { error: 'Volume needs to be a number of Dth above zero, or left blank.' };
+  }
+  const terms = [];
+  for (const [label, raw] of [['previous', form?.previous], ['updated', form?.updated]]) {
+    const start = monthFromInput(raw?.start);
+    const end = monthFromInput(raw?.end);
+    const adder = parseMoney(raw?.adder);
+    if (!start && !end && adder == null) continue;
+    if (!start || !end) return { error: `The ${label} term needs both a start and an end month.` };
+    if (!termLength(start, end)) return { error: `The ${label} term ends before it starts.` };
+    terms.push({ start, end, nymex: null, adder, total: null, volume: volume > 0 ? volume : null });
+  }
+  if (!terms.length) return { error: 'Add at least one term: a start and end month.' };
+  return { site: { name, terms } };
+}
+
+/** The table with one more site on the end. Starts a table when there is none. */
+export function addSite(table, site) {
+  return normalizeSitePricing({
+    sites: [...(table?.sites || []), site],
+    loadedAt: table?.loadedAt || new Date().toISOString().slice(0, 10),
+  });
+}
+
+/** The table with the site at `index` renamed. A blank name leaves it as it was. */
+export function renameSite(table, index, name) {
+  const clean = text(name);
+  if (!table || !clean || !table.sites[index]) return table;
+  return normalizeSitePricing({
+    ...table,
+    sites: table.sites.map((s, i) => (i === index ? { ...s, name: clean } : s)),
+  });
+}
+
+/** The table without the site at `index`, or null once the last one goes. */
+export function removeSite(table, index) {
+  if (!table) return null;
+  return normalizeSitePricing({ ...table, sites: table.sites.filter((_, i) => i !== index) });
+}
+
 /** Read it out of the settings document. */
 export function getSitePricing(settings) {
   return normalizeSitePricing(settings?.[SITE_PRICING_KEY]);
