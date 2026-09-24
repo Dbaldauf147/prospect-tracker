@@ -62,6 +62,12 @@ const SAVE_DELAY_MS = 800;
 // the savings tiles.
 const SOURCING_TABS = [
   {
+    id: 'steps',
+    label: 'Step by step',
+    title: 'Enter a site one step at a time: the site, its consumption, then the contract details',
+    blurb: 'Enter a site one step at a time. Step 1 names the site, step 2 is what it burns, step 3 is the contract. Everything entered here is the same scenario Contract savings and Consumption show.',
+  },
+  {
     id: 'contract',
     label: 'Contract savings',
     title: 'Historical NYMEX settles, contract pricing, hedge layers and term length, and what the hedge is worth',
@@ -803,7 +809,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
   // and follows the user across devices; these two are where you happen to
   // be looking, so they live here and reset on reload.
   const [area, setArea] = useState('efficiency');
-  const [sourcingTab, setSourcingTab] = useState('contract');
+  const [sourcingTab, setSourcingTab] = useState('steps');
   const onSourcing = area === 'sourcing';
   const [mode, setMode] = useState('diagram');
   const [editing, setEditing] = useState(false);
@@ -1463,6 +1469,7 @@ export function EfficiencyTreeView({ settings = {}, settingsLoaded = false, upda
           settingsLoaded={settingsLoaded}
           updateSettings={updateSettings}
           section={sourcingTab}
+          onOpenSection={setSourcingTab}
         />
       ) : (
       <>

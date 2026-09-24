@@ -1185,3 +1185,110 @@
   font-weight: 400;
   color: var(--color-text-muted);
 }
+
+/* ── Step by step ────────────────────────────────────────────────────── */
+
+/* Sized to what they hold: .inputGroup grows to fill a row, and in the
+   panel's column that meant a one-field step as tall as the page. */
+.stepPanel {
+  flex: 0 0 auto;
+}
+
+.stepper {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.stepperItem {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.stepBtn,
+.stepBtnActive {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.5rem 0.7rem;
+  font-family: inherit;
+  text-align: left;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.stepBtn:hover {
+  background: var(--color-surface-alt);
+}
+
+.stepBtnActive {
+  border-color: var(--color-accent);
+  box-shadow: inset 0 -2px 0 var(--color-accent);
+}
+
+.stepNum,
+.stepNumDone {
+  flex: 0 0 auto;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+}
+
+.stepBtnActive .stepNum {
+  color: #fff;
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.stepNumDone {
+  color: #fff;
+  background: #0D9488;
+  border-color: #0D9488;
+}
+
+.stepText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.stepLabel {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.stepHint {
+  font-size: 0.68rem;
+  color: var(--color-text-secondary);
+}
+
+.stepNav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-top: 0.25rem;
+}
+
+.stepNavSpacer {
+  flex: 1;
+}
+
+.stepNav .smallBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
