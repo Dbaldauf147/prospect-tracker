@@ -185,6 +185,28 @@ export function setCoaRequirement(raw, item, patch) {
   return next;
 }
 
+/**
+ * The stored map with one item's answer moved to a new name, for when the
+ * item is renamed on the list from this card. The answer keeps its required
+ * value and notes; if the new name already carries an answer, that one wins
+ * and the old key is simply dropped.
+ */
+export function renameCoaRequirement(raw, from, to) {
+  const next = normalizeCoaRequirements(raw);
+  const fromKey = String(from ?? '').trim().toLowerCase();
+  const label = String(to ?? '').trim();
+  const toKey = label.toLowerCase();
+  if (!fromKey || !toKey || fromKey === toKey) {
+    if (fromKey && fromKey === toKey && next[fromKey]) next[fromKey] = { ...next[fromKey], item: label };
+    return next;
+  }
+  const cur = next[fromKey];
+  if (!cur) return next;
+  delete next[fromKey];
+  if (!next[toKey]) next[toKey] = { ...cur, item: label };
+  return next;
+}
+
 /** Counts for the section header. */
 export function coaRequirementsSummary(rows) {
   const list = rows || [];

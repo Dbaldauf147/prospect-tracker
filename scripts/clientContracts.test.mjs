@@ -14,7 +14,7 @@
 import {
   companyClientNames, dealsForCompany, contractsSummary,
   normalizeCoaRequirements, coaRequirementRows, setCoaRequirement,
-  coaRequirementsSummary,
+  coaRequirementsSummary, renameCoaRequirement,
 } from '../src/utils/clientContracts.js';
 
 let failures = 0;
@@ -91,6 +91,19 @@ eq('normalize tolerates non-objects', normalizeCoaRequirements([1, 2]), {});
 eq('summary counts',
   coaRequirementsSummary(coaRequirementRows({ '3% esc': { item: '3% esc', required: 'yes' } }, catalog)),
   { total: 2, required: 1, notRequired: 0, unset: 1 });
+
+// Renaming an item from the card carries this company's answer across.
+const answered = { '3% esc': { item: '3% esc', required: 'yes', notes: 'MSA 4.2' } };
+eq('rename moves the answer to the new name',
+  renameCoaRequirement(answered, '3% esc', '3% escalator'),
+  { '3% escalator': { item: '3% escalator', required: 'yes', notes: 'MSA 4.2' } });
+eq('rename that only changes casing keeps the answer under the new spelling',
+  renameCoaRequirement(answered, '3% esc', '3% ESC'),
+  { '3% esc': { item: '3% ESC', required: 'yes', notes: 'MSA 4.2' } });
+eq('rename onto an already-answered name keeps that answer',
+  renameCoaRequirement({ ...answered, 'net 60': { item: 'Net 60', required: 'no', notes: '' } }, '3% esc', 'Net 60'),
+  { 'net 60': { item: 'Net 60', required: 'no', notes: '' } });
+eq('rename of an unanswered item changes nothing', renameCoaRequirement(answered, 'Net 60', 'Net 90'), answered);
 
 if (failures) {
   console.log(`\n${failures} failure(s)`);
