@@ -15,6 +15,7 @@ import {
   textToBulletItems, encodeNoteLine, NOTE_LINEBREAK,
   nextStepLinesFromCall, callOnOppPatch,
   NEXT_STEPS_DONE_FIELD, readStepsDone, isStepDoneToday, toggleStepDone, countStepsDoneToday,
+  NEXT_STEPS_HOLD_FIELD, readStepsHold,
 } from '../src/utils/nextSteps.js';
 
 let passed = 0, failed = 0;
@@ -192,6 +193,18 @@ function ok(value, name) { eq(!!value, true, name); }
   eq(readStepsDone({ _nextStepsDone: 'not an array' }), [], 'junk reads as empty rather than throwing');
   eq(readStepsDone({ _nextStepsDone: [null, undefined, 5] }), ['', '', '5'],
     'every entry is coerced to a string so alignment is never lost to a hole');
+}
+
+// --- on hold is a flag, not a day -----------------------------------------
+// Unlike "done today" nothing lapses: a step stays on hold until unticked.
+{
+  eq(NEXT_STEPS_HOLD_FIELD, '_nextStepsHold', 'the field name is what the opp stores');
+  eq(readStepsHold({ _nextStepsHold: [true, false, true] }), [true, false, true], 'flags come back in order');
+  eq(readStepsHold({}), [], 'an opp with nothing on hold reads as empty');
+  eq(readStepsHold(null), [], 'and so does no opp at all');
+  eq(readStepsHold({ _nextStepsHold: 'yes' }), [], 'junk reads as empty rather than throwing');
+  eq(readStepsHold({ _nextStepsHold: [null, 'true', 1, '', 0] }), [false, true, true, false, false],
+    'every entry is a boolean, so alignment is never lost to a hole');
 }
 
 // --- counting ------------------------------------------------------------
