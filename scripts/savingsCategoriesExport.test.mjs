@@ -9,6 +9,7 @@
 import {
   categoryRuns, categoryMonthAoa, categoryHeaders, categoryFormats, summaryRows, summaryAoa,
   categoriesFilename, CATEGORY_SHEET, BASELINE_LABEL, buildSavingsCategoriesWorkbook, SE,
+  chartData, indexLeadIn, indexTableAoa, INDEX_CHART_LOOKBACK, INDEX_KIND_COLOR,
 } from '../src/utils/savingsCategoriesExport.js';
 import ExcelJS from 'exceljs';
 import { writeFileSync } from 'node:fs';
@@ -139,6 +140,55 @@ eq(categoriesFilename('', new Date('2026-09-24T12:00:00Z')), 'site_savings_by_ca
   ok(labels.includes('Saving over the term') && labels.includes('Assumptions'), 'the summary carries the savings and the assumptions');
 
   // Leave a copy for eyeballing when asked to (SAVINGS_XLSX_OUT=path).
+  if (process.env.SAVINGS_XLSX_OUT) writeFileSync(process.env.SAVINGS_XLSX_OUT, Buffer.from(await wb.xlsx.writeBuffer()));
+}
+
+// ── The Charts tab ──
+{
+  const runs = categoryRuns(scenario, series, curve);
+  const leadIn = indexLeadIn(scenario, series, curve);
+  eq(leadIn.length, INDEX_CHART_LOOKBACK, 'the index chart leads in with a year before the term');
+  eq(leadIn.every(m => m.phase === 'history'), true, 'all of it before the term');
+  const term = runs.index.months;
+  const d = chartData(runs, leadIn);
+
+  eq(d.consumption.bars.map(b => b.value), term.map(m => m.volume), 'consumption plots the term volumes');
+  eq(d.consumption.labels.length, term.length, 'a label per term month');
+  eq(d.allIn.series.map(x => x.key), ['contract2', 'index', 'contract1'], 'all-in: Contract 2, the index, Contract 1');
+  eq(d.allIn.series[0].values, term.map(m => m.contractAllIn), 'Contract 2 all-in per month');
+  eq(d.allIn.series[1].values, term.map(m => m.indexAllIn), 'index all-in per month');
+  eq(d.allIn.series[2].values, runs.contract.months.map(m => m.baselineAllIn), 'Contract 1 all-in per month');
+  eq(d.index.points.length, leadIn.length + term.length, 'the index runs through the lead-in and the term');
+  eq(d.index.termStart, leadIn.length, 'with the term marked where it opens');
+  eq(d.index.points.map(p => p.kind), [...leadIn, ...term].map(m => m.source), 'every point says settled or forecast');
+  ok(d.index.points.some(p => p.kind === 'settled') && d.index.points.some(p => p.kind === 'forward'),
+    'this scenario has both settled and forecast months');
+
+  const t = indexTableAoa(runs, leadIn);
+  eq(t.length, 1 + leadIn.length + term.length, 'the index table: a row per charted month');
+  eq(t[1][1], 'Before the term', 'lead-in rows are named as such');
+
+  // A 1x1 PNG stands in for the canvas renders, which need a browser.
+  const dot = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const charts = [1, 2, 3].map(() => ({ dataUrl: dot, width: 880, height: 300 }));
+  const wb = buildSavingsCategoriesWorkbook(ExcelJS.Workbook, runs, { charts, leadIn });
+  eq(wb.worksheets.map(w => w.name), ['Summary', 'Charts', 'Against the index', 'Contract Over Contract', 'Cost Avoidance'], 'Charts right after the Summary');
+  const chs = wb.getWorksheet('Charts');
+  eq(chs.getImages().length, 3, 'three charts on it');
+
+  // Forecast index months look different from settled ones, in the table
+  // on the Charts tab and in the Index column of every category tab.
+  const firstFwd = [...leadIn, ...term].findIndex(m => m.source === 'forward');
+  const firstSettled = [...leadIn, ...term].findIndex(m => m.source === 'settled');
+  const idxCell = (r) => chs.getCell(4 + r, 16);
+  eq(idxCell(firstFwd).font?.italic, true, 'a forecast index is italic');
+  eq(idxCell(firstFwd).font?.color?.argb, INDEX_KIND_COLOR.forward, 'and blue');
+  ok(!idxCell(firstSettled).font?.italic, 'a settled index is not');
+
+  const tab = wb.getWorksheet('Against the index');
+  const tFwd = term.findIndex(m => m.source === 'forward');
+  eq(tab.getCell(4 + tFwd, 5).font?.color?.argb, INDEX_KIND_COLOR.forward, 'the Index column marks forecast months');
+  eq(tab.getCell(4 + tFwd, 5).font?.name, SE.FONT, 'without losing the house font');
   if (process.env.SAVINGS_XLSX_OUT) writeFileSync(process.env.SAVINGS_XLSX_OUT, Buffer.from(await wb.xlsx.writeBuffer()));
 }
 

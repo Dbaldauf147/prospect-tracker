@@ -12,7 +12,9 @@
 // On green title band, a muted subtitle, dark green header rows, Nunito
 // Sans, thin grey borders, zebra rows, a green tab and no gridlines.
 //
-// Term only, no look-back - the same months step 5 shows.
+// Term only, no look-back - the same months step 5 shows. The one exception
+// is the index chart on the Charts tab, which leads in with a year of settled
+// months so the forecast has something to be read against.
 //
 // Pure except for the download at the bottom, so the shape of the file is
 // pinned by scripts/savingsCategoriesExport.test.mjs.
@@ -52,6 +54,81 @@ export function categoryRuns(scenario, series, forward) {
     out[key] = buildSavings({ ...scenario, savingsBasis: key, lookback: 0 }, series, forward);
   }
   return out;
+}
+
+// How many settled months the index chart shows ahead of the term.
+export const INDEX_CHART_LOOKBACK = 12;
+
+/**
+ * The months the index chart leads in with: the year before the term opens,
+ * priced the same way the term is. Kept apart from categoryRuns because no
+ * category tab carries them; they are context for the chart only.
+ */
+export function indexLeadIn(scenario, series, forward, months = INDEX_CHART_LOOKBACK) {
+  return buildSavings({ ...scenario, savingsBasis: 'index', lookback: months }, series, forward).history;
+}
+
+// What a month's index is, as the charts and the Index column tell it apart:
+// a settle is the past, a forward quote is the forecast, and a flat
+// assumption is neither and says so.
+export const INDEX_KIND_LABEL = {
+  settled: 'Settled (past)',
+  forward: 'Forecast (forward curve)',
+  assumed: 'Flat assumption',
+};
+
+/**
+ * The three pictures on the Charts tab, as data: consumption per month,
+ * the all-in prices per month, and the index per month with each point
+ * marked settled or forecast. Pure, so what the charts plot is pinned by
+ * the test; utils/savingsChartImage.js is what draws them.
+ */
+export function chartData(runs, leadIn = []) {
+  const idx = runs?.index || runs?.[Object.keys(SAVINGS_BASES).find(k => runs?.[k])];
+  const months = idx?.months || [];
+  const s = idx?.scenario || {};
+  const contract1 = runs?.contract?.months;
+  const allInSeries = [
+    { key: 'contract2', name: 'Contract 2 all-in', values: months.map(m => m.contractAllIn) },
+    { key: 'index', name: 'Index all-in', values: months.map(m => m.indexAllIn) },
+  ];
+  if (contract1?.length === months.length && Number.isFinite(s.currentRate)) {
+    allInSeries.push({ key: 'contract1', name: 'Contract 1 all-in', values: contract1.map(m => m.baselineAllIn) });
+  }
+  const indexMonths = [...leadIn, ...months];
+  return {
+    consumption: {
+      title: 'Consumption by month',
+      unit: 'Dth',
+      labels: months.map(m => m.short || m.label),
+      bars: months.map(m => ({ value: m.volume, kind: m.volumeSource === 'entered' ? 'entered' : 'shape' })),
+    },
+    allIn: {
+      title: `All-in price by month (${UNIT})`,
+      unit: UNIT,
+      labels: months.map(m => m.short || m.label),
+      series: allInSeries,
+    },
+    index: {
+      title: `Index price by month, settled and forecast (${UNIT})`,
+      unit: UNIT,
+      labels: indexMonths.map(m => m.short || m.label),
+      points: indexMonths.map(m => ({ value: m.index, kind: m.source })),
+      termStart: leadIn.length,
+    },
+  };
+}
+
+/** The index chart's months as a table: month, index, what it is. */
+export function indexTableAoa(runs, leadIn = []) {
+  const idx = runs?.index || runs?.[Object.keys(SAVINGS_BASES).find(k => runs?.[k])];
+  const rows = [...leadIn, ...(idx?.months || [])].map(m => [
+    m.label,
+    m.phase === 'history' ? 'Before the term' : 'Term',
+    m.index,
+    INDEX_KIND_LABEL[m.source] || m.source,
+  ]);
+  return [['Month', 'Period', `Index (${UNIT})`, 'Index is'], ...rows];
 }
 
 // Contract Over Contract only, and only once Contract 1's retail adder is
@@ -253,12 +330,27 @@ function bodyCell(cell, value, { fmt = null, zebra = false, bold = false, total 
   cell.border = total ? { ...BORDER_ALL, top: { style: 'medium', color: { argb: SE.GREEN_DARK } } } : BORDER_ALL;
 }
 
+// The index charts' colours, carried onto the cells so a forecast month
+// reads as one in the table the way it does on the chart: settled months
+// keep the body style, forecast ones go blue italic, a flat assumption
+// grey italic.
+export const INDEX_KIND_COLOR = {
+  settled: 'FF1E293B',
+  forward: 'FF2563EB',
+  assumed: 'FF64748B',
+};
+
+function markIndexKind(cell, kind) {
+  if (!kind || kind === 'settled') return;
+  cell.font = { ...cell.font, italic: true, color: { argb: INDEX_KIND_COLOR[kind] || INDEX_KIND_COLOR.assumed } };
+}
+
 /**
  * The whole workbook, Schneider Electric formatted, on an ExcelJS Workbook
  * class handed in (so it can be built and inspected in a test without a
  * browser). Summary first, then a tab per category.
  */
-export function buildSavingsCategoriesWorkbook(Workbook, runs) {
+export function buildSavingsCategoriesWorkbook(Workbook, runs, { charts = null, leadIn = [] } = {}) {
   const wb = new Workbook();
   wb.creator = 'Schneider Electric · Prospect Tracker';
   wb.created = new Date();
@@ -305,6 +397,35 @@ export function buildSavingsCategoriesWorkbook(Workbook, runs) {
     r += 1;
   }
 
+  // ── Charts ──
+  // Pictures rather than native Excel charts, which ExcelJS cannot write.
+  // The numbers behind them are all in the tabs, and the index months,
+  // which reach back before the term, get a table of their own here.
+  if (charts?.length) {
+    const CHART_SPAN = 12;
+    const chs = addBrandedSheet(wb, 'Charts', CHART_SPAN + 5, `${site}  ·  Consumption, all-in price and index over time`);
+    chs.columns = [...Array(CHART_SPAN).fill({ width: 10 }), { width: 3 }, { width: 14 }, { width: 16 }, { width: 14 }, { width: 24 }];
+    // Rows are the default 15pt, which is 20px.
+    const ROW_PX = 20;
+    let row = 4;
+    for (const c of charts) {
+      const id = wb.addImage({ base64: c.dataUrl, extension: 'png' });
+      chs.addImage(id, { tl: { col: 0.2, row: row - 1 + 0.2 }, ext: { width: c.width, height: c.height } });
+      row += Math.ceil(c.height / ROW_PX) + 2;
+    }
+
+    const [ih, ...ib] = indexTableAoa(runs, leadIn);
+    const C0 = CHART_SPAN + 2;
+    ih.forEach((h, i) => headerCell(chs.getCell(3, C0 + i), h));
+    chs.getRow(3).height = 24;
+    const kinds = [...leadIn, ...(runs?.index?.months || [])].map(m => m.source);
+    ib.forEach((r, j) => {
+      r.forEach((v, i) => bodyCell(chs.getCell(4 + j, C0 + i), v, { fmt: i === 2 ? PRICE_FMT : null, zebra: j % 2 === 1 }));
+      markIndexKind(chs.getCell(4 + j, C0 + 2), kinds[j]);
+      markIndexKind(chs.getCell(4 + j, C0 + 3), kinds[j]);
+    });
+  }
+
   // ── A tab per category ──
   for (const key of keys) {
     const run = runs[key];
@@ -313,7 +434,7 @@ export function buildSavingsCategoriesWorkbook(Workbook, runs) {
     const formats = categoryFormats(key, run.scenario);
     const cws = addBrandedSheet(
       wb, CATEGORY_SHEET[key], head.length,
-      `${site}  ·  ${SAVINGS_BASES[key].label}: ${SAVINGS_BASES[key].note}`,
+      `${site}  ·  ${SAVINGS_BASES[key].label}: ${SAVINGS_BASES[key].note}  ·  Forecast index months in blue italics`,
     );
     cws.columns = head.map((h, i) => ({ width: i === 0 ? 14 : i === 1 || i === 3 ? 22 : 16 }));
     head.forEach((h, i) => headerCell(cws.getCell(3, i + 1), h));
@@ -323,6 +444,11 @@ export function buildSavingsCategoriesWorkbook(Workbook, runs) {
       row.forEach((v, i) => bodyCell(cws.getCell(4 + j, i + 1), v, {
         fmt: formats[i], zebra: j % 2 === 1, total,
       }));
+      if (!total) {
+        const kind = run.months[j]?.source;
+        markIndexKind(cws.getCell(4 + j, 2), kind);
+        markIndexKind(cws.getCell(4 + j, 5), kind);
+      }
     });
     cws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: head.length } };
   }
@@ -330,11 +456,17 @@ export function buildSavingsCategoriesWorkbook(Workbook, runs) {
   return sanitizeExcelWorkbook(wb);
 }
 
-/** Build and download the workbook. Returns the number of months per tab. */
-export async function downloadSavingsCategories(runs, date = new Date()) {
-  const mod = await import('exceljs');
+/**
+ * Build and download the workbook. Returns the number of months per tab.
+ * `leadIn` is the settled year the index chart opens with (indexLeadIn).
+ */
+export async function downloadSavingsCategories(runs, { leadIn = [] } = {}, date = new Date()) {
+  const [mod, { renderSavingsCharts }] = await Promise.all([import('exceljs'), import('./savingsChartImage.js')]);
   const Workbook = mod.Workbook || mod.default?.Workbook;
-  const wb = buildSavingsCategoriesWorkbook(Workbook, runs);
+  const wb = buildSavingsCategoriesWorkbook(Workbook, runs, {
+    charts: renderSavingsCharts(chartData(runs, leadIn)),
+    leadIn,
+  });
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
