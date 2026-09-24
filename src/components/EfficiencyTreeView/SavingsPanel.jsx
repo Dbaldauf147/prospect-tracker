@@ -11,6 +11,7 @@ import {
   buildSavings, forwardSeries, getSavingsState, hasSavedSavings, monthlySeries, normalizeSavingsState,
   parseForwardTable, parseMonthlyVolumes, parseNymexTable, percentileRank, priceStats, sourceSummary,
   termLadder, volumeSummary, yearRows,
+  syncActiveSite, switchSite, addSite, removeSite, MAX_SITES,
   addMonths, monthKey, historySlot, LOOKBACK_ALL, MAX_LOOKBACK_MONTHS,
 } from '../../utils/nymexSavings.js';
 import { downloadSavingsMonths } from '../../utils/savingsExport.js';
@@ -360,7 +361,13 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
 
   useEffect(() => () => clearTimeout(timerRef.current), []);
 
-  const apply = useCallback((next) => { setState(next); save(next); }, [save]);
+  // Every write goes through here, so the open site's copy in the site list
+  // is brought up to date on every edit rather than only on a switch.
+  const apply = useCallback((raw) => {
+    const next = syncActiveSite(raw);
+    setState(next);
+    save(next);
+  }, [save]);
   const patchScenario = useCallback((patch) => {
     const prev = stateRef.current;
     apply({ ...prev, scenario: { ...prev.scenario, ...patch } });
@@ -958,8 +965,68 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
     { n: 2, label: 'Consumption', hint: 'What it burns' },
     { n: 3, label: 'Contract details', hint: 'Term, pricing and hedge' },
   ];
+  // The site list: open one, add one, delete the open one. A new or
+  // switched-to site starts on step 1 with nothing ticked.
+  const sites = state.sites || [];
+  const siteLabel = (sc) => String(sc?.name || '').trim() || 'Untitled site';
+  function openSite(id) {
+    if (id === state.activeSiteId) return;
+    apply(switchSite(stateRef.current, id));
+    setVisited(new Set());
+    setStepRaw(1);
+  }
+  function newSite() {
+    if (sites.length >= MAX_SITES) return;
+    apply(addSite(stateRef.current, series, curve));
+    setVisited(new Set());
+    setStepRaw(1);
+  }
+  function deleteSite() {
+    const id = state.activeSiteId;
+    if (!window.confirm(`Delete "${siteLabel(s)}" and everything entered for it?`)) return;
+    apply(removeSite(stateRef.current, id, series, curve));
+    setVisited(new Set());
+    setStepRaw(1);
+  }
+  const siteBar = (
+    <div className={styles.siteBar}>
+      <span className={styles.siteBarTitle}>Sites <span className={styles.siteBarCount}>{sites.length}</span></span>
+      <div className={styles.siteList} role="tablist" aria-label="Sites">
+        {sites.map(x => {
+          const open = x.id === state.activeSiteId;
+          const sc = open ? s : x.scenario;
+          return (
+            <button
+              key={x.id}
+              type="button"
+              role="tab"
+              aria-selected={open}
+              className={open ? styles.siteChipActive : styles.siteChip}
+              onClick={() => openSite(x.id)}
+              title={`${siteLabel(sc)} - ${vol(sc.annualVolumeDth)} Dth a year, ${sc.termMonths} month term`}
+            >{siteLabel(sc)}</button>
+          );
+        })}
+        <button
+          type="button"
+          className={styles.siteAdd}
+          onClick={newSite}
+          disabled={sites.length >= MAX_SITES}
+          title={sites.length >= MAX_SITES ? `The list holds up to ${MAX_SITES} sites. Delete one to add another.` : 'Start a new site at step 1'}
+        >+ New site</button>
+      </div>
+      <button
+        type="button"
+        className={styles.smallBtn}
+        onClick={deleteSite}
+        title={`Delete "${siteLabel(s)}"`}
+      >Delete site</button>
+    </div>
+  );
+
   const stepHeader = (
     <>
+      {siteBar}
       <ol className={styles.stepper} aria-label="Steps">
         {STEPS.map(st => {
           const current = step === st.n;

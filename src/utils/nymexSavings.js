@@ -934,6 +934,8 @@ export function normalizeSavingsState(raw) {
   const forward = customForward.length ? customForward : null;
   const series = monthlySeries(settles || SHIPPED_SETTLES);
   const curve = forwardSeries(forward || SHIPPED_FORWARD);
+  const scenario = normalizeScenario(raw?.scenario, series, curve);
+  const { sites, activeSiteId } = normalizeSites(raw, scenario, series, curve);
   return {
     settles,
     forward,
@@ -942,8 +944,105 @@ export function normalizeSavingsState(raw) {
     // pasted it; the shipped one carries the as-of date it was quoted at,
     // which is not the same thing and is not guessed at from the file.
     forwardAsOf: text(raw?.forwardAsOf, 40) || null,
-    scenario: normalizeScenario(raw?.scenario, series, curve),
+    scenario,
+    sites,
+    activeSiteId,
   };
+}
+
+// ── the list of sites ───────────────────────────────────────────────────
+//
+// Step by step keeps a list of sites, each a whole scenario of its own.
+// `scenario` stays what it always was - the one every subtab prices - and
+// is the scenario of the site that is open (`activeSiteId`). The list holds
+// a copy of it that syncActiveSite keeps current on every edit, so the
+// stored list is never stale and switching is a plain swap.
+//
+// A record saved before the list existed has just the one scenario; it
+// becomes the first site, so nothing anybody entered goes missing.
+
+export const MAX_SITES = 50;
+const FIRST_SITE_ID = 'site-1';
+
+function normalizeSites(raw, scenario, series, curve) {
+  const seen = new Set();
+  const sites = [];
+  for (const x of Array.isArray(raw?.sites) ? raw.sites : []) {
+    if (!x || typeof x !== 'object') continue;
+    const id = text(x.id, 40);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    sites.push({ id, scenario: normalizeScenario(x.scenario, series, curve) });
+    if (sites.length >= MAX_SITES) break;
+  }
+  if (!sites.length) return { sites: [{ id: FIRST_SITE_ID, scenario }], activeSiteId: FIRST_SITE_ID };
+  let activeSiteId = text(raw?.activeSiteId, 40);
+  if (!sites.some(x => x.id === activeSiteId)) activeSiteId = sites[0].id;
+  // The live scenario is the truth for the open site.
+  return { sites: sites.map(x => (x.id === activeSiteId ? { ...x, scenario } : x)), activeSiteId };
+}
+
+/** The state with the open site's entry in the list matching `scenario`. */
+export function syncActiveSite(state) {
+  if (!state || !Array.isArray(state.sites)) return state;
+  return {
+    ...state,
+    sites: state.sites.map(x => (x.id === state.activeSiteId ? { ...x, scenario: state.scenario } : x)),
+  };
+}
+
+/** Open another site from the list. Unknown ids leave the state as it is. */
+export function switchSite(state, id) {
+  const synced = syncActiveSite(state);
+  const target = synced.sites.find(x => x.id === id);
+  if (!target || id === synced.activeSiteId) return synced;
+  return { ...synced, activeSiteId: id, scenario: target.scenario };
+}
+
+// The page's defaults with no name. Built from the default scenario rather
+// than by normalizing a bare { name }, which would read every missing number
+// as 0 and clamp the term to one month in 1900.
+function blankSiteScenario(series, forward) {
+  return { ...normalizeScenario(null, series, forward), name: '' };
+}
+
+function newSiteId(taken) {
+  let id;
+  do {
+    id = `site-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  } while (taken.has(id));
+  return id;
+}
+
+/**
+ * Add a blank site (the page's defaults, no name) and open it. Returns the
+ * state unchanged once the list is at MAX_SITES.
+ */
+export function addSite(state, series = null, forward = null) {
+  const synced = syncActiveSite(state);
+  if (synced.sites.length >= MAX_SITES) return synced;
+  const id = newSiteId(new Set(synced.sites.map(x => x.id)));
+  const scenario = blankSiteScenario(series, forward);
+  return { ...synced, sites: [...synced.sites, { id, scenario }], activeSiteId: id, scenario };
+}
+
+/**
+ * Take a site off the list. Removing the open one opens the one before it
+ * (or the next, if it was first); removing the last one leaves a blank
+ * site, since the page always prices something.
+ */
+export function removeSite(state, id, series = null, forward = null) {
+  const synced = syncActiveSite(state);
+  const idx = synced.sites.findIndex(x => x.id === id);
+  if (idx < 0) return synced;
+  const sites = synced.sites.filter(x => x.id !== id);
+  if (!sites.length) {
+    const scenario = blankSiteScenario(series, forward);
+    return { ...synced, sites: [{ id: FIRST_SITE_ID, scenario }], activeSiteId: FIRST_SITE_ID, scenario };
+  }
+  if (id !== synced.activeSiteId) return { ...synced, sites };
+  const next = sites[Math.max(0, idx - 1)];
+  return { ...synced, sites, activeSiteId: next.id, scenario: next.scenario };
 }
 
 /** Read it out of the settings document, from nothing if need be. */
