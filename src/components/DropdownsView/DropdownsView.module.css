@@ -1420,6 +1420,43 @@
   line-height: 1.4;
 }
 
+/* The Notes rich-text box, restyled from Quill's snow theme to sit with the
+   plain inputs around it: same border, radius and type size. */
+.detailNotes :global(.ql-toolbar.ql-snow) {
+  border: 1px solid var(--color-border);
+  border-bottom: none;
+  border-radius: var(--radius-md, 6px) var(--radius-md, 6px) 0 0;
+  padding: 0.2rem 0.3rem;
+  background: var(--color-bg, #fff);
+}
+
+.detailNotes :global(.ql-container.ql-snow) {
+  border: 1px solid var(--color-border);
+  border-radius: 0 0 var(--radius-md, 6px) var(--radius-md, 6px);
+  background: var(--color-bg, #fff);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.78rem;
+}
+
+.detailNotes :global(.ql-editor) {
+  min-height: 4.2rem;
+  padding: 0.35rem 0.5rem;
+  line-height: 1.4;
+}
+
+.detailNotes :global(.ql-editor.ql-blank::before) {
+  left: 0.5rem;
+  right: 0.5rem;
+  font-style: normal;
+  color: var(--color-text-muted);
+}
+
+.detailNotes:focus-within :global(.ql-container.ql-snow),
+.detailNotes:focus-within :global(.ql-toolbar.ql-snow) {
+  border-color: var(--color-accent);
+}
+
 .detailInput:focus {
   outline: none;
   border-color: var(--color-accent);

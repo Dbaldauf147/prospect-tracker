@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { rolloutWeeks } from '../../data/serviceCatalog';
 import { parseAutoAddList, formatAutoAddList } from '../../utils/serviceAutoAdd';
@@ -25,7 +25,13 @@ import {
   parseServiceRefs, formatServiceRef, setRefStep, setRefLocalStep,
   findTemplateStepIndex, templatesForService,
 } from '../../utils/serviceStepDeps';
+import { toNotesHtml, notesPlainText } from '../../utils/richNotes';
+import { lazyView } from '../../utils/lazyView';
 import styles from './DropdownsView.module.css';
+
+// Quill is fetched the first time a service opens, not with the Services tab
+// (see QuillEditor.js).
+const ReactQuill = lazyView(() => import('../ProspectModal/QuillEditor'));
 
 // One service, all of it, on one screen. The Services table carries twelve
 // columns behind a horizontal scrollbar, so reading a single row means
@@ -77,48 +83,82 @@ function TextField({ label, value, placeholder, onCommit }) {
   );
 }
 
-// Notes. A multi-line box spanning the grid: Enter is a new line here, so
-// it commits on blur only, and Escape still reverts. Leading and trailing
-// blank space is trimmed but the line breaks inside are kept.
+// Notes. A rich-text box spanning the grid: bold, italic, underline,
+// strike, lists and links through Quill, the same editor the opportunity
+// notes use. It commits when focus leaves the whole box (toolbar included,
+// so clicking Bold doesn't count as leaving), and only when the user
+// actually typed or formatted something: Quill rewrites whatever it loads
+// into its own markup, so comparing strings would re-save every legacy
+// plain-text note the moment it was opened. Escape still reverts.
+const NOTES_TOOLBAR = [
+  ['bold', 'italic', 'underline', 'strike'],
+  [{ list: 'ordered' }, { list: 'bullet' }],
+  ['link'],
+  ['clean'],
+];
+const NOTES_FORMATS = ['bold', 'italic', 'underline', 'strike', 'list', 'indent', 'link'];
+const NOTES_MODULES = { toolbar: NOTES_TOOLBAR, clipboard: { matchVisual: false } };
+
 function NotesField({ value, onCommit }) {
-  const [draft, setDraft] = useState(value || '');
+  const loaded = toNotesHtml(value);
+  const [draft, setDraft] = useState(loaded);
   const [seen, setSeen] = useState(value || '');
+  // True once the user has changed something since the last load or save.
+  const [dirty, setDirty] = useState(false);
   // Set by Escape so the blur that follows it doesn't save the draft it is
-  // throwing away: that blur still sees this render's `draft`.
+  // throwing away: that blur still sees this render's `dirty`.
   const discardRef = useRef(false);
   if ((value || '') !== seen) {
     setSeen(value || '');
-    setDraft(value || '');
+    setDraft(loaded);
+    setDirty(false);
   }
 
   function commit() {
     if (discardRef.current) { discardRef.current = false; return; }
-    const trimmed = draft.trim();
-    if (trimmed === (value || '')) return;
-    onCommit(trimmed);
+    if (!dirty) return;
+    setDirty(false);
+    // An emptied editor still holds `<p><br></p>`; store that as no note.
+    const next = notesPlainText(draft).trim() ? draft : '';
+    if (next === (value || '')) return;
+    onCommit(next);
   }
 
   return (
-    <label className={styles.detailFieldWide}>
+    <div
+      className={`${styles.detailFieldWide} ${styles.detailNotes}`}
+      onBlur={e => {
+        if (e.currentTarget.contains(e.relatedTarget)) return;
+        commit();
+      }}
+      onKeyDown={e => {
+        if (e.key !== 'Escape') return;
+        // Leave the link tooltip's own Escape alone.
+        if (e.target.closest?.('.ql-tooltip')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        discardRef.current = dirty;
+        setDirty(false);
+        setDraft(loaded);
+        e.target.blur?.();
+      }}
+    >
       <span className={styles.detailLabel}>Notes</span>
-      <textarea
-        className={styles.detailTextarea}
-        value={draft}
-        rows={3}
-        placeholder="Add notes about this service"
-        onChange={e => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={e => {
-          if (e.key === 'Escape') {
-            e.preventDefault();
-            e.stopPropagation();
-            discardRef.current = true;
-            setDraft(value || '');
-            e.currentTarget.blur();
-          }
-        }}
-      />
-    </label>
+      <Suspense fallback={<div className={styles.detailTextarea} />}>
+        <ReactQuill
+          theme="snow"
+          value={draft}
+          useSemanticHTML={false}
+          onChange={(html, _delta, source) => {
+            setDraft(html);
+            if (source === 'user') setDirty(true);
+          }}
+          placeholder="Add notes about this service"
+          modules={NOTES_MODULES}
+          formats={NOTES_FORMATS}
+        />
+      </Suspense>
+    </div>
   );
 }
 
