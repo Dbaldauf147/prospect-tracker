@@ -196,7 +196,7 @@ export function savingsScenarioRows(run, meta = {}) {
     { label: 'Savings analysis', value: SAVINGS_BASES[basis].label },
     ...(basis === 'contract' ? [
       s.currentType === 'index'
-        ? { label: `Contract 1 all-in, index + adder, average (${UNIT})`, value: t.avgContract1AllIn, fmt: PRICE_FMT }
+        ? { label: `Contract 1 all-in, index less adder, average (${UNIT})`, value: t.avgContract1AllIn, fmt: PRICE_FMT }
         : { label: `Current contract rate (${UNIT})`, value: s.currentRate, fmt: PRICE_FMT },
     ] : []),
     ...(basis === 'avoided' ? [

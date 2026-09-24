@@ -18,7 +18,7 @@ import {
 } from '../../utils/nymexSavings.js';
 import { downloadSavingsMonths } from '../../utils/savingsExport.js';
 import { categoryRuns, indexLeadIn, downloadSavingsCategories } from '../../utils/savingsCategoriesExport.js';
-import { compareOption, stepSummaries, resultSummary, contractComparison } from '../../utils/sourcingSteps.js';
+import { compareOption, stepSummaries, resultSummary, contractComparison, lessAdder } from '../../utils/sourcingSteps.js';
 
 // The Sourcing area on Service Deep Dives: load the NYMEX record, describe a
 // contract and its hedge layers, and see what the hedge is worth over the
@@ -938,13 +938,13 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       </div>
       <div className={styles.fieldRow}>
         <NumberField
-          label="All-in rate" hint="Henry Hub + basis + adder" width="10rem" step="0.01" min="0" suffix={NYMEX_UNIT}
+          label="All-in rate" hint="Henry Hub + basis - adder" width="10rem" step="0.01" min="0" suffix={NYMEX_UNIT}
           value={s.fixedRate} onCommit={v => patchScenario({ fixedRate: v })}
         />
         <div className={styles.fieldNote}>
-          Every month of the term bills {price(s.fixedRate)} a Dth. Less the {price(s.basis)} basis and {price(s.adder)} adder,
+          Every month of the term bills {price(s.fixedRate)} a Dth. Less the {price(s.basis)} basis and plus the {price(s.adder)} adder,
           that locks <span className={styles.hasTip} title={HENRY_HUB_TIP}>Henry Hub</span> at {price(run.hedge.price)}.
-          The saving is measured against the index plus the same basis and adder.
+          The saving is measured against the index plus the same basis, less the same adder.
         </div>
       </div>
     </div>
@@ -957,7 +957,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       </div>
       <div className={styles.fieldNote}>
         Nothing is locked: every month's <span className={styles.hasTip} title={HENRY_HUB_TIP}>Henry Hub</span> price
-        is that month's NYMEX settle, with the {price(s.basis)} basis and {price(s.adder)} adder fixed on top. It
+        is that month's NYMEX settle, with the {price(s.basis)} basis added and the {price(s.adder)} adder taken off. It
         prices the same as the index, so the saving here is zero: the protection is on the basis and adder, not the
         commodity. Pick Fixed All-In or Block &amp; Index to lock some of the commodity too.
       </div>
@@ -1064,7 +1064,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
         />
       )}
       <NumberField
-        label="Retail adder" hint={contract1Index ? 'on top of the index' : 'inside that rate'} tip={RETAIL_ADDER_TIP}
+        label="Retail adder" hint={contract1Index ? 'taken off the index' : 'inside that rate'} tip={RETAIL_ADDER_TIP}
         width="9.5rem" step="0.01" suffix={NYMEX_UNIT}
         value={s.currentAdder ?? ''}
         onCommit={v => patchScenario({ currentAdder: String(v).trim() === '' ? null : v })}
@@ -1073,7 +1073,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   );
   // How Contract 1's all-in came about, in words, for the lines under it.
   const contract1Rate = contract1Index
-    ? `index + ${price(s.basis)} basis + ${price(s.currentAdder ?? 0)} adder (${price(run.totals.avgContract1AllIn)} on average)`
+    ? `index + ${price(s.basis)} basis ${lessAdder(s.currentAdder, price)} adder (${price(run.totals.avgContract1AllIn)} on average)`
     : price(s.currentRate);
 
   // The inputs the chosen savings analysis needs. The index needs none: it
@@ -1416,7 +1416,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
               {s.contractType === 'fixed'
                 ? `On the ${CONTRACT_TYPES.fixed.label} from step 2, all ${vol(run.totals.volume)} Dth over the term bill at ${price(s.fixedRate)} a Dth.`
                 : s.contractType === 'index'
-                  ? `On the ${CONTRACT_TYPES.index.label} from step 2, all ${vol(run.totals.volume)} Dth over the term float at each month's settle, with basis and adder on top.`
+                  ? `On the ${CONTRACT_TYPES.index.label} from step 2, all ${vol(run.totals.volume)} Dth over the term float at each month's settle, with the basis added and the adder taken off.`
                   : `On the ${CONTRACT_TYPES.layered.label} from step 2, ${run.hedge.pct.toFixed(0)}% of the ${vol(run.totals.volume)} Dth over the term (${vol(run.totals.volume * run.hedge.pct / 100)} Dth) is locked${run.hedge.price == null ? '' : ` at ${price(run.hedge.price)}`}; the rest floats at the index.`}
             </div>
           </div>
@@ -1459,7 +1459,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
               </div>
               <div className={styles.contractSideCost}>
                 {contract1Index
-                  ? <>{vol(run.totals.volume)} Dth at each month&apos;s index + {price(s.basis)} basis + {price(s.currentAdder ?? 0)} adder
+                  ? <>{vol(run.totals.volume)} Dth at each month&apos;s index + {price(s.basis)} basis {lessAdder(s.currentAdder, price)} adder
                     ({price(run.totals.avgContract1AllIn)} all-in on average) is <strong>{usd(oldCost)}</strong> over the new term.</>
                   : <>{vol(run.totals.volume)} Dth at {price(s.currentRate)} is <strong>{usd(oldCost)}</strong> over the new term.</>}
                 {contract1Index && s.currentAdder == null && (
@@ -1539,8 +1539,8 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                 </tr>
                 <tr>
                   <th scope="row">Commodity and basis</th>
-                  <td className={styles.tdNum}>{price(cmp.rate1 - cmp.adder.adder1)}</td>
-                  <td className={styles.tdNum}>{price((cmp.rate2 ?? 0) - cmp.adder.adder2)}</td>
+                  <td className={styles.tdNum}>{price(cmp.rate1 + cmp.adder.adder1)}</td>
+                  <td className={styles.tdNum}>{price((cmp.rate2 ?? 0) + cmp.adder.adder2)}</td>
                   <td className={styles.tdNum}>{price(cmp.volume ? cmp.adder.rest / cmp.volume : null)}</td>
                   <td className={cmp.adder.rest >= 0 ? styles.tdGood : styles.tdBad}>{usd(cmp.adder.rest)}</td>
                 </tr>

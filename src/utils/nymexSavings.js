@@ -172,7 +172,7 @@ export const SAVINGS_BASES = {
   index: {
     label: 'Against the index',
     short: 'the index bill',
-    note: 'The difference between the contract and paying the floating market price (Henry Hub plus the same basis and adder) for the same volume.',
+    note: 'The difference between the contract and paying the floating market price (Henry Hub plus the same basis, less the same adder) for the same volume.',
     example: '',
   },
   contract: {
@@ -198,7 +198,7 @@ export const DEFAULT_SAVINGS_BASIS = 'index';
 //           like. The basis is the delivery point's, so it is shared.
 export const CURRENT_CONTRACT_TYPES = {
   fixed: { label: 'Fixed all-in', note: 'One all-in $/Dth for every month' },
-  index: { label: 'Index + adder', note: 'Each month\'s index plus basis and the retail adder' },
+  index: { label: 'Index less adder', note: 'Each month\'s index plus basis, less the retail adder' },
 };
 // Fixed is what Contract 1 was before it had a type: a saved all-in rate
 // keeps meaning what it meant.
@@ -769,7 +769,7 @@ export function contractHedge(scenario) {
   if (type === 'index') return { type, pct: 0, price: null, over: false, allIn: null };
   if (type === 'fixed') {
     const allIn = num(scenario.fixedRate, 0);
-    return { type, pct: 100, price: allIn - num(scenario.basis, 0) - num(scenario.adder, 0), over: false, allIn };
+    return { type, pct: 100, price: allIn - num(scenario.basis, 0) + num(scenario.adder, 0), over: false, allIn };
   }
   return { type, ...hedgeSummary(scenario.layers), allIn: null };
 }
@@ -941,13 +941,14 @@ export function buildSavings(scenario, series, forward = []) {
     const { price: index, source } = priceOf(year, month);
     const volume = given == null ? s.annualVolumeDth * weights[month - 1] : given;
     const commodity = hedgedShare * strike + (1 - hedgedShare) * index;
-    const indexAllIn = index + s.basis + s.adder;
-    const contractAllIn = commodity + s.basis + s.adder;
+    // The retail adder comes off the index, not on top of it.
+    const indexAllIn = index + s.basis - s.adder;
+    const contractAllIn = commodity + s.basis - s.adder;
     // The rate the saving is measured against. See SAVINGS_BASES.
     // Contract 1, the contract the site is on today, priced this month: its
     // fixed all-in, or the index plus basis and its own adder.
     const contract1AllIn = s.currentType === 'index'
-      ? index + s.basis + (s.currentAdder ?? 0)
+      ? index + s.basis - (s.currentAdder ?? 0)
       : s.currentRate;
     const baselineAllIn = s.savingsBasis === 'contract'
       ? contract1AllIn

@@ -50,7 +50,7 @@ const scenario = {
   const run = buildSavings({ ...scenario, contractType: 'fixed', fixedRate: 4.1 }, series, curve);
   eq(run.hedge.type, 'fixed', 'fixed reports its type');
   eq(run.hedge.pct, 100, 'fixed locks all of the volume');
-  near(run.hedge.price, 4.1 - 0.25 - 0.35, 1e-9, 'its Henry Hub strike is the rate less basis and adder');
+  near(run.hedge.price, 4.1 - 0.25 + 0.35, 1e-9, 'its Henry Hub strike is the rate less basis, with the adder put back');
   ok(run.months.every(m => Math.abs(m.contractAllIn - 4.1) < 1e-9), 'every month bills the fixed all-in rate');
   near(run.totals.contractCost, 4.1 * run.totals.volume, 1e-6, 'so the contract cost is the rate times the volume');
 }
@@ -59,7 +59,7 @@ const scenario = {
   const run = buildSavings({ ...scenario, contractType: 'index' }, series, curve);
   eq(run.hedge.pct, 0, 'index locks nothing');
   eq(run.hedge.price, null, 'and has no strike');
-  ok(run.months.every(m => Math.abs(m.contractAllIn - (m.index + 0.25 + 0.35)) < 1e-9), 'every month is the index plus the fixed basis and adder');
+  ok(run.months.every(m => Math.abs(m.contractAllIn - (m.index + 0.25 - 0.35)) < 1e-9), 'every month is the index plus the fixed basis, less the adder');
   near(run.totals.saving, 0, 1e-6, 'so against the index it saves nothing either way');
 }
 

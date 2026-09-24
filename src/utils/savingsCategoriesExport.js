@@ -245,7 +245,7 @@ export function categoryFormats(key, s) {
 export function categoryMonthAoa(key, run) {
   const s = run?.scenario || {};
   const split = hasAdderSplit(key, s);
-  const adderPerDth = split ? s.currentAdder - s.adder : 0;
+  const adderPerDth = split ? s.adder - s.currentAdder : 0;
   const rows = (run?.months || []).map(m => [
     m.label,
     SOURCE_LABEL[m.source] || m.source,

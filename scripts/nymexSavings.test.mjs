@@ -226,8 +226,8 @@ const curve = forwardSeries(SHIPPED_FORWARD);
   // the saving.
   const loaded = buildSavings({ ...flat, adder: 0.35, basis: -0.2 }, one);
   near(loaded.totals.saving, 100, 1e-9, 'the adder and basis drop out of the saving');
-  near(loaded.totals.indexCost, 515, 1e-9, 'while both legs of the bill carry them');
-  near(loaded.totals.contractCost, 415, 1e-9, 'the contract leg too');
+  near(loaded.totals.indexCost, 445, 1e-9, 'while both legs of the bill carry them, the adder taken off the index');
+  near(loaded.totals.contractCost, 345, 1e-9, 'the contract leg too');
 
   // Half hedged is half the saving.
   const half = buildSavings({ ...flat, layers: [{ pct: 50, price: 4 }] }, one);
