@@ -6,6 +6,7 @@ import {
 import styles from './SavingsPanel.module.css';
 import { SitePricingPanel } from './SitePricingPanel.jsx';
 import { NYMEX_MONTH_LABELS, NYMEX_UNIT } from '../../data/nymexHistory.js';
+import { HENRY_HUB_TIP, BASIS_TIP, RETAIL_ADDER_TIP } from '../../data/gasPriceComponents.js';
 import {
   SAVINGS_KEY, SHIPPED_FORWARD, SHIPPED_FORWARD_ASOF, SHIPPED_SETTLES, TERM_LADDER, VOLUME_SHAPES,
   buildSavings, forwardSeries, getSavingsState, hasSavedSavings, monthlySeries, normalizeSavingsState,
@@ -120,14 +121,16 @@ const ordinal = (n) => {
 // so the box follows the scenario without an effect syncing the two, and
 // dropping the draft on blur is what puts the CLEANED value on screen (a
 // term of "999" comes back as the 120 the scenario clamped it to).
-function NumberField({ label, hint, title, value, step = 'any', min, max, suffix, onCommit, width }) {
+// `tip` is hover text explaining what the field IS (the label gets a dotted
+// underline to say there is some); `title` stays for anything else.
+function NumberField({ label, hint, title, tip, value, step = 'any', min, max, suffix, onCommit, width }) {
   const [draft, setDraft] = useState(null);
   const shown = draft ?? String(value ?? '');
   const commit = () => { if (draft !== null) onCommit(draft); setDraft(null); };
   return (
-    <label className={styles.field} title={title} style={width ? { width } : undefined}>
+    <label className={styles.field} title={tip || title} style={width ? { width } : undefined}>
       <span className={styles.fieldLabel}>
-        {label}
+        {tip ? <span className={styles.hasTip}>{label}</span> : label}
         {hint && <span className={styles.fieldHint}>{hint}</span>}
       </span>
       <span className={styles.inputWrap}>
@@ -852,7 +855,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           <tr>
             <th>Layer</th>
             <th className={styles.thNum}>% of volume</th>
-            <th className={styles.thNum}>Price ({NYMEX_UNIT})</th>
+            <th className={styles.thNum}><span className={styles.hasTip} title={HENRY_HUB_TIP}>Price ({NYMEX_UNIT})</span></th>
             <th />
           </tr>
         </thead>
@@ -896,7 +899,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             <td />
           </tr>
           <tr className={styles.layerFloat}>
-            <th scope="row">At index</th>
+            <th scope="row"><span className={styles.hasTip} title={HENRY_HUB_TIP}>At index</span></th>
             <td className={styles.tdNum}>{(100 - run.hedge.pct).toFixed(0)}%</td>
             <td className={styles.tdNum}>market</td>
             <td />
@@ -1039,11 +1042,11 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
               value={s.termMonths} onCommit={v => patchScenario({ termMonths: v })}
             />
             <NumberField
-              label="Basis" hint="delivered point vs Henry Hub" width="9rem" step="0.01" suffix={NYMEX_UNIT}
+              label="Basis" hint="delivered point vs Henry Hub" tip={BASIS_TIP} width="9rem" step="0.01" suffix={NYMEX_UNIT}
               value={s.basis} onCommit={v => patchScenario({ basis: v })}
             />
             <NumberField
-              label="Retail adder" hint="margin, transport, fees" width="9.5rem" step="0.01" suffix={NYMEX_UNIT}
+              label="Retail adder" hint="margin, transport, fees" tip={RETAIL_ADDER_TIP} width="9.5rem" step="0.01" suffix={NYMEX_UNIT}
               value={s.adder} onCommit={v => patchScenario({ adder: v })}
             />
           </div>
@@ -1119,7 +1122,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       {/* ── the record this is all priced off ─────────────────────────── */}
       <div className={styles.bar}>
         <div className={styles.barMain}>
-          <span className={styles.barTitle}>Settles</span>
+          <span className={`${styles.barTitle} ${styles.hasTip}`} title={HENRY_HUB_TIP}>Settles</span>
           <span
             className={styles.barFacts}
             title={stats
@@ -1149,7 +1152,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           quoted at belongs beside it, not in a tooltip. */}
       <div className={styles.bar}>
         <div className={styles.barMain}>
-          <span className={styles.barTitle}>Forward curve</span>
+          <span className={`${styles.barTitle} ${styles.hasTip}`} title={HENRY_HUB_TIP}>Forward curve</span>
           <span
             className={styles.barFacts}
             title={curve.length
@@ -1677,11 +1680,11 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           </div>
           <div className={styles.fieldRow}>
             <NumberField
-              label="Basis" hint="delivered point vs Henry Hub" width="9rem" step="0.01" suffix={NYMEX_UNIT}
+              label="Basis" hint="delivered point vs Henry Hub" tip={BASIS_TIP} width="9rem" step="0.01" suffix={NYMEX_UNIT}
               value={s.basis} onCommit={v => patchScenario({ basis: v })}
             />
             <NumberField
-              label="Retail adder" hint="margin, transport, fees" width="9.5rem" step="0.01" suffix={NYMEX_UNIT}
+              label="Retail adder" hint="margin, transport, fees" tip={RETAIL_ADDER_TIP} width="9.5rem" step="0.01" suffix={NYMEX_UNIT}
               value={s.adder} onCommit={v => patchScenario({ adder: v })}
             />
             <div className={styles.fieldNote}>
@@ -1839,7 +1842,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                 <th>Year</th>
                 <th className={styles.thNum}>Months</th>
                 <th className={styles.thNum}>Volume (Dth)</th>
-                <th className={styles.thNum}>Avg index</th>
+                <th className={styles.thNum}><span className={styles.hasTip} title={HENRY_HUB_TIP}>Avg index</span></th>
                 <th className={styles.thNum}>At index</th>
                 <th className={styles.thNum}>On contract</th>
                 <th className={styles.thNum}>Saving</th>
@@ -2281,7 +2284,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
               <thead>
                 <tr>
                   <th>Month</th>
-                  <th className={styles.thNum}>Index</th>
+                  <th className={styles.thNum}><span className={styles.hasTip} title={HENRY_HUB_TIP}>Index</span></th>
                   <th className={styles.thNum}>Index all-in</th>
                   <th className={styles.thNum}>Contract all-in</th>
                   <th className={styles.thNum}>Volume (Dth)</th>
