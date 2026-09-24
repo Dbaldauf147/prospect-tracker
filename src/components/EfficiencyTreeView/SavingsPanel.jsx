@@ -254,7 +254,19 @@ function ChartTip({ active, payload, label, format, footer }) {
   );
 }
 
-export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSettings, section = 'contract' }) {
+export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSettings, section = 'contract', onOpenSection }) {
+  // Step by step: the same scenario as the other subtabs, entered one piece
+  // at a time. Which step is open is screen state, not saved.
+  const inSteps = section === 'steps';
+  const [step, setStepRaw] = useState(1);
+  // Steps already stepped through. Consumption and the contract start out
+  // filled with defaults, so "has a value" alone would tick them before
+  // anybody looked at them.
+  const [visited, setVisited] = useState(() => new Set());
+  const setStep = (next) => {
+    setVisited(v => new Set(v).add(step));
+    setStepRaw(next);
+  };
   const [state, setState] = useState(() => getSavingsState(settings));
   const [status, setStatus] = useState('');
   // The paste box serves both tables. `pasteKind` is null when it is shut,
@@ -825,8 +837,285 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
 
   const savingTone = run.totals.saving >= 0 ? 'good' : 'bad';
 
+  // The hedge layers table, shared by Contract savings and step 3 of Step by
+  // step, so the two can't drift into editing the layers differently.
+  const hedgeLayersGroup = (
+    <div className={styles.inputGroup}>
+      <div className={styles.groupTitle}>
+        Hedge positions
+        <span className={styles.groupHint}>
+          Each layer locks a slice of the volume at a price. Whatever is left floats at the index.
+        </span>
+      </div>
+      <table className={styles.layerTable}>
+        <thead>
+          <tr>
+            <th>Layer</th>
+            <th className={styles.thNum}>% of volume</th>
+            <th className={styles.thNum}>Price ({NYMEX_UNIT})</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {s.layers.map((l, i) => (
+            <tr key={i}>
+              <td>
+                <input
+                  className={styles.inputSmall}
+                  type="text"
+                  value={l.label}
+                  onChange={e => setLayer(i, { label: e.target.value })}
+                />
+              </td>
+              <td className={styles.tdNum}>
+                <NumberField
+                  label="" value={l.pct} step="1" min="0" max="100" suffix="%"
+                  onCommit={v => setLayer(i, { pct: v })}
+                />
+              </td>
+              <td className={styles.tdNum}>
+                <NumberField
+                  label="" value={l.price} step="0.01" min="0"
+                  onCommit={v => setLayer(i, { price: v })}
+                />
+              </td>
+              <td>
+                <button
+                  type="button"
+                  className={styles.iconBtn}
+                  onClick={() => removeLayer(i)}
+                  title={`Remove ${l.label}`}
+                >&#215;</button>
+              </td>
+            </tr>
+          ))}
+          <tr className={styles.layerTotal}>
+            <th scope="row">Hedged</th>
+            <td className={styles.tdNum}>{run.hedge.pct.toFixed(0)}%</td>
+            <td className={styles.tdNum}>{price(run.hedge.price)}</td>
+            <td />
+          </tr>
+          <tr className={styles.layerFloat}>
+            <th scope="row">At index</th>
+            <td className={styles.tdNum}>{(100 - run.hedge.pct).toFixed(0)}%</td>
+            <td className={styles.tdNum}>market</td>
+            <td />
+          </tr>
+        </tbody>
+      </table>
+      <div className={styles.rowActions}>
+        <button type="button" className={styles.smallBtn} onClick={addLayer}>+ Add a layer</button>
+        {run.hedge.over && <span className={styles.warn}>The layers add up to more than the volume, so they are clipped at 100%.</span>}
+      </div>
+    </div>
+  );
+
+
+  // ── Step by step ───────────────────────────────────────────────────
+  // Three steps over the one scenario the other subtabs read: the site, what
+  // it burns, and the contract. Every field writes the same scenario the
+  // Contract savings and Consumption subtabs show, so there is nothing to
+  // carry across when the steps are done.
+  const stepDone = {
+    1: !!String(s.name || '').trim(),
+    2: visited.has(2) && (s.annualVolumeDth > 0 || enteredVolumes > 0),
+    3: visited.has(3),
+  };
+  const STEPS = [
+    { n: 1, label: 'Site', hint: 'Name the site' },
+    { n: 2, label: 'Consumption', hint: 'What it burns' },
+    { n: 3, label: 'Contract details', hint: 'Term, pricing and hedge' },
+  ];
+  const stepHeader = (
+    <>
+      <ol className={styles.stepper} aria-label="Steps">
+        {STEPS.map(st => {
+          const current = step === st.n;
+          return (
+            <li key={st.n} className={styles.stepperItem}>
+              <button
+                type="button"
+                className={current ? styles.stepBtnActive : styles.stepBtn}
+                aria-current={current ? 'step' : undefined}
+                onClick={() => setStep(st.n)}
+              >
+                <span className={stepDone[st.n] && !current ? styles.stepNumDone : styles.stepNum}>
+                  {stepDone[st.n] && !current ? '✓' : st.n}
+                </span>
+                <span className={styles.stepText}>
+                  <span className={styles.stepLabel}>Step {st.n}. {st.label}</span>
+                  <span className={styles.stepHint}>{st.hint}</span>
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+
+      {step === 1 && (
+        <div className={`${styles.inputGroup} ${styles.stepPanel}`}>
+          <div className={styles.groupTitle}>
+            Site information
+            <span className={styles.groupHint}>The site or account this gas pricing is for.</span>
+          </div>
+          <div className={styles.fieldRow}>
+            <label className={styles.field} style={{ width: '22rem', maxWidth: '100%' }}>
+              <span className={styles.fieldLabel}>Site name</span>
+              <span className={styles.inputWrap}>
+                <input
+                  className={styles.input}
+                  type="text"
+                  value={s.name}
+                  autoFocus
+                  placeholder="e.g. Midwest plant, Joliet IL"
+                  onChange={e => patchScenario({ name: e.target.value })}
+                  onKeyDown={e => { if (e.key === 'Enter') setStep(2); }}
+                />
+              </span>
+            </label>
+          </div>
+        </div>
+      )}
+
+      {step === 2 && (
+        <div className={`${styles.inputGroup} ${styles.stepPanel}`}>
+          <div className={styles.groupTitle}>
+            Consumption{s.name ? ` for ${s.name}` : ''}
+            <span className={styles.groupHint}>
+              Give the annual volume and how it falls across the year. If you have the real monthly bills, enter or paste them in the table below and those months use them instead.
+            </span>
+          </div>
+          <div className={styles.fieldRow}>
+            <NumberField
+              label="Annual volume" hint="burned in a year" width="10rem" step="1000" suffix="Dth"
+              value={s.annualVolumeDth} onCommit={v => patchScenario({ annualVolumeDth: v })}
+            />
+            <label className={styles.field} style={{ width: '12rem' }}>
+              <span className={styles.fieldLabel}>
+                Volume shape
+                <span className={styles.fieldHint}>{VOLUME_SHAPES[s.volumeShape].note}</span>
+              </span>
+              <span className={styles.inputWrap}>
+                <select
+                  className={styles.input}
+                  value={s.volumeShape}
+                  onChange={e => patchScenario({ volumeShape: e.target.value })}
+                >
+                  {Object.entries(VOLUME_SHAPES).map(([key, shape]) => (
+                    <option key={key} value={key}>{shape.label}</option>
+                  ))}
+                </select>
+              </span>
+            </label>
+          </div>
+        </div>
+      )}
+
+      {step === 3 && (
+        <div className={`${styles.inputGroup} ${styles.stepPanel}`}>
+          <div className={styles.groupTitle}>
+            Contract details{s.name ? ` for ${s.name}` : ''}
+            <span className={styles.groupHint}>When the term starts, how long it runs, and what is charged on top of the index.</span>
+          </div>
+          <div className={styles.fieldRow}>
+            <label className={styles.field} style={{ width: '7rem' }}>
+              <span className={styles.fieldLabel}>Starts<span className={styles.fieldHint}>first month</span></span>
+              <span className={styles.inputWrap}>
+                <select
+                  className={styles.input}
+                  value={s.startMonth}
+                  onChange={e => patchScenario({ startMonth: Number(e.target.value) })}
+                >
+                  {NYMEX_MONTH_LABELS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                </select>
+              </span>
+            </label>
+            <NumberField
+              label="Year" hint="term opens in" width="6rem" step="1"
+              value={s.startYear} onCommit={v => patchScenario({ startYear: v })}
+            />
+            <NumberField
+              label="Term" hint="how long it runs" width="7.5rem" step="1" min="1" suffix="mo"
+              value={s.termMonths} onCommit={v => patchScenario({ termMonths: v })}
+            />
+            <NumberField
+              label="Basis" hint="delivered point vs Henry Hub" width="9rem" step="0.01" suffix={NYMEX_UNIT}
+              value={s.basis} onCommit={v => patchScenario({ basis: v })}
+            />
+            <NumberField
+              label="Retail adder" hint="margin, transport, fees" width="9.5rem" step="0.01" suffix={NYMEX_UNIT}
+              value={s.adder} onCommit={v => patchScenario({ adder: v })}
+            />
+          </div>
+        </div>
+      )}
+    </>
+  );
+  const stepFooter = (
+    <>
+      {step === 3 && (
+        <>
+          <div className={`${styles.inputs} ${styles.stepPanel}`}>{hedgeLayersGroup}</div>
+          <div className={styles.tiles}>
+            <Tile
+              label="Saving over the term"
+              value={usd(run.totals.saving)}
+              sub={`${pct(run.totals.savingPct)} of the index bill`}
+              tone={savingTone}
+              title="What the same volume costs at index, less what it costs on this contract."
+            />
+            <Tile
+              label="Per Dth"
+              value={price(run.totals.savingPerDth)}
+              sub={`over ${vol(run.totals.volume)} Dth`}
+              tone={savingTone}
+            />
+            <Tile
+              label="Hedged"
+              value={`${run.hedge.pct.toFixed(0)}%`}
+              sub={run.hedge.price == null ? 'nothing locked' : `at ${price(run.hedge.price)}`}
+            />
+            <Tile
+              label="Term"
+              value={`${s.termMonths} mo`}
+              sub={run.months.length
+                ? `${run.months[0].label} to ${run.months[run.months.length - 1].label}`
+                : '-'}
+            />
+          </div>
+        </>
+      )}
+      <div className={styles.stepNav}>
+        <button
+          type="button"
+          className={styles.smallBtn}
+          disabled={step === 1}
+          onClick={() => setStep(Math.max(1, step - 1))}
+        >Back</button>
+        {status && <span className={styles.muted}>{status}</span>}
+        <span className={styles.stepNavSpacer} />
+        {step < 3 ? (
+          <button type="button" className={styles.primaryBtn} onClick={() => setStep(Math.min(3, step + 1))}>
+            Next: {STEPS[step].label}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={styles.primaryBtn}
+            onClick={() => { setVisited(v => new Set(v).add(3)); if (onOpenSection) onOpenSection('contract'); }}
+            title="Open Contract savings: the same numbers with the charts, the month-by-month table and the export"
+          >See the full analysis</button>
+        )}
+      </div>
+    </>
+  );
+
   return (
     <div className={styles.wrap}>
+      {/* The price record and the curve are what every subtab prices off,
+          but Step by step is only the data entry, so it leaves them out. */}
+      {!inSteps && (
+      <>
       {/* ── the record this is all priced off ─────────────────────────── */}
       <div className={styles.bar}>
         <div className={styles.barMain}>
@@ -948,6 +1237,11 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
         </div>
       )}
 
+      </>
+      )}
+
+      {inSteps && stepHeader}
+
       {/* ── one term, priced twice: the Contract savings subtab ───────── */}
       {/* ── the Consumption subtab ─────────────────────────────────────
           What the term burns. It reads off the same scenario Contract
@@ -956,8 +1250,9 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           of them and says where they are set instead. A second set of term
           fields here would be a second place to disagree about when the term
           opens. */}
-      {section === 'consumption' && (
+      {(section === 'consumption' || (inSteps && step === 2)) && (
       <>
+      {!inSteps && (
       <div className={styles.termLine}>
         <span className={styles.termLineMain}>
           {run.months[0]?.label} – {run.months[run.months.length - 1]?.label}
@@ -971,6 +1266,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           The term, the volume, the shape and the look-back are all set on Contract savings.
         </span>
       </div>
+      )}
 
 {/* ── the volumes themselves ──────────────────────────────────
           The annual number and the shape are an estimate of what burns
@@ -1280,14 +1576,18 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
         </div>
       </div>
 
+      {!inSteps && (
       <div className={styles.footNote}>
         This is the volume both legs of every saving on Contract savings are priced on: the market price for the month times what burned,
         against what the contract charges for the same month times the same figure. So a month given its real consumption is a month
         measured rather than estimated, and the page says per month, per year and per tile which it used. Nothing here is a price, and
         changing it moves the bill on both legs rather than the saving per Dth.
       </div>
+      )}
       </>
       )}
+
+      {inSteps && stepFooter}
 
       {section === 'contract' && (
       <>
@@ -1391,74 +1691,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
 
         </div>
 
-        <div className={styles.inputGroup}>
-          <div className={styles.groupTitle}>
-            Hedge positions
-            <span className={styles.groupHint}>
-              Each layer locks a slice of the volume at a price. Whatever is left floats at the index.
-            </span>
-          </div>
-          <table className={styles.layerTable}>
-            <thead>
-              <tr>
-                <th>Layer</th>
-                <th className={styles.thNum}>% of volume</th>
-                <th className={styles.thNum}>Price ({NYMEX_UNIT})</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {s.layers.map((l, i) => (
-                <tr key={i}>
-                  <td>
-                    <input
-                      className={styles.inputSmall}
-                      type="text"
-                      value={l.label}
-                      onChange={e => setLayer(i, { label: e.target.value })}
-                    />
-                  </td>
-                  <td className={styles.tdNum}>
-                    <NumberField
-                      label="" value={l.pct} step="1" min="0" max="100" suffix="%"
-                      onCommit={v => setLayer(i, { pct: v })}
-                    />
-                  </td>
-                  <td className={styles.tdNum}>
-                    <NumberField
-                      label="" value={l.price} step="0.01" min="0"
-                      onCommit={v => setLayer(i, { price: v })}
-                    />
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className={styles.iconBtn}
-                      onClick={() => removeLayer(i)}
-                      title={`Remove ${l.label}`}
-                    >&#215;</button>
-                  </td>
-                </tr>
-              ))}
-              <tr className={styles.layerTotal}>
-                <th scope="row">Hedged</th>
-                <td className={styles.tdNum}>{run.hedge.pct.toFixed(0)}%</td>
-                <td className={styles.tdNum}>{price(run.hedge.price)}</td>
-                <td />
-              </tr>
-              <tr className={styles.layerFloat}>
-                <th scope="row">At index</th>
-                <td className={styles.tdNum}>{(100 - run.hedge.pct).toFixed(0)}%</td>
-                <td className={styles.tdNum}>market</td>
-                <td />
-              </tr>
-            </tbody>
-          </table>
-          <div className={styles.rowActions}>
-            <button type="button" className={styles.smallBtn} onClick={addLayer}>+ Add a layer</button>
-            {run.hedge.over && <span className={styles.warn}>The layers add up to more than the volume, so they are clipped at 100%.</span>}
-          </div>
-        </div>
+        {hedgeLayersGroup}
       </div>
 
       {/* ── the answer ────────────────────────────────────────────────── */}
