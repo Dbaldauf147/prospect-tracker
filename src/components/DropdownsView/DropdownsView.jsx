@@ -32,6 +32,7 @@ import { parseMulti } from '../common/columnLinks';
 import { formatAutoAddList, autoAddedByMap } from '../../utils/serviceAutoAdd';
 import { autoNaedByMap } from '../../utils/serviceAutoNa';
 import { splitServiceNames } from '../../utils/serviceNameList';
+import { splitPastedCells, newOptionsFromPaste } from '../../utils/pasteOptions';
 import styles from './DropdownsView.module.css';
 
 // Key the Services table's column prefs (widths, visibility, order) are
@@ -945,7 +946,15 @@ function ListCard({ list, filter, wide, links, onSaveLink, onChange, onRenameLab
   const linkEnabled = typeof onSaveLink === 'function';
   const [adding, setAdding] = useState(false);
   const [addDraft, setAddDraft] = useState('');
+  // What the last multi-line paste did, shown under the add button.
+  const [pasteNote, setPasteNote] = useState('');
   const addInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!pasteNote) return undefined;
+    const t = setTimeout(() => setPasteNote(''), 5000);
+    return () => clearTimeout(t);
+  }, [pasteNote]);
 
   useEffect(() => {
     if (adding) addInputRef.current?.focus();
@@ -976,6 +985,23 @@ function ListCard({ list, filter, wide, links, onSaveLink, onChange, onRenameLab
   function cancelAdd() {
     setAddDraft('');
     setAdding(false);
+  }
+  // A block copied out of Excel (a column, a row, or both) adds every cell
+  // as its own option. A single value pastes into the box as normal, so
+  // it can still be edited before Enter.
+  function handleAddPaste(e) {
+    const text = e.clipboardData?.getData('text/plain') || '';
+    if (splitPastedCells(text).length < 2) return;
+    e.preventDefault();
+    const { added, skipped } = newOptionsFromPaste(list.options, text);
+    if (added.length) onChange(list.key, [...list.options, ...added]);
+    setAddDraft('');
+    setAdding(false);
+    setPasteNote(
+      `Added ${added.length} option${added.length === 1 ? '' : 's'}`
+      + (skipped ? `, skipped ${skipped} already on the list` : '')
+      + '.',
+    );
   }
 
   function handleRemoveList() {
@@ -1052,8 +1078,10 @@ function ListCard({ list, filter, wide, links, onSaveLink, onChange, onRenameLab
               ref={addInputRef}
               type="text"
               value={addDraft}
-              placeholder="New option…"
+              placeholder="New option, or paste from Excel…"
+              title="Type one option, or paste a column or row from Excel to add them all at once"
               onChange={(e) => setAddDraft(e.target.value)}
+              onPaste={handleAddPaste}
               onBlur={commitAdd}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') { e.preventDefault(); commitAdd(); }
@@ -1085,6 +1113,11 @@ function ListCard({ list, filter, wide, links, onSaveLink, onChange, onRenameLab
             opacity: adding ? 0.5 : 1,
           }}
         >+ Add option</button>
+        {pasteNote && (
+          <div role="status" style={{ marginTop: 4, fontSize: '0.68rem', color: 'var(--color-text-muted)', textAlign: 'center' }}>
+            {pasteNote}
+          </div>
+        )}
       </div>
     </div>
   );
