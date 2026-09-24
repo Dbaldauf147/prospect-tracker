@@ -14,7 +14,7 @@ import {
   termLadder, volumeSummary, yearRows,
   syncActiveSite, switchSite, addSite, removeSite, MAX_SITES,
   addMonths, monthKey, historySlot, LOOKBACK_ALL, MAX_LOOKBACK_MONTHS,
-  CONTRACT_TYPES,
+  CONTRACT_TYPES, SAVINGS_BASES,
 } from '../../utils/nymexSavings.js';
 import { downloadSavingsMonths } from '../../utils/savingsExport.js';
 
@@ -831,7 +831,11 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       `Volume: ${vol(run.totals.volume)} Dth over the term`,
       `Contract: ${CONTRACT_TYPES[s.contractType].label}${s.contractType === 'fixed' ? ` at ${price(s.fixedRate)} ${NYMEX_UNIT} all-in` : ''}`,
       `Hedged: ${run.hedge.pct.toFixed(0)}% at ${price(run.hedge.price)} ${NYMEX_UNIT}`,
+      `Savings analysis: ${SAVINGS_BASES[s.savingsBasis].label}`,
       `At index: ${usd(run.totals.indexCost)} (${price(run.totals.avgIndexAllIn)} all-in)`,
+      ...(s.savingsBasis === 'index' ? [] : [
+        `${baselineLabel}: ${usd(run.totals.baselineCost)} (${price(run.totals.avgBaselineAllIn)} all-in)`,
+      ]),
       `On contract: ${usd(run.totals.contractCost)} (${price(run.totals.avgContractAllIn)} all-in)`,
       `Saving: ${usd(run.totals.saving)} (${pct(run.totals.savingPct)}, ${price(run.totals.savingPerDth)} a Dth)`,
       `Priced from: ${sourceSummary(run.totals)}.`,
@@ -880,6 +884,15 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   }
 
   const savingTone = run.totals.saving >= 0 ? 'good' : 'bad';
+  // What the saving is taken from, in the words the tiles use.
+  const baselineLabel = s.savingsBasis === 'contract'
+    ? 'On the current contract'
+    : s.savingsBasis === 'avoided' ? 'With no action' : 'At index';
+  const savingTitle = s.savingsBasis === 'contract'
+    ? 'What the same volume costs at the current contract rate, less what it costs on this contract.'
+    : s.savingsBasis === 'avoided'
+      ? `The cost avoided: this contract's rate times the ${s.noActionPct}% increase with no action less the ${s.strategyPct}% on the strategy, over the volume.`
+      : 'What the same volume costs at index, less what it costs on this contract.';
 
   // What the contract locks, by its type. Shared by Contract savings and the
   // last step of Step by step, so the two can't drift apart. Only a Layered
@@ -992,6 +1005,61 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
     ? fixedRateGroup
     : s.contractType === 'index' ? indexGroup : hedgeLayersGroup;
 
+  // The inputs the chosen savings analysis needs. The index needs none: it
+  // is the loaded settles and curve.
+  const savingsBasisFields = s.savingsBasis === 'contract' ? (
+    <div className={styles.fieldRow}>
+      <NumberField
+        label="Current contract rate" hint="today's third-party all-in" width="12rem" step="0.01" min="0" suffix={NYMEX_UNIT}
+        value={s.currentRate} onCommit={v => patchScenario({ currentRate: v })}
+      />
+      <div className={styles.fieldNote}>
+        Saving = ({price(s.currentRate)} current less {price(run.totals.avgContractAllIn)} on the new contract) x the
+        volume over the term = {usd(run.totals.saving)}.
+      </div>
+    </div>
+  ) : s.savingsBasis === 'avoided' ? (
+    <div className={styles.fieldRow}>
+      <NumberField
+        label="Increase with no action" hint="e.g. not on third-party supply" width="12rem" step="0.1" suffix="%"
+        value={s.noActionPct} onCommit={v => patchScenario({ noActionPct: v })}
+      />
+      <NumberField
+        label="Increase on the strategy" hint="e.g. on third-party supply" width="12rem" step="0.1" suffix="%"
+        value={s.strategyPct} onCommit={v => patchScenario({ strategyPct: v })}
+      />
+      <div className={styles.fieldNote}>
+        {(s.noActionPct - s.strategyPct).toFixed(1)}% avoided on the {price(run.totals.avgContractAllIn)} contract rate
+        is {price(run.totals.savingPerDth)} a Dth; over {vol(run.totals.volume)} Dth that is {usd(run.totals.saving)} avoided.
+      </div>
+    </div>
+  ) : null;
+
+  const savingsBasisPicker = (
+    <div className={styles.typeCards} role="radiogroup" aria-label="Savings analysis">
+      {Object.entries(SAVINGS_BASES).map(([key, b]) => {
+        const on = s.savingsBasis === key;
+        return (
+          <button
+            key={key}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            className={on ? styles.typeCardActive : styles.typeCard}
+            onClick={() => patchScenario({ savingsBasis: key })}
+          >
+            <span className={styles.typeCardHead}>
+              <span className={on ? styles.typeRadioOn : styles.typeRadio} aria-hidden="true" />
+              <span className={styles.typeCardTitle}>{b.label}</span>
+            </span>
+            <span className={styles.typeNote}>{b.note}</span>
+            {b.example && <span className={styles.typeExample}><strong>Example:</strong> {b.example}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+
   // Picking the contract type: a card per strategy, least risk first.
   const contractTypePicker = (
     <div className={styles.typeCards} role="radiogroup" aria-label="Contract type">
@@ -1021,8 +1089,9 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
 
 
   // ── Step by step ───────────────────────────────────────────────────
-  // Four steps over the one scenario the other subtabs read: the site, how
-  // the contract is bought, what it burns, and the contract's details. Every field writes the same scenario the
+  // Five steps over the one scenario the other subtabs read: the site, how
+  // the contract is bought, what it burns, what the saving is measured
+  // against, and the contract's details. Every field writes the same scenario the
   // Contract savings and Consumption subtabs show, so there is nothing to
   // carry across when the steps are done.
   const stepDone = {
@@ -1032,12 +1101,14 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
     2: visited.has(2),
     3: visited.has(3) && (s.annualVolumeDth > 0 || enteredVolumes > 0),
     4: visited.has(4),
+    5: visited.has(5),
   };
   const STEPS = [
     { n: 1, label: 'Site', hint: 'Name the site' },
     { n: 2, label: 'Contract type', hint: 'How the gas is bought' },
     { n: 3, label: 'Consumption', hint: 'What it burns' },
-    { n: 4, label: 'Contract details', hint: 'Term, pricing and hedge' },
+    { n: 4, label: 'Savings analysis', hint: 'What the saving is measured against' },
+    { n: 5, label: 'Contract details', hint: 'Term, pricing and hedge' },
   ];
   const LAST_STEP = STEPS.length;
   // The site list: open one, add one, delete the open one. A new or
@@ -1157,7 +1228,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             Contract type{s.name ? ` for ${s.name}` : ''}
             <span className={styles.groupHint}>
               Depending on your risk tolerance, Henry Hub, basis and the retail adder are combined into different
-              purchasing strategies. Pick the one this contract uses: step 4 asks for what it locks.
+              purchasing strategies. Pick the one this contract uses: step 5 asks for what it locks.
             </span>
           </div>
           {contractTypePicker}
@@ -1199,6 +1270,20 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       )}
 
       {step === 4 && (
+        <div className={`${styles.inputGroup} ${styles.stepPanel}`}>
+          <div className={styles.groupTitle}>
+            Savings analysis{s.name ? ` for ${s.name}` : ''}
+            <span className={styles.groupHint}>
+              What the contract's saving is measured against. Every saving figure on this page and in the export
+              follows this choice.
+            </span>
+          </div>
+          {savingsBasisPicker}
+          {savingsBasisFields}
+        </div>
+      )}
+
+      {step === 5 && (
         <div className={`${styles.inputGroup} ${styles.stepPanel}`}>
           <div className={styles.groupTitle}>
             Contract details{s.name ? ` for ${s.name}` : ''}
@@ -1250,9 +1335,9 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             <Tile
               label="Saving over the term"
               value={usd(run.totals.saving)}
-              sub={`${pct(run.totals.savingPct)} of the index bill`}
+              sub={`${pct(run.totals.savingPct)} of ${SAVINGS_BASES[s.savingsBasis].short}`}
               tone={savingTone}
-              title="What the same volume costs at index, less what it costs on this contract."
+              title={savingTitle}
             />
             <Tile
               label="Per Dth"
@@ -1833,6 +1918,21 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                 </select>
               </span>
             </label>
+            <label className={styles.field} style={{ width: '12rem' }} title={SAVINGS_BASES[s.savingsBasis].note}>
+              <span className={styles.fieldLabel}>
+                Savings analysis
+                <span className={styles.fieldHint}>measured against {SAVINGS_BASES[s.savingsBasis].short}</span>
+              </span>
+              <span className={styles.inputWrap}>
+                <select
+                  className={styles.input}
+                  value={s.savingsBasis}
+                  onChange={e => patchScenario({ savingsBasis: e.target.value })}
+                >
+                  {Object.entries(SAVINGS_BASES).map(([key, b]) => <option key={key} value={key}>{b.label}</option>)}
+                </select>
+              </span>
+            </label>
             {/* The months BEFORE the term, run through the same hedge. A
                 second reading rather than a longer term, so it sits beside
                 the term rather than inside it and its saving is reported
@@ -1895,6 +1995,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             </div>
           </div>
 
+          {savingsBasisFields}
         </div>
 
         {contractGroup}
@@ -1905,9 +2006,9 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
         <Tile
           label="Saving over the term"
           value={usd(run.totals.saving)}
-          sub={`${pct(run.totals.savingPct)} of the index bill`}
+          sub={`${pct(run.totals.savingPct)} of ${SAVINGS_BASES[s.savingsBasis].short}`}
           tone={savingTone}
-          title="What the same volume costs at index, less what it costs on this contract."
+          title={savingTitle}
         />
         <Tile
           label="Per Dth"
@@ -1916,9 +2017,9 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           tone={savingTone}
         />
         <Tile
-          label="At index"
-          value={usd(run.totals.indexCost)}
-          sub={`${price(run.totals.avgIndexAllIn)} all-in`}
+          label={baselineLabel}
+          value={usd(s.savingsBasis === 'index' ? run.totals.indexCost : run.totals.baselineCost)}
+          sub={`${price(s.savingsBasis === 'index' ? run.totals.avgIndexAllIn : run.totals.avgBaselineAllIn)} all-in`}
         />
         <Tile
           label="On this contract"
