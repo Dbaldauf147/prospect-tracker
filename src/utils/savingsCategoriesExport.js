@@ -7,6 +7,11 @@
 // format on it, not as the string on screen, so the columns sum; and the
 // assumptions travel with the numbers.
 //
+// Laid out in the Schneider Electric house style the app's other branded
+// exports use (the Opportunity and Services Explored workbooks): a Life Is
+// On green title band, a muted subtitle, dark green header rows, Nunito
+// Sans, thin grey borders, zebra rows, a green tab and no gridlines.
+//
 // Term only, no look-back - the same months step 5 shows.
 //
 // Pure except for the download at the bottom, so the shape of the file is
@@ -15,8 +20,7 @@
 import {
   SAVINGS_BASES, CONTRACT_TYPES, VOLUME_SHAPES, buildSavings, sourceSummary,
 } from './nymexSavings.js';
-import { sanitizeSheetJsWorkbook, stripDashes } from './exportSanitize.js';
-import { columnWidths } from './savingsExport.js';
+import { sanitizeExcelWorkbook, stripDashes } from './exportSanitize.js';
 
 const PRICE_FMT = '"$"#,##0.000';
 const MONEY_FMT = '"$"#,##0';
@@ -184,45 +188,163 @@ export function categoriesFilename(name, date = new Date()) {
   return `${safe}_savings_by_category${stamp}.xlsx`;
 }
 
-function stampFormats(XLSX, ws, formats, rowCount) {
-  formats.forEach((fmt, c) => {
-    if (!fmt) return;
-    for (let r = 1; r <= rowCount; r++) {
-      const cell = ws[XLSX.utils.encode_cell({ c, r })];
-      if (cell && typeof cell.v === 'number') cell.z = fmt;
-    }
+// Schneider Electric brand palette, as the other branded exports use it.
+export const SE = {
+  GREEN: 'FF3DCD58',       // Life Is On green: title band, tab
+  GREEN_DARK: 'FF009530',  // header and section bands
+  GREEN_TINT: 'FFE6F7EA',  // total rows
+  SURFACE: 'FFF6F9F4',     // zebra rows, label column
+  BORDER: 'FFD4DDE1',
+  TEXT: 'FF1E293B',
+  MUTED: 'FF64748B',
+  WHITE: 'FFFFFFFF',
+  FONT: 'Nunito Sans',
+};
+
+// Money and $/Dth with losses in red, so a category that costs money reads
+// as one at a glance.
+const MONEY_SIGNED = '"$"#,##0;[Red]-"$"#,##0';
+const PRICE_SIGNED = '"$"#,##0.000;[Red]-"$"#,##0.000';
+const signed = (fmt) => (fmt === MONEY_FMT ? MONEY_SIGNED : fmt === PRICE_FMT ? PRICE_SIGNED : fmt);
+
+const thin = { style: 'thin', color: { argb: SE.BORDER } };
+const BORDER_ALL = { top: thin, bottom: thin, left: thin, right: thin };
+const fill = (argb) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
+
+function addBrandedSheet(wb, name, span, subtitle) {
+  const ws = wb.addWorksheet(name, {
+    properties: { tabColor: { argb: SE.GREEN } },
+    views: [{ state: 'frozen', ySplit: 3, showGridLines: false }],
   });
+  ws.mergeCells(1, 1, 1, span);
+  const title = ws.getCell(1, 1);
+  title.value = 'Schneider Electric';
+  title.font = { name: SE.FONT, bold: true, size: 18, color: { argb: SE.WHITE } };
+  title.fill = fill(SE.GREEN);
+  title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.getRow(1).height = 30;
+
+  ws.mergeCells(2, 1, 2, span);
+  const sub = ws.getCell(2, 1);
+  sub.value = stripDashes(subtitle);
+  sub.font = { name: SE.FONT, italic: true, size: 10, color: { argb: SE.MUTED } };
+  sub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.getRow(2).height = 20;
+  return ws;
+}
+
+function headerCell(cell, value) {
+  cell.value = stripDashes(value);
+  cell.font = { name: SE.FONT, bold: true, size: 10, color: { argb: SE.WHITE } };
+  cell.fill = fill(SE.GREEN_DARK);
+  cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+  cell.border = BORDER_ALL;
+}
+
+// Every cell, numbers included, is left-aligned: the house layout for these
+// workbooks reads down a column from its left edge.
+function bodyCell(cell, value, { fmt = null, zebra = false, bold = false, total = false, wrap = false } = {}) {
+  cell.value = value === '' || value == null ? null : stripDashes(value);
+  cell.font = { name: SE.FONT, size: 10, bold: bold || total, color: { argb: SE.TEXT } };
+  if (fmt && typeof value === 'number') cell.numFmt = signed(fmt);
+  if (total) cell.fill = fill(SE.GREEN_TINT);
+  else if (zebra) cell.fill = fill(SE.SURFACE);
+  cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: wrap, indent: 1 };
+  cell.border = total ? { ...BORDER_ALL, top: { style: 'medium', color: { argb: SE.GREEN_DARK } } } : BORDER_ALL;
+}
+
+/**
+ * The whole workbook, Schneider Electric formatted, on an ExcelJS Workbook
+ * class handed in (so it can be built and inspected in a test without a
+ * browser). Summary first, then a tab per category.
+ */
+export function buildSavingsCategoriesWorkbook(Workbook, runs) {
+  const wb = new Workbook();
+  wb.creator = 'Schneider Electric · Prospect Tracker';
+  wb.created = new Date();
+
+  const keys = Object.keys(SAVINGS_BASES).filter(k => runs?.[k]);
+  const first = runs?.[keys[0]];
+  const site = first?.scenario?.name || 'Site';
+
+  // ── Summary ──
+  const rows = summaryRows(runs);
+  const span = 1 + keys.length;
+  const ws = addBrandedSheet(wb, 'Summary', span, `${site}  ·  Savings by category`);
+  ws.columns = [{ width: 38 }, ...keys.map(() => ({ width: 34 }))];
+  const [catRow, ...rest] = rows;
+  headerCell(ws.getCell(3, 1), 'Savings');
+  catRow.values.forEach((v, i) => headerCell(ws.getCell(3, i + 2), v));
+  ws.getRow(3).height = 24;
+  let r = 4;
+  let zebra = false;
+  for (const row of rest) {
+    if (row.label === '') { r += 1; continue; }
+    if (row.label === 'Assumptions') {
+      ws.mergeCells(r, 1, r, span);
+      headerCell(ws.getCell(r, 1), 'Assumptions');
+      ws.getRow(r).height = 22;
+      r += 1;
+      zebra = false;
+      continue;
+    }
+    const isHeadline = row.label === 'Saving over the term';
+    bodyCell(ws.getCell(r, 1), row.label, { zebra: true, bold: true });
+    if (row.values.length === 1 && keys.length > 1) {
+      // An assumption: one value across the category columns.
+      ws.mergeCells(r, 2, r, span);
+      bodyCell(ws.getCell(r, 2), row.values[0], { fmt: row.fmt, zebra });
+    } else {
+      row.values.forEach((v, i) => bodyCell(ws.getCell(r, i + 2), v, {
+        fmt: row.fmt, zebra, total: isHeadline, wrap: row.label === 'What it is',
+      }));
+    }
+    if (row.label === 'What it is') ws.getRow(r).height = 44;
+    else if (isHeadline) ws.getRow(r).height = 22;
+    zebra = !zebra;
+    r += 1;
+  }
+
+  // ── A tab per category ──
+  for (const key of keys) {
+    const run = runs[key];
+    const aoa = categoryMonthAoa(key, run);
+    const [head, ...body] = aoa;
+    const formats = categoryFormats(key, run.scenario);
+    const cws = addBrandedSheet(
+      wb, CATEGORY_SHEET[key], head.length,
+      `${site}  ·  ${SAVINGS_BASES[key].label}: ${SAVINGS_BASES[key].note}`,
+    );
+    cws.columns = head.map((h, i) => ({ width: i === 0 ? 14 : i === 1 || i === 3 ? 22 : 16 }));
+    head.forEach((h, i) => headerCell(cws.getCell(3, i + 1), h));
+    cws.getRow(3).height = 32;
+    body.forEach((row, j) => {
+      const total = j === body.length - 1;
+      row.forEach((v, i) => bodyCell(cws.getCell(4 + j, i + 1), v, {
+        fmt: formats[i], zebra: j % 2 === 1, total,
+      }));
+    });
+    cws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: head.length } };
+  }
+
+  return sanitizeExcelWorkbook(wb);
 }
 
 /** Build and download the workbook. Returns the number of months per tab. */
 export async function downloadSavingsCategories(runs, date = new Date()) {
-  const XLSX = await import('xlsx');
-  const wb = XLSX.utils.book_new();
-
-  const rows = summaryRows(runs);
-  const sAoa = summaryAoa(runs);
-  const summary = XLSX.utils.aoa_to_sheet(sAoa);
-  rows.forEach((row, r) => {
-    if (!row.fmt) return;
-    row.values.forEach((_, i) => {
-      const cell = summary[XLSX.utils.encode_cell({ c: i + 1, r })];
-      if (cell && typeof cell.v === 'number') cell.z = row.fmt;
-    });
-  });
-  summary['!cols'] = [{ wch: 34 }, { wch: 28 }, { wch: 28 }, { wch: 28 }];
-  XLSX.utils.book_append_sheet(wb, summary, 'Summary');
-
-  for (const key of Object.keys(SAVINGS_BASES)) {
-    const run = runs?.[key];
-    if (!run) continue;
-    const aoa = categoryMonthAoa(key, run).map(r => r.map(v => stripDashes(v)));
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    stampFormats(XLSX, ws, categoryFormats(key, run.scenario), aoa.length - 1);
-    ws['!cols'] = columnWidths(aoa, { min: 12, max: 26 });
-    XLSX.utils.book_append_sheet(wb, ws, CATEGORY_SHEET[key]);
-  }
-
+  const mod = await import('exceljs');
+  const Workbook = mod.Workbook || mod.default?.Workbook;
+  const wb = buildSavingsCategoriesWorkbook(Workbook, runs);
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
   const any = runs?.[Object.keys(SAVINGS_BASES).find(k => runs?.[k])];
-  XLSX.writeFile(sanitizeSheetJsWorkbook(wb), categoriesFilename(any?.scenario?.name, date));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = categoriesFilename(any?.scenario?.name, date);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
   return (any?.months || []).length;
 }
