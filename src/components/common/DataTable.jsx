@@ -477,15 +477,28 @@ export function DataTable({
   // export, and don't appear in the Columns dropdown — they return only
   // via Reset. Tables without removable mode never populate removedCols,
   // so this is a no-op for them.
+  //
+  // An always-visible column is never dropped, even when its key sits in
+  // the saved removed list: a key can outlive the column it was deleted
+  // under (the Utility Lookup's old "Lookup City" and its always-on City
+  // share 'city'), and a stale deletion must not hide a column the table
+  // says can't be hidden. Keyed on the joined string so the default []
+  // doesn't recompute every render.
+  const alwaysVisibleKey = alwaysVisible.join('\u0000');
+  const isRemoved = useCallback(
+    (key) => removedCols.has(key) && !alwaysVisible.includes(key),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [removedCols, alwaysVisibleKey],
+  );
   const presentColumns = useMemo(
-    () => (removedCols.size === 0 ? columns : columns.filter(c => !removedCols.has(c.key))),
-    [columns, removedCols],
+    () => (removedCols.size === 0 ? columns : columns.filter(c => !isRemoved(c.key))),
+    [columns, removedCols, isRemoved],
   );
   // The deleted ones, for the picker's restore list. Dropped from
   // presentColumns above, so the picker needs them handed over separately.
   const removedColumnList = useMemo(
-    () => (removedCols.size === 0 ? [] : columns.filter(c => removedCols.has(c.key))),
-    [columns, removedCols],
+    () => (removedCols.size === 0 ? [] : columns.filter(c => isRemoved(c.key))),
+    [columns, removedCols, isRemoved],
   );
 
   // The columns in the user's saved order (defaults to prop order). All
