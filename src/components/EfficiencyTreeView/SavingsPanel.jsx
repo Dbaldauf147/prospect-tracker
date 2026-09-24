@@ -1049,32 +1049,58 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
     </div>
   ) : null;
 
-  const savingsBasisPicker = (
-    <div className={styles.typeCards} role="radiogroup" aria-label="Savings analysis">
+  // The last step of Step by step: the saving under every category at once,
+  // each with the inputs it needs and the sum it does, off the same contract.
+  // One of them is also what Contract savings and the export report; the
+  // card says which, and a click moves it.
+  const savingsComparison = byBasis && (
+    <div className={styles.typeCards}>
       {Object.entries(SAVINGS_BASES).map(([key, b]) => {
-        const on = s.savingsBasis === key;
+        const t = byBasis[key];
+        const shown = s.savingsBasis === key;
+        const good = t.saving >= 0;
         return (
-          <button
-            key={key}
-            type="button"
-            role="radio"
-            aria-checked={on}
-            className={on ? styles.typeCardActive : styles.typeCard}
-            onClick={() => patchScenario({ savingsBasis: key })}
-          >
-            <span className={styles.typeCardHead}>
-              <span className={on ? styles.typeRadioOn : styles.typeRadio} aria-hidden="true" />
-              <span className={styles.typeCardTitle}>{b.label}</span>
-            </span>
-            <span className={styles.typeNote}>{b.note}</span>
-            {byBasis?.[key] && (
-              <span className={styles.typeWhatIf}>
-                For this site: <strong className={byBasis[key].saving >= 0 ? styles.whatIfGood : styles.whatIfBad}>{usd(byBasis[key].saving)}</strong>
-                {' '}over the term, {price(byBasis[key].savingPerDth)} a Dth
-              </span>
+          <div key={key} className={shown ? styles.savingCardShown : styles.savingCard}>
+            <div className={styles.typeCardTitle}>{b.label}</div>
+            <div className={styles.typeNote}>{b.note}</div>
+            <div className={good ? styles.savingBigGood : styles.savingBigBad}>{usd(t.saving)}</div>
+            <div className={styles.savingSub}>
+              {price(t.savingPerDth)} a Dth over {vol(t.volume)} Dth, {pct(t.savingPct)} of {b.short}
+            </div>
+            {key === 'contract' && (
+              <NumberField
+                label="Current contract rate" hint="today's third-party all-in" width="12rem" step="0.01" min="0" suffix={NYMEX_UNIT}
+                value={s.currentRate} onCommit={v => patchScenario({ currentRate: v })}
+              />
             )}
-            {b.example && <span className={styles.typeExample}><strong>Example:</strong> {b.example}</span>}
-          </button>
+            {key === 'avoided' && (
+              <div className={styles.fieldRow}>
+                <NumberField
+                  label="Increase, no action" hint="no third-party supply" width="9.5rem" step="0.1" suffix="%"
+                  value={s.noActionPct} onCommit={v => patchScenario({ noActionPct: v })}
+                />
+                <NumberField
+                  label="Increase, strategy" hint="on third-party supply" width="9.5rem" step="0.1" suffix="%"
+                  value={s.strategyPct} onCommit={v => patchScenario({ strategyPct: v })}
+                />
+              </div>
+            )}
+            <div className={styles.savingWorking}>
+              {key === 'index' && `${usd(t.baselineCost)} at the index (${price(t.avgBaselineAllIn)} all-in) less ${usd(t.contractCost)} on this contract (${price(t.avgContractAllIn)}).`}
+              {key === 'contract' && `(${price(s.currentRate)} today less ${price(t.avgContractAllIn)} on the new contract) x ${vol(t.volume)} Dth = ${usd(t.saving)}.`}
+              {key === 'avoided' && `${(s.noActionPct - s.strategyPct).toFixed(1)}% avoided on the ${price(t.avgContractAllIn)} contract rate = ${price(t.savingPerDth)} a Dth, x ${vol(t.volume)} Dth = ${usd(t.saving)}.`}
+            </div>
+            {b.example && <div className={styles.typeExample}><strong>Example:</strong> {b.example}</div>}
+            <div className={styles.savingShownRow}>
+              {shown ? (
+                <span className={styles.savingShownTag}>Shown on Contract savings and in the export</span>
+              ) : (
+                <button type="button" className={styles.smallBtn} onClick={() => patchScenario({ savingsBasis: key })}>
+                  Show this on Contract savings
+                </button>
+              )}
+            </div>
+          </div>
         );
       })}
     </div>
@@ -1117,8 +1143,8 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
 
   // ── Step by step ───────────────────────────────────────────────────
   // Five steps over the one scenario the other subtabs read: the site, how
-  // the contract is bought, what it burns, what the saving is measured
-  // against, and the contract's details. Every field writes the same scenario the
+  // the contract is bought, what it burns, and the contract's details, then
+  // what it saves measured every way. Every field writes the same scenario the
   // Contract savings and Consumption subtabs show, so there is nothing to
   // carry across when the steps are done.
   const stepDone = {
@@ -1134,11 +1160,11 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
     { n: 1, label: 'Site', hint: 'Name the site' },
     { n: 2, label: 'Contract type', hint: 'How the gas is bought' },
     { n: 3, label: 'Consumption', hint: 'What it burns' },
-    { n: 4, label: 'Savings analysis', hint: 'What the saving is measured against' },
-    { n: 5, label: 'Contract details', hint: 'Term, pricing and hedge' },
+    { n: 4, label: 'Contract details', hint: 'Term, pricing and hedge' },
+    { n: 5, label: 'Savings', hint: 'Across every category' },
   ];
   const LAST_STEP = STEPS.length;
-  const choiceLines = stepSummaries(s, run);
+  const choiceLines = stepSummaries(s, run, byBasis);
   const result = resultSummary(run);
   // The site list: open one, add one, delete the open one. A new or
   // switched-to site starts on step 1 with nothing ticked.
@@ -1245,8 +1271,8 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             </button>
           );
         })}
-        <div className={styles.choiceResult} title="The saving over the term with everything as it stands, measured the way step 4 says.">
-          <span className={styles.choiceLabel}>Saving over the term</span>
+        <div className={styles.choiceResult} title="The saving over the term with everything as it stands, measured the way Contract savings shows it. Step 5 has every category.">
+          <span className={styles.choiceLabel}>Saving, {SAVINGS_BASES[s.savingsBasis].label.toLowerCase()}</span>
           <span className={result.good ? styles.choiceResultGood : styles.choiceResultBad}>{result.saving}</span>
           <span className={styles.choiceSub}>{result.perDth} a Dth</span>
         </div>
@@ -1283,7 +1309,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             Contract type{s.name ? ` for ${s.name}` : ''}
             <span className={styles.groupHint}>
               Depending on your risk tolerance, Henry Hub, basis and the retail adder are combined into different
-              purchasing strategies. Pick the one this contract uses: step 5 asks for what it locks.
+              purchasing strategies. Pick the one this contract uses: step 4 asks for what it locks.
             </span>
           </div>
           {contractTypePicker}
@@ -1334,20 +1360,6 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
       {step === 4 && (
         <div className={`${styles.inputGroup} ${styles.stepPanel}`}>
           <div className={styles.groupTitle}>
-            Savings analysis{s.name ? ` for ${s.name}` : ''}
-            <span className={styles.groupHint}>
-              What the contract's saving is measured against. Every saving figure on this page and in the export
-              follows this choice.
-            </span>
-          </div>
-          {savingsBasisPicker}
-          {savingsBasisFields}
-        </div>
-      )}
-
-      {step === 5 && (
-        <div className={`${styles.inputGroup} ${styles.stepPanel}`}>
-          <div className={styles.groupTitle}>
             Contract details{s.name ? ` for ${s.name}` : ''}
             <span className={styles.groupHint}>
               {CONTRACT_TYPES[s.contractType].label}: when the term starts, how long it runs, and what is charged on top of the index.
@@ -1390,37 +1402,20 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   );
   const stepFooter = (
     <>
+      {step === 4 && (
+        <div className={`${styles.inputs} ${styles.stepPanel}`}>{contractGroup}</div>
+      )}
       {step === LAST_STEP && (
-        <>
-          <div className={`${styles.inputs} ${styles.stepPanel}`}>{contractGroup}</div>
-          <div className={styles.tiles}>
-            <Tile
-              label="Saving over the term"
-              value={usd(run.totals.saving)}
-              sub={`${pct(run.totals.savingPct)} of ${SAVINGS_BASES[s.savingsBasis].short}`}
-              tone={savingTone}
-              title={savingTitle}
-            />
-            <Tile
-              label="Per Dth"
-              value={price(run.totals.savingPerDth)}
-              sub={`over ${vol(run.totals.volume)} Dth`}
-              tone={savingTone}
-            />
-            <Tile
-              label="Hedged"
-              value={`${run.hedge.pct.toFixed(0)}%`}
-              sub={run.hedge.price == null ? 'nothing locked' : `at ${price(run.hedge.price)}`}
-            />
-            <Tile
-              label="Term"
-              value={`${s.termMonths} mo`}
-              sub={run.months.length
-                ? `${run.months[0].label} to ${run.months[run.months.length - 1].label}`
-                : '-'}
-            />
+        <div className={`${styles.inputGroup} ${styles.stepPanel}`}>
+          <div className={styles.groupTitle}>
+            Savings{s.name ? ` for ${s.name}` : ''}
+            <span className={styles.groupHint}>
+              What the {CONTRACT_TYPES[s.contractType].label.toLowerCase()} contract saves over the {s.termMonths} month term,
+              measured every way. Change an input on a card and its saving moves with it.
+            </span>
           </div>
-        </>
+          {savingsComparison}
+        </div>
       )}
       <div className={styles.stepNav}>
         <button

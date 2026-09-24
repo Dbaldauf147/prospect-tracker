@@ -3,7 +3,7 @@
 //   node scripts/sourcingSteps.test.mjs
 import {
   compareOption, contractTypeSummary, savingsBasisSummary, consumptionSummary,
-  termSummary, stepSummaries, resultSummary,
+  termSummary, stepSummaries, resultSummary, savingsCategoriesSummary,
 } from '../src/utils/sourcingSteps.js';
 import {
   buildSavings, normalizeScenario, monthlySeries, forwardSeries, normalizeSettles,
@@ -52,7 +52,17 @@ eq(consumptionSummary(scenario, run.totals), '120,000 Dth a year, even', 'a shap
 eq(consumptionSummary(scenario, { volume: 90000, enteredVolumeMonths: 3 }), '90,000 Dth over the term, 3 months entered', 'entered months are named');
 eq(termSummary(scenario), 'Nov 2026 to Oct 2028, 24 mo', 'the term runs through its last month');
 eq(stepSummaries({ ...scenario, name: '  ' }, run)[0].value, 'Not named yet', 'an unnamed site says so');
-eq(stepSummaries(scenario, run).map(x => x.n), [1, 2, 3, 4, 5], 'a line for every step, in order');
+eq(stepSummaries(scenario, run).map(x => x.label), ['Site', 'Contract type', 'Consumption', 'Contract details', 'Savings'], 'a line for every step, savings last');
+eq(
+  savingsCategoriesSummary({ index: { saving: 143445.2 }, contract: { saving: 9299 }, avoided: { saving: -52371 } }),
+  'Index $143,445 · Contract $9,299 · Avoided -$52,371',
+  'the last step\'s line gives the saving under every category',
+);
+eq(savingsCategoriesSummary(null), '-', 'with nothing worked out yet it says so');
+{
+  const byBasis = compareOption(scenario, series, curve, 'savingsBasis', ['index', 'contract', 'avoided']);
+  eq(stepSummaries(scenario, run, byBasis)[4].value, savingsCategoriesSummary(byBasis), 'and the strip uses it');
+}
 eq(resultSummary({ totals: { saving: -1234.4, savingPerDth: -0.01 } }), { saving: '-$1,234', perDth: '-$0.010', good: false }, 'a loss reads as one');
 
 console.log(`${passed} passed, ${failed} failed`);

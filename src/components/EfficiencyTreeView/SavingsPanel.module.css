@@ -1553,3 +1553,57 @@
 
 .whatIfGood { color: #0F766E; }
 .whatIfBad { color: #B91C1C; }
+
+/* Step 5: the saving under every category, a card each. */
+.savingCard,
+.savingCardShown {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.75rem 0.85rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.savingCardShown {
+  border-color: var(--color-accent);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.savingBigGood,
+.savingBigBad {
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.savingBigGood { color: #0F766E; }
+.savingBigBad { color: #B91C1C; }
+
+.savingSub {
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+}
+
+.savingWorking {
+  font-size: 0.68rem;
+  line-height: 1.45;
+  color: var(--color-text);
+  padding: 0.3rem 0.45rem;
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-sm, 4px);
+}
+
+.savingShownRow {
+  margin-top: auto;
+  padding-top: 0.2rem;
+}
+
+.savingShownTag {
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-accent);
+}

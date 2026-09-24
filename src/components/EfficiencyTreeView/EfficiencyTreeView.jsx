@@ -64,8 +64,8 @@ const SOURCING_TABS = [
   {
     id: 'steps',
     label: 'Step by step',
-    title: 'Enter a site one step at a time: the site, its consumption, then the contract details',
-    blurb: 'Enter a site one step at a time. Step 1 names the site, step 2 is what it burns, step 3 is the contract. Everything entered here is the same scenario Contract savings and Consumption show.',
+    title: 'Enter a site one step at a time: the site, the contract type, its consumption, the contract details, then the savings',
+    blurb: 'Enter a site one step at a time: the site, how the gas is bought, what it burns and the contract, then what it saves measured every way. Everything entered here is the same scenario Contract savings and Consumption show.',
   },
   {
     id: 'contract',
