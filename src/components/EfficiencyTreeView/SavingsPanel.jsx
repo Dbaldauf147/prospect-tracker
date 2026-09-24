@@ -1145,6 +1145,20 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   );
 
 
+  // The current contract on the Contract details step. It runs out the month before the
+  // new term opens, so its end is read off the new start rather than stored:
+  // moving it moves the new start, and the new term keeps its length.
+  const oldEnd = addMonths(s.startYear, s.startMonth, -1);
+  const setOldEnd = (year, month) => {
+    const start = addMonths(year, month, 1);
+    patchScenario({ startYear: start.year, startMonth: start.month });
+  };
+  // What the same term's volume costs on each contract, and the gap between
+  // them: the Contract Over Contract saving, the same sum the Savings step's
+  // card for it does.
+  const oldCost = s.currentRate * run.totals.volume;
+  const cocSaving = oldCost - run.totals.contractCost;
+
   // ── Step by step ───────────────────────────────────────────────────
   // Five steps over the one scenario the other subtabs read: the site, how
   // the contract is bought, what it burns, and the contract's details, then
@@ -1366,39 +1380,89 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           <div className={styles.groupTitle}>
             Contract details{s.name ? ` for ${s.name}` : ''}
             <span className={styles.groupHint}>
-              {CONTRACT_TYPES[s.contractType].label}: when the term starts, how long it runs, and what is charged on top of the index.
+              The contract the site is on today beside the one it moves to, so the two can be compared over the same
+              term and volume.
             </span>
           </div>
-          <div className={styles.fieldRow}>
-            <label className={styles.field} style={{ width: '7rem' }}>
-              <span className={styles.fieldLabel}>Starts<span className={styles.fieldHint}>first month</span></span>
-              <span className={styles.inputWrap}>
-                <select
-                  className={styles.input}
-                  value={s.startMonth}
-                  onChange={e => patchScenario({ startMonth: Number(e.target.value) })}
-                >
-                  {NYMEX_MONTH_LABELS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
-                </select>
-              </span>
-            </label>
-            <NumberField
-              label="Year" hint="term opens in" width="6rem" step="1"
-              value={s.startYear} onCommit={v => patchScenario({ startYear: v })}
-            />
-            <NumberField
-              label="Term" hint="how long it runs" width="7.5rem" step="1" min="1" suffix="mo"
-              value={s.termMonths} onCommit={v => patchScenario({ termMonths: v })}
-            />
-            <TermEndFields scenario={s} onTermMonths={v => patchScenario({ termMonths: v })} />
-            <NumberField
-              label="Basis" hint="delivered point vs Henry Hub" tip={BASIS_TIP} width="9rem" step="0.01" suffix={NYMEX_UNIT}
-              value={s.basis} onCommit={v => patchScenario({ basis: v })}
-            />
-            <NumberField
-              label="Retail adder" hint="margin, transport, fees" tip={RETAIL_ADDER_TIP} width="9.5rem" step="0.01" suffix={NYMEX_UNIT}
-              value={s.adder} onCommit={v => patchScenario({ adder: v })}
-            />
+          <div className={styles.contractCompare}>
+            <div className={styles.contractSide}>
+              <div className={styles.contractSideTitle}>
+                Current contract
+                <span className={styles.groupHint}>what the site pays today</span>
+              </div>
+              <div className={styles.fieldRow}>
+                <NumberField
+                  label="All-in rate" hint="today's third-party rate" width="10rem" step="0.01" min="0" suffix={NYMEX_UNIT}
+                  value={s.currentRate} onCommit={v => patchScenario({ currentRate: v })}
+                />
+                <label className={styles.field} style={{ width: '7rem' }}>
+                  <span className={styles.fieldLabel}>Ends<span className={styles.fieldHint}>last month on it</span></span>
+                  <span className={styles.inputWrap}>
+                    <select
+                      className={styles.input}
+                      value={oldEnd.month}
+                      onChange={e => setOldEnd(oldEnd.year, Number(e.target.value))}
+                    >
+                      {NYMEX_MONTH_LABELS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                    </select>
+                  </span>
+                </label>
+                <NumberField
+                  label="Year" hint="it expires in" width="6rem" step="1"
+                  value={oldEnd.year} onCommit={v => { const y = Math.trunc(Number(v)); if (Number.isFinite(y)) setOldEnd(y, oldEnd.month); }}
+                />
+              </div>
+              <div className={styles.contractSideCost}>
+                {vol(run.totals.volume)} Dth at {price(s.currentRate)} is <strong>{usd(oldCost)}</strong> over the new term.
+              </div>
+            </div>
+            <div className={styles.contractSide}>
+              <div className={styles.contractSideTitle}>
+                New contract
+                <span className={styles.groupHint}>{CONTRACT_TYPES[s.contractType].label}</span>
+              </div>
+              <div className={styles.fieldRow}>
+                <label className={styles.field} style={{ width: '7rem' }}>
+                  <span className={styles.fieldLabel}>Starts<span className={styles.fieldHint}>first month</span></span>
+                  <span className={styles.inputWrap}>
+                    <select
+                      className={styles.input}
+                      value={s.startMonth}
+                      onChange={e => patchScenario({ startMonth: Number(e.target.value) })}
+                    >
+                      {NYMEX_MONTH_LABELS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                    </select>
+                  </span>
+                </label>
+                <NumberField
+                  label="Year" hint="term opens in" width="6rem" step="1"
+                  value={s.startYear} onCommit={v => patchScenario({ startYear: v })}
+                />
+                <NumberField
+                  label="Term" hint="how long it runs" width="7.5rem" step="1" min="1" suffix="mo"
+                  value={s.termMonths} onCommit={v => patchScenario({ termMonths: v })}
+                />
+                <TermEndFields scenario={s} onTermMonths={v => patchScenario({ termMonths: v })} />
+                <NumberField
+                  label="Basis" hint="delivered point vs Henry Hub" tip={BASIS_TIP} width="9rem" step="0.01" suffix={NYMEX_UNIT}
+                  value={s.basis} onCommit={v => patchScenario({ basis: v })}
+                />
+                <NumberField
+                  label="Retail adder" hint="margin, transport, fees" tip={RETAIL_ADDER_TIP} width="9.5rem" step="0.01" suffix={NYMEX_UNIT}
+                  value={s.adder} onCommit={v => patchScenario({ adder: v })}
+                />
+              </div>
+              <div className={styles.contractSideCost}>
+                {vol(run.totals.volume)} Dth at {price(run.totals.avgContractAllIn)} all-in on average
+                is <strong>{usd(run.totals.contractCost)}</strong> over the term.
+              </div>
+            </div>
+          </div>
+          <div className={styles.contractDiff}>
+            Contract over contract: ({price(s.currentRate)} current less {price(run.totals.avgContractAllIn)} new)
+            x {vol(run.totals.volume)} Dth ={' '}
+            <strong className={cocSaving >= 0 ? styles.whatIfGood : styles.whatIfBad}>{usd(cocSaving)}</strong>
+            {oldCost ? `, ${pct(cocSaving / oldCost)} of the current contract` : ''}.
           </div>
         </div>
       )}
