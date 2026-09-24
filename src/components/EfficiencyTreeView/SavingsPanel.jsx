@@ -14,7 +14,7 @@ import {
   termLadder, volumeSummary, yearRows,
   syncActiveSite, switchSite, addSite, removeSite, MAX_SITES,
   addMonths, monthKey, historySlot, LOOKBACK_ALL, MAX_LOOKBACK_MONTHS,
-  CONTRACT_TYPES, SAVINGS_BASES,
+  CONTRACT_TYPES, SAVINGS_BASES, CURRENT_CONTRACT_TYPES,
 } from '../../utils/nymexSavings.js';
 import { downloadSavingsMonths } from '../../utils/savingsExport.js';
 import { categoryRuns, indexLeadIn, downloadSavingsCategories } from '../../utils/savingsCategoriesExport.js';
@@ -1038,16 +1038,51 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
     ? fixedRateGroup
     : s.contractType === 'index' ? indexGroup : hedgeLayersGroup;
 
+  // Contract 1's pricing inputs, the same wherever it is edited: how it is
+  // priced, then an all-in rate only when that is fixed (an index contract
+  // has none: each month is the index plus basis and the adder), then its
+  // retail adder.
+  const contract1Index = s.currentType === 'index';
+  const contract1Fields = (
+    <>
+      <label className={styles.field} style={{ width: '9.5rem' }} title={CURRENT_CONTRACT_TYPES[s.currentType].note}>
+        <span className={styles.fieldLabel}>Priced as<span className={styles.fieldHint}>Contract 1&apos;s pricing</span></span>
+        <span className={styles.inputWrap}>
+          <select
+            className={styles.input}
+            value={s.currentType}
+            onChange={e => patchScenario({ currentType: e.target.value })}
+          >
+            {Object.entries(CURRENT_CONTRACT_TYPES).map(([key, t]) => <option key={key} value={key}>{t.label}</option>)}
+          </select>
+        </span>
+      </label>
+      {!contract1Index && (
+        <NumberField
+          label="All-in rate" hint="today's fixed rate" width="10rem" step="0.01" min="0" suffix={NYMEX_UNIT}
+          value={s.currentRate} onCommit={v => patchScenario({ currentRate: v })}
+        />
+      )}
+      <NumberField
+        label="Retail adder" hint={contract1Index ? 'on top of the index' : 'inside that rate'} tip={RETAIL_ADDER_TIP}
+        width="9.5rem" step="0.01" suffix={NYMEX_UNIT}
+        value={s.currentAdder ?? ''}
+        onCommit={v => patchScenario({ currentAdder: String(v).trim() === '' ? null : v })}
+      />
+    </>
+  );
+  // How Contract 1's all-in came about, in words, for the lines under it.
+  const contract1Rate = contract1Index
+    ? `index + ${price(s.basis)} basis + ${price(s.currentAdder ?? 0)} adder (${price(run.totals.avgContract1AllIn)} on average)`
+    : price(s.currentRate);
+
   // The inputs the chosen savings analysis needs. The index needs none: it
   // is the loaded settles and curve.
   const savingsBasisFields = s.savingsBasis === 'contract' ? (
     <div className={styles.fieldRow}>
-      <NumberField
-        label="Contract 1 rate" hint="current third-party all-in" width="12rem" step="0.01" min="0" suffix={NYMEX_UNIT}
-        value={s.currentRate} onCommit={v => patchScenario({ currentRate: v })}
-      />
+      {contract1Fields}
       <div className={styles.fieldNote}>
-        Saving = ({price(s.currentRate)} current less {price(run.totals.avgContractAllIn)} on the new contract) x the
+        Saving = (Contract 1 at {contract1Rate} less {price(run.totals.avgContractAllIn)} on the new contract) x the
         volume over the term = {usd(run.totals.saving)}.
       </div>
     </div>
@@ -1086,12 +1121,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             <div className={styles.savingSub}>
               {price(t.savingPerDth)} a Dth over {vol(t.volume)} Dth, {pct(t.savingPct)} of {b.short}
             </div>
-            {key === 'contract' && (
-              <NumberField
-                label="Contract 1 rate" hint="current third-party all-in" width="12rem" step="0.01" min="0" suffix={NYMEX_UNIT}
-                value={s.currentRate} onCommit={v => patchScenario({ currentRate: v })}
-              />
-            )}
+            {key === 'contract' && <div className={styles.fieldRow}>{contract1Fields}</div>}
             {key === 'avoided' && (
               <div className={styles.fieldRow}>
                 <NumberField
@@ -1106,7 +1136,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             )}
             <div className={styles.savingWorking}>
               {key === 'index' && `${usd(t.baselineCost)} at the index (${price(t.avgBaselineAllIn)} all-in) less ${usd(t.contractCost)} on this contract (${price(t.avgContractAllIn)}).`}
-              {key === 'contract' && `(${price(s.currentRate)} today less ${price(t.avgContractAllIn)} on the new contract) x ${vol(t.volume)} Dth = ${usd(t.saving)}.`}
+              {key === 'contract' && `(Contract 1 at ${contract1Rate} less ${price(t.avgContractAllIn)} on the new contract) x ${vol(t.volume)} Dth = ${usd(t.saving)}.`}
               {key === 'avoided' && `${(s.noActionPct - s.strategyPct).toFixed(1)}% avoided on the ${price(t.avgContractAllIn)} contract rate = ${price(t.savingPerDth)} a Dth, x ${vol(t.volume)} Dth = ${usd(t.saving)}.`}
             </div>
             {b.example && <div className={styles.typeExample}><strong>Example:</strong> {b.example}</div>}
@@ -1409,15 +1439,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                 <span className={styles.groupHint}>current: what the site pays today</span>
               </div>
               <div className={styles.fieldRow}>
-                <NumberField
-                  label="All-in rate" hint="today's third-party rate" width="10rem" step="0.01" min="0" suffix={NYMEX_UNIT}
-                  value={s.currentRate} onCommit={v => patchScenario({ currentRate: v })}
-                />
-                <NumberField
-                  label="Retail adder" hint="inside that rate" tip={RETAIL_ADDER_TIP} width="9.5rem" step="0.01" suffix={NYMEX_UNIT}
-                  value={s.currentAdder ?? ''}
-                  onCommit={v => patchScenario({ currentAdder: String(v).trim() === '' ? null : v })}
-                />
+                {contract1Fields}
                 <label className={styles.field} style={{ width: '7rem' }}>
                   <span className={styles.fieldLabel}>Ends<span className={styles.fieldHint}>last month on it</span></span>
                   <span className={styles.inputWrap}>
@@ -1436,7 +1458,13 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                 />
               </div>
               <div className={styles.contractSideCost}>
-                {vol(run.totals.volume)} Dth at {price(s.currentRate)} is <strong>{usd(oldCost)}</strong> over the new term.
+                {contract1Index
+                  ? <>{vol(run.totals.volume)} Dth at each month&apos;s index + {price(s.basis)} basis + {price(s.currentAdder ?? 0)} adder
+                    ({price(run.totals.avgContract1AllIn)} all-in on average) is <strong>{usd(oldCost)}</strong> over the new term.</>
+                  : <>{vol(run.totals.volume)} Dth at {price(s.currentRate)} is <strong>{usd(oldCost)}</strong> over the new term.</>}
+                {contract1Index && s.currentAdder == null && (
+                  <span className={styles.warn}> Enter Contract 1&apos;s retail adder: it is taken as $0 until you do.</span>
+                )}
               </div>
             </div>
             <div className={styles.contractSide}>
@@ -1482,7 +1510,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             </div>
           </div>
           <div className={styles.contractDiff}>
-            Contract 1 vs Contract 2: ({price(s.currentRate)} less {price(run.totals.avgContractAllIn)} all-in)
+            Contract 1 vs Contract 2: ({price(cmp.rate1)} less {price(run.totals.avgContractAllIn)} all-in{contract1Index ? ', averaged over the term' : ''})
             x {vol(run.totals.volume)} Dth ={' '}
             <strong className={cocSaving >= 0 ? styles.whatIfGood : styles.whatIfBad}>{usd(cocSaving)}</strong>
             {oldCost ? `, ${pct(cocSaving / oldCost)} of Contract 1` : ''}.

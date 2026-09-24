@@ -20,7 +20,7 @@
 // pinned by scripts/savingsCategoriesExport.test.mjs.
 
 import {
-  SAVINGS_BASES, CONTRACT_TYPES, VOLUME_SHAPES, buildSavings, sourceSummary,
+  SAVINGS_BASES, CONTRACT_TYPES, CURRENT_CONTRACT_TYPES, VOLUME_SHAPES, buildSavings, sourceSummary,
 } from './nymexSavings.js';
 import { sanitizeExcelWorkbook, stripDashes } from './exportSanitize.js';
 
@@ -239,7 +239,12 @@ export function summaryRows(runs) {
     ...(s.contractType === 'fixed' ? [{ label: `Contract 2 fixed all-in (${UNIT})`, values: [s.fixedRate], fmt: PRICE_FMT }] : []),
     { label: `Contract 2 basis (${UNIT})`, values: [s.basis], fmt: PRICE_FMT },
     { label: `Contract 2 retail adder (${UNIT})`, values: [s.adder], fmt: PRICE_FMT },
-    { label: `Contract 1 all-in rate (${UNIT})`, values: [s.currentRate], fmt: PRICE_FMT },
+    { label: 'Contract 1 priced as', values: [(CURRENT_CONTRACT_TYPES[s.currentType] || CURRENT_CONTRACT_TYPES.fixed).label] },
+    // A fixed Contract 1 has a rate; an index one has only the average its
+    // months came to (index + basis + its adder).
+    s.currentType === 'index'
+      ? { label: `Contract 1 all-in, average (${UNIT})`, values: [first?.totals?.avgContract1AllIn], fmt: PRICE_FMT }
+      : { label: `Contract 1 all-in rate (${UNIT})`, values: [s.currentRate], fmt: PRICE_FMT },
     {
       label: `Contract 1 retail adder (${UNIT})`,
       values: [s.currentAdder == null ? 'not given' : s.currentAdder],

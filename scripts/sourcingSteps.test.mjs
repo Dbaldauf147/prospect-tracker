@@ -15,6 +15,7 @@ function eq(actual, expected, name) {
   const a = JSON.stringify(actual), b = JSON.stringify(expected);
   if (a === b) { passed++; } else { failed++; console.error(`FAIL  ${name}\n        expected ${b}\n        got      ${a}`); }
 }
+function ok(cond, name) { eq(!!cond, true, name); }
 function near(actual, expected, tol, name) {
   if (Number.isFinite(actual) && Math.abs(actual - expected) <= tol) { passed++; }
   else { failed++; console.error(`FAIL  ${name}\n        expected ${expected} ±${tol}\n        got      ${actual}`); }
@@ -85,6 +86,28 @@ eq(resultSummary({ totals: { saving: -1234.4, savingPerDth: -0.01 } }), { saving
 
   const worse = contractComparison({ currentRate: 3.5, adder: 0.5, currentAdder: 0.3 }, totals);
   near(worse.adder.saving, -20000, 1e-6, 'a higher adder on Contract 2 is a cost, and says so');
+}
+
+// Contract 1 on the index: no all-in to enter, index + basis + its adder.
+{
+  const idx = normalizeScenario({
+    startYear: 2025, startMonth: 12, termMonths: 12, annualVolumeDth: 53297,
+    basis: 0.05, adder: -0.092, contractType: 'index',
+    currentType: 'index', currentRate: 9.99, currentAdder: -0.276, savingsBasis: 'contract',
+  }, series, curve);
+  eq(idx.currentType, 'index', 'Contract 1 can be an index contract');
+  eq(normalizeScenario({}, series, curve).currentType, 'fixed', 'and is fixed until told otherwise, as saved sites were');
+  const r = buildSavings(idx, series, curve);
+  ok(r.months.every(m => Math.abs(m.contract1AllIn - (m.index + 0.05 - 0.276)) < 1e-12), 'each month is that month\'s index plus basis and Contract 1\'s adder');
+  ok(r.months.every(m => m.contract1AllIn !== 9.99), 'the fixed all-in plays no part');
+  const cmp = contractComparison(idx, r.totals);
+  near(cmp.saving, (-0.276 - -0.092) * r.totals.volume, 1e-6, 'two index contracts differ only by their adders');
+  near(cmp.adder.rest, 0, 1e-6, 'so commodity and basis contribute nothing');
+  near(r.totals.saving, cmp.saving, 1e-6, 'and contract over contract says the same');
+  eq(savingsBasisSummary(idx), 'Contract Over Contract, vs index + -$0.276 today', 'the strip names it as index plus the adder');
+
+  const fixed1 = buildSavings({ ...idx, currentType: 'fixed' }, series, curve);
+  ok(fixed1.months.every(m => m.contract1AllIn === 9.99), 'a fixed Contract 1 still bills its all-in every month');
 }
 
 console.log(`${passed} passed, ${failed} failed`);
