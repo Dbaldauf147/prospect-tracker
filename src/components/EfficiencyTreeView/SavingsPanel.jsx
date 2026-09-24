@@ -148,6 +148,38 @@ function NumberField({ label, hint, title, value, step = 'any', min, max, suffix
   );
 }
 
+// The last month of the term, as a month + year pair beside the Term box.
+// The scenario stores only the start and the length, so the end is derived
+// from them and picking an end rewrites the length. An end before the start
+// collapses to a one-month term rather than going negative.
+function TermEndFields({ scenario: s, onTermMonths }) {
+  const end = addMonths(s.startYear, s.startMonth, s.termMonths - 1);
+  const setEnd = (year, month) => {
+    const months = (year - s.startYear) * 12 + (month - s.startMonth) + 1;
+    onTermMonths(Math.max(1, months));
+  };
+  return (
+    <>
+      <label className={styles.field} style={{ width: '7rem' }}>
+        <span className={styles.fieldLabel}>Ends<span className={styles.fieldHint}>last month</span></span>
+        <span className={styles.inputWrap}>
+          <select
+            className={styles.input}
+            value={end.month}
+            onChange={e => setEnd(end.year, Number(e.target.value))}
+          >
+            {NYMEX_MONTH_LABELS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+          </select>
+        </span>
+      </label>
+      <NumberField
+        label="Year" hint="term closes in" width="6rem" step="1"
+        value={end.year} onCommit={v => { const y = Math.trunc(Number(v)); if (Number.isFinite(y)) setEnd(y, end.month); }}
+      />
+    </>
+  );
+}
+
 // One month's consumption. Same draft-on-blur rule as NumberField, for the
 // same reason, with one addition: an EMPTY box is a month the user has not
 // given a volume for, and it prices off the annual number and the shape
@@ -1038,6 +1070,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
               label="Term" hint="how long it runs" width="7.5rem" step="1" min="1" suffix="mo"
               value={s.termMonths} onCommit={v => patchScenario({ termMonths: v })}
             />
+            <TermEndFields scenario={s} onTermMonths={v => patchScenario({ termMonths: v })} />
             <NumberField
               label="Basis" hint="delivered point vs Henry Hub" width="9rem" step="0.01" suffix={NYMEX_UNIT}
               value={s.basis} onCommit={v => patchScenario({ basis: v })}
@@ -1627,6 +1660,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
               label="Term" hint="how long it runs" width="7.5rem" step="1" min="1" suffix="mo"
               value={s.termMonths} onCommit={v => patchScenario({ termMonths: v })}
             />
+            <TermEndFields scenario={s} onTermMonths={v => patchScenario({ termMonths: v })} />
             {/* The months BEFORE the term, run through the same hedge. A
                 second reading rather than a longer term, so it sits beside
                 the term rather than inside it and its saving is reported
