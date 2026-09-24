@@ -1464,3 +1464,92 @@
   line-height: 1.45;
   color: var(--color-text-muted);
 }
+
+/* Step by step: every choice so far, and the saving they come to. */
+.choiceStrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.4rem;
+}
+
+.choice,
+.choiceActive,
+.choicePending,
+.choiceResult {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  padding: 0.4rem 0.6rem;
+  font-family: inherit;
+  text-align: left;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light, var(--color-border));
+  border-radius: var(--radius-md);
+}
+
+.choice,
+.choiceActive,
+.choicePending {
+  cursor: pointer;
+}
+
+.choice:hover,
+.choicePending:hover {
+  background: var(--color-surface-alt);
+}
+
+.choiceActive {
+  border-color: var(--color-accent);
+}
+
+.choicePending {
+  border-style: dashed;
+  opacity: 0.7;
+}
+
+.choiceResult {
+  background: var(--color-surface-alt);
+}
+
+.choiceLabel {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-muted);
+}
+
+.choiceValue {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.choiceResultGood,
+.choiceResultBad {
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+.choiceResultGood { color: #0F766E; }
+.choiceResultBad { color: #B91C1C; }
+
+.choiceSub {
+  font-size: 0.66rem;
+  color: var(--color-text-secondary);
+}
+
+/* What a picker card's option would come to for this site. */
+.typeWhatIf {
+  font-size: 0.7rem;
+  color: var(--color-text);
+  padding: 0.3rem 0.45rem;
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-sm, 4px);
+}
+
+.whatIfGood { color: #0F766E; }
+.whatIfBad { color: #B91C1C; }

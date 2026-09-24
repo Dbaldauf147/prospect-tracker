@@ -17,6 +17,7 @@ import {
   CONTRACT_TYPES, SAVINGS_BASES,
 } from '../../utils/nymexSavings.js';
 import { downloadSavingsMonths } from '../../utils/savingsExport.js';
+import { compareOption, stepSummaries, resultSummary } from '../../utils/sourcingSteps.js';
 
 // The Sourcing area on Service Deep Dives: load the NYMEX record, describe a
 // contract and its hedge layers, and see what the hedge is worth over the
@@ -431,6 +432,19 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   // falls back to rather than looking like a zero.
   const shapedVolume = (month) => s.annualVolumeDth * VOLUME_SHAPES[s.volumeShape].weights[month - 1];
   const enteredVolumes = run.totals.enteredVolumeMonths;
+  // Step by step's what-ifs: the term's totals on each contract type, and
+  // measured each way, with everything else as entered. They put a number
+  // on every card of the two picker steps, so a choice is made against what
+  // it does for this site rather than against a description. Only worked
+  // out on Step by step, the one subtab that shows them.
+  const byType = useMemo(
+    () => (inSteps ? compareOption(state.scenario, series, curve, 'contractType', Object.keys(CONTRACT_TYPES)) : null),
+    [inSteps, state.scenario, series, curve],
+  );
+  const byBasis = useMemo(
+    () => (inSteps ? compareOption(state.scenario, series, curve, 'savingsBasis', Object.keys(SAVINGS_BASES)) : null),
+    [inSteps, state.scenario, series, curve],
+  );
   // Values sitting past the end of the term: kept rather than trimmed, so
   // shortening a term and lengthening it again does not lose what was typed.
   const volumesPastTerm = Math.max(0, (s.monthlyVolumes || []).length - s.termMonths);
@@ -1053,6 +1067,12 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
               <span className={styles.typeCardTitle}>{b.label}</span>
             </span>
             <span className={styles.typeNote}>{b.note}</span>
+            {byBasis?.[key] && (
+              <span className={styles.typeWhatIf}>
+                For this site: <strong className={byBasis[key].saving >= 0 ? styles.whatIfGood : styles.whatIfBad}>{usd(byBasis[key].saving)}</strong>
+                {' '}over the term, {price(byBasis[key].savingPerDth)} a Dth
+              </span>
+            )}
             {b.example && <span className={styles.typeExample}><strong>Example:</strong> {b.example}</span>}
           </button>
         );
@@ -1080,6 +1100,13 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             </span>
             <span className={styles.typeFormula}>{t.formula}</span>
             <span className={styles.typeNote}>{t.note}</span>
+            {byType?.[key] && (
+              <span className={styles.typeWhatIf}>
+                For this site: {price(byType[key].avgContractAllIn)} all-in,{' '}
+                <strong className={byType[key].saving >= 0 ? styles.whatIfGood : styles.whatIfBad}>{usd(byType[key].saving)}</strong>
+                {' '}saved against {SAVINGS_BASES[s.savingsBasis].short}
+              </span>
+            )}
             <span className={styles.typeRisk}>{t.risk}</span>
           </button>
         );
@@ -1111,6 +1138,8 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
     { n: 5, label: 'Contract details', hint: 'Term, pricing and hedge' },
   ];
   const LAST_STEP = STEPS.length;
+  const choiceLines = stepSummaries(s, run);
+  const result = resultSummary(run);
   // The site list: open one, add one, delete the open one. A new or
   // switched-to site starts on step 1 with nothing ticked.
   const sites = state.sites || [];
@@ -1197,6 +1226,32 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
         })}
       </ol>
 
+      {/* Every choice so far and what it comes to, on every step: change
+          anything and the line for it, and the saving, move with it. */}
+      <div className={styles.choiceStrip} aria-label="Your choices so far">
+        {choiceLines.map(c => {
+          const current = step === c.n;
+          const pending = !current && !stepDone[c.n] && c.n > step;
+          return (
+            <button
+              key={c.n}
+              type="button"
+              className={current ? styles.choiceActive : pending ? styles.choicePending : styles.choice}
+              onClick={() => setStep(c.n)}
+              title={`Step ${c.n}. ${c.label}${pending ? ' (not reviewed yet: this is the default)' : ''}`}
+            >
+              <span className={styles.choiceLabel}>{c.n}. {c.label}</span>
+              <span className={styles.choiceValue}>{c.value}</span>
+            </button>
+          );
+        })}
+        <div className={styles.choiceResult} title="The saving over the term with everything as it stands, measured the way step 4 says.">
+          <span className={styles.choiceLabel}>Saving over the term</span>
+          <span className={result.good ? styles.choiceResultGood : styles.choiceResultBad}>{result.saving}</span>
+          <span className={styles.choiceSub}>{result.perDth} a Dth</span>
+        </div>
+      </div>
+
       {step === 1 && (
         <div className={`${styles.inputGroup} ${styles.stepPanel}`}>
           <div className={styles.groupTitle}>
@@ -1265,6 +1320,13 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
                 </select>
               </span>
             </label>
+            <div className={styles.fieldNote}>
+              {s.contractType === 'fixed'
+                ? `On the ${CONTRACT_TYPES.fixed.label} from step 2, all ${vol(run.totals.volume)} Dth over the term bill at ${price(s.fixedRate)} a Dth.`
+                : s.contractType === 'index'
+                  ? `On the ${CONTRACT_TYPES.index.label} from step 2, all ${vol(run.totals.volume)} Dth over the term float at each month's settle, with basis and adder on top.`
+                  : `On the ${CONTRACT_TYPES.layered.label} from step 2, ${run.hedge.pct.toFixed(0)}% of the ${vol(run.totals.volume)} Dth over the term (${vol(run.totals.volume * run.hedge.pct / 100)} Dth) is locked${run.hedge.price == null ? '' : ` at ${price(run.hedge.price)}`}; the rest floats at the index.`}
+            </div>
           </div>
         </div>
       )}
