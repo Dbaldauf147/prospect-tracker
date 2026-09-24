@@ -189,8 +189,9 @@ function TermEndFields({ scenario: s, onTermMonths }) {
 // One month's consumption. Same draft-on-blur rule as NumberField, for the
 // same reason, with one addition: an EMPTY box is a month the user has not
 // given a volume for, and it prices off the annual number and the shape
-// instead. So the placeholder is that shaped volume - the box shows what it
-// would use, and typing over it is what asserts something.
+// instead. Such a box shows a dash, and the shaped volume it falls back on
+// goes in the tooltip rather than the box, so a glance at the table tells
+// entered months from empty ones.
 // One month's volume, as a box in the consumption calendar. The row and the
 // column already say which month it is, so the box is the box alone.
 //
@@ -200,6 +201,9 @@ function TermEndFields({ scenario: s, onTermMonths }) {
 function VolumeCell({ value, shaped, title, onCommit }) {
   const [draft, setDraft] = useState(null);
   const shown = draft ?? (value == null ? '' : String(value));
+  const fallback = value == null && shaped != null
+    ? `${title}. Empty, so it prices off the shape: ${Math.round(shaped).toLocaleString('en-US')}`
+    : title;
   const commit = () => {
     if (draft !== null) onCommit(draft.trim() === '' ? null : draft);
     setDraft(null);
@@ -211,10 +215,10 @@ function VolumeCell({ value, shaped, title, onCommit }) {
       step="1"
       min="0"
       inputMode="decimal"
-      title={title}
-      aria-label={title}
+      title={fallback}
+      aria-label={fallback}
       value={shown}
-      placeholder={shaped == null ? '' : Math.round(shaped).toLocaleString('en-US')}
+      placeholder="-"
       onChange={e => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
@@ -1903,7 +1907,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           </table>
         </div>
         <div className={styles.fieldNote}>
-          A box left empty prices off the annual volume and the shape, which is the number shown greyed in it. A month the window
+          A box left empty shows a dash and prices off the annual volume and the shape; hover it to see that number. A month the window
           does not reach has no box at all. The table is laid out by the calendar, but what it holds is still tied to the term:
           month one is always the month the term opens, so re-dating the term carries these volumes with it and they land on
           different cells.
