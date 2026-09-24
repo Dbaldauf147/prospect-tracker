@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { loadOpps2Cache, loadOpps2Newest } from '../utils/opps2Store';
+import { useMemo, useSyncExternalStore } from 'react';
+import { useOpps2Data } from './useOpps2Data';
 import { countCallInDue } from '../utils/oppsCallIn';
 import { campaignsAllSent, unfinishedCampaigns } from '../utils/campaignOutreach';
 import { tagsAllMapped } from '../utils/contactRosters';
@@ -36,22 +36,8 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
   // reads them: newest of the local cache and Firestore on mount, then the
   // cache on focus / after any Opps 2 save / on a timer, since Call In is
   // relative to today and this hook lives in App, mounted all day.
-  const [oppsRecords, setOppsRecords] = useState(null);
-  useEffect(() => {
-    let cancelled = false;
-    const apply = (recs) => { if (!cancelled && Array.isArray(recs)) setOppsRecords(recs); };
-    loadOpps2Newest(userId).then(d => apply(d?.records)).catch(() => {});
-    const readCache = () => { loadOpps2Cache().then(d => apply(d?.records)).catch(() => {}); };
-    const timer = setInterval(readCache, 10 * 60 * 1000);
-    window.addEventListener('focus', readCache);
-    window.addEventListener('opps2-cache-updated', readCache);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-      window.removeEventListener('focus', readCache);
-      window.removeEventListener('opps2-cache-updated', readCache);
-    };
-  }, [userId]);
+  const oppsData = useOpps2Data(userId);
+  const oppsRecords = oppsData?.records ?? null;
 
   // The hand-marked steps, straight off localStorage: another tab's mark,
   // the user id landing after login, and the date rolling over past
