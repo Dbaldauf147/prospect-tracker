@@ -18,7 +18,7 @@
 import {
   parseMoney, parseMonthCell, termLength, readHeader, parseSitePricing,
   normalizeSitePricing, getSitePricing, priceTerm, priceSitePricing,
-  SITE_PRICING_KEY,
+  SITE_PRICING_KEY, monthFromInput, buildSite, addSite, renameSite, removeSite,
 } from '../src/utils/sitePricing.js';
 import {
   SHIPPED_SETTLES, SHIPPED_FORWARD, monthlySeries, forwardSeries, priceLookup, normalizeSettles,
@@ -314,6 +314,47 @@ const SHEET = [
   eq(out.rows[1].adderChange < 0, true, 'and Syracuse SMM at a better one');
   ok(out.totals.avgSavingPerDth != null, 'the table averages across the sites it could compare');
   eq(out.totals.annualSaving, null, 'and quotes no dollar saving, because the sheet carries no volume');
+}
+
+// ---- A site typed in by name ----------------------------------------------
+{
+  eq(monthFromInput('2025-12'), { year: 2025, month: 12 }, 'a month input reads as that month');
+  eq(monthFromInput(''), null, 'an empty month input is no month');
+  eq(monthFromInput('2025-13'), null, 'and a thirteenth month is not one');
+
+  const form = {
+    name: '  Syracuse   Main ',
+    previous: { start: '2025-12', end: '2026-11', adder: '($0.276)' },
+    updated: { start: '2026-12', end: '2028-11', adder: '(0.092)' },
+    volume: '12,000',
+  };
+  const { site, error } = buildSite(form);
+  eq(error, undefined, 'a complete form builds a site');
+  eq(site.name, 'Syracuse Main', 'the name is tidied the way a pasted one is');
+  eq(site.terms.length, 2, 'both terms come through');
+  eq(site.terms[0].adder, -0.276, 'parentheses stay a discount when typed, too');
+  eq(site.terms[0].nymex, null, 'NYMEX is left for the page to work out');
+  eq(site.terms[1].volume, 12000, 'the volume rides on the terms, where the paste puts it');
+
+  eq(buildSite({ ...form, name: ' ' }).error, 'Give the site a name.', 'no name, no site');
+  eq(buildSite({ name: 'X' }).error, 'Add at least one term: a start and end month.', 'a name alone has nothing to price');
+  ok(/both a start and an end/.test(buildSite({ ...form, updated: { start: '2026-12' } }).error), 'a half-filled term is refused');
+  ok(/ends before it starts/.test(buildSite({ ...form, updated: { start: '2027-01', end: '2026-01' } }).error), 'a backwards term is refused');
+  eq(buildSite({ ...form, updated: {} }).site.terms.length, 1, 'a blank term is just absent');
+  ok(/Volume/.test(buildSite({ ...form, volume: 'lots' }).error), 'a volume that is not a number is refused');
+
+  const one = addSite(null, site);
+  eq(one.sites.length, 1, 'adding to nothing starts a table');
+  ok(one.loadedAt, 'and dates it');
+  const two = addSite(one, buildSite({ ...form, name: 'Rochester' }).site);
+  eq(two.sites.map(s => s.name), ['Syracuse Main', 'Rochester'], 'a second site goes on the end');
+  eq(renameSite(two, 1, ' Rochester East ').sites[1].name, 'Rochester East', 'a site can be renamed');
+  eq(renameSite(two, 1, '  ').sites[1].name, 'Rochester', 'a blank rename changes nothing');
+  eq(removeSite(two, 0).sites.map(s => s.name), ['Rochester'], 'a site can be removed');
+  eq(removeSite(removeSite(two, 0), 0), null, 'removing the last one leaves no table');
+
+  const out = priceSitePricing(two, monthlySeries(normalizeSettles(SHIPPED_SETTLES)), forwardSeries(SHIPPED_FORWARD), 3.67);
+  eq(out.totals.comparable, 2, 'typed-in sites price like pasted ones');
 }
 
 console.log(`${passed} passed, ${failed} failed`);

@@ -6,6 +6,7 @@ import styles from './SitePricingPanel.module.css';
 import { NYMEX_UNIT } from '../../data/nymexHistory.js';
 import {
   SITE_PRICING_KEY, getSitePricing, normalizeSitePricing, parseSitePricing, priceSitePricing,
+  buildSite, addSite, renameSite, removeSite,
 } from '../../utils/sitePricing.js';
 
 // The Site pricing subtab under Sourcing: the renewal comparison pasted in
@@ -35,6 +36,13 @@ const COST_COLOR = '#B91C1C';
 const GRID = '#E2E8F0';
 const AXIS_TEXT = '#64748B';
 const SAVE_DELAY_MS = 800;
+
+const BLANK_SITE = {
+  name: '',
+  previous: { start: '', end: '', adder: '' },
+  updated: { start: '', end: '', adder: '' },
+  volume: '',
+};
 
 const price = (n, dp = 3) => (n == null || !Number.isFinite(n) ? '-' : `${n < 0 ? '-' : ''}$${Math.abs(n).toFixed(dp)}`);
 const signed = (n, dp = 3) => (n == null || !Number.isFinite(n) ? '-' : `${n > 0 ? '+' : n < 0 ? '-' : ''}$${Math.abs(n).toFixed(dp)}`);
@@ -112,6 +120,15 @@ export function SitePricingPanel({
   const [pasteText, setPasteText] = useState('');
   const [pasteError, setPasteError] = useState('');
   const [status, setStatus] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
+  const [siteForm, setSiteForm] = useState(BLANK_SITE);
+  const [addError, setAddError] = useState('');
+  // The row whose name is being typed over, by index, and the draft.
+  const [renaming, setRenaming] = useState(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  // Set by Escape so a blur the browser fires as the input goes away
+  // doesn't commit the draft that was just thrown out.
+  const cancelRenameRef = useRef(false);
 
   const pendingRef = useRef(false);
   const timerRef = useRef(null);
@@ -171,6 +188,45 @@ export function SitePricingPanel({
     setPasteText('');
     setPasteError('');
     setStatus(`Read ${parsed.sites.length} site${parsed.sites.length === 1 ? '' : 's'} across ${parsed.blocks} block${parsed.blocks === 1 ? '' : 's'}${parsed.skipped.length ? `, skipping ${parsed.skipped.length} line${parsed.skipped.length === 1 ? '' : 's'}` : ''}.`);
+  }
+
+  function commit(next, message) {
+    setTable(next);
+    save(next);
+    if (message) setStatus(message);
+  }
+
+  function setTermField(term, field, value) {
+    setSiteForm(f => ({ ...f, [term]: { ...f[term], [field]: value } }));
+    setAddError('');
+  }
+
+  function addTypedSite() {
+    const { site, error } = buildSite(siteForm);
+    if (error) { setAddError(error); return; }
+    commit(addSite(table, site), `Added ${site.name}.`);
+    setSiteForm(BLANK_SITE);
+    setAddError('');
+    setAddOpen(false);
+  }
+
+  function startRename(index, name) {
+    cancelRenameRef.current = false;
+    setRenaming(index);
+    setRenameDraft(name);
+  }
+
+  function finishRename() {
+    if (renaming == null || cancelRenameRef.current) return;
+    const next = renameSite(table, renaming, renameDraft);
+    if (next !== table) commit(next);
+    setRenaming(null);
+  }
+
+  function deleteSite(index, name) {
+    if (!window.confirm(`Remove ${name} from the comparison?`)) return;
+    setRenaming(null);
+    commit(removeSite(table, index), `Removed ${name}.`);
   }
 
   function clearTable() {
@@ -239,7 +295,10 @@ export function SitePricingPanel({
           </div>
         </div>
         <div className={styles.actions}>
-          <button type="button" className={styles.smallBtn} onClick={() => { setPasteOpen(v => !v); setPasteError(''); }}>
+          <button type="button" className={styles.smallBtn} onClick={() => { setAddOpen(v => !v); setPasteOpen(false); setAddError(''); }}>
+            {addOpen ? 'Close' : 'Add a site'}
+          </button>
+          <button type="button" className={styles.smallBtn} onClick={() => { setPasteOpen(v => !v); setAddOpen(false); setPasteError(''); }}>
             {pasteOpen ? 'Close' : table ? 'Paste another' : 'Paste a comparison'}
           </button>
           {table && <button type="button" className={styles.smallBtn} onClick={copyTable}>Copy the table</button>}
@@ -275,9 +334,66 @@ export function SitePricingPanel({
         </div>
       )}
 
-      {!table && !pasteOpen && (
+      {addOpen && (
+        <div className={styles.pastePanel}>
+          <div className={styles.fieldLabel}>
+            Add a site by hand
+            <span className={styles.fieldHint}>
+              The site name, then the deal it was on and the deal it moved to. Leave NYMEX to the
+              page: each term is averaged across the settles and the curve above. A $/Dth in
+              parentheses is a discount. Fill in one term alone and the site is listed with nothing
+              to compare it to yet.
+            </span>
+          </div>
+          <div className={styles.addGrid}>
+            <label className={styles.addField} style={{ gridColumn: '1 / -1' }}>
+              <span>Site name</span>
+              <input
+                className={styles.input}
+                value={siteForm.name}
+                placeholder="Syracuse Main (SYR)"
+                autoFocus
+                onChange={e => { setSiteForm(f => ({ ...f, name: e.target.value })); setAddError(''); }}
+                onKeyDown={e => { if (e.key === 'Enter') addTypedSite(); }}
+              />
+            </label>
+            {[['previous', 'Previous'], ['updated', 'Updated']].map(([term, label]) => (
+              <Fragment key={term}>
+                <div className={styles.addTermLabel}>{label}</div>
+                <label className={styles.addField}>
+                  <span>Start</span>
+                  <input type="month" className={styles.input} value={siteForm[term].start}
+                    onChange={e => setTermField(term, 'start', e.target.value)} />
+                </label>
+                <label className={styles.addField}>
+                  <span>End</span>
+                  <input type="month" className={styles.input} value={siteForm[term].end}
+                    onChange={e => setTermField(term, 'end', e.target.value)} />
+                </label>
+                <label className={styles.addField}>
+                  <span>$/Dth</span>
+                  <input className={styles.input} value={siteForm[term].adder} placeholder="(0.276)"
+                    onChange={e => setTermField(term, 'adder', e.target.value)} />
+                </label>
+              </Fragment>
+            ))}
+            <label className={styles.addField} style={{ gridColumn: '2 / 3' }}>
+              <span>Volume, Dth/yr (optional)</span>
+              <input className={styles.input} value={siteForm.volume} placeholder="12,000"
+                onChange={e => { setSiteForm(f => ({ ...f, volume: e.target.value })); setAddError(''); }} />
+            </label>
+          </div>
+          {addError && <div className={styles.warn}>{addError}</div>}
+          <div className={styles.actions}>
+            <button type="button" className={styles.primaryBtn} onClick={addTypedSite} disabled={!siteForm.name.trim()}>Add site</button>
+            <button type="button" className={styles.smallBtn} onClick={() => { setAddOpen(false); setAddError(''); }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {!table && !pasteOpen && !addOpen && (
         <div className={styles.empty}>
-          Nothing pasted yet. Contract savings prices one term in detail; this prices a whole list
+          Nothing here yet. Add a site by name, or paste the comparison. Contract savings prices one term in detail; this prices a whole list
           of sites at once, off the same tables, and says for each how much of the change was the
           market and how much was the deal.
         </div>
@@ -403,10 +519,30 @@ export function SitePricingPanel({
                 </tr>
               </thead>
               <tbody>
-                {priced.rows.map(row => (
+                {priced.rows.map((row, index) => (
                   <tr key={row.id}>
                     <th scope="row" className={styles.thSite}>
-                      {row.name}
+                      {renaming === index ? (
+                        <input
+                          className={styles.input}
+                          value={renameDraft}
+                          autoFocus
+                          aria-label="Site name"
+                          onChange={e => setRenameDraft(e.target.value)}
+                          onBlur={finishRename}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') finishRename();
+                            if (e.key === 'Escape') { cancelRenameRef.current = true; setRenaming(null); }
+                          }}
+                        />
+                      ) : (
+                        <span className={styles.siteNameRow}>
+                          <button type="button" className={styles.siteName} title="Rename this site" onClick={() => startRename(index, row.name)}>
+                            {row.name}
+                          </button>
+                          <button type="button" className={styles.removeBtn} title={`Remove ${row.name}`} aria-label={`Remove ${row.name}`} onClick={() => deleteSite(index, row.name)}>×</button>
+                        </span>
+                      )}
                       {row.volume != null && <span className={styles.volNote}>{vol(row.volume)} Dth/yr</span>}
                     </th>
                     {[row.previous, row.updated].map((term, i) => (
