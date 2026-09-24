@@ -628,7 +628,7 @@ export function defaultScenario(series = monthlySeries(SHIPPED_SETTLES), forward
       basis: 0, adder: 0.35,
       forwardPrice: 3.5,
       contractType: DEFAULT_CONTRACT_TYPE, fixedRate: 3.85,
-      savingsBasis: DEFAULT_SAVINGS_BASIS, currentRate: 4.1, noActionPct: 4, strategyPct: 1,
+      savingsBasis: DEFAULT_SAVINGS_BASIS, currentRate: 4.1, currentAdder: null, noActionPct: 4, strategyPct: 1,
       layers: [{ id: 'L1', label: 'Layer 1', pct: 40, price: 3.5 }, { id: 'L2', label: 'Layer 2', pct: 25, price: 3.7 }],
     };
   }
@@ -682,6 +682,10 @@ export function defaultScenario(series = monthlySeries(SHIPPED_SETTLES), forward
     // current contract a quarter above the fixed quote, and the percentages
     // from the cost-avoidance example.
     currentRate: Math.round((strike + 0.6) * 100) / 100,
+    // Contract 1's retail adder. Unknown until somebody types it: the adder
+    // on the contract a site is leaving is often buried in an all-in rate,
+    // and a made-up default would split the saving on a guess.
+    currentAdder: null,
     noActionPct: 4,
     strategyPct: 1,
     layers: [
@@ -724,6 +728,9 @@ export function normalizeScenario(raw, series = null, forward = null) {
     currentRate: raw.currentRate == null || raw.currentRate === ''
       ? base.currentRate
       : clamp(num(raw.currentRate, base.currentRate), 0, 1000),
+    currentAdder: raw.currentAdder == null || raw.currentAdder === '' || !Number.isFinite(Number(raw.currentAdder))
+      ? null
+      : clamp(num(raw.currentAdder, 0), -20, 20),
     noActionPct: raw.noActionPct == null || raw.noActionPct === ''
       ? base.noActionPct
       : clamp(num(raw.noActionPct, base.noActionPct), -100, 1000),

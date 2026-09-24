@@ -17,7 +17,7 @@ import {
   CONTRACT_TYPES, SAVINGS_BASES,
 } from '../../utils/nymexSavings.js';
 import { downloadSavingsMonths } from '../../utils/savingsExport.js';
-import { compareOption, stepSummaries, resultSummary } from '../../utils/sourcingSteps.js';
+import { compareOption, stepSummaries, resultSummary, contractComparison } from '../../utils/sourcingSteps.js';
 
 // The Sourcing area on Service Deep Dives: load the NYMEX record, describe a
 // contract and its hedge layers, and see what the hedge is worth over the
@@ -99,7 +99,7 @@ const usdShort = (n) => {
   if (v >= 1e3) return `${sign}$${Math.round(v / 1e3)}k`;
   return `${sign}$${Math.round(v)}`;
 };
-const price = (n, dp = 3) => (n == null || !Number.isFinite(n) ? '-' : `$${n.toFixed(dp)}`);
+const price = (n, dp = 3) => (n == null || !Number.isFinite(n) ? '-' : `${n < 0 ? '-' : ''}$${Math.abs(n).toFixed(dp)}`);
 const pct = (n, dp = 1) => (n == null || !Number.isFinite(n) ? '-' : `${(n * 100).toFixed(dp)}%`);
 const vol = (n) => (n == null || !Number.isFinite(n) ? '-' : Math.round(n).toLocaleString('en-US'));
 // The same, but keeping the decimals somebody typed. Rounding is right for a
@@ -1028,7 +1028,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   const savingsBasisFields = s.savingsBasis === 'contract' ? (
     <div className={styles.fieldRow}>
       <NumberField
-        label="Current contract rate" hint="today's third-party all-in" width="12rem" step="0.01" min="0" suffix={NYMEX_UNIT}
+        label="Contract 1 rate" hint="current third-party all-in" width="12rem" step="0.01" min="0" suffix={NYMEX_UNIT}
         value={s.currentRate} onCommit={v => patchScenario({ currentRate: v })}
       />
       <div className={styles.fieldNote}>
@@ -1073,7 +1073,7 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             </div>
             {key === 'contract' && (
               <NumberField
-                label="Current contract rate" hint="today's third-party all-in" width="12rem" step="0.01" min="0" suffix={NYMEX_UNIT}
+                label="Contract 1 rate" hint="current third-party all-in" width="12rem" step="0.01" min="0" suffix={NYMEX_UNIT}
                 value={s.currentRate} onCommit={v => patchScenario({ currentRate: v })}
               />
             )}
@@ -1156,8 +1156,11 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
   // What the same term's volume costs on each contract, and the gap between
   // them: the Contract Over Contract saving, the same sum the Savings step's
   // card for it does.
-  const oldCost = s.currentRate * run.totals.volume;
-  const cocSaving = oldCost - run.totals.contractCost;
+  // Contract 1 (today) against Contract 2 (the new one), over the new term's
+  // volume, with the retail adder's share of the saving split out.
+  const cmp = contractComparison(s, run.totals);
+  const oldCost = cmp.cost1;
+  const cocSaving = cmp.saving;
 
   // ── Step by step ───────────────────────────────────────────────────
   // Five steps over the one scenario the other subtabs read: the site, how
@@ -1380,20 +1383,25 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
           <div className={styles.groupTitle}>
             Contract details{s.name ? ` for ${s.name}` : ''}
             <span className={styles.groupHint}>
-              The contract the site is on today beside the one it moves to, so the two can be compared over the same
-              term and volume.
+              Contract 1, the one the site is on today, beside Contract 2, the one it moves to, so the two can be
+              compared over the same term and volume.
             </span>
           </div>
           <div className={styles.contractCompare}>
             <div className={styles.contractSide}>
               <div className={styles.contractSideTitle}>
-                Current contract
-                <span className={styles.groupHint}>what the site pays today</span>
+                Contract 1
+                <span className={styles.groupHint}>current: what the site pays today</span>
               </div>
               <div className={styles.fieldRow}>
                 <NumberField
                   label="All-in rate" hint="today's third-party rate" width="10rem" step="0.01" min="0" suffix={NYMEX_UNIT}
                   value={s.currentRate} onCommit={v => patchScenario({ currentRate: v })}
+                />
+                <NumberField
+                  label="Retail adder" hint="inside that rate" tip={RETAIL_ADDER_TIP} width="9.5rem" step="0.01" suffix={NYMEX_UNIT}
+                  value={s.currentAdder ?? ''}
+                  onCommit={v => patchScenario({ currentAdder: String(v).trim() === '' ? null : v })}
                 />
                 <label className={styles.field} style={{ width: '7rem' }}>
                   <span className={styles.fieldLabel}>Ends<span className={styles.fieldHint}>last month on it</span></span>
@@ -1418,8 +1426,8 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             </div>
             <div className={styles.contractSide}>
               <div className={styles.contractSideTitle}>
-                New contract
-                <span className={styles.groupHint}>{CONTRACT_TYPES[s.contractType].label}</span>
+                Contract 2
+                <span className={styles.groupHint}>new: {CONTRACT_TYPES[s.contractType].label}</span>
               </div>
               <div className={styles.fieldRow}>
                 <label className={styles.field} style={{ width: '7rem' }}>
@@ -1459,11 +1467,55 @@ export function SavingsPanel({ settings = {}, settingsLoaded = false, updateSett
             </div>
           </div>
           <div className={styles.contractDiff}>
-            Contract over contract: ({price(s.currentRate)} current less {price(run.totals.avgContractAllIn)} new)
+            Contract 1 vs Contract 2: ({price(s.currentRate)} less {price(run.totals.avgContractAllIn)} all-in)
             x {vol(run.totals.volume)} Dth ={' '}
             <strong className={cocSaving >= 0 ? styles.whatIfGood : styles.whatIfBad}>{usd(cocSaving)}</strong>
-            {oldCost ? `, ${pct(cocSaving / oldCost)} of the current contract` : ''}.
+            {oldCost ? `, ${pct(cocSaving / oldCost)} of Contract 1` : ''}.
           </div>
+          {/* The retail adder, compared on its own: the part of the saving
+              that was negotiated on margin, apart from what the commodity
+              and basis did. */}
+          {cmp.adder ? (
+            <table className={styles.adderCompare}>
+              <thead>
+                <tr>
+                  <th />
+                  <th className={styles.thNum}>Contract 1</th>
+                  <th className={styles.thNum}>Contract 2</th>
+                  <th className={styles.thNum}>Difference</th>
+                  <th className={styles.thNum}>Over {vol(cmp.volume)} Dth</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row"><span className={styles.hasTip} title={RETAIL_ADDER_TIP}>Retail adder</span></th>
+                  <td className={styles.tdNum}>{price(cmp.adder.adder1)}</td>
+                  <td className={styles.tdNum}>{price(cmp.adder.adder2)}</td>
+                  <td className={styles.tdNum}>{price(cmp.adder.perDth)}</td>
+                  <td className={cmp.adder.saving >= 0 ? styles.tdGood : styles.tdBad}>{usd(cmp.adder.saving)}</td>
+                </tr>
+                <tr>
+                  <th scope="row">Commodity and basis</th>
+                  <td className={styles.tdNum}>{price(cmp.rate1 - cmp.adder.adder1)}</td>
+                  <td className={styles.tdNum}>{price((cmp.rate2 ?? 0) - cmp.adder.adder2)}</td>
+                  <td className={styles.tdNum}>{price(cmp.volume ? cmp.adder.rest / cmp.volume : null)}</td>
+                  <td className={cmp.adder.rest >= 0 ? styles.tdGood : styles.tdBad}>{usd(cmp.adder.rest)}</td>
+                </tr>
+                <tr className={styles.layerTotal}>
+                  <th scope="row">All-in</th>
+                  <td className={styles.tdNum}>{price(cmp.rate1)}</td>
+                  <td className={styles.tdNum}>{price(cmp.rate2)}</td>
+                  <td className={styles.tdNum}>{price(cmp.volume ? cmp.saving / cmp.volume : null)}</td>
+                  <td className={cmp.saving >= 0 ? styles.tdGood : styles.tdBad}>{usd(cmp.saving)}</td>
+                </tr>
+              </tbody>
+            </table>
+          ) : (
+            <div className={styles.contractSideCost}>
+              Enter Contract 1&apos;s retail adder to see how much of the saving is the adder and how much is the
+              commodity and basis.
+            </div>
+          )}
         </div>
       )}
     </>

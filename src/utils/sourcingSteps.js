@@ -98,3 +98,42 @@ export function resultSummary(run) {
     good: (t.saving ?? 0) >= 0,
   };
 }
+
+/**
+ * Contract 1 (the current contract) against Contract 2 (the new one), with
+ * the saving split into what the retail adder did and what everything else
+ * did. `totals` is buildSavings' term totals for Contract 2.
+ *
+ * Contract 1 is an all-in rate; its adder is inside that rate. So the
+ * adder's share of the saving is (adder 1 - adder 2) x volume, and the rest
+ * (commodity and basis) is the whole saving less that. The two add back up to
+ * the whole. Null adder split when Contract 1's adder hasn't been given.
+ */
+export function contractComparison(s, totals) {
+  const volume = totals?.volume || 0;
+  const cost1 = s.currentRate * volume;
+  const cost2 = totals?.contractCost || 0;
+  const saving = cost1 - cost2;
+  const out = {
+    volume,
+    rate1: s.currentRate,
+    rate2: totals?.avgContractAllIn ?? null,
+    cost1,
+    cost2,
+    saving,
+    savingPct: cost1 ? saving / cost1 : null,
+    adder: null,
+  };
+  if (s.currentAdder == null || !Number.isFinite(s.currentAdder)) return out;
+  const perDth = s.currentAdder - s.adder;
+  const adderSaving = perDth * volume;
+  out.adder = {
+    adder1: s.currentAdder,
+    adder2: s.adder,
+    perDth,
+    saving: adderSaving,
+    // Everything that is not the adder: the commodity and the basis.
+    rest: saving - adderSaving,
+  };
+  return out;
+}
