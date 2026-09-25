@@ -857,6 +857,8 @@ export function renderWeeklyReportHtml(snapshot, {
   const coverageDrawn = (s.coverage?.charts || []).some(c => c.image && coverageImageSrcs[c.id]);
   const coverageSpan = Number(s.coverage?.weeks) || (s.coverage?.charts?.[0]?.points || []).length;
   const coverageWeeks = coverageDrawn ? coverageSpan : Math.min(coverageSpan, COVERAGE_TABLE_ROWS);
+  const coverageMonths = coverageDrawn ? Number(s.coverage?.months) || 0 : 0;
+  const coverageSpanLabel = coverageMonths ? `Last ${coverageMonths} months` : `Last ${coverageWeeks} weeks`;
   const coverageRatio = coverageRatioHtml(s.coverageRatio, coverageRatioImageSrc);
   const coverageRatioWeeks = (s.coverageRatio?.points || []).length;
   const trendMonths = (Array.isArray(s.closeRateTrend?.months) ? s.closeRateTrend.months : []).length;
@@ -959,7 +961,7 @@ ${table(`width="100%" bgcolor="${PAGE_BG}" style="border-collapse:collapse;backg
 
     ${spacer(16)}${trendRow}
 
-    ${coverage ? `${spacer(20)}${headingHtml('Account coverage', `Last ${coverageWeeks} weeks, from the Progress tab`)}${spacer(8)}${coverage}` : ''}
+    ${coverage ? `${spacer(20)}${headingHtml('Account coverage', `${coverageSpanLabel}, from the Progress tab`)}${spacer(8)}${coverage}` : ''}
 
     ${narrative ? `${spacer(16)}${narrative}` : ''}
 

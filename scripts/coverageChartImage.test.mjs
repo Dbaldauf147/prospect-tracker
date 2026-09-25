@@ -118,6 +118,33 @@ const pointsOf = (values) => values.map((v, i) => ({
     `half a year of weeks fits the snapshot budget (${image.src.length} of ${MAX_COVERAGE_IMAGE_CHARS})`);
 }
 
+// ---- Ten months of weeks -------------------------------------------------
+{
+  // A series keyed by real Mondays, Dec 1 2025 .. Sep 21 2026, as the
+  // email's ten-month window builds it. The axis names months, not weeks.
+  const keys = [];
+  for (let d = new Date(2025, 11, 1); keys.length < 43; d.setDate(d.getDate() + 7)) {
+    keys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  }
+  const points = keys.map((key, i) => ({ key, label: `Wk ${i}`, t1: i > 18 ? 90 : null, t2: i > 18 ? 70 : null }));
+  const img = coverageChartImage({ title: 'Contacts', points });
+  ok(img, 'ten months of weeks is drawn');
+  ok(img.src.length < MAX_COVERAGE_IMAGE_CHARS, 'and stays inside the snapshot budget');
+  // Label glyphs sit in the band under the baseline. With a label under
+  // every other month there are five of them; the old five week labels
+  // would have put one at the far left, where January's first week is not.
+  const px = pixelsOf(img);
+  const band = [];
+  for (let x = 0; x < px.width; x += 1) {
+    let lit = false;
+    for (let y = px.height - 13 * SCALE; y < px.height; y += 1) if (px.at(x, y) === 3) { lit = true; break; }
+    band.push(lit);
+  }
+  let runs = 0;
+  for (let x = 1; x < band.length; x += 1) if (band[x] && !band[x - 1]) runs += 1;
+  ok(runs >= 5, 'the axis carries month names along the bottom');
+}
+
 // ---- The whole payload ---------------------------------------------------
 {
   const coverage = {

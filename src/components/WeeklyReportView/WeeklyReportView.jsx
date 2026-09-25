@@ -28,7 +28,7 @@ import {
 } from '../../utils/weeklyActivityLog';
 import {
   emailsByWeek, newOppsByWeek, coverageByWeek,
-  TREND_WEEKS, COVERAGE_WEEKS,
+  TREND_WEEKS, COVERAGE_MONTHS,
   coverageReading, coverageRatioByWeek, withCoverageReading, sameReading, weekKeyAt,
 } from '../../utils/weeklyReportTrends';
 import { loadCoverageRatioLog, saveCoverageRatioReading } from '../../utils/coverageRatioStore';
@@ -618,7 +618,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   // picture comes out of the cron's rebuild; this is the same call, not a
   // capture the server has to do without.
   const coverageSeries = useMemo(() => withCoverageImages(coverageByWeek({
-    progressWeeks, refMs: bounds.start, weeks: COVERAGE_WEEKS,
+    progressWeeks, refMs: bounds.start, months: COVERAGE_MONTHS,
   })), [progressWeeks, bounds]);
 
   // The coverage ratio by week, with today's reading standing in for this

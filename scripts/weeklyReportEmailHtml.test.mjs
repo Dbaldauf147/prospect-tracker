@@ -283,6 +283,14 @@ check('the card’s one-line summary rides under the bars',
     ), true);
   check('and only the weeks the bars show where it is not',
     /class="hnote"[^>]*>Last 5 weeks, from the Progress tab/.test(renderWeeklyReportHtml(long(26, false), {})), true);
+  // A series built over calendar months says so, where it is drawn.
+  const tenMonths = { ...long(43, true), coverage: { ...long(43, true).coverage, months: 10 } };
+  check('a drawn series built over months is headed in months',
+    /class="hnote"[^>]*>Last 10 months, from the Progress tab/.test(
+      renderWeeklyReportHtml(tenMonths, { coverageImageSrcs: { contactPct: 'cid:x@y' } }),
+    ), true);
+  check('but the bars still count the weeks they show',
+    /class="hnote"[^>]*>Last 5 weeks, from the Progress tab/.test(renderWeeklyReportHtml(tenMonths, {})), true);
   check('the bars themselves are the recent end of the series',
     renderWeeklyReportHtml(long(26, false), {}).includes('Wk 25')
     && !renderWeeklyReportHtml(long(26, false), {}).includes('Wk 3<'), true);

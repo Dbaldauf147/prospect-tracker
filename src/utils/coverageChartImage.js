@@ -164,6 +164,28 @@ function text(r, s, x, y, c, size, align = 'left') {
 
 // ---- The chart ------------------------------------------------------------
 
+const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+// The first week of each calendar month in a weekly series, read off the
+// points' YYYY-MM-DD keys: `{ index, label }`, oldest first. A point whose
+// key is not a date is skipped.
+function monthStarts(points) {
+  const out = [];
+  let prev = null;
+  points.forEach((p, i) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(p?.key || ''));
+    if (!m) return;
+    const ym = `${m[1]}-${m[2]}`;
+    if (ym === prev) return;
+    prev = ym;
+    // The series' first week usually began in the month before; it only
+    // names a month when it falls in that month's first week.
+    if (i === 0 && Number(m[3]) > 7) return;
+    out.push({ index: i, label: MONTHS[Number(m[2]) - 1] });
+  });
+  return out;
+}
+
 /**
  * One coverage chart as a PNG data URL, or null when there is nothing to
  * draw. Shape matches the funnel's image: `{ src, width, height, alt }`,
@@ -197,21 +219,34 @@ export function coverageChartImage(chart) {
   fill(r, plotL, yAt(0), plotW, SCALE, AXIS);
   text(r, '0%', plotL - 4 * SCALE, yAt(0) - GLYPH_H, LABEL, SCALE, 'right');
 
-  // Week labels along the bottom. Every week would be a smear at this
-  // width, so they are thinned to about five and the last one is always
-  // among them: the right-hand end is the week the report is about.
-  const step = Math.max(1, Math.ceil((points.length - 1) / 4));
-  for (let i = points.length - 1; i >= 0; i -= step) {
-    const label = String(points[i].label || '');
-    const half = textWidth(label, SCALE) / 2;
-    // The last label is the week the report is about and always sits at
-    // the end of the axis, so it is pinned inside the right edge rather
-    // than centred on its point - centred, its tail runs off the picture
-    // and "Sep 7" arrives as "SEP".
-    const at = Math.min(xAt(i), W - half);
-    // Anywhere else, only where it clears the per-cent labels up the left.
-    if (at - half < plotL - PAD_L / 2) continue;
-    text(r, label, at, plotB + 5 * SCALE, LABEL, SCALE, 'center');
+  // Labels along the bottom. Over a long series (the email asks for ten
+  // months of weeks) each month is named once, under the first week that
+  // starts in it, thinned to every other month if they would crowd. A short
+  // series keeps week labels, thinned to about five with the last one
+  // always among them.
+  const monthMarks = points.length > 20 ? monthStarts(points) : null;
+  if (monthMarks && monthMarks.length >= 2) {
+    const every = monthMarks.length > 7 ? 2 : 1;
+    monthMarks.forEach((m, n) => {
+      if ((monthMarks.length - 1 - n) % every) return;
+      const half = textWidth(m.label, SCALE) / 2;
+      const at = Math.max(plotL + half, Math.min(xAt(m.index), W - half));
+      text(r, m.label, at, plotB + 5 * SCALE, LABEL, SCALE, 'center');
+    });
+  } else {
+    const step = Math.max(1, Math.ceil((points.length - 1) / 4));
+    for (let i = points.length - 1; i >= 0; i -= step) {
+      const label = String(points[i].label || '');
+      const half = textWidth(label, SCALE) / 2;
+      // The last label is the week the report is about and always sits at
+      // the end of the axis, so it is pinned inside the right edge rather
+      // than centred on its point - centred, its tail runs off the picture
+      // and "Sep 7" arrives as "SEP".
+      const at = Math.min(xAt(i), W - half);
+      // Anywhere else, only where it clears the per-cent labels up the left.
+      if (at - half < plotL - PAD_L / 2) continue;
+      text(r, label, at, plotB + 5 * SCALE, LABEL, SCALE, 'center');
+    }
   }
 
   // The two series. A week the Progress tab never recorded is joined

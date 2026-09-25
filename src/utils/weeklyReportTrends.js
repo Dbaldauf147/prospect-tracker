@@ -20,10 +20,20 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // fits across half the email column and still shows a direction.
 export const TREND_WEEKS = 10;
 // Coverage looks back further than the two bar series do, because it is
-// drawn as a line and a line wants a shape rather than five readings. Half
-// a year is what the Progress tab's own charts show, and at the size the
-// email draws it 26 points still resolve into weekly steps.
+// drawn as a line and a line wants a shape rather than a few readings: ten
+// calendar months, a point a week, from the Monday that opens the first of
+// them. COVERAGE_WEEKS is what a caller that asks for a plain week count
+// gets, and what tests lean on.
+export const COVERAGE_MONTHS = 10;
 export const COVERAGE_WEEKS = 26;
+
+// How many weekly points it takes to reach back to the start of the
+// calendar month `months - 1` before the one containing `refMs`, counting
+// the week that holds its 1st.
+export function coverageWeeksFor(refMs, months = COVERAGE_MONTHS) {
+  const first = recentMonths(refMs, months)[0].start;
+  return Math.round((mondayOf(refMs) - mondayOf(first)) / (7 * DAY_MS)) + 1;
+}
 
 // The [start, end) ms window for the calendar month containing `ms`.
 export function monthBounds(ms) {
@@ -145,14 +155,15 @@ export function newOppsByWeek({ records, refMs = Date.now(), weeks = TREND_WEEKS
 // no email recording is: the Progress tab writes a snapshot when it is
 // opened, so a week nobody opened it has no reading, and drawing that as
 // 0% would put a cliff in the line that no account ever fell off.
-export function coverageByWeek({ progressWeeks = [], refMs = Date.now(), weeks = COVERAGE_WEEKS } = {}) {
+export function coverageByWeek({ progressWeeks = [], refMs = Date.now(), weeks = COVERAGE_WEEKS, months = null } = {}) {
   const byWeek = new Map();
   for (const w of (Array.isArray(progressWeeks) ? progressWeeks : [])) {
     if (w && typeof w === 'object' && typeof w.week === 'string') byWeek.set(w.week, w);
   }
   if (!byWeek.size) return null;
 
-  const windows = recentWeeks(refMs, weeks);
+  // A span in months wins over a week count: it is how the email asks.
+  const windows = recentWeeks(refMs, months ? coverageWeeksFor(refMs, months) : weeks);
   const charts = COVERAGE_CHARTS.map((c) => {
     const points = windows.map(({ start }) => {
       const snap = byWeek.get(localKey(start));
@@ -166,7 +177,8 @@ export function coverageByWeek({ progressWeeks = [], refMs = Date.now(), weeks =
     return { id: c.id, title: c.label, points, note: coverageNote(points) };
   }).filter(c => c.points.some(p => p.t1 != null || p.t2 != null));
 
-  return charts.length ? { weeks: windows.length, charts } : null;
+  if (!charts.length) return null;
+  return months ? { weeks: windows.length, months, charts } : { weeks: windows.length, charts };
 }
 
 // A percentage the snapshot actually carries, or null. Out-of-range values

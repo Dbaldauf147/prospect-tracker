@@ -164,6 +164,7 @@ export function emailSnapshotPayload({
     coverage: coverage?.charts?.length
       ? {
         weeks: coverage.weeks || coverage.charts[0].points.length,
+        months: coverage.months || null,
         // Each chart travels as its points AND as the picture drawn from
         // them, because a mail client renders neither an SVG nor the line
         // the tab draws. The points are not redundant: a client that
