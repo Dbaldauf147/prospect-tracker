@@ -496,3 +496,58 @@
   background: var(--color-surface, #fff);
   overflow: hidden;
 }
+
+/* ---- The email's charts, on the tab ---- */
+
+.chartGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 0.75rem;
+}
+
+.chartCard {
+  padding: 0.75rem 0.9rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface, #fff);
+  min-width: 0;
+}
+
+.chartTitle {
+  margin-bottom: 0.5rem;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.chartNote {
+  margin-top: 0.4rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+/* One clickable chip per funnel stage, under the funnel card. */
+.stageStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.stageChip {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface, #fff);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.stageChipLabel {
+  font-weight: 700;
+  color: var(--color-text);
+}

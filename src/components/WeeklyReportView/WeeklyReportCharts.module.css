@@ -1,0 +1,179 @@
+/* Column and line charts for the Weekly Report tab. Colours of the marks
+   come from the caller (the same pairs the email draws with); everything
+   else wears the app's text and border tokens so dark mode follows. */
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---- Columns ---- */
+
+.columns {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  height: 150px;
+}
+
+.colSlot {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.colValue {
+  height: 1.1rem;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-align: center;
+  color: var(--color-text);
+}
+
+.colTrack {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.colBar,
+.colBarEmpty {
+  display: block;
+  width: 70%;
+  max-width: 28px;
+  border-radius: 4px 4px 0 0;
+  cursor: pointer;
+}
+
+.colBar:hover { filter: brightness(0.92); }
+
+.colBarEmpty {
+  height: 100%;
+  border: 1px dashed var(--color-border);
+  border-bottom: none;
+  background: transparent;
+}
+
+.colLabel {
+  margin-top: 4px;
+  font-size: 0.68rem;
+  text-align: center;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Lines ---- */
+
+.lineWrap { position: relative; }
+
+.legend {
+  display: flex;
+  gap: 0.9rem;
+  margin-bottom: 0.35rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.legendItem { display: inline-flex; align-items: center; gap: 0.35rem; }
+
+.legendSwatch {
+  width: 12px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.lineBody {
+  display: flex;
+  gap: 6px;
+}
+
+.yAxis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 130px;
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  text-align: right;
+  min-width: 2.2rem;
+  transform: translateY(-0.4rem);
+}
+
+.plot {
+  position: relative;
+  flex: 1;
+  height: 130px;
+  margin-right: 8px;
+}
+
+.svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.baseline { stroke: var(--color-border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.grid { stroke: var(--color-border); stroke-width: 1; stroke-dasharray: 2 4; opacity: 0.6; vector-effect: non-scaling-stroke; }
+.goalLine { stroke: var(--color-text-muted); stroke-width: 1.5; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
+.line { stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+
+.goalLabel {
+  position: absolute;
+  right: 0;
+  transform: translateY(-120%);
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  background: var(--color-surface, #fff);
+  padding: 0 3px;
+  pointer-events: none;
+}
+
+/* The hit target is bigger than the dot, so a week can be clicked without
+   aiming at 8px. */
+.dotHit {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 50%;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--color-surface, #fff);
+  transition: transform 0.1s ease;
+}
+
+.dotHit:hover .dot { transform: scale(1.4); }
+
+.xAxis {
+  position: relative;
+  height: 1.1rem;
+  margin: 4px 8px 0 calc(2.2rem + 6px);
+}
+
+.xTick {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
