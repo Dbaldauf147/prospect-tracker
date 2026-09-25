@@ -44,6 +44,13 @@ import {
 import { PipelineFunnel } from '../PipelineView/PipelineFunnel';
 import { CloseRateTrend } from './CloseRateTrend';
 import { svgToPngDataUrl } from '../../utils/svgToPng';
+import { LiveValue, LiveValueProvider } from '../common/LiveValue';
+import { ColumnTrendChart, LineTrendChart } from './WeeklyReportCharts';
+import {
+  emailsWeekBreakdown, newOppsWeekBreakdown, coverageRatioWeekBreakdown,
+  accountCoverageBreakdown, kpiBreakdown, funnelStageBreakdown,
+} from '../../utils/weeklyReportBreakdowns';
+import { COVERAGE_T1, COVERAGE_T2 } from '../../utils/progressCoverage';
 
 const ACTIVITY_CACHE_KEY = 'hubspot-activity-cache';
 const PIPELINE_STORE = 'pipeline-dashboard';
@@ -176,7 +183,10 @@ function StatTile({ value, label, accent, sub, subTitle, goal = null, onGoal }) 
 // One headline KPI: the number, a verdict chip, and the arithmetic behind
 // it. `status` ('ahead' | 'behind' | null) colours the card and the chip;
 // without one the card stays neutral rather than guessing a verdict.
-function KpiTile({ label, value, status, chip, lines = [] }) {
+//
+// The value is a LiveValue when `breakdown` is given: click it for the
+// deals behind the number and an Excel download of them.
+function KpiTile({ id, label, value, status, chip, lines = [], breakdown }) {
   return (
     <div className={styles.kpi} data-status={status || undefined}>
       <div className={styles.kpiLabel}>{label}</div>
@@ -184,7 +194,11 @@ function KpiTile({ label, value, status, chip, lines = [] }) {
           different lengths, and hanging the chip off them dropped one card's
           value a line below the others. */}
       <div className={styles.kpiValueRow}>
-        <span className={styles.kpiValue}>{value}</span>
+        {breakdown ? (
+          <LiveValue id={`kpi-${id}`} breakdown={breakdown} className={styles.kpiValue}>{value}</LiveValue>
+        ) : (
+          <span className={styles.kpiValue}>{value}</span>
+        )}
         {chip && <span className={styles.kpiChip}>{chip}</span>}
       </div>
       {lines.filter(Boolean).map((line, i) => (
@@ -631,6 +645,28 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     refMs: bounds.start,
   })), [coverageLog, liveCoverage, bounds]);
 
+  // ---- Click-through breakdowns -----------------------------------------
+  // Every figure the email carries is on this tab too, and a click on any
+  // of them opens the rows it was counted from with an Excel download
+  // (utils/weeklyReportBreakdowns). Built once per data change rather than
+  // per render: the email and new-opp ones each re-scan a week of records.
+  const bfoMetrics = useMemo(() => bfoStageMetrics(bfo), [bfo]);
+  const coverageRatioLog = useMemo(
+    () => withCoverageReading(coverageLog || {}, weekKeyAt(Date.now()), liveCoverage),
+    [coverageLog, liveCoverage],
+  );
+  const kpiBreakdowns = useMemo(() => Object.fromEntries(kpiCards.map(card => [
+    card.key, kpiBreakdown({ key: card.key, card, kpis, records: oppsRecords, bfoMetrics }),
+  ])), [kpiCards, kpis, oppsRecords, bfoMetrics]);
+  const breakdowns = useMemo(() => {
+    const byKey = (points, build) => new Map((points || []).map(p => [p.key, build(p)]));
+    return {
+      emails: byKey(trendSeries.emailsByWeek, point => emailsWeekBreakdown({ point, cache, senderEmail })),
+      newOpps: byKey(trendSeries.newOppsByWeek, point => newOppsWeekBreakdown({ point, records: oppsRecords })),
+      ratio: byKey(coverageRatioSeries?.points, point => coverageRatioWeekBreakdown({ point, log: coverageRatioLog })),
+    };
+  }, [trendSeries, coverageRatioSeries, coverageRatioLog, cache, senderEmail, oppsRecords]);
+
   // What the tab publishes. The cron rebuilds the report from Firestore and
   // HubSpot at send time (api/_lib/weeklyReportBuild.js) rather than mailing
   // this back, but both go through emailSnapshotPayload so the document the
@@ -683,7 +719,9 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     // full width so the scrollbar sits at the edge of the pane; the
     // 1100px measure stays on the content column inside it.
     <div className={styles.scroller}>
-      <div className={styles.wrap}>
+      {/* The provider is the box a click in unpins a breakdown from, so it
+          is the whole column: click anywhere off a pinned panel to close it. */}
+      <LiveValueProvider className={styles.wrap}>
         <div className={styles.header}>
           <div className={styles.titleBlock}>
             <h1 className={styles.title}>Weekly Report</h1>
@@ -751,11 +789,41 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
           </div>
           {kpisReady ? (
             <div className={styles.kpiRow}>
-              {kpiCards.map(({ key, ...card }) => <KpiTile key={key} {...card} />)}
+              {kpiCards.map(({ key, ...card }) => (
+                <KpiTile key={key} id={key} {...card} breakdown={kpiBreakdowns[key]} />
+              ))}
             </div>
           ) : (
             <div className={styles.empty}>
               No chart data cached yet. Open <strong>Charts → Pipeline</strong> (and paste BFO Activity) to seed the target, pipeline and run rate.
+            </div>
+          )}
+        </section>
+
+        {/* The email's "Coverage ratio by week": the KPI card above is where
+            the ratio stands, this is which way it has been going. */}
+        <section className={styles.funnelSection}>
+          <div className={styles.kpiHead}>
+            <h2 className={styles.sectionHead}>Coverage ratio by week</h2>
+            <span className={styles.kpiHeadNote}>
+              Open pipeline ÷ annual target, one reading a week. Click a point for its figures.
+            </span>
+          </div>
+          {coverageRatioSeries ? (
+            <div className={styles.chartCard}>
+              <LineTrendChart
+                id="ratio"
+                points={coverageRatioSeries.points}
+                series={[{ key: 'value', name: 'Coverage ratio', color: '#009530' }]}
+                goal={coverageRatioSeries.goal}
+                fmt={v => `${v.toFixed(2)}×`}
+                breakdownFor={p => breakdowns.ratio.get(p.key)}
+              />
+              {coverageRatioSeries.note && <div className={styles.chartNote}>{coverageRatioSeries.note}</div>}
+            </div>
+          ) : (
+            <div className={styles.empty}>
+              No coverage ratio readings yet. One is taken each week this page or Charts → Pipeline is open with a target and pipeline to divide.
             </div>
           )}
         </section>
@@ -768,9 +836,28 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
             </span>
           </div>
           {funnelReady ? (
+            <>
             <div className={styles.funnelCard} ref={funnelCardRef}>
               <PipelineFunnel stages={funnelStages} outcome={funnelOutcome} />
             </div>
+            {/* Outside the card on purpose: the card is rasterised for the
+                email, and these are the tab's way into each stage's opps. */}
+            <div className={styles.stageStrip}>
+              {[...funnelStages].filter(st => Number.isFinite(st.stageNum))
+                .sort((a, b) => a.stageNum - b.stageNum)
+                .map(st => (
+                  <LiveValue
+                    key={st.stageNum}
+                    id={`funnel-${st.stageNum}`}
+                    breakdown={funnelStageBreakdown({ stage: st, bfoMetrics })}
+                    className={styles.stageChip}
+                  >
+                    <span className={styles.stageChipLabel}>Stage {st.stageNum}</span>
+                    <span>{st.countActual ?? 0} opps · {fmtCompactMoney(Number(st.amtActual) || 0)}</span>
+                  </LiveValue>
+                ))}
+            </div>
+            </>
           ) : (
             <div className={styles.empty}>
               No stage volumes cached yet. Open <strong>Charts → Pipeline</strong> (and paste BFO Activity) so the funnel has stage actuals to draw.
@@ -815,6 +902,76 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
             onGoal={mode === 'week' ? (n => setWeeklyTarget('newOpps', n)) : undefined}
           />
         </div>
+
+        {/* The email's two history charts, the week this report covers
+            last. The tiles above say how this period did against its goal;
+            these say which way the last ten weeks have gone. */}
+        <section className={styles.funnelSection}>
+          <div className={styles.kpiHead}>
+            <h2 className={styles.sectionHead}>Last {TREND_WEEKS} weeks</h2>
+            <span className={styles.kpiHeadNote}>Click a column for the emails or opps behind it</span>
+          </div>
+          <div className={styles.chartGrid}>
+            <div className={styles.chartCard}>
+              <div className={styles.chartTitle}>Emails sent</div>
+              <ColumnTrendChart
+                id="emails"
+                points={trendSeries.emailsByWeek}
+                color="#3B82F6"
+                unit="emails"
+                breakdownFor={p => breakdowns.emails.get(p.key)}
+              />
+            </div>
+            <div className={styles.chartCard}>
+              <div className={styles.chartTitle}>New opps</div>
+              <ColumnTrendChart
+                id="newopps"
+                points={trendSeries.newOppsByWeek}
+                color="#10B981"
+                unit="opps"
+                breakdownFor={p => breakdowns.newOpps.get(p.key)}
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* The email's "Account coverage", from the Progress tab's weekly
+            snapshots. A point's download lists the accounts behind it. */}
+        <section className={styles.funnelSection}>
+          <div className={styles.kpiHead}>
+            <h2 className={styles.sectionHead}>Account coverage</h2>
+            <span className={styles.kpiHeadNote}>
+              From the Progress tab, last {COVERAGE_MONTHS} months. Click a point for the accounts.
+            </span>
+          </div>
+          {coverageSeries ? (
+            <div className={styles.chartGrid}>
+              {coverageSeries.charts.map(chart => (
+                <div key={chart.id} className={styles.chartCard}>
+                  <div className={styles.chartTitle}>{chart.title}</div>
+                  <LineTrendChart
+                    id={`cov-${chart.id}`}
+                    points={chart.points}
+                    series={[
+                      { key: 't1', name: 'Tier 1', color: COVERAGE_T1 },
+                      { key: 't2', name: 'Tier 2', color: COVERAGE_T2 },
+                    ]}
+                    yMax={100}
+                    fmt={v => `${Math.round(v)}%`}
+                    breakdownFor={(point, s) => accountCoverageBreakdown({
+                      chart, point, tier: s.key === 't2' ? 2 : 1, progressWeeks,
+                    })}
+                  />
+                  {chart.note && <div className={styles.chartNote}>{chart.note}</div>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className={styles.empty}>
+              No Progress snapshots yet. Open <strong>Charts → Progress</strong> to record this week's account coverage.
+            </div>
+          )}
+        </section>
 
         {(narrative || genError || genLoading) && (
           <div className={styles.narrative}>
@@ -917,7 +1074,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
             )}
           </section>
         </div>
-      </div>
+      </LiveValueProvider>
     </div>
   );
 }
