@@ -147,9 +147,9 @@ export function emailSnapshotPayload({
     // target; the reader wants to know which way the line is going, and a
     // number over a goal cannot say that. Built by the caller (both of them
     // hold the caches these read) via utils/weeklyReportTrends.
-    trends: trends && (trends.emailsByWeek?.length || trends.newOppsByMonth?.length)
+    trends: trends && (trends.emailsByMonth?.length || trends.newOppsByMonth?.length)
       ? {
-        emailsByWeek: trends.emailsByWeek || [],
+        emailsByMonth: trends.emailsByMonth || [],
         newOppsByMonth: trends.newOppsByMonth || [],
       }
       : null,

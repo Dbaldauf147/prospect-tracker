@@ -57,12 +57,12 @@ const snapshot = {
     ],
   },
   trends: {
-    emailsByWeek: [
-      { key: '2026-08-03', label: 'Aug 3', value: 31, recorded: true },
-      { key: '2026-08-10', label: 'Aug 10', value: null, recorded: false },
-      { key: '2026-08-17', label: 'Aug 17', value: 44, recorded: true },
-      { key: '2026-08-24', label: 'Aug 24', value: 18, recorded: true },
-      { key: '2026-08-31', label: 'Aug 31', value: 27, recorded: false },
+    emailsByMonth: [
+      { key: '2026-05', label: 'May', value: 31, recorded: true },
+      { key: '2026-06', label: 'Jun', value: null, recorded: false },
+      { key: '2026-07', label: 'Jul', value: 44, recorded: true },
+      { key: '2026-08', label: 'Aug', value: 18, recorded: true },
+      { key: '2026-09', label: 'Sep', value: 27, recorded: false },
     ],
     newOppsByMonth: [
       { key: '2026-05', label: 'May', value: 4, recorded: false },
@@ -138,26 +138,28 @@ check('every table is a presentation table with no spacing',
   tables.every(t => t.includes('role="presentation"') && t.includes('cellspacing="0"') && t.includes('cellpadding="0"')),
   true);
 
-// Bars are drawn as table cells with a bgcolor - never as a coloured div
+// Columns are drawn as table cells with a bgcolor - never as a coloured div
 // alone, and never as a picture, which a client can refuse to load.
 //
-// The tallest bar in a series is the scale: 44 emails is the max, so it is
-// the 100% bar and 18 is scaled against it, not against a 0–50 axis that
-// would render five near-identical stubs.
-// Every width is a pixel count stated in an attribute as well as in CSS:
-// Word will not resolve a percentage width on a table nested in a cell, so
-// a bar sized that way collapses to its content and the series arrives in
-// Outlook as a column of ticks rather than a row of bars.
-check('a trend bar is a bgcolor cell sized both ways',
-  /<td width="230" height="14" bgcolor="#7C8B9D"[^>]*width:230px/.test(html), true);
-check('bars scale to the series max, not to a fixed axis',
-  /<td width="94" height="14" bgcolor="#7C8B9D"/.test(html), true);
-check('no bar is sized as a share of the cell it sits in',
+// The tallest column in a series is the scale: 44 emails is the max, so it
+// is the full 84px column and 18 is scaled against it, not against a fixed
+// axis that would render near-identical stubs. Every size is a pixel count
+// stated in an attribute as well as in CSS, which is what Word reads.
+check('a trend column is a bgcolor cell sized both ways',
+  /<td width="28" height="84" bgcolor="#7C8B9D"[^>]*width:28px;height:84px/.test(html), true);
+check('columns scale to the series max, not to a fixed axis',
+  /<td width="28" height="34" bgcolor="#7C8B9D"/.test(html), true);
+check('no column is sized as a share of the cell it sits in',
   /width="\d+%"[^>]*bgcolor="(#7C8B9D|#2a78d6|#0E9F6E|#104281|#1c5cab)"/.test(html), false);
 // Emphasis: the period this report covers wears the accent, the history
 // behind it wears the de-emphasis grey.
 check('the current period carries the accent colour',
-  /<td width="141" height="14" bgcolor="#2a78d6"/.test(html), true);
+  /<td width="28" height="52" bgcolor="#2a78d6"/.test(html), true);
+// Months run across the bottom, oldest on the left.
+check('the months read left to right under the columns',
+  /May<\/td>[\s\S]*Jun<\/td>[\s\S]*Jul<\/td>[\s\S]*Aug<\/td>[\s\S]*Sep<\/td>/.test(html), true);
+check('an unmeasured month reads as a dash with no column', /font-weight:700;color:#8896A6[^>]*>-<\/div><\/td>/.test(html), true);
+check('the emails card names its span in months', html.includes('last 5 months'), true);
 check('the current month carries the opps accent',
   /bgcolor="#0E9F6E"/.test(html), true);
 // The funnel is the picture alone: no stage table, no bars standing in for
@@ -371,7 +373,7 @@ check('a drawn funnel has no projected-total block',
     periodEnd: Date.parse('2026-09-06T23:59:59Z'),
     scope: 'week',
     periodLabel: 'Mon, Aug 31 - Sun, Sep 6, 2026',
-    trends: { emailsByWeek: [{ key: '2026-08-31', label: 'Aug 31', value: 0, recorded: true }], newOppsByMonth: [] },
+    trends: { emailsByMonth: [{ key: '2026-08', label: 'Aug', value: 0, recorded: true }], newOppsByMonth: [] },
   }, {});
   const banner = stale.indexOf('These numbers are');
   check('a stale report carries a banner', banner > -1, true);

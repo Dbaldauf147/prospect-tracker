@@ -61,11 +61,13 @@ const statusOf = (s) => STATUS[s] || STATUS.none;
 // would read as a second thing being measured. Both greys and both accents
 // clear 3:1 on white, so every bar is visible and no bar competes.
 const TREND_HISTORY = '#7C8B9D';
-// The chart column of a trend card, in pixels: the 800px content column,
-// halved for the two cards side by side, less the card's border and
-// padding and the label and value columns either side of the bar, with a
-// little slack left so Outlook never has to choose what to drop.
-const TREND_TRACK = 230;
+// A trend card's column chart, in pixels. Ten columns and the nine gaps
+// between them have to fit half the 800px content column less the card's
+// border and padding, with a little slack so Outlook never has to choose
+// what to drop: 10 x 28 + 9 x 5 = 325.
+const TREND_COL = 28;
+const TREND_GAP = 5;
+const TREND_CHART_H = 84;
 const TREND_BLUE = { strong: '#2a78d6', soft: TREND_HISTORY };
 const TREND_GREEN = { strong: '#0E9F6E', soft: TREND_HISTORY };
 
@@ -190,54 +192,45 @@ function cardRow(cells) {
   return table(`width="100%" style="border-collapse:collapse"`, `<tr>${tds}</tr>`);
 }
 
-// A trend series, as a row of horizontal bars - one period per row, oldest
-// at the top, each bar direct-labelled with its own number.
+// A trend series, as a column chart: one column per month, oldest on the
+// left, each column labelled with its own number above it and its month
+// below.
 //
-// Horizontal rather than columns because the period labels ("Aug 11",
-// "Sep") need room to sit beside their bar, and because a row of cells
-// with set heights is the layout Word is least reliable about. Every bar
-// carries its value in text next to it, so the series is legible even
-// where the fills do not render at all - which is also the relief a
-// low-contrast fill on white requires.
+// Every column is a table cell with a set height and a bgcolor, bottom-
+// aligned in a cell of the chart's full height, and every size is stated
+// in an attribute as well as in CSS, which is what Word reads. The value
+// sits above each column in text, so the series is legible even where the
+// fills do not render at all.
 //
-// Horizontal is also something the markup has to hold onto: see barHtml
-// for why the width of a bar is a pixel count and not a percentage.
-//
-// A null value is NOT a zero. For the emails series it means the week has
+// A null value is NOT a zero. For the emails series it means the month has
 // no recording and the feed cannot answer for it; drawing that as an empty
-// bar would assert a quiet week that nobody actually measured.
-function trendRowHtml(point, max, accent, isLast) {
+// column would assert a quiet month that nobody actually measured, so it
+// reads "-" with no column.
+const blankCell = 'font-size:0;line-height:0;mso-line-height-rule:exactly';
+
+function trendColumnHtml(point, max, accent, isLast) {
   const known = point.value != null;
-  const value = known ? point.value : 0;
-  // Scale to the tallest bar in the series, never to the axis: five weeks
-  // of 20-30 emails against a 0-50 axis is five stubs that all look alike.
-  const fillPx = max > 0 && known ? Math.max(4, Math.round((value / max) * TREND_TRACK)) : 0;
+  const value = known ? Number(point.value) || 0 : 0;
+  // Scale to the tallest column in the series, never to a fixed axis.
+  // A non-zero month always gets a visible sliver.
+  const h = max > 0 && known && value > 0 ? Math.max(2, Math.round((value / max) * TREND_CHART_H)) : 0;
   // The current period is the one the reader is being told about, so it
-  // carries the full accent and the rest recede - emphasis, rather than
-  // five bars competing for the same attention.
+  // carries the full accent and the rest recede.
   const fill = isLast ? accent.strong : accent.soft;
-  const labelInk = isLast ? INK : MUTED;
-
-  // The track is drawn even where the bar is empty, so the numbers down
-  // the right stay in a column of their own rather than sliding left on
-  // the weeks nothing can be said about.
-  const bar = barHtml({ fillPx, trackPx: TREND_TRACK, color: fill });
-
-  // The slack cell at the end keeps the three fixed columns together on
-  // the left instead of letting the table spread them across the card. It
-  // carries `hpad` because a percentage cell beside fixed ones is what
-  // forces a table wider than a phone's screen, and the media query drops
-  // it there - Word, which never reads the query, keeps it.
-
-  return `<tr>
-      <td width="58" valign="middle" style="width:58px;padding:3px 8px 3px 0;font-family:${FONT};font-size:12px;font-weight:${isLast ? 700 : 600};color:${labelInk};white-space:nowrap">${esc(point.label)}</td>
-      <td width="${TREND_TRACK}" valign="middle" style="width:${TREND_TRACK}px;padding:3px 0">${bar}</td>
-      <td width="42" valign="middle" style="width:42px;padding:3px 0 3px 8px;font-family:${FONT};font-size:13px;font-weight:700;color:${known ? INK : MUTED};white-space:nowrap;text-align:right">${known ? esc(point.value) : '-'}</td>
-      <td class="hpad" width="99%" style="width:99%"></td>
-    </tr>`;
+  const column = h > 0
+    ? table(`width="${TREND_COL}" style="border-collapse:collapse;width:${TREND_COL}px"`, `<tr>
+          <td width="${TREND_COL}" height="${h}" bgcolor="${fill}" style="width:${TREND_COL}px;height:${h}px;border-radius:2px 2px 0 0;${blankCell}">&nbsp;</td>
+        </tr>`)
+    : '';
+  const figure = `<div style="padding-bottom:3px;font-family:${FONT};font-size:11px;font-weight:700;color:${known ? INK : MUTED};white-space:nowrap;text-align:center">${known ? esc(point.value) : '-'}</div>`;
+  return `<td width="${TREND_COL}" height="${TREND_CHART_H + 18}" valign="bottom" align="center" style="width:${TREND_COL}px;height:${TREND_CHART_H + 18}px;border-bottom:1px solid ${BORDER};padding:0">${figure}${column}</td>`;
 }
 
-// One trend card: heading, the bars, then the footnotes the series needs.
+function trendLabelHtml(point, isLast) {
+  return `<td width="${TREND_COL}" align="center" style="width:${TREND_COL}px;padding:4px 0 0;font-family:${FONT};font-size:11px;font-weight:${isLast ? 700 : 600};color:${isLast ? INK : MUTED};white-space:nowrap;text-align:center">${esc(point.label)}</td>`;
+}
+
+// One trend card: heading, the columns, then the footnotes the series needs.
 function trendCardHtml({ title, note, points, accent, emptyNote }) {
   if (!Array.isArray(points) || points.length === 0) {
     return `${cardOpen({ left: accent.strong })}
@@ -247,14 +240,21 @@ function trendCardHtml({ title, note, points, accent, emptyNote }) {
   }
 
   const max = points.reduce((m, p) => (p.value != null && p.value > m ? p.value : m), 0);
-  const rows = points.map((p, i) => trendRowHtml(p, max, accent, i === points.length - 1)).join('');
-  // Say once, under the series, what the two things a bar can't show mean -
-  // rather than a per-bar asterisk that has to be hunted for.
+  const last = points.length - 1;
+  // A gap is a cell of its own rather than padding, which Outlook ignores
+  // on a cell whose width is already set. The bar row's gaps carry the
+  // same baseline rule as the columns so the axis reads as one line.
+  const gap = (ruled) => `<td width="${TREND_GAP}" style="width:${TREND_GAP}px;${ruled ? `border-bottom:1px solid ${BORDER};` : ''}${blankCell}">&nbsp;</td>`;
+  const join = (cells, ruled) => cells.map((c, i) => (i ? gap(ruled) : '') + c).join('');
+  const bars = join(points.map((p, i) => trendColumnHtml(p, max, accent, i === last)), true);
+  const labels = join(points.map((p, i) => trendLabelHtml(p, i === last)), false);
+  // Say once, under the series, what the two things a column can't show
+  // mean - rather than a per-column asterisk that has to be hunted for.
   const unknown = points.some(p => p.value == null);
   const recorded = points.some(p => p.recorded);
   const feet = [
-    recorded ? 'Weeks the live feed no longer covers are the totals banked on the Activity tab.' : '',
-    unknown ? '- marks a week with no recording and no feed to count.' : '',
+    recorded ? 'Months the live feed no longer covers are the totals banked on the Activity tab.' : '',
+    unknown ? '- marks a month with no recording and no feed to count.' : '',
   ].filter(Boolean).join(' ');
 
   return `${cardOpen({ left: accent.strong })}
@@ -263,7 +263,7 @@ function trendCardHtml({ title, note, points, accent, emptyNote }) {
         <td valign="bottom" style="padding-left:8px;font-family:${FONT};font-size:12px;color:${MUTED};white-space:nowrap">${esc(note)}</td>
         <td width="99%" style="width:99%"></td>
       </tr>`)}
-      ${table(`width="100%" style="border-collapse:collapse;margin-top:8px"`, rows)}
+      ${table(`style="border-collapse:collapse;margin-top:8px"`, `<tr>${bars}</tr><tr>${labels}</tr>`)}
       ${feet ? `<div style="margin-top:7px;font-family:${FONT};font-size:11px;line-height:1.4;color:${MUTED}">${esc(feet)}</div>` : ''}
     ${CARD_CLOSE}`;
 }
@@ -793,17 +793,17 @@ export function renderWeeklyReportHtml(snapshot, {
 
   // The two series that replaced the "Emails sent" and "New opps" tiles.
   // Each is its own chart on its own scale: one axis per chart, because a
-  // week of ~30 emails and a month of ~2 opps share no axis worth drawing.
+  // month of ~200 emails and a month of ~5 opps share no axis worth drawing.
   // Colours are the accents the tab already gives these two metrics, so the
   // same number is the same colour in both places.
-  const trendRow = (s.trends && (tr.emailsByWeek?.length || tr.newOppsByMonth?.length))
+  const trendRow = (s.trends && (tr.emailsByMonth?.length || tr.newOppsByMonth?.length))
     ? cardRow([
       trendCardHtml({
         title: 'Emails sent',
-        note: `last ${(tr.emailsByWeek || []).length} weeks`,
-        points: tr.emailsByWeek,
+        note: `last ${(tr.emailsByMonth || []).length} months`,
+        points: tr.emailsByMonth,
         accent: TREND_BLUE,
-        emptyNote: 'No weekly email history recorded yet.',
+        emptyNote: 'No monthly email history recorded yet.',
       }),
       trendCardHtml({
         title: 'New opps',

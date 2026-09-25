@@ -258,23 +258,22 @@ function fakeFetch(emails) {
   // The two history series. The reported week is the last point in each,
   // so the figures the email leads with are the same ones the change lists
   // below it are drawn from.
-  const wk = p.trends.emailsByWeek;
-  check('five weeks of email history', wk.length, 5);
-  // Two external sends inside the week, the internal-only one dropped and
-  // last week's excluded — counted by computeActivity, the same function
-  // the tab counts with.
-  check('the reported week counts the live window', wk[4].value, 2);
+  const em = p.trends.emailsByMonth;
+  check('ten months of email history', em.length, 10);
+  // Three external sends in September (two in the reported week, one the
+  // week before), the internal-only one dropped — counted by
+  // computeActivity, the same function the tab counts with.
+  check('the reported month counts the live window', em[9].value, 3);
   // A live feed that covers the window outranks the recording, so the
   // planted 99 must not surface.
-  check('a covering live feed beats the recorded total', wk[4].recorded, false);
-  check('the last point is the week the report covers',
-    wk[4].key, '2026-09-07');
+  check('a covering live feed beats the recorded total', em[9].recorded, false);
+  check('the last point is the month the report covers', em[9].key, '2026-09');
 
   const mo = p.trends.newOppsByMonth;
-  check('five months of opp history', mo.length, 5);
-  check('the current month counts the opp that first appeared', mo[4].value, 1);
+  check('ten months of opp history', mo.length, 10);
+  check('the current month counts the opp that first appeared', mo[9].value, 1);
   check('the months run oldest first', mo.map(x => x.key).join(','),
-    '2026-05,2026-06,2026-07,2026-08,2026-09');
+    '2025-12,2026-01,2026-02,2026-03,2026-04,2026-05,2026-06,2026-07,2026-08,2026-09');
 
   // The change lists, named the way the tab names them.
   check('the new opp is listed', p.oppChanges.newOpps[0], 'Acme: HQ retrofit (Stage 4: Influence and Develop)');
@@ -372,16 +371,16 @@ check('a coverage ratio series alone is worth sending',
 // and draw a collapse in outbound that never happened.
 {
   const built = await buildWeeklyReport(fakeDb(docs), UID, { now: NOW, token: '' });
-  const wk = built.payload.trends.emailsByWeek;
-  check('no feed → the recording answers', wk[4].value, 99);
-  check('and the series owns up to where the number came from', wk[4].recorded, true);
-  // The four weeks before it were never recorded either, and with no feed
-  // to count they are unknown — not zero. An empty bar would assert four
-  // quiet weeks that nobody measured.
-  check('unrecorded weeks with no feed are blank, not zero',
-    wk.slice(0, 4).map(x => x.value).join(','), ',,,');
+  const em = built.payload.trends.emailsByMonth;
+  check('no feed → the recording answers', em[9].value, 99);
+  check('and the series owns up to where the number came from', em[9].recorded, true);
+  // The months before it were never recorded either, and with no feed to
+  // count they are unknown — not zero. An empty bar would assert quiet
+  // months that nobody measured.
+  check('unrecorded months with no feed are blank, not zero',
+    em.slice(0, 9).every(x => x.value === null), true);
   check('the rest of the report is unaffected',
-    built.payload.trends.newOppsByMonth[4].value, 1);
+    built.payload.trends.newOppsByMonth[9].value, 1);
 }
 
 // The live feed has to be asked for the whole span the weekly series
@@ -391,11 +390,13 @@ check('a coverage ratio series alone is worth sending',
 // emails it never fetched. Five bars, four of them a confident lie.
 {
   const windows = [];
+  const otherWindows = [];
   const spyFetch = async (url, opts) => {
     const body = JSON.parse(opts?.body || '{}');
     const f = (body.filterGroups?.[0]?.filters || []);
     const from = Number(f.find(x => x.operator === 'GTE')?.value);
-    if (Number.isFinite(from)) windows.push(from);
+    const to = Number(f.find(x => x.operator === 'LTE')?.value);
+    if (Number.isFinite(from)) (url.includes('/emails/') ? windows : otherWindows).push({ from, to });
     return fakeFetch(hubspotEmails)(url, opts);
   };
   await buildWeeklyReport(fakeDb(docs), UID, {
@@ -405,13 +406,21 @@ check('a coverage ratio series alone is worth sending',
   const period = completedPeriodBounds(NOW, { scope: 'week' });
   const seriesStart = trendHistoryStart(period.start);
   check('HubSpot was actually asked', windows.length > 0, true);
-  check('and asked back to the start of the five-week series',
-    Math.min(...windows) <= seriesStart, true);
+  const earliest = Math.min(...windows.map(w => w.from));
+  check('and asked back to the start of the ten-month series',
+    earliest <= seriesStart, true);
   // Bounded, not unbounded: widening the fetch is only acceptable because
   // it is still a fixed span. A whole-history page is what the cron was
   // built to stop doing.
   check('but no further back than the series needs',
-    Math.min(...windows) > seriesStart - 40 * 24 * 60 * 60 * 1000, true);
+    earliest > seriesStart - 40 * 24 * 60 * 60 * 1000, true);
+  // Ten months in one search would stop at the page cap and lose its
+  // oldest months, so the history is asked for a month at a time.
+  check('the email history is fetched in month-sized slices',
+    windows.length >= 10 && windows.every(w => w.to - w.from <= 31 * 24 * 60 * 60 * 1000), true);
+  // Calls and meetings have no series, so they stay on the reported week.
+  check('calls and meetings stay on the reported window',
+    otherWindows.length > 0 && Math.min(...otherWindows.map(w => w.from)) > period.start - 8 * 24 * 60 * 60 * 1000, true);
 }
 
 // ---- when there is nothing to rebuild from ------------------------------

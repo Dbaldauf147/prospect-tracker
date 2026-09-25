@@ -85,23 +85,53 @@ async function fetchType(type, token, from, to, opts) {
   return out;
 }
 
+// The email history behind the Weekly Report's emails-by-month series runs
+// to ten months, which is more mail than one search should be asked for:
+// the pages come back newest first and stop at MAX_PAGES, so an overfull
+// window would lose its OLDEST months while still being stamped as a feed
+// that covers them. Asked for a month at a time instead, each slice gets
+// the whole page budget to itself. Slices share their edges (both filters
+// are inclusive), so a record on a boundary is kept once, by id.
+const SLICE_MS = 31 * DAY_MS;
+
+async function fetchTypeSliced(type, token, from, to, opts) {
+  const out = [];
+  const seen = new Set();
+  for (let s = from; s <= to; s += SLICE_MS) {
+    const rows = await fetchType(type, token, s, Math.min(to, s + SLICE_MS), opts);
+    for (const r of rows) {
+      if (seen.has(r.id)) continue;
+      seen.add(r.id);
+      out.push(r);
+    }
+  }
+  return out;
+}
+
 /**
  * The emails, calls and meetings around a window, shaped like the browser's
  * `hubspot-activity-cache`. `fetchedAt` is stamped now, which is what makes
  * utils/weeklyActivityLog.liveCacheCovers treat it as an answer for the
  * window rather than a feed that predates it.
  *
+ * `opts.emailsFrom` reaches the emails back further than the window, for
+ * the emails-by-month series; calls and meetings stay on the window.
+ *
  * Throws if HubSpot refuses — the caller decides whether to fall back to
  * the recorded weekly totals or give up on a live rebuild.
  */
 export async function fetchActivityWindow(token, start, end, opts = {}) {
   if (!token) throw new Error('HUBSPOT_ACCESS_TOKEN is not configured');
+  const { emailsFrom, ...fetchOpts } = opts || {};
   const from = Math.max(0, Number(start) - PAD_MS);
   const to = Number(end) + PAD_MS;
+  const emailFrom = Number.isFinite(Number(emailsFrom)) && emailsFrom != null
+    ? Math.max(0, Math.min(from, Number(emailsFrom) - PAD_MS))
+    : from;
   const [emails, calls, meetings] = await Promise.all([
-    fetchType('email', token, from, to, opts),
-    fetchType('call', token, from, to, opts),
-    fetchType('meeting', token, from, to, opts),
+    fetchTypeSliced('email', token, emailFrom, to, fetchOpts),
+    fetchType('call', token, from, to, fetchOpts),
+    fetchType('meeting', token, from, to, fetchOpts),
   ]);
   return { emails, calls, meetings, fetchedAt: new Date().toISOString() };
 }
