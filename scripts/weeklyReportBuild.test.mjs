@@ -36,13 +36,24 @@ const at = (iso) => Date.parse(iso);
 // ---- a fake firebase-admin Firestore ------------------------------------
 // Only the surface the loaders touch: collection().doc().get(), .data(),
 // and a `chunks` subcollection that iterates with forEach.
-function fakeDb(docs) {
+function fakeDb(seed) {
+  // A copy, so a write one test makes cannot leak into the next; the
+  // written state is exposed as `docs` on the fake for tests to read.
+  const docs = { ...seed };
   const makeSnap = (path) => {
     const v = docs[path];
     return { exists: v !== undefined, data: () => v };
   };
   const makeRef = (path) => ({
     get: async () => makeSnap(path),
+    // A shallow-enough merge for the one write the build makes: the
+    // coverage-ratio log's `weeks` map, one entry at a time.
+    set: async (value, opts) => {
+      const prev = docs[path] || {};
+      docs[path] = opts?.merge
+        ? { ...prev, ...value, weeks: { ...(prev.weeks || {}), ...(value.weeks || {}) } }
+        : value;
+    },
     collection: (sub) => ({
       get: async () => {
         const prefix = `${path}/${sub}/`;
@@ -54,7 +65,7 @@ function fakeDb(docs) {
       doc: (id) => makeRef(`${path}/${sub}/${id}`),
     }),
   });
-  return { collection: (name) => ({ doc: (id) => makeRef(`${name}/${id}`) }) };
+  return { docs, collection: (name) => ({ doc: (id) => makeRef(`${name}/${id}`) }) };
 }
 
 // ---- fixtures -----------------------------------------------------------
@@ -284,6 +295,75 @@ function fakeFetch(emails) {
   // The recap stays the tab's on-demand piece.
   check('no narrative is invented', p.narrative, '');
 }
+
+// ---- the coverage ratio by week -----------------------------------------
+// The KPI card's ratio has no history of its own, so the build writes the
+// week it reports into the log when nobody measured it while it ran, and
+// the email draws the log as a weekly series.
+{
+  const db = fakeDb(docs);
+  const built = await buildWeeklyReport(db, UID, {
+    now: NOW, token: 'tok', fetchOpts: { fetchImpl: fakeFetch(hubspotEmails) },
+  });
+  const cr = built.payload.coverageRatio;
+  check('the coverage ratio series is carried', !!cr, true);
+  check('eight weeks of it', cr.points.length, 8);
+  check('ending on the week the report covers', cr.points[7].key, '2026-09-07');
+  check('whose point is the KPI card figure', cr.points[7].value, 1.78);
+  check('weeks nobody measured are blank, not 0', cr.points[0].value, null);
+  check('the goal rides along', cr.goal, 3.21);
+  const saved = db.docs[`coverageRatioHistory/${UID}`]?.weeks?.['2026-09-07'];
+  check('the reading is written to the log', saved?.ratio, 1.78);
+  check('with the figures it divides', saved?.pipeline, 2_358_500);
+  check('stamped with when it was taken', saved?.at, NOW);
+  check('the write is not an error', built.errors.some(e => e.startsWith('coverageRatioHistory')), false);
+}
+
+// A week the tab already measured keeps its reading: the build fills
+// gaps, it does not overwrite what was taken while the week ran.
+{
+  const db = fakeDb({
+    ...docs,
+    [`coverageRatioHistory/${UID}`]: { weeks: {
+      '2026-08-31': { ratio: 1.5, goal: 3.21, at: 1 },
+      '2026-09-07': { ratio: 1.9, goal: 3.21, at: 2 },
+    } },
+  });
+  const built = await buildWeeklyReport(db, UID, {
+    now: NOW, token: 'tok', fetchOpts: { fetchImpl: fakeFetch(hubspotEmails) },
+  });
+  const pts = built.payload.coverageRatio.points;
+  check('a reading taken during the week stands', pts[7].value, 1.9);
+  check('the week before is drawn from the log', pts[6].value, 1.5);
+  check('and the log is left alone',
+    db.docs[`coverageRatioHistory/${UID}`].weeks['2026-09-07'].at, 2);
+  check('the note says which way it went', built.payload.coverageRatio.note,
+    'Up 0.40× since Aug 31, from 1.50× to 1.90×.');
+}
+
+// A send well after the week closed is measuring a different week, so it
+// does not fill the closed one.
+{
+  const db = fakeDb(docs);
+  const late = at('2026-09-18T12:00:00Z'); // Friday
+  const built = await buildWeeklyReport(db, UID, {
+    now: late, token: 'tok', fetchOpts: { fetchImpl: fakeFetch(hubspotEmails) },
+  });
+  check('a late send writes nothing', db.docs[`coverageRatioHistory/${UID}`], undefined);
+  check('and has no series to draw', built.payload.coverageRatio, null);
+}
+
+// A daily report closes a day, not the week the log is kept in.
+{
+  const db = fakeDb(docs);
+  await buildWeeklyReport(db, UID, {
+    now: NOW, scope: 'day', token: 'tok', fetchOpts: { fetchImpl: fakeFetch(hubspotEmails) },
+  });
+  check('a daily send writes nothing', db.docs[`coverageRatioHistory/${UID}`], undefined);
+}
+
+check('a coverage ratio series alone is worth sending',
+  payloadHasFigures({ coverageRatio: { points: [{ label: 'Sep 7', value: 2 }] } }), true);
 
 // Without a live feed the recorded weekly totals stand in, exactly as the
 // tile did in the browser when the storage quota had dropped the cache.

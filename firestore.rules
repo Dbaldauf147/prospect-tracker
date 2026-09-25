@@ -291,6 +291,13 @@ service cloud.firestore {
       allow read, write: if owns(userId);
     }
 
+    // Weekly coverage-ratio readings (open pipeline ÷ annual target), one
+    // per week in a `weeks` map. Written by the Weekly Report tab; the
+    // scheduled send's rebuild fills missing weeks through the Admin SDK.
+    match /coverageRatioHistory/{userId} {
+      allow read, write: if owns(userId);
+    }
+
     // Weekly reviews: the recorded "what's holding me back" verdict for each
     // week, written by the Weekly Report tab. Same per-user scoping as
     // progressHistory — one document per user holding a `weeks` array.

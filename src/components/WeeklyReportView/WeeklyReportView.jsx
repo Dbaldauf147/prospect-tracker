@@ -29,7 +29,9 @@ import {
 import {
   emailsByWeek, newOppsByMonth, coverageByWeek,
   TREND_WEEKS, TREND_MONTHS, COVERAGE_WEEKS,
+  coverageReading, coverageRatioByWeek, withCoverageReading, sameReading, weekKeyAt,
 } from '../../utils/weeklyReportTrends';
+import { loadCoverageRatioLog, saveCoverageRatioReading } from '../../utils/coverageRatioStore';
 import { withCoverageImages } from '../../utils/coverageChartImage';
 import {
   buildFunnelStages, closeRateTrendByStage, closeRatesByStage, emailCloseRateTrend,
@@ -248,6 +250,10 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   // and the funnel.
   const [bfo, setBfo] = useState(null);
   const [progressWeeks, setProgressWeeks] = useState([]);
+  // The weekly coverage-ratio log, from Firestore. Null until it has
+  // loaded, so this week's reading is never written over one the log
+  // already holds before we have seen it.
+  const [coverageLog, setCoverageLog] = useState(null);
 
   const [narrative, setNarrative] = useState('');
   const [genLoading, setGenLoading] = useState(false);
@@ -309,6 +315,15 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     return () => { cancelled = true; };
   }, [user?.uid]);
 
+  useEffect(() => {
+    if (!user?.uid) return undefined;
+    let cancelled = false;
+    loadCoverageRatioLog(user.uid)
+      .then((log) => { if (!cancelled) setCoverageLog(log); })
+      .catch((err) => console.warn('Weekly Report: coverage ratio log load failed', err));
+    return () => { cancelled = true; };
+  }, [user?.uid]);
+
   const bounds = useMemo(
     () => (mode === 'day' ? dayBounds(refDate) : weekBounds(refDate)),
     [mode, refDate],
@@ -360,6 +375,27 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   // last Tuesday. Each card carries the arithmetic behind it so a figure
   // that looks wrong can be traced without opening the Pipeline tab.
   const kpis = useMemo(() => headlineKpis(reviewSnapshot), [reviewSnapshot]);
+
+  // ---- Coverage ratio by week -------------------------------------------
+  // The ratio on the card below is where it stands right now, so it is
+  // written down as this week's reading: next week's email then has a
+  // point for this week whatever the pipeline does in between. The latest
+  // reading in a week wins. Debounced because the caches behind the ratio
+  // arrive one at a time on load, and the first ratio computed is often
+  // off hand-entered stage actuals the BFO paste is about to replace.
+  const liveCoverage = useMemo(() => coverageReading(kpis), [kpis]);
+  useEffect(() => {
+    if (!user?.uid || !coverageLog || !liveCoverage) return undefined;
+    const key = weekKeyAt(Date.now());
+    if (sameReading(coverageLog[key], liveCoverage)) return undefined;
+    const t = setTimeout(() => {
+      const at = Date.now();
+      saveCoverageRatioReading(user.uid, key, { ...liveCoverage, at })
+        .then(() => setCoverageLog(prev => withCoverageReading(prev, key, liveCoverage, { at })))
+        .catch(err => console.warn('Weekly Report: coverage ratio write failed', err));
+    }, 2000);
+    return () => clearTimeout(t);
+  }, [user?.uid, coverageLog, liveCoverage]);
 
   // ---- Pipeline funnel --------------------------------------------------
   // The same chart the Pipeline tab draws under its metrics table, from the
@@ -585,6 +621,14 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     progressWeeks, refMs: bounds.start, weeks: COVERAGE_WEEKS,
   })), [progressWeeks, bounds]);
 
+  // The coverage ratio by week, with today's reading standing in for this
+  // week before the write above has landed, so the last bar in the email
+  // is the figure on the KPI card.
+  const coverageRatioSeries = useMemo(() => coverageRatioByWeek({
+    log: withCoverageReading(coverageLog || {}, weekKeyAt(Date.now()), liveCoverage),
+    refMs: bounds.start,
+  }), [coverageLog, liveCoverage, bounds]);
+
   // What the tab publishes. The cron rebuilds the report from Firestore and
   // HubSpot at send time (api/_lib/weeklyReportBuild.js) rather than mailing
   // this back, but both go through emailSnapshotPayload so the document the
@@ -607,13 +651,16 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     // pipeline figures above say what the year is worth, these say whether
     // the accounts it rests on have anybody in them to call.
     coverage: coverageSeries,
+    // The coverage ratio card's history: one reading a week, so the email
+    // says which way the ratio is going as well as where it stands.
+    coverageRatio: coverageRatioSeries,
     oppChanges,
     goalsProgress: goalsProg,
     // Only ship a recap that was written for this period; a stale one
     // would describe a different week under this week's heading.
     narrative: narrativeStale ? '' : narrative,
   }), [mode, label, bounds, kpisReady, kpis, funnelSummary, funnelImage, closeRateTrendSummary,
-    trendSeries, coverageSeries, oppChanges, goalsProg, narrative, narrativeStale]);
+    trendSeries, coverageSeries, coverageRatioSeries, oppChanges, goalsProg, narrative, narrativeStale]);
 
   // Publish on a debounce whenever the snapshot changes and there is
   // something in it worth sending. Only the current period is published:

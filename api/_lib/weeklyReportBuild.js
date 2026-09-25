@@ -14,6 +14,7 @@
 //   Weekly activity log   …/weekly-activity-log
 //   YOY pins              …/yoy-chart-overrides
 //   Progress weeks        progressHistory/{uid}
+//   Coverage ratio log    coverageRatioHistory/{uid}
 //   Targets, work email   userSettings/{uid}
 //   Emails / calls / mtgs  the HubSpot API itself, live
 //
@@ -40,6 +41,7 @@ import { buildReviewSnapshot, headlineKpis, emailKpiCards } from '../../src/util
 import {
   emailsByWeek, newOppsByMonth, coverageByWeek,
   recentWeeks, TREND_WEEKS, TREND_MONTHS, COVERAGE_WEEKS,
+  coverageReading, coverageRatioByWeek, withCoverageReading, weekKeyAt, COVERAGE_RATIO_WEEKS,
 } from '../../src/utils/weeklyReportTrends.js';
 import { withCoverageImages } from '../../src/utils/coverageChartImage.js';
 import {
@@ -54,6 +56,13 @@ import { fetchActivityWindow } from './hubspotActivityWindow.js';
 import { zonedToUtc, localParts } from './weeklyReportSchedule.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+// How long after a week closes a reading can still stand for it. The
+// ratio is a level, so what it reads at Monday 6am is where the week ended,
+// and a week the tab was never opened in gets that as its point. A send
+// later than this (a Friday schedule, a manual "send now" mid-week) is
+// measuring a different week and leaves the closed one alone.
+const COVERAGE_FILL_GRACE_MS = 2 * DAY_MS;
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const isoOf = ({ y, mo, d }) => `${y}-${pad2(mo + 1)}-${pad2(d)}`;
@@ -125,7 +134,7 @@ export async function loadReportSources(db, uid, { token = '', start, end, histo
     }
   };
 
-  const [opps2, pipeline, bfo, goals, activityLog, yoyOverrides, progress, settings, activityCache] =
+  const [opps2, pipeline, bfo, goals, activityLog, yoyOverrides, progress, coverageRatioLog, settings, activityCache] =
     await Promise.all([
       settle('opps2', () => loadOpps2(db, uid), null),
       settle('pipeline', () => loadMirror(db, uid, MIRROR.pipeline), null),
@@ -141,6 +150,11 @@ export async function loadReportSources(db, uid, { token = '', start, end, histo
             .sort((a, b) => a.week.localeCompare(b.week))
           : [];
       }, []),
+      settle('coverageRatioHistory', async () => {
+        const snap = await db.collection('coverageRatioHistory').doc(uid).get();
+        const weeks = snap.exists ? snap.data()?.weeks : null;
+        return (weeks && typeof weeks === 'object') ? weeks : {};
+      }, {}),
       settle('userSettings', async () => {
         const snap = await db.collection('userSettings').doc(uid).get();
         return snap.exists ? (snap.data() || {}) : {};
@@ -166,6 +180,7 @@ export async function loadReportSources(db, uid, { token = '', start, end, histo
     activityLog: (activityLog && typeof activityLog === 'object') ? activityLog : {},
     yoyOverrides: (yoyOverrides && typeof yoyOverrides === 'object') ? yoyOverrides : {},
     progressWeeks: progress,
+    coverageRatioLog: coverageRatioLog || {},
     settings: settings || {},
     activityCache,
     errors,
@@ -176,7 +191,17 @@ export async function loadReportSources(db, uid, { token = '', start, end, histo
  * The snapshot payload, from already-loaded sources. Pure — no I/O — so the
  * whole shape of a built report can be tested against fixtures.
  */
-export function buildReportPayload(sources, period) {
+export function buildReportPayload(sources, period, opts) {
+  return buildReport(sources, period, opts).payload;
+}
+
+/**
+ * The payload plus the coverage-ratio reading this build took for the
+ * week it reports, when that week had none (`coverageFill`, null
+ * otherwise). Still pure: the caller decides whether to write the fill.
+ * `now` is when the reading is being taken; without one, nothing is filled.
+ */
+export function buildReport(sources, period, { now = null } = {}) {
   const s = sources || {};
   const { start, end, scope, label } = period;
   const settings = s.settings || {};
@@ -226,6 +251,22 @@ export function buildReportPayload(sources, period) {
   const kpis = headlineKpis(reviewSnapshot);
   const kpisReady = !!(reviewSnapshot.pipeline || reviewSnapshot.yoy);
 
+  // The coverage ratio by week. The series reads the log the tab and
+  // earlier sends wrote; the week this report covers gets today's reading
+  // when nobody took one while it ran and the week has only just closed
+  // (see COVERAGE_FILL_GRACE_MS). Only a weekly report fills: a daily one
+  // closes a day, not the week the log is kept in.
+  const reportWeekKey = weekKeyAt(start);
+  const reading = kpisReady ? coverageReading(kpis) : null;
+  const canFill = scope !== 'day' && reading && Number.isFinite(now)
+    && now >= end && now - end <= COVERAGE_FILL_GRACE_MS;
+  const log = s.coverageRatioLog || {};
+  const filledLog = canFill
+    ? withCoverageReading(log, reportWeekKey, reading, { at: now, onlyIfMissing: true })
+    : log;
+  const coverageFill = filledLog !== log ? { key: reportWeekKey, entry: filledLog[reportWeekKey] } : null;
+  const coverageRatio = coverageRatioByWeek({ log: filledLog, refMs: start, weeks: COVERAGE_RATIO_WEEKS });
+
   const funnelStages = buildFunnelStages({
     stages: Array.isArray(s.pipeline?.stages) ? s.pipeline.stages : [],
     bfoMetrics: bfoStageMetrics(s.bfo),
@@ -233,7 +274,7 @@ export function buildReportPayload(sources, period) {
     closeRates: closeRatesByStage(s.oppsRecords),
   });
 
-  return emailSnapshotPayload({
+  const payload = emailSnapshotPayload({
     scope,
     periodLabel: label,
     periodStart: start,
@@ -247,12 +288,14 @@ export function buildReportPayload(sources, period) {
     closeRateTrend: emailCloseRateTrend(closeRateTrendByStage(s.oppsRecords, { months: 6 })),
     trends,
     coverage,
+    coverageRatio,
     oppChanges,
     goalsProgress,
     // The recap is the tab's one on-demand piece; a cron that wrote its own
     // prose would be a different report arriving under the same heading.
     narrative: '',
   });
+  return { payload, coverageFill };
 }
 
 // Whether a built payload is worth mailing in place of the stored
@@ -265,6 +308,7 @@ export function payloadHasFigures(payload) {
   if (payload.funnel) return true;
   if (payload.closeRateTrend) return true;
   if (payload.coverage) return true;
+  if (payload.coverageRatio) return true;
   const tr = payload.trends || {};
   const points = [...(tr.emailsByWeek || []), ...(tr.newOppsByMonth || [])];
   if (points.some(p => Number(p.value) > 0)) return true;
@@ -290,6 +334,19 @@ export async function buildWeeklyReport(db, uid, {
     historyStart: trendHistoryStart(period.start),
     fetchOpts,
   });
-  const payload = buildReportPayload(sources, period);
-  return { payload, period, errors: sources.errors, usable: payloadHasFigures(payload) };
+  const { payload, coverageFill } = buildReport(sources, period, { now });
+  const errors = [...sources.errors];
+  // Write the week's reading down, so next week's email has this point
+  // whether or not this one is sent. A merge of the one map entry: the
+  // weeks the tab recorded stay as they are. A failed write costs the
+  // point, not the send.
+  if (coverageFill) {
+    try {
+      await db.collection('coverageRatioHistory').doc(uid)
+        .set({ weeks: { [coverageFill.key]: coverageFill.entry } }, { merge: true });
+    } catch (err) {
+      errors.push(`coverageRatioHistory write: ${String(err?.message || err).slice(0, 200)}`);
+    }
+  }
+  return { payload, period, errors, usable: payloadHasFigures(payload) };
 }
