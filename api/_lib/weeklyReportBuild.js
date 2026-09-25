@@ -40,7 +40,7 @@ import {
 import { buildReviewSnapshot, headlineKpis, emailKpiCards } from '../../src/utils/weeklyReview.js';
 import {
   emailsByWeek, newOppsByWeek, coverageByWeek,
-  recentWeeks, TREND_WEEKS, COVERAGE_WEEKS,
+  recentWeeks, TREND_WEEKS, COVERAGE_MONTHS,
   coverageReading, coverageRatioByWeek, withCoverageReading, weekKeyAt, COVERAGE_RATIO_WEEKS,
 } from '../../src/utils/weeklyReportTrends.js';
 import { withCoverageImages, withCoverageRatioImage } from '../../src/utils/coverageChartImage.js';
@@ -237,7 +237,7 @@ export function buildReport(sources, period, { now = null } = {}) {
   // pixel by pixel (utils/coverageChartImage), so a scheduled send carries
   // the same picture the preview shows.
   const coverage = withCoverageImages(coverageByWeek({
-    progressWeeks: s.progressWeeks, refMs: start, weeks: COVERAGE_WEEKS,
+    progressWeeks: s.progressWeeks, refMs: start, months: COVERAGE_MONTHS,
   }));
 
   const reviewSnapshot = buildReviewSnapshot({

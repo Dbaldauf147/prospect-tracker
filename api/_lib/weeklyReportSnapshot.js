@@ -139,10 +139,10 @@ function closeRateTrendDoc(t) {
 // fact from a week where no account had a contact. clampInt would turn the
 // first into the second and draw a coverage collapse that never happened.
 export const MAX_COVERAGE_CHARTS = 4;
-// Half a year of weeks, with room to spare. The chart is drawn from these
-// points, so a cap below the window the series is built over would store a
-// shorter chart than the one the picture shows.
-export const MAX_COVERAGE_POINTS = 40;
+// Ten months of weeks (up to 45), with room to spare. The chart is drawn
+// from these points, so a cap below the window the series is built over
+// would store a shorter chart than the one the picture shows.
+export const MAX_COVERAGE_POINTS = 56;
 
 const covPct = (v) => (v == null ? null : clampInt(v, 0, 100, 0));
 
@@ -197,7 +197,14 @@ function coverageDoc(c) {
     }))
     .filter(ch => ch.title && ch.points.length);
   if (!charts.length) return null;
-  return { weeks: charts[0].points.length, charts };
+  const months = Number(c.months);
+  return {
+    weeks: charts[0].points.length,
+    // The span the tab asked for, so the heading can say "10 months"
+    // rather than counting weeks. Absent on an older snapshot.
+    months: Number.isFinite(months) && months >= 1 ? clampInt(months, 1, 24, 0) : null,
+    charts,
+  };
 }
 
 // The coverage ratio by week. A point's `value` may be null, and as with

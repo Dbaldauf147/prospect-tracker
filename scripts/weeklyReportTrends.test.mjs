@@ -9,6 +9,7 @@
 // with more weeks to get wrong.
 import {
   monthBounds, recentWeeks, recentMonths, emailsByWeek, newOppsByWeek, coverageByWeek,
+  coverageWeeksFor, COVERAGE_MONTHS,
 } from '../src/utils/weeklyReportTrends.js';
 
 let passed = 0, failed = 0;
@@ -241,6 +242,24 @@ const opp = (id, ms) => ({ id, account: `Acct ${id}`, Stage: 'Discovery', _rowUp
     progressWeeks: [{ week: wk(4), t1ContactPct: 140, t2ContactPct: -5 }], refMs: REF, weeks: 1,
   });
   eq([odd.charts[0].points[0].t1, odd.charts[0].points[0].t2], [100, 0], 'coverage: percentages are clamped to the track');
+}
+
+// ---- Ten months of coverage ---------------------------------------------
+{
+  // Sep 21 2026 is a Monday. Ten months back is December 2025, whose 1st is
+  // a Monday too, so the series runs Dec 1 .. Sep 21: 43 weeks.
+  const ref = at(2026, 9, 23);
+  eq(COVERAGE_MONTHS, 10, 'coverage: the email asks for ten months');
+  eq(coverageWeeksFor(ref, 10), 43, 'coverage: ten months is the weeks from the first month\u2019s opening Monday');
+  const cov = coverageByWeek({
+    progressWeeks: [{ week: '2026-09-21', t1ContactPct: 95, t2ContactPct: 79 }], refMs: ref, months: 10,
+  });
+  eq(cov.months, 10, 'coverage: a month-built series says how many months');
+  eq(cov.weeks, 43, 'coverage: and how many weekly points');
+  eq(cov.charts[0].points[0].key, '2025-12-01', 'coverage: it starts in the week holding the first month\u2019s 1st');
+  eq(cov.charts[0].points[42].key, '2026-09-21', 'coverage: and ends on the reported week');
+  eq(coverageByWeek({ progressWeeks: [{ week: '2026-09-21', t1ContactPct: 50 }], refMs: ref, weeks: 5 }).months, undefined,
+    'coverage: a week-count series carries no month span');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
