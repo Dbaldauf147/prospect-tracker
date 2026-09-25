@@ -289,10 +289,8 @@ const injected = renderWeeklyReportHtml({
   goals: { active: ['<script>g</script>'] },
   oppChanges: { newOpps: ['<script>x</script>'] },
 }, { message: '<b>intro</b>' });
-check('opp names are escaped', injected.includes('&lt;script&gt;x&lt;/script&gt;'), true);
 check('period label is escaped', injected.includes('&lt;b&gt;label&lt;/b&gt;'), true);
 check('intro message is escaped', injected.includes('&lt;b&gt;intro&lt;/b&gt;'), true);
-check('goal text is escaped', injected.includes('&lt;script&gt;g&lt;/script&gt;'), true);
 check('funnel stage names are escaped', injected.includes('&lt;img src=x&gt;'), true);
 check('trend rates are escaped', injected.includes('&lt;i&gt;17%&lt;/i&gt;'), true);
 check('trend month heads are escaped', injected.includes('&lt;b&gt;Apr&lt;/b&gt;'), true);
@@ -493,21 +491,19 @@ check('the series says when a week came off the recording',
   html.includes('banked on the Activity tab'), true);
 check('the new-opps series draws in its own accent',
   html.includes('bgcolor="#0E9F6E"'), true);
-check('lists the opp changes', html.includes('Acme: HQ retrofit'), true);
-check('omits sections with nothing in them', html.includes('Deals closed'), false);
+// Opportunity changes and Goals stay on the tab only, even when the
+// snapshot still carries them.
+check('leaves the opp changes out', html.includes('Acme: HQ retrofit'), false);
+check('leaves the Opportunity changes card out', html.includes('Opportunity changes'), false);
+check('leaves the new-opps caveat out', html.includes('best-effort estimate'), false);
 check('includes the narrative', html.includes('Two new opps landed.'), true);
 
 // The funnel travels as a picture only; with none in the snapshot the
 // stage table and projected total must not come back in its place.
 check('no stage table without the picture', html.includes('Stage 4: Influence and Develop'), false);
 check('no projected total without the picture', html.includes('= projected total'), false);
-// A goal's priority is drawn as the same dark pill the tab uses, so the
-// text arrives split around it.
-check('lists the goals', html.includes('Close Berkshire'), true);
-check('draws the goal priority as a pill', /#1<\/span>/.test(html), true);
-// The goal groups sit inside a "Goals" card, titled as the tab titles them.
-check('names the period in the goal heading', html.includes('Set this week'), true);
-check('omits goal groups with nothing in them', html.includes('completed / closed'), false);
+check('leaves the goals out', html.includes('Close Berkshire') || html.includes('Set this week'), false);
+check('leaves the Goals card out', html.includes('No goals recorded'), false);
 
 // The close rate trend — the section that was on the tab and missing from
 // the inbox. It has to carry the same figures the grid shows, including the

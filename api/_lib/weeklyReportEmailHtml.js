@@ -497,41 +497,6 @@ export function coverageHtml(coverage, srcs = {}) {
   return charts.length ? cardRow(charts.map(c => coverageCardHtml(c, srcs[c.id] || ''))) : '';
 }
 
-// A group of changes, as the tab lists them: uppercase title, a count pill,
-// then the rows. The leading name is the bold part on screen, so the same
-// split is made here - everything up to the first "→" or "(" is the who.
-function changeGroupHtml(title, items, { max = 25 } = {}) {
-  if (!Array.isArray(items) || items.length === 0) return '';
-  const rows = items.slice(0, max).map((raw) => {
-    const text = String(raw ?? '');
-    const cut = text.search(/\s(?:→|\()/);
-    const who = cut > 0 ? text.slice(0, cut) : text;
-    const rest = cut > 0 ? text.slice(cut) : '';
-    // A goal carries its priority as "#3 …"; the tab draws that as a pill.
-    const pri = who.match(/^#(\d+)\s+(.*)$/);
-    const whoHtml = pri
-      ? `<span style="background-color:#1E293B;color:#FFFFFF;border-radius:999px;padding:0 6px;font-size:11px;font-weight:700">#${esc(pri[1])}</span> ${esc(pri[2])}`
-      : esc(who);
-    return `<tr><td style="padding:2px 0;font-family:${FONT};font-size:13px;line-height:1.35;color:${INK}">
-        <span style="font-weight:600">${whoHtml}</span><span style="color:${MUTED}">${esc(rest)}</span>
-      </td></tr>`;
-  }).join('');
-  const more = items.length > max
-    ? `<tr><td style="padding:2px 0;font-family:${FONT};font-size:12px;font-style:italic;color:${MUTED}">…and ${items.length - max} more</td></tr>`
-    : '';
-  const count = table(`style="border-collapse:collapse"`, `<tr>
-      <td bgcolor="${SURFACE_ALT}" style="padding:0 7px;border-radius:999px;font-family:${FONT};font-size:12px;color:${INK}">${items.length}</td>
-    </tr>`);
-  return `
-    <div style="margin-bottom:12px">
-      ${table(`style="border-collapse:collapse;margin-bottom:3px"`, `<tr>
-        <td style="font-family:${FONT};font-size:12px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;color:${MUTED}">${esc(title)}</td>
-        <td style="padding-left:5px">${count}</td>
-      </tr>`)}
-      ${table(`width="100%" style="border-collapse:collapse"`, rows + more)}
-    </div>`;
-}
-
 const mutedRow = (text) => `<div style="font-family:${FONT};font-size:13px;color:${MUTED}">${esc(text)}</div>`;
 
 // The funnel.
@@ -801,11 +766,6 @@ export function renderWeeklyReportHtml(snapshot, {
   const fresh = freshnessNote(s);
   const cards = Array.isArray(s.kpiCards) ? s.kpiCards : [];
   const tr = s.trends || {};
-  const oc = s.oppChanges || {};
-  const gl = s.goals || {};
-  // "this week" / "this day", so the goal headings read the way they do on
-  // the tab for whichever period the snapshot covers.
-  const periodWord = s.scope === 'day' ? 'day' : 'week';
 
   const intro = String(message || '').trim()
     ? `${cardOpen()}<div style="font-family:${FONT};font-size:13px;line-height:1.5;color:${INK};white-space:pre-wrap">${esc(message)}</div>${CARD_CLOSE}${spacer(14)}`
@@ -864,35 +824,9 @@ export function renderWeeklyReportHtml(snapshot, {
   const trendMonths = (Array.isArray(s.closeRateTrend?.months) ? s.closeRateTrend.months : []).length;
   const narrative = narrativeHtml(s.narrative);
 
-  const changeGroups = [
-    changeGroupHtml('Deals closed', oc.closed),
-    changeGroupHtml('New opps', oc.newOpps),
-    changeGroupHtml('Stage changes', oc.stageChanges),
-    changeGroupHtml('Close-date moves', oc.closeDateMoves),
-    changeGroupHtml('Amount updates', oc.amountUpdates),
-    changeGroupHtml('BFO Opportunity Names tagged', oc.bfoTags),
-  ].join('');
-
-  const goalGroups = [
-    changeGroupHtml(`Set this ${periodWord}`, gl.created),
-    changeGroupHtml('Completed / closed', gl.completed),
-    changeGroupHtml('Active goals', gl.active, { max: 12 }),
-  ].join('');
-
-  // The two detail cards the tab shows side by side. Each keeps the page's
-  // own empty state, so a quiet week reads as a quiet week rather than as
-  // a section that failed to render.
-  const changesCard = `
-      ${cardOpen()}
-        <div style="margin-bottom:9px;font-family:${FONT};font-size:16px;font-weight:700;color:${INK}">Opportunity changes</div>
-        ${changeGroups || mutedRow(`No opp changes recorded this ${periodWord}.`)}
-        ${changeGroups ? `<div style="margin-top:6px;font-family:${FONT};font-size:12px;font-style:italic;line-height:1.4;color:${MUTED}">“New opps” is a best-effort estimate: opps first edited in the tool this period may appear here even if created earlier, since the data carries no dedicated creation date.</div>` : ''}
-      ${CARD_CLOSE}`;
-  const goalsCard = `
-      ${cardOpen()}
-        <div style="margin-bottom:9px;font-family:${FONT};font-size:16px;font-weight:700;color:${INK}">Goals</div>
-        ${goalGroups || mutedRow('No goals recorded for this period.')}
-      ${CARD_CLOSE}`;
+  // Opportunity changes and Goals are left out on purpose: they stay on
+  // the tab, but the email is the charts and the narrative. The snapshot
+  // still carries both, so the tab's preview and any later reuse keep them.
 
   return `<!doctype html>
 <html xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
@@ -964,9 +898,6 @@ ${table(`width="100%" bgcolor="${PAGE_BG}" style="border-collapse:collapse;backg
     ${coverage ? `${spacer(20)}${headingHtml('Account coverage', `${coverageSpanLabel}, from the Progress tab`)}${spacer(8)}${coverage}` : ''}
 
     ${narrative ? `${spacer(16)}${narrative}` : ''}
-
-    ${spacer(16)}
-    ${cardRow([changesCard, goalsCard])}
 
     ${spacer(18)}
     <div style="font-family:${FONT};font-size:12px;color:${MUTED};text-align:center">Sent from Prospect Tracker · Charts → Weekly Report</div>
