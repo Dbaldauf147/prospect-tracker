@@ -14,6 +14,9 @@ import {
 import { emailSnapshotPayload } from '../src/utils/weeklyReportEmailSnapshot.js';
 import { buildSnapshotDoc } from '../api/_lib/weeklyReportSnapshot.js';
 import { renderWeeklyReportHtml, coverageRatioHtml } from '../api/_lib/weeklyReportEmailHtml.js';
+import { coverageRatioChartImage, withCoverageRatioImage, RATIO_CHART_W, RATIO_CHART_H } from '../src/utils/coverageChartImage.js';
+import { coverageRatioAttachment } from '../api/_lib/weeklyReportEmail.js';
+import { MAX_COVERAGE_IMAGE_CHARS } from '../api/_lib/weeklyReportSnapshot.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -132,6 +135,44 @@ const REF = at(2026, 9, 23); // a Wednesday; its week starts Mon Sep 21
   check('no section without readings', renderWeeklyReportHtml({}).includes('Coverage ratio by week'), false);
   check('the card alone is empty with nothing to draw', coverageRatioHtml(null), '');
   check('nothing in it is an em dash', /—/.test(coverageRatioHtml(doc.coverageRatio)), false);
+}
+
+// ---- the line chart ------------------------------------------------------
+{
+  const series = coverageRatioByWeek({
+    log: { '2026-08-31': { ratio: 1.4, goal: 3.21 }, '2026-09-14': { ratio: 1.5, goal: 3.21 }, '2026-09-21': { ratio: 1.68, goal: 3.21 } },
+    refMs: REF,
+  });
+  const img = coverageRatioChartImage(series);
+  check('the series is drawn as a PNG', /^data:image\/png;base64,/.test(img.src), true);
+  check('laid out at the chart size', [img.width, img.height], [RATIO_CHART_W, RATIO_CHART_H]);
+  check('within the budget the snapshot allows', img.src.length < MAX_COVERAGE_IMAGE_CHARS, true);
+  check('the alt text says where it stands', img.alt.includes('1.68x') && img.alt.includes('3.21x goal'), true);
+  check('one reading is still drawn',
+    !!coverageRatioChartImage({ points: [{ label: 'a', value: null }, { label: 'b', value: 1.2 }] }), true);
+  check('no readings is no picture', coverageRatioChartImage({ points: [{ label: 'a', value: null }] }), null);
+  check('no series is no picture', coverageRatioChartImage(null), null);
+
+  // The picture survives the payload and the stored snapshot, and becomes
+  // an attachment for a sent message.
+  const payload = emailSnapshotPayload({ coverageRatio: withCoverageRatioImage(series) });
+  const doc = buildSnapshotDoc(payload, { uid: 'u' });
+  check('the stored snapshot keeps the picture', doc.coverageRatio.image?.src, img.src);
+  check('a picture that is not a PNG is dropped',
+    buildSnapshotDoc({ coverageRatio: { ...series, image: { src: 'javascript:x', width: 1, height: 1 } } }, {}).coverageRatio.image, null);
+  const att = coverageRatioAttachment(doc);
+  check('it travels as an inline attachment', [att.cid, att.contentType], ['weekly-report-coverage-ratio@prospect-tracker', 'image/png']);
+  check('no picture, no attachment', coverageRatioAttachment({ coverageRatio: { points: [] } }), null);
+
+  // With a src the card is the line chart; without one it is the bars.
+  const drawn = renderWeeklyReportHtml(doc, { coverageRatioImageSrc: 'cid:ratio@x' });
+  check('the card draws the line chart', /<img src="cid:ratio@x" width="720" height="160"/.test(drawn), true);
+  check('and drops the bars', drawn.includes('class="cbar" width="480"'), false);
+  check('the latest reading and the goal are text under it',
+    drawn.includes('Week of Sep 21') && drawn.includes('1.68×') && drawn.includes('3.21×'), true);
+  check('joined-across weeks are explained', drawn.includes('Weeks with no reading are joined across'), true);
+  check('no src falls back to the bars', renderWeeklyReportHtml(doc).includes('class="cbar" width="480"'), true);
+  check('nothing in the chart card is an em dash', /—/.test(coverageRatioHtml(doc.coverageRatio, 'cid:x')), false);
 }
 
 console.log(failures === 0 ? '\nAll checks passed.' : `\n${failures} check(s) failed.`);

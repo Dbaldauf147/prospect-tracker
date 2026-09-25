@@ -52,6 +52,7 @@ export function WeeklyReportEmailPreview({
       message,
       funnelImageSrc: doc.funnelImage?.src || '',
       coverageImageSrcs,
+      coverageRatioImageSrc: doc.coverageRatio?.image?.src || '',
     });
   }, [open, snapshot, message, uid]);
 

@@ -104,6 +104,7 @@ const FONT = {
   // loses its blocks at this size and reads as a small x.
   '%': [0x43, 0x23, 0x08, 0x62, 0x61],
   '-': [0x08, 0x08, 0x08, 0x08, 0x08],
+  '.': [0x00, 0x60, 0x60, 0x00, 0x00],
   '0': [0x3E, 0x51, 0x49, 0x45, 0x3E],
   '1': [0x00, 0x42, 0x7F, 0x40, 0x00],
   '2': [0x42, 0x61, 0x51, 0x49, 0x46],
@@ -132,6 +133,8 @@ const FONT = {
   T: [0x01, 0x01, 0x7F, 0x01, 0x01],
   U: [0x3F, 0x40, 0x40, 0x40, 0x3F],
   V: [0x1F, 0x20, 0x40, 0x20, 0x1F],
+  // Stands in for the multiplication sign the ratio is written with.
+  X: [0x63, 0x14, 0x08, 0x14, 0x63],
   Y: [0x07, 0x08, 0x70, 0x08, 0x07],
 };
 
@@ -258,4 +261,157 @@ export function withCoverageImages(coverage) {
     ...coverage,
     charts: charts.map(c => ({ ...c, image: coverageChartImage(c) })),
   };
+}
+
+// ---- The coverage ratio ---------------------------------------------------
+//
+// The coverage ratio by week (open pipeline / annual target) as a line: a
+// point per week, the goal as a dashed rule across the plot, and the latest
+// reading written beside its point. Drawn the same way as the charts above,
+// for the same reason: the email that lands on Monday is rebuilt where
+// there is no canvas.
+
+const RATIO_BG = 0;
+const RATIO_GRID = 1;
+const RATIO_AXIS = 2;
+const RATIO_LABEL = 3;
+const RATIO_LINE = 4;
+const RATIO_GOAL = 5;
+
+const RATIO_PALETTE = [
+  [255, 255, 255],  // the card it sits on
+  [237, 241, 246],  // gridlines
+  [203, 213, 225],  // the baseline
+  [136, 150, 166],  // --color-text-muted, for the labels
+  [124, 58, 237],   // the ratio, in the card's own purple accent
+  [167, 139, 250],  // the goal, a lighter purple so it reads as the target and not a second series
+];
+
+// Laid out across the full content column, less the card's border and
+// padding, since this card has the row to itself.
+export const RATIO_CHART_W = 720;
+export const RATIO_CHART_H = 160;
+
+const RATIO_PAD_L = 40 * SCALE;
+// Room to the right of the plot for the goal's label, which sits beside the
+// end of its dashed rule rather than on it, so a line running at or near the
+// goal never strikes it through.
+const RATIO_PAD_R = 72 * SCALE;
+// The first and last weeks are held in from the plot's edges, so their
+// labels centre under them instead of running into the axis figures.
+const RATIO_INSET_X = 18 * SCALE;
+const RATIO_PAD_T = 12 * SCALE;
+const RATIO_PAD_B = 14 * SCALE;
+
+// A gridline step that gives three to six lines whatever the scale.
+function ratioStep(top) {
+  if (top <= 1.5) return 0.25;
+  if (top <= 3) return 0.5;
+  if (top <= 6) return 1;
+  return 2;
+}
+
+const ratioText = (v, step) => `${step < 0.5 ? v.toFixed(2) : v.toFixed(1)}X`;
+
+/**
+ * The coverage-ratio series as a PNG data URL, or null when no week has a
+ * reading. Same shape as the other chart images: `{ src, width, height,
+ * alt }`, sized as laid out.
+ */
+export function coverageRatioChartImage(cr) {
+  const points = Array.isArray(cr?.points) ? cr.points : [];
+  const known = points.filter(p => typeof p?.value === 'number' && Number.isFinite(p.value));
+  if (!points.length || !known.length) return null;
+  const goal = typeof cr?.goal === 'number' && Number.isFinite(cr.goal) && cr.goal > 0 ? cr.goal : null;
+
+  const W = RATIO_CHART_W * SCALE;
+  const H = RATIO_CHART_H * SCALE;
+  const r = raster(W, H);
+
+  const plotL = RATIO_PAD_L;
+  const plotR = W - RATIO_PAD_R;
+  const plotT = RATIO_PAD_T;
+  const plotB = H - RATIO_PAD_B;
+  const plotW = plotR - plotL;
+  const plotH = plotB - plotT;
+
+  // The axis runs a little past the higher of the goal and the best week,
+  // so neither sits on the top edge, and ends on a whole step.
+  const peak = Math.max(goal || 0, ...known.map(p => p.value), 0.5);
+  const step = ratioStep(peak * 1.1);
+  const top = Math.ceil((peak * 1.1) / step) * step;
+
+  // A single week is drawn in the middle rather than pinned to one edge.
+  const spanL = plotL + RATIO_INSET_X;
+  const spanW = plotW - 2 * RATIO_INSET_X;
+  const xAt = (i) => spanL + (points.length === 1 ? spanW / 2 : (spanW * i) / (points.length - 1));
+  const yAt = (v) => plotB - (plotH * Math.max(0, v)) / top;
+
+  for (let v = step; v <= top + 1e-9; v += step) {
+    fill(r, plotL, yAt(v), plotW, SCALE, RATIO_GRID);
+    text(r, ratioText(v, step), plotL - 4 * SCALE, yAt(v) - GLYPH_H, RATIO_LABEL, SCALE, 'right');
+  }
+  fill(r, plotL, yAt(0), plotW, SCALE, RATIO_AXIS);
+  text(r, ratioText(0, step), plotL - 4 * SCALE, yAt(0) - GLYPH_H, RATIO_LABEL, SCALE, 'right');
+
+  // Week labels, thinned on a long series, the last one always shown and
+  // kept inside the right edge.
+  const labelStep = points.length > 13 ? Math.ceil((points.length - 1) / 8) : 1;
+  for (let i = points.length - 1; i >= 0; i -= labelStep) {
+    const label = String(points[i].label || '');
+    const half = textWidth(label.toUpperCase(), SCALE) / 2;
+    const at = Math.min(xAt(i), W - half);
+    if (at - half < plotL - RATIO_PAD_L / 2) continue;
+    text(r, label, at, plotB + 5 * SCALE, RATIO_LABEL, SCALE, 'center');
+  }
+
+  // The goal: a dashed rule, labelled in the margin past its right-hand end.
+  if (goal != null) {
+    const gy = yAt(goal);
+    const dash = 6 * SCALE;
+    for (let x = plotL; x < plotR; x += dash * 2) {
+      fill(r, x, gy, Math.min(dash, plotR - x), SCALE, RATIO_GOAL);
+    }
+    text(r, `GOAL ${goal.toFixed(2)}X`, plotR + 5 * SCALE, gy - Math.round((GLYPH_H * SCALE) / 2) + 1, RATIO_GOAL, SCALE, 'left');
+  }
+
+  // The line. A week with no reading is joined across, the way the
+  // account-coverage charts join theirs: the gap is about nobody measuring
+  // that week, not about the pipeline.
+  let prev = null;
+  points.forEach((p, i) => {
+    if (typeof p?.value !== 'number') return;
+    const here = { x: xAt(i), y: yAt(p.value) };
+    if (prev) stroke(r, prev.x, prev.y, here.x, here.y, RATIO_LINE, 2 * SCALE);
+    prev = here;
+  });
+  points.forEach((p, i) => {
+    if (typeof p?.value !== 'number') return;
+    marker(r, Math.round(xAt(i)), Math.round(yAt(p.value)), RATIO_LINE, points.length > 14 ? 3 : 4);
+  });
+
+  // The latest reading, written above its point, which is the figure the
+  // KPI card shows.
+  const lastIdx = points.map(p => typeof p?.value === 'number').lastIndexOf(true);
+  const last = points[lastIdx];
+  const label = `${last.value.toFixed(2)}X`;
+  const lw = textWidth(label, SCALE);
+  const lx = Math.max(plotL + lw / 2, Math.min(xAt(lastIdx), plotR - lw / 2));
+  // Above its point, or under it where the top of the plot would clip it.
+  const above = yAt(last.value) - GLYPH_H * SCALE - 8 * SCALE;
+  const ly = above >= 0 ? above : yAt(last.value) + 8 * SCALE;
+  text(r, label, lx, ly, RATIO_LINE, SCALE, 'center');
+
+  return {
+    src: pngDataUrl({ width: W, height: H, palette: RATIO_PALETTE, pixels: r.px }),
+    width: RATIO_CHART_W,
+    height: RATIO_CHART_H,
+    alt: `Coverage ratio by week: ${last.value.toFixed(2)}x in the week of ${last.label}${goal != null ? `, against a ${goal.toFixed(2)}x goal` : ''}`,
+  };
+}
+
+// The coverage-ratio series with its picture attached, for the snapshot.
+export function withCoverageRatioImage(cr) {
+  if (!cr || typeof cr !== 'object') return cr || null;
+  return { ...cr, image: coverageRatioChartImage(cr) };
 }

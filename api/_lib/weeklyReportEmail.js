@@ -72,6 +72,20 @@ export function coverageAttachments(snapshot) {
   return out;
 }
 
+// The coverage ratio's line chart, as its own attachment.
+const COVERAGE_RATIO_CID = 'weekly-report-coverage-ratio@prospect-tracker';
+
+export function coverageRatioAttachment(snapshot) {
+  const content = pngBytes(snapshot?.coverageRatio?.image?.src);
+  if (!content) return null;
+  return {
+    filename: 'coverage-ratio.png',
+    content,
+    cid: COVERAGE_RATIO_CID,
+    contentType: 'image/png',
+  };
+}
+
 // A stale send is marked in the subject as well as in the banner. The
 // banner only works on a report someone opens; the tag is what says "these
 // are old numbers" from the message list, which is where a weekly report
@@ -84,16 +98,19 @@ export async function sendWeeklyReportEmail({ to, subject, message, snapshot, re
   const attachment = funnelAttachment(snapshot);
   const coverage = coverageAttachments(snapshot);
   const coverageImageSrcs = Object.fromEntries(coverage.map(a => [a.id, `cid:${a.cid}`]));
+  const ratio = coverageRatioAttachment(snapshot);
   const html = renderWeeklyReportHtml(snapshot, {
     message,
     funnelImageSrc: attachment ? `cid:${FUNNEL_CID}` : '',
     coverageImageSrcs,
+    coverageRatioImageSrc: ratio ? `cid:${ratio.cid}` : '',
   });
   const label = snapshot?.periodLabel ? ` - ${snapshot.periodLabel}` : '';
   // `id` is this module's own bookkeeping for pairing a picture with its
   // card; the mailer wants the file, so it is left behind here.
   const files = [
     ...(attachment ? [attachment] : []),
+    ...(ratio ? [ratio] : []),
     ...coverage.map(a => ({ filename: a.filename, content: a.content, cid: a.cid, contentType: a.contentType })),
   ];
   return sendEmail({

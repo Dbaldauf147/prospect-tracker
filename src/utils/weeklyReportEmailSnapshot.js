@@ -188,6 +188,8 @@ export function emailSnapshotPayload({
         goal: coverageRatio.goal ?? null,
         points: coverageRatio.points,
         note: coverageRatio.note || '',
+        // The line chart drawn from the points (utils/coverageChartImage).
+        image: coverageRatio.image || null,
       }
       : null,
     oppChanges: {
