@@ -497,12 +497,10 @@ check('lists the opp changes', html.includes('Acme: HQ retrofit'), true);
 check('omits sections with nothing in them', html.includes('Deals closed'), false);
 check('includes the narrative', html.includes('Two new opps landed.'), true);
 
-// The funnel is a drawn chart on the tab and a table here; the figures have
-// to be the same ones, including the exit block hanging off the arrow.
-check('draws the funnel stages', html.includes('Stage 4: Influence and Develop'), true);
-check('carries the projected total', html.includes('$833K'), true);
-check('carries the share of target', html.includes('63% of $1.3M target'), true);
-check('a stage with no life or close rate reads as a dash', html.includes('>-<'), true);
+// The funnel travels as a picture only; with none in the snapshot the
+// stage table and projected total must not come back in its place.
+check('no stage table without the picture', html.includes('Stage 4: Influence and Develop'), false);
+check('no projected total without the picture', html.includes('= projected total'), false);
 // A goal's priority is drawn as the same dark pill the tab uses, so the
 // text arrives split around it.
 check('lists the goals', html.includes('Close Berkshire'), true);

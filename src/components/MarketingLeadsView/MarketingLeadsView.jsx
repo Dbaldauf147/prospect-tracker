@@ -125,7 +125,21 @@ function dedupeByEmail(rows) {
     }
   });
   const dropSet = new Set(dropIds);
-  return { kept: rows.filter(r => !dropSet.has(r.id)), dropIds };
+  // The richest row can still be the one without a Salesforce Link. Carry
+  // a dropped copy's link over rather than deleting it with the copy.
+  const linkByEmail = new Map();
+  for (const r of rows) {
+    const url = String(r?.sfUrl || '').trim();
+    const key = emailKey(r);
+    if (dropSet.has(r.id) && url && key && !linkByEmail.has(key)) linkByEmail.set(key, url);
+  }
+  const kept = rows
+    .filter(r => !dropSet.has(r.id))
+    .map(r => {
+      const url = linkByEmail.get(emailKey(r));
+      return url && !String(r?.sfUrl || '').trim() ? { ...r, sfUrl: url } : r;
+    });
+  return { kept, dropIds };
 }
 
 // Tab / comma / semicolon-tolerant split for a clipboard row — handles
@@ -1430,8 +1444,10 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
     if (nextLocal) updateSettings({ contactLocalFields: nextLocal });
   };
 
-  function persist(next) {
-    updateSettings({ marketingLeads: next });
+  // opts.clearLeadLinks names the leads whose Salesforce Link this write
+  // removes on purpose; useUserSettings puts any other blanked link back.
+  function persist(next, opts) {
+    updateSettings({ marketingLeads: next }, opts);
   }
 
   function updateCell(rowId, key, value) {
@@ -1440,7 +1456,11 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
       persist([...persistedRows, { ...emptyRow(), [key]: value }]);
       return;
     }
-    persist(persistedRows.map(r => (r.id === rowId ? { ...r, [key]: value } : r)));
+    const clearsLink = key === 'sfUrl' && !String(value || '').trim();
+    persist(
+      persistedRows.map(r => (r.id === rowId ? { ...r, [key]: value } : r)),
+      clearsLink ? { clearLeadLinks: [rowId] } : undefined,
+    );
   }
 
   function addRow() {
@@ -1660,6 +1680,12 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
       notes.push(
         `${plan.statusPromoted} lead${plan.statusPromoted === 1 ? '' : 's'} moved to Working ` +
         `from a duplicate in the paste.`
+      );
+    }
+    if (plan.linksFilled > 0) {
+      notes.push(
+        `${plan.linksFilled} missing Salesforce Link${plan.linksFilled === 1 ? '' : 's'} ` +
+        `filled back in from the paste.`
       );
     }
     if (plan.blockedDuplicate.length > 0) {

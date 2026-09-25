@@ -114,13 +114,16 @@ export function BFOActivityView({ prospects = [], settings, updateSettings } = {
     // carries no Email column at all, and without a name match every
     // paste would add the whole list over again.
     const plan = planLeadImport({ incoming, saved, hiddenIds, matchByName: true });
-    if (plan.additions.length) {
+    if (plan.additions.length || plan.savedAfter !== saved) {
       updateSettings({ marketingLeads: [...plan.savedAfter, ...plan.additions] });
     }
     const n = plan.additions.length;
     const notes = [n
       ? `${n} new lead${n === 1 ? '' : 's'} added to Marketing Leads: ${summariseLeadNames(plan.additions)}.`
       : 'No new leads for Marketing Leads.'];
+    if (plan.linksFilled) {
+      notes.push(`${plan.linksFilled} missing Salesforce Link${plan.linksFilled === 1 ? '' : 's'} filled back in.`);
+    }
     const h = plan.blockedHidden.length;
     if (h) {
       notes.push(

@@ -71,10 +71,6 @@ const TREND_GREEN = { strong: '#0E9F6E', soft: TREND_HISTORY };
 
 // The stage ramp the Pipeline funnel draws with, earliest stage darkest.
 const STAGE_FILL = ['#104281', '#1c5cab', '#2a78d6', '#6da7ec'];
-// The stage-bar column in the funnel table, drawn only when the chart
-// itself could not be rasterised. Wider than a trend track because this
-// card has the full content column to itself.
-const FUNNEL_TRACK = 260;
 
 const table = (attrs, rows) =>
   `<table role="presentation" cellpadding="0" cellspacing="0" border="0" ${attrs}>${rows}</table>`;
@@ -443,7 +439,7 @@ function coverageCardHtml(chart, src) {
   // With the chart drawn, the weekly figures beside every bar would be the
   // same series told twice, so the card carries where each tier stands and
   // leaves the shape to the picture. Without it, the bars ARE the chart -
-  // the same arrangement the funnel makes with its stage table.
+  // the same arrangement the funnel used to make with its stage table.
   const body = img
     ? `<div style="margin-top:8px">${img}</div>
       ${table(`style="border-collapse:collapse;margin-top:9px"`, `<tr>
@@ -517,99 +513,23 @@ const mutedRow = (text) => `<div style="font-family:${FONT};font-size:13px;color
 // The funnel.
 //
 // On the tab this is a drawn chart - band height for pipeline value,
-// segment length for how long deals sit in a stage. An email can't carry
-// that: inline SVG doesn't render in Outlook at all, and a rasterised
-// chart would be blocked as a remote image. So each stage keeps its band
-// as a bar sized by pipeline value in the stage's own colour from the
-// chart's ramp, with the stage-by-stage figures beside it and the outcome
-// block that hangs off the funnel's exit arrow underneath - closed, plus
-// what the open pipeline weights to, and the projected total.
+// segment length for how long deals sit in a stage. The email carries that
+// chart as a picture and nothing else: the stage-by-stage table and the
+// projected-total block that used to sit under it were taken out on
+// request, since the picture already draws both. With no picture there is
+// nothing to show, so the section is left out rather than headed and empty.
 export function funnelHtml(funnel, image = null) {
   const stages = Array.isArray(funnel?.stages) ? funnel.stages : [];
-  if (!stages.length) return '';
+  if (!stages.length || !image?.src) return '';
 
-  // The chart itself, when the tab managed to rasterise it. It is sized in
-  // a width attribute as well as CSS - Word reads the attribute - and the
-  // alt text is the chart's own screen-reader label, so a client that
-  // hides pictures still says what the picture was. The stage rows below
-  // it stay either way: they are the figures, and they are what a reader
-  // with images off is left with.
-  const picture = image?.src ? `
-      <div style="margin-bottom:10px">
-        <img src="${esc(image.src)}" width="${IMG_WIDTH}" alt="${esc(image.alt || 'Pipeline funnel')}" style="display:block;width:100%;max-width:${IMG_WIDTH}px;height:auto;border:0;outline:none;text-decoration:none">
-      </div>` : '';
-
-  // Bars are sized off the formatted amounts the tab already produced -
-  // "$1,095,000", "$545K" - because the snapshot carries text, not
-  // figures. A row whose amount can't be read just gets no bar.
-  const amountOf = (s) => {
-    const m = String(s?.amount ?? '').replace(/[^0-9.KMB]/gi, '');
-    const n = parseFloat(m);
-    if (!Number.isFinite(n)) return 0;
-    if (/M/i.test(m)) return n * 1e6;
-    if (/K/i.test(m)) return n * 1e3;
-    if (/B/i.test(m)) return n * 1e9;
-    return n;
-  };
-  const peak = Math.max(...stages.map(amountOf), 0);
-
-  const th = (label, align = 'left', width = '', cls = '') =>
-    `<th ${cls ? `class="${cls}" ` : ''}${width ? `width="${width}" ` : ''}style="padding:0 8px 5px 0;text-align:${align};font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;color:${MUTED};border-bottom:1px solid ${BORDER}">${esc(label)}</th>`;
-  const td = (v, align = 'left', strong = false) =>
-    `<td style="padding:7px 8px 7px 0;text-align:${align};font-family:${FONT};font-size:13px;color:${strong ? INK : INK_SOFT};font-weight:${strong ? 600 : 400};border-bottom:1px solid ${SURFACE_ALT};white-space:nowrap">${esc(v ?? '-')}</td>`;
-
-  // With the chart above them the rows are the figures, plainly; without
-  // it they are also the picture, so each stage keeps a bar sized by
-  // pipeline value in its own colour from the chart's ramp.
-  const rows = stages.map((st, i) => {
-    const amt = amountOf(st);
-    const fillPx = peak > 0 ? Math.max(4, Math.round((amt / peak) * FUNNEL_TRACK)) : 0;
-    const fill = STAGE_FILL[Math.min(i, STAGE_FILL.length - 1)];
-    // Same pixel track as the trend bars, and for the same reason: this
-    // column is the picture when there is no picture, and a percentage
-    // width would leave Outlook drawing five vertical ticks instead.
-    const bar = picture || fillPx <= 0 ? '' : `<td class="sbar" width="${FUNNEL_TRACK}" style="width:${FUNNEL_TRACK}px;padding:7px 8px 7px 0;border-bottom:1px solid ${SURFACE_ALT}">${barHtml({
-      fillPx, trackPx: FUNNEL_TRACK, color: fill, height: 12, radius: '2px',
-    })}</td>`;
-    return `<tr>
-        ${td(st.label, 'left', true)}
-        ${bar}
-        ${td(st.amount, 'right', true)}
-        ${td(Number(st.count) || 0, 'right')}
-        ${td(st.life, 'right')}
-        ${td(st.closeRate, 'right')}
-      </tr>`;
-  }).join('');
-
-  // The outcome block stays in text even under the picture, which draws
-  // its own. It is the projected total - the figure the KPI row no longer
-  // carries - and a reader whose client hides the image would otherwise be
-  // left without it. In the picture it is six pixels tall; here it is
-  // readable.
-  const o = funnel.outcome;
-  const outRow = (label, value, strong) => `<tr>
-        <td style="padding:3px 0;font-family:${FONT};font-size:13px;color:${strong ? INK : MUTED};font-weight:${strong ? 700 : 400}">${esc(label)}</td>
-        <td style="padding:3px 0;text-align:right;font-family:${FONT};font-size:${strong ? 15 : 13}px;color:${INK};font-weight:${strong ? 700 : 600}">${esc(value ?? '-')}</td>
-      </tr>`;
-  const outcome = o ? `
-      <div style="margin-top:12px">
-        ${table(`width="300" style="border-collapse:collapse;width:300px"`, `
-          ${outRow(o.soldLabel || 'Closed YTD', o.sold, true)}
-          ${outRow('+ weighted pipeline', o.weighted, false)}
-          <tr><td colspan="2" style="padding:0;border-top:1px solid ${BORDER};font-size:0;line-height:0;mso-line-height-rule:exactly">&nbsp;</td></tr>
-          ${outRow('= projected total', o.total, true)}
-          ${o.note ? `<tr><td colspan="2" style="padding:2px 0 0;text-align:right;font-family:${FONT};font-size:12px;color:${MUTED}">${esc(o.note)}</td></tr>` : ''}
-        `)}
-      </div>` : '';
-
+  // Sized in a width attribute as well as CSS - Word reads the attribute -
+  // and the alt text is the chart's own screen-reader label, so a client
+  // that hides pictures still says what the picture was.
   return `
     ${cardOpen()}
-      ${picture}
-      ${table(`width="100%" style="border-collapse:collapse"`, `
-        <tr>${th('Stage')}${picture ? '' : th('Pipeline', 'left', String(FUNNEL_TRACK + 8), 'sbar')}${th('Value', 'right')}${th('Opps', 'right')}${th('Avg life', 'right')}${th('Close rate', 'right')}</tr>
-        ${rows}
-      `)}
-      ${outcome}
+      <div>
+        <img src="${esc(image.src)}" width="${IMG_WIDTH}" alt="${esc(image.alt || 'Pipeline funnel')}" style="display:block;width:100%;max-width:${IMG_WIDTH}px;height:auto;border:0;outline:none;text-decoration:none">
+      </div>
     ${CARD_CLOSE}`;
 }
 
@@ -847,9 +767,8 @@ export function staleBannerHtml(fresh) {
  * @param {string} opts.funnelImageSrc  what the funnel <img> should point
  *   at. A sent email passes a `cid:` reference to its own attachment,
  *   since a remote image is blocked by default in Outlook and Gmail; the
- *   tab's preview passes the data URL straight through. Omit it and the
- *   email is the stage table alone, which is also what happens when the
- *   snapshot carries no picture.
+ *   tab's preview passes the data URL straight through. Omit it, or send a
+ *   snapshot with no picture, and the email leaves the funnel out.
  */
 export function renderWeeklyReportHtml(snapshot, {
   message = '', funnelImageSrc = '', coverageImageSrcs = {},
@@ -979,10 +898,6 @@ export function renderWeeklyReportHtml(snapshot, {
        being squeezed against the slack cell, which goes away. */
     .hnote { white-space:normal !important; }
     .hpad { display:none !important; width:0 !important; }
-    /* The funnel's stage bars are a fixed column, which is 260px a phone
-       does not have: there the figures beside them are the whole story,
-       as they are for a reader whose client hides the chart image. */
-    .sbar { display:none !important; width:0 !important; }
     /* Same trade for the coverage cards: two fixed tracks and their
        figures are wider than a phone, and the percentages beside them
        carry the series on their own. */
