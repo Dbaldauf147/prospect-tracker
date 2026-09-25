@@ -196,6 +196,16 @@ function matchesKnownLead(index, row, matchByName) {
   return !e || sameName.some(r => !leadEmailKey(r));
 }
 
+// The saved lead `row` duplicates: by email, else the only saved lead
+// under that name. Two saved leads sharing the name is ambiguous, so
+// nothing is picked.
+function findSavedLead(index, row) {
+  const e = leadEmailKey(row);
+  if (e && index.byEmail.has(e)) return index.byEmail.get(e);
+  const sameName = index.byName.get(leadNameKey(row?.name));
+  return sameName?.length === 1 ? sameName[0] : null;
+}
+
 // Decide what a pasted batch of leads does to the saved list.
 //
 // `incoming` are lead rows (from leadRowsFromTable, or built by the
@@ -215,6 +225,11 @@ function matchesKnownLead(index, row, matchByName) {
 //     skipped as a duplicate.
 //  4. Otherwise it's new: the name is normalised to "First Last" and the
 //     row is added.
+//
+// A duplicate that carries a Salesforce Link (from the pasted list view's
+// anchors) also fills that link into the saved lead when the saved lead
+// has none, so re-running the import heals links that went missing. It
+// never replaces a link the saved lead already has.
 export function planLeadImport({
   incoming = [], saved = [], hiddenIds = [],
   matchByName = false, promoteWorkingStatus = false,
@@ -234,6 +249,8 @@ export function planLeadImport({
   // promoted: the reverse (a stale Closed-Recycle copy overwriting a lead
   // you are actively working) is exactly what this must not do.
   const statusUpdates = new Map();
+  // id → a Salesforce Link to fill into a saved lead that has none.
+  const linkUpdates = new Map();
   const additions = [];
   const blockedHidden = [];
   const blockedDuplicate = [];
@@ -254,17 +271,34 @@ export function planLeadImport({
       }
     }
     if (matchesKnownLead(hiddenIndex, row, matchByName)) { blockedHidden.push(row); continue; }
-    if (matchesKnownLead(savedIndex, row, matchByName)
-      || matchesKnownLead(pasteIndex, row, matchByName)) { blockedDuplicate.push(row); continue; }
+    if (matchesKnownLead(savedIndex, row, matchByName)) {
+      const url = String(row.sfUrl || '').trim();
+      const target = url ? findSavedLead(savedIndex, row) : null;
+      if (target && !String(target.sfUrl || '').trim() && !linkUpdates.has(target.id)) {
+        linkUpdates.set(target.id, url);
+      }
+      blockedDuplicate.push(row);
+      continue;
+    }
+    if (matchesKnownLead(pasteIndex, row, matchByName)) { blockedDuplicate.push(row); continue; }
     indexLead(pasteIndex, row);
     additions.push(row);
   }
 
-  const savedAfter = statusUpdates.size
-    ? saved.map(r => (statusUpdates.has(r.id) ? { ...r, status: statusUpdates.get(r.id) } : r))
+  const savedAfter = statusUpdates.size || linkUpdates.size
+    ? saved.map((r) => {
+      if (!statusUpdates.has(r.id) && !linkUpdates.has(r.id)) return r;
+      const next = { ...r };
+      if (statusUpdates.has(r.id)) next.status = statusUpdates.get(r.id);
+      if (linkUpdates.has(r.id)) next.sfUrl = linkUpdates.get(r.id);
+      return next;
+    })
     : saved;
 
-  return { additions, savedAfter, blockedHidden, blockedDuplicate, statusPromoted };
+  return {
+    additions, savedAfter, blockedHidden, blockedDuplicate, statusPromoted,
+    linksFilled: linkUpdates.size,
+  };
 }
 
 // "Ana Higueras, Colleen Reid and 3 more" — for reporting which leads a

@@ -16,6 +16,8 @@ import { computeCloseNotSoldOpps, hasBfoOppNameIndex, detectBfoUrl, resolveOppFo
 import { BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY, BFO_ACTIVITY_EVENT } from '../../utils/bfoActivityStore';
 import { buildActivityAddressLines } from '../../utils/activityAddressLines';
 import { resolveSfUrl } from '../../utils/salesforceLeads';
+import { findRecoverableLinks, applyRecoveredLinks, ledgerRows, LEAD_LINK_LEDGER_KEY } from '../../utils/leadLinks';
+import { listBackups } from '../../utils/settingsBackup';
 import { loadCallRecords } from '../../utils/callRecordingsStore';
 import { oppMeetingsFromRecords, withUnloggedGranolaMeetings } from '../../utils/granolaMeetings';
 import { OppInfoModal } from '../OppsView2/OppsView2';
@@ -145,6 +147,22 @@ const DEFAULT_AI_PROMPT_CLOSE_NOT_SOLDS = `1.  Reference the BFO links below.
 const DEFAULT_AI_PROMPT_BFO_PREP = `1.  I am logged on to this website https://se.lightning.force.com/lightning/o/Opportunity/list?filterName=00B8V00000B0XsD&0.sfdcIFrameOrigin=https%3A%2F%2Fse.lightning.force.com
 2.  Reference the BFO Opportunity names below.  My goal is to have you open their websites and copy and paste the BFO website Address to the BFO address table here on the Agents tab of this website https://prospect-tracker-ashen.vercel.app/ in the AI BFO Prep table.`;
 
+// Appended to every Marketing Leads prompt when it's copied, whatever the
+// user has edited the prompt itself to say. A run of the Salesforce Link
+// agent lost every link it had pasted; the app now refuses a save that
+// blanks a link (utils/leadLinks), and these rules keep the assistant from
+// taking the destructive routes around that guard.
+const MARKETING_LEADS_SAFETY_RULES = `Rules for this website while you work:
+- Keep https://prospect-tracker-ashen.vercel.app/ open in ONE browser tab only. A second tab holds an older copy of the leads and can save over your work.
+- Only ever fill an EMPTY Salesforce Link cell. Never clear, overwrite or retype a link that is already there.
+- Never delete, hide or clear leads, and never click "Remove duplicates", "Clear table" or a row's delete button on the Marketing Leads page. None of that is part of these tasks.
+- If a link you saved earlier looks empty again, don't paste over the gap: stop and report which leads it happened to.`;
+
+function withMarketingLeadsSafety(prompt) {
+  const text = String(prompt || '').trim();
+  return text ? `${text}\n\n${MARKETING_LEADS_SAFETY_RULES}` : MARKETING_LEADS_SAFETY_RULES;
+}
+
 // The one prompt that pulls INTO the tracker. Every other Marketing
 // Leads prompt reads the leads already saved on the Contacts page, so a
 // lead sitting in Salesforce but not in the tracker is invisible to all
@@ -161,10 +179,11 @@ const DEFAULT_AI_PROMPT_IMPORT_MARKETING_LEADS = `1.  Go to this Salesforce Lead
 8.  Report back how many leads were newly imported and their names. Anything imported now is NOT in the lists further down this bundle - those were captured before the import ran - so say so, and I will re-copy the prompts to pick the new leads up.`
 
 const DEFAULT_AI_PROMPT_MARKETING_LEADS = `1.  Go to this Salesforce Leads list: https://se.lightning.force.com/lightning/o/Lead/list?filterName=00BKj00000QYbyfMAD
-2.  For each lead listed below (by Name), click the lead's name in Salesforce to open their record page.
-3.  Copy the record page's URL from the browser address bar.
-4.  Paste that URL into the Salesforce Link cell for that lead in the table below (on the Agents tab of this website https://prospect-tracker-ashen.vercel.app/). It saves straight to the Marketing Leads subtab on the Contacts page, and the row drops off this list once the link is set.
-5.  Repeat for every lead listed below.`;
+2.  For each lead listed below, find it by Name and click the name to open their record page. If more than one lead has that name, pick the one whose Company matches the Company below; if you still can't tell which is right, skip it and report it.
+3.  Copy the record page's URL from the browser address bar. It looks like https://se.lightning.force.com/lightning/r/Lead/00Q.../view
+4.  On the Agents tab of this website https://prospect-tracker-ashen.vercel.app/, find that lead's row in the Marketing Leads table, check the Name on the row, paste the URL into its Salesforce Link cell and press Enter. It saves straight to the Marketing Leads subtab on the Contacts page. The row stays in the table marked Saved until the page is reloaded, so the rows don't move under you while you work.
+5.  Repeat for every lead listed below.
+6.  When you are done, report back every lead you linked as a list of Name and URL, plus any lead you skipped and why, so there is a record of the links outside the app.`;
 
 const DEFAULT_AI_PROMPT_MARKETING_LEAD_STATUS_UPDATE = `1.  Go to this Salesforce Leads list: https://se.lightning.force.com/lightning/o/Lead/list?filterName=00BKj00000QYbyfMAD
 2.  For each lead listed below (by Name), find the matching lead in the Salesforce list and compare its Status in Salesforce against the Marketing Leads Status shown below. The Marketing Leads Status (from this website's Marketing Leads page) is the source of truth.
@@ -1923,6 +1942,18 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       && !hiddenMarketingLeadIds.has(String(r?.id)));
   }, [settings, hiddenMarketingLeadIds]);
 
+  // Leads given a link on this visit. They stay in the table (marked
+  // Saved) instead of dropping off, so the rows below don't shift up
+  // under an assistant that is working down the list and paste the next
+  // link onto the wrong lead. They leave on the next page load.
+  const [linkedThisVisit, setLinkedThisVisit] = useState(() => new Set());
+  const marketingLeadLinkRows = useMemo(() => {
+    const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
+    return arr.filter(r => String(r?.name || '').trim()
+      && !hiddenMarketingLeadIds.has(String(r?.id))
+      && (!String(r?.sfUrl || '').trim() || linkedThisVisit.has(String(r?.id))));
+  }, [settings, hiddenMarketingLeadIds, linkedThisVisit]);
+
   // Index of the BFO Activity "Leads" subtab: order-insensitive name key →
   // every row pasted under that name, as { name, company, statuses }.
   //
@@ -2046,12 +2077,75 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   // Write a Salesforce Link back onto the matching lead in
   // settings.marketingLeads so it saves through the same settings →
   // Firestore pipeline and shows up on the Marketing Leads page.
+  //
+  // A blank value is a deliberate clear (the cell was emptied by hand), so
+  // it is named to the settings save, which otherwise refuses to blank a
+  // link. See utils/leadLinks.
   const updateMarketingLeadSfUrl = (leadId, value) => {
     if (!updateSettings || !leadId) return;
     const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
     const v = String(value || '').trim();
     const next = arr.map(r => (r?.id != null && String(r.id) === String(leadId) ? { ...r, sfUrl: v } : r));
-    updateSettings({ marketingLeads: next });
+    updateSettings({ marketingLeads: next }, v ? undefined : { clearLeadLinks: [leadId] });
+    if (v) setLinkedThisVisit(prev => new Set(prev).add(String(leadId)));
+  };
+
+  // Look for the links of leads now missing one: in the link ledger, this
+  // browser's pre-save backups, then the nightly cloud backups, newest
+  // first. Found links are listed for a confirm before anything is written,
+  // and only blank cells are filled.
+  const [recoverBusy, setRecoverBusy] = useState(false);
+  const [recoverNote, setRecoverNote] = useState('');
+  const recoverLostLinks = async () => {
+    if (recoverBusy || !updateSettings) return;
+    const leads = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
+    if (!leads.some(r => String(r?.name || '').trim() && !String(r?.sfUrl || '').trim())) return;
+    setRecoverBusy(true);
+    setRecoverNote('Searching backups...');
+    try {
+      const sources = [{ label: 'link history', rows: ledgerRows(settings?.[LEAD_LINK_LEDGER_KEY]) }];
+      const local = await listBackups();
+      for (const b of local) {
+        const rows = b?.data?.marketingLeads;
+        if (Array.isArray(rows)) sources.push({ label: `browser backup ${new Date(b.timestamp).toLocaleString()}`, rows });
+      }
+      let found = findRecoverableLinks(leads, sources);
+      const stillMissing = leads.filter(r => String(r?.name || '').trim() && !String(r?.sfUrl || '').trim()).length;
+      if (found.length < stillMissing) {
+        try {
+          const resp = await apiFetch('/api/backups-list');
+          const files = resp.ok ? ((await resp.json())?.files || []) : [];
+          const newest = [...files]
+            .sort((a, b) => String(b.createdTime || b.name).localeCompare(String(a.createdTime || a.name)))
+            .slice(0, 10);
+          for (const f of newest) {
+            const r = await apiFetch(`/api/backup-fetch?name=${encodeURIComponent(f.name)}&part=userSettings`);
+            if (!r.ok) continue;
+            const out = await r.json();
+            const rows = out?.value?.marketingLeads;
+            if (Array.isArray(rows)) sources.push({ label: `cloud backup ${String(out.generatedAt || f.name).slice(0, 10)}`, rows });
+            found = findRecoverableLinks(leads, sources);
+            if (found.length >= stillMissing) break;
+          }
+        } catch { /* cloud backups are a bonus; the local search already ran */ }
+      }
+      if (!found.length) {
+        setRecoverNote('No backup holds a link for these leads.');
+        return;
+      }
+      const lines = found.slice(0, 15).map(x => `${x.name}: ${x.url}`);
+      if (found.length > 15) lines.push(`and ${found.length - 15} more`);
+      const ok = window.confirm(
+        `Found ${found.length} lost Salesforce Link${found.length === 1 ? '' : 's'}:\n\n${lines.join('\n')}\n\nFill them back in?`,
+      );
+      if (!ok) { setRecoverNote(''); return; }
+      updateSettings({ marketingLeads: applyRecoveredLinks(leads, found) });
+      setRecoverNote(`Recovered ${found.length} link${found.length === 1 ? '' : 's'}.`);
+    } catch (err) {
+      setRecoverNote(`Recovery failed: ${err?.message || err}`);
+    } finally {
+      setRecoverBusy(false);
+    }
   };
 
   // The "Update BFO Activity" prompt is appended to the end of every
@@ -3261,11 +3355,11 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       // one that pulls new leads in from Salesforce, and the ones below can
       // only act on leads the tracker already holds. No data block of its
       // own — the whole job is to fetch a list this app doesn't have yet.
-      { title: 'Import Marketing Leads', prompt: importMarketingLeadsPrompt, block: '', hasData: false, always: true },
+      { title: 'Import Marketing Leads', prompt: withMarketingLeadsSafety(importMarketingLeadsPrompt), block: '', hasData: false, always: true },
       // Marketing Leads always rides along in the bundle, even with no leads
       // missing a Salesforce Link — its prompt stands alone as a reusable
       // instruction, so `always` keeps it in every copy regardless of data.
-      { title: 'Marketing Leads', prompt: marketingLeadsPrompt, block: marketingLeadsBlock, hasData: marketingLeadsMissing.length > 0, always: true },
+      { title: 'Marketing Leads', prompt: withMarketingLeadsSafety(marketingLeadsPrompt), block: marketingLeadsBlock, hasData: marketingLeadsMissing.length > 0, always: true },
       { title: 'Marketing Lead Status Update', prompt: marketingLeadStatusUpdatePrompt, block: marketingLeadStatusBlock, hasData: marketingLeadStatusRows.length > 0, always: true },
       { title: 'Duplicate Leads', prompt: duplicateLeadsPrompt, block: duplicateLeadsBlock, hasData: duplicateLeadRows.length > 0, always: true },
     ];
@@ -3886,7 +3980,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
             className={styles.aiPromptBtn}
             onClick={async () => {
               try {
-                await navigator.clipboard.writeText(importMarketingLeadsPrompt);
+                await navigator.clipboard.writeText(withMarketingLeadsSafety(importMarketingLeadsPrompt));
                 setImportMarketingLeadsCopyFlash('Copied!');
               } catch {
                 setImportMarketingLeadsCopyFlash('Copy failed');
@@ -3910,7 +4004,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           <span className={styles.sectionCount}>{marketingLeadsMissing.length}</span>
         </h2>
         <p className={styles.subnote}>
-          Leads from the Marketing Leads subtab on the Contacts page that don&rsquo;t have a Salesforce Link yet. Copy the prompt to have your AI assistant open each lead in Salesforce and grab its record URL, then paste it into the Salesforce Link column below: it saves straight to the Marketing Leads page and the row drops off this list once set.
+          Leads from the Marketing Leads subtab on the Contacts page that don&rsquo;t have a Salesforce Link yet. Copy the prompt to have your AI assistant open each lead in Salesforce and grab its record URL, then paste it into the Salesforce Link column below: it saves straight to the Marketing Leads page, and the row is marked Saved and drops off this list on the next page load. A save can never blank a link that is already set, and every link is also kept in a separate history, so if links do go missing, <strong>Recover lost links</strong> fills them back in from that history and from backups.
         </p>
         {revealedPrompts.marketingLeads && (
           <textarea
@@ -3928,9 +4022,10 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
             onClick={async () => {
               // With no leads missing a link there's no data block to append,
               // so copy the prompt on its own — it's still useful standalone.
+              const prompt = withMarketingLeadsSafety(marketingLeadsPrompt);
               const fullPrompt = marketingLeadsMissing.length === 0
-                ? marketingLeadsPrompt
-                : `${marketingLeadsPrompt}\n\n${['Name\tCompany', ...marketingLeadsMissing.map(l => `${(l.name || '').trim()}\t${(l.company || '').trim()}`)].join('\n')}`;
+                ? prompt
+                : `${prompt}\n\n${['Name\tCompany', ...marketingLeadsMissing.map(l => `${(l.name || '').trim()}\t${(l.company || '').trim()}`)].join('\n')}`;
               try {
                 await navigator.clipboard.writeText(fullPrompt);
                 setMarketingLeadsCopyFlash('Copied!');
@@ -3946,7 +4041,17 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           {revealedPrompts.marketingLeads && (
             <button type="button" className={styles.aiPromptBtnGhost} onClick={resetMarketingLeadsPrompt}>Reset to default</button>
           )}
+          {marketingLeadsMissing.length > 0 && (
+            <button
+              type="button"
+              className={styles.aiPromptBtnGhost}
+              onClick={recoverLostLinks}
+              disabled={recoverBusy}
+              title="Look for these leads' links in the link history and in settings backups, and fill back any that were lost"
+            >{recoverBusy ? 'Searching...' : 'Recover lost links'}</button>
+          )}
           {marketingLeadsCopyFlash && <span className={styles.copyFlash}>{marketingLeadsCopyFlash}</span>}
+          {recoverNote && <span className={styles.copyFlash}>{recoverNote}</span>}
         </div>
         <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
           <table className={styles.table}>
@@ -3958,22 +4063,38 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
               </tr>
             </thead>
             <tbody>
-              {marketingLeadsMissing.length === 0 ? (
+              {marketingLeadLinkRows.length === 0 ? (
                 <tr className={styles.emptyRow}>
                   <td colSpan={3}>No marketing leads are missing a Salesforce Link.</td>
                 </tr>
-              ) : marketingLeadsMissing.map((l, i) => (
-                <tr key={l.id || `${l.name}-${i}`}>
-                  <td>{l.name || '-'}</td>
-                  <td className={l.company ? '' : styles.muted}>{l.company || '-'}</td>
-                  <td>
-                    <MarketingLeadSfCell
-                      value={l.sfUrl}
-                      onCommit={(v) => updateMarketingLeadSfUrl(l.id, v)}
-                    />
-                  </td>
-                </tr>
-              ))}
+              ) : marketingLeadLinkRows.map((l, i) => {
+                const saved = !!String(l.sfUrl || '').trim();
+                return (
+                  <tr key={l.id || `${l.name}-${i}`}>
+                    <td>{l.name || '-'}</td>
+                    <td className={l.company ? '' : styles.muted}>{l.company || '-'}</td>
+                    <td>
+                      {saved ? (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ color: '#15803D', fontWeight: 600, whiteSpace: 'nowrap' }}>Saved ✓</span>
+                          <a
+                            href={resolveSfUrl(l.sfUrl) || undefined}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={l.sfUrl}
+                            style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+                          >{l.sfUrl}</a>
+                        </span>
+                      ) : (
+                        <MarketingLeadSfCell
+                          value={l.sfUrl}
+                          onCommit={(v) => updateMarketingLeadSfUrl(l.id, v)}
+                        />
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

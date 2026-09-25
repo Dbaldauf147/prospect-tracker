@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { subscribeToUserSettings, saveUserSettings, savePathUpdates, initUserSettings } from '../utils/userSettingsSync';
 import { pushBackup } from '../utils/settingsBackup';
 import { autoMergeValue, mergeSettingsKey, foldWriteResult } from '../utils/settingsMerge';
+import { guardLeadLinks, recordLeadLinks, LEAD_LINK_LEDGER_KEY } from '../utils/leadLinks';
 import { SETTINGS_SIZE_BUDGET, overBudgetMessage, settingsDocReport } from '../utils/settingsDocSize';
 import {
   isClientWedged, isClientWedgedError, shouldAnnounceWedgedClient, wedgedClientMessage, watchForClientCrash,
@@ -86,6 +87,27 @@ function reportSaveFailure(err) {
   return false;
 }
 
+// A marketingLeads write may not blank a Salesforce Link that `base`
+// already holds for the same lead (see utils/leadLinks), and every link it
+// carries is recorded in the link ledger, which sits outside the leads
+// array where a stale rewrite of the leads can't reach it. `clears` names
+// the leads whose link is being removed on purpose.
+//
+// `base` is whatever this write is being laid over: this tab's state for a
+// plain save, the server's copy after a cross-device merge.
+function protectLeadLinks(updates, base, clears) {
+  if (!Array.isArray(updates?.marketingLeads)) return updates;
+  const ledgerBase = updates[LEAD_LINK_LEDGER_KEY] ?? base?.[LEAD_LINK_LEDGER_KEY];
+  const { rows, restored } = guardLeadLinks(updates.marketingLeads, base?.marketingLeads, clears, ledgerBase);
+  if (restored.length) {
+    console.warn('Kept Salesforce Links a save would have blanked:', restored.map(r => r.name || r.id));
+  }
+  const ledger = recordLeadLinks(ledgerBase, rows, clears);
+  const out = { ...updates, marketingLeads: rows };
+  if (ledger !== base?.[LEAD_LINK_LEDGER_KEY]) out[LEAD_LINK_LEDGER_KEY] = ledger;
+  return out;
+}
+
 export function useUserSettings(user) {
   const [settings, setSettings] = useState({});
   const [loaded, setLoaded] = useState(false);
@@ -144,13 +166,18 @@ export function useUserSettings(user) {
   }, [user]);
 
   // Optimistic update + immediate Firestore write with staleness guard + local backup.
-  const updateSettings = useCallback(async (updates) => {
+  //
+  // opts.clearLeadLinks: ids of Marketing Leads whose Salesforce Link this
+  // save removes on purpose. Any other blanked link is put back.
+  const updateSettings = useCallback(async (rawUpdates, opts = {}) => {
     if (!userIdRef.current) return;
+    const clears = opts?.clearLeadLinks || [];
 
     // Snapshot the pre-save state for recovery.
     pushBackup(settingsRef.current, 'pre-save').catch(() => {});
 
     const prev = settingsRef.current || {};
+    const updates = protectLeadLinks(rawUpdates, prev, clears);
     const expectedAt = prev._lastWriteAt || null;
     const optimistic = { ...prev, ...updates };
     // Refuse before touching local state, so a save that can't be stored
@@ -182,11 +209,14 @@ export function useUserSettings(user) {
         // the prior state is recoverable if the heuristic ever picks
         // the wrong side on a primitive overlap.
         const remote = result.remoteData || {};
-        const mergedUpdates = { ...updates };
+        let mergedUpdates = { ...updates };
         for (const k of updateKeys) {
           if (!(k in remote)) continue;
           mergedUpdates[k] = mergeSettingsKey(k, updates[k], remote[k]);
         }
+        // The merge lets our copy of a lead win outright, blank link and
+        // all; a link the other device set on that lead is kept.
+        mergedUpdates = protectLeadLinks(mergedUpdates, remote, clears);
         const forced = await saveUserSettings(userIdRef.current, mergedUpdates, { force: true });
         written = mergedUpdates;
         writtenAt = forced.writtenAt;
@@ -226,7 +256,11 @@ export function useUserSettings(user) {
         // A remote snapshot landed mid-write. Take it as the new base
         // (the other device's changes) and overlay the keys we just
         // wrote, so neither side's change is dropped.
-        const next = foldWriteResult({ ...pending, ...written }, optimistic, settingsRef.current);
+        const next = foldWriteResult(
+          { ...pending, ...protectLeadLinks(written, pending, clears) },
+          optimistic,
+          settingsRef.current,
+        );
         const at = Math.max(Number(pending._lastWriteAt) || 0, Number(writtenAt) || 0);
         if (at) next._lastWriteAt = at;
         settingsRef.current = next;
