@@ -27,8 +27,8 @@ import {
   loadWeeklyActivityLog, emailsSentFor, WEEKLY_ACTIVITY_EVENT,
 } from '../../utils/weeklyActivityLog';
 import {
-  emailsByWeek, newOppsByMonth, coverageByWeek,
-  TREND_WEEKS, TREND_MONTHS, COVERAGE_WEEKS,
+  emailsByMonth, newOppsByMonth, coverageByWeek,
+  TREND_MONTHS, COVERAGE_WEEKS,
 } from '../../utils/weeklyReportTrends';
 import { withCoverageImages } from '../../utils/coverageChartImage';
 import {
@@ -565,8 +565,8 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   // the current period sits at the end of, so the last bar in each is the
   // period this report covers.
   const trendSeries = useMemo(() => ({
-    emailsByWeek: emailsByWeek({
-      cache, log: activityLog, senderEmail, refMs: bounds.start, weeks: TREND_WEEKS,
+    emailsByMonth: emailsByMonth({
+      cache, log: activityLog, senderEmail, refMs: bounds.start, months: TREND_MONTHS,
     }),
     newOppsByMonth: newOppsByMonth({
       records: oppsRecords, refMs: bounds.start, months: TREND_MONTHS,

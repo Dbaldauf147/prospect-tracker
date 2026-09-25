@@ -3,10 +3,9 @@
 //
 // A tile answered one question — how did this week go against its target —
 // and the email is read once a week by someone who wants to know whether
-// the line is going the right way. "27 emails, /50" cannot say that; five
-// weeks side by side can. So the email trades the two tiles for the two
-// series, on the cadence each metric actually moves at: mail is a weekly
-// habit, opps arrive in ones and twos and only make a shape over months.
+// the line is going the right way. "27 emails, /50" cannot say that; ten
+// months side by side can. So the email trades the two tiles for the two
+// series, both by calendar month so the two charts share an axis.
 //
 // These live here rather than in the tab because they are pure functions of
 // data the tab already holds, and because a series that decides what an
@@ -17,10 +16,9 @@ import { COVERAGE_CHARTS } from './progressCoverage.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// How far back each series looks. Five is what fits across an email column
-// without the bars becoming stripes, and it is enough to see a direction.
-export const TREND_WEEKS = 5;
-export const TREND_MONTHS = 5;
+// How far back each series looks. Ten months, drawn as columns, is what
+// fits across half the email column and still shows a season's direction.
+export const TREND_MONTHS = 10;
 // Coverage looks back further than the two bar series do, because it is
 // drawn as a line and a line wants a shape rather than five readings. Half
 // a year is what the Progress tab's own charts show, and at the size the
@@ -80,38 +78,57 @@ export function recentMonths(refMs, n) {
 const weekLabel = (ms) => new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 const monthLabel = (ms) => new Date(ms).toLocaleDateString('en-US', { month: 'short' });
 
-// Emails sent per week for the last `weeks` weeks.
+// Emails sent per calendar month for the last `months` months.
 //
-// Each week is answered by the same rule the tile used (emailsSentFor): the
-// live HubSpot feed where it covers that week, the Activity tab's recording
-// where it doesn't. Both writers of that feed page the whole history, so a
-// feed covers every week that began before it was fetched — which means the
-// weeks it cannot answer for are the RECENT ones, and the usual gap is the
-// feed being absent entirely after the storage quota dropped it.
+// Each month is answered by the live HubSpot feed where it covers that
+// month (the same rule the tile used, via emailsSentFor). Where it doesn't,
+// the Activity tab's recordings stand in, and those are kept per week: the
+// month is then the sum of each week's answer for the weeks that begin in
+// it. That files a week straddling two months under the one it starts in,
+// which is the price of a log that has no finer grain than a week, and it
+// only applies to months the feed can no longer speak for.
 //
-// Either way, a series that counted the feed alone would read zero across
-// the weeks it has nothing for and look like a collapse in outbound that
-// never happened. That was survivable as one wrong tile; as five bars it
-// would be a trend line pointing at the floor.
+// A series that counted the feed alone would read zero across the months it
+// has nothing for and look like a collapse in outbound that never happened.
 //
-// A week with neither source is `null`, not 0: "we have no record of that
-// week" and "that week had no sends" are different facts, and drawing the
+// A month with neither source is `null`, not 0: "we have no record of that
+// month" and "that month had no sends" are different facts, and drawing the
 // first as an empty bar is the kind of quiet lie this report keeps having
 // to be talked out of.
-export function emailsByWeek({ cache, log, senderEmail, refMs = Date.now(), weeks = TREND_WEEKS } = {}) {
-  return recentWeeks(refMs, weeks).map(({ start, end }) => {
-    const live = computeActivity(cache, senderEmail, start, end).emails.length;
-    const { count, recorded } = emailsSentFor({ cache, log, start, live, weekly: true });
-    // Nothing to go on: no recording for the week, and a feed that cannot
-    // speak for it either.
-    const known = recorded || live > 0 || hasLiveCoverage(cache, start);
-    return {
-      key: localKey(start),
-      label: weekLabel(start),
-      value: known ? count : null,
-      recorded: !!recorded,
-    };
+export function emailsByMonth({ cache, log, senderEmail, refMs = Date.now(), months = TREND_MONTHS } = {}) {
+  return recentMonths(refMs, months).map(({ start, end }) => {
+    const point = { key: localKey(start).slice(0, 7), label: monthLabel(start) };
+    if (hasLiveCoverage(cache, start)) {
+      const live = computeActivity(cache, senderEmail, start, end).emails.length;
+      return { ...point, value: live, recorded: false };
+    }
+    let total = 0;
+    let known = false;
+    let recorded = false;
+    for (const wk of weeksStartingIn(start, end)) {
+      const live = computeActivity(cache, senderEmail, wk.start, wk.end).emails.length;
+      const answer = emailsSentFor({ cache, log, start: wk.start, live, weekly: true });
+      total += answer.count;
+      if (answer.recorded) recorded = true;
+      if (answer.recorded || live > 0) known = true;
+    }
+    return { ...point, value: known ? total : null, recorded };
   });
+}
+
+// The week windows whose Monday falls inside [start, end).
+function weeksStartingIn(start, end) {
+  const out = [];
+  let s = mondayOf(start);
+  if (s < start) s += 7 * DAY_MS;
+  // Stepped by calendar date, not by 7 * DAY_MS, so a daylight-saving
+  // change inside the month can't slide a Monday off local midnight.
+  for (let d = new Date(s); d.getTime() < end; d.setDate(d.getDate() + 7)) {
+    const ws = d.getTime();
+    const we = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7).getTime();
+    out.push({ start: ws, end: we });
+  }
+  return out;
 }
 
 // Split out so the "no record" test reads as the one condition it is, and
