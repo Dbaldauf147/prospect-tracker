@@ -142,15 +142,15 @@ export function emailSnapshotPayload({
     // Independent of the funnel: the trend reads the Opps cache alone, so a
     // report with no stage volumes cached still carries it.
     closeRateTrend,
-    // Emails by week and new opps by month, in place of the two tiles this
+    // Emails and new opps by week, in place of the two tiles this
     // email used to lead with. A tile said how one week went against a
     // target; the reader wants to know which way the line is going, and a
     // number over a goal cannot say that. Built by the caller (both of them
     // hold the caches these read) via utils/weeklyReportTrends.
-    trends: trends && (trends.emailsByMonth?.length || trends.newOppsByMonth?.length)
+    trends: trends && (trends.emailsByWeek?.length || trends.newOppsByWeek?.length)
       ? {
-        emailsByMonth: trends.emailsByMonth || [],
-        newOppsByMonth: trends.newOppsByMonth || [],
+        emailsByWeek: trends.emailsByWeek || [],
+        newOppsByWeek: trends.newOppsByWeek || [],
       }
       : null,
     // The two account-coverage charts off the Progress tab: how much of

@@ -27,8 +27,8 @@ import {
   loadWeeklyActivityLog, emailsSentFor, WEEKLY_ACTIVITY_EVENT,
 } from '../../utils/weeklyActivityLog';
 import {
-  emailsByMonth, newOppsByMonth, coverageByWeek,
-  TREND_MONTHS, COVERAGE_WEEKS,
+  emailsByWeek, newOppsByWeek, coverageByWeek,
+  TREND_WEEKS, COVERAGE_WEEKS,
   coverageReading, coverageRatioByWeek, withCoverageReading, sameReading, weekKeyAt,
 } from '../../utils/weeklyReportTrends';
 import { loadCoverageRatioLog, saveCoverageRatioReading } from '../../utils/coverageRatioStore';
@@ -601,11 +601,11 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   // the current period sits at the end of, so the last bar in each is the
   // period this report covers.
   const trendSeries = useMemo(() => ({
-    emailsByMonth: emailsByMonth({
-      cache, log: activityLog, senderEmail, refMs: bounds.start, months: TREND_MONTHS,
+    emailsByWeek: emailsByWeek({
+      cache, log: activityLog, senderEmail, refMs: bounds.start, weeks: TREND_WEEKS,
     }),
-    newOppsByMonth: newOppsByMonth({
-      records: oppsRecords, refMs: bounds.start, months: TREND_MONTHS,
+    newOppsByWeek: newOppsByWeek({
+      records: oppsRecords, refMs: bounds.start, weeks: TREND_WEEKS,
     }),
   }), [cache, activityLog, senderEmail, oppsRecords, bounds]);
 

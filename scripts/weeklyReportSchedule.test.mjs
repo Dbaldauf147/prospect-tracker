@@ -272,7 +272,7 @@ const injected = renderWeeklyReportHtml({
   capturedAt: Date.now(),
   periodLabel: '<b>label</b>',
   kpiCards: [{ label: '<b>k</b>', value: '<i>v</i>', lines: ['<u>line</u>'] }],
-  trends: { emailsByMonth: [{ key: '2026-08', label: '<u>wk</u>', value: 1 }], newOppsByMonth: [] },
+  trends: { emailsByWeek: [{ key: '2026-08-31', label: '<u>wk</u>', value: 1 }], newOppsByWeek: [] },
   funnel: {
     stages: [{ label: '<img src=x>', count: 1, amount: '<i>$1</i>', life: '<u>1</u>', closeRate: '<b>1%</b>' }],
     outcome: { soldLabel: '<b>sold</b>', sold: '<i>$1</i>', weighted: '<u>$2</u>', total: '<b>$3</b>', note: '<script>n</script>' },
@@ -311,11 +311,11 @@ const built = buildSnapshotDoc({
   scope: 'week',
   periodLabel: 'Mon, Aug 31 – Sun, Sep 6, 2026',
   trends: {
-    emailsByMonth: [
-      { key: '2026-08', label: 'Aug', value: 18, recorded: true },
-      { key: '2026-09', label: 'Sep', value: 27, recorded: false },
+    emailsByWeek: [
+      { key: '2026-08-24', label: '8/24', value: 18, recorded: true },
+      { key: '2026-08-31', label: '8/31', value: 27, recorded: false },
     ],
-    newOppsByMonth: [{ key: '2026-09', label: 'Sep', value: 2 }],
+    newOppsByWeek: [{ key: '2026-08-31', label: '8/31', value: 2 }],
   },
   funnel: {
     stages: [{ label: 'Stage 3: Qualify Opportunity', count: 3, amount: '$402,000', life: '120 days', closeRate: '25%' }],
@@ -329,14 +329,14 @@ check('a posted snapshot is stamped with a capture time',
 check('an unstamped snapshot no longer reads as unknown',
   freshnessNote(built).text.startsWith('Captured at an unknown time'), false);
 check('ownership comes from the token, not the payload', built.ownerUid, 'u1');
-check('the emails-by-month series survives', built.trends.emailsByMonth.length, 2);
-check('a point keeps its recorded flag', built.trends.emailsByMonth[0].recorded, true);
-check('the new-opps-by-month series survives', built.trends.newOppsByMonth[0].value, 2);
+check('the emails-by-week series survives', built.trends.emailsByWeek.length, 2);
+check('a point keeps its recorded flag', built.trends.emailsByWeek[0].recorded, true);
+check('the new-opps-by-week series survives', built.trends.newOppsByWeek[0].value, 2);
 // A week with no recording and no feed is not a week with no sends, and the
 // clamp that turns every value into a number would erase the difference.
 check('an unknown week stays null, not 0',
-  buildSnapshotDoc({ trends: { emailsByMonth: [{ key: 'k', label: 'Aug', value: null }] } }, {})
-    .trends.emailsByMonth[0].value, null);
+  buildSnapshotDoc({ trends: { emailsByWeek: [{ key: 'k', label: '8/31', value: null }] } }, {})
+    .trends.emailsByWeek[0].value, null);
 check('a snapshot with no trends stores none', buildSnapshotDoc({}, {}).trends, null);
 check('the funnel survives', built.funnel.stages[0].count, 3);
 check('the goals survive', [built.goals.created.length, built.goals.active.length], [1, 1]);
@@ -468,13 +468,13 @@ const html = renderWeeklyReportHtml({
     ],
   },
   trends: {
-    emailsByMonth: [
-      { key: '2026-08', label: 'Aug', value: 18, recorded: true },
-      { key: '2026-09', label: 'Sep', value: 27, recorded: false },
+    emailsByWeek: [
+      { key: '2026-08-31', label: '8/31', value: 18, recorded: true },
+      { key: '2026-09-07', label: '9/7', value: 27, recorded: false },
     ],
-    newOppsByMonth: [
-      { key: '2026-08', label: 'Aug', value: 3 },
-      { key: '2026-09', label: 'Sep', value: 2 },
+    newOppsByWeek: [
+      { key: '2026-08-31', label: '8/31', value: 3 },
+      { key: '2026-09-07', label: '9/7', value: 2 },
     ],
   },
   oppChanges: { newOpps: ['Acme: HQ retrofit (Discovery)'], closed: [] },
@@ -487,9 +487,9 @@ check('renders the chip', html.includes('Behind pace'), true);
 check('the current week draws in the accent, the one before it in grey',
   html.includes('bgcolor="#2a78d6"') && html.includes('bgcolor="#7C8B9D"'), true);
 check('the series carries the number the tab shows', html.includes('>27<'), true);
-// A month answered by the Activity tab's banked total rather than the live
+// A week answered by the Activity tab's banked total rather than the live
 // feed says so once, under the series — the tile used to say it per number.
-check('the series says when a month came off the recording',
+check('the series says when a week came off the recording',
   html.includes('banked on the Activity tab'), true);
 check('the new-opps series draws in its own accent',
   html.includes('bgcolor="#0E9F6E"'), true);

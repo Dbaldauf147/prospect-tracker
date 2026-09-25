@@ -85,10 +85,10 @@ async function fetchType(type, token, from, to, opts) {
   return out;
 }
 
-// The email history behind the Weekly Report's emails-by-month series runs
-// to ten months, which is more mail than one search should be asked for:
+// The email history behind the Weekly Report's emails-by-week series runs
+// to ten weeks, which can be more mail than one search should be asked for:
 // the pages come back newest first and stop at MAX_PAGES, so an overfull
-// window would lose its OLDEST months while still being stamped as a feed
+// window would lose its OLDEST weeks while still being stamped as a feed
 // that covers them. Asked for a month at a time instead, each slice gets
 // the whole page budget to itself. Slices share their edges (both filters
 // are inclusive), so a record on a boundary is kept once, by id.
@@ -115,7 +115,7 @@ async function fetchTypeSliced(type, token, from, to, opts) {
  * window rather than a feed that predates it.
  *
  * `opts.emailsFrom` reaches the emails back further than the window, for
- * the emails-by-month series; calls and meetings stay on the window.
+ * the emails-by-week series; calls and meetings stay on the window.
  *
  * Throws if HubSpot refuses — the caller decides whether to fall back to
  * the recorded weekly totals or give up on a live rebuild.

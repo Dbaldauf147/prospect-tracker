@@ -1,14 +1,14 @@
 // The two history series the Weekly Report email carries in place of the
 // "Emails sent" and "New opps" tiles.
 //
-// The thing worth guarding: a month the live HubSpot feed can no longer
-// reach must read off the Activity tab's banked weekly recordings, not off
-// the feed. Counting the feed alone would slope the series down to zero and
-// show a collapse in outbound that never happened — which is the same bug
-// that made a single tile read "Emails sent 0", now with more months to get
-// wrong.
+// The thing worth guarding: a week the live HubSpot feed can no longer
+// reach must read off the Activity tab's banked recording, not off the
+// feed. Counting the feed alone would slope every series down to zero at
+// the left-hand end and show a collapse in outbound that never happened —
+// which is the same bug that made a single tile read "Emails sent 0", now
+// with more weeks to get wrong.
 import {
-  monthBounds, recentWeeks, recentMonths, emailsByMonth, newOppsByMonth, coverageByWeek,
+  monthBounds, recentWeeks, recentMonths, emailsByWeek, newOppsByWeek, coverageByWeek,
 } from '../src/utils/weeklyReportTrends.js';
 
 let passed = 0, failed = 0;
@@ -59,7 +59,7 @@ const DAY = 24 * 60 * 60 * 1000;
     'monthBounds: the whole of February');
 }
 
-// ---- Emails by month -----------------------------------------------------
+// ---- Emails by week ------------------------------------------------------
 const REF = at(2026, 9, 9);
 const weekStarts = recentWeeks(REF, 5).map(w => w.start);
 const isoKey = (ms) => {
@@ -78,88 +78,85 @@ const email = (ms) => ({
   hs_email_to_email: 'buyer@acme.com',
 });
 const feed = (fetchedAt, sends) => ({ fetchedAt: new Date(fetchedAt).toISOString(), emails: sends.map(email) });
-// Weekly recordings, keyed by each week's Monday. Aug 31 is a Monday, so
-// the week it starts belongs to August even though most of it is September.
-const log = {
-  [isoKey(at(2026, 8, 3, 0))]: { emails: 10, at: at(2026, 8, 3, 0) },
-  [isoKey(at(2026, 8, 10, 0))]: { emails: 20, at: at(2026, 8, 10, 0) },
-  [isoKey(at(2026, 8, 31, 0))]: { emails: 40, at: at(2026, 8, 31, 0) },
-  [isoKey(at(2026, 9, 7, 0))]: { emails: 30, at: at(2026, 9, 7, 0) },
-};
+const log = Object.fromEntries(weekStarts.map((s, i) => [isoKey(s), { emails: (i + 1) * 10, at: s }]));
 
 {
-  // A feed fetched now answers for every month in the series, and a month
-  // is counted as the calendar month, not as a run of weeks.
-  const cache = feed(REF, [at(2026, 9, 8), at(2026, 9, 1), at(2026, 5, 5)]);
-  const series = emailsByMonth({ cache, log, senderEmail: 'me@se.com', refMs: REF, months: 5 });
-  eq(series.length, 5, 'emails: one point per month');
-  eq(series.map(p => p.key), ['2026-05', '2026-06', '2026-07', '2026-08', '2026-09'], 'emails: keyed by month');
-  eq(series[4].label, 'Sep', 'emails: labelled with the month name');
-  eq(series.map(p => p.value), [1, 0, 0, 0, 2], 'emails: each month counts the live feed');
+  // Both writers of this cache page the whole HubSpot history, so a feed
+  // fetched after a week ended is complete for it by construction — a fresh
+  // feed answers for every week in the series.
+  const cache = feed(REF, [weekStarts[4] + DAY, weekStarts[4] + 2 * DAY, weekStarts[0] + DAY]);
+  const series = emailsByWeek({ cache, log, senderEmail: 'me@se.com', refMs: REF, weeks: 5 });
+  eq(series.length, 5, 'emails: one point per week');
+  eq(series.map(p => p.label), ['8/10', '8/17', '8/24', '8/31', '9/7'], 'emails: labelled with each week\'s Monday');
+  eq(series[4].value, 2, 'emails: the current week counts the live feed');
+  eq(series[4].recorded, false, 'emails: a live-counted week is not marked recorded');
   eq(series.map(p => p.recorded), [false, false, false, false, false],
     'emails: a feed that covers the whole series beats every recording');
 }
 
 {
-  // The mixed case. A feed fetched in August answers for August and the
-  // months before it; September began after it was taken, so September
-  // falls back to its weeks' recordings.
-  const cache = feed(at(2026, 8, 20), [at(2026, 8, 4), at(2026, 7, 9)]);
-  const series = emailsByMonth({ cache, log, senderEmail: 'me@se.com', refMs: REF, months: 5 });
+  // The mixed case. A feed pages the whole history, so it answers for every
+  // week that began before it was fetched — the week it CANNOT answer for
+  // is the one still running when it was taken. Here the feed is from the
+  // late in the week before, so the four behind it count live and the
+  // current week falls back to the recording, which knows more.
+  const cache = feed(weekStarts[4] - DAY, [
+    weekStarts[0] + DAY, weekStarts[1] + DAY, weekStarts[1] + 2 * DAY, weekStarts[3] + DAY,
+  ]);
+  const series = emailsByWeek({ cache, log, senderEmail: 'me@se.com', refMs: REF, weeks: 5 });
   eq(series.map(p => p.recorded), [false, false, false, false, true],
-    'emails: the month the feed cannot reach falls back to the recordings');
-  eq(series.map(p => p.value), [0, 0, 1, 1, 30],
-    'emails: each month takes the source that can actually answer for it');
+    'emails: the week the feed was taken during falls back to the recording');
+  eq(series.map(p => p.value), [1, 2, 0, 1, 50],
+    'emails: each week takes the source that can actually answer for it');
 }
 
 {
-  // The real case: the feed was dropped by the storage quota, so every month
-  // is the sum of its weeks' banked recordings.
-  const series = emailsByMonth({ cache: null, log, senderEmail: 'me@se.com', refMs: REF, months: 5 });
-  eq(series.map(p => p.value), [null, null, null, 70, 30],
-    'emails: with no feed, a month adds up the weeks that start in it');
-  eq(series.map(p => p.recorded), [false, false, false, true, true],
-    'emails: a month built from recordings says so');
+  // The real case: the feed was dropped by the storage quota, so every week
+  // is answered by the banked recording. Without that fallback the whole
+  // series reads zero and looks like outbound stopped.
+  const series = emailsByWeek({ cache: null, log, senderEmail: 'me@se.com', refMs: REF, weeks: 5 });
+  eq(series.map(p => p.value), [10, 20, 30, 40, 50], 'emails: with no feed at all, the recordings carry the series');
+  ok(series.every(p => p.recorded), 'emails: every point says it came from a recording');
 }
 
 {
-  // No recording and no feed is not the same fact as a month with no sends,
-  // and drawing it as an empty bar asserts a quiet month nobody measured.
-  const series = emailsByMonth({ cache: null, log: {}, senderEmail: 'me@se.com', refMs: REF, months: 5 });
-  eq(series.map(p => p.value), [null, null, null, null, null], 'emails: an unmeasured month is null, not 0');
+  // No recording and no feed is not the same fact as a week with no sends,
+  // and drawing it as an empty bar asserts a quiet week nobody measured.
+  const series = emailsByWeek({ cache: null, log: {}, senderEmail: 'me@se.com', refMs: REF, weeks: 5 });
+  eq(series.map(p => p.value), [null, null, null, null, null], 'emails: an unmeasured week is null, not 0');
 
   // A feed that covers the window and legitimately found nothing IS a zero.
-  const covered = emailsByMonth({
-    cache: feed(REF, []), log: {}, senderEmail: 'me@se.com', refMs: REF, months: 1,
+  const covered = emailsByWeek({
+    cache: feed(REF, []), log: {}, senderEmail: 'me@se.com', refMs: REF, weeks: 1,
   });
-  eq(covered[0].value, 0, 'emails: a covered month with no sends is a real zero');
+  eq(covered[0].value, 0, 'emails: a covered week with no sends is a real zero');
 }
 
 {
-  // A feed fetched before a month started cannot know what happened in it.
-  const stale = feed(at(2026, 4, 20), []);
-  const series = emailsByMonth({ cache: stale, log: {}, senderEmail: 'me@se.com', refMs: REF, months: 5 });
+  // A feed fetched before a week started cannot know what happened in it.
+  const stale = feed(weekStarts[0] - DAY, []);
+  const series = emailsByWeek({ cache: stale, log: {}, senderEmail: 'me@se.com', refMs: REF, weeks: 5 });
   eq(series[4].value, null, 'emails: a feed older than the window answers for nothing');
 }
 
-// ---- New opps by month ---------------------------------------------------
+// ---- New opps by week ----------------------------------------------------
 const opp = (id, ms) => ({ id, account: `Acct ${id}`, Stage: 'Discovery', _rowUpdatedAt: ms });
 
 {
   const records = [
-    opp(1, at(2026, 5, 4)), opp(2, at(2026, 5, 20)),
-    opp(3, at(2026, 7, 8)),
-    opp(4, at(2026, 9, 2)), opp(5, at(2026, 9, 3)), opp(6, at(2026, 9, 4)),
-    // Outside the five-month window entirely.
-    opp(7, at(2025, 12, 1)),
+    opp(1, at(2026, 8, 11)), opp(2, at(2026, 8, 14)),
+    opp(3, at(2026, 8, 26)),
+    opp(4, at(2026, 9, 7)), opp(5, at(2026, 9, 8)), opp(6, at(2026, 9, 9)),
+    // Outside the five-week window entirely.
+    opp(7, at(2026, 7, 1)),
   ];
-  const series = newOppsByMonth({ records, refMs: REF, months: 5 });
-  eq(series.map(p => p.value), [2, 0, 1, 0, 3], 'opps: counted into the month each first appeared');
-  eq(series.map(p => p.key), ['2026-05', '2026-06', '2026-07', '2026-08', '2026-09'], 'opps: keyed by month');
-  eq(series[4].label, 'Sep', 'opps: labelled with the month name');
+  const series = newOppsByWeek({ records, refMs: REF, weeks: 5 });
+  eq(series.map(p => p.value), [2, 0, 1, 0, 3], 'opps: counted into the week each first appeared');
+  eq(series.map(p => p.key), ['2026-08-10', '2026-08-17', '2026-08-24', '2026-08-31', '2026-09-07'], 'opps: keyed by each week\'s Monday');
+  eq(series[4].label, '9/7', 'opps: labelled short enough for a 28px column');
   ok(series.every(p => p.recorded === false), 'opps: nothing here comes off a recording');
 
-  eq(newOppsByMonth({ records: [], refMs: REF, months: 5 }).map(p => p.value), [0, 0, 0, 0, 0],
+  eq(newOppsByWeek({ records: [], refMs: REF, weeks: 5 }).map(p => p.value), [0, 0, 0, 0, 0],
     'opps: an empty cache is five real zeroes, not five blanks');
 }
 
