@@ -39,8 +39,8 @@ import {
 } from '../../src/utils/weeklyReport.js';
 import { buildReviewSnapshot, headlineKpis, emailKpiCards } from '../../src/utils/weeklyReview.js';
 import {
-  emailsByMonth, newOppsByMonth, coverageByWeek,
-  recentMonths, TREND_MONTHS, COVERAGE_WEEKS,
+  emailsByWeek, newOppsByWeek, coverageByWeek,
+  recentWeeks, TREND_WEEKS, COVERAGE_WEEKS,
   coverageReading, coverageRatioByWeek, withCoverageReading, weekKeyAt, COVERAGE_RATIO_WEEKS,
 } from '../../src/utils/weeklyReportTrends.js';
 import { withCoverageImages, withCoverageRatioImage } from '../../src/utils/coverageChartImage.js';
@@ -111,11 +111,11 @@ export function completedPeriodBounds(now, { scope = 'week', timeZone = '' } = {
   }
 }
 
-// The start of the oldest month the emails-by-month series covers, which is
+// The start of the oldest week the emails-by-week series covers, which is
 // how far back the live feed has to reach. Exported so the scheduler asks
 // for the same span the build will read.
 export function trendHistoryStart(periodStart) {
-  return recentMonths(periodStart, TREND_MONTHS)[0].start;
+  return recentWeeks(periodStart, TREND_WEEKS)[0].start;
 }
 
 /**
@@ -163,11 +163,11 @@ export async function loadReportSources(db, uid, { token = '', start, end, histo
       // build carries on and emailsSentFor falls back to the recorded
       // weekly total, which is exactly what the tab does with a feed the
       // storage quota dropped.
-      // Emails back to the first month of the emails-by-month series, not
+      // Emails back to the first week of the emails-by-week series, not
       // just the reported window. The feed is stamped `fetchedAt: now`, so
-      // liveCacheCovers treats it as an answer for every month in the
+      // liveCacheCovers treats it as an answer for every week in the
       // series — and a feed holding only the current week would then
-      // answer 0 for the months behind it and draw a collapse in outbound
+      // answer 0 for the weeks behind it and draw a collapse in outbound
       // that never happened. Calls and meetings have no series, so they
       // are fetched for the reported window only.
       settle('hubspotActivity', () => fetchActivityWindow(token, start, end, { ...fetchOpts, emailsFrom: historyStart }), null),
@@ -212,19 +212,19 @@ export function buildReport(sources, period, { now = null } = {}) {
 
   // The two history series the email carries in place of the old tiles.
   // Same pure functions the tab calls, over the same caches — the weekly
-  // emails one leans on emailsSentFor, so a month the feed cannot answer
-  // for falls back to the Activity tab's banked weekly totals rather than
+  // emails one leans on emailsSentFor, so a week the feed cannot answer
+  // for falls back to the Activity tab's banked weekly total rather than
   // to zero. A day-scoped report gets no emails series, as before.
   const trends = {
-    emailsByMonth: scope === 'day' ? [] : emailsByMonth({
+    emailsByWeek: scope === 'day' ? [] : emailsByWeek({
       cache: s.activityCache,
       log: s.activityLog,
       senderEmail: workEmail,
       refMs: start,
-      months: TREND_MONTHS,
+      weeks: TREND_WEEKS,
     }),
-    newOppsByMonth: newOppsByMonth({
-      records: s.oppsRecords, refMs: start, months: TREND_MONTHS,
+    newOppsByWeek: newOppsByWeek({
+      records: s.oppsRecords, refMs: start, weeks: TREND_WEEKS,
     }),
   };
 
@@ -310,7 +310,7 @@ export function payloadHasFigures(payload) {
   if (payload.coverage) return true;
   if (payload.coverageRatio) return true;
   const tr = payload.trends || {};
-  const points = [...(tr.emailsByMonth || []), ...(tr.newOppsByMonth || [])];
+  const points = [...(tr.emailsByWeek || []), ...(tr.newOppsByWeek || [])];
   if (points.some(p => Number(p.value) > 0)) return true;
   const oc = payload.oppChanges || {};
   return Object.values(oc).some(v => Array.isArray(v) && v.length > 0);
@@ -329,7 +329,7 @@ export async function buildWeeklyReport(db, uid, {
     token,
     start: period.start,
     end: period.end,
-    // The live feed has to reach back across the whole emails-by-month
+    // The live feed has to reach back across the whole emails-by-week
     // series, not just the reported week.
     historyStart: trendHistoryStart(period.start),
     fetchOpts,

@@ -192,9 +192,9 @@ function cardRow(cells) {
   return table(`width="100%" style="border-collapse:collapse"`, `<tr>${tds}</tr>`);
 }
 
-// A trend series, as a column chart: one column per month, oldest on the
-// left, each column labelled with its own number above it and its month
-// below.
+// A trend series, as a column chart: one column per week, oldest on the
+// left, each column labelled with its own number above it and its week
+// ("9/21") below.
 //
 // Every column is a table cell with a set height and a bgcolor, bottom-
 // aligned in a cell of the chart's full height, and every size is stated
@@ -202,9 +202,9 @@ function cardRow(cells) {
 // sits above each column in text, so the series is legible even where the
 // fills do not render at all.
 //
-// A null value is NOT a zero. For the emails series it means the month has
+// A null value is NOT a zero. For the emails series it means the week has
 // no recording and the feed cannot answer for it; drawing that as an empty
-// column would assert a quiet month that nobody actually measured, so it
+// column would assert a quiet week that nobody actually measured, so it
 // reads "-" with no column.
 const blankCell = 'font-size:0;line-height:0;mso-line-height-rule:exactly';
 
@@ -212,7 +212,7 @@ function trendColumnHtml(point, max, accent, isLast) {
   const known = point.value != null;
   const value = known ? Number(point.value) || 0 : 0;
   // Scale to the tallest column in the series, never to a fixed axis.
-  // A non-zero month always gets a visible sliver.
+  // A non-zero week always gets a visible sliver.
   const h = max > 0 && known && value > 0 ? Math.max(2, Math.round((value / max) * TREND_CHART_H)) : 0;
   // The current period is the one the reader is being told about, so it
   // carries the full accent and the rest recede.
@@ -253,8 +253,8 @@ function trendCardHtml({ title, note, points, accent, emptyNote }) {
   const unknown = points.some(p => p.value == null);
   const recorded = points.some(p => p.recorded);
   const feet = [
-    recorded ? 'Months the live feed no longer covers are the totals banked on the Activity tab.' : '',
-    unknown ? '- marks a month with no recording and no feed to count.' : '',
+    recorded ? 'Weeks the live feed no longer covers are the totals banked on the Activity tab.' : '',
+    unknown ? '- marks a week with no recording and no feed to count.' : '',
   ].filter(Boolean).join(' ');
 
   return `${cardOpen({ left: accent.strong })}
@@ -817,24 +817,24 @@ export function renderWeeklyReportHtml(snapshot, {
 
   // The two series that replaced the "Emails sent" and "New opps" tiles.
   // Each is its own chart on its own scale: one axis per chart, because a
-  // month of ~200 emails and a month of ~5 opps share no axis worth drawing.
+  // week of ~50 emails and a week of ~2 opps share no axis worth drawing.
   // Colours are the accents the tab already gives these two metrics, so the
   // same number is the same colour in both places.
-  const trendRow = (s.trends && (tr.emailsByMonth?.length || tr.newOppsByMonth?.length))
+  const trendRow = (s.trends && (tr.emailsByWeek?.length || tr.newOppsByWeek?.length))
     ? cardRow([
       trendCardHtml({
         title: 'Emails sent',
-        note: `last ${(tr.emailsByMonth || []).length} months`,
-        points: tr.emailsByMonth,
+        note: `last ${(tr.emailsByWeek || []).length} weeks`,
+        points: tr.emailsByWeek,
         accent: TREND_BLUE,
-        emptyNote: 'No monthly email history recorded yet.',
+        emptyNote: 'No weekly email history recorded yet.',
       }),
       trendCardHtml({
         title: 'New opps',
-        note: `last ${(tr.newOppsByMonth || []).length} months`,
-        points: tr.newOppsByMonth,
+        note: `last ${(tr.newOppsByWeek || []).length} weeks`,
+        points: tr.newOppsByWeek,
         accent: TREND_GREEN,
-        emptyNote: 'No monthly opp history in the cache yet.',
+        emptyNote: 'No weekly opp history in the cache yet.',
       }),
     ])
     : `<div style="font-family:${FONT};font-size:13px;color:${MUTED};padding:12px 14px;border:1px dashed ${BORDER};background-color:${SURFACE_ALT};border-radius:6px">The email history series were not in this snapshot. Open Charts \u2192 Weekly Report once and the next send will carry them.</div>`;

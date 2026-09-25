@@ -82,10 +82,10 @@ function seriesDoc(points, max) {
 
 function trendsDoc(t) {
   if (!t || typeof t !== 'object') return null;
-  const emailsByMonth = seriesDoc(t.emailsByMonth, 12);
-  const newOppsByMonth = seriesDoc(t.newOppsByMonth, 12);
-  if (!emailsByMonth.length && !newOppsByMonth.length) return null;
-  return { emailsByMonth, newOppsByMonth };
+  const emailsByWeek = seriesDoc(t.emailsByWeek, 12);
+  const newOppsByWeek = seriesDoc(t.newOppsByWeek, 12);
+  if (!emailsByWeek.length && !newOppsByWeek.length) return null;
+  return { emailsByWeek, newOppsByWeek };
 }
 
 // The close-rate trend, as text the tab already formatted — same reason the

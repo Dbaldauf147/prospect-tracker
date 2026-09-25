@@ -57,19 +57,19 @@ const snapshot = {
     ],
   },
   trends: {
-    emailsByMonth: [
-      { key: '2026-05', label: 'May', value: 31, recorded: true },
-      { key: '2026-06', label: 'Jun', value: null, recorded: false },
-      { key: '2026-07', label: 'Jul', value: 44, recorded: true },
-      { key: '2026-08', label: 'Aug', value: 18, recorded: true },
-      { key: '2026-09', label: 'Sep', value: 27, recorded: false },
+    emailsByWeek: [
+      { key: '2026-08-10', label: '8/10', value: 31, recorded: true },
+      { key: '2026-08-17', label: '8/17', value: null, recorded: false },
+      { key: '2026-08-24', label: '8/24', value: 44, recorded: true },
+      { key: '2026-08-31', label: '8/31', value: 18, recorded: true },
+      { key: '2026-09-07', label: '9/7', value: 27, recorded: false },
     ],
-    newOppsByMonth: [
-      { key: '2026-05', label: 'May', value: 4, recorded: false },
-      { key: '2026-06', label: 'Jun', value: 2, recorded: false },
-      { key: '2026-07', label: 'Jul', value: 6, recorded: false },
-      { key: '2026-08', label: 'Aug', value: 3, recorded: false },
-      { key: '2026-09', label: 'Sep', value: 1, recorded: false },
+    newOppsByWeek: [
+      { key: '2026-08-10', label: '8/10', value: 4, recorded: false },
+      { key: '2026-08-17', label: '8/17', value: 2, recorded: false },
+      { key: '2026-08-24', label: '8/24', value: 6, recorded: false },
+      { key: '2026-08-31', label: '8/31', value: 3, recorded: false },
+      { key: '2026-09-07', label: '9/7', value: 1, recorded: false },
     ],
   },
   coverage: {
@@ -155,12 +155,12 @@ check('no column is sized as a share of the cell it sits in',
 // behind it wears the de-emphasis grey.
 check('the current period carries the accent colour',
   /<td width="28" height="52" bgcolor="#2a78d6"/.test(html), true);
-// Months run across the bottom, oldest on the left.
-check('the months read left to right under the columns',
-  /May<\/td>[\s\S]*Jun<\/td>[\s\S]*Jul<\/td>[\s\S]*Aug<\/td>[\s\S]*Sep<\/td>/.test(html), true);
-check('an unmeasured month reads as a dash with no column', /font-weight:700;color:#8896A6[^>]*>-<\/div><\/td>/.test(html), true);
-check('the emails card names its span in months', html.includes('last 5 months'), true);
-check('the current month carries the opps accent',
+// Weeks run across the bottom, oldest on the left.
+check('the weeks read left to right under the columns',
+  />8\/10<\/td>[\s\S]*>8\/17<\/td>[\s\S]*>8\/24<\/td>[\s\S]*>8\/31<\/td>[\s\S]*>9\/7<\/td>/.test(html), true);
+check('an unmeasured week reads as a dash with no column', /font-weight:700;color:#8896A6[^>]*>-<\/div><\/td>/.test(html), true);
+check('the emails card names its span in weeks', html.includes('last 5 weeks'), true);
+check('the current week carries the opps accent',
   /bgcolor="#0E9F6E"/.test(html), true);
 // The funnel is the picture alone: no stage table, no bars standing in for
 // it, and no section at all when there is no picture to show.
@@ -373,7 +373,7 @@ check('a drawn funnel has no projected-total block',
     periodEnd: Date.parse('2026-09-06T23:59:59Z'),
     scope: 'week',
     periodLabel: 'Mon, Aug 31 - Sun, Sep 6, 2026',
-    trends: { emailsByMonth: [{ key: '2026-08', label: 'Aug', value: 0, recorded: true }], newOppsByMonth: [] },
+    trends: { emailsByWeek: [{ key: '2026-08-31', label: '8/31', value: 0, recorded: true }], newOppsByWeek: [] },
   }, {});
   const banner = stale.indexOf('These numbers are');
   check('a stale report carries a banner', banner > -1, true);
