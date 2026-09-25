@@ -211,15 +211,18 @@ export function coverageChartImage(chart) {
     text(r, label, at, plotB + 5 * SCALE, LABEL, SCALE, 'center');
   }
 
-  // The two series. A week the Progress tab never recorded breaks the line
-  // rather than being joined across: an unrecorded week is not a reading,
-  // and a segment drawn straight through it would invent one.
+  // The two series. A week the Progress tab never recorded is joined
+  // across rather than breaking the line: the tab only writes a snapshot
+  // when somebody opens it, so gaps are about who looked, not about the
+  // accounts, and the tab's own chart (which plots recorded weeks only)
+  // draws one unbroken line. The points still sit at their real weeks, so
+  // a long stretch with no reading shows as one long straight segment.
   const series = [{ key: 't2', colour: T2 }, { key: 't1', colour: T1 }];
   for (const s of series) {
     let prev = null;
     points.forEach((p, i) => {
       const v = p[s.key];
-      if (v == null) { prev = null; return; }
+      if (v == null) return;
       const here = { x: xAt(i), y: yAt(v) };
       if (prev) stroke(r, prev.x, prev.y, here.x, here.y, s.colour, 2 * SCALE);
       prev = here;

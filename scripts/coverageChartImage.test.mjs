@@ -2,8 +2,8 @@
 //
 // The chart is drawn rather than described, so the only honest test is to
 // decode what was drawn and look at particular pixels: is the Tier 1 line
-// where 88% should put it, does an unrecorded week leave a gap instead of
-// a line drawn through it, does the picture stay inside the budget the
+// where 88% should put it, is an unrecorded week joined across the way the
+// Progress tab draws it, does the picture stay inside the budget the
 // snapshot allows it. Every colour is flat and exact, which is what makes
 // that tractable - there is no antialiasing to soften a comparison.
 //
@@ -97,12 +97,12 @@ const pointsOf = (values) => values.map((v, i) => ({
   const gapped = pixelsOf(coverageChartImage({
     points: pointsOf([80, 80, 80, 80, 80]).map((p, i) => (i === 2 ? { ...p, t1: null, t2: null } : p)),
   }));
-  ok(gapped.count(T1) < drawn.count(T1), 'an unrecorded week takes line out of the chart');
-  // The gap is AT the missing week, not somewhere convenient.
+  // Joined straight across, the way the Progress tab draws it: a flat
+  // 80% either side of the gap is the same flat line as five recorded weeks.
   const middle = Math.round(gapped.width / 2);
-  eq(gapped.column(middle).filter(([, c]) => c === T1 || c === T2).length, 0,
-    'and the gap is where the week is, with nothing drawn through it');
-  ok(gapped.count(T1) > drawn.count(T1) / 3, 'the weeks either side of it are still drawn');
+  ok(gapped.column(middle).some(([, c]) => c === T1 || c === T2),
+    'an unrecorded week is joined across, with no break in the line');
+  ok(gapped.count(T1) > drawn.count(T1) * 0.9, 'the line across the gap is as long as a recorded one');
 }
 
 // ---- What the card carries -----------------------------------------------
