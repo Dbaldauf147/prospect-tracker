@@ -160,15 +160,10 @@ check('the current period carries the accent colour',
   /<td width="141" height="14" bgcolor="#2a78d6"/.test(html), true);
 check('the current month carries the opps accent',
   /bgcolor="#0E9F6E"/.test(html), true);
-check('a funnel bar uses the chart’s own stage colour',
-  html.includes('bgcolor="#104281"'), true);
-// The stage bars are a fixed column too, and the one column in the report
-// that is decoration rather than figures - so it is also the one a phone
-// drops, rather than carrying a 260px column no phone has room for.
-check('a funnel bar is sized in pixels like the trend bars',
-  /<td width="\d+" height="12" bgcolor="#104281"/.test(html), true);
-check('the stage-bar column is droppable on a narrow client',
-  /\.sbar \{ display:none/.test(html) && /<td class="sbar"/.test(html), true);
+// The funnel is the picture alone: no stage table, no bars standing in for
+// it, and no section at all when there is no picture to show.
+check('no picture → no funnel section', html.includes('Pipeline funnel'), false);
+check('no stage bars stand in for the picture', html.includes('bgcolor="#104281"'), false);
 
 // ---- Account coverage -----------------------------------------------------
 // The Progress tab draws these two as lines; mail gets neither an SVG nor a
@@ -334,8 +329,6 @@ check('and it ships with the arrow, not the colour alone',
 // the data URL in the snapshot. A remote image would be blocked by default
 // in both Outlook and Gmail, which is the whole reason for the attachment.
 check('no picture asked for → no img at all', /<img\b/.test(html), false);
-check('no picture → the stage rows keep their bars',
-  html.includes('bgcolor="#104281"'), true);
 
 const withPicture = renderWeeklyReportHtml(snapshot, { funnelImageSrc: 'cid:funnel@x' });
 check('the funnel img points at the attachment',
@@ -347,14 +340,12 @@ check('the img carries the chart’s own screen-reader label',
 check('it is still the only image', (withPicture.match(/<img\b/g) || []).length, 1);
 check('nothing is loaded over the network', /src="https?:/.test(withPicture), false);
 
-// The picture draws the bands, so the rows beside it are figures, not a
-// second chart. The outcome block stays in text either way: it is the
-// projected total, and a reader whose client hides the picture needs it.
-check('a drawn funnel drops the duplicate bar column',
-  withPicture.includes('bgcolor="#104281"'), false);
-check('a drawn funnel keeps the stage figures', withPicture.includes('$402,000'), true);
-check('the projected total is readable text under the picture',
-  withPicture.includes('= projected total') && withPicture.includes('$833K'), true);
+// The picture is the whole funnel: the stage table and the projected-total
+// block that used to sit under it are gone.
+check('a drawn funnel has no stage table', /Avg life|Close rate<\/th>/.test(withPicture.split('Close rate trend')[0]), false);
+check('a drawn funnel has no stage figures', withPicture.includes('$402,000'), false);
+check('a drawn funnel has no projected-total block',
+  withPicture.includes('= projected total') || withPicture.includes('+ weighted pipeline'), false);
 
 // The bytes the message carries. Only base64 PNG makes it this far — the
 // snapshot builder rejects anything else — and the mailer turns it back

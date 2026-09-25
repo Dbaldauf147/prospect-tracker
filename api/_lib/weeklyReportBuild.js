@@ -22,8 +22,8 @@
 // tab publishes by calling the same functions, rather than restating them.
 //
 // Two things the tab can do that this cannot, both handled rather than
-// hidden: it rasterises the funnel chart into a PNG (a server build sends
-// the stage table the email already falls back to), and it can ask Claude
+// hidden: it rasterises the funnel chart into a PNG (a server build has
+// no picture, so its email leaves the funnel section out), and it can ask Claude
 // for a narrative recap (left out; the email omits the section when it is
 // empty). Everything numeric is here.
 //
