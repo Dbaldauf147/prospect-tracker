@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import styles from './Sidebar.module.css';
 import {
   KEEP_AWAKE_PRESETS, parseDurationMinutes, endFor, isRunning, formatRemaining,
@@ -9,15 +10,29 @@ import {
 // laptop doesn't idle into sleep, for as long as the timer the user picks.
 //
 // What the browser allows, and so what this can promise:
-// - The lock only holds while this tab is visible. Switching to another tab
-//   or minimising the window releases it; coming back re-takes it, which is
-//   what the visibilitychange handler below is for.
+// - The lock only holds while this tab is visible. Switching to another tab,
+//   minimising the window, or (on Windows) covering it completely with other
+//   windows releases it; coming back re-takes it, which is what the
+//   visibilitychange handler below is for.
 // - It stops idle sleep, not a sleep the user asks for: closing the lid or
-//   choosing Sleep still sleeps the machine.
+//   choosing Sleep still sleeps the machine. Battery saver can refuse it.
 // - Browsers without the API (older Safari, Firefox before 126) get a note
 //   saying so instead of a button that silently does nothing.
+//
+// The first version showed a green "Keeping awake" pill whenever a timer was
+// running, whether or not the browser was actually holding the lock - so a
+// laptop could go to sleep under a pill that said it wouldn't. Everything
+// shown now comes off `lockState`, which only reads 'held' while a lock the
+// browser granted is still in hand, and the popup keeps a log of every time
+// the lock was lost and why.
 const supported = typeof navigator !== 'undefined' && 'wakeLock' in navigator;
 const storage = typeof window !== 'undefined' ? window.localStorage : null;
+
+// While the lock is refused (battery saver, a transient error), ask again
+// this often, as long as the tab is visible and the timer is running.
+const RETRY_MS = 30_000;
+
+const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
 export function KeepAwake() {
   const [session, setSession] = useState(() => readSession(storage));
@@ -25,8 +40,16 @@ export function KeepAwake() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [custom, setCustom] = useState('');
   const [customError, setCustomError] = useState('');
-  // 'held' | 'paused' (tab hidden) | 'error'
+  // '' | 'held' | 'paused' (tab hidden) | 'error' (refused)
   const [lockState, setLockState] = useState('');
+  const lockStateRef = useRef('');
+  useEffect(() => { lockStateRef.current = lockState; }, [lockState]);
+  // The popup in the middle of the screen. Opens whenever a timer starts or
+  // is picked back up, and again when the lock is taken back after a pause,
+  // so the user sees what happened; "Minimize" tucks it into the sidebar.
+  const [popupOpen, setPopupOpen] = useState(() => !!readSession(storage));
+  // The times the lock was lost this session, newest last: { at, reason }.
+  const [drops, setDrops] = useState([]);
   const lockRef = useRef(null);
   // Set while a request is in flight, so two callers can't each take a lock.
   const pendingRef = useRef(false);
@@ -38,6 +61,10 @@ export function KeepAwake() {
   const runningRef = useRef(running);
   useEffect(() => { runningRef.current = running; }, [running]);
 
+  const noteDrop = useCallback((reason) => {
+    setDrops(d => [...d.slice(-4), { at: Date.now(), reason }]);
+  }, []);
+
   const release = useCallback(async () => {
     const lock = lockRef.current;
     lockRef.current = null;
@@ -47,10 +74,8 @@ export function KeepAwake() {
   }, []);
 
   const acquire = useCallback(async () => {
-    if (!supported || document.visibilityState !== 'visible') {
-      setLockState(supported ? 'paused' : 'error');
-      return;
-    }
+    if (!supported) { setLockState('error'); return; }
+    if (document.visibilityState !== 'visible') { setLockState('paused'); return; }
     if ((lockRef.current && !lockRef.current.released) || pendingRef.current) return;
     pendingRef.current = true;
     try {
@@ -67,21 +92,26 @@ export function KeepAwake() {
         // Let go by stop() or unmount: nothing to report.
         if (lockRef.current !== lock) return;
         lockRef.current = null;
-        // Released by the browser (tab hidden, battery saver) rather than by
-        // us: say it's paused, and the visibility handler takes it back.
-        setLockState(document.visibilityState === 'visible' ? 'error' : 'paused');
+        // Released by the browser rather than by us.
+        const hidden = document.visibilityState !== 'visible';
+        setLockState(hidden ? 'paused' : 'error');
+        noteDrop(hidden
+          ? 'this tab was hidden (another tab, or the window minimized or covered)'
+          : 'the browser let go of it (battery saver, or the system asked)');
       });
     } catch {
       pendingRef.current = false;
       setLockState('error');
     }
-  }, []);
+  }, [noteDrop]);
 
   function stop() {
     setSession(null);
     writeSession(storage, null);
     release();
     setLockState('');
+    setPopupOpen(false);
+    setDrops([]);
   }
 
   function start(minutes) {
@@ -92,6 +122,8 @@ export function KeepAwake() {
     setMenuOpen(false);
     setCustom('');
     setCustomError('');
+    setDrops([]);
+    setPopupOpen(true);
   }
 
   // Take the lock whenever a session is running, including one picked back
@@ -111,31 +143,55 @@ export function KeepAwake() {
   }, [session]);
 
   // The browser drops the lock when the tab is hidden; take it back when the
-  // tab is shown again, as long as the timer is still running.
+  // tab is shown again, and open the popup so the pause is visible.
   useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === 'visible' && runningRef.current) acquire();
-      else if (document.visibilityState !== 'visible' && session) setLockState('paused');
+      if (!runningRef.current) return;
+      if (document.visibilityState === 'visible') {
+        // Back from a pause: show the popup so the gap is visible. A plain
+        // click back into the window while the lock held opens nothing.
+        if (lockStateRef.current !== 'held') setPopupOpen(true);
+        acquire();
+      } else {
+        setLockState('paused');
+      }
     };
     document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [session, acquire]);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [acquire]);
+
+  // A refused lock is asked for again every so often: battery saver ends,
+  // a transient failure clears.
+  useEffect(() => {
+    if (!running || lockState !== 'error' || !supported) return undefined;
+    const id = window.setInterval(() => acquire(), RETRY_MS);
+    return () => window.clearInterval(id);
+  }, [running, lockState, acquire]);
 
   // Let the lock go if the sidebar unmounts (sign-out).
   useEffect(() => () => { release(); }, [release]);
 
-  // Close the menu on an outside click or Escape.
+  // Close the menu on an outside click; Escape closes the menu or tucks the
+  // popup away.
   useEffect(() => {
-    if (!menuOpen) return undefined;
-    const onDown = (e) => { if (!wrapRef.current?.contains(e.target)) setMenuOpen(false); };
-    const onKey = (e) => { if (e.key === 'Escape') setMenuOpen(false); };
+    if (!menuOpen && !popupOpen) return undefined;
+    const onDown = (e) => { if (menuOpen && !wrapRef.current?.contains(e.target)) setMenuOpen(false); };
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      setMenuOpen(false);
+      setPopupOpen(false);
+    };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
     };
-  }, [menuOpen]);
+  }, [menuOpen, popupOpen]);
 
   function submitCustom(e) {
     e.preventDefault();
@@ -147,24 +203,70 @@ export function KeepAwake() {
     start(minutes);
   }
 
-  const status = !running ? ''
-    : session.until == null ? 'On until you stop it'
+  const timeText = !running ? ''
+    : session.until == null ? 'Until you stop it'
       : `${formatRemaining(session.until - now)} left`;
-  const note = lockState === 'paused'
-    ? 'Paused while this tab is hidden. Come back to this tab to resume.'
-    : lockState === 'error'
-      ? 'The browser refused to keep the screen on (battery saver may be on).'
-      : '';
+  // What the lock is actually doing, in the words each surface uses.
+  const tone = lockState === 'held' ? 'on' : lockState === 'paused' ? 'paused' : lockState === 'error' ? 'off' : 'pending';
+  const headline = {
+    on: 'Screen will stay on',
+    paused: 'Paused: this tab is hidden',
+    off: 'Not holding: the browser refused',
+    pending: 'Starting...',
+  }[tone];
+  const detail = {
+    on: 'The screen stays on and the laptop won\'t sleep while this tab stays open and on screen.',
+    paused: 'The browser lets go while this tab is in the background. Come back to this tab and it picks up again.',
+    off: `Battery saver or a system setting is blocking it. Plugging in or turning battery saver off usually fixes it. Trying again every ${RETRY_MS / 1000} seconds.`,
+    pending: 'Asking the browser to keep the screen on.',
+  }[tone];
+  const pillLabel = { on: 'Keeping awake', paused: 'Awake: paused', off: 'Awake: not holding', pending: 'Keeping awake' }[tone];
+
+  const popup = running && popupOpen && typeof document !== 'undefined' ? createPortal(
+    <div className={styles.keepAwakeOverlay} onMouseDown={(e) => { if (e.target === e.currentTarget) setPopupOpen(false); }}>
+      <div className={styles.keepAwakeModal} role="dialog" aria-modal="true" aria-labelledby="keep-awake-title">
+        <div className={styles.keepAwakeModalHead}>
+          <span className={styles[`keepAwakeDot_${tone}`]} aria-hidden="true" />
+          <span id="keep-awake-title" className={styles.keepAwakeModalTitle}>{headline}</span>
+        </div>
+        <div className={styles.keepAwakeModalTime}>{timeText}</div>
+        {session?.until != null ? (
+          <div className={styles.keepAwakeModalUntil}>Until {clock(session.until)}</div>
+        ) : null}
+        <p className={styles.keepAwakeModalDetail}>{detail}</p>
+        {drops.length ? (
+          <div className={styles.keepAwakeModalLog}>
+            <div className={styles.keepAwakeModalLogTitle}>Times the screen was allowed to sleep</div>
+            <ul>
+              {drops.map((d, i) => <li key={i}>{clock(d.at)}: {d.reason}</li>)}
+            </ul>
+          </div>
+        ) : null}
+        <div className={styles.keepAwakeModalActions}>
+          <button type="button" className={styles.keepAwakeModalMin} onClick={() => setPopupOpen(false)}>Minimize</button>
+          <button type="button" className={styles.keepAwakeModalStop} onClick={stop}>Stop</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  ) : null;
 
   return (
     <div className={styles.keepAwakeWrap} ref={wrapRef}>
       {running ? (
-        <div className={styles.keepAwakeActive} title="The screen will stay on and the laptop won't go to sleep while this tab is open and visible.">
-          <span className={styles.keepAwakeDot} aria-hidden="true" />
-          <span className={styles.keepAwakeText}>
-            <span className={styles.keepAwakeLabel}>Keeping awake</span>
-            <span className={styles.keepAwakeTime}>{status}</span>
-          </span>
+        <div className={styles[`keepAwakePill_${tone}`]}>
+          <button
+            type="button"
+            className={styles.keepAwakeOpen}
+            onClick={() => setPopupOpen(true)}
+            title="Show the Keep awake window"
+          >
+            <span className={styles[`keepAwakeDot_${tone}`]} aria-hidden="true" />
+            <span className={styles.keepAwakeText}>
+              <span className={styles.keepAwakeLabel}>{pillLabel}</span>
+              <span className={styles.keepAwakeTime}>{timeText}</span>
+            </span>
+          </button>
           <button type="button" className={styles.keepAwakeStop} onClick={stop}>Stop</button>
         </div>
       ) : (
@@ -180,7 +282,6 @@ export function KeepAwake() {
           <span className={styles.settingsCaret}>{menuOpen ? '▾' : '▸'}</span>
         </button>
       )}
-      {running && note ? <div className={styles.keepAwakeNote}>{note}</div> : null}
 
       {menuOpen && !running && (
         <div className={styles.keepAwakeMenu} role="menu">
@@ -215,12 +316,13 @@ export function KeepAwake() {
               </form>
               {customError ? <div className={styles.keepAwakeError}>{customError}</div> : null}
               <div className={styles.keepAwakeHint}>
-                Works while this tab stays open and visible. Closing the lid still sleeps the laptop.
+                Works while this tab stays open and on screen. Closing the lid still sleeps the laptop.
               </div>
             </>
           )}
         </div>
       )}
+      {popup}
     </div>
   );
 }
