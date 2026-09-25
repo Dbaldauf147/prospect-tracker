@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import styles from './Sidebar.module.css';
+import { KeepAwake } from './KeepAwake';
 import { AGENTS_RUN_INTERVAL_BUSINESS_DAYS } from '../utils/agentsRunReminder';
 
 // Predictive company + contact search shown in the sidebar header (replaces
@@ -527,6 +528,8 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           </div>
         )}
       </div>
+
+      <KeepAwake />
 
       <div className={styles.userSection}>
         <div className={styles.avatar}>
