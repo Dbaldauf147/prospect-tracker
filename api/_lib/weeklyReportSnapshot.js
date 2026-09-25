@@ -63,7 +63,7 @@ function funnelDoc(f) {
 }
 
 // One trend series. A point's `value` may be null and that is load-bearing:
-// for the emails series it means "no record of that week" — no recording
+// for the emails series it means "no record of that month" — no recording
 // from the Activity tab and a feed that cannot speak for it — which is a
 // different fact from a week with no sends, and the email draws the two
 // differently. clampInt would turn the first into the second.
@@ -82,10 +82,10 @@ function seriesDoc(points, max) {
 
 function trendsDoc(t) {
   if (!t || typeof t !== 'object') return null;
-  const emailsByWeek = seriesDoc(t.emailsByWeek, 12);
+  const emailsByMonth = seriesDoc(t.emailsByMonth, 12);
   const newOppsByMonth = seriesDoc(t.newOppsByMonth, 12);
-  if (!emailsByWeek.length && !newOppsByMonth.length) return null;
-  return { emailsByWeek, newOppsByMonth };
+  if (!emailsByMonth.length && !newOppsByMonth.length) return null;
+  return { emailsByMonth, newOppsByMonth };
 }
 
 // The close-rate trend, as text the tab already formatted — same reason the
