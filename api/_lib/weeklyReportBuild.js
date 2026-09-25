@@ -43,7 +43,7 @@ import {
   recentMonths, TREND_MONTHS, COVERAGE_WEEKS,
   coverageReading, coverageRatioByWeek, withCoverageReading, weekKeyAt, COVERAGE_RATIO_WEEKS,
 } from '../../src/utils/weeklyReportTrends.js';
-import { withCoverageImages } from '../../src/utils/coverageChartImage.js';
+import { withCoverageImages, withCoverageRatioImage } from '../../src/utils/coverageChartImage.js';
 import {
   buildFunnelStages, closeRateTrendByStage, closeRatesByStage, emailCloseRateTrend,
 } from '../../src/utils/pipelineFunnelData.js';
@@ -265,7 +265,7 @@ export function buildReport(sources, period, { now = null } = {}) {
     ? withCoverageReading(log, reportWeekKey, reading, { at: now, onlyIfMissing: true })
     : log;
   const coverageFill = filledLog !== log ? { key: reportWeekKey, entry: filledLog[reportWeekKey] } : null;
-  const coverageRatio = coverageRatioByWeek({ log: filledLog, refMs: start, weeks: COVERAGE_RATIO_WEEKS });
+  const coverageRatio = withCoverageRatioImage(coverageRatioByWeek({ log: filledLog, refMs: start, weeks: COVERAGE_RATIO_WEEKS }));
 
   const funnelStages = buildFunnelStages({
     stages: Array.isArray(s.pipeline?.stages) ? s.pipeline.stages : [],

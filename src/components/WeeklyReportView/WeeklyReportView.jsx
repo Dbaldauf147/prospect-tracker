@@ -32,7 +32,7 @@ import {
   coverageReading, coverageRatioByWeek, withCoverageReading, sameReading, weekKeyAt,
 } from '../../utils/weeklyReportTrends';
 import { loadCoverageRatioLog, saveCoverageRatioReading } from '../../utils/coverageRatioStore';
-import { withCoverageImages } from '../../utils/coverageChartImage';
+import { withCoverageImages, withCoverageRatioImage } from '../../utils/coverageChartImage';
 import {
   buildFunnelStages, closeRateTrendByStage, closeRatesByStage, emailCloseRateTrend,
 } from '../../utils/pipelineFunnelData';
@@ -624,10 +624,12 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   // The coverage ratio by week, with today's reading standing in for this
   // week before the write above has landed, so the last bar in the email
   // is the figure on the KPI card.
-  const coverageRatioSeries = useMemo(() => coverageRatioByWeek({
+  // Drawn as a line chart here too, so the preview and the cron's rebuild
+  // carry the same picture.
+  const coverageRatioSeries = useMemo(() => withCoverageRatioImage(coverageRatioByWeek({
     log: withCoverageReading(coverageLog || {}, weekKeyAt(Date.now()), liveCoverage),
     refMs: bounds.start,
-  }), [coverageLog, liveCoverage, bounds]);
+  })), [coverageLog, liveCoverage, bounds]);
 
   // What the tab publishes. The cron rebuilds the report from Firestore and
   // HubSpot at send time (api/_lib/weeklyReportBuild.js) rather than mailing

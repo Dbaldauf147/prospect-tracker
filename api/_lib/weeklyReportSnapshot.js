@@ -229,6 +229,8 @@ function coverageRatioDoc(c) {
     goal: ratioOrNull(c.goal),
     points,
     note: str(c.note, 200),
+    // The line chart, through the same checks as the coverage pictures.
+    image: coverageImageDoc(c.image),
   };
 }
 
