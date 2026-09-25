@@ -200,6 +200,38 @@ function coverageDoc(c) {
   return { weeks: charts[0].points.length, charts };
 }
 
+// The coverage ratio by week. A point's `value` may be null, and as with
+// every series here that is load-bearing: no reading was taken that week,
+// which is not a week the pipeline was empty. Ratios keep two decimals and
+// are capped well above anything real, so a garbage figure cannot stretch
+// the bars into nothing.
+export const MAX_COVERAGE_RATIO_POINTS = 26;
+const ratioOrNull = (v) => {
+  const n = Number(v);
+  if (v == null || v === '' || !Number.isFinite(n)) return null;
+  return +Math.min(100, Math.max(0, n)).toFixed(2);
+};
+
+function coverageRatioDoc(c) {
+  if (!c || typeof c !== 'object') return null;
+  const points = (Array.isArray(c.points) ? c.points : [])
+    // The recent end, for the same reason the coverage charts keep it.
+    .slice(-MAX_COVERAGE_RATIO_POINTS)
+    .map(p => ({
+      key: str(p?.key, 10),
+      label: str(p?.label, 16),
+      value: ratioOrNull(p?.value),
+    }))
+    .filter(p => p.label);
+  if (!points.some(p => p.value != null)) return null;
+  return {
+    weeks: points.length,
+    goal: ratioOrNull(c.goal),
+    points,
+    note: str(c.note, 200),
+  };
+}
+
 // The funnel as a picture: a PNG the tab rasterised off its own chart,
 // carried as a data URL and mailed as an attachment.
 //
@@ -265,6 +297,8 @@ export function buildSnapshotDoc(input, auth) {
     // a picture, for the same reason the trends are: the email draws its
     // own bars from them.
     coverage: coverageDoc(s.coverage),
+    // The KPI card's coverage ratio, a reading per week.
+    coverageRatio: coverageRatioDoc(s.coverageRatio),
     oppChanges: {
       closed: trimList(oc.closed),
       newOpps: trimList(oc.newOpps),

@@ -111,6 +111,7 @@ export function emailSnapshotPayload({
   closeRateTrend = null,
   trends = null,
   coverage = null,
+  coverageRatio = null,
   oppChanges = {},
   goalsProgress = {},
   narrative = '',
@@ -175,6 +176,18 @@ export function emailSnapshotPayload({
           note: c.note,
           image: c.image || null,
         })),
+      }
+      : null,
+    // The coverage ratio by week (utils/weeklyReportTrends,
+    // coverageRatioByWeek): the KPI card's figure with its history put
+    // back, from the readings logged each week. Null until at least one
+    // week has a reading.
+    coverageRatio: coverageRatio?.points?.some(p => p.value != null)
+      ? {
+        weeks: coverageRatio.weeks || coverageRatio.points.length,
+        goal: coverageRatio.goal ?? null,
+        points: coverageRatio.points,
+        note: coverageRatio.note || '',
       }
       : null,
     oppChanges: {

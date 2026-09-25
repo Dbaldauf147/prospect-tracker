@@ -268,6 +268,62 @@ function trendCardHtml({ title, note, points, accent, emptyNote }) {
     ${CARD_CLOSE}`;
 }
 
+// ---- Coverage ratio by week -------------------------------------------
+//
+// The KPI card's coverage ratio with its history put back: one row per
+// week, oldest at the top, the bar sized against the larger of the best
+// week shown and the goal, so a week at goal reaches the same length
+// whichever weeks happen to be on screen. The goal is the footnote rather
+// than a line across the bars: a rule drawn over a column of table cells
+// is exactly what Word lays out wrong.
+//
+// The same shape as the trend cards - label, bar, figure - with a wider
+// track because the card has the column to itself. The current week takes
+// the accent and the rest recede, as they do on the trend cards.
+const RATIO_ACCENT = '#7C3AED';
+const RATIO_TRACK = 480;
+
+function coverageRatioRowHtml(point, max, isLast, trackBg) {
+  const known = point.value != null;
+  const fillPx = known && max > 0 && point.value > 0
+    ? Math.max(4, Math.round((point.value / max) * RATIO_TRACK))
+    : 0;
+  const bar = barHtml({ fillPx, trackPx: RATIO_TRACK, color: isLast ? RATIO_ACCENT : TREND_HISTORY, trackBg });
+  // The bar column carries `cbar` so a phone drops it and keeps the week
+  // and its figure, the same trade the coverage cards make.
+  return `<tr>
+      <td width="58" valign="middle" style="width:58px;padding:3px 8px 3px 0;font-family:${FONT};font-size:12px;font-weight:${isLast ? 700 : 600};color:${isLast ? INK : MUTED};white-space:nowrap">${esc(point.label)}</td>
+      <td class="cbar" width="${RATIO_TRACK}" valign="middle" style="width:${RATIO_TRACK}px;padding:3px 0">${bar}</td>
+      <td width="56" valign="middle" style="width:56px;padding:3px 0 3px 8px;font-family:${FONT};font-size:13px;font-weight:700;color:${known ? INK : MUTED};white-space:nowrap;text-align:right">${known ? `${esc(point.value.toFixed(2))}×` : '-'}</td>
+      <td width="99%" style="width:99%"></td>
+    </tr>`;
+}
+
+export function coverageRatioHtml(cr) {
+  const points = (Array.isArray(cr?.points) ? cr.points : []).filter(p => p && p.label);
+  if (!points.some(p => p.value != null)) return '';
+  const goal = Number.isFinite(cr.goal) && cr.goal > 0 ? cr.goal : null;
+  const max = Math.max(goal || 0, ...points.map(p => (p.value != null ? p.value : 0)));
+  // While no week has reached the goal, the goal is the end of the track,
+  // so the track is painted: the gap left of each figure is the distance
+  // still to go. Once a week passes it, the track ends at that week instead
+  // and a painted end would claim a goal that is not there.
+  const goalIsEnd = goal != null && max === goal;
+  const trackBg = goalIsEnd ? COVERAGE_TRACK_BG : '';
+  const rows = points.map((p, i) => coverageRatioRowHtml(p, max, i === points.length - 1, trackBg)).join('');
+  const feet = [
+    cr.note || '',
+    goal ? (goalIsEnd ? `A full bar is the ${goal.toFixed(2)}× goal.` : `Goal ${goal.toFixed(2)}×.`) : '',
+    points.some(p => p.value == null)
+      ? '- marks a week with no reading: the Weekly Report tab was not opened and no scheduled send measured it.'
+      : '',
+  ].filter(Boolean).join(' ');
+  return `${cardOpen({ left: RATIO_ACCENT })}
+      ${table(`width="100%" style="border-collapse:collapse"`, rows)}
+      ${feet ? `<div style="margin-top:7px;font-family:${FONT};font-size:11px;line-height:1.4;color:${MUTED}">${esc(feet)}</div>` : ''}
+    ${CARD_CLOSE}`;
+}
+
 // ---- Account coverage ---------------------------------------------------
 //
 // The Progress tab's two coverage charts, as the email can draw them. On
@@ -777,6 +833,8 @@ export function renderWeeklyReportHtml(snapshot, {
   const coverageDrawn = (s.coverage?.charts || []).some(c => c.image && coverageImageSrcs[c.id]);
   const coverageSpan = Number(s.coverage?.weeks) || (s.coverage?.charts?.[0]?.points || []).length;
   const coverageWeeks = coverageDrawn ? coverageSpan : Math.min(coverageSpan, COVERAGE_TABLE_ROWS);
+  const coverageRatio = coverageRatioHtml(s.coverageRatio);
+  const coverageRatioWeeks = (s.coverageRatio?.points || []).length;
   const trendMonths = (Array.isArray(s.closeRateTrend?.months) ? s.closeRateTrend.months : []).length;
   const narrative = narrativeHtml(s.narrative);
 
@@ -868,6 +926,8 @@ ${table(`width="100%" bgcolor="${PAGE_BG}" style="border-collapse:collapse;backg
     ${headingHtml('Where the year stands')}
     ${spacer(8)}
     ${kpiRow}
+
+    ${coverageRatio ? `${spacer(20)}${headingHtml('Coverage ratio by week', `Last ${coverageRatioWeeks} weeks, open pipeline ÷ annual target`)}${spacer(8)}${coverageRatio}` : ''}
 
     ${funnel ? `${spacer(20)}${headingHtml('Pipeline funnel')}${spacer(8)}${funnel}` : ''}
 

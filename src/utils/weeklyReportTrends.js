@@ -216,3 +216,107 @@ function coverageNote(points) {
   const parts = [phrase('Tier 1', 't1'), phrase('Tier 2', 't2')].filter(Boolean);
   return parts.length ? `${parts.join(', ')} since ${base.label}.` : '';
 }
+
+// ---- Coverage ratio by week ----------------------------------------------
+//
+// The KPI card says what the coverage ratio (open pipeline ÷ annual target)
+// is today. Nothing said what it was last week, because the ratio is
+// computed off whatever pipeline is cached at the moment and nothing kept
+// the answer. So a reading is written down per week (utils/coverageRatioStore
+// on the tab, the cron's rebuild for a week nobody opened it) and this turns
+// those readings into the series the email draws.
+//
+// Eight weeks: long enough for a direction to show through a week of noise,
+// short enough to sit as one card of bars under the KPI row.
+export const COVERAGE_RATIO_WEEKS = 8;
+// How long the log is kept. A reading is ~80 bytes, so three years of them
+// is still a rounding error against a Firestore document.
+const MAX_COVERAGE_READINGS = 156;
+
+// The Monday key of the week containing `ms`, in the same local terms the
+// series windows are built in. The one function both writers key a reading
+// by, so a reading always lands in the window that will look for it.
+export function weekKeyAt(ms) {
+  return localKey(mondayOf(ms));
+}
+
+const finiteOrNull = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+// What a week's reading holds, off the headline KPIs: the ratio and the
+// two figures it divides, plus the goal it stood against at the time (the
+// goal is edited on the Pipeline tab, and a later edit should not rewrite
+// what last month was measured against). Null when there is no ratio to
+// record: a blank card is an absent answer, and writing it down as one
+// would put a hole in a week that may yet get a real reading.
+export function coverageReading(kpis) {
+  const c = kpis?.coverageRatio || {};
+  const ratio = finiteOrNull(c.actual);
+  if (ratio == null) return null;
+  return {
+    ratio,
+    goal: finiteOrNull(c.goal),
+    pipeline: finiteOrNull(c.pipelineActual),
+    target: finiteOrNull(c.target),
+  };
+}
+
+// Whether two readings say the same thing, so an unchanged figure is not
+// rewritten on every render of the tab.
+export function sameReading(a, b) {
+  if (!a || !b) return false;
+  return a.ratio === b.ratio && (a.goal ?? null) === (b.goal ?? null)
+    && (a.pipeline ?? null) === (b.pipeline ?? null) && (a.target ?? null) === (b.target ?? null);
+}
+
+// The log with `reading` recorded under `key`. The latest reading in a week
+// wins - the ratio is a level, and where it stood when the week closed is
+// the figure that week is remembered by - unless `onlyIfMissing`, which is
+// how the cron fills a week without overwriting one the tab measured while
+// the week was still running. Returns the same object when nothing changes.
+export function withCoverageReading(log, key, reading, { at = Date.now(), onlyIfMissing = false } = {}) {
+  const prev = (log && typeof log === 'object') ? log : {};
+  if (!key || !reading || finiteOrNull(reading.ratio) == null) return prev;
+  if (onlyIfMissing && prev[key]) return prev;
+  if (sameReading(prev[key], reading)) return prev;
+  const out = { ...prev, [key]: { ...reading, at } };
+  const keys = Object.keys(out).sort();
+  if (keys.length <= MAX_COVERAGE_READINGS) return out;
+  const trimmed = {};
+  for (const k of keys.slice(keys.length - MAX_COVERAGE_READINGS)) trimmed[k] = out[k];
+  return trimmed;
+}
+
+// The coverage ratio for the last `weeks` weeks, oldest first, ending with
+// the week containing `refMs`.
+//
+// A week with no reading is null, not 0, for the reason every series here
+// keeps: nobody measured it, and a 0.00× bar would draw the week the
+// pipeline emptied out. The goal the card reports is the latest one
+// recorded, which is the one the reader is being held to now.
+export function coverageRatioByWeek({ log, refMs = Date.now(), weeks = COVERAGE_RATIO_WEEKS } = {}) {
+  const readings = (log && typeof log === 'object') ? log : {};
+  const points = recentWeeks(refMs, weeks).map(({ start }) => {
+    const key = localKey(start);
+    const r = readings[key];
+    const value = finiteOrNull(r?.ratio);
+    return { key, label: weekLabel(start), value: value == null ? null : +value.toFixed(2) };
+  });
+  const known = points.filter(p => p.value != null);
+  if (!known.length) return null;
+
+  const latestKey = [...points].reverse().find(p => p.value != null).key;
+  const goal = finiteOrNull(readings[latestKey]?.goal);
+  return { weeks: points.length, goal, points, note: coverageRatioNote(known) };
+}
+
+// The one line under the card: how far the ratio has moved across the
+// weeks shown. The bars show the shape; this is the sentence a reader
+// repeats.
+function coverageRatioNote(known) {
+  if (known.length < 2) return '';
+  const base = known[0];
+  const last = known[known.length - 1];
+  const d = +(last.value - base.value).toFixed(2);
+  if (d === 0) return `Flat at ${last.value.toFixed(2)}× since ${base.label}.`;
+  return `${d > 0 ? 'Up' : 'Down'} ${Math.abs(d).toFixed(2)}× since ${base.label}, from ${base.value.toFixed(2)}× to ${last.value.toFixed(2)}×.`;
+}
