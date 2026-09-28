@@ -497,33 +497,9 @@
   font-weight: 500;
 }
 
-.coverage {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  margin-top: 0.5rem;
-}
-
-.coverageTitle {
-  margin: 0;
-  font-size: var(--font-size-sm);
-}
-
-.issueRow td {
-  background: #fff7ed;
-}
-
 .warnText {
   font-size: 0.7rem;
   color: #b45309;
-}
-
-.rollLabel {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  flex-wrap: wrap;
-  font-size: var(--font-size-xs);
 }
 
 /* Price check: the cost lines marked up, against the rate card range. */
@@ -857,4 +833,17 @@
   gap: 0.35rem;
   margin-top: 0.2rem;
   font-size: var(--font-size-xs);
+}
+
+/* The price check's counts in the cost line table's Unit column. */
+.countStack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  font-size: var(--font-size-xs);
+}
+
+.countStack .countField {
+  flex-wrap: wrap;
 }
