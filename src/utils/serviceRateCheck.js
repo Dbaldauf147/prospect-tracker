@@ -171,7 +171,12 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
   const priced = !!est?.priced && !est.noFee;
   const low = priced ? (est.fee || 0) + (est.setup || 0) : null;
   const high = priced ? (est.feeHigh ?? est.fee ?? 0) + (est.setupHigh ?? est.setup ?? 0) : null;
-  const lines = priced ? [...(est.breakdown || []), ...(est.setupBreakdown || [])] : [];
+  // A line the card charges nothing for (a $0 setup left in the grid) is
+  // not part of the fee model: it can't be priced against, and counting it
+  // would stop a one-rate card (per account at $4.80 to $5) from being
+  // checked at that rate.
+  const charged = (list) => (list || []).filter(b => (Number(b.rate) || 0) > 0 || (Number(b.rateHigh) || 0) > 0);
+  const lines = priced ? [...charged(est.breakdown), ...charged(est.setupBreakdown)] : [];
   // Why the card came out at nothing, when it did: a count the SIA doesn't
   // carry, or a percentage with no deal to take it of.
   const notes = [...new Set(lines.map(b => b.note).filter(Boolean))];
@@ -191,9 +196,9 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
   // lines are setup, a line that bills every year is ongoing, the rest is
   // one-time money.
   const cardFor = {
-    setup: priced ? (est.setupBreakdown || []) : [],
-    recurring: priced ? (est.breakdown || []).filter(b => b.recurs) : [],
-    oneTime: priced ? (est.breakdown || []).filter(b => !b.recurs) : [],
+    setup: priced ? charged(est.setupBreakdown) : [],
+    recurring: priced ? charged(est.breakdown).filter(b => b.recurs) : [],
+    oneTime: priced ? charged(est.breakdown).filter(b => !b.recurs) : [],
   };
   const parts = priced
     ? FEE_PARTS.map(({ key, label }) => feePart({
