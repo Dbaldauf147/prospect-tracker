@@ -317,3 +317,166 @@
 .muted {
   color: var(--color-text-muted);
 }
+
+.flash {
+  font-size: var(--font-size-xs);
+  background: #dcfce7;
+  color: #166534;
+  border: 1px solid #86efac;
+  border-radius: 6px;
+  padding: 0.35rem 0.6rem;
+}
+
+.structTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.structTab,
+.structTabActive,
+.structAdd {
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  padding: 0.28rem 0.65rem;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: #fff;
+  color: var(--color-text);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.structTabActive {
+  background: #eef2ff;
+  border-color: #6366f1;
+  color: #3730a3;
+  font-weight: 600;
+}
+
+.structAdd {
+  border-style: dashed;
+  color: var(--color-text-muted);
+}
+
+.star {
+  color: #d97706;
+}
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.editorBar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.nameLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.nameInput {
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  padding: 0.25rem 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  width: 200px;
+}
+
+.standardTag {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: #b45309;
+  background: #fef3c7;
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+}
+
+.barBtn,
+.barBtnDanger,
+.applyBtn {
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  padding: 0.28rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: #fff;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.barBtnDanger {
+  color: #b91c1c;
+}
+
+.applyBtn {
+  background: #4f46e5;
+  border-color: #4f46e5;
+  color: #fff;
+  font-weight: 600;
+}
+
+.applyBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.barSpacer {
+  flex: 1;
+}
+
+.cellInput,
+.cellSelect {
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  padding: 0.2rem 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.cellInput::placeholder {
+  color: #94a3b8;
+}
+
+.moveCell {
+  white-space: nowrap;
+}
+
+.iconBtn {
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0 0.2rem;
+}
+
+.iconBtn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.editTable th,
+.editTable td {
+  padding: 0.3rem 0.3rem;
+}
+
+.editTable th {
+  white-space: normal;
+}
