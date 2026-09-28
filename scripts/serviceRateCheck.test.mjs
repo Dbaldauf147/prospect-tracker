@@ -4,7 +4,7 @@
 //   node scripts/serviceRateCheck.test.mjs
 
 import assert from 'node:assert/strict';
-import { rateCardCheck, year1CostOf, RATE_CHECK } from '../src/utils/serviceRateCheck.js';
+import { rateCardCheck, year1CostOf, RATE_CHECK, siaCountsFor, priceCheckCounts } from '../src/utils/serviceRateCheck.js';
 
 let failed = 0;
 function test(name, fn) {
@@ -160,6 +160,33 @@ test('a cost the card has no line for is called out, and a card line with no cos
   assert.equal(by.setup.status, RATE_CHECK.NOT_ON_CARD);
   assert.equal(by.recurring.status, RATE_CHECK.NO_COST);
   assert.equal(by.oneTime, undefined);
+});
+
+test('an option without its own sites takes another option sheet\'s', () => {
+  const o1 = { sheetName: 'Option 1', siteCount: null };
+  const o5 = { sheetName: 'Option 5', siteCount: 29, accountCount: 1 };
+  const wb = { options: [o1, o5] };
+  assert.deepEqual(siaCountsFor(wb, o1), { sites: 29, accounts: 1, sitesFrom: 'Option 5', accountsFrom: 'Option 5' });
+  assert.deepEqual(siaCountsFor(wb, o5), { sites: 29, accounts: 1, sitesFrom: null, accountsFrom: null });
+  assert.deepEqual(siaCountsFor({ options: [o1] }, o1), { sites: null, accounts: null, sitesFrom: null, accountsFrom: null });
+});
+
+test('the SIA sites price a per-site-w/-mandate card, and a typed count wins', () => {
+  const { counts, fromSia } = priceCheckCounts({ sites: 29, accounts: 1 }, {});
+  assert.equal(counts.sites_mandate, 29);
+  assert.equal(fromSia.sites_mandate, 29);
+  const c = rateCardCheck({
+    items: [{ cts: 268, type: 'One Time' }],
+    entry: { basis: 'per_site_mandate', rate: 625, rateHigh: 825 },
+    meta: project,
+    counts,
+  });
+  assert.equal(c.low, 625 * 29);
+  assert.notEqual(c.status, RATE_CHECK.INCOMPLETE);
+  assert.deepEqual(c.unitsUsed, ['sites_mandate']);
+  const typed = priceCheckCounts({ sites: 29 }, { sites_mandate: 4 });
+  assert.equal(typed.counts.sites_mandate, 4);
+  assert.equal(typed.fromSia.sites_mandate, 29);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
