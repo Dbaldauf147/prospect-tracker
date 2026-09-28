@@ -431,7 +431,22 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
                           <div className={styles.subNote}>Automated Fee Name: {it.automatedName}</div>
                         )}
                       </td>
-                      <td>{it.unit}</td>
+                      <td>
+                        {it.unit}
+                        {/* The counts the price check prices on (the SIA's, or
+                            typed), shown against the lines they price. They are
+                            the option's, so every line shows the same boxes. */}
+                        {hasWorkbook && onSetCount && detail?.rateCheck && !it.ignored && (
+                          <CheckCounts
+                            compact
+                            missing={detail.rateCheck.missing}
+                            used={detail.rateCheck.unitsUsed}
+                            entered={detail.enteredCounts}
+                            fromSia={detail.fromSia}
+                            onSetCount={onSetCount}
+                          />
+                        )}
+                      </td>
                       <td>{it.passThrough ? 'Yes' : ''}</td>
                       {onIgnoreForCheck && (
                         <td className={styles.center}>
@@ -462,7 +477,13 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
       )}
 
       {hasWorkbook && detail?.rateCheck && (
-        <RateCheck check={detail.rateCheck} entered={detail.enteredCounts} fromSia={detail.fromSia} onSetCount={onSetCount} optionName={optionName} />
+        <RateCheck
+          check={detail.rateCheck}
+          entered={detail.enteredCounts}
+          fromSia={detail.fromSia}
+          onSetCount={items.some(it => !it.ignored) ? null : onSetCount}
+          optionName={optionName}
+        />
       )}
 
           <section className={styles.section}>
@@ -759,7 +780,10 @@ function RateCheck({ check, entered = {}, fromSia = {}, onSetCount, optionName }
 // A count the SIA supplies (sites, accounts, and sites standing in for
 // sites w/ mandate) shows as the box's grey placeholder: blank means the
 // SIA's, and a typed number overrides it until "Use SIA" clears it.
-function CheckCounts({ missing = [], used = [], entered = {}, fromSia = {}, onSetCount, optionName }) {
+//
+// `compact` is the Unit-column form on the cost line table: no heading,
+// one count per line.
+function CheckCounts({ missing = [], used = [], entered = {}, fromSia = {}, onSetCount, optionName, compact = false }) {
   const fields = [...missing];
   const add = (key) => {
     if (!fields.some(f => f.key === key)) fields.push({ key, label: key === 'dealSize' ? 'Deal size' : unitLabelFor(key) });
@@ -768,8 +792,8 @@ function CheckCounts({ missing = [], used = [], entered = {}, fromSia = {}, onSe
   for (const key of Object.keys(entered)) add(key);
   if (fields.length === 0) return null;
   return (
-    <div className={styles.countRow}>
-      <span className={styles.factKey}>Counts for {optionName || 'this option'}:</span>
+    <div className={compact ? styles.countStack : styles.countRow}>
+      {!compact && <span className={styles.factKey}>Counts for {optionName || 'this option'}:</span>}
       {fields.map(f => {
         const isMoney = f.key === 'dealSize';
         const v = entered[f.key];
