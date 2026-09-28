@@ -309,5 +309,43 @@ test('tech depreciation is added before the margin: $268 at 50% is $557.44', () 
   assert.equal(c.status, RATE_CHECK.BELOW);
 });
 
+test('a per-site card with a setup the SIA has no cost for is checked per site', () => {
+  // ESPM link: $39 to $41 a site a year, plus a $500 setup on the card.
+  // The SIA carries only the monthly costs.
+  const c = rateCardCheck({
+    items: [
+      { cts: 22.33, type: 'Recurring (monthly)', startMonth: 1 },
+      { cts: 1.57, type: 'Recurring (monthly)', startMonth: 1 },
+    ],
+    entry: { basis: 'per_site', rate: 39, rateHigh: 41, setupLines: [{ basis: 'flat', rate: 500 }] },
+    meta: recurring,
+    counts: { sites: 29, sites_mandate: 1 },
+  });
+  assert.ok(c.perUnit, 'per-unit check');
+  assert.equal(c.perUnit.part, 'Ongoing');
+  assert.equal(c.perUnit.units, 29);
+  assert.equal(c.perUnit.rateLow, 39);
+  assert.equal(c.perUnit.rateHigh, 41);
+  // 23.90 x 12 at 50% margin = 573.60 a year, over 29 sites = 19.78.
+  assert.ok(Math.abs(c.perUnit.price - 23.9 * 12 * 2 / 29) < 1e-9);
+  assert.equal(c.status, RATE_CHECK.BELOW);
+  assert.equal(c.leftOut.length, 1);
+  assert.equal(c.leftOut[0].fee, 500);
+  // Both components are listed with their own rates.
+  assert.deepEqual(c.parts.map(pt => pt.key), ['setup', 'recurring']);
+  assert.equal(c.parts[0].status, RATE_CHECK.NO_COST);
+});
+
+test('two components the SIA has costs for stay a check on the total', () => {
+  const c = rateCardCheck({
+    items: [{ cts: 100, type: 'Setup' }, { cts: 10, type: 'Recurring (monthly)' }],
+    entry: { basis: 'per_site', rate: 39, setupLines: [{ basis: 'flat', rate: 500 }] },
+    meta: recurring,
+    counts: { sites: 29 },
+  });
+  assert.equal(c.perUnit, null);
+  assert.deepEqual(c.leftOut, []);
+});
+
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
 console.log('\nall passed');

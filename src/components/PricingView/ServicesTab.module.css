@@ -858,3 +858,29 @@
   color: #fff;
   font-weight: 600;
 }
+
+/* The price check's fee components, one row per part of the fee model. */
+.componentTable {
+  width: 100%;
+  max-width: 720px;
+  border-collapse: collapse;
+  font-size: var(--font-size-xs);
+  margin-top: 0.5rem;
+}
+
+.componentTable th,
+.componentTable td {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.componentTable th {
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.componentTable .num {
+  text-align: right;
+}

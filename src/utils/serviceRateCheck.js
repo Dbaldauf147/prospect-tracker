@@ -229,30 +229,58 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
 
   // A card that is one per-unit rate is checked at that rate: the year's
   // marked-up cost over the same count, against the rate's own range.
-  const only = lines.length === 1 ? lines[0] : null;
+  //
+  // So is a card with more on it, when only one of its fee components is
+  // one the SIA's costs pay for: ESPM link at so much per site a year, with
+  // a setup line on the card and no setup cost on the SIA, is checked per
+  // site against the recurring costs. The components left out are listed
+  // (`leftOut`), not silently dropped.
+  const partsWithCost = FEE_PARTS.map(x => x.key).filter(k => year1.lines[k] > 0);
+  const cardWithCost = partsWithCost.flatMap(k => cardFor[k]);
+  let only = null;
+  let onlyPart = null;
+  if (lines.length === 1) only = lines[0];
+  else if (partsWithCost.length === 1 && cardWithCost.length === 1) { only = cardWithCost[0]; onlyPart = partsWithCost[0]; }
+  const leftOut = onlyPart
+    ? lines.filter(b => b !== only).map(b => ({ basisLabel: b.basisLabel, fee: b.fee, feeHigh: b.feeHigh ?? b.fee, rate: b.rate, rateHigh: b.rateHigh }))
+    : [];
   // A monthly rate is read against a month: the recurring lines' run rate
-  // over twelve. Anything else is read against the first year.
+  // over twelve. Anything else is read against the first year, or, for a
+  // single component, that component's year the way feePart reads it.
   const perMonth = !!only?.monthly && year1.runRate > 0;
+  let baseCost = perMonth ? year1.runRate / 12 : cost;
+  let basePrice = perMonth ? year1.pricedRunRate / 12 : price;
+  if (onlyPart && !perMonth) {
+    baseCost = onlyPart === 'recurring' ? year1.runRate : year1.parts[onlyPart];
+    basePrice = onlyPart === 'recurring' ? year1.pricedRunRate : year1.priced[onlyPart];
+  }
   const perUnit = only && only.kind === 'unit' && only.units > 0 && !only.gap
     ? {
       unitLabel: only.unitLabel,
       basisLabel: only.basisLabel || null,
       units: only.units,
       perMonth,
-      // The whole service's figure the per-unit one is cut from: a month's
-      // when perMonth, else year 1's.
-      totalCost: perMonth ? year1.runRate / 12 : cost,
-      totalPrice: perMonth ? year1.pricedRunRate / 12 : price,
-      cost: (perMonth ? year1.runRate / 12 : cost) / only.units,
-      price: (perMonth ? year1.pricedRunRate / 12 : price) / only.units,
+      // The part of the fee model the rate prices, when the card carries
+      // others the SIA has no cost for; null when it is the whole card.
+      part: onlyPart ? FEE_PARTS.find(x => x.key === onlyPart).label : null,
+      // The figure the per-unit one is cut from: a month's when perMonth,
+      // else year 1's (a year's run rate for an ongoing component).
+      totalCost: baseCost,
+      totalPrice: basePrice,
+      cost: baseCost / only.units,
+      price: basePrice / only.units,
       rateLow: Math.min(only.rate, only.rateHigh ?? only.rate),
       rateHigh: Math.max(only.rate, only.rateHigh ?? only.rate),
     }
     : null;
 
+  // Checked on one component, only that component's missing count holds
+  // the check up.
+  const blocking = perUnit && onlyPart ? [] : missing;
+
   let status;
   if (!priced) status = RATE_CHECK.UNPRICED;
-  else if (missing.length) status = RATE_CHECK.INCOMPLETE;
+  else if (blocking.length) status = RATE_CHECK.INCOMPLETE;
   else if (counted === 0 || cost <= 0) status = RATE_CHECK.NO_COST;
   else if (perUnit) status = statusOf(perUnit.price, perUnit.rateLow, perUnit.rateHigh);
   else status = statusOf(price, low, high);
@@ -262,7 +290,7 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
   const unitsUsed = [...new Set(lines.filter(b => b.kind === 'unit' && b.unit).map(b => b.unit))];
 
   return {
-    status, cost, price, margin: appliedMargin, techDeprPct: Number(techDeprPct) || 0, low, high, notes, passThrough, later, missing, parts, unitsUsed, perUnit,
+    status, cost, price, margin: appliedMargin, techDeprPct: Number(techDeprPct) || 0, low, high, notes, passThrough, later, missing, parts, unitsUsed, perUnit, leftOut,
     noFee: !!est?.noFee,
   };
 }
