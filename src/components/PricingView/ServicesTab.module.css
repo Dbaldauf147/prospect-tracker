@@ -879,3 +879,16 @@
   max-width: 200px;
   padding: 4px 7px;
 }
+
+/* A cost line unticked out of the price check. */
+.ignoredRow td {
+  color: var(--color-text-muted);
+}
+
+.ignoredRow td:first-child {
+  text-decoration: line-through;
+}
+
+.center {
+  text-align: center;
+}
