@@ -898,13 +898,14 @@ function FeeStructureEditor({
   const setRow = (idx, patch) => onChange(st => {
     const next = { ...st, rows: st.rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)) };
     // Renaming a fee keeps every cost it covers (picked, or matched by
-    // the old name) on it.
+    // the old name) on it. A cost that only fell to it for want of a row
+    // with its own fee name keeps falling the same way, so it isn't pinned.
     const before = String(st.rows[idx]?.feeName || '').trim().toLowerCase();
     const after = String(patch.feeName ?? '').trim().toLowerCase();
     if ('feeName' in patch && before && after && before !== after) {
       const alloc = { ...(st.allocations || {}) };
       for (const co of std.costs) {
-        if (co.rowIdx === idx) alloc[co.key] = { ...(alloc[co.key] || {}), fee: after };
+        if (co.rowIdx === idx && !co.fellBack) alloc[co.key] = { ...(alloc[co.key] || {}), fee: after };
       }
       next.allocations = alloc;
     }
