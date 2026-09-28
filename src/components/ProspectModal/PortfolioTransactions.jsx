@@ -244,7 +244,17 @@ export default function PortfolioTransactions({ rows, onChange }) {
                         {TRANSACTION_KINDS.map(k => <option key={k} value={k}>{k}</option>)}
                       </select>
                     </td>
-                    <td style={td}><EditCell value={r.asset} placeholder="What was bought or sold" onChange={v => update(r.id, { asset: v })} /></td>
+                    <td style={td}>
+                      <EditCell value={r.asset} placeholder="What was bought or sold" onChange={v => update(r.id, { asset: v })} />
+                      {r.source === 'digest' && (
+                        <div
+                          style={{ fontSize: '0.62rem', color: '#64748B', padding: '0 0.4rem 0.15rem' }}
+                          title={`Logged automatically by the weekly acquisition-news run${r.loggedAt ? ` on ${new Date(r.loggedAt).toLocaleDateString()}` : ''}. Check it against the source.`}
+                        >
+                          From weekly digest
+                        </div>
+                      )}
+                    </td>
                     <td style={td}>
                       <select value={r.dealType || ''} onChange={e => update(r.id, { dealType: e.target.value })} style={{ ...cellInput, cursor: 'pointer' }}>
                         <option value="">-</option>

@@ -7304,6 +7304,30 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const initialRef = useRef(true);
   const saveTimerRef = useRef(null);
 
+  // The weekly acquisition-news run writes deals onto this record's
+  // portfolioTransactions from the server. The card autosaves the whole
+  // record, so a card left open across that run would write its older copy
+  // of the log back over them on the next keystroke. Take in any row the
+  // server added since the card opened before that can happen. Only rows
+  // logged after opening: an older row missing here was removed on this
+  // card, and must stay removed.
+  const openedAtRef = useRef(Date.now());
+  // Off the live list rather than `prospect`, which is the copy the card
+  // was opened with and never changes.
+  const incomingTransactions = useMemo(
+    () => (prospect?.id ? prospects.find(p => p.id === prospect.id)?.portfolioTransactions : undefined),
+    [prospects, prospect?.id],
+  );
+  useEffect(() => {
+    if (!Array.isArray(incomingTransactions) || incomingTransactions.length === 0) return;
+    setFields(prev => {
+      const local = Array.isArray(prev.portfolioTransactions) ? prev.portfolioTransactions : [];
+      const have = new Set(local.map(r => r?.id));
+      const fresh = incomingTransactions.filter(r => r?.id && !have.has(r.id) && Number(r.loggedAt) > openedAtRef.current);
+      return fresh.length ? { ...prev, portfolioTransactions: [...fresh, ...local] } : prev;
+    });
+  }, [incomingTransactions]);
+
   function set(key, value) {
     setFields(prev => ({ ...prev, [key]: value }));
   }

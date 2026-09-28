@@ -49,10 +49,16 @@ const ADMIN_EMAIL = 'baldaufdan@gmail.com';
 // ---- Loading the opted-in companies -------------------------------------
 // Same collection layout as peOpps.loadPeFirms: admin reads the shared
 // `prospects` collection, everyone else their own subcollection.
-export async function loadTrackedCompanies(db, uid, email) {
-  const col = email === ADMIN_EMAIL
+// The admin's records are the shared top-level collection; everybody
+// else's live under their own user doc.
+function prospectsCollection(db, uid, email) {
+  return email === ADMIN_EMAIL
     ? db.collection('prospects')
     : db.collection('users').doc(uid).collection('prospects');
+}
+
+export async function loadTrackedCompanies(db, uid, email) {
+  const col = prospectsCollection(db, uid, email);
 
   let snap;
   try { snap = await col.get(); } catch { return []; }
@@ -768,7 +774,7 @@ function unsureBlock(unsure) {
     </div>`;
 }
 
-export function buildNewsEmailHtml(results, { since, until, message, newsletters } = {}) {
+export function buildNewsEmailHtml(results, { since, until, message, newsletters, logged } = {}) {
   const hasContent = (r) => r.deals.length > 0 || (r.unsure || []).length > 0;
   const withDeals = results.filter(hasContent);
   const withoutDeals = results.filter((r) => !hasContent(r));
@@ -855,6 +861,7 @@ export function buildNewsEmailHtml(results, { since, until, message, newsletters
           : newsletters?.count
             ? `<div style="margin-bottom:6px">Includes ${newsletters.count} headline${newsletters.count === 1 ? '' : 's'} from the trade newsletters in the mailbox, alongside the news feeds.</div>`
             : ''}
+        ${logged ? `<div style="margin-bottom:6px">${logged} new deal${logged === 1 ? ' was' : 's were'} added to ${logged === 1 ? 'its company’s' : 'the companies’'} Acquisitions &amp; Dispositions log on the Portfolio tab.</div>` : ''}
         Companies are tracked by ticking “Track acquisition news” on the company popup in Prospect Tracker.
         Deals are read from public news feed headlines and can be incomplete - always confirm against the linked source before acting.
       </div>
@@ -876,6 +883,87 @@ export async function sendCompanyNewsEmail({ to, subject, html, replyTo }) {
 // the email. Shared by the cron and the "send now" route so both produce
 // exactly the same message. Returns null when there's nothing to send and
 // the caller asked to skip empty runs.
+// ---- Logging deals onto the company records ----------------------------
+// Every deal the digest finds is also written to that company's
+// Acquisitions & Dispositions log (the Portfolio tab's second page, stored
+// as `portfolioTransactions`), so the email is not the only place it lives
+// and nobody has to copy it across by hand.
+
+// One digest deal as a log row. Same shape the popup writes
+// (blankTransaction in src/utils/portfolioTransactions.js), plus
+// `source: 'digest'` so an auto-logged row can be told apart from a typed one.
+export function dealToTransaction(deal, company, now = Date.now()) {
+  const buyer = String(deal.buyer || '').trim();
+  return {
+    id: `tx_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    kind: 'Acquisition',
+    date: String(deal.announcedOn || ''),
+    asset: String(deal.target || ''),
+    // The digest's buyer is the company itself or the portfolio company that
+    // made an add-on; only the second is worth a "Through" entry.
+    entity: buyer && buyer.toLowerCase() !== String(company || '').trim().toLowerCase() ? buyer : '',
+    counterparty: '',
+    dealType: String(deal.dealType || ''),
+    sector: String(deal.sector || ''),
+    value: String(deal.value || ''),
+    sites: String(deal.sites || ''),
+    sourceTitle: String(deal.sourceTitle || ''),
+    sourceUrl: String(deal.sourceUrl || ''),
+    notes: String(deal.summary || ''),
+    source: 'digest',
+    loggedAt: now,
+  };
+}
+
+// Same asset on the same date is the same deal, whoever logged it. The
+// digest's window overlaps week to week, so this is what stops a deal from
+// landing twice; it matches transactionKey on the popup side.
+function txKey(r) {
+  return `${String(r?.asset || '').trim().toLowerCase()}|${String(r?.date || '')}`;
+}
+
+// The log with this run's new deals added, and how many were new. Pure, so
+// the dedupe is testable without Firestore.
+export function mergeDealsIntoLog(existing, deals, company, now = Date.now()) {
+  const log = Array.isArray(existing) ? existing : [];
+  const seen = new Set(log.map(txKey));
+  const added = [];
+  for (const d of deals || []) {
+    const row = dealToTransaction(d, company, now);
+    if (!row.asset || seen.has(txKey(row))) continue;
+    seen.add(txKey(row));
+    added.push(row);
+  }
+  return { next: added.length ? [...added, ...log] : log, added: added.length };
+}
+
+// Write each company's new deals onto its record. A transaction per company,
+// touching only `portfolioTransactions`, so a row somebody typed in between
+// the read and the write is kept. A failure on one record is counted and
+// skipped: the email still goes out.
+export async function logDealsToRecords(db, uid, email, results, now = Date.now()) {
+  const col = prospectsCollection(db, uid, email);
+  let logged = 0;
+  let failed = 0;
+  for (const r of results || []) {
+    if (!r?.id || !Array.isArray(r.deals) || r.deals.length === 0) continue;
+    try {
+      const ref = col.doc(r.id);
+      logged += await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists) return 0;
+        const { next, added } = mergeDealsIntoLog(snap.data()?.portfolioTransactions, r.deals, r.company, now);
+        if (added) tx.update(ref, { portfolioTransactions: next });
+        return added;
+      });
+    } catch (err) {
+      failed += 1;
+      console.error('company-news: logging deals failed for', r.company, err?.message || err);
+    }
+  }
+  return { logged, failed };
+}
+
 export async function buildDigest(db, uid, email, {
   lastSentAt, message, skipWhenEmpty, startIndex = 0, budgetMs, minLookbackDays,
 } = {}) {
@@ -901,6 +989,10 @@ export async function buildDigest(db, uid, email, {
   const deals = results.reduce((n, r) => n + r.deals.length, 0);
   const nextStartIndex = nextCursor(startIndex, results);
 
+  // Onto the company records before anything else can return early: a deal
+  // found is worth keeping whether or not this run ends up sending.
+  const log = deals > 0 ? await logDealsToRecords(db, uid, email, results) : { logged: 0, failed: 0 };
+
   const halted = results.find((r) => r.halted)?.error || null;
   // Never suppress a halted run: "skip when empty" means "don't mail me a
   // quiet fortnight", not "don't tell me the research stopped working".
@@ -919,11 +1011,12 @@ export async function buildDigest(db, uid, email, {
     // should not have to open the email to find out.
     halted,
     deals,
+    logged: log.logged,
     since,
     until,
     results,
     nextStartIndex,
-    html: buildNewsEmailHtml(results, { since, until, message, newsletters: news }),
+    html: buildNewsEmailHtml(results, { since, until, message, newsletters: news, logged: log.logged }),
     defaultSubject: newsSubject(results, since, until),
   };
 }
