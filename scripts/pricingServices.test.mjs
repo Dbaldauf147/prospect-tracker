@@ -17,7 +17,7 @@ import {
   feeStructureRowsFromFees, feeStructureRowToAltRow, applyFeeStructureToSchedule,
   standardFeesForStructure, costKey,
   addServiceToLineItem, costTotalsByLineItem, addLaterCostFees,
-  costTypeConversion, moveCostAllocation, buildScheduleFromStructures,
+  costTypeConversion, moveCostAllocation, buildScheduleFromStructures, standardFeeContext,
 } from '../src/utils/pricingServices.js';
 
 let failed = 0;
@@ -174,6 +174,43 @@ test('rolled and monthly costs add together on one monthly fee', () => {
   const allocations = { [bbsCosts[0].key]: { fee: 'all in', roll: true }, [bbsCosts[1].key]: { fee: 'All in' } };
   const r = standardFeesForStructure({ rows, costs: bbsCosts, allocations, termMonths: 36 });
   assert.equal(r.perRow[0].standardFee, Math.round((290 + 536 / 36) * 100) / 100);
+});
+
+test('a markup on the row prices its costs from what they cost, not their GM price', () => {
+  const costs = [
+    { ...bbsCosts[0], cost: 400 },
+    { ...bbsCosts[1], cost: 200 },
+  ];
+  const rows = [
+    { feeName: 'Per site', type: 'One Time', unit: 'Per Site', markupPct: 0.25 },
+    { feeName: 'Program fee', type: 'Recurring (monthly)', unit: 'Fixed', markupPct: 0.5 },
+  ];
+  let r = standardFeesForStructure({ rows, costs, termMonths: 36, siteCount: 29 });
+  assert.equal(r.perRow[0].standardFee, 17.24); // 400 x 1.25 / 29
+  assert.equal(r.perRow[0].markupPct, 0.25);
+  assert.equal(r.perRow[1].standardFee, 300); // 200 x 1.5
+  // A rolled cost takes the markup before it is spread over the term.
+  r = standardFeesForStructure({
+    rows: [{ feeName: 'All in', type: 'Recurring (monthly)', unit: 'Fixed', markupPct: 0.5 }],
+    costs, allocations: { [costs[0].key]: { fee: 'all in', roll: true }, [costs[1].key]: { fee: 'all in' } }, termMonths: 36,
+  });
+  assert.equal(r.perRow[0].standardFee, Math.round((200 * 1.5 + 400 * 1.5 / 36) * 100) / 100);
+  // No markup, a pass-through row, or a cost without a cost figure falls
+  // back to the GM price or bills nothing.
+  r = standardFeesForStructure({ rows: rows.map(x => ({ ...x, markupPct: null })), costs, termMonths: 36, siteCount: 29 });
+  assert.equal(r.perRow[1].standardFee, 290);
+  r = standardFeesForStructure({ rows: [{ ...rows[1], passThrough: true }], costs, termMonths: 36 });
+  assert.equal(r.perRow[0].standardFee, 290);
+  assert.equal(r.perRow[0].markupPct, null);
+  r = standardFeesForStructure({ rows: [rows[1]], costs: bbsCosts, termMonths: 36 });
+  assert.equal(r.perRow[0].standardFee, null);
+});
+
+test('the cost figure reaches the standard fee through the shared context', () => {
+  const structure = { rows: [{ feeName: 'Program fee', type: 'Recurring (monthly)', unit: 'Fixed', markupPct: 0.1 }] };
+  const ctx = standardFeeContext(structure, [{ description: 'BBS Monthly', type: 'Recurring (monthly)', price: 290, cost: 200, startMonth: 1, feeName: 'Program fee' }]);
+  assert.equal(ctx.standardFee(0), 220);
+  assert.equal(ctx.filled.rows[0].fee, 220);
 });
 
 test('a monthly cost on an upfront fee is flagged, and "not covered" takes a cost out', () => {
