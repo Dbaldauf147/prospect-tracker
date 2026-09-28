@@ -59,6 +59,7 @@ import {
   flushOpps2ToFirestore,
   mergeOpps2Datasets,
 } from '../../utils/opps2Store';
+import { OPPS2_EXTERNAL_UPDATE_EVENT } from '../../utils/serviceRenameRunner';
 import { pushOpps2Backup } from '../../utils/opps2Backup';
 import { isClientWedged, subscribeToClientWedged } from '../../utils/firestoreClientHealth';
 import { remoteChangesCallInOrder } from '../../utils/oppsCallIn';
@@ -14667,6 +14668,20 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     window.addEventListener(OPPS_PRICING_SNAPSHOT_EVENT, onSnapshotChanged);
     return () => window.removeEventListener(OPPS_PRICING_SNAPSHOT_EVENT, onSnapshotChanged);
   }, [user?.uid]);
+
+  // A service rename written from outside this page (see
+  // utils/serviceRenameRunner.js) lands in the cache with fresh field
+  // stamps; merge it in now so the table shows it and the next autosave
+  // carries it rather than writing the old Scope back.
+  useEffect(() => {
+    const onExternal = () => {
+      loadOpps2Cache()
+        .then(cached => { if (cached) setData(local => (local ? mergeOpps2Datasets(local, cached) : cached)); })
+        .catch(() => {});
+    };
+    window.addEventListener(OPPS2_EXTERNAL_UPDATE_EVENT, onExternal);
+    return () => window.removeEventListener(OPPS2_EXTERNAL_UPDATE_EVENT, onExternal);
+  }, []);
 
   // Real-time sync — subscribe to Firestore changes on the opps2 document
   // so edits from another browser (or device) arrive within ~500ms without

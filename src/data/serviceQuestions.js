@@ -13,7 +13,7 @@ export const SERVICE_QUESTIONS = {
     'Have you ever been hit with late fees or service disruptions? How did that come about?',
     'What does your approval workflow look like, and where does it tend to get stuck?',
   ],
-  'budgets': [
+  'budgets (site level)': [
     'How do you build your energy budget today? Is it based on prior year actuals, a rate forecast, or something else?',
     "How do you account for weather variability, rate changes, or new sites when you're forecasting?",
     'How close did your actuals come to budget last year, and where were the biggest misses?',
@@ -42,7 +42,7 @@ export const SERVICE_THEIR_QUESTIONS = {
     { question: 'What does the approval workflow look like on our end: can we customize it?', response: '' },
     { question: 'How do you handle exceptions, disputes, and bills that fall outside normal parameters?', response: '' },
   ],
-  'budgets': [
+  'budgets (site level)': [
     { question: "What's your forecasting methodology, and how accurate have you been historically?", response: '' },
     { question: 'How do you handle weather normalization and rate volatility?', response: '' },
     { question: 'How do you factor in our operational changes: new sites, closures, expansions?', response: '' },

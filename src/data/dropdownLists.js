@@ -459,7 +459,7 @@ export const SOLUTIONS_CATALOG = [
   'Bespoke consulting SUCON',
   'Bill payment',
   'BPS Reporting',
-  'Budgets',
+  'Budgets (site level)',
   'Building Activate',
   'CA SB Bills - SUCON',
   'Capital asset planning',

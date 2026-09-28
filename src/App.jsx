@@ -6,8 +6,8 @@ import { useProspects } from './hooks/useProspects';
 import { userLsGet, userLsSet } from './utils/userLs';
 import { runProspectBackfill, formatBackfillReport, BACKFILL_PASSES } from './utils/peOwnerBackfill';
 import { migrateIdKeyedSettings } from './utils/dedupeSettingsMigration';
-import { SERVICE_MERGES, planServiceMerge } from './utils/serviceNameMerges';
-import { mergeServiceLanguage } from './utils/contractLanguageStore';
+import { SERVICE_MERGES, planServiceMerge, SERVICE_RENAME_LOG_KEY, serviceRenameFlag } from './utils/serviceNameMerges';
+import { renameServiceShared, renameServiceLocal } from './utils/serviceRenameRunner';
 import { useSheetSync } from './hooks/useSheetSync';
 import { planSheetSyncSetup } from './utils/sheetSyncSettings';
 import { useFilters } from './hooks/useFilters';
@@ -325,40 +325,79 @@ function App() {
     updateSettings(patch);
   }, [user, settingsLoaded, updateSettings]);
 
-  // One-time service-name merges (see utils/serviceNameMerges.js): a service
-  // that was seeded under two spellings is folded onto one name across the
-  // stored board layout, the Solutions list, per-service metadata, and every
-  // record's Services Explored / notes / SME maps.
+  // Service renames, carried to every place a service name is stored (see
+  // utils/serviceNameMerges.js and utils/serviceRenameRunner.js): the board
+  // layout, the Solutions list, per-service metadata, every record's
+  // Services Explored / notes / SME maps, the Opps (open and closed), the
+  // Pricing page, Deal Sizing, Account Potential, timelines and the rest.
+  //
+  // Two sources, one pass:
+  //   SERVICE_MERGES   renames the app ships (a seed misspelling, Budgets
+  //                    to Budgets (site level)), run once per browser.
+  //   serviceRenameLog renames made on Dropdowns › Services, logged in
+  //                    settings so they reach every browser. The shared
+  //                    stores (settings, prospects, Opps, …) move once, on
+  //                    whichever browser gets there first, which marks the
+  //                    entry `sharedDone`; the browser-only ones (the
+  //                    Pricing cache, the Account Potential estimate) move
+  //                    on every browser.
   //
   // Gated on settings having loaded as well as prospects: before the
   // Firestore snapshot arrives `settings` is {} and the pass would plan an
-  // empty patch, set its flag, and never look again. Silent unless it
-  // actually moves something — the correction is the app's to make, not a
-  // decision to put in front of the user like the backfills' report.
+  // empty patch, set its flag, and never look again. A pass that couldn't
+  // load a store (Opps not synced yet) clears its flag so the next load
+  // tries again; every step is a no-op once the old name is gone.
+  const renameLog = settings?.[SERVICE_RENAME_LOG_KEY];
   useEffect(() => {
     if (!user || !settingsLoaded || dataLoading) return;
-    const pending = SERVICE_MERGES.filter(m => !userLsGet(m.flag));
-    if (pending.length === 0) return;
-    for (const m of pending) userLsSet(m.flag, new Date().toISOString());
+    const log = Array.isArray(renameLog) ? renameLog : [];
+    const jobs = [
+      ...SERVICE_MERGES.map(m => ({ ...m, shared: true })),
+      ...log.filter(e => e && e.id && String(e.to || '').trim()
+        && String(e.from || '').trim().toLowerCase() !== String(e.to).trim().toLowerCase()).map(e => ({
+        flag: serviceRenameFlag(e.id), from: e.from, to: e.to, logId: e.id, shared: !e.sharedDone,
+      })),
+    ].filter(j => !userLsGet(j.flag));
+    if (jobs.length === 0) return;
+    for (const j of jobs) userLsSet(j.flag, new Date().toISOString());
     (async () => {
-      for (const merge of pending) {
+      // Plans run against the settings as each earlier job left them, so
+      // two renames in one pass don't each write over the other's patch.
+      let working = settingsRef.current || {};
+      for (const job of jobs) {
         try {
-          const { settingsPatch, prospectPatches, counts } = planServiceMerge(merge, settingsRef.current, prospects);
-          if (Object.keys(settingsPatch).length) updateSettings(settingsPatch);
-          for (const { id, patch } of prospectPatches) await updateProspect(id, patch);
-          const language = await mergeServiceLanguage(user.uid, merge.from, merge.to);
-          if (counts.settingsKeys.length || counts.prospects || language.moved) {
-            console.log(
-              `Merged service "${merge.from}" into "${merge.to}":`,
-              { settings: counts.settingsKeys, prospects: counts.prospects, clausesMoved: language.moved },
-            );
+          // The browser-only stores first: they are quick and local, and a
+          // shared one waiting on the network shouldn't hold them up.
+          const report = { ...(await renameServiceLocal(user.uid, job)) };
+          if (job.shared) {
+            const { settingsPatch, prospectPatches, counts } = planServiceMerge(job, working, prospects);
+            if (Object.keys(settingsPatch).length) {
+              working = { ...working, ...settingsPatch };
+              updateSettings(settingsPatch);
+            }
+            for (const { id, patch } of prospectPatches) await updateProspect(id, patch);
+            const shared = await renameServiceShared(user.uid, job);
+            Object.assign(report, { settings: counts.settingsKeys, prospects: counts.prospects }, shared, {
+              failed: [...(report.failed || []), ...(shared.failed || [])],
+            });
+            // Marked done for every other browser only once the shared
+            // stores have all moved; a failure leaves it for the retry.
+            if (job.logId && !shared.failed?.length) {
+              const current = Array.isArray(settingsRef.current?.[SERVICE_RENAME_LOG_KEY]) ? settingsRef.current[SERVICE_RENAME_LOG_KEY] : [];
+              const marked = current.map(e => (e?.id === job.logId ? { ...e, sharedDone: true } : e));
+              working = { ...working, [SERVICE_RENAME_LOG_KEY]: marked };
+              updateSettings({ [SERVICE_RENAME_LOG_KEY]: marked });
+            }
           }
+          if (report.failed?.length) userLsSet(job.flag, '');
+          console.log(`Renamed service "${job.from}" to "${job.to}":`, report);
         } catch (err) {
-          console.warn(`Service merge "${merge.from}" → "${merge.to}" failed:`, err);
+          userLsSet(job.flag, '');
+          console.warn(`Service rename "${job.from}" → "${job.to}" failed:`, err);
         }
       }
     })();
-  }, [user, settingsLoaded, dataLoading, prospects, updateProspect, updateSettings]);
+  }, [user, settingsLoaded, dataLoading, prospects, updateProspect, updateSettings, renameLog]);
 
   const handleModalSave = useCallback(async (data, { close = true } = {}) => {
     try {
