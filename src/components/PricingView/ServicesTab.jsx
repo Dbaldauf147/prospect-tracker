@@ -4,6 +4,7 @@ import {
   SERVICE_STATUS, FEE_STRUCTURE_TYPES, FEE_STRUCTURE_UNITS, serviceKey,
   newFeeStructureId, blankFeeStructureRow, feeStructureRowsFromFees,
 } from '../../utils/pricingServices';
+import { RATE_CHECK } from '../../utils/serviceRateCheck';
 
 const fmtMoney = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -275,6 +276,10 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, onO
           </section>
       )}
 
+      {hasWorkbook && detail?.rateCheck && (
+        <RateCheck check={detail.rateCheck} counts={detail.counts} />
+      )}
+
           <section className={styles.section}>
             <h4 className={styles.sectionTitle}>Fee structure</h4>
             <FeeStructureTabs
@@ -377,6 +382,60 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, onO
             )}
           </section>
     </div>
+  );
+}
+
+const RATE_BADGE = {
+  [RATE_CHECK.WITHIN]: ['rateWithin', 'Within range'],
+  [RATE_CHECK.BELOW]: ['rateOutside', 'Below range'],
+  [RATE_CHECK.ABOVE]: ['rateOutside', 'Above range'],
+  [RATE_CHECK.UNPRICED]: ['rateUnknown', 'No rate card'],
+  [RATE_CHECK.NO_COST]: ['rateUnknown', 'No cost to check'],
+};
+
+const fmtWhole = (n) => (typeof n === 'number' && Number.isFinite(n)
+  ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
+  : '');
+
+// The service's first-year cost on the SIA, marked up, set against the
+// price range its Dropdowns › Services Pricing rate card quotes.
+function RateCheck({ check, counts = {} }) {
+  const [cls, label] = RATE_BADGE[check.status];
+  const markupPct = Math.round(check.markup * 100);
+  const range = check.low == null ? '' : (Math.round(check.low) === Math.round(check.high)
+    ? fmtWhole(check.low)
+    : `${fmtWhole(Math.min(check.low, check.high))} – ${fmtWhole(Math.max(check.low, check.high))}`);
+  const countText = [
+    counts.sites != null && `${counts.sites.toLocaleString('en-US')} sites`,
+    counts.accounts != null && `${counts.accounts.toLocaleString('en-US')} accounts`,
+  ].filter(Boolean).join(', ');
+  let gap = '';
+  if (check.status === RATE_CHECK.BELOW) gap = `${fmtWhole(Math.min(check.low, check.high) - check.price)} under the low end`;
+  if (check.status === RATE_CHECK.ABOVE) gap = `${fmtWhole(check.price - Math.max(check.low, check.high))} over the high end`;
+
+  return (
+    <section className={styles.section}>
+      <h4 className={styles.sectionTitle}>
+        Price check <span className={styles[cls]}>{label}</span>
+      </h4>
+      <div className={styles.rateGrid}>
+        <span><span className={styles.factKey}>Year 1 cost:</span> <span className={styles.rateFigure}>{fmtWhole(check.cost)}</span></span>
+        <span><span className={styles.factKey}>Marked up {markupPct}%:</span> <span className={styles.rateFigure}>{fmtWhole(check.price)}</span></span>
+        <span>
+          <span className={styles.factKey}>Rate card range:</span>{' '}
+          <span className={styles.rateFigure}>{check.noFee ? 'No fee' : (range || 'not set')}</span>
+        </span>
+        {gap && <span className={styles.factKey}>{gap}</span>}
+      </div>
+      <p className={styles.note}>
+        {check.status === RATE_CHECK.UNPRICED
+          ? (check.noFee
+            ? 'This service is marked No Fee on Dropdowns › Services Pricing, so there is no range to check against.'
+            : 'No rate set for this service on Dropdowns › Services Pricing, so there is no range to check against.')
+          : `Year 1 cost is the CTS on the lines above, recurring lines counted as 12 months${check.passThrough ? ', pass-through lines left out' : ''}. The range is the Year 1 fee (plus setup) from Dropdowns › Services Pricing${countText ? `, priced on this option's ${countText}` : ''}.`}
+        {check.notes.length > 0 && ` Rate card note: ${check.notes.join('; ')}.`}
+      </p>
+    </section>
   );
 }
 
