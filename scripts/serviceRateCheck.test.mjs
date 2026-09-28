@@ -72,6 +72,20 @@ test('a count the SIA does not carry comes back as a note', () => {
     counts: { sites: 3 },
   });
   assert.ok(c.notes.some(n => /meters/i.test(n)));
+  assert.equal(c.status, RATE_CHECK.INCOMPLETE);
+  assert.deepEqual(c.missing, ['meters']);
+});
+
+test('a $0 range from a missing count is not "above range"', () => {
+  const c = rateCardCheck({
+    items: [{ cts: 268, type: 'One-time' }],
+    entry: { basis: 'per_site_mandate', rate: 100 },
+    meta: project,
+    counts: { sites: 29, accounts: 519 },
+  });
+  assert.equal(c.high, 0);
+  assert.equal(c.status, RATE_CHECK.INCOMPLETE);
+  assert.deepEqual(c.missing, ['sites w/ mandate']);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
