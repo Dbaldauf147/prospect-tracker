@@ -27,12 +27,14 @@ import { migrateS2cTags } from '../../utils/s2cTags';
 import { CalculatorTab } from './CalculatorTab';
 import { ServicesTab } from './ServicesTab';
 import { buildServiceRows } from '../../utils/serviceRows';
-import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow } from '../../utils/pricingServices';
+import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem } from '../../utils/pricingServices';
 import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
 import { isSetupFeeType } from '../../utils/setupFeeFloor';
 import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
 import { setOppPricingSnapshot } from '../../utils/oppsPricingSnapshot';
 import { servicesByFeeName } from '../../utils/siaScopeCompare';
+import { getServicePricing, pricingFor, resolvePricingBases } from '../../utils/servicePricing';
+import { rateCardCheck } from '../../utils/serviceRateCheck';
 import { saveOppSourceFile, sourceFileMeta } from '../../utils/oppPricingSourceFile';
 import {
   loadOptionLinks,
@@ -4676,7 +4678,25 @@ export function PricingView({ settings } = {}) {
       toBuild.forEach(r => fees.push(view(r, false)));
       if (onSched.length === 0 && toBuild.length === 0) fees.push({ name, missing: true });
     }
-    return { items, fees };
+
+    // The cost lines marked up, against the price range the Dropdowns ›
+    // Services Pricing rate card quotes for this service, priced on this
+    // option's own site and account counts.
+    const bases = resolvePricingBases(settings);
+    const svc = pricingServiceList.find(s => norm(s.name) === want);
+    const pricing = getServicePricing(settings);
+    const cardName = Object.keys(pricing).find(k => norm(k) === want) || serviceName;
+    const counts = {};
+    if (typeof opt.siteCount === 'number') counts.sites = opt.siteCount;
+    if (typeof opt.accountCount === 'number') counts.accounts = opt.accountCount;
+    const rateCheck = rateCardCheck({
+      items,
+      entry: pricingFor(pricing, cardName, bases),
+      meta: svc?.meta || null,
+      counts,
+      bases,
+    });
+    return { items, fees, rateCheck, counts };
   }
 
   // One saved fee-structure row as the active option would bill it: the
@@ -5021,6 +5041,10 @@ export function PricingView({ settings } = {}) {
           numYears={Math.max(1, Math.ceil(termMonths / 12))}
           termMonths={termMonths}
           onOpenLinkedTo={() => setPageSubtab('linkedTo')}
+          unlinked={unmappedForBanner}
+          tagOptions={solutionsOptions}
+          onTagLineItem={(key, service) => setLineItemServices(prev => addServiceToLineItem(prev, key, service))}
+          onIgnoreLineItem={(key) => setLineItemIgnored(prev => ({ ...(prev || {}), [key]: true }))}
         />
       )}
 

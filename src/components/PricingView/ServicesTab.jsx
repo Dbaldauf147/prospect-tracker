@@ -2,9 +2,10 @@ import { useMemo, useState } from 'react';
 import styles from './ServicesTab.module.css';
 import {
   SERVICE_STATUS, FEE_STRUCTURE_TYPES, FEE_STRUCTURE_UNITS, serviceKey,
-  newFeeStructureId, blankFeeStructureRow, feeStructureRowsFromFees,
+  newFeeStructureId, blankFeeStructureRow, feeStructureRowsFromFees, costTotalsByLineItem,
   standardFeesForStructure, costKey, COST_BUCKET_UPFRONT,
 } from '../../utils/pricingServices';
+import { RATE_CHECK } from '../../utils/serviceRateCheck';
 
 const fmtMoney = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -29,9 +30,15 @@ const STATUS_CLASS = {
 //   feeStructures   saved fee structures per service (serviceKey)
 //   previewFeeRow   (structureRow) => what it bills on the active option
 //   applyFeeStructure (serviceName, structure) => writes it to the schedule
+//   unlinked        unmappedLineItems() for the active option: cost lines
+//                   with no service yet, warned about above the list
+//   tagOptions      the Dropdowns catalog a cost line can be tagged to
+//   onTagLineItem   (lineItemKey, serviceName) => adds the service
+//   onIgnoreLineItem (lineItemKey) => marks the line item Ignore
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
   feeStructures = {}, setFeeStructures, previewFeeRow, applyFeeStructure,
+  unlinked = null, tagOptions = [], onTagLineItem, onIgnoreLineItem,
 }) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(null);
@@ -51,6 +58,17 @@ export function ServicesTab({
 
   const current = services.find(s => s.name === selected) || null;
   const detail = current && detailFor ? detailFor(current.name) : null;
+
+  const costTotals = useMemo(
+    () => costTotalsByLineItem((opt?.sections || []).flatMap(sec => sec.items || [])),
+    [opt],
+  );
+  // The picked service can take a one-click tag only when it's one the
+  // Dropdowns catalog still offers; tagging to anything else would leave
+  // the warning standing.
+  const quickTag = current && tagOptions.some(o => String(o).trim().toLowerCase() === current.name.trim().toLowerCase())
+    ? current.name
+    : null;
 
   return (
     <div className={styles.wrapper}>
@@ -73,6 +91,19 @@ export function ServicesTab({
             </button>
           ))}
         </div>
+      )}
+
+      {workbook && unlinked && unlinked.all.length > 0 && (
+        <UnlinkedWarning
+          unlinked={unlinked}
+          costTotals={costTotals}
+          optionName={opt?.sheetName}
+          tagOptions={tagOptions}
+          quickTag={quickTag}
+          onTag={(key, service) => { onTagLineItem?.(key, service); setSelected(services.find(x => x.name.toLowerCase() === service.toLowerCase())?.name || selected); }}
+          onIgnore={onIgnoreLineItem}
+          onOpenLinkedTo={onOpenLinkedTo}
+        />
       )}
 
       <div className={styles.layout}>
@@ -151,6 +182,75 @@ export function ServicesTab({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Cost lines on the active option that no service covers yet (nothing
+// picked, or only picks the Dropdowns catalog has since dropped), each with
+// a way to tag it right here: a one-click button for the service picked in
+// the list, a menu of every catalog service, or Ignore.
+function UnlinkedWarning({ unlinked, costTotals, optionName, tagOptions, quickTag, onTag, onIgnore, onOpenLinkedTo }) {
+  const [open, setOpen] = useState(true);
+  const n = unlinked.all.length;
+  const offList = new Set(unlinked.offList.map(r => r.key));
+  return (
+    <div className={styles.unlinked} role="alert">
+      <div className={styles.unlinkedHead}>
+        <span aria-hidden="true">⚠</span>
+        <span className={styles.unlinkedText}>
+          <strong>{n} cost line item{n === 1 ? '' : 's'}</strong>
+          {optionName ? ` on ${optionName}` : ''} {n === 1 ? 'is' : 'are'} not linked to a service.
+          {' '}{quickTag
+            ? <>Tag {n === 1 ? 'it' : 'each one'} to <strong>{quickTag}</strong> with one click, or pick any service from the menu.</>
+            : <>Pick a service from the menu, or select one in the list below for one-click tagging.</>}
+        </span>
+        <button type="button" className={styles.linkBtn} onClick={() => setOpen(o => !o)}>{open ? 'Hide' : 'Show'}</button>
+      </div>
+      {open && (
+        <ul className={styles.unlinkedList}>
+          {unlinked.all.map(row => {
+            const t = costTotals[row.key];
+            return (
+              <li key={row.key} className={styles.unlinkedRow}>
+                <span className={styles.unlinkedName}>
+                  {row.name}
+                  <span className={styles.subNote}>
+                    {t ? `${t.count} cost line${t.count === 1 ? '' : 's'}${t.cts ? `, ${fmtMoney(t.cts)} CTS` : ''}` : 'Saved mapping, not on this option'}
+                    {offList.has(row.key) && ', tagged only to a service the Dropdowns list no longer has'}
+                  </span>
+                </span>
+                <span className={styles.unlinkedActions}>
+                  {quickTag && (
+                    <button type="button" className={styles.tagBtn} onClick={() => onTag(row.key, quickTag)} title={`Tag "${row.name}" to ${quickTag}`}>
+                      Tag to {quickTag}
+                    </button>
+                  )}
+                  <select
+                    className={styles.tagSelect}
+                    value=""
+                    onChange={(e) => { if (e.target.value) onTag(row.key, e.target.value); }}
+                    aria-label={`Tag ${row.name} to a service`}
+                  >
+                    <option value="">{tagOptions.length ? 'Tag to a service...' : 'No services on the Dropdowns tab'}</option>
+                    {tagOptions.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                  {onIgnore && (
+                    <button type="button" className={styles.ignoreBtn} onClick={() => onIgnore(row.key)} title="This cost line needs no service. Undo on the Linked To subtab.">
+                      Ignore
+                    </button>
+                  )}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {open && onOpenLinkedTo && (
+        <div className={styles.unlinkedFoot}>
+          Tags land on the <button type="button" className={styles.linkBtn} onClick={onOpenLinkedTo}>Linked To</button> subtab (Line Item → Services), where they can be changed or removed.
+        </div>
+      )}
     </div>
   );
 }
@@ -279,6 +379,10 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
           </section>
       )}
 
+      {hasWorkbook && detail?.rateCheck && (
+        <RateCheck check={detail.rateCheck} counts={detail.counts} />
+      )}
+
           <section className={styles.section}>
             <h4 className={styles.sectionTitle}>Fee structure</h4>
             <FeeStructureTabs
@@ -385,6 +489,60 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
             )}
           </section>
     </div>
+  );
+}
+
+const RATE_BADGE = {
+  [RATE_CHECK.WITHIN]: ['rateWithin', 'Within range'],
+  [RATE_CHECK.BELOW]: ['rateOutside', 'Below range'],
+  [RATE_CHECK.ABOVE]: ['rateOutside', 'Above range'],
+  [RATE_CHECK.UNPRICED]: ['rateUnknown', 'No rate card'],
+  [RATE_CHECK.NO_COST]: ['rateUnknown', 'No cost to check'],
+};
+
+const fmtWhole = (n) => (typeof n === 'number' && Number.isFinite(n)
+  ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
+  : '');
+
+// The service's first-year cost on the SIA, marked up, set against the
+// price range its Dropdowns › Services Pricing rate card quotes.
+function RateCheck({ check, counts = {} }) {
+  const [cls, label] = RATE_BADGE[check.status];
+  const markupPct = Math.round(check.markup * 100);
+  const range = check.low == null ? '' : (Math.round(check.low) === Math.round(check.high)
+    ? fmtWhole(check.low)
+    : `${fmtWhole(Math.min(check.low, check.high))} – ${fmtWhole(Math.max(check.low, check.high))}`);
+  const countText = [
+    counts.sites != null && `${counts.sites.toLocaleString('en-US')} sites`,
+    counts.accounts != null && `${counts.accounts.toLocaleString('en-US')} accounts`,
+  ].filter(Boolean).join(', ');
+  let gap = '';
+  if (check.status === RATE_CHECK.BELOW) gap = `${fmtWhole(Math.min(check.low, check.high) - check.price)} under the low end`;
+  if (check.status === RATE_CHECK.ABOVE) gap = `${fmtWhole(check.price - Math.max(check.low, check.high))} over the high end`;
+
+  return (
+    <section className={styles.section}>
+      <h4 className={styles.sectionTitle}>
+        Price check <span className={styles[cls]}>{label}</span>
+      </h4>
+      <div className={styles.rateGrid}>
+        <span><span className={styles.factKey}>Year 1 cost:</span> <span className={styles.rateFigure}>{fmtWhole(check.cost)}</span></span>
+        <span><span className={styles.factKey}>Marked up {markupPct}%:</span> <span className={styles.rateFigure}>{fmtWhole(check.price)}</span></span>
+        <span>
+          <span className={styles.factKey}>Rate card range:</span>{' '}
+          <span className={styles.rateFigure}>{check.noFee ? 'No fee' : (range || 'not set')}</span>
+        </span>
+        {gap && <span className={styles.factKey}>{gap}</span>}
+      </div>
+      <p className={styles.note}>
+        {check.status === RATE_CHECK.UNPRICED
+          ? (check.noFee
+            ? 'This service is marked No Fee on Dropdowns › Services Pricing, so there is no range to check against.'
+            : 'No rate set for this service on Dropdowns › Services Pricing, so there is no range to check against.')
+          : `Year 1 cost is the CTS on the lines above, recurring lines counted as 12 months${check.passThrough ? ', pass-through lines left out' : ''}. The range is the Year 1 fee (plus setup) from Dropdowns › Services Pricing${countText ? `, priced on this option's ${countText}` : ''}.`}
+        {check.notes.length > 0 && ` Rate card note: ${check.notes.join('; ')}.`}
+      </p>
+    </section>
   );
 }
 

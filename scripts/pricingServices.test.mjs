@@ -16,6 +16,7 @@ import {
   buildPricingServiceList, costItemsForService, servicesForItems, SERVICE_STATUS,
   feeStructureRowsFromFees, feeStructureRowToAltRow, applyFeeStructureToSchedule,
   standardFeesForStructure, costKey,
+  addServiceToLineItem, costTotalsByLineItem,
 } from '../src/utils/pricingServices.js';
 
 let failed = 0;
@@ -182,6 +183,25 @@ test('a monthly cost on an upfront fee is flagged, and "not covered" takes a cos
   const r2 = standardFeesForStructure({ rows, costs: bbsCosts, allocations: { [bbsCosts[0].key]: { fee: '' } } });
   assert.equal(r2.costs[0].rowIdx, -1);
   assert.equal(r2.perRow[0].standardFee, null);
+});
+
+test('tagging an unlinked line item adds the service once', () => {
+  const start = { 'site setup': ['Budgets'] };
+  const a = addServiceToLineItem(start, 'Data Mgmt', 'Utility Bill Pay');
+  assert.deepEqual(a['data mgmt'], ['Utility Bill Pay']);
+  assert.deepEqual(start, { 'site setup': ['Budgets'] });
+  const b = addServiceToLineItem(a, 'site setup', 'ENERGY STAR');
+  assert.deepEqual(b['site setup'], ['Budgets', 'ENERGY STAR']);
+  assert.equal(addServiceToLineItem(b, 'site setup', 'budgets'), b);
+  assert.equal(addServiceToLineItem(b, '', 'Budgets'), b);
+  assert.equal(addServiceToLineItem(b, 'x', '  '), b);
+});
+
+test('cost totals group cost lines by description', () => {
+  const t = costTotalsByLineItem([
+    { description: 'Setup', cts: 100 }, { description: 'setup ', cts: 50 }, { description: 'Other', cts: null }, { description: '' },
+  ]);
+  assert.deepEqual(t, { setup: { count: 2, cts: 150 }, other: { count: 1, cts: 0 } });
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
