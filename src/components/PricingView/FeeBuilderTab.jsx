@@ -9,7 +9,25 @@ const fmtMoney = (n) => (typeof n === 'number' && Number.isFinite(n)
   : '');
 const fmtPct = (n) => (typeof n === 'number' && Number.isFinite(n) ? `${(n * 100).toFixed(1)}%` : '');
 const sum = (arr) => arr.reduce((a, b) => a + (Number(b) || 0), 0);
-const groupFrom = (subRows) => `${subRows.length} ${subRows.every(r => r.service) ? 'services' : 'rows'}`;
+// The From cell for a fee line: every service the fee covers, comma
+// separated. A fee several services wrote lists all of them, those whose
+// row was left off for having no fee of its own included, since the one
+// row that stays bills their costs too.
+const feeKey = (name) => String(name || '').trim().toLowerCase();
+function coveredByFee(shared) {
+  const m = new Map();
+  for (const c of shared || []) m.set(feeKey(c.fee), [...c.services, ...(c.unpriced || [])]);
+  return m;
+}
+function fromLabel(g, covered) {
+  const names = [];
+  const add = (n) => { if (n && !names.includes(n)) names.push(n); };
+  for (const r of g.subRows.length ? g.subRows : [g.row]) add(r.service);
+  for (const n of covered.get(feeKey(g.row.name)) || []) add(n);
+  const onSchedule = (g.subRows.length ? g.subRows : [g.row]).some(r => !r.service);
+  if (onSchedule) add('On the schedule');
+  return names.join(', ');
+}
 
 // The as-built schedule as a workbook: a fee several services share is one
 // line with a grouped (collapsible) sub-row per service under it, then the
@@ -24,8 +42,9 @@ function exportPlan(plan) {
   ];
   const aoa = [['Fee', 'From', 'Type', 'Fee / Unit', 'Unit', 'Unit Count', 'Start Month', ...yearIdx.map(i => `Y${i + 1}`), 'Term']];
   const rowLevels = [{}];
+  const covered = coveredByFee(plan.shared);
   for (const g of groupFeeRows(plan.rows)) {
-    const from = g.subRows.length ? groupFrom(g.subRows) : (g.row.service || 'On the schedule');
+    const from = fromLabel(g, covered);
     aoa.push(line(g.row, g.row.name, from));
     rowLevels.push({});
     for (const sr of g.subRows) {
@@ -111,6 +130,7 @@ export function FeeBuilderTab({
   const numYears = plan?.numYears || 1;
   const yearIdx = Array.from({ length: numYears }, (_, i) => i);
   const building = plan?.perService?.length || 0;
+  const covered = coveredByFee(plan?.shared);
 
   return (
     <div className={styles.wrapper}>
@@ -304,7 +324,7 @@ export function FeeBuilderTab({
                     return (
                       <tr key={`${key}-${gi}`} className={r.service ? own.newRow : undefined}>
                         <td>{r.name}{r.passThrough && <span className={styles.subNote}> pass-through</span>}</td>
-                        <td className={r.service ? undefined : own.muted}>{r.service || 'On the schedule'}</td>
+                        <td className={r.service ? undefined : own.muted}>{fromLabel(g, covered)}</td>
                         <td>{r.type}</td>
                         {cells(r)}
                       </tr>
@@ -324,7 +344,7 @@ export function FeeBuilderTab({
                             <span aria-hidden="true">{open ? '▾' : '▸'}</span> {g.row.name}
                           </button>
                         </td>
-                        <td>{groupFrom(g.subRows)}</td>
+                        <td>{fromLabel(g, covered)}</td>
                         <td>{g.row.type}</td>
                         {cells(g.row)}
                       </tr>
