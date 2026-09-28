@@ -177,5 +177,34 @@ const verdict = (r) => (r.deal ? 'deal' : r.skip ? `skip:${r.skip}` : 'unsure');
     'skip:not deal news', 'unsure: an opinion piece is not a headline to check');
 }
 
+// ---- Stricter: the Apollo digest of 2026-09-28 --------------------------
+// Four "deals" that email reported, three of them wrong. Each case below is
+// the headline as the feed carried it.
+{
+  const readOn = (title, date, company = 'Apollo Global Management') =>
+    classifyHeadline({ title, publishedAt: Date.parse(date) }, { company, isPe: true }, nameVariants(company));
+
+  // A partner of the firm is not the firm.
+  eq(verdict(readOn('Wrexham AFC Owners Reynolds and McElhenney Partner With Apollo to Acquire The Turf Pub - streamlinefeed.co.ke', '2026-09-21')),
+    'unsure', 'strict: the firm named as a partner of the buyers is not a deal by it');
+  eq(verdict(readOn('Sponsors team up with Apollo to buy Acme', '2026-09-21')), 'unsure', 'strict: "team up with <firm>" is the same');
+  eq(verdict(readOn('Apollo, with KKR, acquires Acme Logistics', '2026-09-21')), 'deal', 'strict: the firm ahead of its partner still leads');
+  const led = readOn('Consortium led by Apollo acquires Acme Logistics', '2026-09-21');
+  eq(verdict(led), 'deal', 'strict: a consortium the firm leads is its deal');
+  eq(verdict(readOn('Foo Corp, backed by Apollo, acquires Bar Inc', '2026-09-21')), 'deal', 'strict: an add-on by a backed company is still a deal');
+
+  // A deal from an earlier year is a recap.
+  eq(verdict(readOn('Apollo funds complete ~$5B acquisition of Yahoo (2021) - Dealroom.co', '2026-09-18')),
+    'skip:recap of an older deal', 'strict: a year before publication marks a recap');
+  eq(verdict(readOn('Apollo to acquire Acme in deal expected to close in 2027', '2026-09-18')), 'deal', 'strict: a later year is fine');
+  eq(verdict(readOn('Five years after Apollo bought Acme, what changed', '2026-09-18')), 'skip:recap of an older deal', 'strict: recap wording without a year');
+
+  // The buyer is a name, not the left half of the sentence.
+  const bmg = readOn('Apollo Provides $1.25 Billion to Support BMG, Concord Merger; Acquires Stake in BMG Unit - marketscreener.com', '2026-09-17');
+  eq([verdict(bmg), bmg.deal?.target, bmg.deal?.buyer], ['deal', 'Stake in BMG Unit', 'Apollo'], 'strict: buyer cut at its verb');
+  eq(readOn('Apollo funds complete $5B acquisition of Acme Logistics', '2026-09-18').deal?.buyer, 'Apollo funds', 'strict: buyer cut before the verb and amount');
+  eq(readOn('Acme Logistics acquired by Apollo in a $5B deal that reshapes freight', '2026-09-18').deal?.buyer, 'Apollo', 'strict: reverse shape buyer cut too');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
