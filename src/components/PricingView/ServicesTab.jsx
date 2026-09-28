@@ -7,7 +7,7 @@ import {
   costTypeConversion, moveCostAllocation, feeBucket,
 } from '../../utils/pricingServices';
 import { RATE_CHECK } from '../../utils/serviceRateCheck';
-import { unitLabelFor, unitNoun } from '../../utils/servicePricing';
+import { unitLabelFor } from '../../utils/servicePricing';
 
 const fmtMoney = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -465,7 +465,6 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
                             the option's, so every line shows the same boxes. */}
                         {hasWorkbook && onSetCount && detail?.rateCheck && !it.ignored && (
                           <CheckCounts
-                            compact
                             missing={detail.rateCheck.missing}
                             used={detail.rateCheck.unitsUsed}
                             entered={detail.enteredCounts}
@@ -504,13 +503,7 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
       )}
 
       {hasWorkbook && detail?.rateCheck && (
-        <RateCheck
-          check={detail.rateCheck}
-          entered={detail.enteredCounts}
-          fromSia={detail.fromSia}
-          onSetCount={items.some(it => !it.ignored) ? null : onSetCount}
-          optionName={optionName}
-        />
+        <RateCheck check={detail.rateCheck} />
       )}
 
           <section className={styles.section}>
@@ -752,18 +745,13 @@ const RATE_BADGE = {
   [RATE_CHECK.NOT_ON_CARD]: ['rateUnknown', 'Not on rate card'],
 };
 
-// A per-unit rate keeps its cents ($22.50/account); a total doesn't.
-const fmtRate = (n) => (typeof n === 'number' && Number.isFinite(n)
-  ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: n < 100 ? 2 : 0, maximumFractionDigits: n < 100 ? 2 : 0 })
-  : '');
-
 const fmtWhole = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
   : '');
 
 // The service's first-year cost on the SIA, marked up, set against the
 // price range its Dropdowns › Services Pricing rate card quotes.
-function RateCheck({ check, entered = {}, fromSia = {}, onSetCount, optionName }) {
+function RateCheck({ check }) {
   const [cls, label] = RATE_BADGE[check.status];
   const markupPct = Math.round(check.markup * 100);
   const range = check.low == null ? '' : (Math.round(check.low) === Math.round(check.high)
@@ -784,10 +772,6 @@ function RateCheck({ check, entered = {}, fromSia = {}, onSetCount, optionName }
         </span>
       </div>
       <RateMeter check={check} />
-      {check.parts?.length > 0 && <FeeParts parts={check.parts} markup={check.markup} />}
-      {onSetCount && (
-        <CheckCounts missing={check.missing} used={check.unitsUsed} entered={entered} fromSia={fromSia} onSetCount={onSetCount} optionName={optionName} />
-      )}
       {(check.status === RATE_CHECK.INCOMPLETE || check.status === RATE_CHECK.UNPRICED) && (
         <p className={styles.note}>
           {check.status === RATE_CHECK.INCOMPLETE
@@ -807,10 +791,8 @@ function RateCheck({ check, entered = {}, fromSia = {}, onSetCount, optionName }
 // A count the SIA supplies (sites, accounts, and sites standing in for
 // sites w/ mandate) shows as the box's grey placeholder: blank means the
 // SIA's, and a typed number overrides it until "Use SIA" clears it.
-//
-// `compact` is the Unit-column form on the cost line table: no heading,
-// one count per line.
-function CheckCounts({ missing = [], used = [], entered = {}, fromSia = {}, onSetCount, optionName, compact = false }) {
+// Shown in the Unit column of the cost line table, one count per line.
+function CheckCounts({ missing = [], used = [], entered = {}, fromSia = {}, onSetCount }) {
   const fields = [...missing];
   const add = (key) => {
     if (!fields.some(f => f.key === key)) fields.push({ key, label: key === 'dealSize' ? 'Deal size' : unitLabelFor(key) });
@@ -819,8 +801,7 @@ function CheckCounts({ missing = [], used = [], entered = {}, fromSia = {}, onSe
   for (const key of Object.keys(entered)) add(key);
   if (fields.length === 0) return null;
   return (
-    <div className={compact ? styles.countStack : styles.countRow}>
-      {!compact && <span className={styles.factKey}>Counts for {optionName || 'this option'}:</span>}
+    <div className={styles.countStack}>
       {fields.map(f => {
         const isMoney = f.key === 'dealSize';
         const v = entered[f.key];
@@ -853,76 +834,9 @@ function CheckCounts({ missing = [], used = [], entered = {}, fromSia = {}, onSe
   );
 }
 
-// The same check split by the parts of the fee model: setup against the
-// card's setup lines, ongoing against its recurring ones, one-time against
-// the rest. A part the card quotes per unit is judged per unit, which is
-// how the fee is actually written.
-function FeeParts({ parts, markup }) {
-  const markupPct = Math.round(markup * 100);
-  return (
-    <table className={`${styles.table} ${styles.partsTable}`}>
-      <thead>
-        <tr>
-          <th>Fee part</th>
-          <th className={styles.num}>Cost</th>
-          <th className={styles.num}>Marked up {markupPct}%</th>
-          <th className={styles.num}>Rate card</th>
-          <th>Result</th>
-        </tr>
-      </thead>
-      <tbody>
-        {parts.map(p => {
-          const [cls, label] = RATE_BADGE[p.status];
-          const noun = p.perUnit ? unitNoun(p.perUnit.unitLabel) : '';
-          const per = p.key === 'recurring' ? `/${noun}/yr` : `/${noun}`;
-          const cardRange = p.low == null ? '' : (Math.round(p.low) === Math.round(p.high)
-            ? fmtWhole(p.low) : `${fmtWhole(p.low)} – ${fmtWhole(p.high)}`);
-          const basis = p.cardLines.map(b => b.basisLabel).join(' + ');
-          const meter = p.perUnit
-            ? { status: p.status, price: p.perUnit.price, low: p.perUnit.rateLow, high: p.perUnit.rateHigh, cost: p.perUnit.price / (1 + markup), fmt: fmtRate }
-            : { status: p.status, price: p.price, low: p.low, high: p.high, cost: p.cost, fmt: fmtWhole };
-          return (
-            <tr key={p.key}>
-              <td>
-                {p.label}
-                {basis && <div className={styles.subNote}>{basis}</div>}
-              </td>
-              <td className={styles.num}>
-                {p.cost > 0 ? fmtWhole(p.cost) : <span className={styles.muted}>none</span>}
-                {p.monthly && p.cost > 0 && <div className={styles.subNote}>{fmtRate(p.cost / 12)}/mo × 12</div>}
-              </td>
-              <td className={styles.num}>
-                {p.cost > 0 ? fmtWhole(p.price) : ''}
-                {p.monthly && p.cost > 0 && <div className={styles.subNote}>{fmtRate(p.price / 12)}/mo</div>}
-                {p.perUnit && <div className={styles.subNote}>{fmtRate(p.perUnit.price)}{per}</div>}
-              </td>
-              <td className={styles.num}>
-                {cardRange || <span className={styles.muted}>no line</span>}
-                {p.perUnit && (
-                  <div className={styles.subNote}>
-                    {p.perUnit.rateLow === p.perUnit.rateHigh
-                      ? fmtRate(p.perUnit.rateLow)
-                      : `${fmtRate(p.perUnit.rateLow)} – ${fmtRate(p.perUnit.rateHigh)}`}{per} × {p.perUnit.units.toLocaleString('en-US')}
-                  </div>
-                )}
-              </td>
-              <td>
-                <div className={styles.partResult}>
-                  <span className={styles[cls]}>{label}</span>
-                  <RateMeter check={meter} compact />
-                </div>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  );
-}
-
 // Where the marked-up price lands on a line from $0, with the rate card
 // range shaded on it. Nothing to draw without a range above $0.
-function RateMeter({ check, compact = false }) {
+function RateMeter({ check }) {
   if (check.low == null || check.price == null) return null;
   const lo = Math.min(check.low, check.high);
   const hi = Math.max(check.low, check.high);
@@ -934,8 +848,7 @@ function RateMeter({ check, compact = false }) {
   const tone = check.status === RATE_CHECK.WITHIN ? styles.meterIn
     : (check.status === RATE_CHECK.BELOW || check.status === RATE_CHECK.ABOVE) ? styles.meterOut
       : styles.meterUnknown;
-  const fmt = check.fmt || fmtWhole;
-  // Per-unit rates are small numbers, so "the same" is to the cent there.
+  const fmt = fmtWhole;
   const single = fmt(lo) === fmt(hi);
   // Two range labels closer than this share one, so they never overlap.
   const joined = single || at(hi) - at(lo) < 18;
@@ -952,12 +865,6 @@ function RateMeter({ check, compact = false }) {
       <div className={`${styles.meterDot} ${tone}`} style={{ left: `${at(check.price)}%` }} title={priceTip} />
     </div>
   );
-  // In a table row the figures sit in the columns beside it, so the line
-  // goes on its own.
-  if (compact) {
-    return <div className={styles.meterCompact} role="img" aria-label={`${priceTip}. ${rangeTip}.`}>{track}</div>;
-  }
-
   return (
     <div className={styles.meter} role="img" aria-label={`${priceTip}. ${rangeTip}.`}>
       <div className={styles.meterTop}>

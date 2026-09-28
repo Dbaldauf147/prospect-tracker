@@ -773,15 +773,6 @@
   font-size: var(--font-size-xs);
 }
 
-/* Counts typed for the price check. */
-.countRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.4rem 1rem;
-  font-size: var(--font-size-xs);
-}
-
 .countField {
   display: inline-flex;
   align-items: center;
@@ -792,24 +783,6 @@
 .countNeeded {
   border-color: #f59e0b !important;
   background: #fffbeb !important;
-}
-
-/* The price check split by fee part: one row per part, a small meter each. */
-.partsTable td {
-  vertical-align: middle;
-}
-
-.partResult {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-}
-
-.meterCompact {
-  flex: 1 1 140px;
-  min-width: 120px;
-  max-width: 200px;
-  padding: 4px 7px;
 }
 
 /* A cost line unticked out of the price check. */
