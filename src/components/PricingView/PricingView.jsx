@@ -5053,7 +5053,7 @@ export function PricingView({ settings } = {}) {
       rows,
       nextSchedule: built.rows,
       perService: built.perService,
-      conflicts: built.conflicts,
+      shared: built.shared,
       before: totals(schedule),
       after: totals(built.rows),
     };
@@ -5074,8 +5074,8 @@ export function PricingView({ settings } = {}) {
       '',
       `Adds ${added} row${added === 1 ? '' : 's'}${removed ? ` and replaces ${removed}` : ''}. Rows for services left as they are stay on the schedule.`,
     ];
-    if (plan.conflicts.length) {
-      lines.push('', `Fee names written by more than one service (the later one wins): ${plan.conflicts.map(c => `${c.fee} (${c.services.join(', ')})`).join('; ')}.`);
+    if (plan.shared.length) {
+      lines.push('', `Fee names shared by more than one service, one row each: ${plan.shared.map(c => `${c.fee} (${c.services.join(', ')})`).join('; ')}.`);
     }
     if (!window.confirm(lines.join('\n'))) return false;
     replaceAltFeeRows(plan.optionNumber, plan.nextSchedule);

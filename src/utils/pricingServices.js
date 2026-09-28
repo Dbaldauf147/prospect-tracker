@@ -564,33 +564,120 @@ export function repriceLinkedFees(altFees, gm) {
 // Each pick is applied in turn with applyFeeStructureToSchedule, with one
 // difference: a fee name an earlier pick in this same build wrote is never
 // dropped because a later service happens to list it among its current fee
-// names. When a later structure writes that same fee name itself, the later
-// one wins and the clash is reported, so it can be shown rather than lost.
+// names. When a later structure writes that same fee name itself, both
+// services keep their row: the later one lands right under the earlier
+// one, so the schedule carries one row per service under the shared name
+// and bills them all. Those are reported in shared.
+//
+// A row in such a group with no fee of its own (the service's standard fee
+// came out blank) would be left to derive its fee from every cost carrying
+// the name, the other services' included, and bill them twice. So when a
+// sibling has a fee the blank row is dropped, and when none has one only
+// the first is kept. The services that lost their row that way are listed
+// under unpriced.
 export function buildScheduleFromStructures(schedule, picks, { siteCount, accountCount } = {}) {
   let rows = [...(schedule || [])];
-  const builtBy = new Map(); // fee name -> service that wrote it in this build
+  const builtBy = new Map(); // fee name -> services that wrote it in this build
   const addedRows = new Set();
   const perService = [];
-  const conflicts = [];
   for (const pick of picks || []) {
+    const incoming = (pick.rows || []).filter(r => String(r?.feeName || '').trim());
+    const own = incoming.filter(r => !builtBy.has(norm(r.feeName)));
+    const joins = incoming.filter(r => builtBy.has(norm(r.feeName)));
     const replaceNames = (pick.replaceNames || []).filter(n => !builtBy.has(norm(n)));
-    const plan = applyFeeStructureToSchedule(rows, pick.rows, { replaceNames, siteCount, accountCount });
-    for (const r of plan.added) {
+    const plan = applyFeeStructureToSchedule(rows, own, { replaceNames, siteCount, accountCount });
+    rows = plan.rows;
+    const added = [...plan.added];
+    for (const jr of joins) {
+      const alt = feeStructureRowToAltRow(jr, { siteCount, accountCount });
+      const k = norm(alt.altItem);
+      let at = -1;
+      rows.forEach((r, i) => { if (addedRows.has(r) && norm(r.altItem) === k) at = i; });
+      rows = [...rows.slice(0, at + 1), alt, ...rows.slice(at + 1)];
+      added.push(alt);
+    }
+    for (const r of added) {
       const k = norm(r.altItem);
-      const prev = builtBy.get(k);
-      if (prev && prev !== pick.service) conflicts.push({ fee: r.altItem, services: [prev, pick.service] });
-      builtBy.set(k, pick.service);
+      const list = builtBy.get(k) || [];
+      if (!list.includes(pick.service)) list.push(pick.service);
+      builtBy.set(k, list);
       addedRows.add(r);
     }
     perService.push({
       service: pick.service,
       structureName: pick.structureName || '',
-      added: plan.added,
+      added,
       // Only rows that were on the schedule before the build count as
-      // replaced; one a previous pick wrote shows up as a conflict instead.
+      // replaced.
       removed: plan.removed.filter(r => !addedRows.has(r)),
     });
-    rows = plan.rows;
   }
-  return { rows, perService, conflicts };
+
+  const serviceOf = new Map();
+  for (const ps of perService) for (const r of ps.added) serviceOf.set(r, ps.service);
+  const shared = [];
+  for (const [k, services] of builtBy) {
+    if (services.length < 2) continue;
+    const group = rows.filter(r => addedRows.has(r) && norm(r.altItem) === k);
+    const priced = group.filter(r => r.fee != null);
+    const keep = new Set(priced.length ? priced : group.slice(0, 1));
+    const drop = group.filter(r => !keep.has(r));
+    if (drop.length) rows = rows.filter(r => !drop.includes(r));
+    const kept = [...new Set([...keep].map(r => serviceOf.get(r)))];
+    shared.push({
+      fee: group[0].altItem,
+      services: kept,
+      unpriced: [...new Set(drop.map(r => serviceOf.get(r)))].filter(x => !kept.includes(x)),
+    });
+  }
+  return { rows, perService, shared };
+}
+
+// The as-built rows with every fee name that shows more than once folded
+// into a group: one line for the fee (its years and term summed, the
+// shared columns carried when every row agrees) over a sub-row per row.
+//
+//   rows   [{ name, service, type, feePerUnit, unit, unitCount, startMonth,
+//             years: [..], term }]
+//
+// Returns [{ row, subRows }] in first-seen order, subRows empty for a fee
+// with one row. A group's fee per unit is the sum of its rows' when they
+// all bill the same unit and count, and blank otherwise, since adding
+// per-site to per-account says nothing.
+export function groupFeeRows(rows) {
+  const order = [];
+  const byName = new Map();
+  for (const r of rows || []) {
+    const k = norm(r?.name);
+    if (!byName.has(k)) { byName.set(k, []); order.push(k); }
+    byName.get(k).push(r);
+  }
+  const same = (list, f) => list.every(x => (x[f] ?? '') === (list[0][f] ?? ''));
+  return order.map(k => {
+    const list = byName.get(k);
+    if (list.length === 1) return { row: list[0], subRows: [] };
+    const n = Math.max(...list.map(x => (x.years || []).length));
+    const years = Array.from({ length: n }, (_, i) => list.reduce((s, x) => s + (Number(x.years?.[i]) || 0), 0));
+    const fees = list.map(x => x.feePerUnit);
+    const sumFee = same(list, 'unit') && same(list, 'unitCount') && fees.every(f => typeof f === 'number')
+      ? Math.round(fees.reduce((a, b) => a + b, 0) * 100) / 100
+      : null;
+    const starts = list.map(x => Number(x.startMonth)).filter(Number.isFinite);
+    const services = [...new Set(list.map(x => x.service).filter(Boolean))];
+    return {
+      row: {
+        name: list[0].name,
+        service: services.length ? services.join(', ') : null,
+        type: same(list, 'type') ? list[0].type : 'Mixed',
+        feePerUnit: sumFee,
+        unit: same(list, 'unit') ? list[0].unit : 'Mixed',
+        unitCount: same(list, 'unitCount') ? list[0].unitCount : null,
+        startMonth: starts.length ? Math.min(...starts) : null,
+        passThrough: list.every(x => x.passThrough),
+        years,
+        term: years.reduce((a, b) => a + b, 0),
+      },
+      subRows: list,
+    };
+  });
 }
