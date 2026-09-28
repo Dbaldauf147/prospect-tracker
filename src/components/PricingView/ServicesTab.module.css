@@ -553,21 +553,6 @@
   margin-top: 0.35rem;
 }
 
-.warnNote {
-  font-size: var(--font-size-xs);
-  line-height: 1.5;
-  color: #92400E;
-  background: #FFFBEB;
-  border: 1px solid #FDE68A;
-  border-radius: 6px;
-  padding: 0.4rem 0.6rem;
-}
-
-.deltaRow td {
-  font-weight: 600;
-  border-top: 1px solid var(--color-border);
-}
-
 .unlinked {
   border: 1px solid #f59e0b;
   border-left: 4px solid #f59e0b;
