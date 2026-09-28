@@ -483,7 +483,8 @@ function coverageCardHtml(chart, src) {
     ${CARD_CLOSE}`;
 }
 
-// The pair, side by side, as they sit on the Progress tab. Nothing at all
+// The pair, stacked one above the other at the column's full width, so
+// each chart is drawn large enough to read week by week. Nothing at all
 // when the snapshot carries no coverage: an empty card would say the
 // coverage is missing, when what is missing is the recording of it.
 //
@@ -494,7 +495,7 @@ function coverageCardHtml(chart, src) {
 export function coverageHtml(coverage, srcs = {}) {
   const charts = (Array.isArray(coverage?.charts) ? coverage.charts : [])
     .filter(c => c && c.title && Array.isArray(c.points) && c.points.length);
-  return charts.length ? cardRow(charts.map(c => coverageCardHtml(c, srcs[c.id] || ''))) : '';
+  return charts.map(c => cardRow([coverageCardHtml(c, srcs[c.id] || '')])).join(spacer(12));
 }
 
 const mutedRow = (text) => `<div style="font-family:${FONT};font-size:13px;color:${MUTED}">${esc(text)}</div>`;
