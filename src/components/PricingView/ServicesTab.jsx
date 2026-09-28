@@ -852,6 +852,18 @@ const parsePct = (v) => {
   if (!Number.isFinite(n)) return undefined;
   return n > 1 ? n / 100 : n;
 };
+// Markup is always a percent: "50" and "50%" are both 50%, and "0.5" is
+// half a percent (unlike GM%, which reads 0.5 as 50%). Anything from
+// -100% up.
+const parseMarkup = (v) => {
+  const t = String(v ?? '').replace(/[%,\s]/g, '');
+  if (!t) return null;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < -100) return undefined;
+  return n / 100;
+};
+const fmtMarkupInput = (n) => String(Math.round(n * 10000) / 100);
+const fmtMarkup = (n) => `${fmtMarkupInput(n)}%`;
 const fmtPlain = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   : '');
@@ -934,6 +946,7 @@ function FeeStructureEditor({
             <th>Fee</th>
             <th>Type</th>
             <th className={styles.num}>Fee / Unit</th>
+            <th className={styles.num} style={{ whiteSpace: 'nowrap' }} title="Mark this fee up from the cost of the lines it covers. Fee / Unit = cost x (1 + markup) / units. Blank prices at the Pricing tab's GM.">Markup %</th>
             <th>Unit</th>
             <th className={styles.num}>Unit Count</th>
             <th className={styles.num}>Start Month</th>
@@ -967,15 +980,43 @@ function FeeStructureEditor({
                     placeholder={standardFee(idx) != null ? fmtPlain(standardFee(idx)) : (p?.autoFee != null ? fmtPlain(p.autoFee) : 'auto')}
                     align="right"
                     width={80}
-                    onCommit={(v) => { const n = parseMoney(v); if (n !== undefined) setRow(idx, { fee: n }); }}
+                    onCommit={(v) => {
+                      const n = parseMoney(v);
+                      if (n === undefined) return;
+                      // A typed fee is the price, so a markup left on the
+                      // row would no longer mean anything.
+                      setRow(idx, n == null ? { fee: n } : { fee: n, markupPct: null });
+                    }}
                   />
                   {standardFee(idx) != null && (
                     <div
                       className={typeof r.fee === 'number' && Math.abs(r.fee - standardFee(idx)) > 0.005 ? styles.stdFeeOff : styles.stdFee}
-                      title={`Standard fee: recovers the ${std.perRow[idx].costIdx.length} cost line${std.perRow[idx].costIdx.length === 1 ? '' : 's'} this fee covers at their marked-up price.${typeof r.fee === 'number' ? '' : ' The blank cell bills it.'}`}
+                      title={`Standard fee: recovers the ${std.perRow[idx].costIdx.length} cost line${std.perRow[idx].costIdx.length === 1 ? '' : 's'} this fee covers ${std.perRow[idx].markupPct != null ? `at cost plus a ${fmtMarkup(std.perRow[idx].markupPct)} markup` : 'at their marked-up price'}.${typeof r.fee === 'number' ? '' : ' The blank cell bills it.'}`}
                     >
                       ★ {fmtMoney(standardFee(idx))}
                     </div>
+                  )}
+                </td>
+                <td className={styles.num}>
+                  {r.passThrough ? <span className={styles.muted}>pass</span> : (
+                    <span title={std.perRow[idx].costIdx.length === 0
+                      ? 'No cost lines are on this fee yet, so there is no cost to mark up.'
+                      : `Fee / Unit = cost of the ${std.perRow[idx].costIdx.length} cost line${std.perRow[idx].costIdx.length === 1 ? '' : 's'} on this fee (CTS plus tech depreciation) x (1 + markup) / units. Blank prices at the Pricing tab's GM.`}
+                    >
+                      <DraftInput
+                        value={typeof r.markupPct === 'number' ? fmtMarkupInput(r.markupPct) : ''}
+                        placeholder="GM"
+                        align="right"
+                        width={56}
+                        onCommit={(v) => {
+                          const n = parseMarkup(v);
+                          if (n === undefined) return;
+                          // Setting a markup hands the price back to it, so a
+                          // typed fee steps aside.
+                          setRow(idx, n == null ? { markupPct: null } : { markupPct: n, fee: null });
+                        }}
+                      />
+                    </span>
                   )}
                 </td>
                 <td>
@@ -1026,13 +1067,13 @@ function FeeStructureEditor({
             );
           })}
           {rows.length === 0 && (
-            <tr><td colSpan={hasWorkbook ? 10 + numYears : 10} className={styles.muted}>No fees yet.</td></tr>
+            <tr><td colSpan={hasWorkbook ? 11 + numYears : 11} className={styles.muted}>No fees yet.</td></tr>
           )}
         </tbody>
         {hasWorkbook && rows.length > 0 && (
           <tfoot>
             <tr>
-              <td colSpan={7}>Total</td>
+              <td colSpan={8}>Total</td>
               {totals.map((t, i) => <td key={i} className={styles.num}>{t > 0 ? fmtMoney(t) : ''}</td>)}
               <td colSpan={3} />
             </tr>

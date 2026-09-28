@@ -11,6 +11,7 @@
 //   3. repriceLinkedFees moves linked rows only, and hands back the same
 //      object when nothing changes.
 //   4. A typed fee is left alone and carries no link.
+//   5. A row priced by its own Markup % is all fixed part.
 
 import assert from 'node:assert/strict';
 import {
@@ -72,6 +73,15 @@ test('without the split, no link', () => {
   const { filled } = standardFeeContext(structure, plain, { termMonths: 36 });
   assert.equal(filled.rows[0].fee, 7);
   assert.equal(filled.rows[0].gmLink, undefined);
+});
+
+test('a Markup % row does not move with the GM', () => {
+  const withCost = costs.map((c, i) => ({ ...c, cost: [300, 100][i] }));
+  const marked = { rows: [{ ...structure.rows[0], markupPct: 0.2 }] };
+  const { filled } = standardFeeContext(marked, withCost, { termMonths: 36 });
+  assert.equal(filled.rows[0].fee, 4.8);
+  assert.deepEqual(filled.rows[0].gmLink, { atCost: 0, fixed: 4.8 });
+  assert.equal(feeAtGm(filled.rows[0].gmLink, 0.3), 4.8);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

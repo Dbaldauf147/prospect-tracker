@@ -102,11 +102,13 @@ export function costItemsForService(items, lineItemServices, service) {
 // they carry from deal to deal; applying one writes its rows into the
 // loaded option's Alternative Fee schedule.
 //
-// A row is { feeName, type, fee, unit, unitCount, startMonth, feeGmPct,
-// passThrough }. A blank fee, unit count or start month means "derive it",
-// the same as a blank cell on the schedule: the fee from the costs carrying
-// the fee name, the unit count from the SIA's site / account count, the
-// start month from the costs.
+// A row is { feeName, type, fee, unit, unitCount, startMonth, markupPct,
+// feeGmPct, passThrough }. A blank fee, unit count or start month means
+// "derive it", the same as a blank cell on the schedule: the fee from the
+// costs carrying the fee name, the unit count from the SIA's site / account
+// count, the start month from the costs. markupPct (a fraction, 0.5 = 50%)
+// prices the derived fee off those costs' own cost plus that markup instead
+// of their marked-up price at the Pricing tab's GM.
 
 export const FEE_STRUCTURE_TYPES = ['Setup', 'One Time', 'Recurring (monthly)'];
 export const FEE_STRUCTURE_UNITS = ['Fixed', 'Per Site', 'Per Account', 'Per Meter'];
@@ -122,7 +124,7 @@ export function newFeeStructureId() {
 }
 
 export function blankFeeStructureRow() {
-  return { feeName: '', type: '', fee: null, unit: '', unitCount: null, startMonth: null, feeGmPct: null, passThrough: false };
+  return { feeName: '', type: '', fee: null, unit: '', unitCount: null, startMonth: null, markupPct: null, feeGmPct: null, passThrough: false };
 }
 
 const numOrNull = (v) => {
@@ -207,6 +209,8 @@ export function applyFeeStructureToSchedule(schedule, structureRows, { replaceNa
 // structure (or by none). By default a cost goes to the row carrying its
 // fee name; the user can point it at any row instead. A row's standard fee
 // is then what recovers the costs pointed at it, at their marked-up price:
+// the Pricing tab's GM by default, or, when the row carries a markupPct,
+// each cost's own cost times (1 + markupPct):
 //
 //   upfront fee (Setup / One Time)   sum of upfront cost prices / units
 //   recurring fee (monthly)          sum of monthly cost prices / units,
@@ -220,7 +224,9 @@ export function applyFeeStructureToSchedule(schedule, structureRows, { replaceNa
 // ("Setup Rolled", "One Time Rolled") roll without being asked.
 //
 //   rows          structure rows ({ feeName, type, unit, unitCount, startMonth })
-//   costs         [{ key, description, type, price, startMonth, feeNames: [..] }]
+//   costs         [{ key, description, type, price, cost, startMonth, feeNames: [..] }]
+//                 price is the cost marked up at its GM, cost is what it
+//                 costs (CTS plus tech depreciation)
 //   allocations   structure.allocations: { [cost key]: { fee, roll } } where
 //                 fee is a lowercased fee name, '' for "not covered", or
 //                 absent for the default
@@ -327,7 +333,7 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
     const rowStart = row ? Math.round(Number(row.startMonth) || 1) : 1;
     const later = costStart > FIRST_YEAR_MONTHS;
     const billedEarly = later && !!row && yearOfMonth(rowStart) < yearOfMonth(costStart);
-    return { key: c.key, rowIdx, defaulted, bucket, feeBucket: fb, canRoll, rolled, issue, price: c.price, startMonth: costStart, later, billedEarly };
+    return { key: c.key, rowIdx, defaulted, bucket, feeBucket: fb, canRoll, rolled, issue, price: c.price, cost: c.cost, startMonth: costStart, later, billedEarly };
   });
 
   rows.forEach((row, ri) => {
@@ -337,17 +343,26 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
     const start = Math.max(1, Math.round(alt.startMonth || 1));
     const rollMonths = Math.max(1, Math.round(termMonths) - start + 1);
     const agg = perRow[ri];
+    // A markup typed on the row prices its costs off what they cost; a
+    // pass-through fee bills at cost already, so it takes no markup.
+    const markup = typeof row?.markupPct === 'number' && Number.isFinite(row.markupPct) && row?.passThrough !== true
+      ? row.markupPct
+      : null;
+    agg.markupPct = markup;
     let any = false;
     costOut.forEach((co, ci) => {
       if (co.rowIdx !== ri) return;
       agg.costIdx.push(ci);
-      if (typeof co.price !== 'number' || !Number.isFinite(co.price) || co.issue) return;
+      const price = markup != null
+        ? (typeof co.cost === 'number' && Number.isFinite(co.cost) ? co.cost * (1 + markup) : null)
+        : co.price;
+      if (typeof price !== 'number' || !Number.isFinite(price) || co.issue) return;
       const effBucket = fb || co.feeBucket;
       if (effBucket === COST_BUCKET_RECURRING) {
-        if (co.bucket === COST_BUCKET_RECURRING) { agg.monthlyTotal += co.price; any = true; }
-        else if (co.rolled) { agg.monthlyTotal += co.price / rollMonths; any = true; }
+        if (co.bucket === COST_BUCKET_RECURRING) { agg.monthlyTotal += price; any = true; }
+        else if (co.rolled) { agg.monthlyTotal += price / rollMonths; any = true; }
       } else if (effBucket === COST_BUCKET_UPFRONT && co.bucket === COST_BUCKET_UPFRONT) {
-        agg.upfrontTotal += co.price;
+        agg.upfrontTotal += price;
         any = true;
       }
     });
@@ -408,6 +423,7 @@ export function addLaterCostFees(structure, costs, opts = {}) {
       unit: from?.unit || '',
       unitCount: from?.unitCount ?? null,
       startMonth: g.startMonth,
+      markupPct: typeof from?.markupPct === 'number' ? from.markupPct : null,
       feeGmPct: null,
       passThrough: from?.passThrough === true,
     });
@@ -456,7 +472,7 @@ export function costTotalsByLineItem(items) {
 // one the other shows.
 //
 //   costs   the service's cost lines as the Services subtab reads them
-//           ({ description, type, price, startMonth, feeName, automatedName })
+//           ({ description, type, price, cost, startMonth, feeName, automatedName })
 
 export function feeStructureCostInputs(costs) {
   return (costs || []).map(c => ({
@@ -464,6 +480,7 @@ export function feeStructureCostInputs(costs) {
     description: c.description,
     type: c.type,
     price: c.price,
+    cost: c.cost,
     startMonth: c.startMonth,
     feeNames: [c.feeName, c.automatedName].filter(Boolean),
   }));
@@ -487,7 +504,13 @@ export function standardFeeContext(structure, costs, { termMonths = 36, siteCoun
   const linkable = (costs || []).some(c => typeof c?.priceAtCost === 'number');
   const split = (field) => standardFeesForStructure({
     ...opts,
-    costs: costInputs.map((c, i) => ({ ...c, price: typeof c.price === 'number' ? (Number(costs[i]?.[field]) || 0) : c.price })),
+    // A row with its own Markup % prices off cost, not the GM: all of it
+    // lands in the fixed part.
+    costs: costInputs.map((c, i) => ({
+      ...c,
+      price: typeof c.price === 'number' ? (Number(costs[i]?.[field]) || 0) : c.price,
+      cost: field === 'priceAtCost' && typeof c.cost === 'number' ? 0 : c.cost,
+    })),
   }).perRow;
   const atCost = linkable ? split('priceAtCost') : null;
   const fixed = linkable ? split('priceFixed') : null;
