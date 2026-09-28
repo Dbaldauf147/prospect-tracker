@@ -303,13 +303,6 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
   const costTotal = items.reduce((s, it) => s + (typeof it.cts === 'number' ? it.cts : 0), 0);
   const ignoredCount = items.filter(it => it.ignored).length;
   const ignoredTotal = items.reduce((s, it) => s + (it.ignored && typeof it.cts === 'number' ? it.cts : 0), 0);
-  const meta = service.meta || {};
-  const facts = [
-    service.bucket && ['Group', service.bucket],
-    meta.productLine && ['Product line', meta.productLine],
-    meta.serviceType && ['Service type', meta.serviceType],
-    meta.years && ['Contract years', meta.years],
-  ].filter(Boolean);
 
   return (
     <div className={styles.detail}>
@@ -318,19 +311,11 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
         {service.inScope && <span className={styles.scopeTag}>In SIA scope</span>}
         <span className={styles[STATUS_CLASS[service.status]]}>{service.status}</span>
       </div>
-      {facts.length > 0 && (
-        <div className={styles.facts}>
-          {facts.map(([k, v]) => <span key={k}><span className={styles.factKey}>{k}:</span> {String(v)}</span>)}
-        </div>
-      )}
 
       {!hasWorkbook ? (
         <div className={styles.placeholder}>Upload an SIA on the Pricing subtab to see the cost lines and fees behind this service.</div>
       ) : (
           <section className={styles.section}>
-            <h4 className={styles.sectionTitle}>
-              Cost line items{optionName ? ` on ${optionName}` : ''} ({items.length})
-            </h4>
             {items.length === 0 ? (
               <div className={styles.note}>
                 No cost line on this option is tied to this service.
@@ -735,9 +720,6 @@ function RateCheck({ check, counts = {}, entered = {}, ignoredCount = 0, onSetCo
       ? `${fmtWhole(v)} deal size`
       : `${Number(v).toLocaleString('en-US')} ${unitLabelFor(k).toLowerCase()}`)),
   ].filter(Boolean).join(', ');
-  let gap = '';
-  if (check.status === RATE_CHECK.BELOW) gap = `${fmtWhole(Math.min(check.low, check.high) - check.price)} under the low end`;
-  if (check.status === RATE_CHECK.ABOVE) gap = `${fmtWhole(check.price - Math.max(check.low, check.high))} over the high end`;
 
   return (
     <section className={styles.section}>
@@ -751,7 +733,6 @@ function RateCheck({ check, counts = {}, entered = {}, ignoredCount = 0, onSetCo
           <span className={styles.factKey}>Rate card range:</span>{' '}
           <span className={styles.rateFigure}>{check.noFee ? 'No fee' : (check.status === RATE_CHECK.INCOMPLETE && !(check.high > 0) ? 'Unknown' : (range || 'not set'))}</span>
         </span>
-        {gap && <span className={styles.factKey}>{gap}</span>}
       </div>
       <RateMeter check={check} />
       {check.parts?.length > 0 && <FeeParts parts={check.parts} markup={check.markup} />}
@@ -934,11 +915,6 @@ function RateMeter({ check, compact = false }) {
             <span className={styles.meterScaleLabel} style={{ left: `${labelAt(hi)}%` }}>{fmtWhole(hi)}</span>
           </>
         )}
-      </div>
-      <div className={styles.meterLegend}>
-        <span><span className={styles.meterKeyBand} /> Rate card range</span>
-        <span><span className={`${styles.meterKeyDot} ${tone}`} /> Marked-up price</span>
-        <span><span className={styles.meterKeyCost} /> Cost</span>
       </div>
     </div>
   );

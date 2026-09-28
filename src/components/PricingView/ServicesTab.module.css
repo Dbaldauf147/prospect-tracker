@@ -248,14 +248,6 @@
   font-size: 1.05rem;
 }
 
-.facts {
-  display: flex;
-  gap: 1rem;
-  flex-wrap: wrap;
-  font-size: var(--font-size-xs);
-  color: var(--color-text);
-}
-
 .factKey {
   color: var(--color-text-muted);
 }
@@ -784,45 +776,9 @@
 .meterIn { color: #166534; }
 .meterOut { color: #b91c1c; }
 .meterUnknown { color: #475569; }
-.meterDot.meterIn, .meterKeyDot.meterIn { background: #16a34a; }
-.meterDot.meterOut, .meterKeyDot.meterOut { background: #dc2626; }
-.meterDot.meterUnknown, .meterKeyDot.meterUnknown { background: #64748b; }
-
-.meterLegend {
-  display: flex;
-  gap: 1rem;
-  flex-wrap: wrap;
-  margin-top: 0.2rem;
-  color: var(--color-text-muted);
-}
-
-.meterLegend > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-}
-
-.meterKeyBand {
-  display: inline-block;
-  width: 14px;
-  height: 8px;
-  border-radius: 4px;
-  background: #86efac;
-}
-
-.meterKeyDot {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
-
-.meterKeyCost {
-  display: inline-block;
-  width: 2px;
-  height: 12px;
-  background: #64748b;
-}
+.meterDot.meterIn { background: #16a34a; }
+.meterDot.meterOut { background: #dc2626; }
+.meterDot.meterUnknown { background: #64748b; }
 
 /* Costs starting after the first year with no fee billing from then. */
 .laterNote {
