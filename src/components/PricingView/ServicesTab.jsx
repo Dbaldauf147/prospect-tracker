@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import styles from './ServicesTab.module.css';
 import {
   SERVICE_STATUS, FEE_STRUCTURE_TYPES, FEE_STRUCTURE_UNITS, serviceKey,
@@ -53,6 +53,26 @@ export function ServicesTab({
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(null);
   const [showInactive, setShowInactive] = useState(true);
+  // The service list stays in view while the detail beside it scrolls, and
+  // runs to the bottom of the visible area. How tall that area is depends
+  // on how far the Pricing header above wraps, so it is measured rather
+  // than guessed at in CSS.
+  const wrapperRef = useRef(null);
+  const [listMaxHeight, setListMaxHeight] = useState(null);
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const measure = () => {
+      // Less the top padding it pins under and a small gap at the foot.
+      const pad = (parseFloat(getComputedStyle(el).paddingTop) || 0) + 12;
+      const h = el.clientHeight - pad;
+      setListMaxHeight(h > 300 ? Math.floor(h) : null);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0] || null;
   const scopeCount = services.filter(s => s.inScope).length;
@@ -84,7 +104,7 @@ export function ServicesTab({
     : null;
 
   return (
-    <div className={styles.wrapper}>
+    <div className={styles.wrapper} ref={wrapperRef}>
       <p className={styles.intro}>
         Every service on the Dropdowns tab, with its status there. Services tied to a cost line on the
         attached SIA are tagged <span className={styles.scopeTag}>In SIA scope</span> and listed first.
@@ -120,7 +140,7 @@ export function ServicesTab({
       )}
 
       <div className={styles.layout}>
-        <div className={styles.listPane}>
+        <div className={styles.listPane} style={listMaxHeight ? { maxHeight: listMaxHeight } : undefined}>
           <div className={styles.listTools}>
             <input
               type="search"
