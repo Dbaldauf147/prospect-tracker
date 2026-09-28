@@ -54,7 +54,9 @@ function labelEvery(n) {
 // One or two lines over the same weeks, a dot per known reading. `series`
 // is [{ key, name, color }], each reading `point[key]`. `goal`, when set,
 // is drawn as a dashed line. The y axis starts at zero.
-export function LineTrendChart({ id, points = [], series = [], goal = null, yMax = null, fmt, breakdownFor }) {
+// `height`, when set, is the plot's (and its y axis's) height in pixels in
+// place of the stylesheet's default.
+export function LineTrendChart({ id, points = [], series = [], goal = null, yMax = null, height = null, fmt, breakdownFor }) {
   const values = points.flatMap(p => series.map(s => p[s.key])).filter(Number.isFinite);
   const top = yMax ?? (Math.max(Number.isFinite(goal) ? goal : 0, ...values, 0) * 1.1 || 1);
   const n = points.length;
@@ -87,11 +89,11 @@ export function LineTrendChart({ id, points = [], series = [], goal = null, yMax
         </div>
       )}
       <div className={styles.lineBody}>
-        <div className={styles.yAxis}>
+        <div className={styles.yAxis} style={height ? { height } : undefined}>
           <span>{fmt(top)}</span>
           <span>{fmt(0)}</span>
         </div>
-        <div className={styles.plot}>
+        <div className={styles.plot} style={height ? { height } : undefined}>
           <svg className={styles.svg} viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
             <line x1="0" x2="100" y1="100" y2="100" className={styles.baseline} />
             <line x1="0" x2="100" y1="50" y2="50" className={styles.grid} />

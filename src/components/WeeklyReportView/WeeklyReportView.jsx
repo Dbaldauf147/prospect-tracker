@@ -945,7 +945,8 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
             </span>
           </div>
           {coverageSeries ? (
-            <div className={styles.chartGrid}>
+            // Stacked at full width, as the email lays them out.
+            <div className={styles.chartStack}>
               {coverageSeries.charts.map(chart => (
                 <div key={chart.id} className={styles.chartCard}>
                   <div className={styles.chartTitle}>{chart.title}</div>
@@ -957,6 +958,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
                       { key: 't2', name: 'Tier 2', color: COVERAGE_T2 },
                     ]}
                     yMax={100}
+                    height={220}
                     fmt={v => `${Math.round(v)}%`}
                     breakdownFor={(point, s) => accountCoverageBreakdown({
                       chart, point, tier: s.key === 't2' ? 2 : 1, progressWeeks,
