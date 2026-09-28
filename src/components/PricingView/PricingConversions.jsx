@@ -85,7 +85,10 @@ function HintRow({ label, children }) {
   );
 }
 
-export function PricingConversions() {
+// open / onToggle make the panel controlled (the Pricing subtab keeps it
+// collapsed by default and remembers the choice); without them it keeps
+// its own state and starts open.
+export function PricingConversions({ open: openProp, onToggle } = {}) {
   // Each calculator owns its own little state. Sensible defaults that
   // match the worked example values from the request so the panel
   // shows the right answers on first open.
@@ -104,7 +107,14 @@ export function PricingConversions() {
   const [c5Start, setC5Start] = useState(1500);
   const [c5End, setC5End] = useState(4687.56);
 
-  const [open, setOpen] = useState(true);
+  const [openState, setOpenState] = useState(true);
+  const controlled = typeof openProp === 'boolean';
+  const open = controlled ? openProp : openState;
+  const setOpen = (fn) => {
+    const next = fn(open);
+    if (controlled) onToggle?.(next);
+    else setOpenState(next);
+  };
 
   // Optional extra decimal places on the displayed conversion results.
   // This is purely a view control and is deliberately kept in local
