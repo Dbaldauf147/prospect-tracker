@@ -706,9 +706,11 @@ function RateCheck({ check }) {
     ? { ...check, cost: pu.cost, price: pu.price, low: pu.rateLow, high: pu.rateHigh }
     : check;
   const fmt = pu ? fmtRate : fmtWhole;
-  const markupLabel = typeof check.markup === 'number'
-    ? `Marked up ${Math.round(check.markup * 1000) / 10}%`
-    : 'Marked up per fee structure';
+  const pct = (n) => `${Math.round(n * 1000) / 10}%`;
+  const deprNote = check.techDeprPct > 0 ? ` + ${pct(check.techDeprPct)} tech depr.` : '';
+  const markupLabel = typeof check.margin === 'number'
+    ? `At ${pct(check.margin)} margin${deprNote}`
+    : `At each line's margin${deprNote}`;
   const range = shown.low == null ? '' : (fmt(shown.low) === fmt(shown.high)
     ? fmt(shown.low)
     : `${fmt(Math.min(shown.low, shown.high))} – ${fmt(Math.max(shown.low, shown.high))}`);
@@ -728,7 +730,7 @@ function RateCheck({ check }) {
       </div>
       {pu && (
         <p className={styles.note}>
-          {period} cost of {fmtWhole(pu.totalCost ?? check.cost)}, marked up to {fmtWhole(pu.totalPrice ?? check.price)}, over {pu.units.toLocaleString('en-US')} {String(pu.unitLabel || 'units').toLowerCase()}.
+          {period} cost of {fmtWhole(pu.totalCost ?? check.cost)}, priced at {fmtWhole(pu.totalPrice ?? check.price)}, over {pu.units.toLocaleString('en-US')} {String(pu.unitLabel || 'units').toLowerCase()}.
         </p>
       )}
       <RateMeter check={shown} fmt={fmt} />

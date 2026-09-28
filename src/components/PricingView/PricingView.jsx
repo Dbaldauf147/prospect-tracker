@@ -4771,6 +4771,7 @@ export function PricingView({ settings } = {}) {
       meta: svc?.meta || null,
       counts,
       bases,
+      techDeprPct,
     });
     return { items, fees, rateCheck, counts, enteredCounts, fromSia, sia };
   }

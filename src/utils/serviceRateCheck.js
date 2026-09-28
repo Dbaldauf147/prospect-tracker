@@ -10,8 +10,10 @@
 //   card side   estimateServiceRange's first-year fee plus setup, low and
 //               high, priced on the option's own site and account counts.
 //
-// Each cost line is marked up at its own `markup` when it carries one, else
-// at the default.
+// Each cost line is priced at its own `margin` when it carries one, else at
+// the default, after tech depreciation is added to it the way the rest of
+// the Pricing page costs a line: price = CTS x (1 + tech depr) / (1 - margin).
+// A $268 cost at 50% margin with 4% tech depreciation prices at $557.44.
 //
 // A card quoted per month (see `period` in servicePricing) is compared per
 // month, where it is quoted per unit: the recurring cost lines' monthly run
@@ -27,7 +29,10 @@
 
 import { estimateServiceRange, PRICING_BASES } from './servicePricing.js';
 
-export const DEFAULT_MARKUP = 0.5;
+export const DEFAULT_MARGIN = 0.5;
+
+// What one dollar of CTS is priced at.
+const priceFactor = (margin, techDeprPct) => (1 + (Number(techDeprPct) || 0)) / (1 - Math.min(margin, 0.99));
 
 export const RATE_CHECK = {
   WITHIN: 'within',
@@ -71,10 +76,11 @@ function partOfCost(it) {
 // cost. `runRate` is the recurring lines' full year (monthly × 12), which
 // is how an annual per-unit rate is quoted.
 //
-// `priced`, `pricedRunRate` and `price` are the same figures marked up,
-// each line at its own `markup` when it has one, else at `markup`.
-// `markups` lists the distinct markups the counted lines were priced at.
-export function year1CostOf(items = [], markup = DEFAULT_MARKUP) {
+// `priced`, `pricedRunRate` and `price` are the same figures priced, each
+// line at its own `margin` when it has one, else at `margin`, with tech
+// depreciation added. `margins` lists the distinct margins the counted
+// lines were priced at.
+export function year1CostOf(items = [], margin = DEFAULT_MARGIN, techDeprPct = 0) {
   const parts = { setup: 0, recurring: 0, oneTime: 0 };
   const priced = { setup: 0, recurring: 0, oneTime: 0 };
   const lines = { setup: 0, recurring: 0, oneTime: 0 };
@@ -82,30 +88,31 @@ export function year1CostOf(items = [], markup = DEFAULT_MARKUP) {
   let pricedRunRate = 0;
   let passThrough = 0;
   let later = 0;
-  const markups = new Set();
+  const margins = new Set();
   for (const it of items) {
     if (typeof it?.cts !== 'number' || !Number.isFinite(it.cts)) continue;
     if (it.passThrough) { passThrough += 1; continue; }
     const start = startOf(it);
     if (start > 12) { later += 1; continue; }
-    const m = typeof it.markup === 'number' && Number.isFinite(it.markup) ? it.markup : markup;
-    markups.add(m);
+    const m = typeof it.margin === 'number' && Number.isFinite(it.margin) ? it.margin : margin;
+    margins.add(m);
+    const f = priceFactor(m, techDeprPct);
     const part = partOfCost(it);
     if (part === 'recurring') {
       parts.recurring += it.cts * (13 - start);
-      priced.recurring += it.cts * (13 - start) * (1 + m);
+      priced.recurring += it.cts * (13 - start) * f;
       runRate += it.cts * 12;
-      pricedRunRate += it.cts * 12 * (1 + m);
+      pricedRunRate += it.cts * 12 * f;
     } else {
       parts[part] += it.cts;
-      priced[part] += it.cts * (1 + m);
+      priced[part] += it.cts * f;
     }
     lines[part] += 1;
   }
   const cost = parts.setup + parts.recurring + parts.oneTime;
   const price = priced.setup + priced.recurring + priced.oneTime;
   const counted = lines.setup + lines.recurring + lines.oneTime;
-  return { cost, price, counted, passThrough, later, parts, priced, lines, runRate, pricedRunRate, markups: [...markups] };
+  return { cost, price, counted, passThrough, later, parts, priced, lines, runRate, pricedRunRate, margins: [...margins] };
 }
 
 const statusOf = (price, low, high) => {
@@ -166,14 +173,15 @@ function feePart({ key, label, cost: year1Cost, price: year1Price, lineCount, ru
  * meta     the service's catalog metadata (Type, Years)
  * counts   { sites, accounts, ... } off the SIA option, plus any typed in
  *          for the check; `dealSize` is what a percentage fee is a cut of
- * markup   0.5 means cost × 1.5
+ * margin       0.5 means half the price is margin: cost ÷ 0.5
+ * techDeprPct  added to each cost first, as the Pricing page does
  */
-export function rateCardCheck({ items = [], entry = null, meta = null, counts = {}, markup = DEFAULT_MARKUP, bases = PRICING_BASES } = {}) {
-  const year1 = year1CostOf(items, markup);
+export function rateCardCheck({ items = [], entry = null, meta = null, counts = {}, margin = DEFAULT_MARGIN, techDeprPct = 0, bases = PRICING_BASES } = {}) {
+  const year1 = year1CostOf(items, margin, techDeprPct);
   const { cost, price, counted, passThrough, later } = year1;
-  // The one markup every counted line was priced at, or null when the fee
-  // structure marks its fees up differently.
-  const appliedMarkup = year1.markups.length === 0 ? markup : (year1.markups.length === 1 ? year1.markups[0] : null);
+  // The one margin every counted line was priced at, or null when they
+  // differ.
+  const appliedMargin = year1.margins.length === 0 ? margin : (year1.margins.length === 1 ? year1.margins[0] : null);
   const est = entry ? estimateServiceRange({ entry, meta, counts, dealSize: counts?.dealSize ?? null, bases }) : null;
   const priced = !!est?.priced && !est.noFee;
   const low = priced ? (est.fee || 0) + (est.setup || 0) : null;
@@ -254,7 +262,7 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
   const unitsUsed = [...new Set(lines.filter(b => b.kind === 'unit' && b.unit).map(b => b.unit))];
 
   return {
-    status, cost, price, markup: appliedMarkup, low, high, notes, passThrough, later, missing, parts, unitsUsed, perUnit,
+    status, cost, price, margin: appliedMargin, techDeprPct: Number(techDeprPct) || 0, low, high, notes, passThrough, later, missing, parts, unitsUsed, perUnit,
     noFee: !!est?.noFee,
   };
 }
