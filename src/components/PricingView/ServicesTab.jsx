@@ -392,7 +392,6 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
                     <th>Type</th>
                     <th className={styles.num}>CTS</th>
                     <th className={styles.num}>Start Month</th>
-                    <th>Fee Name</th>
                     <th>Unit</th>
                     <th>Pass-through</th>
                     {onIgnoreForCheck && <th title="Untick to leave a line out of the price check below.">In price check</th>}
@@ -459,12 +458,6 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
                       </td>
                       <td className={styles.num}>{fmtMoney(it.cts)}</td>
                       <td className={styles.num}>{it.startMonth || ''}</td>
-                      <td>
-                        {it.feeName || <span className={styles.muted}>none</span>}
-                        {it.automatedName && it.automatedName.toLowerCase() !== it.feeName.toLowerCase() && (
-                          <div className={styles.subNote}>Automated Fee Name: {it.automatedName}</div>
-                        )}
-                      </td>
                       <td>{it.unit}</td>
                       <td>{it.passThrough ? 'Yes' : ''}</td>
                       {onIgnoreForCheck && (
@@ -487,7 +480,7 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
                       {fmtMoney(costTotal)}
                       {ignoredCount > 0 && <div className={styles.subNote}>{fmtMoney(costTotal - ignoredTotal)} in price check</div>}
                     </td>
-                    <td colSpan={onIgnoreForCheck ? 5 : 4} />
+                    <td colSpan={onIgnoreForCheck ? 4 : 3} />
                   </tr>
                 </tfoot>
               </table>
