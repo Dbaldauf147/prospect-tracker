@@ -169,6 +169,9 @@ export function feeStructureRowToAltRow(row, { siteCount, accountCount } = {}) {
     feeGmPct: null,
     passThrough: row?.passThrough === true,
     ...(row?.gmLink ? { gmLink: row.gmLink } : {}),
+    // The Fee Builder's note of which cost lines the row prices, for its
+    // margin column. Stripped before anything is written to the schedule.
+    ...(Array.isArray(row?.costIds) ? { costIds: row.costIds } : {}),
   };
 }
 
@@ -623,7 +626,21 @@ export function buildScheduleFromStructures(schedule, picks, { siteCount, accoun
     const priced = group.filter(r => r.fee != null);
     const keep = new Set(priced.length ? priced : group.slice(0, 1));
     const drop = group.filter(r => !keep.has(r));
-    if (drop.length) rows = rows.filter(r => !drop.includes(r));
+    if (drop.length) {
+      // The row that stays bills the dropped rows' costs, so it carries
+      // them for the margin too.
+      const first = [...keep][0];
+      const ids = drop.flatMap(r => r.costIds || []);
+      if (ids.length) {
+        const merged = { ...first, costIds: [...(first.costIds || []), ...ids] };
+        serviceOf.set(merged, serviceOf.get(first));
+        keep.delete(first);
+        keep.add(merged);
+        rows = rows.map(r => (r === first ? merged : r));
+        for (const ps of perService) ps.added = ps.added.map(r => (r === first ? merged : r));
+      }
+      rows = rows.filter(r => !drop.includes(r));
+    }
     const kept = [...new Set([...keep].map(r => serviceOf.get(r)))];
     shared.push({
       fee: group[0].altItem,
@@ -642,7 +659,9 @@ export function buildScheduleFromStructures(schedule, picks, { siteCount, accoun
 //             years: [..], term }]
 //
 // Returns [{ row, subRows }] in first-seen order, subRows empty for a fee
-// with one row. A group's fee per unit is the sum of its rows' when they
+// with one row. Rows carrying cost (the term cost of the lines they price)
+// give the group that cost summed and its margin on the summed term. A
+// group's fee per unit is the sum of its rows' when they
 // all bill the same unit and count, and blank otherwise, since adding
 // per-site to per-account says nothing.
 export function groupFeeRows(rows) {
@@ -677,6 +696,12 @@ export function groupFeeRows(rows) {
         passThrough: list.every(x => x.passThrough),
         years,
         term: years.reduce((a, b) => a + b, 0),
+        ...(() => {
+          if (!list.some(x => typeof x.cost === 'number')) return {};
+          const cost = list.reduce((a, x) => a + (Number(x.cost) || 0), 0);
+          const term = years.reduce((a, b) => a + b, 0);
+          return { cost, margin: term > 0 ? (term - cost) / term : null };
+        })(),
       },
       subRows: list,
     };

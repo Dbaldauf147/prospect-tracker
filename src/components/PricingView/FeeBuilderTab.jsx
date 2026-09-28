@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react';
-import * as XLSX from 'xlsx';
+import { sanitizeExcelWorkbook } from '../../utils/exportSanitize';
 import styles from './ServicesTab.module.css';
 import own from './FeeBuilderTab.module.css';
 import { serviceKey, groupFeeRows } from '../../utils/pricingServices';
@@ -31,57 +31,85 @@ function fromLabel(g, covered) {
 
 // The as-built schedule as a workbook: a fee several services share is one
 // line with a grouped (collapsible) sub-row per service under it, then the
-// option's totals now and as built.
-function exportPlan(plan) {
+// total and the option's totals now and as built. Group lines and totals
+// are styled apart from the rows under them so they read as totals.
+async function exportPlan(plan) {
+  const { Workbook } = await import('exceljs');
   const numYears = plan.numYears || 1;
   const yearIdx = Array.from({ length: numYears }, (_, i) => i);
   const money = (n) => (typeof n === 'number' && Number.isFinite(n) && n !== 0 ? Math.round(n * 100) / 100 : null);
-  const line = (r, name, from) => [
+  const pct = (n) => (typeof n === 'number' && Number.isFinite(n) ? n : null);
+  const MONEY = '$#,##0.00';
+  const PCT = '0.0%';
+  const thin = { style: 'thin', color: { argb: 'FFCBD5E1' } };
+  const fill = (argb) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
+
+  const wb = new Workbook();
+  const ws = wb.addWorksheet('As built', { properties: { outlineProperties: { summaryBelow: false } } });
+  const headers = ['Fee', 'From', 'Type', 'Fee / Unit', 'Unit', 'Unit Count', 'Start Month', ...yearIdx.map(i => `Y${i + 1}`), 'Term', 'Margin'];
+  const moneyCols = [4, ...yearIdx.map(i => 8 + i), 8 + numYears];
+  const marginCol = 9 + numYears;
+  ws.columns = [30, 34, 20, 12, 12, 11, 11, ...yearIdx.map(() => 14), 14, 10].map(width => ({ width }));
+
+  const head = ws.addRow(headers);
+  head.eachCell(c => { c.font = { bold: true }; c.fill = fill('FFF1F5F9'); c.border = { bottom: thin }; });
+  const formats = (row) => {
+    for (const c of moneyCols) row.getCell(c).numFmt = MONEY;
+    row.getCell(marginCol).numFmt = PCT;
+  };
+  const line = (r, name, from) => ws.addRow([
     name, from, r.type || '', typeof r.feePerUnit === 'number' ? r.feePerUnit : null, r.unit || '',
-    r.unitCount ?? null, r.startMonth ?? null, ...yearIdx.map(i => money(r.years?.[i])), money(r.term),
-  ];
-  const aoa = [['Fee', 'From', 'Type', 'Fee / Unit', 'Unit', 'Unit Count', 'Start Month', ...yearIdx.map(i => `Y${i + 1}`), 'Term']];
-  const rowLevels = [{}];
+    r.unitCount ?? null, r.startMonth ?? null, ...yearIdx.map(i => money(r.years?.[i])), money(r.term), pct(r.margin),
+  ]);
+
   const covered = coveredByFee(plan.shared);
   for (const g of groupFeeRows(plan.rows)) {
-    const from = fromLabel(g, covered);
-    aoa.push(line(g.row, g.row.name, from));
-    rowLevels.push({});
+    const top = line(g.row, g.row.name, fromLabel(g, covered));
+    formats(top);
+    if (g.subRows.length) {
+      top.eachCell({ includeEmpty: true }, c => { c.font = { bold: true }; c.fill = fill('FFEEF2FF'); });
+    }
     for (const sr of g.subRows) {
-      aoa.push(line(sr, `   ${sr.name}`, sr.service || 'On the schedule'));
-      rowLevels.push({ level: 1 });
+      const sub = line(sr, sr.name, sr.service || 'On the schedule');
+      formats(sub);
+      sub.outlineLevel = 1;
+      sub.getCell(1).alignment = { indent: 2 };
+      sub.getCell(1).font = { color: { argb: 'FF64748B' } };
     }
   }
-  aoa.push(['Total', '', '', null, '', null, null, ...yearIdx.map(i => money(plan.after.feeByYear[i])), money(sum(plan.after.feeByYear))]);
-  aoa.push([]);
-  aoa.push([`${plan.optionName} totals`, ...yearIdx.map(i => `Y${i + 1} fees`), 'Term fees', 'Term cost', 'Deal margin']);
+  const termAll = sum(plan.rows.map(r => r.term));
+  const costAll = sum(plan.rows.map(r => r.cost));
+  const total = ws.addRow(['Total', '', '', null, '', null, null, ...yearIdx.map(i => money(plan.after.feeByYear[i])),
+    money(sum(plan.after.feeByYear)), termAll > 0 ? (termAll - costAll) / termAll : null]);
+  formats(total);
+  total.eachCell({ includeEmpty: true }, c => {
+    c.font = { bold: true };
+    c.fill = fill('FFE2E8F0');
+    c.border = { top: thin, bottom: { style: 'double', color: { argb: 'FF64748B' } } };
+  });
+
+  ws.addRow([]);
+  const th = ws.addRow([`${plan.optionName} totals`, ...yearIdx.map(i => `Y${i + 1} fees`), 'Term fees', 'Term cost', 'Deal margin']);
+  th.eachCell(c => { c.font = { bold: true }; c.fill = fill('FFF1F5F9'); c.border = { bottom: thin }; });
   for (const [label, t] of [['Now on the schedule', plan.before], ['As built', plan.after]]) {
-    aoa.push([label, ...yearIdx.map(i => money(t.feeByYear[i])), money(sum(t.feeByYear)), money(sum(t.costByYear)),
+    const r = ws.addRow([label, ...yearIdx.map(i => money(t.feeByYear[i])), money(sum(t.feeByYear)), money(sum(t.costByYear)),
       t.margin?.finalMargin != null ? t.margin.finalMargin : null]);
+    for (let c = 2; c <= numYears + 3; c++) r.getCell(c).numFmt = MONEY;
+    r.getCell(numYears + 4).numFmt = PCT;
+    if (label === 'As built') r.eachCell(c => { c.font = { bold: true }; });
   }
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws['!rows'] = rowLevels;
-  ws['!outline'] = { above: true };
-  ws['!cols'] = [{ wch: 30 }, { wch: 26 }, { wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 11 }, { wch: 11 }, ...yearIdx.map(() => ({ wch: 14 })), { wch: 14 }];
-  // Money formats on the schedule's money columns and the totals block;
-  // Deal margin as a percentage.
-  const range = XLSX.utils.decode_range(ws['!ref']);
-  const scheduleEnd = rowLevels.length; // header + fee rows + Total
-  for (let R = 1; R <= range.e.r; R++) {
-    for (let C = 0; C <= range.e.c; C++) {
-      const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
-      if (!cell || cell.t !== 'n') continue;
-      if (R <= scheduleEnd) {
-        if (C === 3 || C >= 7) cell.z = '$#,##0.00';
-      } else {
-        cell.z = C === numYears + 3 ? '0.0%' : '$#,##0.00';
-      }
-    }
-  }
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'As built');
-  const safe = String(plan.optionName || 'option').replace(/[^\w.-]+/g, '-');
-  XLSX.writeFile(wb, `fee-schedule-${safe}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+
+  sanitizeExcelWorkbook(wb);
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `fee-schedule-${String(plan.optionName || 'option').replace(/[^\w.-]+/g, '-')}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // Fee Builder subtab: one row per service in SIA scope (and any other
@@ -251,7 +279,7 @@ export function FeeBuilderTab({
               type="button"
               className={own.smallBtn}
               disabled={plan.rows.length === 0}
-              onClick={() => exportPlan(plan)}
+              onClick={() => { exportPlan(plan).catch(err => window.alert(`Export failed: ${err?.message || err}`)); }}
               title="Download this schedule as an Excel file. A fee shared by several services is grouped with a sub-row for each."
             >
               Export to Excel
@@ -302,6 +330,7 @@ export function FeeBuilderTab({
                   <th className={styles.num}>Start Month</th>
                   {yearIdx.map(i => <th key={i} className={styles.num}>{`Y${i + 1}`}</th>)}
                   <th className={styles.num}>Term</th>
+                  <th className={styles.num} title="Term fees against the term cost of the cost lines the fee prices">Margin</th>
                 </tr>
               </thead>
               <tbody>
@@ -317,6 +346,7 @@ export function FeeBuilderTab({
                       <td className={styles.num}>{r.startMonth ?? ''}</td>
                       {yearIdx.map(yi => <td key={yi} className={styles.num}>{r.years[yi] ? fmtMoney(r.years[yi]) : ''}</td>)}
                       <td className={styles.num}>{r.term ? fmtMoney(r.term) : ''}</td>
+                      <td className={styles.num}>{fmtPct(r.margin)}</td>
                     </>
                   );
                   if (!isGroup) {
@@ -363,6 +393,12 @@ export function FeeBuilderTab({
                   <td colSpan={7}>Total</td>
                   {yearIdx.map(yi => <td key={yi} className={styles.num}>{fmtMoney(plan.after.feeByYear[yi])}</td>)}
                   <td className={styles.num}>{fmtMoney(sum(plan.after.feeByYear))}</td>
+                  <td
+                    className={styles.num}
+                    title="Fees against the cost lines they price. Deal margin below also counts cost no fee prices."
+                  >
+                    {(() => { const t = sum(plan.rows.map(r => r.term)); return t > 0 ? fmtPct((t - sum(plan.rows.map(r => r.cost))) / t) : ''; })()}
+                  </td>
                 </tr>
               </tbody>
             </table>

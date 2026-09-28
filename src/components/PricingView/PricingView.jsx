@@ -2960,22 +2960,7 @@ export function PricingView({ settings } = {}) {
       }
     }
 
-    const totalCost = linked.reduce((s, item) => {
-      if (typeof item.cts !== 'number') return s;
-      const t = effectiveType(item);
-      const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
-      // Effective cost folds tech depr into non-pass-through cost.
-      const baseCost = ctsItemEffectiveCost(item);
-      // Same start-month treatment as the fee side, and as the per-year
-      // cost the Deal margin row sums - so the two margins can't disagree.
-      const startMonth = ctsItemStartMonth(item);
-      if (isRecurring) return s + baseCost * billedMonthFactor(costEscalator, termMonths, startMonth);
-      if (startMonth > termMonths) return s;
-      // Setup / One Time + Setup-Rolled / One-Time-Rolled: cost is
-      // booked upfront, not amortized - the customer is billed on a
-      // rolled schedule but our cost has already been incurred.
-      return s + baseCost;
-    }, 0);
+    const totalCost = linked.reduce((s, item) => s + ctsItemTermCost(item), 0);
 
     return {
       totalCost,
@@ -2986,6 +2971,24 @@ export function PricingView({ settings } = {}) {
       marginPct: (totalFee - totalCost) / totalFee,
     };
   }
+  // One CTS line's cost over the term, the way a fee's margin counts it.
+  function ctsItemTermCost(item) {
+    if (typeof item.cts !== 'number') return 0;
+    const t = effectiveType(item);
+    const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
+    // Effective cost folds tech depr into non-pass-through cost.
+    const baseCost = ctsItemEffectiveCost(item);
+    // Same start-month treatment as the fee side, and as the per-year
+    // cost the Deal margin row sums - so the two margins can't disagree.
+    const startMonth = ctsItemStartMonth(item);
+    if (isRecurring) return baseCost * billedMonthFactor(costEscalator, termMonths, startMonth);
+    if (startMonth > termMonths) return 0;
+    // Setup / One Time + Setup-Rolled / One-Time-Rolled: cost is
+    // booked upfront, not amortized - the customer is billed on a
+    // rolled schedule but our cost has already been incurred.
+    return baseCost;
+  }
+
   function projectMonthlyOverTerm(monthly, escPct, months) {
     if (typeof monthly !== 'number' || !Number.isFinite(monthly)) return 0;
     if (!months || months <= 0) return 0;
@@ -5023,11 +5026,20 @@ export function PricingView({ settings } = {}) {
         currentFees: detail.fees.filter(f => f.onSchedule).map(f => f.name),
       });
       if (!structure) continue;
-      const filled = standardFeeContext(structure, detail.items, {
+      const ctx = standardFeeContext(structure, detail.items, {
         termMonths,
         siteCount: detail.sia?.sites ?? opt.siteCount,
         accountCount: detail.sia?.accounts ?? opt.accountCount,
-      }).filled;
+      });
+      // Which of the service's cost lines each row prices, for the
+      // preview's margin column.
+      const filled = {
+        ...ctx.filled,
+        rows: ctx.filled.rows.map((r, ri) => ({
+          ...r,
+          costIds: ctx.std.costs.flatMap((co, ci) => (co.rowIdx === ri ? [detail.items[ci].id] : [])),
+        })),
+      };
       const replaceNames = [];
       for (const f of detail.fees) if (f.name) replaceNames.push(f.name);
       for (const it of detail.items) if (it.feeName) replaceNames.push(it.feeName);
@@ -5039,6 +5051,32 @@ export function PricingView({ settings } = {}) {
     });
     const fromService = new Map();
     for (const ps of built.perService) for (const r of ps.added) fromService.set(r, ps.service);
+    // Each row's term cost: the cost lines its structure row prices, or,
+    // for a row already on the schedule, the lines carrying its fee name
+    // that no built row took, shared across those rows by their fees.
+    const itemById = new Map();
+    for (const sec of opt.sections || []) for (const item of sec.items || []) itemById.set(item.id, item);
+    const claimed = new Set(built.rows.flatMap(r => r.costIds || []));
+    const nameCost = new Map();
+    for (const item of itemById.values()) {
+      if (claimed.has(item.id)) continue;
+      const k = String(mappingNameFor(item) || '').trim().toLowerCase();
+      if (k) nameCost.set(k, (nameCost.get(k) || 0) + ctsItemTermCost(item));
+    }
+    const termOf = (r) => Array.from({ length: numYears }, (_, yi) => altFeeYearRevenue(r, yi + 1)).reduce((a, b) => a + b, 0);
+    const nameTerm = new Map();
+    for (const r of built.rows) {
+      if (r.costIds) continue;
+      const k = String(r?.altItem || '').trim().toLowerCase();
+      if (k) nameTerm.set(k, (nameTerm.get(k) || 0) + termOf(r));
+    }
+    const rowCost = (r, term) => {
+      if (r.costIds) return r.costIds.reduce((s, id) => s + (itemById.has(id) ? ctsItemTermCost(itemById.get(id)) : 0), 0);
+      const k = String(r?.altItem || '').trim().toLowerCase();
+      const all = nameCost.get(k) || 0;
+      const share = nameTerm.get(k) > 0 ? term / nameTerm.get(k) : 1;
+      return all * share;
+    };
     const rows = built.rows
       .filter(r => String(r?.altItem || '').trim())
       .map(r => {
@@ -5057,7 +5095,13 @@ export function PricingView({ settings } = {}) {
           years,
           term: years.reduce((a, b) => a + b, 0),
           service: fromService.get(r) || null,
+          _src: r,
         };
+      })
+      .map(row => {
+        const cost = rowCost(row._src, row.term);
+        const { _src, ...rest } = row;
+        return { ...rest, cost, margin: row.term > 0 ? (row.term - cost) / row.term : null };
       });
     const totals = (list) => {
       const { costByYear } = optionCostBreakdown(opt, list);
@@ -5070,7 +5114,7 @@ export function PricingView({ settings } = {}) {
       numYears,
       services,
       rows,
-      nextSchedule: built.rows,
+      nextSchedule: built.rows.map(r => { const { costIds: _costIds, ...rest } = r; return rest; }),
       perService: built.perService,
       shared: built.shared,
       before: totals(schedule),
