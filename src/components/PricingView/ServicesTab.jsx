@@ -46,7 +46,7 @@ const STATUS_CLASS = {
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
   onSetCount, onIgnoreForCheck, feeStructures = {}, setFeeStructures, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough,
-  unlinked = null, tagOptions = [], onTagLineItem, onIgnoreLineItem,
+  unlinked = null, tagOptions = [], onTagLineItem, onIgnoreLineItem, globalGmPct = null,
 }) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(null);
@@ -192,6 +192,7 @@ export function ServicesTab({
               onOpenLinkedTo={onOpenLinkedTo}
               onSetCount={onSetCount}
               onIgnoreForCheck={onIgnoreForCheck ? (itemId, on) => onIgnoreForCheck(current.name, itemId, on) : null}
+              globalGmPct={globalGmPct}
             />
           )}
         </div>
@@ -269,7 +270,7 @@ function UnlinkedWarning({ unlinked, costTotals, optionName, tagOptions, quickTa
   );
 }
 
-function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough }) {
+function ServiceDetail({ service, globalGmPct, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough }) {
   const items = detail?.items || [];
   const fees = detail?.fees || [];
   const structures = saved?.structures || [];
@@ -549,6 +550,7 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
             ) : (
               <FeeStructureEditor
                 structure={openStructure}
+                globalGmPct={globalGmPct}
                 isStandard={openStructure.id === standardId}
                 hasWorkbook={hasWorkbook}
                 optionName={optionName}
@@ -845,25 +847,6 @@ const parseCount = (v) => {
   const n = Number(t);
   return Number.isFinite(n) && n > 0 ? n : undefined;
 };
-const parsePct = (v) => {
-  const t = String(v ?? '').replace('%', '').trim();
-  if (!t) return null;
-  const n = Number(t);
-  if (!Number.isFinite(n)) return undefined;
-  return n > 1 ? n / 100 : n;
-};
-// Markup is always a percent: "50" and "50%" are both 50%, and "0.5" is
-// half a percent (unlike GM%, which reads 0.5 as 50%). Anything from
-// -100% up.
-const parseMarkup = (v) => {
-  const t = String(v ?? '').replace(/[%,\s]/g, '');
-  if (!t) return null;
-  const n = Number(t);
-  if (!Number.isFinite(n) || n < -100) return undefined;
-  return n / 100;
-};
-const fmtMarkupInput = (n) => String(Math.round(n * 10000) / 100);
-const fmtMarkup = (n) => `${fmtMarkupInput(n)}%`;
 const fmtPlain = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   : '');
@@ -872,7 +855,7 @@ const fmtPlain = (n) => (typeof n === 'number' && Number.isFinite(n)
 // GM% cells derive, and the placeholder shows what they derive to on the
 // loaded SIA, the same way the Alternative Fee schedule reads.
 function FeeStructureEditor({
-  structure, isStandard, hasWorkbook, optionName, numYears, termMonths = 36, siteCount, accountCount, costs = [],
+  structure, globalGmPct, isStandard, hasWorkbook, optionName, numYears, termMonths = 36, siteCount, accountCount, costs = [],
   feeNameSuggestions, previewFeeRow, onChange, onMakeStandard, onDuplicate, onDelete, onApply,
 }) {
   const listId = `fs-names-${structure.id}`;
@@ -939,6 +922,10 @@ function FeeStructureEditor({
       <datalist id={listId}>
         {feeNameSuggestions.map(n => <option key={n} value={n} />)}
       </datalist>
+      <p className={styles.note}>
+        Blank fees are priced from the service&apos;s costs at the Global GM%
+        {typeof globalGmPct === 'number' ? ` (${fmtPct(globalGmPct)})` : ''} at the top of the page, so they move with it.
+      </p>
       <table className={`${styles.table} ${styles.editTable}`}>
         <thead>
           <tr>
@@ -946,12 +933,10 @@ function FeeStructureEditor({
             <th>Fee</th>
             <th>Type</th>
             <th className={styles.num}>Fee / Unit</th>
-            <th className={styles.num} style={{ whiteSpace: 'nowrap' }} title="Mark this fee up from the cost of the lines it covers. Fee / Unit = cost x (1 + markup) / units. Blank prices at the Pricing tab's GM.">Markup %</th>
             <th>Unit</th>
             <th className={styles.num}>Unit Count</th>
             <th className={styles.num}>Start Month</th>
             {hasWorkbook && Array.from({ length: numYears }, (_, i) => <th key={i} className={styles.num}>{`Y${i + 1}`}</th>)}
-            <th className={styles.num}>Fee GM%</th>
             <th>Pass</th>
             <th style={{ width: 28 }} />
           </tr>
@@ -983,40 +968,16 @@ function FeeStructureEditor({
                     onCommit={(v) => {
                       const n = parseMoney(v);
                       if (n === undefined) return;
-                      // A typed fee is the price, so a markup left on the
-                      // row would no longer mean anything.
-                      setRow(idx, n == null ? { fee: n } : { fee: n, markupPct: null });
+                      setRow(idx, { fee: n });
                     }}
                   />
                   {standardFee(idx) != null && (
                     <div
                       className={typeof r.fee === 'number' && Math.abs(r.fee - standardFee(idx)) > 0.005 ? styles.stdFeeOff : styles.stdFee}
-                      title={`Standard fee: recovers the ${std.perRow[idx].costIdx.length} cost line${std.perRow[idx].costIdx.length === 1 ? '' : 's'} this fee covers ${std.perRow[idx].markupPct != null ? `at cost plus a ${fmtMarkup(std.perRow[idx].markupPct)} markup` : 'at their marked-up price'}.${typeof r.fee === 'number' ? '' : ' The blank cell bills it.'}`}
+                      title={`Standard fee: recovers the ${std.perRow[idx].costIdx.length} cost line${std.perRow[idx].costIdx.length === 1 ? '' : 's'} this fee covers at their marked-up price (the Global GM% at the top of the page).${typeof r.fee === 'number' ? '' : ' The blank cell bills it.'}`}
                     >
                       ★ {fmtMoney(standardFee(idx))}
                     </div>
-                  )}
-                </td>
-                <td className={styles.num}>
-                  {r.passThrough ? <span className={styles.muted}>pass</span> : (
-                    <span title={std.perRow[idx].costIdx.length === 0
-                      ? 'No cost lines are on this fee yet, so there is no cost to mark up.'
-                      : `Fee / Unit = cost of the ${std.perRow[idx].costIdx.length} cost line${std.perRow[idx].costIdx.length === 1 ? '' : 's'} on this fee (CTS plus tech depreciation) x (1 + markup) / units. Blank prices at the Pricing tab's GM.`}
-                    >
-                      <DraftInput
-                        value={typeof r.markupPct === 'number' ? fmtMarkupInput(r.markupPct) : ''}
-                        placeholder="GM"
-                        align="right"
-                        width={56}
-                        onCommit={(v) => {
-                          const n = parseMarkup(v);
-                          if (n === undefined) return;
-                          // Setting a markup hands the price back to it, so a
-                          // typed fee steps aside.
-                          setRow(idx, n == null ? { markupPct: null } : { markupPct: n, fee: null });
-                        }}
-                      />
-                    </span>
                   )}
                 </td>
                 <td>
@@ -1046,17 +1007,6 @@ function FeeStructureEditor({
                 {hasWorkbook && Array.from({ length: numYears }, (_, yi) => (
                   <td key={yi} className={styles.num}>{p?.years?.[yi] > 0 ? fmtMoney(p.years[yi]) : ''}</td>
                 ))}
-                <td className={styles.num}>
-                  {r.passThrough ? <span className={styles.muted}>pass</span> : (
-                    <DraftInput
-                      value={typeof r.feeGmPct === 'number' ? (r.feeGmPct * 100).toFixed(1) : ''}
-                      placeholder={p?.gmPct != null ? fmtPct(p.gmPct) : 'auto'}
-                      align="right"
-                      width={60}
-                      onCommit={(v) => { const n = parsePct(v); if (n !== undefined) setRow(idx, { feeGmPct: n }); }}
-                    />
-                  )}
-                </td>
                 <td>
                   <input type="checkbox" checked={r.passThrough === true} onChange={(e) => setRow(idx, { passThrough: e.target.checked })} />
                 </td>
@@ -1067,15 +1017,15 @@ function FeeStructureEditor({
             );
           })}
           {rows.length === 0 && (
-            <tr><td colSpan={hasWorkbook ? 11 + numYears : 11} className={styles.muted}>No fees yet.</td></tr>
+            <tr><td colSpan={hasWorkbook ? 9 + numYears : 9} className={styles.muted}>No fees yet.</td></tr>
           )}
         </tbody>
         {hasWorkbook && rows.length > 0 && (
           <tfoot>
             <tr>
-              <td colSpan={8}>Total</td>
+              <td colSpan={7}>Total</td>
               {totals.map((t, i) => <td key={i} className={styles.num}>{t > 0 ? fmtMoney(t) : ''}</td>)}
-              <td colSpan={3} />
+              <td colSpan={2} />
             </tr>
           </tfoot>
         )}

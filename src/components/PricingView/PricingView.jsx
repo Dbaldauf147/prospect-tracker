@@ -4687,9 +4687,6 @@ export function PricingView({ settings } = {}) {
             ? { priceAtCost: ok ? ctsItemEffectiveCost(item) : 0, priceFixed: 0 }
             : { priceAtCost: 0, priceFixed: ok ? pr : 0 };
         })(),
-        // What the line costs (CTS plus tech depreciation), the base a fee
-        // structure row's Markup % is applied to.
-        cost: typeof item.cts === 'number' ? ctsItemEffectiveCost(item) : null,
         startMonth: effectiveItemStartMonth(item),
         feeName: String(mappingNameFor(item) || '').trim(),
         automatedName: String(resolvedLinkedTo(item) || '').trim(),
@@ -5376,6 +5373,7 @@ export function PricingView({ settings } = {}) {
           detailFor={serviceDetailFor}
           onSetCount={setPriceCheckCount}
           onIgnoreForCheck={setPriceCheckIgnored}
+          globalGmPct={globalGmPct}
           feeStructures={serviceFeeStructures}
           setFeeStructures={setServiceFeeStructures}
           previewFeeRow={previewFeeStructureRow}

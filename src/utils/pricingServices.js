@@ -102,13 +102,14 @@ export function costItemsForService(items, lineItemServices, service) {
 // they carry from deal to deal; applying one writes its rows into the
 // loaded option's Alternative Fee schedule.
 //
-// A row is { feeName, type, fee, unit, unitCount, startMonth, markupPct,
-// feeGmPct, passThrough }. A blank fee, unit count or start month means
-// "derive it", the same as a blank cell on the schedule: the fee from the
-// costs carrying the fee name, the unit count from the SIA's site / account
-// count, the start month from the costs. markupPct (a fraction, 0.5 = 50%)
-// prices the derived fee off those costs' own cost plus that markup instead
-// of their marked-up price at the Pricing tab's GM.
+// A row is { feeName, type, fee, unit, unitCount, startMonth, passThrough }.
+// A blank fee, unit count or start month means "derive it", the same as a
+// blank cell on the schedule: the fee from the costs carrying the fee name,
+// the unit count from the SIA's site / account count, the start month from
+// the costs. A structure carries no margin of its own: a derived fee is
+// priced at the Pricing page's Global GM%, and the schedule works the fee's
+// GM% out from there. (Structures saved while rows could carry their own
+// markupPct / feeGmPct still hold them; both are ignored.)
 
 export const FEE_STRUCTURE_TYPES = ['Setup', 'One Time', 'Recurring (monthly)'];
 export const FEE_STRUCTURE_UNITS = ['Fixed', 'Per Site', 'Per Account', 'Per Meter'];
@@ -124,7 +125,7 @@ export function newFeeStructureId() {
 }
 
 export function blankFeeStructureRow() {
-  return { feeName: '', type: '', fee: null, unit: '', unitCount: null, startMonth: null, markupPct: null, feeGmPct: null, passThrough: false };
+  return { feeName: '', type: '', fee: null, unit: '', unitCount: null, startMonth: null, passThrough: false };
 }
 
 const numOrNull = (v) => {
@@ -145,7 +146,6 @@ export function feeStructureRowsFromFees(fees) {
     unit: f.unit || '',
     unitCount: null,
     startMonth: numOrNull(f.manualStartMonth),
-    feeGmPct: typeof f.manualGmPct === 'number' ? f.manualGmPct : null,
     passThrough: f.passThrough === true,
   }));
 }
@@ -166,7 +166,7 @@ export function feeStructureRowToAltRow(row, { siteCount, accountCount } = {}) {
     unit,
     unitCount,
     startMonth: numOrNull(row?.startMonth),
-    feeGmPct: typeof row?.feeGmPct === 'number' ? row.feeGmPct : null,
+    feeGmPct: null,
     passThrough: row?.passThrough === true,
     ...(row?.gmLink ? { gmLink: row.gmLink } : {}),
   };
@@ -208,9 +208,8 @@ export function applyFeeStructureToSchedule(schedule, structureRows, { replaceNa
 // Each of the service's cost lines is recovered by one fee row of the
 // structure (or by none). By default a cost goes to the row carrying its
 // fee name; the user can point it at any row instead. A row's standard fee
-// is then what recovers the costs pointed at it, at their marked-up price:
-// the Pricing tab's GM by default, or, when the row carries a markupPct,
-// each cost's own cost times (1 + markupPct):
+// is then what recovers the costs pointed at it, at their marked-up price
+// (the Pricing page's Global GM%, or a line's own GM% where it has one):
 //
 //   upfront fee (Setup / One Time)   sum of upfront cost prices / units
 //   recurring fee (monthly)          sum of monthly cost prices / units,
@@ -333,7 +332,7 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
     const rowStart = row ? Math.round(Number(row.startMonth) || 1) : 1;
     const later = costStart > FIRST_YEAR_MONTHS;
     const billedEarly = later && !!row && yearOfMonth(rowStart) < yearOfMonth(costStart);
-    return { key: c.key, rowIdx, defaulted, bucket, feeBucket: fb, canRoll, rolled, issue, price: c.price, cost: c.cost, startMonth: costStart, later, billedEarly };
+    return { key: c.key, rowIdx, defaulted, bucket, feeBucket: fb, canRoll, rolled, issue, price: c.price, startMonth: costStart, later, billedEarly };
   });
 
   rows.forEach((row, ri) => {
@@ -343,19 +342,11 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
     const start = Math.max(1, Math.round(alt.startMonth || 1));
     const rollMonths = Math.max(1, Math.round(termMonths) - start + 1);
     const agg = perRow[ri];
-    // A markup typed on the row prices its costs off what they cost; a
-    // pass-through fee bills at cost already, so it takes no markup.
-    const markup = typeof row?.markupPct === 'number' && Number.isFinite(row.markupPct) && row?.passThrough !== true
-      ? row.markupPct
-      : null;
-    agg.markupPct = markup;
     let any = false;
     costOut.forEach((co, ci) => {
       if (co.rowIdx !== ri) return;
       agg.costIdx.push(ci);
-      const price = markup != null
-        ? (typeof co.cost === 'number' && Number.isFinite(co.cost) ? co.cost * (1 + markup) : null)
-        : co.price;
+      const price = co.price;
       if (typeof price !== 'number' || !Number.isFinite(price) || co.issue) return;
       const effBucket = fb || co.feeBucket;
       if (effBucket === COST_BUCKET_RECURRING) {
@@ -423,8 +414,6 @@ export function addLaterCostFees(structure, costs, opts = {}) {
       unit: from?.unit || '',
       unitCount: from?.unitCount ?? null,
       startMonth: g.startMonth,
-      markupPct: typeof from?.markupPct === 'number' ? from.markupPct : null,
-      feeGmPct: null,
       passThrough: from?.passThrough === true,
     });
     for (const ci of g.idx) {
@@ -480,7 +469,6 @@ export function feeStructureCostInputs(costs) {
     description: c.description,
     type: c.type,
     price: c.price,
-    cost: c.cost,
     startMonth: c.startMonth,
     feeNames: [c.feeName, c.automatedName].filter(Boolean),
   }));
@@ -504,12 +492,9 @@ export function standardFeeContext(structure, costs, { termMonths = 36, siteCoun
   const linkable = (costs || []).some(c => typeof c?.priceAtCost === 'number');
   const split = (field) => standardFeesForStructure({
     ...opts,
-    // A row with its own Markup % prices off cost, not the GM: all of it
-    // lands in the fixed part.
     costs: costInputs.map((c, i) => ({
       ...c,
       price: typeof c.price === 'number' ? (Number(costs[i]?.[field]) || 0) : c.price,
-      cost: field === 'priceAtCost' && typeof c.cost === 'number' ? 0 : c.cost,
     })),
   }).perRow;
   const atCost = linkable ? split('priceAtCost') : null;

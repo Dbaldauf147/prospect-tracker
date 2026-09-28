@@ -96,7 +96,7 @@ test('seeding a structure keeps typed values, leaves derived ones blank', () => 
   assert.equal(rows.length, 2);
   assert.equal(rows[0].fee, null);
   assert.equal(rows[0].unitCount, null);
-  assert.deepEqual(rows[1], { feeName: 'Program fee', type: 'Recurring (monthly)', fee: 500, unit: 'Fixed', unitCount: null, startMonth: 3, feeGmPct: 0.4, passThrough: true });
+  assert.deepEqual(rows[1], { feeName: 'Program fee', type: 'Recurring (monthly)', fee: 500, unit: 'Fixed', unitCount: null, startMonth: 3, passThrough: true });
 });
 
 test('a blank unit count derives from the SIA counts', () => {
@@ -176,41 +176,22 @@ test('rolled and monthly costs add together on one monthly fee', () => {
   assert.equal(r.perRow[0].standardFee, Math.round((290 + 536 / 36) * 100) / 100);
 });
 
-test('a markup on the row prices its costs from what they cost, not their GM price', () => {
+test('a structure carries no margin of its own: an old saved markup or fee GM% is ignored', () => {
   const costs = [
     { ...bbsCosts[0], cost: 400 },
     { ...bbsCosts[1], cost: 200 },
   ];
   const rows = [
-    { feeName: 'Per site', type: 'One Time', unit: 'Per Site', markupPct: 0.25 },
-    { feeName: 'Program fee', type: 'Recurring (monthly)', unit: 'Fixed', markupPct: 0.5 },
+    { feeName: 'Per site', type: 'One Time', unit: 'Per Site', markupPct: 0.25, feeGmPct: 0.3 },
+    { feeName: 'Program fee', type: 'Recurring (monthly)', unit: 'Fixed', markupPct: 0.5, feeGmPct: 0.3 },
   ];
-  let r = standardFeesForStructure({ rows, costs, termMonths: 36, siteCount: 29 });
-  assert.equal(r.perRow[0].standardFee, 17.24); // 400 x 1.25 / 29
-  assert.equal(r.perRow[0].markupPct, 0.25);
-  assert.equal(r.perRow[1].standardFee, 300); // 200 x 1.5
-  // A rolled cost takes the markup before it is spread over the term.
-  r = standardFeesForStructure({
-    rows: [{ feeName: 'All in', type: 'Recurring (monthly)', unit: 'Fixed', markupPct: 0.5 }],
-    costs, allocations: { [costs[0].key]: { fee: 'all in', roll: true }, [costs[1].key]: { fee: 'all in' } }, termMonths: 36,
-  });
-  assert.equal(r.perRow[0].standardFee, Math.round((200 * 1.5 + 400 * 1.5 / 36) * 100) / 100);
-  // No markup, a pass-through row, or a cost without a cost figure falls
-  // back to the GM price or bills nothing.
-  r = standardFeesForStructure({ rows: rows.map(x => ({ ...x, markupPct: null })), costs, termMonths: 36, siteCount: 29 });
+  const r = standardFeesForStructure({ rows, costs, termMonths: 36, siteCount: 29 });
+  // Priced from the costs' marked-up (Global GM%) price, not cost x (1 + markup).
+  assert.equal(r.perRow[0].standardFee, Math.round((536 / 29) * 100) / 100);
   assert.equal(r.perRow[1].standardFee, 290);
-  r = standardFeesForStructure({ rows: [{ ...rows[1], passThrough: true }], costs, termMonths: 36 });
-  assert.equal(r.perRow[0].standardFee, 290);
-  assert.equal(r.perRow[0].markupPct, null);
-  r = standardFeesForStructure({ rows: [rows[1]], costs: bbsCosts, termMonths: 36 });
-  assert.equal(r.perRow[0].standardFee, null);
-});
-
-test('the cost figure reaches the standard fee through the shared context', () => {
-  const structure = { rows: [{ feeName: 'Program fee', type: 'Recurring (monthly)', unit: 'Fixed', markupPct: 0.1 }] };
-  const ctx = standardFeeContext(structure, [{ description: 'BBS Monthly', type: 'Recurring (monthly)', price: 290, cost: 200, startMonth: 1, feeName: 'Program fee' }]);
-  assert.equal(ctx.standardFee(0), 220);
-  assert.equal(ctx.filled.rows[0].fee, 220);
+  assert.equal(feeStructureRowToAltRow(rows[1]).feeGmPct, null);
+  const ctx = standardFeeContext({ rows: [rows[1]] }, [{ description: 'BBS Monthly', type: 'Recurring (monthly)', price: 290, cost: 200, startMonth: 1, feeName: 'Program fee' }]);
+  assert.equal(ctx.filled.rows[0].fee, 290);
 });
 
 test('a monthly cost on an upfront fee is flagged, and "not covered" takes a cost out', () => {
