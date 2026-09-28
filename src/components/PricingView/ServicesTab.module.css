@@ -840,3 +840,24 @@
   color: #78350f;
   font-size: var(--font-size-xs);
 }
+
+/* Counts typed for the price check. */
+.countRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 1rem;
+  font-size: var(--font-size-xs);
+}
+
+.countField {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--color-text);
+}
+
+.countNeeded {
+  border-color: #f59e0b !important;
+  background: #fffbeb !important;
+}
