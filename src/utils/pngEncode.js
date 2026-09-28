@@ -1,10 +1,10 @@
 // A PNG, written by hand, so a chart can be drawn where there is no canvas.
 //
-// The Weekly Report email carries pictures of two charts. The tab could
-// rasterise them the way it rasterises the funnel (utils/svgToPng, via a
-// canvas), but the email that actually lands in an inbox on Monday is
-// rebuilt on a serverless runner with no DOM at all - which is exactly why
-// the funnel arrives there as a table of figures rather than as the chart.
+// The Weekly Report email carries pictures of its charts. The tab could
+// rasterise them the way it rasterises its own funnel (utils/svgToPng, via
+// a canvas), but the email that actually lands in an inbox on Monday is
+// rebuilt on a serverless runner with no DOM at all, so the cron draws
+// every chart, the funnel included, through this encoder.
 // A picture that only appears when somebody happened to have the tab open
 // is not a picture the report can be said to carry.
 //

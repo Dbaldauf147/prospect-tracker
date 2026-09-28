@@ -128,9 +128,9 @@ export function emailSnapshotPayload({
     // emailKpiCards for why the tab's working is left on the tab.
     kpiCards,
     funnel: funnelSummary,
-    // The chart itself. Absent when it couldn't be captured — a serverless
-    // build never can — and the email carries the same figures as a table
-    // underneath it either way.
+    // The chart itself: the tab's capture of its SVG, or on a scheduled
+    // rebuild the same chart drawn pixel by pixel (utils/funnelChartImage).
+    // Absent, the email leaves the funnel section out.
     funnelImage: funnelSummary && funnelImage
       ? {
         src: funnelImage.src,

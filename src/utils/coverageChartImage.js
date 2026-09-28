@@ -53,7 +53,7 @@ const PAD_B = 20 * SCALE;
 
 // ---- A raster to draw on --------------------------------------------------
 
-function raster(width, height) {
+export function raster(width, height) {
   return { width, height, px: new Uint8Array(width * height).fill(BG) };
 }
 
@@ -64,7 +64,7 @@ function dot(r, x, y, c) {
   r.px[yi * r.width + xi] = c;
 }
 
-function fill(r, x, y, w, h, c) {
+export function fill(r, x, y, w, h, c) {
   for (let yy = Math.round(y); yy < Math.round(y) + h; yy += 1) {
     for (let xx = Math.round(x); xx < Math.round(x) + w; xx += 1) dot(r, xx, yy, c);
   }
@@ -100,16 +100,22 @@ function marker(r, x, y, c, radius) {
 //
 // A 5x7 bitmap font, drawn at twice that, because there is no font to ask
 // for glyphs from out here. Only the characters a chart axis uses are
-// defined: the digits, a per-cent sign, and capitals for the month names.
+// defined: the digits, a per-cent sign, and capitals for the month names,
+// plus the dollar sign and the few letters the funnel's figures spell out
+// (utils/funnelChartImage borrows this font and the raster above).
 // Each glyph is five columns; each column is seven bits, top row first.
 const GLYPH_W = 5;
-const GLYPH_H = 7;
+export const GLYPH_H = 7;
 const FONT = {
   ' ': [0x00, 0x00, 0x00, 0x00, 0x00],
   // Two blocks and the stroke between them. The stock 5x7 per-cent sign
   // loses its blocks at this size and reads as a small x.
   '%': [0x43, 0x23, 0x08, 0x62, 0x61],
+  '$': [0x24, 0x2A, 0x7F, 0x2A, 0x12],
+  '+': [0x08, 0x08, 0x3E, 0x08, 0x08],
+  ',': [0x00, 0x50, 0x30, 0x00, 0x00],
   '-': [0x08, 0x08, 0x08, 0x08, 0x08],
+  '=': [0x14, 0x14, 0x14, 0x14, 0x14],
   '.': [0x00, 0x60, 0x60, 0x00, 0x00],
   '0': [0x3E, 0x51, 0x49, 0x45, 0x3E],
   '1': [0x00, 0x42, 0x7F, 0x40, 0x00],
@@ -128,7 +134,10 @@ const FONT = {
   E: [0x7F, 0x49, 0x49, 0x49, 0x41],
   F: [0x7F, 0x09, 0x09, 0x09, 0x01],
   G: [0x3E, 0x41, 0x49, 0x49, 0x7A],
+  H: [0x7F, 0x08, 0x08, 0x08, 0x7F],
+  I: [0x00, 0x41, 0x7F, 0x41, 0x00],
   J: [0x20, 0x40, 0x41, 0x3F, 0x01],
+  K: [0x7F, 0x08, 0x14, 0x22, 0x41],
   L: [0x7F, 0x40, 0x40, 0x40, 0x40],
   M: [0x7F, 0x02, 0x0C, 0x02, 0x7F],
   N: [0x7F, 0x04, 0x08, 0x10, 0x7F],
@@ -139,15 +148,16 @@ const FONT = {
   T: [0x01, 0x01, 0x7F, 0x01, 0x01],
   U: [0x3F, 0x40, 0x40, 0x40, 0x3F],
   V: [0x1F, 0x20, 0x40, 0x20, 0x1F],
+  W: [0x3F, 0x40, 0x38, 0x40, 0x3F],
   // Stands in for the multiplication sign the ratio is written with.
   X: [0x63, 0x14, 0x08, 0x14, 0x63],
   Y: [0x07, 0x08, 0x70, 0x08, 0x07],
 };
 
-const textWidth = (s, size) => (s.length * (GLYPH_W + 1) - 1) * size;
+export const textWidth = (s, size) => (s.length * (GLYPH_W + 1) - 1) * size;
 
 // `x` is the left edge unless `align` says otherwise; `y` is the top.
-function text(r, s, x, y, c, size, align = 'left') {
+export function text(r, s, x, y, c, size, align = 'left') {
   const str = String(s).toUpperCase();
   const w = textWidth(str, size);
   let left = x;

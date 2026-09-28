@@ -22,11 +22,11 @@
 // a serverless function unchanged. So this builds the same document the
 // tab publishes by calling the same functions, rather than restating them.
 //
-// Two things the tab can do that this cannot, both handled rather than
-// hidden: it rasterises the funnel chart into a PNG (a server build has
-// no picture, so its email leaves the funnel section out), and it can ask Claude
-// for a narrative recap (left out; the email omits the section when it is
-// empty). Everything numeric is here.
+// One thing the tab can do that this cannot, handled rather than hidden:
+// it can ask Claude for a narrative recap (left out; the email omits the
+// section when it is empty). Everything numeric is here, and so is every
+// chart: the funnel the tab rasterises off its SVG is drawn here pixel by
+// pixel instead (utils/funnelChartImage), as the coverage charts are.
 //
 // The period is the last *completed* one — for a weekly report, the week
 // that ended most recently. A report of a week still in progress is
@@ -44,6 +44,7 @@ import {
   coverageReading, coverageRatioByWeek, withCoverageReading, weekKeyAt, COVERAGE_RATIO_WEEKS,
 } from '../../src/utils/weeklyReportTrends.js';
 import { withCoverageImages, withCoverageRatioImage } from '../../src/utils/coverageChartImage.js';
+import { funnelChartImage } from '../../src/utils/funnelChartImage.js';
 import {
   buildFunnelStages, closeRateTrendByStage, closeRatesByStage, emailCloseRateTrend,
 } from '../../src/utils/pipelineFunnelData.js';
@@ -232,10 +233,9 @@ export function buildReport(sources, period, { now = null } = {}) {
   // progressHistory weeks the review snapshot below reads. Not scoped to
   // the period: coverage is a level, not a count, so a day-scoped report
   // gets the same weekly series a week-scoped one does.
-  // Drawn here as well as counted: unlike the funnel, whose picture needs a
-  // canvas the tab has and this does not, the coverage chart is encoded
-  // pixel by pixel (utils/coverageChartImage), so a scheduled send carries
-  // the same picture the preview shows.
+  // Drawn here as well as counted: the coverage chart is encoded pixel by
+  // pixel (utils/coverageChartImage), so a scheduled send carries the same
+  // picture the preview shows.
   const coverage = withCoverageImages(coverageByWeek({
     progressWeeks: s.progressWeeks, refMs: start, months: COVERAGE_MONTHS,
   }));
@@ -274,17 +274,18 @@ export function buildReport(sources, period, { now = null } = {}) {
     closeRates: closeRatesByStage(s.oppsRecords),
   });
 
+  const funnelOutcome = funnelOutcomeFor(kpis);
   const payload = emailSnapshotPayload({
     scope,
     periodLabel: label,
     periodStart: start,
     periodEnd: end,
     kpiCards: kpisReady ? emailKpiCards(kpis) : [],
-    funnelSummary: emailFunnelSummary(funnelStages, funnelOutcomeFor(kpis)),
-    // No chart: rasterising one needs a DOM. The email draws the stage
-    // table in its place, which it already does whenever the tab failed to
-    // capture a picture.
-    funnelImage: null,
+    funnelSummary: emailFunnelSummary(funnelStages, funnelOutcome),
+    // The tab rasterises its SVG; there is no DOM here, so the same chart
+    // is drawn pixel by pixel. Without it the email leaves the funnel out,
+    // which is how the scheduled send lost it.
+    funnelImage: funnelChartImage(funnelStages, funnelOutcome),
     closeRateTrend: emailCloseRateTrend(closeRateTrendByStage(s.oppsRecords, { months: 6 })),
     trends,
     coverage,
