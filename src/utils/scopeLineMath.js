@@ -82,12 +82,15 @@ function mathPhrase(part) {
   if (part.kind === 'unit') {
     const noun = unitNoun(part.unitLabel || part.unit || 'unit');
     const units = Number(part.units) || 0;
-    return units > 0 ? `${rate} per ${noun} × ${count(units)}` : `${rate} per ${noun}`;
+    // A monthly rate bills twelve times, so the year says so or it won't foot.
+    const per = part.monthly ? `${rate} per ${noun} a month` : `${rate} per ${noun}`;
+    return units > 0 ? `${per} × ${count(units)}${part.monthly ? ' × 12 months' : ''}` : per;
   }
   if (part.kind === 'percent') {
     const base = percentBase(part);
     return base ? `${rate} of ${base}` : `${rate} of the deal`;
   }
+  if (part.monthly) return `${rate} a month × 12 months`;
   return part.recurs ? `${rate} a year` : `${rate} flat`;
 }
 

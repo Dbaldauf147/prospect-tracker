@@ -2747,6 +2747,26 @@
   background: #fff;
 }
 
+/* Per month / per year for the card's recurring rates. */
+.pricingModalPeriod {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  margin-bottom: 0.4rem;
+}
+
+.pricingModalPeriod select {
+  font-family: inherit;
+  font-size: 0.78rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 6px);
+  background: var(--color-bg, #fff);
+  color: var(--color-text);
+}
+
 /* The Pricing Basis cell: the picker, and a count of the lines the picker
    isn't showing. */
 /* DataTable truncates every direct child of a cell — `display: inline-block`,

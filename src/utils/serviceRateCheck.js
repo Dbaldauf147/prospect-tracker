@@ -13,6 +13,11 @@
 // Each cost line is marked up at its own `markup` when it carries one, else
 // at the default.
 //
+// A card quoted per month (see `period` in servicePricing) is compared per
+// month, where it is quoted per unit: the recurring cost lines' monthly run
+// rate, marked up, per unit, against the monthly rate itself. The totals
+// stay annual, the estimate having already multiplied the rate up.
+//
 // When the card prices the service on one per-unit rate and nothing else
 // (BBS at $625 to $825 per site w/ mandate), that rate is what the check
 // reads: the marked-up cost is divided by the same count and set against
@@ -126,10 +131,12 @@ function feePart({ key, label, cost: year1Cost, price: year1Price, lineCount, ru
   let perUnit = null;
   if (cardLines.length === 1 && cardLines[0].kind === 'unit' && cardLines[0].units > 0 && lineCount > 0) {
     const b = cardLines[0];
+    const perMonth = !!b.monthly && key === 'recurring';
     perUnit = {
       unitLabel: b.unitLabel,
       units: b.units,
-      price: price / b.units,
+      perMonth,
+      price: price / b.units / (perMonth ? 12 : 1),
       rateLow: Math.min(b.rate, b.rateHigh ?? b.rate),
       rateHigh: Math.max(b.rate, b.rateHigh ?? b.rate),
     };
@@ -147,7 +154,7 @@ function feePart({ key, label, cost: year1Cost, price: year1Price, lineCount, ru
     key, label, status, cost, price, monthly: key === 'recurring', low: onCard ? low : null, high: onCard ? high : null,
     perUnit,
     cardLines: cardLines.map(b => ({
-      basisLabel: b.basisLabel, kind: b.kind, unitLabel: b.unitLabel,
+      basisLabel: b.basisLabel, kind: b.kind, unitLabel: b.unitLabel, monthly: !!b.monthly,
       rate: b.rate, rateHigh: b.rateHigh, units: b.units, fee: b.fee, feeHigh: b.feeHigh,
     })),
   };
@@ -215,13 +222,21 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
   // A card that is one per-unit rate is checked at that rate: the year's
   // marked-up cost over the same count, against the rate's own range.
   const only = lines.length === 1 ? lines[0] : null;
+  // A monthly rate is read against a month: the recurring lines' run rate
+  // over twelve. Anything else is read against the first year.
+  const perMonth = !!only?.monthly && year1.runRate > 0;
   const perUnit = only && only.kind === 'unit' && only.units > 0 && !only.gap
     ? {
       unitLabel: only.unitLabel,
       basisLabel: only.basisLabel || null,
       units: only.units,
-      cost: cost / only.units,
-      price: price / only.units,
+      perMonth,
+      // The whole service's figure the per-unit one is cut from: a month's
+      // when perMonth, else year 1's.
+      totalCost: perMonth ? year1.runRate / 12 : cost,
+      totalPrice: perMonth ? year1.pricedRunRate / 12 : price,
+      cost: (perMonth ? year1.runRate / 12 : cost) / only.units,
+      price: (perMonth ? year1.pricedRunRate / 12 : price) / only.units,
       rateLow: Math.min(only.rate, only.rateHigh ?? only.rate),
       rateHigh: Math.max(only.rate, only.rateHigh ?? only.rate),
     }

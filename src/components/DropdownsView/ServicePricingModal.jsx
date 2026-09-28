@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { PRICING_BASES, formatMoney, parseMoney } from '../../utils/servicePricing';
+import { PRICING_BASES, formatMoney, parseMoney, isRecurring } from '../../utils/servicePricing';
 import { IMPACT_SOURCES, impactTitle } from '../../utils/serviceImpact';
 import styles from './DropdownsView.module.css';
 
@@ -159,6 +159,10 @@ function FeeBreakdown({ row, bases, onSaveLine, onSaveSetupLine }) {
   const setupFeeHigh = row._setupFeeHigh || 0;
   const year1 = row.fee === null ? null : row.fee + setupFee;
   const year1High = row.feeHigh === null ? null : row.feeHigh + setupFeeHigh;
+  // The recurring rates are per month or per year (see `period` on the
+  // card); the Year 1 columns are a year's money either way.
+  const monthly = row.period === 'monthly' && isRecurring(row);
+  const cadence = monthly ? 'Monthly' : 'Annual';
 
   return (
     <>
@@ -167,8 +171,8 @@ function FeeBreakdown({ row, bases, onSaveLine, onSaveSetupLine }) {
           <span role="columnheader">Fee Component</span>
           <span role="columnheader">Setup Low</span>
           <span role="columnheader">Setup High</span>
-          <span role="columnheader">Low Annual Recurring</span>
-          <span role="columnheader">High Annual Recurring</span>
+          <span role="columnheader">Low {cadence} Recurring</span>
+          <span role="columnheader">High {cadence} Recurring</span>
           <span role="columnheader">Year 1 Low</span>
           <span role="columnheader">Year 1 High</span>
         </div>
@@ -267,7 +271,7 @@ function FeeBreakdown({ row, bases, onSaveLine, onSaveSetupLine }) {
 
       <div className={styles.pricingModalHint}>
         The four rate columns are what you charge - dollars per unit, or a percentage. Setup is
-        billed once and lands in year one; the recurring columns bill again every year and run for
+        billed once and lands in year one; the recurring columns bill again every {monthly ? 'month (twelve times a year)' : 'year'} and run for
         the term. The Year 1 columns are the two added together under the estimate open on the Deal
         Pricing subtab. The Total row adds dollars, not rates.
       </div>
@@ -346,6 +350,21 @@ export function ServicePricingModal({
             </div>
           )}
           <div className={styles.pricingModalSectionTitle}>Fee breakdown</div>
+          {/* Whether the recurring rates below are a month's or a year's.
+              Only a recurring service bills again, so only it asks. */}
+          {isRecurring(row) && (
+            <label className={styles.pricingModalPeriod}>
+              Recurring rates are
+              <select
+                value={row.period === 'monthly' ? 'monthly' : 'annual'}
+                onChange={(e) => onSaveField('period', e.target.value)}
+                title="Per month bills the rate twelve times a year. The price check on the Pricing page compares a monthly rate against a month's cost."
+              >
+                <option value="annual">per year</option>
+                <option value="monthly">per month</option>
+              </select>
+            </label>
+          )}
           <FeeBreakdown
             row={row}
             bases={bases}

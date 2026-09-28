@@ -58,6 +58,14 @@
 //            amounts landing on the same basis add up. Never written: the
 //            first edit stores `setupLines` instead, and the old key is
 //            left where it is rather than deleted. See setupLinesFor.
+//   period — 'monthly' when the card's recurring rates are quoted per month
+//            ($2 per account a month); absent means per year, which is how
+//            every card was read before this existed. A monthly rate bills
+//            twelve times a year, so every estimate multiplies it by 12 and
+//            carries on in annual money exactly as before. Only the per-unit
+//            and flat recurring lines follow it: "Recurring annual" says its
+//            own period, a percentage is a cut of the deal rather than a
+//            rate, and setup is billed once whatever the card says.
 //   lines  — the EXTRA recurring lines the service is priced on, beyond the
 //            one `basis`/`rate`/`rateHigh` already state. Each is
 //            { basis, rate, rateHigh }, at most one per basis, and none of
@@ -445,7 +453,10 @@ export function formatRate(entry, bases = PRICING_BASES) {
  * (see pricedBases). `spread` says whether any line is quoted as a range,
  * which is what tells the caller there is a high end worth drawing at all.
  */
-export function year1FromCard(entry, bases = PRICING_BASES) {
+// `recurring` is whether the service's own Type is Recurring, which decides
+// whether its lines bill every year and so whether a monthly card's rates
+// are multiplied up to a year (see `period`).
+export function year1FromCard(entry, bases = PRICING_BASES, { recurring = true } = {}) {
   const parts = new Map();
   // Flat money is one part whatever basis it sits on — "Flat fee" and
   // "Recurring annual" are both a figure, and the first year pays both.
@@ -457,11 +468,14 @@ export function year1FromCard(entry, bases = PRICING_BASES) {
   };
   const add = (basisKey, rate, rateHigh, isSetup) => {
     const basis = basisFor(basisKey, bases);
-    const lo = parseMoney(rate);
-    if (!basis || lo === null) return;
+    const perYear = !isSetup && lineBillsMonthly(entry, basis, lineRecurs(basis, recurring)) ? MONTHS_PER_YEAR : 1;
+    const rawLo = parseMoney(rate);
+    if (!basis || rawLo === null) return;
+    const lo = rawLo * perYear;
     // A high end typed below the low one is a typo, not an inverted range —
     // the same reading estimateRecurring gives it.
-    const hi = parseMoney(rateHigh);
+    const rawHi = parseMoney(rateHigh);
+    const hi = rawHi === null ? null : rawHi * perYear;
     const shape = shapeOf(basis);
     const part = parts.get(shape)
       || { shape, basis: basis.key, lo: 0, hi: 0, ongoing: false, setup: false };
@@ -489,8 +503,8 @@ export function year1FromCard(entry, bases = PRICING_BASES) {
  * setup shares a basis with the fee the two have already been added, and
  * calling the sum setup would be wrong.
  */
-export function formatYear1(entry, bases = PRICING_BASES, end = 'lo') {
-  const { parts, spread } = year1FromCard(entry, bases);
+export function formatYear1(entry, bases = PRICING_BASES, end = 'lo', opts = {}) {
+  const { parts, spread } = year1FromCard(entry, bases, opts);
   if (parts.length === 0) return '';
   if (end === 'hi' && !spread) return '';
   return parts.map((part) => {
@@ -785,6 +799,8 @@ export function pricingFor(pricing, name, bases = PRICING_BASES) {
     // Delivered at no charge, on purpose. Not the same claim as an empty
     // rate card, which says nobody has priced this yet — see setNoFee.
     noFee: row?.noFee === true,
+    // Recurring rates quoted per month rather than per year (see `period`).
+    monthly: row?.period === 'monthly',
     basis: basis ? basis.key : '',
     rate: parseMoney(row?.rate),
     rateHigh: parseMoney(row?.rateHigh),
@@ -988,7 +1004,9 @@ export function setPricingField(pricing, name, field, value, bases = PRICING_BAS
   let row = { ...(next[name] || {}) };
   const blank = value == null || value === '';
   if (blank) delete row[field];
-  else row[field] = (field === 'basis' || field === 'notes' || field === 'impact') ? value : parseMoney(value);
+  else row[field] = (field === 'basis' || field === 'notes' || field === 'impact' || field === 'period') ? value : parseMoney(value);
+  // Annual is the default, so it is stored as nothing rather than a word.
+  if (field === 'period' && value !== 'monthly') delete row.period;
   // A rate is meaningless without a basis to read it against, so clearing
   // the basis takes the numbers that belonged to it rather than leaving a
   // stranded "$450 per nothing". A typed fee is not one of them — it
@@ -1022,7 +1040,7 @@ export function setPricingField(pricing, name, field, value, bases = PRICING_BAS
   // client is not what it charges them, so a service given away free can
   // still be the one that saves them the most, and saying so must not
   // quietly start billing for it.
-  if (!blank && field !== 'notes' && field !== 'impact') delete row.noFee;
+  if (!blank && field !== 'notes' && field !== 'impact' && field !== 'period') delete row.noFee;
   if (Object.keys(row).length === 0) delete next[name];
   else next[name] = row;
   return next;
@@ -1387,6 +1405,14 @@ function lineRecurs(basis, recurring) {
   return basis?.recurs ? true : recurring;
 }
 
+export const MONTHS_PER_YEAR = 12;
+
+// Whether a line's rate is a monthly one, and so bills twelve times a year:
+// a recurring per-unit or flat line on a card quoted monthly. See `period`.
+export function lineBillsMonthly(entry, basis, recurs) {
+  return !!entry?.monthly && !!recurs && !basis?.recurs && basis?.kind !== 'percent';
+}
+
 function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASES }) {
   const basis = basisFor(entry?.basis, bases);
   const minFee = parseMoney(entry?.minFee);
@@ -1511,19 +1537,23 @@ function estimateRecurring({ entry, meta, counts, dealSize, bases = PRICING_BASE
       lineBasis, { counts, dealSize, ownUnit, ownUnits },
     );
     if (lineBasis.kind === 'unit' && !unitsTyped) unitsNeeded.add(lineBasis.unit);
-    const feeLo = feeAt(lo);
-    const feeHi = feeAt(hi);
+    const recurs = lineRecurs(lineBasis, recurring);
+    // A monthly rate is a year's money twelve times over; from here on the
+    // line is annual like every other.
+    const monthly = lineBillsMonthly(entry, lineBasis, recurs);
+    const perYear = monthly ? MONTHS_PER_YEAR : 1;
+    const feeLo = feeAt(lo) * perYear;
+    const feeHi = feeAt(hi) * perYear;
     if (!note) allNothing = false;
     else if (!firstNote) { firstNote = note; firstGap = ctxGap; }
 
-    const recurs = lineRecurs(lineBasis, recurring);
     if (recurs) { recurLo += feeLo; recurHi += feeHi; }
     else { onceLo += feeLo; onceHi += feeHi; }
 
     breakdown.push({
       basis: lineBasis.key, basisLabel: lineBasis.label, kind: lineBasis.kind,
       unit: lineBasis.unit || null, unitLabel: lineBasis.unitLabel || '',
-      rate: line.rate, rateHigh: line.rateHigh,
+      rate: line.rate, rateHigh: line.rateHigh, monthly,
       units, unitsTyped, recurs, fee: feeLo, feeHigh: feeHi, note, gap: ctxGap,
     });
   }
@@ -1696,10 +1726,10 @@ function partPhrase(part, withAmount = false, percentOf = '') {
   );
   if (part.kind === 'unit') {
     const unit = String(part.unitLabel || 'unit').toLowerCase().replace(/s$/, '');
-    return `${rate} per ${unit}${part.units ? ` × ${part.units}` : ''}`;
+    return `${rate} per ${unit}${part.monthly ? ' a month' : ''}${part.units ? ` × ${part.units}` : ''}`;
   }
   if (part.kind === 'percent') return `${rate} of ${percentOf || 'deal size'}`;
-  return withAmount ? `${part.basisLabel} ${rate}` : part.basisLabel;
+  return withAmount ? `${part.basisLabel} ${rate}${part.monthly ? ' a month' : ''}` : part.basisLabel;
 }
 
 function legacyParts(line, bases) {
