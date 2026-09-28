@@ -283,6 +283,9 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
     || null;
   const [flash, setFlash] = useState('');
   const say = (msg) => { setFlash(msg); window.setTimeout(() => setFlash(''), 3500); };
+  // Lines left out of the price check are hidden from the cost table and
+  // its total. "Show" brings them back so they can be ticked in again.
+  const [showIgnored, setShowIgnored] = useState(false);
 
   function addStructure(fromSia) {
     const id = newFeeStructureId();
@@ -401,7 +404,7 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((it, i) => (
+                  {items.map((it, i) => (it.ignored && !showIgnored) ? null : (
                     <tr key={it.id} className={it.ignored ? styles.ignoredRow : undefined}>
                       <td>
                         {it.description}
@@ -503,10 +506,23 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
                   <tr>
                     <td colSpan={2}>Total CTS</td>
                     <td className={styles.num}>
-                      {fmtMoney(costTotal)}
-                      {ignoredCount > 0 && <div className={styles.subNote}>{fmtMoney(costTotal - ignoredTotal)} in price check</div>}
+                      {fmtMoney(costTotal - ignoredTotal)}
+                      {ignoredTotal > 0 && (
+                        <div className={styles.subNote}>
+                          {fmtMoney(ignoredTotal)} left out, not counted
+                        </div>
+                      )}
                     </td>
-                    <td colSpan={onIgnoreForCheck ? 4 : 3} />
+                    <td colSpan={onIgnoreForCheck ? 4 : 3}>
+                      {ignoredCount > 0 && (
+                        <span className={styles.subNote}>
+                          {ignoredCount === 1 ? '1 line' : `${ignoredCount} lines`} left out of the price check.{' '}
+                          <button type="button" className={styles.linkBtn} onClick={() => setShowIgnored(v => !v)}>
+                            {showIgnored ? 'Hide' : 'Show'}
+                          </button>
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 </tfoot>
               </table>
