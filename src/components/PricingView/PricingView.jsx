@@ -71,6 +71,32 @@ function GmInput({ initialPct, placeholder, title, isOverride, disabled, onCommi
   );
 }
 
+// CTS cell on the cost table: shows the line's cost and takes a typed one
+// over the SIA's. Blank puts the SIA's figure back.
+function CtsInput({ value, isOverride, title, onCommit }) {
+  const shown = typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : '';
+  const [draft, setDraft] = useState(shown);
+  const [editing, setEditing] = useState(false);
+  const display = editing ? draft : (shown === '' ? '' : `$${Number(shown).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+  return (
+    <input
+      className={`${styles.cellInput} ${isOverride ? styles.overridden : ''}`}
+      style={{ textAlign: 'right' }}
+      type="text"
+      inputMode="decimal"
+      value={display}
+      title={title}
+      onFocus={() => { setDraft(shown); setEditing(true); }}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => { setEditing(false); if (draft !== shown) onCommit(draft); }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        if (e.key === 'Escape') { setDraft(shown); e.currentTarget.blur(); }
+      }}
+    />
+  );
+}
+
 // Multi-checkbox menu for toggling column visibility on a table.
 function ColumnsMenu({ open, onToggle, columns, hiddenFn, onItemToggle }) {
   return (
@@ -3706,6 +3732,39 @@ export function PricingView({ settings } = {}) {
     setItemType(itemId, on ? 'Recurring (monthly)' : '');
   }
 
+  // Type a CTS over the SIA's for one line. Stored on the workbook item, the
+  // same way the annual conversion is, so tech depreciation, marked-up
+  // price, fees, margins and exports all read it. The SIA's figure is kept
+  // as siaCts; a blank entry (or the SIA's own number) puts it back.
+  function setItemCts(itemId, raw) {
+    const text = String(raw ?? '').replace(/[$,\s]/g, '');
+    const n = text === '' ? null : Number(text);
+    if (text !== '' && !Number.isFinite(n)) return;
+    setWorkbook(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        options: prev.options.map(o => ({
+          ...o,
+          sections: (o.sections || []).map(sec => ({
+            ...sec,
+            items: (sec.items || []).map(it => {
+              if (it.id !== itemId) return it;
+              const had = Object.prototype.hasOwnProperty.call(it, 'siaCts');
+              const sia = had ? it.siaCts : it.cts;
+              if (n === null || n === sia) {
+                if (!had) return it;
+                const { siaCts, ...rest } = it;
+                return { ...rest, cts: siaCts };
+              }
+              return { ...it, siaCts: sia ?? null, cts: n };
+            }),
+          })),
+        })),
+      };
+    });
+  }
+
   function setItemLinkedTo(item, raw) {
     const itemId = item.id;
     const trimmed = (raw || '').trim();
@@ -5988,7 +6047,22 @@ export function PricingView({ settings } = {}) {
                                     })()}
                                   </td>
                                 )}
-                                {!colHidden('cts') && <td className={styles.numCell}>{item.cts === null || item.cts === undefined ? '' : fmtMoney(item.cts)}</td>}
+                                {!colHidden('cts') && (() => {
+                                  const ctsOverridden = Object.prototype.hasOwnProperty.call(item, 'siaCts');
+                                  return (
+                                    <td className={styles.gmCell}>
+                                      <CtsInput
+                                        key={`${item.id}:cts:${item.cts ?? ''}`}
+                                        value={item.cts}
+                                        isOverride={ctsOverridden}
+                                        title={ctsOverridden
+                                          ? `Typed over the SIA's ${item.siaCts == null ? 'blank' : fmtMoney(item.siaCts)}. Clear to put the SIA's figure back.`
+                                          : 'From the SIA. Type a value to override it for this line.'}
+                                        onCommit={(raw) => setItemCts(item.id, raw)}
+                                      />
+                                    </td>
+                                  );
+                                })()}
                                 {!colHidden('techDepr') && (
                                   <td className={styles.numCell} title={`${(techDeprPct * 100).toFixed(1)}% of CTS`}>
                                     {techDepr === null ? '' : fmtMoney(techDepr)}
