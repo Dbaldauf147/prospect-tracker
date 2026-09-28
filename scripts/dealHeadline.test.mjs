@@ -68,10 +68,6 @@ const verdict = (r) => (r.deal ? 'deal' : r.skip ? `skip:${r.skip}` : 'unsure');
   const cases = [
     ['Blackstone acquired by rival in shock deal', 'the firm is the target'],
     ['Blackstone to be acquired by a consortium', 'the firm is the target'],
-    ['Blackstone sells Gamma Logistics to Apollo', 'the firm is selling'],
-    ['Blackstone agrees to sell Gamma Logistics to Apollo', 'the firm is selling'],
-    ['Blackstone exits stake in Sigma', 'exit'],
-    ['Blackstone divests its stake in Sigma', 'exit'],
     ['Blackstone closes $20bn real estate fund', 'fund raise'],
     ['Blackstone raises $12 billion for new fund', 'fund raise'],
     ['Blackstone explores sale of Gamma Logistics', 'unconfirmed'],
@@ -98,7 +94,9 @@ const verdict = (r) => (r.deal ? 'deal' : r.skip ? `skip:${r.skip}` : 'unsure');
   eq(buyer.deal.target, 'Gamma Logistics', 'three parties: the target is the thing sold, not the seller');
   eq(buyer.deal.buyer, 'Apollo Global Management', 'three parties: and the buyer is the buyer');
 
-  eq(verdict(read('Blackstone', t)), 'skip:the firm is selling', 'three parties: the seller gets nothing');
+  const seller = read('Blackstone', t);
+  eq([verdict(seller), seller.deal?.kind, seller.deal?.target, seller.deal?.counterparty],
+    ['deal', 'Disposition', 'Gamma Logistics', 'Apollo Global Management'], 'three parties: the seller gets a disposition, sold to the buyer');
   eq(verdict(read('Gamma Logistics', t, false)), 'skip:the firm is the target',
     'three parties: the thing sold is not buying anything');
   eq(verdict(read('Ara Partners', t)), 'skip:a sale between other parties',
@@ -204,6 +202,40 @@ const verdict = (r) => (r.deal ? 'deal' : r.skip ? `skip:${r.skip}` : 'unsure');
   eq([verdict(bmg), bmg.deal?.target, bmg.deal?.buyer], ['deal', 'Stake in BMG Unit', 'Apollo'], 'strict: buyer cut at its verb');
   eq(readOn('Apollo funds complete $5B acquisition of Acme Logistics', '2026-09-18').deal?.buyer, 'Apollo funds', 'strict: buyer cut before the verb and amount');
   eq(readOn('Acme Logistics acquired by Apollo in a $5B deal that reshapes freight', '2026-09-18').deal?.buyer, 'Apollo', 'strict: reverse shape buyer cut too');
+}
+
+// ---- Dispositions ----------------------------------------------------------
+// What the firm sold, logged as the other half of the Acquisitions &
+// Dispositions page. Every shape a sale is written in, and the near-misses
+// that must stay out.
+{
+  const sold = (title, company = 'Blackstone', isPe = true) => {
+    const r = read(company, title, isPe);
+    return r.deal ? [r.deal.kind || 'Acquisition', r.deal.target, r.deal.counterparty || '', r.deal.dealType] : verdict(r);
+  };
+  eq(sold('Blackstone agrees to sell Gamma Logistics to Apollo'), ['Disposition', 'Gamma Logistics', 'Apollo', 'Exit'], 'sell: agrees to sell X to Y');
+  eq(sold('Blackstone exits stake in Sigma'), ['Disposition', 'Sigma', '', 'Exit'], 'sell: exits stake in X, the stake taken off');
+  eq(sold('Blackstone divests its stake in Sigma'), ['Disposition', 'Sigma', '', 'Exit'], 'sell: divests its stake');
+  eq(sold('Blackstone completes sale of Gamma Logistics to KKR for $2bn'), ['Disposition', 'Gamma Logistics', 'KKR', 'Exit'], 'sell: completes sale of X to Y');
+  eq(sold('Siemens to divest mobility unit to Alstom', 'Siemens', false), ['Disposition', 'mobility unit', 'Alstom', 'Divestiture'], 'sell: a corporate divestiture');
+  eq(sold('Blackstone sells portfolio of 12 warehouses to Prologis'), ['Disposition', 'portfolio of 12 warehouses', 'Prologis', 'Asset sale'], 'sell: an asset sale');
+  eq(sold('Blackstone-backed Gamma Logistics acquired by KKR'), ['Disposition', 'Gamma Logistics', 'KKR', 'Exit'], 'sell: "<firm>-backed X acquired by Y"');
+  eq(sold("Blackstone's Gamma Logistics sold to KKR"), ['Disposition', 'Gamma Logistics', 'KKR', 'Exit'], "sell: \"<firm>'s X sold to Y\"");
+  eq(sold('Gamma Logistics acquired by KKR from Blackstone'), ['Disposition', 'Gamma Logistics', 'KKR', 'Exit'], 'sell: "X acquired by Y from <firm>"');
+  eq(sold('KKR acquires Gamma Logistics from Blackstone'), ['Disposition', 'Gamma Logistics', 'KKR', 'Exit'], 'sell: "Y acquires X from <firm>"');
+  eq(sold('KKR acquires Gamma Logistics from Blackstone', 'KKR'), ['Acquisition', 'Gamma Logistics', 'Blackstone', 'Platform'], 'the same headline is the buyer\'s acquisition, with the seller recorded');
+  eq(sold('KKR acquires Blackstone-backed Gamma Logistics'), ['Disposition', 'Gamma Logistics', 'KKR', 'Exit'], 'sell: "Y acquires <firm>-backed X"');
+
+  // Near-misses.
+  eq(sold('Blackstone explores sale of Gamma Logistics'), 'skip:unconfirmed', 'sell: exploring a sale is not one');
+  eq(sold('Blackstone plans to sell Gamma Logistics'), 'skip:unconfirmed', 'sell: planning one is not one either');
+  eq(sold('Blackstone puts Gamma Logistics up for sale'), 'skip:unconfirmed', 'sell: nor is putting it up for sale');
+  eq(sold('Blackstone hires bankers for Gamma Logistics sale'), 'skip:unconfirmed', 'sell: nor hiring bankers');
+  eq(sold('Blackstone sells minority stake in Gamma'), 'skip:minority', 'sell: a minority sell-down is out, as a minority buy is');
+  eq(sold('Blackstone to sell Gamma to fund expansion'), ['Disposition', 'Gamma', '', 'Exit'], 'sell: a purpose clause is not the buyer');
+  eq(sold('KKR sells Gamma Logistics to Apollo'), 'skip:a sale between other parties', 'sell: a sale the firm is not in');
+  eq(sold('Investors partner with Blackstone to sell Gamma'), 'unsure', 'sell: a partner of the sellers is not the seller');
+  eq(sold('Blackstone to be acquired by a consortium'), 'skip:the firm is the target', 'sell: the firm itself being bought stays out');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -25,7 +25,7 @@
 // whom is the classifier's job, and it can now say "the firm is selling"
 // or "the firm is the target" for a reason the reader could check. A gate
 // that guessed direction here would throw those away unexamined.
-const DEAL_WORDS = /\b(acquir\w*|acquisition|buys?|bought|buyout|purchas\w*|takeover|take-private|merger|merges?|bolt-?on|add-?on|majority stake|controlling stake|recapitaliz\w*|snaps? up|to buy|sells?|sold)\b/i;
+const DEAL_WORDS = /\b(acquir\w*|acquisition|buys?|bought|buyout|purchas\w*|takeover|take-private|merger|merges?|bolt-?on|add-?on|majority stake|controlling stake|recapitaliz\w*|snaps? up|to buy|sells?|sold|sale of|divest\w*|offload\w*|exits?|exited)\b/i;
 
 // How many feed items are worth classifying for one company. Past this the
 // tail is duplicate coverage of the same two or three deals.
@@ -100,7 +100,9 @@ export function feedQuery(company) {
   const variants = nameVariants(company);
   if (variants.length === 0) return '';
   const names = variants.map((v) => `"${v.replace(/"/g, '')}"`).join(' OR ');
-  const terms = '(acquires OR acquisition OR "to acquire" OR acquired OR "bolt-on" OR "add-on" OR takeover OR merger)';
+  // Both directions: what the company bought and what it sold, since the
+  // digest logs dispositions too.
+  const terms = '(acquires OR acquisition OR "to acquire" OR acquired OR "bolt-on" OR "add-on" OR takeover OR merger OR sells OR "to sell" OR "sale of" OR divests OR divestiture OR exits)';
   return `(${names}) ${terms}`;
 }
 
@@ -115,7 +117,7 @@ export function siteQuery(company, website) {
   if (!host) return '';
   const names = nameVariants(company);
   if (!names.length) return '';
-  return `site:${host} (acquisition OR acquires OR "to acquire" OR acquired)`;
+  return `site:${host} (acquisition OR acquires OR "to acquire" OR acquired OR "sale of" OR sells OR divests)`;
 }
 
 export function hostOf(website) {
