@@ -6,7 +6,7 @@ import {
   standardFeesForStructure, costKey, COST_BUCKET_UPFRONT, addLaterCostFees, FIRST_YEAR_MONTHS,
 } from '../../utils/pricingServices';
 import { RATE_CHECK } from '../../utils/serviceRateCheck';
-import { unitLabelFor } from '../../utils/servicePricing';
+import { unitLabelFor, unitNoun } from '../../utils/servicePricing';
 
 const fmtMoney = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -691,7 +691,13 @@ const RATE_BADGE = {
   [RATE_CHECK.UNPRICED]: ['rateUnknown', 'No rate card'],
   [RATE_CHECK.INCOMPLETE]: ['rateUnknown', 'Missing a count'],
   [RATE_CHECK.NO_COST]: ['rateUnknown', 'No cost to check'],
+  [RATE_CHECK.NOT_ON_CARD]: ['rateUnknown', 'Not on rate card'],
 };
+
+// A per-unit rate keeps its cents ($22.50/account); a total doesn't.
+const fmtRate = (n) => (typeof n === 'number' && Number.isFinite(n)
+  ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: n < 100 ? 2 : 0, maximumFractionDigits: n < 100 ? 2 : 0 })
+  : '');
 
 const fmtWhole = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
@@ -731,6 +737,7 @@ function RateCheck({ check, counts = {}, entered = {}, onSetCount, optionName })
         {gap && <span className={styles.factKey}>{gap}</span>}
       </div>
       <RateMeter check={check} />
+      {check.parts?.length > 0 && <FeeParts parts={check.parts} markup={check.markup} />}
       {onSetCount && (
         <CheckCounts missing={check.missing} entered={entered} onSetCount={onSetCount} optionName={optionName} />
       )}
@@ -743,6 +750,7 @@ function RateCheck({ check, counts = {}, entered = {}, onSetCount, optionName })
             ? 'This service is marked No Fee on Dropdowns › Services Pricing, so there is no range to check against.'
             : 'No rate set for this service on Dropdowns › Services Pricing, so there is no range to check against.')
           : `Year 1 cost is the CTS on the lines above, months 1 to 12 only (a recurring line counts the months it runs in year 1)${check.later ? `, ${check.later} line${check.later === 1 ? '' : 's'} starting after month 12 left out` : ''}${check.passThrough ? ', pass-through lines left out' : ''}. The range is the Year 1 fee (plus setup) from Dropdowns › Services Pricing${countText ? `, priced on this option's ${countText}` : ''}.`}
+         {check.parts?.length > 0 && ' In the table, ongoing costs are a full year of the monthly cost, like the annual fee on the card, and a part quoted per unit is judged per unit: the marked-up cost divided by the count.'}
         {check.status !== RATE_CHECK.INCOMPLETE && check.notes.length > 0 && ` Rate card note: ${check.notes.join('; ')}.`}
       </p>
     </section>
@@ -784,9 +792,76 @@ function CheckCounts({ missing = [], entered = {}, onSetCount, optionName }) {
   );
 }
 
+// The same check split by the parts of the fee model: setup against the
+// card's setup lines, ongoing against its recurring ones, one-time against
+// the rest. A part the card quotes per unit is judged per unit, which is
+// how the fee is actually written.
+function FeeParts({ parts, markup }) {
+  const markupPct = Math.round(markup * 100);
+  return (
+    <table className={`${styles.table} ${styles.partsTable}`}>
+      <thead>
+        <tr>
+          <th>Fee part</th>
+          <th className={styles.num}>Cost</th>
+          <th className={styles.num}>Marked up {markupPct}%</th>
+          <th className={styles.num}>Rate card</th>
+          <th>Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        {parts.map(p => {
+          const [cls, label] = RATE_BADGE[p.status];
+          const noun = p.perUnit ? unitNoun(p.perUnit.unitLabel) : '';
+          const per = p.key === 'recurring' ? `/${noun}/yr` : `/${noun}`;
+          const cardRange = p.low == null ? '' : (Math.round(p.low) === Math.round(p.high)
+            ? fmtWhole(p.low) : `${fmtWhole(p.low)} – ${fmtWhole(p.high)}`);
+          const basis = p.cardLines.map(b => b.basisLabel).join(' + ');
+          const meter = p.perUnit
+            ? { status: p.status, price: p.perUnit.price, low: p.perUnit.rateLow, high: p.perUnit.rateHigh, cost: p.perUnit.price / (1 + markup), fmt: fmtRate }
+            : { status: p.status, price: p.price, low: p.low, high: p.high, cost: p.cost, fmt: fmtWhole };
+          return (
+            <tr key={p.key}>
+              <td>
+                {p.label}
+                {basis && <div className={styles.subNote}>{basis}</div>}
+              </td>
+              <td className={styles.num}>
+                {p.cost > 0 ? fmtWhole(p.cost) : <span className={styles.muted}>none</span>}
+                {p.monthly && p.cost > 0 && <div className={styles.subNote}>{fmtRate(p.cost / 12)}/mo × 12</div>}
+              </td>
+              <td className={styles.num}>
+                {p.cost > 0 ? fmtWhole(p.price) : ''}
+                {p.monthly && p.cost > 0 && <div className={styles.subNote}>{fmtRate(p.price / 12)}/mo</div>}
+                {p.perUnit && <div className={styles.subNote}>{fmtRate(p.perUnit.price)}{per}</div>}
+              </td>
+              <td className={styles.num}>
+                {cardRange || <span className={styles.muted}>no line</span>}
+                {p.perUnit && (
+                  <div className={styles.subNote}>
+                    {p.perUnit.rateLow === p.perUnit.rateHigh
+                      ? fmtRate(p.perUnit.rateLow)
+                      : `${fmtRate(p.perUnit.rateLow)} – ${fmtRate(p.perUnit.rateHigh)}`}{per} × {p.perUnit.units.toLocaleString('en-US')}
+                  </div>
+                )}
+              </td>
+              <td>
+                <div className={styles.partResult}>
+                  <span className={styles[cls]}>{label}</span>
+                  <RateMeter check={meter} compact />
+                </div>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
 // Where the marked-up price lands on a line from $0, with the rate card
 // range shaded on it. Nothing to draw without a range above $0.
-function RateMeter({ check }) {
+function RateMeter({ check, compact = false }) {
   if (check.low == null || check.price == null) return null;
   const lo = Math.min(check.low, check.high);
   const hi = Math.max(check.low, check.high);
@@ -798,11 +873,29 @@ function RateMeter({ check }) {
   const tone = check.status === RATE_CHECK.WITHIN ? styles.meterIn
     : (check.status === RATE_CHECK.BELOW || check.status === RATE_CHECK.ABOVE) ? styles.meterOut
       : styles.meterUnknown;
-  const single = Math.round(lo) === Math.round(hi);
+  const fmt = check.fmt || fmtWhole;
+  // Per-unit rates are small numbers, so "the same" is to the cent there.
+  const single = fmt(lo) === fmt(hi);
   // Two range labels closer than this share one, so they never overlap.
   const joined = single || at(hi) - at(lo) < 18;
-  const priceTip = `Marked-up price ${fmtWhole(check.price)} (cost ${fmtWhole(check.cost)} + ${Math.round(check.markup * 100)}%)`;
-  const rangeTip = single ? `Rate card: ${fmtWhole(lo)}` : `Rate card range: ${fmtWhole(lo)} – ${fmtWhole(hi)}`;
+  const priceTip = `Marked-up price ${fmt(check.price)} (cost ${fmt(check.cost)})`;
+  const rangeTip = single ? `Rate card: ${fmt(lo)}` : `Rate card range: ${fmt(lo)} – ${fmt(hi)}`;
+  const track = (
+    <div className={styles.meterTrack}>
+      <div
+        className={single ? styles.meterTick : styles.meterBand}
+        style={single ? { left: `${at(lo)}%` } : { left: `${at(lo)}%`, width: `${at(hi) - at(lo)}%` }}
+        title={rangeTip}
+      />
+      <div className={styles.meterCost} style={{ left: `${at(check.cost)}%` }} title={`Cost ${fmt(check.cost)}`} />
+      <div className={`${styles.meterDot} ${tone}`} style={{ left: `${at(check.price)}%` }} title={priceTip} />
+    </div>
+  );
+  // In a table row the figures sit in the columns beside it, so the line
+  // goes on its own.
+  if (compact) {
+    return <div className={styles.meterCompact} role="img" aria-label={`${priceTip}. ${rangeTip}.`}>{track}</div>;
+  }
 
   return (
     <div className={styles.meter} role="img" aria-label={`${priceTip}. ${rangeTip}.`}>
@@ -811,15 +904,7 @@ function RateMeter({ check }) {
           {fmtWhole(check.price)}
         </span>
       </div>
-      <div className={styles.meterTrack}>
-        <div
-          className={single ? styles.meterTick : styles.meterBand}
-          style={single ? { left: `${at(lo)}%` } : { left: `${at(lo)}%`, width: `${at(hi) - at(lo)}%` }}
-          title={rangeTip}
-        />
-        <div className={styles.meterCost} style={{ left: `${at(check.cost)}%` }} title={`Cost ${fmtWhole(check.cost)}`} />
-        <div className={`${styles.meterDot} ${tone}`} style={{ left: `${at(check.price)}%` }} title={priceTip} />
-      </div>
+      {track}
       <div className={styles.meterScale}>
         <span className={styles.meterScaleLabel} style={{ left: 0, transform: 'none' }}>$0</span>
         {joined ? (
