@@ -266,5 +266,32 @@ test('a $0 setup line on the card does not stop a one-rate card being checked pe
   assert.ok(!c.parts.some(p => p.key === 'setup'), 'no setup part for a $0 setup with no setup cost');
 });
 
+test('a card quoted per month is checked per month, with the totals kept annual', () => {
+  // Budgets (account level): $2 to $2.50 per account a month; $541 a month of cost.
+  const c = rateCardCheck({
+    items: [{ cts: 541, type: 'Recurring (monthly)', startMonth: 1 }],
+    entry: { basis: 'per_account', rate: 2, rateHigh: 2.5, monthly: true },
+    meta: { serviceType: 'Recurring', years: '3 years' },
+    counts: { accounts: 519 },
+  });
+  assert.equal(c.low, 2 * 519 * 12);
+  assert.equal(c.high, 2.5 * 519 * 12);
+  assert.equal(c.perUnit.perMonth, true);
+  assert.equal(c.perUnit.totalCost, 541);
+  assert.ok(Math.abs(c.perUnit.price - 541 * 1.5 / 519) < 1e-9); // $1.56 an account a month
+  assert.equal(c.perUnit.rateLow, 2);
+  assert.equal(c.perUnit.rateHigh, 2.5);
+  assert.equal(c.status, RATE_CHECK.BELOW);
+  // The same card read per year compares year 1 against the rate, as before.
+  const annual = rateCardCheck({
+    items: [{ cts: 541, type: 'Recurring (monthly)', startMonth: 1 }],
+    entry: { basis: 'per_account', rate: 2, rateHigh: 2.5 },
+    meta: { serviceType: 'Recurring', years: '3 years' },
+    counts: { accounts: 519 },
+  });
+  assert.equal(annual.perUnit.perMonth, false);
+  assert.equal(annual.status, RATE_CHECK.ABOVE);
+});
+
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
 console.log('\nall passed');

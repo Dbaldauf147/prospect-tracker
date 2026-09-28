@@ -12,7 +12,7 @@
 import {
   estimateService, estimateScope, pricingFor, setPricingField, contractYears, formatMoney,
   feeBasisLabel, projectServiceLines, formatMoneyRange, formatRate, avgMoney,
-  normalizeSetupLines, setupLinesFor, estimateSetup, formatSetupSummary, setPricingSetupLine,
+  normalizeSetupLines, setupLinesFor, estimateSetup, formatSetupSummary, setPricingSetupLine, formatYear1
 } from '../src/utils/servicePricing.js';
 
 let passed = 0, failed = 0;
@@ -671,6 +671,23 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
   });
   check('a service with no setup fee is untouched', plain.year1Total, 9000);
   check('and reports no setup money', plain.setup, 0);
+}
+
+// A card quoted per month bills its recurring rates twelve times a year.
+{
+  let pricing = { Budgets: { basis: 'per_account', rate: 2, rateHigh: 2.5, setupLines: [{ basis: 'flat', rate: 1000 }] } };
+  pricing = setPricingField(pricing, 'Budgets', 'period', 'monthly');
+  check('period is stored as monthly', pricing.Budgets.period, 'monthly');
+  const card = pricingFor(pricing, 'Budgets');
+  check('the card reads as monthly', card.monthly, true);
+  const est = estimateService({ entry: card, meta: RECURRING, counts: { accounts: 100 }, dealSize: '' });
+  check('a monthly per-account rate is a year of months', [est.fee, est.feeHigh], [2400, 3000]);
+  check('setup is billed once whatever the period', est.setup, 1000);
+  check('the line says it is monthly', est.breakdown[0].monthly, true);
+  check('year 1 off the card is twelve months', formatYear1(card), '$24/account + $1,000 setup');
+  pricing = setPricingField(pricing, 'Budgets', 'period', 'annual');
+  check('annual is the default and stored as nothing', pricing.Budgets.period, undefined);
+  check('and prices per year again', estimateService({ entry: pricingFor(pricing, 'Budgets'), meta: RECURRING, counts: { accounts: 100 }, dealSize: '' }).fee, 200);
 }
 
 console.log(`${passed} passed, ${failed} failed`);

@@ -699,7 +699,9 @@ function RateCheck({ check }) {
   // A card that is one per-unit rate is read per unit: cost and price over
   // the same count, against the rate itself.
   const pu = check.perUnit;
-  const per = pu ? ` ${String(pu.basisLabel || `per ${pu.unitLabel || 'unit'}`).toLowerCase()}` : '';
+  const per = pu ? ` ${String(pu.basisLabel || `per ${pu.unitLabel || 'unit'}`).toLowerCase()}${pu.perMonth ? ' a month' : ''}` : '';
+  // A card quoted per month is checked against a month's cost, not year 1's.
+  const period = pu?.perMonth ? 'Monthly' : 'Year 1';
   const shown = pu
     ? { ...check, cost: pu.cost, price: pu.price, low: pu.rateLow, high: pu.rateHigh }
     : check;
@@ -717,7 +719,7 @@ function RateCheck({ check }) {
         Price check <span className={styles[cls]}>{label}</span>
       </h4>
       <div className={styles.rateGrid}>
-        <span><span className={styles.factKey}>Year 1 cost{per}:</span> <span className={styles.rateFigure}>{fmt(shown.cost)}</span></span>
+        <span><span className={styles.factKey}>{pu?.perMonth ? 'Cost' : 'Year 1 cost'}{per}:</span> <span className={styles.rateFigure}>{fmt(shown.cost)}</span></span>
         <span><span className={styles.factKey}>{markupLabel}:</span> <span className={styles.rateFigure}>{fmt(shown.price)}{per}</span></span>
         <span>
           <span className={styles.factKey}>Rate card{pu ? '' : ' range'}:</span>{' '}
@@ -726,7 +728,7 @@ function RateCheck({ check }) {
       </div>
       {pu && (
         <p className={styles.note}>
-          Year 1 cost of {fmtWhole(check.cost)}, marked up to {fmtWhole(check.price)}, over {pu.units.toLocaleString('en-US')} {String(pu.unitLabel || 'units').toLowerCase()}.
+          {period} cost of {fmtWhole(pu.totalCost ?? check.cost)}, marked up to {fmtWhole(pu.totalPrice ?? check.price)}, over {pu.units.toLocaleString('en-US')} {String(pu.unitLabel || 'units').toLowerCase()}.
         </p>
       )}
       <RateMeter check={shown} fmt={fmt} />

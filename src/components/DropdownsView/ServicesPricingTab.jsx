@@ -13,6 +13,7 @@ import {
   formatRate,
   formatYear1,
   year1FromCard,
+  isRecurring,
   getServicePricing,
   isGraveyardBucket,
   parseMoney,
@@ -286,8 +287,10 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         // side by side where they aren't. Strings rather than numbers
         // because a per-unit service's year one is "$625/site + $5,000
         // setup" — see year1FromCard.
-        year1: formatYear1(entry, bases),
-        year1High: formatYear1(entry, bases, 'hi'),
+        year1: formatYear1(entry, bases, 'lo', { recurring: isRecurring(meta) }),
+        year1High: formatYear1(entry, bases, 'hi', { recurring: isRecurring(meta) }),
+        // Whether the recurring rates are quoted per month or per year.
+        period: entry.monthly ? 'monthly' : 'annual',
         // The setup lines as stored, and what they come to under the
         // estimate on the Deal Pricing subtab — the panel's rate columns
         // show the first, its Year 1 columns the second.
@@ -433,7 +436,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   // apart — but a sort needs one number per row, and the alternative is
   // sorting a column of money by the text of it.
   function year1Total(row, end) {
-    const { parts } = year1FromCard(pricingFor(pricing, row.name, bases), bases);
+    const { parts } = year1FromCard(pricingFor(pricing, row.name, bases), bases, { recurring: isRecurring(row) });
     return parts.reduce((sum, p) => sum + (end === 'hi' ? p.hi : p.lo), 0);
   }
 
@@ -441,7 +444,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   // can't take apart is one they can't check.
   function year1Title(row, end) {
     const entry = pricingFor(pricing, row.name, bases);
-    const { parts } = year1FromCard(entry, bases);
+    const { parts } = year1FromCard(entry, bases, { recurring: isRecurring(row) });
     const setup = parts.some(p => p.setup);
     const head = row.noFee
       ? 'Not charged: this service is no fee, so it prices to $0 whatever the card says. '
