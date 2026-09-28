@@ -17,6 +17,7 @@ import { companyNewsBudgetMs } from './researchBudget.js';
 import { fetchHeadlines, nameVariants } from './newsFeeds.js';
 import { classifyHeadline, stripPublisher } from './dealHeadline.js';
 import { fetchNewsletterItems } from './newsletterInbox.js';
+import { dedupeDeals, sameDeal } from './dealDedupe.js';
 
 // A prospect opts in with `trackAcquisitionNews: true`, written by the
 // checkbox on the company popup (ProspectModal).
@@ -142,6 +143,10 @@ Do NOT count, even when the headline is about the company:
 - Exits, divestitures, and sales of portfolio companies.
 - Earnings, leadership changes, expansions, partnerships, product launches, litigation.
 - Rumoured, "exploring", "in talks", or unconfirmed deals.
+- Recaps, profiles, or anniversary pieces about a deal from an earlier year, even when published this week.
+- Deals where others are the buyers and the company is only named as their partner, lender, or financing source.
+
+The "buyer" field is a short entity name (e.g. "Apollo funds", "Foo Corp"), never a phrase or sentence from the headline.
 
 Work only from the headlines given. Do not add deals you remember from elsewhere - a deal that is not in the list does not go in the answer. When several headlines cover the same deal, return the clearest one only.
 
@@ -372,7 +377,7 @@ export function classifyByRules(entry, items) {
 
   deals.sort((a, b) => b.announcedOn.localeCompare(a.announcedOn));
   unsure.sort((a, b) => b.announcedOn.localeCompare(a.announcedOn));
-  return { deals: deals.slice(0, 25), unsure: unsure.slice(0, 8), error: null };
+  return { deals: dedupeDeals(deals).slice(0, 25), unsure: unsure.slice(0, 8), error: null };
 }
 
 // The pre-feed implementation, kept for the case the feeds can't answer:
@@ -523,7 +528,8 @@ export function dealsFromHeadlines(raw, items) {
     });
   }
   out.sort((a, b) => b.announcedOn.localeCompare(a.announcedOn));
-  return out.slice(0, 25);
+  // The same deal worded two ways by two outlets is one deal.
+  return dedupeDeals(out).slice(0, 25);
 }
 
 // Keep only deals that carry a target, a source URL, and an announcement
@@ -562,7 +568,8 @@ export function normalizeDeals(raw, since, until) {
     });
   }
   out.sort((a, b) => b.announcedOn.localeCompare(a.announcedOn));
-  return out.slice(0, 25);
+  // The same deal worded two ways by two outlets is one deal.
+  return dedupeDeals(out).slice(0, 25);
 }
 
 // Research the tracked companies against one shared deadline.
@@ -906,7 +913,8 @@ export function dealToTransaction(deal, company, now = Date.now()) {
     asset: String(deal.target || ''),
     // The digest's buyer is the company itself or the portfolio company that
     // made an add-on; only the second is worth a "Through" entry.
-    entity: buyer && buyer.toLowerCase() !== String(company || '').trim().toLowerCase() ? buyer : '',
+    // "Apollo" for Apollo Global Management is the company itself too.
+    entity: buyer && !String(company || '').toLowerCase().includes(buyer.toLowerCase()) ? buyer : '',
     counterparty: '',
     dealType: String(deal.dealType || ''),
     sector: String(deal.sector || ''),
@@ -920,23 +928,22 @@ export function dealToTransaction(deal, company, now = Date.now()) {
   };
 }
 
-// Same asset on the same date is the same deal, whoever logged it. The
-// digest's window overlaps week to week, so this is what stops a deal from
-// landing twice; it matches transactionKey on the popup side.
-function txKey(r) {
-  return `${String(r?.asset || '').trim().toLowerCase()}|${String(r?.date || '')}`;
+// A deal already on the log, whoever logged it, is not logged again. The
+// digest's window overlaps week to week, and outlets word one deal several
+// ways a few days apart, so this is sameDeal's fuzzy match rather than an
+// exact asset and date.
+function onLog(log, row) {
+  return log.some(r => sameDeal({ target: r?.asset, date: r?.date }, { target: row.asset, date: row.date }));
 }
 
 // The log with this run's new deals added, and how many were new. Pure, so
 // the dedupe is testable without Firestore.
 export function mergeDealsIntoLog(existing, deals, company, now = Date.now()) {
   const log = Array.isArray(existing) ? existing : [];
-  const seen = new Set(log.map(txKey));
   const added = [];
   for (const d of deals || []) {
     const row = dealToTransaction(d, company, now);
-    if (!row.asset || seen.has(txKey(row))) continue;
-    seen.add(txKey(row));
+    if (!row.asset || onLog(log, row) || onLog(added, row)) continue;
     added.push(row);
   }
   return { next: added.length ? [...added, ...log] : log, added: added.length, rows: added };

@@ -211,6 +211,56 @@ function cleanParty(s) {
     .slice(0, 200);
 }
 
+// A headline about a deal from an earlier year is a recap, a profile page
+// or an anniversary piece, not news: "Apollo funds complete ~$5B
+// acquisition of Yahoo (2021)" was published this month about a 2021 deal.
+// Any year before the one the item was published in marks it. A later year
+// ("expected to close in 2027") is fine.
+const RECAP_WORDS = /\b(look(s|ing)? back|years? (after|since|ago)|anniversary|timeline|history of|biggest deals|top deals|deals? of (the|20\d\d)|recap|in review|profile)\b/i;
+
+function isRecap(title, publishedAt) {
+  if (RECAP_WORDS.test(title)) return true;
+  const pub = new Date(publishedAt || Date.now());
+  const pubYear = Number.isNaN(pub.getTime()) ? new Date().getFullYear() : pub.getFullYear();
+  const years = (title.match(/\b(?:19|20)\d{2}\b/g) || []).map(Number);
+  return years.some(y => y < pubYear);
+}
+
+// The firm has to be the one doing the buying, not a partner named next to
+// it: in "Wrexham AFC Owners Reynolds and McElhenney Partner With Apollo to
+// Acquire The Turf Pub" the firm is on the buying side of the verb, but the
+// subject is two actors and Apollo is their backer. When the firm only
+// appears after one of these words, it is not the lead buyer, and the
+// headline goes to the reader as unsure.
+const CO_SUBJECT = /\b(partner(s|ed|ing)?\s+with|team(s|ed)?\s+up\s+with|join(s|ed)?|alongside|together\s+with|with|consortium)\b/i;
+
+function firmLeadsSide(side, variants) {
+  // "Consortium led by Apollo acquires" - the firm is the lead.
+  const led = side.match(/\bled\s+by\b/i);
+  if (led && namesFirm(side.slice(led.index), variants)) return true;
+  const m = side.match(CO_SUBJECT);
+  if (!m) return true;
+  // The firm is fine to the left of the marker ("Apollo, with KKR,
+  // acquires"); only a firm that first appears after it is a partner.
+  return namesFirm(side.slice(0, m.index), variants);
+}
+
+// The buyer as a name rather than the half-sentence left of the verb. A
+// headline's left side often carries the verb's own lead-in ("Apollo funds
+// complete ~$5B", "Apollo Provides $1.25 Billion to Support BMG, Concord
+// Merger;"). Cut at the first clause break, verb or amount after the
+// subject; anything still long is a sentence, and the firm itself is the
+// honest answer.
+const BUYER_TAIL = /\s*[;:]|\s+(?:has|have|had|will|to|announce[sd]?|announcing|complete[sd]?|completing|close[sd]?|closing|agree[sd]?|agreeing|finali[sz]e[sd]?|sign(s|ed)?|provide[sd]?|provides|make[s]?|made|lead[s]?|strike[s]?|struck|seal[s]?|sealed|ink[s]?|inked|is|are|was|were)\b|\s+[~$€£]|\s+\d/i;
+
+function cleanBuyer(left, company) {
+  const base = cleanParty(left);
+  const m = base.match(BUYER_TAIL);
+  const cut = (m ? base.slice(0, m.index) : base).replace(/[\s,;:.]+$/, '').trim();
+  if (!cut || cut.split(/\s+/).length > 6) return company;
+  return cut;
+}
+
 /**
  * Read one feed item as an acquisition by `entry.company`.
  *
@@ -228,6 +278,7 @@ export function classifyHeadline(item, entry, variants) {
     if (re.test(title)) return { skip: reason };
   }
   if (!DEAL_WORDS.test(title)) return { skip: 'not deal news' };
+  if (isRecap(title, item?.publishedAt)) return { skip: 'recap of an older deal' };
 
   // A sale names three parties — "Apollo sells Gamma Logistics to
   // Blackstone" — and splitting it on one verb gets it wrong in the worst
@@ -241,7 +292,7 @@ export function classifyHeadline(item, entry, variants) {
       return {
         deal: {
           target: cleanParty(asset),
-          buyer: cleanParty(buyer) || entry.company,
+          buyer: cleanBuyer(buyer, entry.company),
           dealType: dealTypeFor(title, true, entry.isPe),
           value: dealValue(title),
           summary: title,
@@ -269,7 +320,7 @@ export function classifyHeadline(item, entry, variants) {
       return {
         deal: {
           target: cleanParty(left),
-          buyer: cleanParty(right) || entry.company,
+          buyer: cleanBuyer(right, entry.company),
           dealType: dealTypeFor(title, true, entry.isPe),
           value: dealValue(title),
           summary: title,
@@ -286,6 +337,7 @@ export function classifyHeadline(item, entry, variants) {
     const left = title.slice(0, fwd.index);
     const right = title.slice(fwd.index + fwd.length);
     if (namesFirm(left, variants)) {
+      if (!firmLeadsSide(left, variants)) return { unsure: true };
       // Only the verbs whose object is unambiguously the thing bought get
       // printed as a deal. "backs", "invests in", "adds" are real signals
       // but too loose to assert an acquisition from, so they go to the
@@ -300,7 +352,7 @@ export function classifyHeadline(item, entry, variants) {
       return {
         deal: {
           target,
-          buyer: cleanParty(left),
+          buyer: sponsorOnly ? cleanParty(left) : cleanBuyer(left, entry.company),
           dealType: sponsorOnly ? 'Add-on' : dealTypeFor(title, true, entry.isPe),
           value: dealValue(title),
           summary: title,
@@ -319,4 +371,4 @@ export function classifyHeadline(item, entry, variants) {
   return { unsure: true };
 }
 
-export const __testing = { DISQUALIFIERS, BUY_FORWARD, BUY_REVERSE, SELL_FORWARD, dealValue, dealTypeFor };
+export const __testing = { DISQUALIFIERS, BUY_FORWARD, BUY_REVERSE, SELL_FORWARD, dealValue, dealTypeFor, isRecap, firmLeadsSide, cleanBuyer };
