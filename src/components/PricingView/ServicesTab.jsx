@@ -178,8 +178,8 @@ export function ServicesTab({
               optionName={opt?.sheetName}
               numYears={numYears}
               termMonths={termMonths}
-              siteCount={opt?.siteCount}
-              accountCount={opt?.accountCount}
+              siteCount={detail?.sia?.sites ?? opt?.siteCount}
+              accountCount={detail?.sia?.accounts ?? opt?.accountCount}
               onOpenLinkedTo={onOpenLinkedTo}
               onSetCount={onSetCount}
             />
@@ -384,7 +384,7 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
       )}
 
       {hasWorkbook && detail?.rateCheck && (
-        <RateCheck check={detail.rateCheck} counts={detail.counts} entered={detail.enteredCounts} onSetCount={onSetCount} optionName={optionName} />
+        <RateCheck check={detail.rateCheck} counts={detail.counts} entered={detail.enteredCounts} fromSia={detail.fromSia} sia={detail.sia} onSetCount={onSetCount} optionName={optionName} />
       )}
 
           <section className={styles.section}>
@@ -705,19 +705,22 @@ const fmtWhole = (n) => (typeof n === 'number' && Number.isFinite(n)
 
 // The service's first-year cost on the SIA, marked up, set against the
 // price range its Dropdowns › Services Pricing rate card quotes.
-function RateCheck({ check, counts = {}, entered = {}, onSetCount, optionName }) {
+function RateCheck({ check, counts = {}, entered = {}, fromSia = {}, sia = {}, onSetCount, optionName }) {
   const [cls, label] = RATE_BADGE[check.status];
   const markupPct = Math.round(check.markup * 100);
   const range = check.low == null ? '' : (Math.round(check.low) === Math.round(check.high)
     ? fmtWhole(check.low)
     : `${fmtWhole(Math.min(check.low, check.high))} – ${fmtWhole(Math.max(check.low, check.high))}`);
+  // Each count the card prices on, and whether it is the SIA's or typed.
+  const sheetOf = (k) => (k === 'accounts' ? sia.accountsFrom : sia.sitesFrom);
   const countText = [
-    counts.sites != null && `${counts.sites.toLocaleString('en-US')} sites`,
-    counts.accounts != null && `${counts.accounts.toLocaleString('en-US')} accounts`,
-    ...Object.entries(entered).map(([k, v]) => (k === 'dealSize'
-      ? `${fmtWhole(v)} deal size`
-      : `${Number(v).toLocaleString('en-US')} ${unitLabelFor(k).toLowerCase()}`)),
-  ].filter(Boolean).join(', ');
+    ...(check.unitsUsed || []).filter(k => counts[k] != null).map(k => {
+      const typed = typeof entered[k] === 'number';
+      const src = typed ? 'typed' : (fromSia[k] != null ? `from the SIA${sheetOf(k) ? ` (${sheetOf(k)})` : ''}` : '');
+      return `${Number(counts[k]).toLocaleString('en-US')} ${unitLabelFor(k).toLowerCase()}${src ? `, ${src}` : ''}`;
+    }),
+    typeof entered.dealSize === 'number' && `${fmtWhole(entered.dealSize)} deal size`,
+  ].filter(Boolean).join('; ');
   let gap = '';
   if (check.status === RATE_CHECK.BELOW) gap = `${fmtWhole(Math.min(check.low, check.high) - check.price)} under the low end`;
   if (check.status === RATE_CHECK.ABOVE) gap = `${fmtWhole(check.price - Math.max(check.low, check.high))} over the high end`;
@@ -739,7 +742,7 @@ function RateCheck({ check, counts = {}, entered = {}, onSetCount, optionName })
       <RateMeter check={check} />
       {check.parts?.length > 0 && <FeeParts parts={check.parts} markup={check.markup} />}
       {onSetCount && (
-        <CheckCounts missing={check.missing} entered={entered} onSetCount={onSetCount} optionName={optionName} />
+        <CheckCounts missing={check.missing} used={check.unitsUsed} entered={entered} fromSia={fromSia} onSetCount={onSetCount} optionName={optionName} />
       )}
       <p className={styles.note}>
         {check.status === RATE_CHECK.INCOMPLETE && (
@@ -749,7 +752,7 @@ function RateCheck({ check, counts = {}, entered = {}, onSetCount, optionName })
           ? (check.noFee
             ? 'This service is marked No Fee on Dropdowns › Services Pricing, so there is no range to check against.'
             : 'No rate set for this service on Dropdowns › Services Pricing, so there is no range to check against.')
-          : `Year 1 cost is the CTS on the lines above, months 1 to 12 only (a recurring line counts the months it runs in year 1)${check.later ? `, ${check.later} line${check.later === 1 ? '' : 's'} starting after month 12 left out` : ''}${check.passThrough ? ', pass-through lines left out' : ''}. The range is the Year 1 fee (plus setup) from Dropdowns › Services Pricing${countText ? `, priced on this option's ${countText}` : ''}.`}
+          : `Year 1 cost is the CTS on the lines above, months 1 to 12 only (a recurring line counts the months it runs in year 1)${check.later ? `, ${check.later} line${check.later === 1 ? '' : 's'} starting after month 12 left out` : ''}${check.passThrough ? ', pass-through lines left out' : ''}. The range is the Year 1 fee (plus setup) from Dropdowns › Services Pricing${countText ? `, priced on ${countText}` : ''}.`}
          {check.parts?.length > 0 && ' In the table, ongoing costs are a full year of the monthly cost, like the annual fee on the card, and a part quoted per unit is judged per unit: the marked-up cost divided by the count.'}
         {check.status !== RATE_CHECK.INCOMPLETE && check.notes.length > 0 && ` Rate card note: ${check.notes.join('; ')}.`}
       </p>
@@ -759,11 +762,17 @@ function RateCheck({ check, counts = {}, entered = {}, onSetCount, optionName })
 
 // Boxes for the counts the rate card needs and the SIA doesn't carry, plus
 // any already typed so they can be changed or cleared. Saved on the option.
-function CheckCounts({ missing = [], entered = {}, onSetCount, optionName }) {
+//
+// A count the SIA supplies (sites, accounts, and sites standing in for
+// sites w/ mandate) shows as the box's grey placeholder: blank means the
+// SIA's, and a typed number overrides it until "Use SIA" clears it.
+function CheckCounts({ missing = [], used = [], entered = {}, fromSia = {}, onSetCount, optionName }) {
   const fields = [...missing];
-  for (const key of Object.keys(entered)) {
+  const add = (key) => {
     if (!fields.some(f => f.key === key)) fields.push({ key, label: key === 'dealSize' ? 'Deal size' : unitLabelFor(key) });
-  }
+  };
+  for (const key of used) if (fromSia[key] != null) add(key);
+  for (const key of Object.keys(entered)) add(key);
   if (fields.length === 0) return null;
   return (
     <div className={styles.countRow}>
@@ -771,20 +780,28 @@ function CheckCounts({ missing = [], entered = {}, onSetCount, optionName }) {
       {fields.map(f => {
         const isMoney = f.key === 'dealSize';
         const v = entered[f.key];
+        const siaV = fromSia[f.key];
         return (
           <label key={f.key} className={styles.countField}>
             {f.label}
             <DraftInput
               value={typeof v === 'number' ? (isMoney ? fmtPlain(v) : String(v)) : ''}
-              placeholder={isMoney ? '$' : 'Enter'}
+              placeholder={isMoney ? '$' : (siaV != null ? String(siaV) : 'Enter')}
               align="right"
               width={isMoney ? 110 : 72}
-              className={`${styles.cellInput} ${v == null ? styles.countNeeded : ''}`}
+              className={`${styles.cellInput} ${v == null && siaV == null ? styles.countNeeded : ''}`}
               onCommit={(raw) => {
                 const n = isMoney ? parseMoney(raw) : parseCount(raw);
                 if (n !== undefined) onSetCount(f.key, n);
               }}
             />
+            {siaV != null && (typeof v === 'number' && v !== siaV
+              ? (
+                <button type="button" className={styles.linkBtn} onClick={() => onSetCount(f.key, null)} title={`Clear the typed count and use the SIA's ${siaV.toLocaleString('en-US')}.`}>
+                  Use SIA ({siaV.toLocaleString('en-US')})
+                </button>
+              )
+              : <span className={styles.subNote}>from SIA</span>)}
           </label>
         );
       })}

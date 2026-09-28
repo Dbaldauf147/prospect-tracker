@@ -34,7 +34,7 @@ import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/p
 import { setOppPricingSnapshot } from '../../utils/oppsPricingSnapshot';
 import { servicesByFeeName } from '../../utils/siaScopeCompare';
 import { getServicePricing, pricingFor, resolvePricingBases } from '../../utils/servicePricing';
-import { rateCardCheck } from '../../utils/serviceRateCheck';
+import { rateCardCheck, siaCountsFor, priceCheckCounts } from '../../utils/serviceRateCheck';
 import { saveOppSourceFile, sourceFileMeta } from '../../utils/oppPricingSourceFile';
 import {
   loadOptionLinks,
@@ -4690,14 +4690,13 @@ export function PricingView({ settings } = {}) {
     const svc = pricingServiceList.find(s => norm(s.name) === want);
     const pricing = getServicePricing(settings);
     const cardName = Object.keys(pricing).find(k => norm(k) === want) || serviceName;
-    const counts = {};
-    if (typeof opt.siteCount === 'number') counts.sites = opt.siteCount;
-    if (typeof opt.accountCount === 'number') counts.accounts = opt.accountCount;
-    // Counts typed on the Services subtab for what the SIA doesn't carry
-    // (sites w/ mandate, meters, a deal size). Kept on the option, so they
-    // are saved and cleared with the workbook they describe.
+    // The SIA's own sites and accounts (another option sheet's when this
+    // one doesn't carry them), with counts typed on the Services subtab on
+    // top (meters, a deal size, or an override). Typed ones are kept on
+    // the option, so they are saved and cleared with the workbook.
+    const sia = siaCountsFor(workbook, opt);
     const enteredCounts = (opt.priceCheckCounts && typeof opt.priceCheckCounts === 'object') ? opt.priceCheckCounts : {};
-    Object.assign(counts, enteredCounts);
+    const { counts, fromSia } = priceCheckCounts(sia, enteredCounts);
     const rateCheck = rateCardCheck({
       items,
       entry: pricingFor(pricing, cardName, bases),
@@ -4705,7 +4704,7 @@ export function PricingView({ settings } = {}) {
       counts,
       bases,
     });
-    return { items, fees, rateCheck, counts, enteredCounts };
+    return { items, fees, rateCheck, counts, enteredCounts, fromSia, sia };
   }
 
   // Type (or clear, with null) one of those counts on the active option.
@@ -4732,7 +4731,8 @@ export function PricingView({ settings } = {}) {
   // margin the page derives for blanks.
   function previewFeeStructureRow(row) {
     const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
-    const alt = feeStructureRowToAltRow(row, { siteCount: opt?.siteCount, accountCount: opt?.accountCount });
+    const sia = siaCountsFor(workbook, opt);
+    const alt = feeStructureRowToAltRow(row, { siteCount: sia.sites ?? undefined, accountCount: sia.accounts ?? undefined });
     const numYears = Math.max(1, Math.ceil(termMonths / 12));
     if (!opt || !alt.altItem) return { alt, autoFee: null, startMonth: null, years: Array(numYears).fill(0), gmPct: null };
     const autoFee = autoFeePerUnitFor(alt);
@@ -4767,8 +4767,9 @@ export function PricingView({ settings } = {}) {
       const replaceNames = [];
       for (const f of detail.fees) if (f.name) replaceNames.push(f.name);
       for (const it of detail.items) if (it.feeName) replaceNames.push(it.feeName);
+      const sia = siaCountsFor(workbook, opt);
       const plan = applyFeeStructureToSchedule(schedule, structure.rows, {
-        replaceNames, siteCount: opt.siteCount, accountCount: opt.accountCount,
+        replaceNames, siteCount: sia.sites ?? undefined, accountCount: sia.accounts ?? undefined,
       });
       serviceRows = plan.added;
       nextSchedule = plan.rows;
@@ -4843,8 +4844,9 @@ export function PricingView({ settings } = {}) {
     for (const f of detail.fees) if (f.name) replaceNames.push(f.name);
     for (const it of detail.items) if (it.feeName) replaceNames.push(it.feeName);
     const schedule = altFees[opt.optionNumber] || [];
+    const sia = siaCountsFor(workbook, opt);
     const plan = applyFeeStructureToSchedule(schedule, structure.rows, {
-      replaceNames, siteCount: opt.siteCount, accountCount: opt.accountCount,
+      replaceNames, siteCount: sia.sites ?? undefined, accountCount: sia.accounts ?? undefined,
     });
     if (plan.added.length === 0) {
       window.alert('This structure has no named fees to apply.');

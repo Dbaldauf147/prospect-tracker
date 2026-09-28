@@ -189,8 +189,48 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
   else if (counted === 0 || cost <= 0) status = RATE_CHECK.NO_COST;
   else status = statusOf(price, low, high);
 
+  // The counts the card multiplies by (sites, accounts, ...), so the page
+  // can show each one and where it came from.
+  const unitsUsed = [...new Set(lines.filter(b => b.kind === 'unit' && b.unit).map(b => b.unit))];
+
   return {
-    status, cost, price, markup, low, high, notes, passThrough, later, missing, parts,
+    status, cost, price, markup, low, high, notes, passThrough, later, missing, parts, unitsUsed,
     noFee: !!est?.noFee,
   };
+}
+
+// The SIA's site and account counts for one option. The counts sit in
+// each option sheet's header block, and an SIA often fills them in on one
+// sheet only, so an option without its own takes the first other option
+// sheet's. `sitesFrom` / `accountsFrom` name that sheet, or are null when
+// the option carries the count itself.
+export function siaCountsFor(workbook, opt) {
+  const pick = (k) => {
+    if (typeof opt?.[k] === 'number' && opt[k] > 0) return { value: opt[k], from: null };
+    const other = (workbook?.options || []).find(o => o !== opt && typeof o?.[k] === 'number' && o[k] > 0);
+    return other ? { value: other[k], from: other.sheetName || null } : { value: null, from: null };
+  };
+  const s = pick('siteCount');
+  const a = pick('accountCount');
+  return { sites: s.value, accounts: a.value, sitesFrom: s.from, accountsFrom: a.from };
+}
+
+// The counts the price check prices on: the SIA's, with any typed on the
+// Services subtab on top. The SIA's sites also stand in for sites w/
+// mandate: the SIA is priced on the sites in its scope, which for a
+// compliance service are the mandated ones. `fromSia` is what came off the
+// SIA, per counts key, so the page can say so and offer it back after a
+// typed override.
+export function priceCheckCounts(sia = {}, entered = {}) {
+  const counts = {};
+  const fromSia = {};
+  if (typeof sia.sites === 'number') {
+    counts.sites = fromSia.sites = sia.sites;
+    counts.sites_mandate = fromSia.sites_mandate = sia.sites;
+  }
+  if (typeof sia.accounts === 'number') counts.accounts = fromSia.accounts = sia.accounts;
+  for (const [k, v] of Object.entries(entered || {})) {
+    if (typeof v === 'number' && Number.isFinite(v)) counts[k] = v;
+  }
+  return { counts, fromSia };
 }
