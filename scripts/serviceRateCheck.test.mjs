@@ -117,8 +117,49 @@ test('only months 1 to 12 are year 1', () => {
     { cts: 100, type: 'Recurring', startMonth: 14 },
   ]);
   assert.equal(r.cost, 670 + 900);
+  assert.equal(r.runRate, 1200);
   assert.equal(r.counted, 2);
   assert.equal(r.later, 2);
+});
+
+test('each part of the fee model is checked against its own card lines', () => {
+  const c = rateCardCheck({
+    items: [
+      { cts: 2750, type: 'Setup', startMonth: 1 },
+      { cts: 4835.5, type: 'Setup', startMonth: 1 },
+      { cts: 648.75, type: 'Recurring (monthly)', startMonth: 4 },
+      { cts: null, type: 'Fee = $6.75/account' },
+    ],
+    entry: { basis: 'per_account', rate: 10, rateHigh: 20, setupLines: [{ basis: 'flat', rate: 5000, rateHigh: 8000 }] },
+    meta: recurring,
+    counts: { sites: 29, accounts: 519 },
+  });
+  const by = Object.fromEntries(c.parts.map(p => [p.key, p]));
+  assert.deepEqual(Object.keys(by), ['setup', 'recurring']);
+  // Setup: 7,585.50 × 1.5 = 11,378.25 against 5,000 to 8,000.
+  assert.equal(by.setup.status, RATE_CHECK.ABOVE);
+  assert.equal(by.setup.low, 5000);
+  assert.equal(by.setup.perUnit, null);
+  // Ongoing, per account: 648.75 × 12 × 1.5 / 519 = 22.50 against $10 to $20.
+  assert.equal(by.recurring.cost, 648.75 * 12);
+  assert.equal(by.recurring.perUnit.unitLabel, 'Accounts');
+  assert.ok(Math.abs(by.recurring.perUnit.price - 22.5) < 1e-9);
+  assert.equal(by.recurring.perUnit.rateLow, 10);
+  assert.equal(by.recurring.perUnit.rateHigh, 20);
+  assert.equal(by.recurring.status, RATE_CHECK.ABOVE);
+});
+
+test('a cost the card has no line for is called out, and a card line with no cost too', () => {
+  const c = rateCardCheck({
+    items: [{ cts: 1000, type: 'Setup' }],
+    entry: { basis: 'per_site', rate: 100 },
+    meta: recurring,
+    counts: { sites: 10 },
+  });
+  const by = Object.fromEntries(c.parts.map(p => [p.key, p]));
+  assert.equal(by.setup.status, RATE_CHECK.NOT_ON_CARD);
+  assert.equal(by.recurring.status, RATE_CHECK.NO_COST);
+  assert.equal(by.oneTime, undefined);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
