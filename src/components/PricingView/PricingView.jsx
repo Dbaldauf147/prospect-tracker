@@ -4693,6 +4693,11 @@ export function PricingView({ settings } = {}) {
     const counts = {};
     if (typeof opt.siteCount === 'number') counts.sites = opt.siteCount;
     if (typeof opt.accountCount === 'number') counts.accounts = opt.accountCount;
+    // Counts typed on the Services subtab for what the SIA doesn't carry
+    // (sites w/ mandate, meters, a deal size). Kept on the option, so they
+    // are saved and cleared with the workbook they describe.
+    const enteredCounts = (opt.priceCheckCounts && typeof opt.priceCheckCounts === 'object') ? opt.priceCheckCounts : {};
+    Object.assign(counts, enteredCounts);
     const rateCheck = rateCardCheck({
       items,
       entry: pricingFor(pricing, cardName, bases),
@@ -4700,7 +4705,26 @@ export function PricingView({ settings } = {}) {
       counts,
       bases,
     });
-    return { items, fees, rateCheck, counts };
+    return { items, fees, rateCheck, counts, enteredCounts };
+  }
+
+  // Type (or clear, with null) one of those counts on the active option.
+  function setPriceCheckCount(key, value) {
+    setWorkbook(prev => {
+      if (!prev) return prev;
+      const target = prev.options.find(o => o.optionNumber === activeOption) || prev.options[0];
+      if (!target) return prev;
+      return {
+        ...prev,
+        options: prev.options.map(o => {
+          if (o !== target) return o;
+          const next = { ...(o.priceCheckCounts || {}) };
+          if (value == null) delete next[key];
+          else next[key] = value;
+          return { ...o, priceCheckCounts: next };
+        }),
+      };
+    });
   }
 
   // One saved fee-structure row as the active option would bill it: the
@@ -5125,6 +5149,7 @@ export function PricingView({ settings } = {}) {
           setActiveOption={setActiveOption}
           services={pricingServiceList}
           detailFor={serviceDetailFor}
+          onSetCount={setPriceCheckCount}
           feeStructures={serviceFeeStructures}
           setFeeStructures={setServiceFeeStructures}
           previewFeeRow={previewFeeStructureRow}

@@ -30,31 +30,37 @@ export const RATE_CHECK = {
 
 const isRecurringType = (t) => /^recurring/i.test(String(t || '').trim());
 
-// The first-year cost of a set of cost lines, pass-through left out.
+// The first-year cost of a set of cost lines, pass-through left out. Only
+// months 1 to 12 count: a recurring line starting in month 4 pays nine of
+// them, and a one-time cost landing in month 13 or later is a year 2 cost.
 export function year1CostOf(items = []) {
   let cost = 0;
   let counted = 0;
   let passThrough = 0;
+  let later = 0;
   for (const it of items) {
     if (typeof it?.cts !== 'number' || !Number.isFinite(it.cts)) continue;
     if (it.passThrough) { passThrough += 1; continue; }
-    cost += isRecurringType(it.type) ? it.cts * 12 : it.cts;
+    const start = Number(it.startMonth) >= 1 ? Math.floor(Number(it.startMonth)) : 1;
+    if (start > 12) { later += 1; continue; }
+    cost += isRecurringType(it.type) ? it.cts * (13 - start) : it.cts;
     counted += 1;
   }
-  return { cost, counted, passThrough };
+  return { cost, counted, passThrough, later };
 }
 
 /**
  * items    serviceDetailFor's cost lines ({ cts, type, passThrough })
  * entry    the service's rate card entry (pricingFor)
  * meta     the service's catalog metadata (Type, Years)
- * counts   { sites, accounts, ... } off the SIA option
+ * counts   { sites, accounts, ... } off the SIA option, plus any typed in
+ *          for the check; `dealSize` is what a percentage fee is a cut of
  * markup   0.5 means cost × 1.5
  */
 export function rateCardCheck({ items = [], entry = null, meta = null, counts = {}, markup = DEFAULT_MARKUP, bases = PRICING_BASES } = {}) {
-  const { cost, counted, passThrough } = year1CostOf(items);
+  const { cost, counted, passThrough, later } = year1CostOf(items);
   const price = cost * (1 + markup);
-  const est = entry ? estimateServiceRange({ entry, meta, counts, bases }) : null;
+  const est = entry ? estimateServiceRange({ entry, meta, counts, dealSize: counts?.dealSize ?? null, bases }) : null;
   const priced = !!est?.priced && !est.noFee;
   const low = priced ? (est.fee || 0) + (est.setup || 0) : null;
   const high = priced ? (est.feeHigh ?? est.fee ?? 0) + (est.setupHigh ?? est.setup ?? 0) : null;
@@ -65,9 +71,16 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
     : [];
 
   const lines = priced ? [...(est.breakdown || []), ...(est.setupBreakdown || [])] : [];
-  const missing = [...new Set(lines.filter(b => b.gap).map(b => (
-    b.gap.kind === 'deal' ? 'deal size' : (b.gap.unitLabel || b.unitLabel || 'a count').toLowerCase()
-  )))];
+  // What to ask for, one entry per input: { key, label }, key being the
+  // counts key the estimate reads ('dealSize' for a percentage fee).
+  const missing = [];
+  for (const b of lines) {
+    if (!b.gap) continue;
+    const m = b.gap.kind === 'deal'
+      ? { key: 'dealSize', label: 'Deal size' }
+      : { key: b.gap.unit || b.unit, label: b.gap.unitLabel || b.unitLabel || b.gap.unit || 'Count' };
+    if (m.key && !missing.some(x => x.key === m.key)) missing.push(m);
+  }
 
   let status;
   if (!priced) status = RATE_CHECK.UNPRICED;
@@ -78,7 +91,7 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
   else status = RATE_CHECK.WITHIN;
 
   return {
-    status, cost, price, markup, low, high, notes, passThrough, missing,
+    status, cost, price, markup, low, high, notes, passThrough, later, missing,
     noFee: !!est?.noFee,
   };
 }
