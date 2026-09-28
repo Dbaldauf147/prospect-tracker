@@ -3,8 +3,8 @@ import styles from './ServicesTab.module.css';
 import {
   SERVICE_STATUS, FEE_STRUCTURE_TYPES, FEE_STRUCTURE_UNITS, serviceKey,
   newFeeStructureId, blankFeeStructureRow, feeStructureRowsFromFees, costTotalsByLineItem,
-  standardFeesForStructure, costKey, addLaterCostFees, FIRST_YEAR_MONTHS,
-  costTypeConversion, moveCostAllocation, feeBucket,
+  costKey, addLaterCostFees, FIRST_YEAR_MONTHS, feeStructureCostInputs,
+  costTypeConversion, moveCostAllocation, feeBucket, standardFeeContext,
 } from '../../utils/pricingServices';
 import { RATE_CHECK } from '../../utils/serviceRateCheck';
 import { unitLabelFor } from '../../utils/servicePricing';
@@ -567,29 +567,6 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
   );
 }
 
-// A structure with its blank Fee cells filled by the standard fee, the
-// rows Apply writes and the option preview bills. One helper for both so
-// the preview never shows a different fee from the one Apply would write.
-function costInputsFor(costs) {
-  return (costs || []).map(c => ({
-    key: costKey(c.description, c.type, c.startMonth),
-    description: c.description,
-    type: c.type,
-    price: c.price,
-    startMonth: c.startMonth,
-    feeNames: [c.feeName, c.automatedName].filter(Boolean),
-  }));
-}
-
-function standardFeeContext(structure, costs, { termMonths = 36, siteCount, accountCount } = {}) {
-  const rows = structure?.rows || [];
-  const costInputs = costInputsFor(costs);
-  const std = standardFeesForStructure({ rows, costs: costInputs, allocations: structure?.allocations || {}, termMonths, siteCount, accountCount });
-  const standardFee = (idx) => std.perRow[idx]?.standardFee ?? null;
-  const billed = (r, idx) => (r.fee == null && standardFee(idx) != null ? { ...r, fee: standardFee(idx) } : r);
-  return { std, standardFee, billed, filled: structure ? { ...structure, rows: rows.map(billed) } : null };
-}
-
 const sum = (arr) => arr.reduce((a, b) => a + (Number(b) || 0), 0);
 const marginOf = (fee, cost) => (fee > 0 ? (fee - cost) / fee : null);
 
@@ -1062,7 +1039,7 @@ function FeeStructureEditor({
             <button
               type="button"
               className={styles.barBtn}
-              onClick={() => onChange(st => addLaterCostFees(st, costInputsFor(costs), { termMonths, siteCount, accountCount }))}
+              onClick={() => onChange(st => addLaterCostFees(st, feeStructureCostInputs(costs), { termMonths, siteCount, accountCount }))}
               title="Add a fee row per start month for these costs, starting the month they do, and point them at it. Its standard fee recovers exactly them."
             >
               + Add standard fee for costs after month {FIRST_YEAR_MONTHS}

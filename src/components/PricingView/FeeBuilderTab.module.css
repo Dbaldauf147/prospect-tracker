@@ -1,0 +1,65 @@
+/* Fee Builder subtab. Shares most of its look with the Services subtab
+   (ServicesTab.module.css); these are the few pieces only it needs. */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.smallBtn {
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  padding: 0.25rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: #fff;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.smallBtn:hover {
+  background: #f8fafc;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.select {
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  padding: 0.2rem 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: #fff;
+  min-width: 160px;
+}
+
+.muted {
+  color: var(--color-text-muted);
+}
+
+.newRow td {
+  background: #f5f7ff;
+}
+
+.totalRow td {
+  font-weight: 600;
+  border-top: 1px solid var(--color-border);
+}
+
+.warn {
+  font-size: var(--font-size-xs);
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+  border-radius: 6px;
+  padding: 0.35rem 0.6rem;
+}

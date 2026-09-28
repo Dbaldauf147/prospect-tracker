@@ -26,8 +26,9 @@ import { S2CTab } from './S2CTab';
 import { migrateS2cTags } from '../../utils/s2cTags';
 import { CalculatorTab } from './CalculatorTab';
 import { ServicesTab } from './ServicesTab';
+import { FeeBuilderTab } from './FeeBuilderTab';
 import { buildServiceRows } from '../../utils/serviceRows';
-import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem } from '../../utils/pricingServices';
+import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, serviceKey, standardFeeContext, buildScheduleFromStructures } from '../../utils/pricingServices';
 import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
 import { isSetupFeeType } from '../../utils/setupFeeFloor';
 import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
@@ -2279,6 +2280,7 @@ export function PricingView({ settings } = {}) {
   const [linkedToOptionsModal, setLinkedToOptionsModal] = useState(null); // { autoTags: string[] } - open state for the Linked To options manager
   const [lineItemServices, setLineItemServices] = useState({}); // { [lineItemKey]: string[] }
   const [serviceFeeStructures, setServiceFeeStructures] = useState({}); // see SERVICE_FEE_STRUCTURES_KEY
+  const [feeBuilderPicks, setFeeBuilderPicks] = useState({}); // Fee Builder subtab: { [serviceKey]: structureId | '' } - '' leaves the service's fees as they are; absent means its standard structure
   const [lineItemIgnored, setLineItemIgnored] = useState({}); // { [lineItemKey]: true } - line items the user opted to ignore (greyed out, excluded from the unmapped warning)
   const [termMonths, setTermMonths] = useState(36);
   const [annualEscalator, setAnnualEscalator] = useState(0.03);
@@ -2307,7 +2309,7 @@ export function PricingView({ settings } = {}) {
   useEffect(() => {
     try { localStorage.setItem('pricing-show-quick-conversions', showConversionsOnPricing ? '1' : '0'); } catch { /* noop */ }
   }, [showConversionsOnPricing]);
-  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'services' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c' | 'calculator'
+  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'services' | 'feeBuilder' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c' | 'calculator'
   const [optionsTabData, setOptionsTabData] = useState(null); // OptionsTab state: array of { name, years, escPct, rows: [...] }
   const [compareTabData, setCompareTabData] = useState(null); // CompareTab state: { currentLabel, nextLabel, current: [...], next: [...] }
   const [brokerFeesData, setBrokerFeesData] = useState(null); // BrokerFeesTab state: array of { company, loadEp, feeEp, rfps, loadNg, feeNg }
@@ -2468,7 +2470,7 @@ export function PricingView({ settings } = {}) {
         if (typeof saved.hideEmptyCtsRows === 'boolean') setHideEmptyCtsRows(saved.hideEmptyCtsRows);
         if (saved.summaryColWidths) setSummaryColWidths(saved.summaryColWidths);
         if (saved.summaryColVisibility) setSummaryColVisibility(saved.summaryColVisibility);
-        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'services' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options' || saved.pageSubtab === 'compare' || saved.pageSubtab === 'brokerFees' || saved.pageSubtab === 's2c' || saved.pageSubtab === 'calculator') setPageSubtab(saved.pageSubtab);
+        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'services' || saved.pageSubtab === 'feeBuilder' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options' || saved.pageSubtab === 'compare' || saved.pageSubtab === 'brokerFees' || saved.pageSubtab === 's2c' || saved.pageSubtab === 'calculator') setPageSubtab(saved.pageSubtab);
         if (Array.isArray(saved.s2cTabData)) setS2cTabData(saved.s2cTabData);
         if (Array.isArray(saved.optionsTabData)) setOptionsTabData(saved.optionsTabData);
         if (saved.compareTabData && typeof saved.compareTabData === 'object') setCompareTabData(saved.compareTabData);
@@ -4935,6 +4937,128 @@ export function PricingView({ settings } = {}) {
     return true;
   }
 
+  // Fee Builder subtab: which saved fee structure each service would use.
+  // A service with no pick uses its standard (★) structure when it is in
+  // SIA scope; '' leaves its fees on the schedule as they are.
+  function feeBuilderPickFor(svc) {
+    const k = serviceKey(svc.name);
+    const saved = serviceFeeStructures[k];
+    const structures = saved?.structures || [];
+    const picked = feeBuilderPicks[k];
+    if (picked === '') return null;
+    if (picked) return structures.find(x => x.id === picked) || null;
+    if (!svc.inScope) return null;
+    return structures.find(x => x.id === saved?.standardId) || structures[0] || null;
+  }
+
+  // The active option's Alternative Fee schedule rebuilt from the picked
+  // structure of every service, as the Services subtab's Apply would write
+  // each one (blank fees filled with the standard fee, the service's
+  // current fee rows replaced), plus the option's totals before and after.
+  function feeBuilderPlan() {
+    const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
+    if (!opt) return null;
+    const numYears = Math.max(1, Math.ceil(termMonths / 12));
+    const sia = siaCountsFor(workbook, opt);
+    const picks = [];
+    const services = [];
+    for (const svc of pricingServiceList) {
+      const k = serviceKey(svc.name);
+      const saved = serviceFeeStructures[k];
+      if (!svc.inScope && !(saved?.structures?.length)) continue;
+      const structure = feeBuilderPickFor(svc);
+      const detail = serviceDetailFor(svc.name);
+      const costCts = detail.items.reduce((s, it) => s + (typeof it.cts === 'number' ? it.cts : 0), 0);
+      services.push({
+        name: svc.name,
+        bucket: svc.bucket,
+        inScope: svc.inScope,
+        structures: saved?.structures || [],
+        standardId: saved?.standardId || null,
+        pickedId: structure?.id || '',
+        costCount: detail.items.length,
+        costCts,
+        currentFees: detail.fees.filter(f => f.onSchedule).map(f => f.name),
+      });
+      if (!structure) continue;
+      const filled = standardFeeContext(structure, detail.items, {
+        termMonths,
+        siteCount: detail.sia?.sites ?? opt.siteCount,
+        accountCount: detail.sia?.accounts ?? opt.accountCount,
+      }).filled;
+      const replaceNames = [];
+      for (const f of detail.fees) if (f.name) replaceNames.push(f.name);
+      for (const it of detail.items) if (it.feeName) replaceNames.push(it.feeName);
+      picks.push({ service: svc.name, structureName: structure.name || 'Untitled', rows: filled.rows, replaceNames });
+    }
+    const schedule = altFees[opt.optionNumber] || [];
+    const built = buildScheduleFromStructures(schedule, picks, {
+      siteCount: sia.sites ?? undefined, accountCount: sia.accounts ?? undefined,
+    });
+    const fromService = new Map();
+    for (const ps of built.perService) for (const r of ps.added) fromService.set(r, ps.service);
+    const rows = built.rows
+      .filter(r => String(r?.altItem || '').trim())
+      .map(r => {
+        const manual = Number(r.fee);
+        const feeIsManual = r.fee != null && r.fee !== '' && Number.isFinite(manual) && manual >= 0;
+        const auto = feeIsManual ? null : autoFeePerUnitFor(r);
+        const years = Array.from({ length: numYears }, (_, yi) => altFeeYearRevenue(r, yi + 1));
+        return {
+          name: r.altItem,
+          type: r.type || '',
+          feePerUnit: feeIsManual ? manual : (typeof auto === 'number' ? auto : null),
+          unit: r.unit || '',
+          unitCount: r.unitCount,
+          startMonth: altFeeRowStartMonth(r),
+          passThrough: r.passThrough === true,
+          years,
+          term: years.reduce((a, b) => a + b, 0),
+          service: fromService.get(r) || null,
+        };
+      });
+    const totals = (list) => {
+      const { costByYear } = optionCostBreakdown(opt, list);
+      const feeByYear = Array.from({ length: numYears }, (_, yi) => list.reduce((s, r) => s + altFeeYearRevenue(r, yi + 1), 0));
+      return { feeByYear, costByYear, margin: dealMarginForOption(opt, list) };
+    };
+    return {
+      optionName: opt.sheetName,
+      optionNumber: opt.optionNumber,
+      numYears,
+      services,
+      rows,
+      nextSchedule: built.rows,
+      perService: built.perService,
+      conflicts: built.conflicts,
+      before: totals(schedule),
+      after: totals(built.rows),
+    };
+  }
+
+  function applyFeeBuilderPlan(plan) {
+    if (!plan || plan.perService.length === 0) return false;
+    const added = plan.perService.reduce((s, p) => s + p.added.length, 0);
+    const removed = plan.perService.reduce((s, p) => s + p.removed.length, 0);
+    if (added === 0) {
+      window.alert('The picked structures have no named fees to write.');
+      return false;
+    }
+    const lines = [
+      `Build the Alternative Fee schedule on ${plan.optionName} from ${plan.perService.length} service fee structure${plan.perService.length === 1 ? '' : 's'}?`,
+      '',
+      ...plan.perService.map(p => `${p.service}: "${p.structureName}", ${p.added.length} fee row${p.added.length === 1 ? '' : 's'}${p.removed.length ? `, replaces ${p.removed.map(r => r.altItem).join(', ')}` : ''}`),
+      '',
+      `Adds ${added} row${added === 1 ? '' : 's'}${removed ? ` and replaces ${removed}` : ''}. Rows for services left as they are stay on the schedule.`,
+    ];
+    if (plan.conflicts.length) {
+      lines.push('', `Fee names written by more than one service (the later one wins): ${plan.conflicts.map(c => `${c.fee} (${c.services.join(', ')})`).join('; ')}.`);
+    }
+    if (!window.confirm(lines.join('\n'))) return false;
+    replaceAltFeeRows(plan.optionNumber, plan.nextSchedule);
+    return true;
+  }
+
   return (
     <div
       className={styles.wrapper}
@@ -5167,6 +5291,13 @@ export function PricingView({ settings } = {}) {
         </button>
         <button
           type="button"
+          className={pageSubtab === 'feeBuilder' ? styles.subtabActive : styles.subtab}
+          onClick={() => setPageSubtab('feeBuilder')}
+        >
+          Fee Builder
+        </button>
+        <button
+          type="button"
           className={pageSubtab === 'linkedTo' ? styles.subtabActive : styles.subtab}
           onClick={() => setPageSubtab('linkedTo')}
         >
@@ -5233,6 +5364,18 @@ export function PricingView({ settings } = {}) {
           tagOptions={solutionsOptions}
           onTagLineItem={(key, service) => setLineItemServices(prev => addServiceToLineItem(prev, key, service))}
           onIgnoreLineItem={(key) => setLineItemIgnored(prev => ({ ...(prev || {}), [key]: true }))}
+        />
+      )}
+
+      {pageSubtab === 'feeBuilder' && (
+        <FeeBuilderTab
+          workbook={workbook}
+          activeOption={activeOption}
+          setActiveOption={setActiveOption}
+          setPicks={setFeeBuilderPicks}
+          planFor={feeBuilderPlan}
+          onApply={applyFeeBuilderPlan}
+          onOpenServices={() => setPageSubtab('services')}
         />
       )}
 
