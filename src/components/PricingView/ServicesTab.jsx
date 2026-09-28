@@ -39,11 +39,13 @@ const STATUS_CLASS = {
 //   onTagLineItem   (lineItemKey, serviceName) => adds the service
 //   onIgnoreLineItem (lineItemKey) => marks the line item Ignore
 //   onSetItemType   (itemId, type) => overrides a cost line's Type ('' clears it)
+//   onSetPassThrough (description, type, on) => the Linked To pass-through
+//                   setting for that Line Item + Type pair
 //   onSetItemAnnual (itemId, on) => turns a one-time cost into an annual one
 //                   (CTS ÷ 12, Recurring monthly), or back
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
-  onSetCount, onIgnoreForCheck, feeStructures = {}, setFeeStructures, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual,
+  onSetCount, onIgnoreForCheck, feeStructures = {}, setFeeStructures, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough,
   unlinked = null, tagOptions = [], onTagLineItem, onIgnoreLineItem,
 }) {
   const [query, setQuery] = useState('');
@@ -178,6 +180,7 @@ export function ServicesTab({
               previewOnOption={previewOnOption}
               onSetItemType={onSetItemType}
               onSetItemAnnual={onSetItemAnnual}
+              onSetPassThrough={onSetPassThrough}
               applyFeeStructure={applyFeeStructure}
               detail={detail}
               hasWorkbook={!!workbook}
@@ -266,7 +269,7 @@ function UnlinkedWarning({ unlinked, costTotals, optionName, tagOptions, quickTa
   );
 }
 
-function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual }) {
+function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough }) {
   const items = detail?.items || [];
   const fees = detail?.fees || [];
   const structures = saved?.structures || [];
@@ -474,7 +477,16 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
                           />
                         )}
                       </td>
-                      <td>{it.passThrough ? 'Yes' : ''}</td>
+                      <td className={onSetPassThrough ? styles.center : undefined}>
+                        {onSetPassThrough ? (
+                          <input
+                            type="checkbox"
+                            checked={it.passThrough === true}
+                            onChange={(e) => onSetPassThrough(it.description, it.type, e.target.checked)}
+                            title={`Bill this cost at cost, with no margin. Same setting as the Linked To subtab: applies to every "${it.description}" line typed ${it.type || 'blank'}, on every option.`}
+                          />
+                        ) : (it.passThrough ? 'Yes' : '')}
+                      </td>
                       {onIgnoreForCheck && (
                         <td className={styles.center}>
                           <input

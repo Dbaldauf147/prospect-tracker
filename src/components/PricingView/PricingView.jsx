@@ -5224,6 +5224,7 @@ export function PricingView({ settings } = {}) {
           previewOnOption={previewServiceOnOption}
           onSetItemType={setItemType}
           onSetItemAnnual={setItemAnnual}
+          onSetPassThrough={(description, type, on) => setLinkedToPassThroughDefault(linkedToDefaultKey(description, type), on)}
           applyFeeStructure={applyServiceFeeStructure}
           numYears={Math.max(1, Math.ceil(termMonths / 12))}
           termMonths={termMonths}
