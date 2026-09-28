@@ -27,7 +27,7 @@ import { migrateS2cTags } from '../../utils/s2cTags';
 import { CalculatorTab } from './CalculatorTab';
 import { ServicesTab } from './ServicesTab';
 import { buildServiceRows } from '../../utils/serviceRows';
-import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow } from '../../utils/pricingServices';
+import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem } from '../../utils/pricingServices';
 import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
 import { isSetupFeeType } from '../../utils/setupFeeFloor';
 import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
@@ -5037,6 +5037,10 @@ export function PricingView({ settings } = {}) {
           applyFeeStructure={applyServiceFeeStructure}
           numYears={Math.max(1, Math.ceil(termMonths / 12))}
           onOpenLinkedTo={() => setPageSubtab('linkedTo')}
+          unlinked={unmappedForBanner}
+          tagOptions={solutionsOptions}
+          onTagLineItem={(key, service) => setLineItemServices(prev => addServiceToLineItem(prev, key, service))}
+          onIgnoreLineItem={(key) => setLineItemIgnored(prev => ({ ...(prev || {}), [key]: true }))}
         />
       )}
 
