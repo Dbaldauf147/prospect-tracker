@@ -4,6 +4,7 @@ import {
   SERVICE_STATUS, FEE_STRUCTURE_TYPES, FEE_STRUCTURE_UNITS, serviceKey,
   newFeeStructureId, blankFeeStructureRow, feeStructureRowsFromFees, costTotalsByLineItem,
   standardFeesForStructure, costKey, COST_BUCKET_UPFRONT, addLaterCostFees, FIRST_YEAR_MONTHS,
+  costTypeConversion, moveCostAllocation, feeBucket,
 } from '../../utils/pricingServices';
 import { RATE_CHECK } from '../../utils/serviceRateCheck';
 import { unitLabelFor, unitNoun } from '../../utils/servicePricing';
@@ -37,9 +38,10 @@ const STATUS_CLASS = {
 //   tagOptions      the Dropdowns catalog a cost line can be tagged to
 //   onTagLineItem   (lineItemKey, serviceName) => adds the service
 //   onIgnoreLineItem (lineItemKey) => marks the line item Ignore
+//   onSetItemType   (itemId, type) => overrides a cost line's Type ('' clears it)
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
-  onSetCount, onIgnoreForCheck, feeStructures = {}, setFeeStructures, previewFeeRow, previewOnOption, applyFeeStructure,
+  onSetCount, onIgnoreForCheck, feeStructures = {}, setFeeStructures, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType,
   unlinked = null, tagOptions = [], onTagLineItem, onIgnoreLineItem,
 }) {
   const [query, setQuery] = useState('');
@@ -172,6 +174,7 @@ export function ServicesTab({
               })}
               previewFeeRow={previewFeeRow}
               previewOnOption={previewOnOption}
+              onSetItemType={onSetItemType}
               applyFeeStructure={applyFeeStructure}
               detail={detail}
               hasWorkbook={!!workbook}
@@ -260,7 +263,7 @@ function UnlinkedWarning({ unlinked, costTotals, optionName, tagOptions, quickTa
   );
 }
 
-function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure }) {
+function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType }) {
   const items = detail?.items || [];
   const fees = detail?.fees || [];
   const structures = saved?.structures || [];
@@ -304,6 +307,38 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
   const ignoredCount = items.filter(it => it.ignored).length;
   const ignoredTotal = items.reduce((s, it) => s + (it.ignored && typeof it.cts === 'number' ? it.cts : 0), 0);
   const meta = service.meta || {};
+
+  // Each cost line's type against the fee that prices it in the pricing
+  // standard: the starred structure's fee covering the cost, else that
+  // structure's fee type when all its fees bill one way, else the
+  // Dropdowns service type. A mismatch offers the type that fits.
+  const standard = structures.find(x => x.id === standardId) || null;
+  const stdCosts = standard && hasWorkbook
+    ? standardFeeContext(standard, items, { termMonths, siteCount, accountCount }).std.costs
+    : [];
+  const stdBuckets = standard ? [...new Set((standard.rows || []).map(r => feeBucket(r.type)).filter(Boolean))] : [];
+  const stdOneType = stdBuckets.length === 1 ? (standard.rows.find(r => feeBucket(r.type))?.type || '') : '';
+  const typeFit = items.map((it, i) => {
+    const co = stdCosts[i];
+    const row = co && co.rowIdx >= 0 ? standard.rows[co.rowIdx] : null;
+    let feeType = '';
+    let from = '';
+    if (row?.type) { feeType = row.type; from = `${row.feeName || 'the fee'} on the ★ ${standard.name || 'standard'} structure`; }
+    else if (stdOneType) { feeType = stdOneType; from = `the ★ ${standard.name || 'standard'} structure`; }
+    else if (meta.serviceType) { feeType = meta.serviceType; from = 'the Dropdowns service type'; }
+    const conv = it.passThrough ? null : costTypeConversion(it.type, feeType);
+    return conv ? { ...conv, feeType, from } : null;
+  });
+  const mismatches = typeFit.filter(Boolean).length;
+  function convertType(it, toType) {
+    if (!onSetItemType) return;
+    // Back to the SIA's own type clears the override rather than pinning it.
+    onSetItemType(it.id, toType === it.siaType ? '' : toType);
+    const fromKey = costKey(it.description, it.type, it.startMonth);
+    const toKey = costKey(it.description, toType, it.startMonth);
+    setSaved(prev => ({ ...prev, structures: moveCostAllocation(prev.structures, fromKey, toKey) }));
+  }
+
   const facts = [
     service.bucket && ['Group', service.bucket],
     meta.productLine && ['Product line', meta.productLine],
@@ -331,6 +366,13 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
             <h4 className={styles.sectionTitle}>
               Cost line items{optionName ? ` on ${optionName}` : ''} ({items.length})
             </h4>
+            {mismatches > 0 && (
+              <div className={styles.note}>
+                {mismatches === 1 ? 'One cost line has' : `${mismatches} cost lines have`} a type that doesn't bill the way
+                the pricing standard does. Convert {mismatches === 1 ? 'it' : 'them'} below: a one-time or setup cost on a
+                monthly fee becomes Rolled, spread over the {termMonths}-month term.
+              </div>
+            )}
             {items.length === 0 ? (
               <div className={styles.note}>
                 No cost line on this option is tied to this service.
@@ -353,7 +395,7 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map(it => (
+                  {items.map((it, i) => (
                     <tr key={it.id} className={it.ignored ? styles.ignoredRow : undefined}>
                       <td>
                         {it.description}
@@ -361,7 +403,38 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
                           <div className={styles.subNote}>Also covers {it.otherServices.join(', ')}</div>
                         )}
                       </td>
-                      <td>{it.type}</td>
+                      <td>
+                        {it.type}
+                        {it.siaType && it.siaType !== it.type && (
+                          <div className={styles.subNote}>
+                            SIA: {it.siaType}
+                            {onSetItemType && (
+                              <> <button type="button" className={styles.linkBtn} onClick={() => convertType(it, it.siaType)}>Undo</button></>
+                            )}
+                          </div>
+                        )}
+                        {typeFit[i] && (
+                          <div className={styles.typeFit}>
+                            <span className={styles.warnText}>
+                              Standard fee type: {typeFit[i].feeType}
+                            </span>
+                            {typeFit[i].convertTo && onSetItemType ? (
+                              <button
+                                type="button"
+                                className={styles.tagBtn}
+                                onClick={() => convertType(it, typeFit[i].convertTo)}
+                                title={`Priced by ${typeFit[i].from}. ${typeFit[i].feeBucket === 'recurring'
+                                  ? `Rolled spreads this cost over the ${termMonths}-month term so the monthly fee recovers it.`
+                                  : 'Plain bills this cost upfront, the way the fee does.'} Changes the type on ${optionName || 'this option'}, the same as the Type column on the Pricing subtab.`}
+                              >
+                                Convert to {typeFit[i].convertTo}
+                              </button>
+                            ) : !typeFit[i].convertTo && (
+                              <span className={styles.subNote}>Point it at a monthly fee instead</span>
+                            )}
+                          </div>
+                        )}
+                      </td>
                       <td className={styles.num}>{fmtMoney(it.cts)}</td>
                       <td className={styles.num}>{it.startMonth || ''}</td>
                       <td>

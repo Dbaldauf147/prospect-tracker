@@ -4622,6 +4622,9 @@ export function PricingView({ settings } = {}) {
         id: item.id,
         description: item.description,
         type: t,
+        // The type the SIA itself gives the line, so a converted one can
+        // say what it was and be put back.
+        siaType: item.type || '',
         cts: typeof item.cts === 'number' ? item.cts : null,
         // Marked-up price at the row's GM, what a fee has to collect to
         // recover this cost (see priceFor).
@@ -5181,6 +5184,7 @@ export function PricingView({ settings } = {}) {
           setFeeStructures={setServiceFeeStructures}
           previewFeeRow={previewFeeStructureRow}
           previewOnOption={previewServiceOnOption}
+          onSetItemType={setItemType}
           applyFeeStructure={applyServiceFeeStructure}
           numYears={Math.max(1, Math.ceil(termMonths / 12))}
           termMonths={termMonths}
