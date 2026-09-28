@@ -27,7 +27,7 @@ export const SERVICE_CATALOG = [
   { name: 'Bespoke consulting SUCON',                   bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project' },
   { name: 'Bill payment',                               bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
   { name: 'BPS Reporting',                              bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
-  { name: 'Budgets',                                    bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
+  { name: 'Budgets (site level)',                       bfoTag: '#DATA',  region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },
   { name: 'CA SB Bills - SUCON',                        bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUECO - SUSTAINABILITY ECOACT',  serviceType: 'Project' },
   { name: 'Capital asset planning',                     bfoTag: '#SUESP', region: 'NAM',    years: '3 years', productLine: 'SUESP - EFFICIENCY & SUST PROG.', serviceType: 'Recurring' },
   { name: 'Cat 1 & 2',                                  bfoTag: '#SUECO', region: 'NAM',    years: '3 years', productLine: 'SUSUP - SUPPLY & SUST SERVICES', serviceType: 'Recurring' },

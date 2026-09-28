@@ -22,6 +22,13 @@
 // the retired one only fills a blank. A merge should never overwrite what
 // the user set on the name they're keeping.
 
+import { SOLUTIONS_CATALOG } from '../data/dropdownLists.js';
+import { SERVICE_CATEGORIES } from '../data/enums.js';
+import { getServiceMetadata } from '../data/serviceCatalog.js';
+import { getTimelineTemplates } from './timelineTemplatesStore.js';
+import { getTreeLibrary, hasSavedTrees, LIBRARY_KEY, renameServiceInLibrary } from './treeLibrary.js';
+import { splitServiceNames, joinServiceNames } from './serviceNameList.js';
+
 // Every merge to run, each guarded by its own flag. A new merge = a new
 // entry with a fresh flag; the flag is what stops the pass re-running on
 // every load once the account is clean.
@@ -76,7 +83,31 @@ export const SERVICE_MERGES = [
     from: 'Risk - progressional',
     to: 'Risk - professional',
   },
+  // Budgets split in two: the site-level service and Budgets (account
+  // level). Every deal that says plain Budgets was sold as the site-level
+  // one, so the old name is carried over to it everywhere, open and closed
+  // opps alike, and stops being a service of its own.
+  {
+    flag: 'service-merge-budgets-site-level-2026-09',
+    from: 'Budgets',
+    to: 'Budgets (site level)',
+  },
 ];
+
+// Renames made on Dropdowns › Services, logged in settings so every browser
+// carries them into its own stores: [{ id, from, to, at, sharedDone }]. See
+// the rename pass in App.jsx.
+export const SERVICE_RENAME_LOG_KEY = 'serviceRenameLog';
+
+// The per-browser flag saying one logged rename has been applied here.
+export const serviceRenameFlag = (id) => `service-rename-applied-${id}`;
+
+// A log entry for a rename just made. Appended to the log in the same
+// settings write as the rename itself.
+export function serviceRenameLogEntry(from, to, now = new Date()) {
+  const at = now.toISOString();
+  return { id: `${now.getTime().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, from, to, at, sharedDone: false };
+}
 
 // The prospect fields keyed by service name. Each is a plain
 // { [serviceName]: value } map on the record.
@@ -100,6 +131,58 @@ export const SERVICE_KEYED_SETTINGS = [
 ];
 
 const norm = s => String(s ?? '').trim().toLowerCase();
+
+// The per-service fields that hold OTHER services' names, as a
+// comma-separated list (see serviceAutoAdd / serviceAutoNa / dependsOn).
+const OVERRIDE_NAME_LIST_FIELDS = ['dependsOn', 'autoAdd', 'autoNa'];
+
+// The seed metadata a service carries in the catalogue, copied onto the new
+// name when a seed service is renamed to one the catalogue doesn't know, so
+// its BFO tag, years and type don't vanish with the old spelling.
+const SEED_FIELDS = ['bfoTag', 'region', 'years', 'productLine', 'serviceType', 'timelineDriven', 'rolloutTime'];
+
+/**
+ * A comma-separated service list (a Scope cell, a Depends On list) with
+ * `from` renamed to `to`. Null when it doesn't name `from`. Where both are
+ * already there the old one is dropped rather than listed twice.
+ */
+export function renameInNameString(value, from, to) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const names = splitServiceNames(value, [from, to]);
+  const next = mergeNameList(names, from, to);
+  return next ? joinServiceNames(next) : null;
+}
+
+// Exported for the stores the pass rewrites outside settings.
+export { mergeNameList as renameInNameList, mergeNameMap as renameInNameMap };
+
+// A { key: value } map keyed by the LOWERCASED service name (fee
+// structures, price-check picks). Same rule: the surviving key's value wins.
+export function renameInLowerKeyMap(map, from, to) {
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return null;
+  const f = norm(from);
+  const t = norm(to);
+  if (!(f in map) || f === t) return null;
+  const out = { ...map };
+  const retired = out[f];
+  delete out[f];
+  if (out[t] === undefined || out[t] === null) out[t] = retired;
+  return out;
+}
+
+// A list of LOWERCASED names (completed services, hidden timeline bands).
+export function renameInLowerList(list, from, to) {
+  if (!Array.isArray(list)) return null;
+  const f = norm(from);
+  const t = norm(to);
+  if (!list.some(n => norm(n) === f)) return null;
+  const out = [];
+  for (const n of list) {
+    const k = norm(n) === f ? t : n;
+    if (!out.some(x => norm(x) === norm(k))) out.push(k);
+  }
+  return out;
+}
 
 // Rewrite `from` to `to` in a list of service names, dropping the duplicate
 // if the list already carried both. Order is preserved: where both are
@@ -197,14 +280,95 @@ function mergeCategories(categories, from, to) {
 export function planServiceMerge({ from, to }, settings = {}, prospects = []) {
   const settingsPatch = {};
 
-  const categories = mergeCategories(settings?.customServiceCategories, from, to);
+  // A board or Solutions list nobody has edited isn't stored: it is the
+  // seed, which can carry the old name too (Budgets), so the seed is what
+  // gets renamed and written back.
+  const storedCats = settings?.customServiceCategories;
+  const categories = mergeCategories(
+    Array.isArray(storedCats) && storedCats.length ? storedCats : SERVICE_CATEGORIES, from, to,
+  );
   if (categories) settingsPatch.customServiceCategories = categories;
 
-  const solutions = mergeNameList(settings?.dropdownLists?.solutions, from, to);
+  const storedSolutions = settings?.dropdownLists?.solutions;
+  const solutions = mergeNameList(Array.isArray(storedSolutions) ? storedSolutions : SOLUTIONS_CATALOG, from, to);
   if (solutions) settingsPatch.dropdownLists = { ...(settings?.dropdownLists || {}), solutions };
 
-  const overrides = mergeOverrides(settings?.serviceOverrides, from, to);
+  let overrides = mergeOverrides(settings?.serviceOverrides, from, to);
+  // A seed service renamed to a name the catalogue doesn't carry takes its
+  // seed metadata with it, under anything already set on the new name.
+  const fromSeed = getServiceMetadata(from);
+  if (fromSeed && !getServiceMetadata(to)) {
+    const base = overrides || { ...(settings?.serviceOverrides || {}) };
+    const toKey = Object.keys(base).find(k => norm(k) === norm(to));
+    const current = toKey !== undefined ? base[toKey] : {};
+    const seeded = {};
+    for (const f of SEED_FIELDS) {
+      if (fromSeed[f] !== undefined && fromSeed[f] !== '') seeded[f] = fromSeed[f];
+    }
+    const merged = { ...seeded };
+    for (const [k, v] of Object.entries(current || {})) {
+      if (v !== undefined && v !== '' && v !== null) merged[k] = v;
+    }
+    if (toKey !== undefined && toKey !== to) delete base[toKey];
+    base[to] = merged;
+    overrides = base;
+  }
+  // Other services' Depends On / Auto-add / N/A lists that name the old one.
+  const src = overrides || settings?.serviceOverrides;
+  if (src && typeof src === 'object') {
+    let touched = null;
+    for (const [svc, meta] of Object.entries(src)) {
+      if (!meta || typeof meta !== 'object') continue;
+      let nextMeta = null;
+      for (const field of OVERRIDE_NAME_LIST_FIELDS) {
+        const next = renameInNameString(meta[field], from, to);
+        if (next !== null) { nextMeta = { ...(nextMeta || meta), [field]: next }; }
+      }
+      if (nextMeta) { touched = touched || { ...src }; touched[svc] = nextMeta; }
+    }
+    if (touched) overrides = touched;
+  }
   if (overrides) settingsPatch.serviceOverrides = overrides;
+
+  // Opps queued to open later carry a Scope of their own.
+  if (Array.isArray(settings?.scheduledOpps)) {
+    let changed = false;
+    const next = settings.scheduledOpps.map(e => {
+      const scope = renameInNameString(e?.scope, from, to);
+      if (scope === null) return e;
+      changed = true;
+      return { ...e, scope };
+    });
+    if (changed) settingsPatch.scheduledOpps = next;
+  }
+
+  // Timelines attached to the service, working list and saved library.
+  const renameTemplates = (list) => {
+    let changed = false;
+    const next = list.map(t => {
+      const services = mergeNameList(t?.services, from, to);
+      if (!services) return t;
+      changed = true;
+      return { ...t, services };
+    });
+    return changed ? next : null;
+  };
+  const templates = renameTemplates(getTimelineTemplates(settings));
+  if (templates) settingsPatch.timelineTemplates = templates;
+  if (Array.isArray(settings?.timelineLibrary)) {
+    const library = renameTemplates(settings.timelineLibrary);
+    if (library) settingsPatch.timelineLibrary = library;
+  }
+
+  // Efficiency Decision Tree steps tagged with the service.
+  if (hasSavedTrees(settings)) {
+    const retagged = renameServiceInLibrary(getTreeLibrary(settings), from, to);
+    if (retagged) settingsPatch[LIBRARY_KEY] = retagged;
+  }
+
+  // The PE services report's picked services.
+  const peSel = mergeNameList(settings?.peServicesReportSelection, from, to);
+  if (peSel) settingsPatch.peServicesReportSelection = peSel;
 
   for (const key of SERVICE_KEYED_SETTINGS) {
     const next = mergeNameMap(settings?.[key], from, to);

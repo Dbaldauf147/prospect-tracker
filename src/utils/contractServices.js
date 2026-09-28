@@ -102,7 +102,7 @@ export const SERVICE_ALIASES = [
   { canonical: 'Rate optimization', aliases: ['tariff analysis', 'rate analysis', 'tariff optimization'] },
   { canonical: 'Deposit recovery', aliases: ['utility deposit recovery'] },
   { canonical: 'Open/Close', aliases: ['account open close', 'move in move out', 'open close services'] },
-  { canonical: 'Budgets', aliases: ['energy budgeting', 'budget forecasting', 'budgeting and forecasting'] },
+  { canonical: 'Budgets (site level)', aliases: ['budgets', 'energy budgeting', 'budget forecasting', 'budgeting and forecasting'] },
   { canonical: 'Peak Alerts', aliases: ['peak alert', 'peak load notification', 'peak day alerts'] },
   { canonical: 'Demand response', aliases: ['demand response program', 'curtailment services', 'load curtailment'] },
   { canonical: 'Water Cost Recovery', aliases: ['water refund', 'water cost recovery services'] },

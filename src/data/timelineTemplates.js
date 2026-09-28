@@ -40,7 +40,7 @@ export const BUILTIN_TIMELINE_TEMPLATES = [
     format: 'gantt',
     // Placed by each stage's start / end dates, stated rather than inferred.
     positionMode: 'dates',
-    services: ['Budgets'],
+    services: ['Budgets (site level)'],
     stages: [
       {
         id: 'tl-budget-agreement',

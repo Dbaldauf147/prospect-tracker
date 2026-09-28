@@ -26,6 +26,8 @@ import { S2CTab } from './S2CTab';
 import { migrateS2cTags } from '../../utils/s2cTags';
 import { CalculatorTab } from './CalculatorTab';
 import { ServicesTab } from './ServicesTab';
+import { SERVICE_RENAMED_EVENT } from '../../utils/serviceRenameRunner';
+import { renameLineItemServices, renameFeeStructures, renameWorkbookServices } from '../../utils/serviceRenamePlans';
 import { FeeBuilderTab } from './FeeBuilderTab';
 import { buildServiceRows } from '../../utils/serviceRows';
 import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees } from '../../utils/pricingServices';
@@ -2309,6 +2311,20 @@ export function PricingView({ settings } = {}) {
   const [linkedToOptionsModal, setLinkedToOptionsModal] = useState(null); // { autoTags: string[] } - open state for the Linked To options manager
   const [lineItemServices, setLineItemServices] = useState({}); // { [lineItemKey]: string[] }
   const [serviceFeeStructures, setServiceFeeStructures] = useState({}); // see SERVICE_FEE_STRUCTURES_KEY
+  // A service renamed elsewhere (see utils/serviceRenameRunner.js) is
+  // applied to what this page holds too, or its next save would put the
+  // old name back into the cache the rename just cleaned.
+  useEffect(() => {
+    const onRenamed = (e) => {
+      const { from, to } = e?.detail || {};
+      if (!from || !to) return;
+      setLineItemServices(prev => renameLineItemServices(prev, from, to) || prev);
+      setServiceFeeStructures(prev => renameFeeStructures(prev, from, to) || prev);
+      setWorkbook(prev => renameWorkbookServices(prev, from, to) || prev);
+    };
+    window.addEventListener(SERVICE_RENAMED_EVENT, onRenamed);
+    return () => window.removeEventListener(SERVICE_RENAMED_EVENT, onRenamed);
+  }, []);
   const [feeBuilderPicks, setFeeBuilderPicks] = useState({}); // Fee Builder subtab: { [serviceKey]: structureId | '' } - '' leaves the service's fees as they are; absent means its standard structure
   const [lineItemIgnored, setLineItemIgnored] = useState({}); // { [lineItemKey]: true } - line items the user opted to ignore (greyed out, excluded from the unmapped warning)
   const [termMonths, setTermMonths] = useState(36);

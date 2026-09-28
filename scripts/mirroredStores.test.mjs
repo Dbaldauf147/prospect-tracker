@@ -49,6 +49,11 @@ const LOCAL_BY_DESIGN = {
   'callHistoryCache.js': 'cache - the call history itself is one document per call in Firestore',
   'hubspotContactsCache.js': 'cache - refetched from HubSpot',
 
+  // Not a store of its own: it rewrites a renamed service inside the Pricing
+  // page's cache (and the other stores it names), which keep their own
+  // persistence rules.
+  'serviceRenameRunner.js': 'writer - edits other stores in place when a service is renamed',
+
   // Backup layers. Mirroring a backup to the cloud defeats its purpose:
   // these exist to survive a bad cloud write, not to be one.
   'settingsBackup.js': 'IS the local backup layer for userSettings',

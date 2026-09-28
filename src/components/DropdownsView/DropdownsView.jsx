@@ -23,6 +23,7 @@ import { TimelinesTab } from './TimelinesTab';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
 import { getServicePricing, renameServicePricing, isGraveyardBucket } from '../../utils/servicePricing';
 import { LIBRARY_KEY, getTreeLibrary, hasSavedTrees, renameServiceInLibrary } from '../../utils/treeLibrary';
+import { SERVICE_RENAME_LOG_KEY, serviceRenameLogEntry } from '../../utils/serviceNameMerges';
 import { loadPricingEstimate } from '../../utils/pricingEstimateStore';
 import { parseServiceRefs, formatServiceRef } from '../../utils/serviceStepDeps';
 import { DataTable } from '../common/DataTable';
@@ -1656,6 +1657,18 @@ export function DropdownsView({ settings, updateSettings }) {
         if (hasSavedTrees(settings)) {
           const retagged = renameServiceInLibrary(getTreeLibrary(settings), edit.renamedFrom, edit.renamedTo);
           if (retagged) updates[LIBRARY_KEY] = retagged;
+        }
+        // Everywhere else the name is stored (the Opps, open and closed,
+        // the Pricing page, Deal Sizing, company cards, timelines, …) is
+        // moved by the rename pass in App.jsx, which reads this log: logged
+        // rather than done here so browsers other than this one carry the
+        // rename into their own local stores too.
+        // A change of case only is the same service to every comparison in
+        // the app, so there is nothing to carry.
+        const lc = (v) => String(v ?? '').trim().toLowerCase();
+        if (lc(edit.renamedTo) && lc(edit.renamedFrom) !== lc(edit.renamedTo)) {
+          const log = Array.isArray(settings?.[SERVICE_RENAME_LOG_KEY]) ? settings[SERVICE_RENAME_LOG_KEY] : [];
+          updates[SERVICE_RENAME_LOG_KEY] = [...log, serviceRenameLogEntry(edit.renamedFrom, edit.renamedTo)];
         }
       }
     }
