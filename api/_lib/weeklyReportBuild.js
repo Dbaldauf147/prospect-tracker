@@ -13,6 +13,7 @@
 //   Daily Success goals   …/idb__daily-success-goals__list
 //   Weekly activity log   …/weekly-activity-log
 //   YOY pins              …/yoy-chart-overrides
+//   Don't Track clients   …/clients-untracked-map
 //   Progress weeks        progressHistory/{uid}
 //   Coverage ratio log    coverageRatioHistory/{uid}
 //   Targets, work email   userSettings/{uid}
@@ -44,6 +45,7 @@ import {
   coverageReading, coverageRatioByWeek, withCoverageReading, weekKeyAt, COVERAGE_RATIO_WEEKS,
 } from '../../src/utils/weeklyReportTrends.js';
 import { withCoverageImages, withCoverageRatioImage } from '../../src/utils/coverageChartImage.js';
+import { excludeUntrackedFromWeeks } from '../../src/utils/progressUntracked.js';
 import { funnelChartImage } from '../../src/utils/funnelChartImage.js';
 import {
   buildFunnelStages, closeRateTrendByStage, closeRatesByStage, emailCloseRateTrend,
@@ -135,7 +137,7 @@ export async function loadReportSources(db, uid, { token = '', start, end, histo
     }
   };
 
-  const [opps2, pipeline, bfo, goals, activityLog, yoyOverrides, progress, coverageRatioLog, settings, activityCache] =
+  const [opps2, pipeline, bfo, goals, activityLog, yoyOverrides, progress, coverageRatioLog, settings, activityCache, clientUntracked] =
     await Promise.all([
       settle('opps2', () => loadOpps2(db, uid), null),
       settle('pipeline', () => loadMirror(db, uid, MIRROR.pipeline), null),
@@ -172,6 +174,7 @@ export async function loadReportSources(db, uid, { token = '', start, end, histo
       // that never happened. Calls and meetings have no series, so they
       // are fetched for the reported window only.
       settle('hubspotActivity', () => fetchActivityWindow(token, start, end, { ...fetchOpts, emailsFrom: historyStart }), null),
+      settle('clientUntracked', () => loadMirror(db, uid, MIRROR.clientUntracked, {}), {}),
     ]);
 
   return {
@@ -182,6 +185,7 @@ export async function loadReportSources(db, uid, { token = '', start, end, histo
     activityLog: (activityLog && typeof activityLog === 'object') ? activityLog : {},
     yoyOverrides: (yoyOverrides && typeof yoyOverrides === 'object') ? yoyOverrides : {},
     progressWeeks: progress,
+    clientUntrackedMap: (clientUntracked && typeof clientUntracked === 'object') ? clientUntracked : {},
     coverageRatioLog: coverageRatioLog || {},
     settings: settings || {},
     activityCache,
@@ -236,8 +240,12 @@ export function buildReport(sources, period, { now = null } = {}) {
   // Drawn here as well as counted: the coverage chart is encoded pixel by
   // pixel (utils/coverageChartImage), so a scheduled send carries the same
   // picture the preview shows.
+  // Read with the "Don't Track" clients taken out, as the Progress tab
+  // and the Weekly Report tab both plot it.
   const coverage = withCoverageImages(coverageByWeek({
-    progressWeeks: s.progressWeeks, refMs: start, months: COVERAGE_MONTHS,
+    progressWeeks: excludeUntrackedFromWeeks(s.progressWeeks, s.clientUntrackedMap).weeks,
+    refMs: start,
+    months: COVERAGE_MONTHS,
   }));
 
   const reviewSnapshot = buildReviewSnapshot({

@@ -1,0 +1,173 @@
+// Writes src/utils/chartFontData.js: the outlines of the few characters a
+// chart axis needs, read out of a TrueType font, so utils/chartRaster can
+// letter an axis with real, antialiased type where there is no canvas.
+//
+// Run by hand when the character set changes; the output is committed.
+//   node scripts/genChartFont.mjs /usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf
+//
+// Only simple (non-composite) glyphs with quadratic outlines are read,
+// which is every character in CHARS for a TrueType sans. Not a test: the
+// runner only picks up *.test.mjs.
+import fs from 'node:fs';
+import path from 'node:path';
+
+const CHARS = '0123456789%.,-:/()+ ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+
+const file = process.argv[2];
+if (!file) {
+  console.error('usage: node scripts/genChartFont.mjs <font.ttf>');
+  process.exit(1);
+}
+const buf = fs.readFileSync(file);
+const u16 = (o) => buf.readUInt16BE(o);
+const i16 = (o) => buf.readInt16BE(o);
+const u32 = (o) => buf.readUInt32BE(o);
+
+const tables = {};
+for (let i = 0, n = u16(4); i < n; i += 1) {
+  const rec = 12 + i * 16;
+  tables[buf.toString('latin1', rec, rec + 4)] = u32(rec + 8);
+}
+
+const head = tables.head;
+const unitsPerEm = u16(head + 18);
+const longLoca = i16(head + 50) === 1;
+const numHMetrics = u16(tables.hhea + 34);
+const ascender = i16(tables.hhea + 4);
+const descender = i16(tables.hhea + 6);
+
+// cmap: the Windows Unicode BMP subtable, format 4.
+function cmapLookup() {
+  const cmap = tables.cmap;
+  let sub = null;
+  for (let i = 0, n = u16(cmap + 2); i < n; i += 1) {
+    const rec = cmap + 4 + i * 8;
+    if (u16(rec) === 3 && u16(rec + 2) === 1) sub = cmap + u32(rec + 4);
+  }
+  if (sub == null || u16(sub) !== 4) throw new Error('no format 4 cmap');
+  const segX2 = u16(sub + 6);
+  const ends = sub + 14;
+  const starts = ends + segX2 + 2;
+  const deltas = starts + segX2;
+  const offsets = deltas + segX2;
+  return (code) => {
+    for (let s = 0; s < segX2 / 2; s += 1) {
+      if (code > u16(ends + s * 2)) continue;
+      const start = u16(starts + s * 2);
+      if (code < start) return 0;
+      const delta = i16(deltas + s * 2);
+      const ro = u16(offsets + s * 2);
+      if (!ro) return (code + delta) & 0xFFFF;
+      const g = u16(offsets + s * 2 + ro + (code - start) * 2);
+      return g ? (g + delta) & 0xFFFF : 0;
+    }
+    return 0;
+  };
+}
+
+const glyphOffset = (g) => (longLoca ? u32(tables.loca + g * 4) : u16(tables.loca + g * 2) * 2);
+const advanceOf = (g) => u16(tables.hmtx + Math.min(g, numHMetrics - 1) * 4);
+
+// One glyph's contours as an SVG-style path in font units, y up:
+// M x y, L x y, Q cx cy x y, Z.
+function glyphPath(g) {
+  const start = glyphOffset(g);
+  const end = glyphOffset(g + 1);
+  if (end === start) return '';
+  const at = tables.glyf + start;
+  const nContours = i16(at);
+  if (nContours < 0) throw new Error(`glyph ${g} is composite`);
+  const endPts = [];
+  for (let i = 0; i < nContours; i += 1) endPts.push(u16(at + 10 + i * 2));
+  const nPts = endPts[endPts.length - 1] + 1;
+  let p = at + 10 + nContours * 2;
+  p += 2 + u16(p);
+  const flags = [];
+  while (flags.length < nPts) {
+    const f = buf[p++];
+    flags.push(f);
+    if (f & 8) {
+      const rep = buf[p++];
+      for (let r = 0; r < rep; r += 1) flags.push(f);
+    }
+  }
+  const read = (short, same) => {
+    const out = [];
+    let v = 0;
+    for (const f of flags) {
+      if (f & short) {
+        const d = buf[p++];
+        v += (f & same) ? d : -d;
+      } else if (!(f & same)) {
+        v += i16(p); p += 2;
+      }
+      out.push(v);
+    }
+    return out;
+  };
+  const xs = read(2, 16);
+  const ys = read(4, 32);
+
+  const parts = [];
+  let first = 0;
+  for (const last of endPts) {
+    const pts = [];
+    for (let i = first; i <= last; i += 1) pts.push({ x: xs[i], y: ys[i], on: !!(flags[i] & 1) });
+    first = last + 1;
+    // Implied on-curve points between two consecutive off-curve ones.
+    const full = [];
+    pts.forEach((pt, i) => {
+      const next = pts[(i + 1) % pts.length];
+      full.push(pt);
+      if (!pt.on && !next.on) full.push({ x: (pt.x + next.x) / 2, y: (pt.y + next.y) / 2, on: true });
+    });
+    let s = full.findIndex(q => q.on);
+    const ring = full.slice(s).concat(full.slice(0, s));
+    const cmds = [`M${ring[0].x} ${ring[0].y}`];
+    for (let i = 1; i <= ring.length; i += 1) {
+      const q = ring[i % ring.length];
+      if (q.on) cmds.push(`L${q.x} ${q.y}`);
+      else {
+        const e = ring[(i + 1) % ring.length];
+        cmds.push(`Q${q.x} ${q.y} ${e.x} ${e.y}`);
+        i += 1;
+      }
+    }
+    cmds.push('Z');
+    parts.push(cmds.join(''));
+  }
+  return parts.join('');
+}
+
+const lookup = cmapLookup();
+const glyphs = {};
+for (const ch of CHARS) {
+  const g = lookup(ch.codePointAt(0));
+  if (!g) throw new Error(`no glyph for ${JSON.stringify(ch)}`);
+  glyphs[ch] = { a: advanceOf(g), d: glyphPath(g) };
+}
+
+const out = `// GENERATED by scripts/genChartFont.mjs - do not edit by hand.
+//
+// Glyph outlines for chart axis lettering (utils/chartRaster), taken from
+// ${path.basename(file)}, version 2.1.5.
+//
+// Digitized data copyright (c) 2010 Google Corporation with Reserved Font
+// Arimo, Tinos and Cousine. Copyright (c) 2012 Red Hat, Inc. with Reserved
+// Font Name Liberation.
+//
+// This Font Software is licensed under the SIL Open Font License, Version
+// 1.1, and this extract stays under it. The license text is in
+// licenses/OFL-1.1.txt and at https://openfontlicense.org.
+//
+// Each entry: \`a\` is the advance width and \`d\` the outline as M/L/Q/Z
+// commands, both in font units with y pointing up from the baseline.
+
+export const UNITS_PER_EM = ${unitsPerEm};
+export const ASCENDER = ${ascender};
+export const DESCENDER = ${descender};
+
+export const GLYPHS = ${JSON.stringify(glyphs, null, 0).replace(/\},"/g, '},\n  "').replace(/^\{/, '{\n  ').replace(/\}$/, ',\n}')};
+`;
+fs.writeFileSync(new URL('../src/utils/chartFontData.js', import.meta.url), out);
+console.log(`wrote ${Object.keys(glyphs).length} glyphs, ${out.length} bytes`);

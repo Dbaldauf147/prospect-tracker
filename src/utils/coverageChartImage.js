@@ -1,60 +1,39 @@
 // The two account-coverage charts, drawn as the Weekly Report email's own
-// picture: a line per tier, a point per week, the way the Progress tab
-// draws them.
+// picture of the Progress tab's charts: same weeks, same axis, same curve,
+// same dots, so the email and the tab show one chart rather than two
+// readings of it.
 //
-// Drawn pixel by pixel rather than from an SVG, because the email that
-// matters is rebuilt on a serverless runner (api/_lib/weeklyReportBuild)
-// where there is no canvas to rasterise one with. See utils/pngEncode for
-// the rest of that argument. Everything here is arithmetic over a byte per
-// pixel, so it runs the same in the tab's preview and in the cron.
+// Drawn without a canvas, because the email that matters is rebuilt on a
+// serverless runner (api/_lib/weeklyReportBuild) where there is none. The
+// coverage charts go through utils/chartRaster, which antialiases every
+// edge and letters the axes from real glyph outlines. The coverage-ratio
+// chart further down (and the funnel, which borrows these helpers) still
+// use the older whole-pixel drawing and the 5x7 bitmap font.
 //
-// The picture is drawn at twice the size it is laid out at, so it stays
-// sharp on a phone and on a high-density screen - the same trade the
-// funnel's rasteriser makes.
+// Every picture is drawn at twice the size it is laid out at, so it stays
+// sharp on a phone and on a high-density screen.
 
 import { pngDataUrl } from './pngEncode.js';
-
-// Palette indices. Kept to the few flat colours a chart needs, which is
-// what lets the whole thing be one byte per pixel.
-const BG = 0;
-const GRID = 1;
-const AXIS = 2;
-const LABEL = 3;
-const T1 = 4;
-const T2 = 5;
-
-const PALETTE = [
-  [255, 255, 255],  // the card it sits on
-  [237, 241, 246],  // gridlines, a shade lighter than the page border
-  [203, 213, 225],  // the baseline, which is a rule rather than a gridline
-  [136, 150, 166],  // --color-text-muted, for the labels
-  [220, 38, 38],    // Tier 1, the Progress chart's red
-  [59, 130, 246],   // Tier 2, its blue
-];
+import {
+  createRaster, fillRect, fillCircle, strokePolyline, drawText, textWidth as typeWidth,
+  rasterToPngDataUrl,
+} from './chartRaster.js';
+import { monotonePolyline, numberRuns } from './monotoneCurve.js';
+import { COVERAGE_T1, COVERAGE_T2 } from './progressCoverage.js';
 
 export const SCALE = 2;
 // Laid-out size, in CSS pixels: the email's full 800px column, less the
-// card's border and padding, the same width as the coverage-ratio chart.
-// The two charts stack one above the other rather than sharing a row, so
-// each gets the whole width and enough height to read the weekly moves.
+// card's border and padding. The Progress tab's chart is 250px tall with
+// its legend; the legend here is the HTML row under the picture.
 export const CHART_W = 720;
-export const CHART_H = 220;
-
-// The axis labels' glyph size, in raster pixels per font pixel: half as
-// big again as the ratio chart's, so they stay in proportion to a chart
-// that has the column to itself.
-const LABEL_SIZE = 3;
-
-// Room for the "100%" up the left and the week labels along the bottom.
-const PAD_L = 42 * SCALE;
-const PAD_R = 10 * SCALE;
-const PAD_T = 10 * SCALE;
-const PAD_B = 20 * SCALE;
+export const CHART_H = 230;
 
 // ---- A raster to draw on --------------------------------------------------
 
+// One byte per pixel, a palette index; every palette that draws on one of
+// these keeps its background at index 0.
 export function raster(width, height) {
-  return { width, height, px: new Uint8Array(width * height).fill(BG) };
+  return { width, height, px: new Uint8Array(width * height).fill(0) };
 }
 
 function dot(r, x, y, c) {
@@ -178,34 +157,73 @@ export function text(r, s, x, y, c, size, align = 'left') {
   }
 }
 
-// ---- The chart ------------------------------------------------------------
+// ---- The coverage chart ---------------------------------------------------
+//
+// Every size below is the Progress tab's recharts chart in CSS pixels
+// (ProgressView's ProgressChart, line view), multiplied up by SCALE.
 
-const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+const INK = {
+  grid: '#E2E8F0',       // CartesianGrid stroke
+  axis: '#666666',       // recharts' default axis and tick-line colour
+  label: '#64748B',      // the tick labels' fill
+  green: '#15803D',      // ProgressView's DARK_GREEN, for a maxed-out week
+};
+const FONT_PX = 11;              // the axes' fontSize
+const TICK = 6;                  // recharts' tick-line length
+const Y_AXIS_W = 60;             // recharts' default YAxis width
+const X_AXIS_H = 30;             // and XAxis height
+const MARGIN = 5;                // the chart's default margin
+// The last week's label is centred on the right-hand end of the axis, so
+// the plot stops short of the edge by half of it.
+const PAD_R = 20;
+const PAD_T = 10;
+const LINE_W = 2;
+const GREEN_W = 2.5;
+const DOT_R = 4;
 
-// The first week of each calendar month in a weekly series, read off the
-// points' YYYY-MM-DD keys: `{ index, label }`, oldest first. A point whose
-// key is not a date is skipped.
-function monthStarts(points) {
-  const out = [];
-  let prev = null;
-  points.forEach((p, i) => {
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(p?.key || ''));
-    if (!m) return;
-    const ym = `${m[1]}-${m[2]}`;
-    if (ym === prev) return;
-    prev = ym;
-    // The series' first week usually began in the month before; it only
-    // names a month when it falls in that month's first week.
-    if (i === 0 && Number(m[3]) > 7) return;
-    out.push({ index: i, label: MONTHS[Number(m[2]) - 1] });
-  });
-  return out;
+// The value a recharts "__green" key would hold: the week's own reading
+// where it, or the week either side, is at 100%, and nothing elsewhere.
+// ProgressView's withGreenKeys, restated for one series.
+function greenValues(values) {
+  return values.map((v, i) => (
+    v === 100 || values[i - 1] === 100 || values[i + 1] === 100 ? v : null
+  ));
+}
+
+// A dashed rule, 3 on and 3 off, as the grid is drawn.
+function dashed(r, x0, y0, x1, y1, color) {
+  const dash = 3 * SCALE;
+  if (y0 === y1) {
+    for (let x = x0; x < x1; x += dash * 2) fillRect(r, x, y0 - SCALE / 2, Math.min(dash, x1 - x), SCALE, color);
+  } else {
+    for (let y = y0; y < y1; y += dash * 2) fillRect(r, x0 - SCALE / 2, y, SCALE, Math.min(dash, y1 - y), color);
+  }
+}
+
+// Which week labels fit, recharts' "preserveEnd": the last is always shown
+// and the rest are taken walking back from it, each only if it clears the
+// one after it by the axis' minimum gap.
+function visibleLabels(points, xAt, size) {
+  const keep = new Set();
+  let leftEdge = Infinity;
+  for (let i = points.length - 1; i >= 0; i -= 1) {
+    const w = typeWidth(points[i].label, size);
+    const right = xAt(i) + w / 2;
+    if (i === points.length - 1 || right + 5 * SCALE <= leftEdge) {
+      keep.add(i);
+      leftEdge = xAt(i) - w / 2;
+    }
+  }
+  return keep;
 }
 
 /**
  * One coverage chart as a PNG data URL, or null when there is nothing to
  * draw. Shape matches the funnel's image: `{ src, width, height, alt }`,
  * with the width and height being the size it is laid out at.
+ *
+ * `chart.points` are the recorded weeks only, oldest first, as the Progress
+ * tab plots them: evenly spaced, whatever the calendar gap between them.
  */
 export function coverageChartImage(chart) {
   const points = Array.isArray(chart?.points) ? chart.points : [];
@@ -214,93 +232,70 @@ export function coverageChartImage(chart) {
 
   const W = CHART_W * SCALE;
   const H = CHART_H * SCALE;
-  const r = raster(W, H);
+  const r = createRaster(W, H);
+  const size = FONT_PX * SCALE;
 
-  const plotL = PAD_L;
-  const plotR = W - PAD_R;
-  const plotT = PAD_T;
-  const plotB = H - PAD_B;
-  const plotW = plotR - plotL;
-  const plotH = plotB - plotT;
+  const plotL = (MARGIN + Y_AXIS_W) * SCALE;
+  const plotR = W - PAD_R * SCALE;
+  const plotT = PAD_T * SCALE;
+  const plotB = H - (MARGIN + X_AXIS_H) * SCALE;
+  const n = points.length;
+  const xAt = (i) => plotL + ((plotR - plotL) * i) / (n - 1);
+  const yAt = (pct) => plotB - ((plotB - plotT) * pct) / 100;
 
-  const xAt = (i) => plotL + (points.length === 1 ? plotW / 2 : (plotW * i) / (points.length - 1));
-  const yAt = (pct) => plotB - (plotH * pct) / 100;
+  // The grid, under everything: a dashed rule at every tick of both axes.
+  for (const pct of [25, 50, 75, 100]) dashed(r, plotL, yAt(pct), plotR, yAt(pct), INK.grid);
+  for (let i = 1; i < n; i += 1) dashed(r, xAt(i), plotT, xAt(i), plotB, INK.grid);
 
-  // The axis. Four gridlines and a baseline, which is all the structure a
-  // chart this size can carry before the lines are competing with it.
-  for (const pct of [25, 50, 75, 100]) {
-    fill(r, plotL, yAt(pct), plotW, SCALE, GRID);
-    text(r, `${pct}%`, plotL - 4 * SCALE, yAt(pct) - Math.round((GLYPH_H * LABEL_SIZE) / 2), LABEL, LABEL_SIZE, 'right');
+  // The two axes, their tick marks, and the labels off them.
+  fillRect(r, plotL - SCALE / 2, plotT, SCALE, plotB - plotT, INK.axis);
+  fillRect(r, plotL, plotB - SCALE / 2, plotR - plotL, SCALE, INK.axis);
+  for (const pct of [0, 25, 50, 75, 100]) {
+    const y = yAt(pct);
+    fillRect(r, plotL - TICK * SCALE, y - SCALE / 2, TICK * SCALE, SCALE, INK.axis);
+    drawText(r, `${pct}%`, plotL - (TICK + 3) * SCALE, y + 0.355 * size, size, INK.label, 'right');
   }
-  fill(r, plotL, yAt(0), plotW, SCALE, AXIS);
-  text(r, '0%', plotL - 4 * SCALE, yAt(0) - Math.round((GLYPH_H * LABEL_SIZE) / 2), LABEL, LABEL_SIZE, 'right');
+  const shown = visibleLabels(points, xAt, size);
+  points.forEach((p, i) => {
+    fillRect(r, xAt(i) - SCALE / 2, plotB, SCALE, TICK * SCALE, INK.axis);
+    if (!shown.has(i)) return;
+    const w = typeWidth(p.label, size);
+    // Centred on its week, but never off either edge of the picture.
+    const at = Math.max(w / 2, Math.min(xAt(i), W - w / 2));
+    drawText(r, p.label, at, plotB + (TICK + 2) * SCALE + 0.71 * size, size, INK.label, 'center');
+  });
 
-  // Labels along the bottom. Over a long series (the email asks for ten
-  // months of weeks) each month is named once, under the first week that
-  // starts in it, thinned to every other month if they would crowd. A short
-  // series keeps week labels, thinned to about five with the last one
-  // always among them.
-  const monthMarks = points.length > 20 ? monthStarts(points) : null;
-  if (monthMarks && monthMarks.length >= 2) {
-    const every = monthMarks.length > 7 ? 2 : 1;
-    monthMarks.forEach((m, n) => {
-      if ((monthMarks.length - 1 - n) % every) return;
-      const half = textWidth(m.label, LABEL_SIZE) / 2;
-      const at = Math.max(plotL + half, Math.min(xAt(m.index), W - half));
-      text(r, m.label, at, plotB + 6 * SCALE, LABEL, LABEL_SIZE, 'center');
-    });
-  } else {
-    const step = Math.max(1, Math.ceil((points.length - 1) / 4));
-    for (let i = points.length - 1; i >= 0; i -= step) {
-      const label = String(points[i].label || '');
-      const half = textWidth(label, LABEL_SIZE) / 2;
-      // The last label is the week the report is about and always sits at
-      // the end of the axis, so it is pinned inside the right edge rather
-      // than centred on its point - centred, its tail runs off the picture
-      // and "Sep 7" arrives as "SEP".
-      const at = Math.min(xAt(i), W - half);
-      // Anywhere else, only where it clears the per-cent labels up the left.
-      if (at - half < plotL - PAD_L / 2) continue;
-      text(r, label, at, plotB + 6 * SCALE, LABEL, LABEL_SIZE, 'center');
+  // The lines: Tier 1, then Tier 2 over it, each broken where a week has
+  // no reading, then the green stretches over both.
+  const series = [{ key: 't1', colour: COVERAGE_T1 }, { key: 't2', colour: COVERAGE_T2 }];
+  const curve = (values, width, colour) => {
+    for (const run of numberRuns(values)) {
+      const line = monotonePolyline(run.map(i => ({ x: xAt(i), y: yAt(values[i]) })));
+      strokePolyline(r, line, width * SCALE, colour);
     }
-  }
+  };
+  for (const s of series) curve(points.map(p => p[s.key]), LINE_W, s.colour);
+  for (const s of series) curve(greenValues(points.map(p => p[s.key])), GREEN_W, INK.green);
 
-  // The two series. A week the Progress tab never recorded is joined
-  // across rather than breaking the line: the tab only writes a snapshot
-  // when somebody opens it, so gaps are about who looked, not about the
-  // accounts, and the tab's own chart (which plots recorded weeks only)
-  // draws one unbroken line. The points still sit at their real weeks, so
-  // a long stretch with no reading shows as one long straight segment.
-  const series = [{ key: 't2', colour: T2 }, { key: 't1', colour: T1 }];
+  // A dot on every week, green and a size up where the week is at 100%.
   for (const s of series) {
-    let prev = null;
     points.forEach((p, i) => {
       const v = p[s.key];
       if (v == null) return;
-      const here = { x: xAt(i), y: yAt(v) };
-      if (prev) stroke(r, prev.x, prev.y, here.x, here.y, s.colour, 2 * SCALE);
-      prev = here;
-    });
-  }
-  // Markers go on after both lines, so a point is never half-buried under
-  // the other tier's line where the two cross.
-  for (const s of series) {
-    points.forEach((p, i) => {
-      if (p[s.key] == null) return;
-      // Every recorded week gets a dot, the way the Progress tab and the
-      // Weekly Report page draw it, so a reading stands out from the
-      // stretch of line joining it to the next.
-      marker(r, Math.round(xAt(i)), Math.round(yAt(p[s.key])), s.colour, 4 * SCALE);
+      const hit = v === 100;
+      // The Progress dot is r=4 with a 1px stroke of its own colour.
+      fillCircle(r, xAt(i), yAt(v), ((hit ? DOT_R + 1 : DOT_R) + 0.5) * SCALE, hit ? INK.green : s.colour);
     });
   }
 
   return {
-    src: pngDataUrl({ width: W, height: H, palette: PALETTE, pixels: r.px }),
+    src: rasterToPngDataUrl(r),
     width: CHART_W,
     height: CHART_H,
     alt: `${chart.title || 'Account coverage'}: Tier 1 and Tier 2 by week`,
   };
 }
+
 
 // Every chart in a coverage payload, drawn. Returns the payload with an
 // `image` on each chart that could be drawn, so a caller can hand the whole

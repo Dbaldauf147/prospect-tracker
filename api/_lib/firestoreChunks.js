@@ -78,4 +78,7 @@ export const MIRROR = {
   goals: 'idb__daily-success-goals__list',
   activityLog: 'weekly-activity-log',
   yoyOverrides: 'yoy-chart-overrides',
+  // The Clients tab's "Don't Track" ticks, which the Progress tab takes
+  // out of its coverage charts before plotting them.
+  clientUntracked: 'clients-untracked-map',
 };
