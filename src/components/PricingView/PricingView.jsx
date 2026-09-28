@@ -5295,7 +5295,11 @@ export function PricingView({ settings } = {}) {
         );
       })()}
 
-      {pageSubtab === 'pricing' && showConversionsOnPricing && <PricingConversions />}
+      {/* Collapsed by default: the strip's own "Quick conversions" toggle
+          opens it, the same setting as the Calculator subtab's checkbox. */}
+      {pageSubtab === 'pricing' && (
+        <PricingConversions open={showConversionsOnPricing} onToggle={setShowConversionsOnPricing} />
+      )}
 
       <div className={styles.subtabStrip}>
         <button
