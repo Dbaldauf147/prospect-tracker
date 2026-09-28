@@ -81,24 +81,32 @@ export function emailsWeekBreakdown({ point, cache, senderEmail }) {
 
 // ---- New opps, one week -----------------------------------------------
 
-export function newOppsWeekBreakdown({ point, records }) {
+// "New" is the Pipeline page's New Opps by Month rule (computeOppChanges),
+// and the Created column is the open date that rule placed the opp by, in
+// the same YYYY-MM-DD form that page's export writes.
+const createdDate = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : '');
+
+export function newOppsWeekBreakdown({ point, records, ageRef = Date.now() }) {
   const w = weekWindow(point?.key);
   const list = Array.isArray(records) ? records : [];
   const byId = new Map(list.map(r => [r?._id, r]));
-  const found = w ? computeOppChanges(list, w.start, w.end).newOpps : [];
-  const full = found.map(o => byId.get(o.id) || { Account: o.account, Scope: o.scope, Stage: o.stage });
+  const found = w ? computeOppChanges(list, w.start, w.end, { ageRef }).newOpps : [];
+  const full = found
+    .map(o => ({ r: byId.get(o.id) || { Account: o.account, Scope: o.scope, Stage: o.stage }, openTs: o.openTs }))
+    .sort((a, b) => (a.openTs - b.openTs) || str(a.r.Account).localeCompare(str(b.r.Account)));
   return {
     title: `New opps, week of ${weekOf(point?.key)}`,
     value: `${found.length} opp${found.length === 1 ? '' : 's'}`,
-    formula: 'Opps 2 rows whose earliest tracked edit falls in the week',
+    formula: 'Opps with a BFO Opportunity Name created in the week (same rule as the Pipeline page\'s New Opps by Month)',
     rows: {
       head: 'Opportunities',
-      columns: ['Account', 'Scope', 'Stage'],
-      ...mapRows(full, r => [str(r.Account) || '(no account)', str(r.Scope), str(r.Stage)], {
-        exportColumns: OPP_COLUMNS, exportMapFn: oppRow,
+      columns: ['Account', 'Scope', 'Stage', 'Created'],
+      ...mapRows(full, x => [str(x.r.Account) || '(no account)', str(x.r.Scope), str(x.r.Stage), createdDate(x.openTs)], {
+        exportColumns: [...OPP_COLUMNS, 'Created'],
+        exportMapFn: x => [...oppRow(x.r), createdDate(x.openTs)],
       }),
     },
-    note: 'A best-effort count: the data carries no creation date, so an opp first edited in the tool this week can appear even if it was created earlier.',
+    note: 'Created is the opp\'s Start Date, or when there is none, the date its Age counts back to.',
     filePrefix: BREAKDOWN_FILE_PREFIX,
   };
 }

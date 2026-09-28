@@ -7,6 +7,8 @@
 // and gets back structured stats + a plain-text serialization suitable
 // for the clipboard and for handing to the report LLM.
 
+import { bfoOppNameOf, oppOpenTs } from './pipelineFunnelData.js';
+
 // ---- Date-range helpers -------------------------------------------------
 
 // Local midnight of an ISO (YYYY-MM-DD) or Date. Falls back to today.
@@ -168,13 +170,16 @@ function oppSummary(r, extra) {
 // come from the per-field `_fieldUpdatedAt` stamps (epoch ms), falling
 // back to the row-level `_rowUpdatedAt` for un-stamped (imported) rows.
 //
-// "New opps" is a best-effort estimate: an opp whose earliest tracked
-// timestamp lands in the window is treated as first appearing this period
-// (the data model carries no dedicated creation stamp). Deals that closed
-// in-window are always reported, even if the opp is also new. Other edit
-// types are attributed only to opps that already existed before the
-// window, to avoid double-counting a brand-new opp's initial data entry.
-export function computeOppChanges(records, start, end) {
+// "New opps" follows the Pipeline page's New Opps by Month rule, so the two
+// pages agree: an opp with a BFO Opportunity Name whose open date
+// (oppOpenTs: Start Date, else `ageRef` minus Age) falls in the window.
+// `ageRef` is when the Age column was read; the Pipeline page uses the
+// cache's fetchedAt when it has one and now otherwise, and so does this.
+// Deals that closed in-window are always reported, even if the opp is also
+// new. Other edit types are attributed only to opps that already existed
+// before the window (earliest tracked edit before it), to avoid
+// double-counting a brand-new opp's initial data entry.
+export function computeOppChanges(records, start, end, { ageRef = Date.now() } = {}) {
   const out = {
     newOpps: [], stageChanges: [], closed: [],
     closeDateMoves: [], amountUpdates: [], bfoTags: [],
@@ -187,7 +192,9 @@ export function computeOppChanges(records, start, end) {
       : [];
     const rowT = Number.isFinite(r._rowUpdatedAt) ? r._rowUpdatedAt : null;
     const firstTouch = Math.min(...[...fieldTimes, ...(rowT != null ? [rowT] : [])].filter(Number.isFinite));
-    const isNew = Number.isFinite(firstTouch) && inWin(firstTouch, start, end);
+    const firstTouchInWin = Number.isFinite(firstTouch) && inWin(firstTouch, start, end);
+    const openTs = oppOpenTs(r, ageRef);
+    const isNew = !!bfoOppNameOf(r) && inWin(openTs, start, end);
 
     const stageT = stamps ? stamps['Stage'] : null;
     const stageInWin = inWin(stageT, start, end);
@@ -202,10 +209,8 @@ export function computeOppChanges(records, start, end) {
       if (amt != null) out.closedAmount += amt;
     }
 
-    if (isNew) {
-      out.newOpps.push(oppSummary(r, { stage: stageVal }));
-      continue; // don't re-attribute this opp's initial data entry
-    }
+    if (isNew) out.newOpps.push(oppSummary(r, { stage: stageVal, openTs }));
+    if (isNew || firstTouchInWin) continue; // don't re-attribute this opp's initial data entry
 
     if (!stamps) continue; // existing un-stamped row — nothing to attribute
 

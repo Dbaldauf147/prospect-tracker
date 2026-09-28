@@ -254,6 +254,9 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   // dropped, which is why last week's "Emails sent" used to read 0.
   const [activityLog, setActivityLog] = useState(loadWeeklyActivityLog);
   const [oppsRecords, setOppsRecords] = useState([]);
+  // When the Opps cache's Age column was read, for placing an opp with no
+  // Start Date on the calendar the way the Pipeline page does.
+  const [oppsAgeRef, setOppsAgeRef] = useState(() => Date.now());
   const [goals, setGoals] = useState([]);
   const [pipeline, setPipeline] = useState(null);
   const [coachingRules, setCoachingRules] = useState(null);
@@ -286,7 +289,12 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     const refresh = () => {
       setCache(readActivityCache());
       setActivityLog(loadWeeklyActivityLog());
-      loadOppsFromCache().then(o => { if (!cancelled) setOppsRecords(o?.records || []); }).catch(() => {});
+      loadOppsFromCache().then(o => {
+        if (cancelled) return;
+        setOppsRecords(o?.records || []);
+        const fetched = o?.fetchedAt ? Date.parse(o.fetchedAt) : NaN;
+        setOppsAgeRef(Number.isFinite(fetched) ? fetched : Date.now());
+      }).catch(() => {});
       loadGoals().then(g => { if (!cancelled) setGoals(Array.isArray(g) ? g : []); }).catch(() => {});
       dbGet(PIPELINE_STORE, PIPELINE_KEY).then(p => { if (!cancelled) setPipeline(p || null); }).catch(() => {});
       dbGet(BFO_STORE, BFO_KEY).then(b => { if (!cancelled) setBfo(b || null); }).catch(() => { if (!cancelled) setBfo(null); });
@@ -351,8 +359,8 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     [cache, senderEmail, bounds],
   );
   const oppChanges = useMemo(
-    () => computeOppChanges(oppsRecords, bounds.start, bounds.end),
-    [oppsRecords, bounds],
+    () => computeOppChanges(oppsRecords, bounds.start, bounds.end, { ageRef: oppsAgeRef }),
+    [oppsRecords, bounds, oppsAgeRef],
   );
   const goalsProg = useMemo(
     () => computeGoalsProgress(goals, bounds.start, bounds.end),
@@ -621,9 +629,9 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
       cache, log: activityLog, senderEmail, refMs: bounds.start, weeks: TREND_WEEKS,
     }),
     newOppsByWeek: newOppsByWeek({
-      records: oppsRecords, refMs: bounds.start, weeks: TREND_WEEKS,
+      records: oppsRecords, refMs: bounds.start, weeks: TREND_WEEKS, ageRef: oppsAgeRef,
     }),
-  }), [cache, activityLog, senderEmail, oppsRecords, bounds]);
+  }), [cache, activityLog, senderEmail, oppsRecords, bounds, oppsAgeRef]);
 
   // The Progress tab's two account-coverage charts, off the same weekly
   // snapshots the KPI cards already read. Not scoped to the period the way
@@ -672,10 +680,10 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
     const byKey = (points, build) => new Map((points || []).map(p => [p.key, build(p)]));
     return {
       emails: byKey(trendSeries.emailsByWeek, point => emailsWeekBreakdown({ point, cache, senderEmail })),
-      newOpps: byKey(trendSeries.newOppsByWeek, point => newOppsWeekBreakdown({ point, records: oppsRecords })),
+      newOpps: byKey(trendSeries.newOppsByWeek, point => newOppsWeekBreakdown({ point, records: oppsRecords, ageRef: oppsAgeRef })),
       ratio: byKey(coverageRatioSeries?.points, point => coverageRatioWeekBreakdown({ point, log: coverageRatioLog })),
     };
-  }, [trendSeries, coverageRatioSeries, coverageRatioLog, cache, senderEmail, oppsRecords]);
+  }, [trendSeries, coverageRatioSeries, coverageRatioLog, cache, senderEmail, oppsRecords, oppsAgeRef]);
 
   // What the tab publishes. The cron rebuilds the report from Firestore and
   // HubSpot at send time (api/_lib/weeklyReportBuild.js) rather than mailing
@@ -1036,7 +1044,7 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
                 <ChangeList title="Amount updates" items={oppChanges.amountUpdates} suffix={x => (x.amount ? ` → ${x.amount}` : '')} />
                 <ChangeList title="BFO Opportunity Names tagged" items={oppChanges.bfoTags} suffix={x => (x.bfo ? ` → ${x.bfo}` : '')} />
                 <div className={styles.caveat}>
-                  “New opps” is a best-effort estimate: opps first edited in the tool this period may appear here even if created earlier, since the data carries no dedicated creation date.
+                  “New opps” uses the Pipeline page's rule: opps with a BFO Opportunity Name whose Start Date (or, without one, the date their Age counts back to) falls in this period.
                 </div>
               </>
             )}

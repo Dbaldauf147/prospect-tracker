@@ -47,13 +47,21 @@ eq(b.note.length > 0, true, '...and explains why');
 
 // ---- new opps --------------------------------------------------------
 
+// The Pipeline page's rule: a BFO Opportunity Name, and a Start Date (else
+// Age counted back from the cache's read time) inside the week.
 const records = [
-  { _id: 'o1', Account: 'Acme', Scope: 'Energy', Stage: 'Stage 3', 'Quoted Amount': '$10,000', _rowUpdatedAt: at(23) },
-  { _id: 'o2', Account: 'Old Co', Stage: 'Sold', 'Quoted Amount': '$5,000', 'Close Date': '2026-03-01', _rowUpdatedAt: new Date(2026, 1, 1).getTime() },
+  { _id: 'o1', Account: 'Acme', Scope: 'Energy', Stage: 'Stage 3', 'BFO Link': 'Acme Energy', 'Start Date': '9/23/2026', 'Quoted Amount': '$10,000' },
+  { _id: 'o2', Account: 'Old Co', Stage: 'Sold', 'BFO Link': 'Old Co', 'Start Date': '2/1/2026', 'Quoted Amount': '$5,000', 'Close Date': '2026-03-01', _rowUpdatedAt: at(23) },
+  { _id: 'o3', Account: 'Draft Co', Stage: 'Stage 3', 'BFO Link': '-', 'Start Date': '9/22/2026' },
+  { _id: 'o4', Account: 'Aged Co', Stage: 'Stage 4', 'BFO Link': 'Aged Co', Age: '3' },
 ];
-b = newOppsWeekBreakdown({ point: { key: '2026-09-21', value: 1 }, records });
-eq(exported(b).map(r => r[0]), ['Acme'], 'new opps list the week\'s new rows');
+b = newOppsWeekBreakdown({ point: { key: '2026-09-21', value: 2 }, records, ageRef: at(25) });
+eq(exported(b).map(r => r[0]), ['Aged Co', 'Acme'], 'new opps are the linked opps created in the week, oldest first');
 eq(b.rows.exportColumns.includes('Quoted Amount'), true, 'the export carries the full opp fields');
+eq(b.rows.exportColumns.at(-1), 'Created', 'the export ends with the Created date');
+eq(exported(b).map(r => r.at(-1)), [new Date(at(25) - 3 * 86400000).toISOString().slice(0, 10), new Date(2026, 8, 23).toISOString().slice(0, 10)],
+  'Created is the Start Date, else ageRef minus Age');
+eq(b.rows.columns.at(-1), 'Created', 'the on-screen list shows Created too');
 
 // ---- coverage ratio --------------------------------------------------
 

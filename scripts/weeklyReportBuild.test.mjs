@@ -76,9 +76,10 @@ const NOW = at('2026-09-14T06:00:00Z');        // the following Mon, 6am
 const opps2 = {
   headers: [],
   records: [
-    // New this week: first touch inside the window.
+    // New this week: linked to BFO and started inside the window.
     {
       _id: 'o1', Account: 'Acme', Scope: 'HQ retrofit', Stage: 'Stage 4: Influence and Develop',
+      'BFO Link': 'Acme HQ retrofit', 'Start Date': '9/8/2026',
       'Quoted Amount': '$120,000',
       _fieldUpdatedAt: { Account: at('2026-09-08T10:00:00Z'), Stage: at('2026-09-08T10:00:00Z') },
     },

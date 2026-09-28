@@ -11,7 +11,7 @@ import { bfoStageMetrics, matchStage } from '../../utils/bfoStageMetrics';
 import { parseMoney } from '../../utils/oppsMetrics';
 import {
   CLOSE_RATE_STAGES, bfoOppNameOf, buildFunnelStages, closeRateTally,
-  closeRatesByStage, closedOppEntry,
+  closeRatesByStage, closedOppEntry, oppOpenTs,
 } from '../../utils/pipelineFunnelData';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { isPullThroughOpp } from '../../utils/pullThrough';
@@ -54,29 +54,9 @@ const KEY = 'current';
 const BFO_STORE = 'bfo-activity';
 const BFO_KEY = 'current';
 
-// Best-effort "opened" timestamp for an Opps row (ms, or NaN when it can't be
-// placed on the calendar). Age fields go stale between paste-imports, so we
-// prefer, in order:
-//   1. The opp's Start Date column when it parses as a real date.
-//   2. Otherwise Age interpreted at import time (ageRef − Age days); closed
-//      opps (Sold / Not Sold) count back from their Close Date instead.
-// Shared by the past-30-days and by-month new-opp tallies.
-function oppOpenTs(r, ageRef) {
-  const startRaw = String(r['Start Date'] || '').trim();
-  if (startRaw) {
-    const ts = Date.parse(startRaw);
-    if (!Number.isNaN(ts)) return ts;
-  }
-  const age = Number(String(r.Age ?? '').replace(/[^0-9.\-]/g, ''));
-  if (!Number.isFinite(age) || age < 0) return NaN;
-  const stage = (r.Stage || '').trim();
-  if (stage === 'Sold' || stage === 'Not Sold') {
-    const closeTs = Date.parse(r['Close Date'] || '');
-    if (Number.isNaN(closeTs)) return NaN;
-    return closeTs - age * 86400000;
-  }
-  return ageRef - age * 86400000;
-}
+// The best-effort "opened" timestamp for an Opps row (oppOpenTs) now lives
+// in utils/pipelineFunnelData so the Weekly Report counts new opps by the
+// same rule. Imported below; unchanged in behaviour.
 
 // Colored countdown cell for the "Days Since Sold — 60 Day Goal" column:
 // green while there's a week+ of runway, amber in the final week, red once
