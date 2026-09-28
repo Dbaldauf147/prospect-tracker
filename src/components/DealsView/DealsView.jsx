@@ -29,7 +29,7 @@ import {
 } from '../../utils/dealOppYear1';
 import { indexOppScopeByBfo, oppScopeForDeal, oppScopeText } from '../../utils/dealOppScope';
 import {
-  asNumber, asDate, fmtCurrency, fmtPercent, fmtDate, isExpiredDeal,
+  asNumber, asDate, fmtCurrency, fmtPercent, fmtDate, isExpiredDeal, isPastEndDateDeal,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
 } from '../../utils/dealsFormat';
 import { matchesCdm } from '../../utils/cdmMatch';
@@ -2782,6 +2782,11 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
               // moot once the contract is over, and a green expired row
               // would read as live at a glance.
               if (isExpiredDeal(row)) return { background: '#E2E8F0' };
+              // Still live but past its End Date: red, ahead of the green
+              // and amber, because the contract either needs marking
+              // Expired or its date needs correcting, whatever else the
+              // row says.
+              if (isPastEndDateDeal(row)) return { background: '#FEE2E2' };
               // A deal marked On track or Completed reads green down the
               // whole row — the point of the status is to see, without
               // reading a column, which deals still need chasing.

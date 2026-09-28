@@ -77,6 +77,25 @@ export function isExpiredDeal(deal) {
   return String(deal?.['Paperwork completed'] || '').trim().toLowerCase() === 'expired';
 }
 
+// Past its End Date but still treated as live: nobody has marked the
+// Paperwork column Expired (or Cancelled), yet the date on the agreement
+// has gone by. This is the flip side of isExpiredDeal's rule above: a
+// stale date doesn't expire a deal on its own, so the Deals page flags
+// it instead, asking the user to either mark it Expired or fix the date.
+//
+// "Past" means strictly before today; a deal ending today is still live.
+// A missing or unparseable End Date never counts.
+export function isPastEndDateDeal(deal, now = new Date()) {
+  if (isInactiveAgreement(deal)) return false;
+  const end = asDate(deal?.['End Date']);
+  if (!end) return false;
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const endDay = new Date(end);
+  endDay.setHours(0, 0, 0, 0);
+  return endDay < today;
+}
+
 // The calendar year a deal belongs to, derived from its Original Contract
 // Start date. This is what the Deals tab renders in its read-only Year
 // column, so anything that buckets deals by year (e.g. the YOY Commissions
