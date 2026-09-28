@@ -3,7 +3,7 @@ import styles from './ServicesTab.module.css';
 import {
   SERVICE_STATUS, FEE_STRUCTURE_TYPES, FEE_STRUCTURE_UNITS, serviceKey,
   newFeeStructureId, blankFeeStructureRow, feeStructureRowsFromFees, costTotalsByLineItem,
-  standardFeesForStructure, costKey, COST_BUCKET_UPFRONT, addLaterCostFees, FIRST_YEAR_MONTHS,
+  standardFeesForStructure, costKey, addLaterCostFees, FIRST_YEAR_MONTHS,
   costTypeConversion, moveCostAllocation, feeBucket,
 } from '../../utils/pricingServices';
 import { RATE_CHECK } from '../../utils/serviceRateCheck';
@@ -1068,10 +1068,6 @@ function FeeStructureEditor({
   // pointed at it (see standardFeesForStructure). A blank Fee cell bills
   // it, and Apply writes it into the schedule.
   const { std, standardFee, billed } = standardFeeContext(structure, costs, { termMonths, siteCount, accountCount });
-  const setAllocation = (key, patch) => onChange(st => ({
-    ...st,
-    allocations: { ...(st.allocations || {}), [key]: { ...((st.allocations || {})[key] || {}), ...patch } },
-  }));
   const previews = rows.map((r, idx) => (previewFeeRow && hasWorkbook ? previewFeeRow(billed(r, idx)) : null));
   const totals = Array.from({ length: numYears }, (_, yi) => previews.reduce((s, p) => s + (p?.years?.[yi] || 0), 0));
 
@@ -1248,86 +1244,6 @@ function FeeStructureEditor({
           </div>
         );
       })()}
-      {costs.length > 0 && (
-        <div className={styles.coverage}>
-          <h5 className={styles.coverageTitle}>Costs covered</h5>
-          <p className={styles.note}>
-            Which fee recovers each of this service's costs on {optionName || 'the loaded option'}. The ★ standard
-            fee above is built from these. A one-time or setup cost on a monthly fee can be rolled over the
-            {` ${termMonths}-month`} term so the monthly fee recovers it.
-          </p>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Line Item</th>
-                <th>Cost Type</th>
-                <th className={styles.num}>Start Month</th>
-                <th className={styles.num}>Price</th>
-                <th>Covered by</th>
-                <th>Format</th>
-              </tr>
-            </thead>
-            <tbody>
-              {costs.map((c, ci) => {
-                const co = std.costs[ci];
-                const key = co.key;
-                const row = co.rowIdx >= 0 ? rows[co.rowIdx] : null;
-                const rollMonths = co.rowIdx >= 0 ? std.perRow[co.rowIdx].rollMonths : termMonths;
-                const namedRows = rows.map((r, i) => ({ name: String(r.feeName || '').trim(), i })).filter(x => x.name);
-                return (
-                  <tr key={`${key}-${ci}`} className={co.issue || co.billedEarly ? styles.issueRow : undefined}>
-                    <td>{c.description}</td>
-                    <td>{c.type}</td>
-                    <td className={styles.num}>{c.startMonth || ''}</td>
-                    <td className={styles.num}>{fmtMoney(c.price)}</td>
-                    <td>
-                      <select
-                        className={styles.cellSelect}
-                        value={co.rowIdx >= 0 ? String(row.feeName || '').trim().toLowerCase() : ''}
-                        onChange={(e) => setAllocation(key, { fee: e.target.value })}
-                      >
-                        <option value="">Not covered</option>
-                        {namedRows.map(x => (
-                          <option key={x.i} value={x.name.toLowerCase()}>{x.name}</option>
-                        ))}
-                      </select>
-                      {co.defaulted && co.rowIdx >= 0 && <div className={styles.subNote}>matched by fee name</div>}
-                      {co.billedEarly && (
-                        <div className={styles.warnText}>
-                          Starts month {co.startMonth}; this fee bills from month {Math.round(Number(row.startMonth) || 1)}
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      {co.rowIdx < 0 ? (
-                        <span className={styles.warnText}>Not recovered by any fee</span>
-                      ) : co.canRoll ? (
-                        <label className={styles.rollLabel}>
-                          <input
-                            type="checkbox"
-                            checked={co.rolled}
-                            onChange={(e) => setAllocation(key, { roll: e.target.checked, fee: String(row.feeName || '').trim().toLowerCase() })}
-                          />
-                          Roll over term
-                          {co.rolled
-                            ? <span className={styles.subNote}> {fmtMoney(c.price)} / {rollMonths} mo = {fmtMoney(c.price / rollMonths)} a month</span>
-                            : <span className={styles.warnText}> {row.type} fee, {c.type} cost: not billed until rolled</span>}
-                        </label>
-                      ) : co.issue === 'recurringOnUpfront' ? (
-                        <span className={styles.warnText}>Monthly cost on a {row.type} fee: point it at a monthly fee</span>
-                      ) : co.bucket === COST_BUCKET_UPFRONT || co.rolled ? (
-                        <span className={styles.subNote}>{co.rolled ? `Rolled over ${rollMonths} months` : 'Matches the fee'}</span>
-                      ) : (
-                        <span className={styles.subNote}>Matches the fee</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
     </div>
   );
 }
