@@ -2239,6 +2239,16 @@ export function PricingView({ settings } = {}) {
   const [summaryColVisibility, setSummaryColVisibility] = useState({});
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const [summaryMenuOpen, setSummaryMenuOpen] = useState(false);
+  // Quick conversions sit on the Calculator subtab. They only show on the
+  // Pricing subtab too when somebody asks for that, since most visits to
+  // Pricing are about the workbook, not the side calculations. Remembered
+  // per browser.
+  const [showConversionsOnPricing, setShowConversionsOnPricing] = useState(() => {
+    try { return localStorage.getItem('pricing-show-quick-conversions') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('pricing-show-quick-conversions', showConversionsOnPricing ? '1' : '0'); } catch { /* noop */ }
+  }, [showConversionsOnPricing]);
   const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c' | 'calculator'
   const [optionsTabData, setOptionsTabData] = useState(null); // OptionsTab state: array of { name, years, escPct, rows: [...] }
   const [compareTabData, setCompareTabData] = useState(null); // CompareTab state: { currentLabel, nextLabel, current: [...], next: [...] }
@@ -4724,7 +4734,7 @@ export function PricingView({ settings } = {}) {
         );
       })()}
 
-      {pageSubtab === 'pricing' && <PricingConversions />}
+      {pageSubtab === 'pricing' && showConversionsOnPricing && <PricingConversions />}
 
       <div className={styles.subtabStrip}>
         <button
@@ -4848,7 +4858,20 @@ export function PricingView({ settings } = {}) {
         />
       )}
 
-      {pageSubtab === 'calculator' && <CalculatorTab />}
+      {pageSubtab === 'calculator' && (
+        <>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', color: 'var(--color-text-muted)', margin: '0.5rem 0 0.25rem 1.25rem', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={showConversionsOnPricing}
+              onChange={e => setShowConversionsOnPricing(e.target.checked)}
+            />
+            Show Quick conversions on the Pricing tab
+          </label>
+          <PricingConversions />
+          <CalculatorTab />
+        </>
+      )}
 
       <div className={styles.body} style={pageSubtab !== 'pricing' ? { display: 'none' } : undefined}>
         {!workbook && (
