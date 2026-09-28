@@ -3655,6 +3655,39 @@ export function PricingView({ settings } = {}) {
     });
   }
 
+  // Turn a one-time cost into an annual one, or back. There is no annual
+  // cost type (every Recurring CTS on this page is read as monthly), so the
+  // yearly figure becomes a monthly one: the CTS is divided by 12 and the
+  // type set to Recurring (monthly). The SIA's figure is kept on the item
+  // so it can be put back. Stored on the workbook item itself, so every
+  // total, margin and export on the page reads the converted cost.
+  function setItemAnnual(itemId, on) {
+    setWorkbook(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        options: prev.options.map(o => ({
+          ...o,
+          sections: (o.sections || []).map(sec => ({
+            ...sec,
+            items: (sec.items || []).map(it => {
+              if (it.id !== itemId) return it;
+              if (on && typeof it.annualFromCts !== 'number' && typeof it.cts === 'number') {
+                return { ...it, annualFromCts: it.cts, cts: it.cts / 12 };
+              }
+              if (!on && typeof it.annualFromCts === 'number') {
+                const { annualFromCts, ...rest } = it;
+                return { ...rest, cts: annualFromCts };
+              }
+              return it;
+            }),
+          })),
+        })),
+      };
+    });
+    setItemType(itemId, on ? 'Recurring (monthly)' : '');
+  }
+
   function setItemLinkedTo(item, raw) {
     const itemId = item.id;
     const trimmed = (raw || '').trim();
@@ -4625,6 +4658,9 @@ export function PricingView({ settings } = {}) {
         // The type the SIA itself gives the line, so a converted one can
         // say what it was and be put back.
         siaType: item.type || '',
+        // Set when the one-time cost was turned into an annual one: the
+        // SIA's figure, now billed as a twelfth of it every month.
+        annualFrom: typeof item.annualFromCts === 'number' ? item.annualFromCts : null,
         cts: typeof item.cts === 'number' ? item.cts : null,
         // Marked-up price at the row's GM, what a fee has to collect to
         // recover this cost (see priceFor).
@@ -5187,6 +5223,7 @@ export function PricingView({ settings } = {}) {
           previewFeeRow={previewFeeStructureRow}
           previewOnOption={previewServiceOnOption}
           onSetItemType={setItemType}
+          onSetItemAnnual={setItemAnnual}
           applyFeeStructure={applyServiceFeeStructure}
           numYears={Math.max(1, Math.ceil(termMonths / 12))}
           termMonths={termMonths}
