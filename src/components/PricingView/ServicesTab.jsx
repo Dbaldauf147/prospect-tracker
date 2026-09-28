@@ -28,10 +28,11 @@ const STATUS_CLASS = {
 //   detailFor       (serviceName) => { items, fees } for the active option
 //   feeStructures   saved fee structures per service (serviceKey)
 //   previewFeeRow   (structureRow) => what it bills on the active option
+//   previewOnOption (serviceName, structure|null) => the option with it in place
 //   applyFeeStructure (serviceName, structure) => writes it to the schedule
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, onOpenLinkedTo,
-  feeStructures = {}, setFeeStructures, previewFeeRow, applyFeeStructure,
+  feeStructures = {}, setFeeStructures, previewFeeRow, previewOnOption, applyFeeStructure,
 }) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(null);
@@ -138,6 +139,7 @@ export function ServicesTab({
                 return next;
               })}
               previewFeeRow={previewFeeRow}
+              previewOnOption={previewOnOption}
               applyFeeStructure={applyFeeStructure}
               detail={detail}
               hasWorkbook={!!workbook}
@@ -152,7 +154,7 @@ export function ServicesTab({
   );
 }
 
-function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, onOpenLinkedTo, saved, setSaved, previewFeeRow, applyFeeStructure }) {
+function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, onOpenLinkedTo, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure }) {
   const items = detail?.items || [];
   const fees = detail?.fees || [];
   const structures = saved?.structures || [];
@@ -381,7 +383,170 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, onO
               />
             )}
           </section>
+
+      {hasWorkbook && previewOnOption && (
+        <OptionPreview
+          preview={previewOnOption(service.name, openStructure)}
+          structureName={openStructure ? `fee structure "${openStructure.name || 'Untitled'}"` : 'the SIA setup'}
+          isSia={!openStructure}
+        />
+      )}
     </div>
+  );
+}
+
+const sum = (arr) => arr.reduce((a, b) => a + (Number(b) || 0), 0);
+const marginOf = (fee, cost) => (fee > 0 ? (fee - cost) / fee : null);
+
+// The option as it would read with the picked fee structure in place for
+// this service: the fee rows it bills, the service's cost against them,
+// and the option's totals now next to with it.
+function OptionPreview({ preview, structureName, isSia }) {
+  if (!preview) return null;
+  const { optionName, numYears, fees, feeByYear, costByYear, unbilled, before, after } = preview;
+  const yearIdx = Array.from({ length: numYears }, (_, i) => i);
+  const yearHeads = yearIdx.map(i => <th key={i} className={styles.num}>{`Y${i + 1}`}</th>);
+  const money = (n) => (n ? fmtMoney(n) : '');
+  const svcMargin = yearIdx.map(i => marginOf(feeByYear[i], costByYear[i]));
+  const svcTermMargin = marginOf(sum(feeByYear), sum(costByYear));
+  const changed = !isSia || sum(after.feeByYear) !== sum(before.feeByYear) || sum(after.costByYear) !== sum(before.costByYear);
+  const deltaFee = yearIdx.map(i => after.feeByYear[i] - before.feeByYear[i]);
+  const signed = (n) => (Math.abs(n) < 0.005 ? '' : `${n > 0 ? '+' : '-'}${fmtMoney(Math.abs(n))}`);
+  const optRows = changed
+    ? [['Now on the schedule', before], [isSia ? 'With the SIA setup' : 'With this structure', after]]
+    : [['On the schedule', before]];
+
+  return (
+    <section className={styles.section}>
+      <h4 className={styles.sectionTitle}>
+        How {optionName} looks with {structureName}
+      </h4>
+      <p className={styles.note}>
+        {isSia
+          ? `The fees the SIA sets up for this service, as ${optionName} would bill them.`
+          : `A preview of ${optionName} with this structure in place of the service's current fee rows. Nothing changes until you apply it.`}
+      </p>
+
+      <div className={styles.previewLabel}>Fees billed for this service</div>
+      {fees.length === 0 ? (
+        <div className={styles.note}>No named fees, so this service bills nothing on {optionName}.</div>
+      ) : (
+        <table className={styles.table}>
+          <thead>
+            <tr>
+              <th>Fee</th>
+              <th>Type</th>
+              <th className={styles.num}>Fee / Unit</th>
+              <th>Unit</th>
+              <th className={styles.num}>Unit Count</th>
+              <th className={styles.num}>Start Month</th>
+              {yearHeads}
+              <th className={styles.num}>Term</th>
+            </tr>
+          </thead>
+          <tbody>
+            {fees.map((f, i) => (
+              <tr key={`${f.name}-${i}`}>
+                <td>{f.name}{f.passThrough && <div className={styles.subNote}>Pass-through</div>}</td>
+                <td>{f.type}</td>
+                <td className={styles.num}>{fmtMoney(f.feePerUnit)}</td>
+                <td>{f.unit}</td>
+                <td className={styles.num}>{f.unitCount}</td>
+                <td className={styles.num}>{f.startMonth || ''}</td>
+                {yearIdx.map(i2 => <td key={i2} className={styles.num}>{money(f.years[i2])}</td>)}
+                <td className={styles.num}>{money(f.term)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <div className={styles.previewLabel}>This service, fee against cost</div>
+      <table className={styles.table}>
+        <thead>
+          <tr>
+            <th />
+            {yearHeads}
+            <th className={styles.num}>Term</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Fee</td>
+            {yearIdx.map(i => <td key={i} className={styles.num}>{money(feeByYear[i])}</td>)}
+            <td className={styles.num}>{money(sum(feeByYear))}</td>
+          </tr>
+          <tr>
+            <td>Cost</td>
+            {yearIdx.map(i => <td key={i} className={styles.num}>{money(costByYear[i])}</td>)}
+            <td className={styles.num}>{money(sum(costByYear))}</td>
+          </tr>
+          <tr>
+            <td>Margin</td>
+            {yearIdx.map(i => <td key={i} className={styles.num}>{feeByYear[i] || costByYear[i] ? fmtMoney(feeByYear[i] - costByYear[i]) : ''}</td>)}
+            <td className={styles.num}>{fmtMoney(sum(feeByYear) - sum(costByYear))}</td>
+          </tr>
+          <tr>
+            <td>Margin %</td>
+            {yearIdx.map(i => <td key={i} className={styles.num}>{fmtPct(svcMargin[i])}</td>)}
+            <td className={styles.num}>{fmtPct(svcTermMargin)}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p className={styles.note}>
+        Cost is every cost line tied to this service, with tech depreciation, recurring lines escalated by the cost escalator.
+      </p>
+      {unbilled.length > 0 && (
+        <div className={styles.warnNote}>
+          {unbilled.length === 1 ? 'One cost line is' : `${unbilled.length} cost lines are`} priced by a fee name
+          this doesn't bill, so {optionName}'s Deal margin leaves {unbilled.length === 1 ? 'it' : 'them'} out:{' '}
+          {unbilled.map((u, i) => (
+            <span key={i}>
+              {i > 0 && '; '}
+              {u.description} ({u.feeName ? `fee name ${u.feeName}` : 'no fee name'}, {fmtMoney(u.termCost)} over the term)
+            </span>
+          ))}.
+        </div>
+      )}
+
+      <div className={styles.previewLabel}>{optionName} totals</div>
+      <table className={styles.table}>
+        <thead>
+          <tr>
+            <th />
+            {yearHeads}
+            <th className={styles.num}>Term</th>
+            <th className={styles.num}>Deal margin</th>
+          </tr>
+        </thead>
+        <tbody>
+          {optRows.map(([label, t]) => (
+            <tr key={label}>
+              <td>{label}</td>
+              {yearIdx.map(i => <td key={i} className={styles.num}>{money(t.feeByYear[i])}</td>)}
+              <td className={styles.num}>{money(sum(t.feeByYear))}</td>
+              <td className={styles.num}>{fmtPct(t.margin?.finalMargin)}</td>
+            </tr>
+          ))}
+          {changed && (
+            <tr className={styles.deltaRow}>
+              <td>Change</td>
+              {yearIdx.map(i => <td key={i} className={styles.num}>{signed(deltaFee[i])}</td>)}
+              <td className={styles.num}>{signed(sum(deltaFee))}</td>
+              <td className={styles.num}>
+                {typeof before.margin?.finalMargin === 'number' && typeof after.margin?.finalMargin === 'number'
+                  && Math.abs(after.margin.finalMargin - before.margin.finalMargin) >= 0.0005
+                  ? `${after.margin.finalMargin > before.margin.finalMargin ? '+' : '-'}${(Math.abs(after.margin.finalMargin - before.margin.finalMargin) * 100).toFixed(1)} pts`
+                  : ''}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      <p className={styles.note}>
+        Total fee billed on {optionName} each year. Deal margin is over the full term, pass-through netted out, the same as the Pricing subtab.
+      </p>
+    </section>
   );
 }
 
