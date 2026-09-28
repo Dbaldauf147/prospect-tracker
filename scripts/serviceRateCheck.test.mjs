@@ -189,5 +189,65 @@ test('the SIA sites price a per-site-w/-mandate card, and a typed count wins', (
   assert.equal(typed.fromSia.sites_mandate, 29);
 });
 
+test('a card that is one per-unit rate is checked per unit, not on the total', () => {
+  // BBS: $625 to $825 a year per site w/ mandate, 29 sites.
+  const c = rateCardCheck({
+    items: [
+      { cts: 290, type: 'Recurring (monthly)', startMonth: 1 },
+      { cts: 536, type: 'One Time', startMonth: 1 },
+    ],
+    entry: { basis: 'per_site_mandate', rate: 625, rateHigh: 825 },
+    meta: recurring,
+    counts: { sites_mandate: 29 },
+  });
+  const year1 = 290 * 12 + 536;
+  assert.equal(c.cost, year1);
+  assert.equal(c.perUnit.units, 29);
+  assert.equal(c.perUnit.basisLabel, 'Per site w/ mandate');
+  assert.ok(Math.abs(c.perUnit.cost - year1 / 29) < 1e-9);
+  assert.ok(Math.abs(c.perUnit.price - year1 * 1.5 / 29) < 1e-9); // $207.72 a site
+  assert.equal(c.perUnit.rateLow, 625);
+  assert.equal(c.perUnit.rateHigh, 825);
+  assert.equal(c.status, RATE_CHECK.BELOW);
+  // More than one card line stays a check on the total.
+  const two = rateCardCheck({
+    items: [{ cts: 100, type: 'Setup' }, { cts: 10, type: 'Recurring (monthly)' }],
+    entry: { basis: 'per_site', rate: 100, setupLines: [{ basis: 'flat', rate: 500 }] },
+    meta: recurring,
+    counts: { sites: 10 },
+  });
+  assert.equal(two.perUnit, null);
+});
+
+test('each cost is marked up at its own markup when it carries one', () => {
+  const c = rateCardCheck({
+    items: [
+      { cts: 1000, type: 'Recurring (monthly)', startMonth: 1, markup: 3 },
+      { cts: 100, type: 'One Time', startMonth: 1, markup: 3 },
+    ],
+    entry: { basis: 'per_site_mandate', rate: 625, rateHigh: 825 },
+    meta: recurring,
+    counts: { sites_mandate: 80 },
+  });
+  // (12,000 + 100) x 4 / 80 = $605 a site, just under the card.
+  assert.equal(c.markup, 3);
+  assert.ok(Math.abs(c.perUnit.price - 605) < 1e-9);
+  assert.equal(c.status, RATE_CHECK.BELOW);
+  // Mixed markups report none, and each line keeps its own.
+  const mixed = rateCardCheck({
+    items: [
+      { cts: 1000, type: 'Recurring (monthly)', startMonth: 1, markup: 3 },
+      { cts: 100, type: 'One Time', startMonth: 1 },
+    ],
+    entry: { basis: 'per_site_mandate', rate: 625, rateHigh: 825 },
+    meta: recurring,
+    counts: { sites_mandate: 80 },
+  });
+  assert.equal(mixed.markup, null);
+  assert.ok(Math.abs(mixed.price - (12000 * 4 + 100 * 1.5)) < 1e-9);
+  const rec = mixed.parts.find(p => p.key === 'recurring');
+  assert.ok(Math.abs(rec.price - 48000) < 1e-9);
+});
+
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
 console.log('\nall passed');

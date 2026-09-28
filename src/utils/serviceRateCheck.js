@@ -10,6 +10,14 @@
 //   card side   estimateServiceRange's first-year fee plus setup, low and
 //               high, priced on the option's own site and account counts.
 //
+// Each cost line is marked up at its own `markup` when it carries one (the
+// Markup % on the fee structure row that bills it), else at the default.
+//
+// When the card prices the service on one per-unit rate and nothing else
+// (BBS at $625 to $825 per site w/ mandate), that rate is what the check
+// reads: the marked-up cost is divided by the same count and set against
+// the rate, rather than against the rate times the count.
+//
 // Pure, so scripts/serviceRateCheck.test.mjs can hold it still.
 
 import { estimateServiceRange, PRICING_BASES } from './servicePricing.js';
@@ -57,29 +65,42 @@ function partOfCost(it) {
 // pays nine of them, and a cost landing in month 13 or later is a year 2
 // cost. `runRate` is the recurring lines' full year (monthly × 12), which
 // is how an annual per-unit rate is quoted.
-export function year1CostOf(items = []) {
+//
+// `priced`, `pricedRunRate` and `price` are the same figures marked up,
+// each line at its own `markup` when it has one, else at `markup`.
+// `markups` lists the distinct markups the counted lines were priced at.
+export function year1CostOf(items = [], markup = DEFAULT_MARKUP) {
   const parts = { setup: 0, recurring: 0, oneTime: 0 };
+  const priced = { setup: 0, recurring: 0, oneTime: 0 };
   const lines = { setup: 0, recurring: 0, oneTime: 0 };
   let runRate = 0;
+  let pricedRunRate = 0;
   let passThrough = 0;
   let later = 0;
+  const markups = new Set();
   for (const it of items) {
     if (typeof it?.cts !== 'number' || !Number.isFinite(it.cts)) continue;
     if (it.passThrough) { passThrough += 1; continue; }
     const start = startOf(it);
     if (start > 12) { later += 1; continue; }
+    const m = typeof it.markup === 'number' && Number.isFinite(it.markup) ? it.markup : markup;
+    markups.add(m);
     const part = partOfCost(it);
     if (part === 'recurring') {
       parts.recurring += it.cts * (13 - start);
+      priced.recurring += it.cts * (13 - start) * (1 + m);
       runRate += it.cts * 12;
+      pricedRunRate += it.cts * 12 * (1 + m);
     } else {
       parts[part] += it.cts;
+      priced[part] += it.cts * (1 + m);
     }
     lines[part] += 1;
   }
   const cost = parts.setup + parts.recurring + parts.oneTime;
+  const price = priced.setup + priced.recurring + priced.oneTime;
   const counted = lines.setup + lines.recurring + lines.oneTime;
-  return { cost, counted, passThrough, later, parts, lines, runRate };
+  return { cost, price, counted, passThrough, later, parts, priced, lines, runRate, pricedRunRate, markups: [...markups] };
 }
 
 const statusOf = (price, low, high) => {
@@ -94,9 +115,9 @@ const statusOf = (price, low, high) => {
 //
 // Ongoing is taken over a full year (monthly × 12), not year 1's months:
 // the card's recurring fee is an annual one, so that is the like for like.
-function feePart({ key, label, cost: year1Cost, lineCount, runRate, cardLines, markup }) {
+function feePart({ key, label, cost: year1Cost, price: year1Price, lineCount, runRate, pricedRunRate, cardLines }) {
   const cost = key === 'recurring' ? runRate : year1Cost;
-  const price = cost * (1 + markup);
+  const price = key === 'recurring' ? pricedRunRate : year1Price;
   const onCard = cardLines.length > 0;
   const low = cardLines.reduce((t, b) => t + (b.fee || 0), 0);
   const high = cardLines.reduce((t, b) => t + (b.feeHigh ?? b.fee ?? 0), 0);
@@ -141,9 +162,11 @@ function feePart({ key, label, cost: year1Cost, lineCount, runRate, cardLines, m
  * markup   0.5 means cost × 1.5
  */
 export function rateCardCheck({ items = [], entry = null, meta = null, counts = {}, markup = DEFAULT_MARKUP, bases = PRICING_BASES } = {}) {
-  const year1 = year1CostOf(items);
-  const { cost, counted, passThrough, later } = year1;
-  const price = cost * (1 + markup);
+  const year1 = year1CostOf(items, markup);
+  const { cost, price, counted, passThrough, later } = year1;
+  // The one markup every counted line was priced at, or null when the fee
+  // structure marks its fees up differently.
+  const appliedMarkup = year1.markups.length === 0 ? markup : (year1.markups.length === 1 ? year1.markups[0] : null);
   const est = entry ? estimateServiceRange({ entry, meta, counts, dealSize: counts?.dealSize ?? null, bases }) : null;
   const priced = !!est?.priced && !est.noFee;
   const low = priced ? (est.fee || 0) + (est.setup || 0) : null;
@@ -176,17 +199,34 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
     ? FEE_PARTS.map(({ key, label }) => feePart({
       key, label,
       cost: year1.parts[key],
+      price: year1.priced[key],
       lineCount: year1.lines[key],
       runRate: year1.runRate,
+      pricedRunRate: year1.pricedRunRate,
       cardLines: cardFor[key],
-      markup,
     })).filter(p => p.status)
     : [];
+
+  // A card that is one per-unit rate is checked at that rate: the year's
+  // marked-up cost over the same count, against the rate's own range.
+  const only = lines.length === 1 ? lines[0] : null;
+  const perUnit = only && only.kind === 'unit' && only.units > 0 && !only.gap
+    ? {
+      unitLabel: only.unitLabel,
+      basisLabel: only.basisLabel || null,
+      units: only.units,
+      cost: cost / only.units,
+      price: price / only.units,
+      rateLow: Math.min(only.rate, only.rateHigh ?? only.rate),
+      rateHigh: Math.max(only.rate, only.rateHigh ?? only.rate),
+    }
+    : null;
 
   let status;
   if (!priced) status = RATE_CHECK.UNPRICED;
   else if (missing.length) status = RATE_CHECK.INCOMPLETE;
   else if (counted === 0 || cost <= 0) status = RATE_CHECK.NO_COST;
+  else if (perUnit) status = statusOf(perUnit.price, perUnit.rateLow, perUnit.rateHigh);
   else status = statusOf(price, low, high);
 
   // The counts the card multiplies by (sites, accounts, ...), so the page
@@ -194,7 +234,7 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
   const unitsUsed = [...new Set(lines.filter(b => b.kind === 'unit' && b.unit).map(b => b.unit))];
 
   return {
-    status, cost, price, markup, low, high, notes, passThrough, later, missing, parts, unitsUsed,
+    status, cost, price, markup: appliedMarkup, low, high, notes, passThrough, later, missing, parts, unitsUsed, perUnit,
     noFee: !!est?.noFee,
   };
 }

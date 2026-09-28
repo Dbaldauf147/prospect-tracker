@@ -4765,8 +4765,22 @@ export function PricingView({ settings } = {}) {
     // Services subtab). Per service, since one line can cover several.
     const ignoredIds = new Set(opt.priceCheckIgnored?.[want] || []);
     items.forEach(it => { it.ignored = ignoredIds.has(it.id); });
+    // Each cost is marked up the way the service's starred fee structure
+    // marks up the fee that bills it (its Markup %), so the check reads the
+    // price that structure would charge. Costs on a fee with no markup, or
+    // on no fee, take the check's default.
+    const savedStructures = serviceFeeStructures[serviceKey(serviceName)];
+    const standard = savedStructures?.structures?.find(x => x.id === savedStructures.standardId) || null;
+    const markupOf = new Map();
+    if (standard) {
+      const { std } = standardFeeContext(standard, items, { termMonths, siteCount: sia.sites, accountCount: sia.accounts });
+      std.costs.forEach((co, i) => {
+        const m = co.rowIdx >= 0 ? std.perRow[co.rowIdx]?.markupPct : null;
+        if (typeof m === 'number') markupOf.set(items[i], m);
+      });
+    }
     const rateCheck = rateCardCheck({
-      items: items.filter(it => !it.ignored),
+      items: items.filter(it => !it.ignored).map(it => (markupOf.has(it) ? { ...it, markup: markupOf.get(it) } : it)),
       entry: pricingFor(pricing, cardName, bases),
       meta: svc?.meta || null,
       counts,
