@@ -364,3 +364,30 @@ test('groupFeeRows folds repeated names under one line', () => {
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
+
+test('a cost no row names falls to the first row that can bill it', () => {
+  // A "Program fee" structure on a service whose costs carry "BBS per site".
+  const costs = [
+    { key: costKey('BBS setup', 'One Time'), description: 'BBS setup', type: 'One Time', price: 720, startMonth: 1, feeNames: ['BBS per site'] },
+    { key: costKey('BBS monthly', 'Recurring (monthly)'), description: 'BBS monthly', type: 'Recurring (monthly)', price: 40, startMonth: 1, feeNames: ['BBS per site'] },
+  ];
+  const monthly = [{ feeName: 'Program fee', type: 'Recurring (monthly)', unit: 'Fixed', unitCount: 1 }];
+  let r = standardFeesForStructure({ rows: monthly, costs, termMonths: 36 });
+  assert.deepEqual(r.costs.map(c => [c.rowIdx, c.fellBack, c.issue]), [[0, true, ''], [0, true, '']]);
+  assert.equal(r.perRow[0].standardFee, 60); // 40 + 720 / 36, the setup rolled over the term
+  // An upfront row takes the upfront cost; the monthly one goes to the monthly row.
+  const both = [{ feeName: 'Setup', type: 'One Time', unit: 'Fixed', unitCount: 1 }, ...monthly];
+  r = standardFeesForStructure({ rows: both, costs, termMonths: 36 });
+  assert.deepEqual(r.costs.map(c => c.rowIdx), [0, 1]);
+  assert.equal(r.perRow[0].standardFee, 720);
+  assert.equal(r.perRow[1].standardFee, 40);
+  // Only upfront rows: the monthly cost stays uncovered.
+  r = standardFeesForStructure({ rows: both.slice(0, 1), costs, termMonths: 36 });
+  assert.deepEqual(r.costs.map(c => c.rowIdx), [0, -1]);
+  // "Not covered" still takes a cost out, and a named row still wins.
+  r = standardFeesForStructure({ rows: monthly, costs, allocations: { [costs[0].key]: { fee: '' } }, termMonths: 36 });
+  assert.equal(r.costs[0].rowIdx, -1);
+  assert.equal(r.perRow[0].standardFee, 40);
+  r = standardFeesForStructure({ rows: [...monthly, { feeName: 'BBS per site', type: 'Recurring (monthly)', unit: 'Fixed' }], costs, termMonths: 36 });
+  assert.deepEqual(r.costs.map(c => [c.rowIdx, c.fellBack]), [[1, false], [1, false]]);
+});

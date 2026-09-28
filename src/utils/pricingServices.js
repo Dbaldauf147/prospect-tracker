@@ -316,10 +316,26 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
       }
     }
     const bucket = costBucket(c.type);
+    // A cost whose fee name no row carries goes to the first row that can
+    // bill it, so a structure named differently from the SIA's fees (one
+    // "Program fee" in place of "BBS per site") still prices from the
+    // service's costs: a monthly or rolled cost to the first monthly row,
+    // an upfront one to the first upfront row, else rolled over the term
+    // on the first monthly row. A monthly cost with only upfront rows has
+    // nowhere honest to go and stays uncovered.
+    let fellBack = false;
+    if (defaulted && rowIdx < 0 && bucket) {
+      const firstOf = (b) => rows.findIndex(r => feeBucket(r?.type) === b);
+      const rec = firstOf(COST_BUCKET_RECURRING);
+      rowIdx = bucket === COST_BUCKET_UPFRONT
+        ? (firstOf(COST_BUCKET_UPFRONT) >= 0 ? firstOf(COST_BUCKET_UPFRONT) : rec)
+        : rec;
+      fellBack = rowIdx >= 0;
+    }
     const row = rowIdx >= 0 ? rows[rowIdx] : null;
     const fb = row ? (feeBucket(row.type) || (bucket === COST_BUCKET_ROLLED ? COST_BUCKET_RECURRING : bucket)) : '';
     const canRoll = bucket === COST_BUCKET_UPFRONT && fb === COST_BUCKET_RECURRING;
-    const rolled = bucket === COST_BUCKET_ROLLED || (canRoll && a?.roll === true);
+    const rolled = bucket === COST_BUCKET_ROLLED || (canRoll && (a?.roll === true || fellBack));
     let issue = '';
     if (row && typeof c.price === 'number') {
       if (fb === COST_BUCKET_RECURRING && bucket === COST_BUCKET_UPFRONT && !rolled) issue = 'upfrontOnRecurring';
@@ -332,7 +348,7 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
     const rowStart = row ? Math.round(Number(row.startMonth) || 1) : 1;
     const later = costStart > FIRST_YEAR_MONTHS;
     const billedEarly = later && !!row && yearOfMonth(rowStart) < yearOfMonth(costStart);
-    return { key: c.key, rowIdx, defaulted, bucket, feeBucket: fb, canRoll, rolled, issue, price: c.price, startMonth: costStart, later, billedEarly };
+    return { key: c.key, rowIdx, defaulted, fellBack, bucket, feeBucket: fb, canRoll, rolled, issue, price: c.price, startMonth: costStart, later, billedEarly };
   });
 
   rows.forEach((row, ri) => {
