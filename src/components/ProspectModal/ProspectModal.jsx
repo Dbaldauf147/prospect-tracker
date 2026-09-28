@@ -77,6 +77,7 @@ import { planSheetCompanyRename, spreadsheetIdFromUrl } from '../../utils/sheetC
 import { computePortfolioFitScore, siteCountNumber, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { SiteListPasteModal } from './SiteListPasteModal';
 import { SiteListExportMenu } from './SiteListExportMenu';
+import PortfolioTransactions from './PortfolioTransactions';
 import { siteListFacts as computeSiteListFacts, siteListScreeningRows, formatSqft } from '../../utils/siteListFacts';
 import { annualSavingsFromWorkbook } from '../../utils/analysisWorkbookFigures';
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
@@ -567,7 +568,7 @@ const PROSPECT_TABS = [
   {
     key: 'portfolio',
     label: 'Portfolio',
-    title: "What the company owns: its site list and the companies it holds",
+    title: "What the company owns: its site list, the companies it holds, and what it has bought and sold",
   },
 ];
 
@@ -604,7 +605,7 @@ const EMPTY = {
   // read as an answer.
   deregulatedSites: null, indicativeAnnualSavings: null, maxYearlyExposure: null,
   rank: '', tier: 'Tier 3',
-  hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [],
+  hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [], portfolioTransactions: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', strategies: [], revenue: '',
   // Opts this company into the weekly acquisition-news digest
   // (api/company-news-scheduler). Off unless explicitly ticked.
@@ -5133,6 +5134,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [editingServiceName, setEditingServiceName] = useState(null);
   const [expandedServiceNote, setExpandedServiceNote] = useState(null);
   const [portfolioOpen, setPortfolioOpen] = useState(true);
+  // Which page of the Portfolio tab is showing: the site list and holdings,
+  // or the acquisitions & dispositions log.
+  const [portfolioSubTab, setPortfolioSubTab] = useState('holdings');
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergeQuery, setMergeQuery] = useState('');
   const [listsMatchOpen, setListsMatchOpen] = useState(false);
@@ -10142,10 +10146,42 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
           )}
 
+          {/* The Portfolio tab's own pages: what the company holds today,
+              and the log of what it has bought and sold, kept off the
+              weekly acquisition-news digest. */}
+          {!isNew && activeTab === 'portfolio' && (
+            <div className={styles.subtabs} role="tablist" style={{ marginTop: '0.25rem' }}>
+              {[
+                { key: 'holdings', label: 'Sites & Holdings', title: 'The site list and the companies it holds', count: (fields.portfolioCompanies || []).length },
+                { key: 'transactions', label: 'Acquisitions & Dispositions', title: 'What the company has bought and sold, logged from the weekly news digest', count: (fields.portfolioTransactions || []).length },
+              ].map(t => (
+                <button
+                  key={t.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={portfolioSubTab === t.key}
+                  className={portfolioSubTab === t.key ? styles.subtabActive : styles.subtab}
+                  onClick={() => setPortfolioSubTab(t.key)}
+                  title={t.title}
+                >
+                  {t.label}
+                  {t.count > 0 && <span className={styles.subtabCount}>{t.count}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {!isNew && activeTab === 'portfolio' && portfolioSubTab === 'transactions' && (
+            <PortfolioTransactions
+              rows={fields.portfolioTransactions}
+              onChange={next => set('portfolioTransactions', next)}
+            />
+          )}
+
           {/* Site List - uploaded spreadsheet of this company's physical
               sites/locations. Surfaces on the Email Drafts page as part of
               the combined Site List Overview. */}
-          {!isNew && activeTab === 'portfolio' && (
+          {!isNew && activeTab === 'portfolio' && portfolioSubTab === 'holdings' && (
             <div
               style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem', position: 'relative', borderRadius: 8, transition: 'background 0.15s, outline 0.15s', outline: siteListDragActive ? '2px dashed var(--color-accent)' : '2px dashed transparent', outlineOffset: siteListDragActive ? '4px' : '0px', background: siteListDragActive ? 'rgba(59, 125, 221, 0.06)' : 'transparent' }}
               onDragOver={e => {
@@ -10334,7 +10370,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           )}
 
           {/* Portfolio Companies */}
-          {!isNew && activeTab === 'portfolio' && (
+          {!isNew && activeTab === 'portfolio' && portfolioSubTab === 'holdings' && (
             <div
               style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem', position: 'relative', borderRadius: 8, transition: 'background 0.15s, outline 0.15s', outline: portfolioDragActive ? '2px dashed var(--color-accent)' : '2px dashed transparent', outlineOffset: portfolioDragActive ? '4px' : '0px', background: portfolioDragActive ? 'rgba(59, 125, 221, 0.06)' : 'transparent' }}
               onDragOver={e => {
