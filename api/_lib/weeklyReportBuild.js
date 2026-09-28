@@ -179,6 +179,9 @@ export async function loadReportSources(db, uid, { token = '', start, end, histo
 
   return {
     oppsRecords: Array.isArray(opps2?.records) ? opps2.records : [],
+    // When the Opps Age column was read, for dating an opp with no Start
+    // Date the way the Pipeline page does; null means "now".
+    oppsFetchedAt: opps2?.fetchedAt || null,
     pipeline,
     bfo,
     goals: Array.isArray(goals) ? goals : [],
@@ -212,7 +215,9 @@ export function buildReport(sources, period, { now = null } = {}) {
   const { start, end, scope, label } = period;
   const settings = s.settings || {};
   const workEmail = String(settings.workEmail || '').toLowerCase().trim();
-  const oppChanges = computeOppChanges(s.oppsRecords, start, end);
+  const fetchedAt = s.oppsFetchedAt ? Date.parse(s.oppsFetchedAt) : NaN;
+  const ageRef = Number.isFinite(fetchedAt) ? fetchedAt : (now ?? Date.now());
+  const oppChanges = computeOppChanges(s.oppsRecords, start, end, { ageRef });
   const goalsProgress = computeGoalsProgress(s.goals, start, end);
 
   // The two history series the email carries in place of the old tiles.
@@ -229,7 +234,7 @@ export function buildReport(sources, period, { now = null } = {}) {
       weeks: TREND_WEEKS,
     }),
     newOppsByWeek: newOppsByWeek({
-      records: s.oppsRecords, refMs: start, weeks: TREND_WEEKS,
+      records: s.oppsRecords, refMs: start, weeks: TREND_WEEKS, ageRef,
     }),
   };
 

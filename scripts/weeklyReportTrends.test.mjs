@@ -141,7 +141,8 @@ const log = Object.fromEntries(weekStarts.map((s, i) => [isoKey(s), { emails: (i
 }
 
 // ---- New opps by week ----------------------------------------------------
-const opp = (id, ms) => ({ id, account: `Acct ${id}`, Stage: 'Discovery', _rowUpdatedAt: ms });
+// Dated the Pipeline page's way: a BFO Opportunity Name and a Start Date.
+const opp = (id, ms) => ({ id, account: `Acct ${id}`, Stage: 'Discovery', 'BFO Link': `Opp ${id}`, 'Start Date': new Date(ms).toString() });
 
 {
   const records = [
@@ -150,9 +151,13 @@ const opp = (id, ms) => ({ id, account: `Acct ${id}`, Stage: 'Discovery', _rowUp
     opp(4, at(2026, 9, 7)), opp(5, at(2026, 9, 8)), opp(6, at(2026, 9, 9)),
     // Outside the five-week window entirely.
     opp(7, at(2026, 7, 1)),
+    // Started in the window but not linked to BFO: the Pipeline page skips it too.
+    { ...opp(8, at(2026, 9, 8)), 'BFO Link': '-' },
+    // Linked, edited in the window, but started long before it.
+    { ...opp(9, at(2026, 1, 5)), _rowUpdatedAt: at(2026, 9, 8) },
   ];
   const series = newOppsByWeek({ records, refMs: REF, weeks: 5 });
-  eq(series.map(p => p.value), [2, 0, 1, 0, 3], 'opps: counted into the week each first appeared');
+  eq(series.map(p => p.value), [2, 0, 1, 0, 3], 'opps: counted into the week each was created');
   eq(series.map(p => p.key), ['2026-08-10', '2026-08-17', '2026-08-24', '2026-08-31', '2026-09-07'], 'opps: keyed by each week\'s Monday');
   eq(series[4].label, '9/7', 'opps: labelled short enough for a 28px column');
   ok(series.every(p => p.recorded === false), 'opps: nothing here comes off a recording');

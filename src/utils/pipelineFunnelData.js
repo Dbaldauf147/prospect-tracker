@@ -23,6 +23,31 @@ export function bfoOppNameOf(r) {
   return BFO_BLANK_SENTINELS.has(v.toLowerCase()) ? '' : v;
 }
 
+// Best-effort "opened" timestamp for an Opps row (ms, or NaN when it can't be
+// placed on the calendar). Age fields go stale between paste-imports, so we
+// prefer, in order:
+//   1. The opp's Start Date column when it parses as a real date.
+//   2. Otherwise Age interpreted at import time (ageRef − Age days); closed
+//      opps (Sold / Not Sold) count back from their Close Date instead.
+// Shared by the Pipeline page's past-30-days and by-month new-opp tallies
+// and the Weekly Report's new opps, so "new" means one thing everywhere.
+export function oppOpenTs(r, ageRef = Date.now()) {
+  const startRaw = String(r?.['Start Date'] || '').trim();
+  if (startRaw) {
+    const ts = Date.parse(startRaw);
+    if (!Number.isNaN(ts)) return ts;
+  }
+  const age = Number(String(r?.Age ?? '').replace(/[^0-9.-]/g, ''));
+  if (!Number.isFinite(age) || age < 0) return NaN;
+  const stage = String(r?.Stage || '').trim();
+  if (stage === 'Sold' || stage === 'Not Sold') {
+    const closeTs = Date.parse(r?.['Close Date'] || '');
+    if (Number.isNaN(closeTs)) return NaN;
+    return closeTs - age * 86400000;
+  }
+  return ageRef - age * 86400000;
+}
+
 // ---- Close-rate stage signals ---------------------------------------------
 // "Did this opp actually reach stage N?" read off the Opps tab. Defined
 // once here and shared by the rolling-365-day Close Rate Actual column in

@@ -130,14 +130,17 @@ function hasLiveCoverage(cache, start) {
 
 // New opps per week for the last `weeks` weeks.
 //
+// "New" is the Pipeline page's rule (see computeOppChanges); `ageRef` is
+// when the Opps cache's Age column was read, now when it doesn't say.
+//
 // Recomputed from the Opps cache the same way the period's own count is, so
 // the last bar and the "New opps" list further down the email are the same
 // number by construction rather than by two pieces of arithmetic agreeing.
-export function newOppsByWeek({ records, refMs = Date.now(), weeks = TREND_WEEKS } = {}) {
+export function newOppsByWeek({ records, refMs = Date.now(), weeks = TREND_WEEKS, ageRef = Date.now() } = {}) {
   return recentWeeks(refMs, weeks).map(({ start, end }) => ({
     key: localKey(start),
     label: shortWeekLabel(start),
-    value: computeOppChanges(records, start, end).newOpps.length,
+    value: computeOppChanges(records, start, end, { ageRef }).newOpps.length,
     recorded: false,
   }));
 }
