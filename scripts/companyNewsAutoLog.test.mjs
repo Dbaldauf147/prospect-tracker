@@ -7,7 +7,7 @@
 // comes back more than once; what matters here is that it lands on the log
 // once, that nothing typed by hand is lost, and that one bad record does
 // not stop the rest.
-import { dealToTransaction, mergeDealsIntoLog, logDealsToRecords, buildNewsEmailHtml } from '../api/_lib/companyNews.js';
+import { dealToTransaction, mergeDealsIntoLog, logDealsToRecords, buildNewsEmailHtml, checkCompanyNow } from '../api/_lib/companyNews.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -75,7 +75,8 @@ const deal = {
   const origErr = console.error; console.error = () => {};
   const out = await logDealsToRecords(db, 'u1', 'baldaufdan@gmail.com', results);
   console.error = origErr;
-  eq(out, { logged: 1, failed: 1 }, 'one logged, the broken record counted and skipped');
+  eq([out.logged, out.failed], [1, 1], 'one logged, the broken record counted and skipped');
+  eq(out.rows.map(r => r.asset), ['Acme Services'], 'and the rows written handed back');
   eq(writes, [['prospects/p1', ['portfolioTransactions']]], 'only portfolioTransactions is written, only where something is new');
   eq(docs['prospects/p1'].portfolioTransactions.map(r => r.asset), ['Acme Services', 'Riverside'], 'deal added ahead of the typed row');
   const again = await logDealsToRecords(db, 'u1', 'baldaufdan@gmail.com', results.slice(0, 1));
@@ -83,6 +84,36 @@ const deal = {
 
   const out2 = await logDealsToRecords(db, 'u2', 'someone@example.com', [{ id: 'p2', company: 'KKR', deals: [deal] }]);
   eq([out2.logged, docs['users/u2/prospects/p2'].portfolioTransactions.length], [1, 1], "a non-admin's deals go to their own records");
+}
+
+// ── checking one company now ─────────────────────────────────────────────
+{
+  const docs = { 'prospects/apollo': { company: 'Apollo Global Management', type: 'Private Equity' } };
+  const ref = (path) => ({
+    path,
+    get: async () => ({ exists: path in docs, id: path.split('/').pop(), data: () => docs[path] }),
+  });
+  const db = {
+    collection: (name) => ({ doc: (id) => ref(`${name}/${id}`) }),
+    runTransaction: async (fn) => fn({
+      get: async (r) => ({ exists: r.path in docs, data: () => docs[r.path] }),
+      update: (r, patch) => Object.assign(docs[r.path], patch),
+    }),
+  };
+  let asked = null;
+  const research = async (entry, since, until) => {
+    asked = { company: entry.company, isPe: entry.isPe, days: Math.round((until - since) / 86400000) };
+    return { deals: [deal, { ...deal, target: 'Yahoo', announcedOn: '2026-09-18' }], unsure: [], error: null };
+  };
+  const newsletters = async () => ({ items: [] });
+  const now = new Date('2026-09-28T12:00:00Z').getTime();
+  const out = await checkCompanyNow(db, 'u1', 'baldaufdan@gmail.com', 'apollo', { lookbackDays: 14, now, research, newsletters });
+  eq(asked, { company: 'Apollo Global Management', isPe: true, days: 14 }, 'searches that record over the window asked for');
+  eq([out.found, out.logged, out.rows.length], [2, 2, 2], 'both deals logged and handed back');
+  eq(docs['prospects/apollo'].portfolioTransactions.length, 2, 'written to the record');
+  const again = await checkCompanyNow(db, 'u1', 'baldaufdan@gmail.com', 'apollo', { now, research, newsletters });
+  eq([again.found, again.logged], [2, 0], 'checking again finds them but logs nothing new');
+  eq((await checkCompanyNow(db, 'u1', 'baldaufdan@gmail.com', 'nope', { research, newsletters })).notFound, true, 'a missing record says so');
 }
 
 // ── the email says so ─────────────────────────────────────────────────────

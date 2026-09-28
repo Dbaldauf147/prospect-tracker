@@ -7311,6 +7311,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // server added since the card opened before that can happen. Only rows
   // logged after opening: an older row missing here was removed on this
   // card, and must stay removed.
+  // Put rows the server has already written onto the card, skipping any it
+  // already holds (by id).
+  function addTransactionRows(rows) {
+    if (!Array.isArray(rows) || rows.length === 0) return;
+    setFields(prev => {
+      const local = Array.isArray(prev.portfolioTransactions) ? prev.portfolioTransactions : [];
+      const have = new Set(local.map(r => r?.id));
+      const fresh = rows.filter(r => r?.id && !have.has(r.id));
+      return fresh.length ? { ...prev, portfolioTransactions: [...fresh, ...local] } : prev;
+    });
+  }
   const openedAtRef = useRef(Date.now());
   // Off the live list rather than `prospect`, which is the copy the card
   // was opened with and never changes.
@@ -10199,6 +10210,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <PortfolioTransactions
               rows={fields.portfolioTransactions}
               onChange={next => set('portfolioTransactions', next)}
+              prospectId={prospect?.id}
+              onAddRows={addTransactionRows}
             />
           )}
 

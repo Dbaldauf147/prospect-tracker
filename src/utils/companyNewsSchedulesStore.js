@@ -144,3 +144,17 @@ function clamp(n, lo, hi, dflt) {
   if (!Number.isFinite(v)) return dflt;
   return Math.min(hi, Math.max(lo, Math.round(v)));
 }
+
+// Search one company's news now and log any deals onto its Acquisitions &
+// Dispositions page. Hands back { found, logged, rows, error }, where rows
+// are the log entries just written.
+export async function checkCompanyNow({ prospectId, lookbackDays }) {
+  const res = await apiFetch('/api/company-news-check-now', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prospectId, lookbackDays }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Check failed (${res.status})`);
+  return data;
+}

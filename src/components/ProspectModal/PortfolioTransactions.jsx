@@ -4,6 +4,7 @@ import {
   TRANSACTION_KINDS, DEAL_TYPES_BY_KIND, blankTransaction, sortTransactions,
   summarizeTransactions, parseDigestText, transactionKey,
 } from '../../utils/portfolioTransactions';
+import { checkCompanyNow } from '../../utils/companyNewsSchedulesStore';
 
 // The Portfolio tab's Acquisitions & Dispositions page: a log of what this
 // company has bought and sold, kept by hand off the weekly acquisition-news
@@ -134,7 +135,56 @@ function PasteDigestPanel({ existingKeys, onAdd, onClose }) {
   );
 }
 
-export default function PortfolioTransactions({ rows, onChange }) {
+// The "Check for deals now" control: runs the weekly digest's search for
+// this one company and logs what it finds, so a deal doesn't have to wait
+// for the next scheduled run (or predate the log, as the first digests did).
+function CheckNowControl({ prospectId, onLogged }) {
+  const [days, setDays] = useState(30);
+  const [state, setState] = useState({ busy: false, msg: '', error: false });
+
+  async function run() {
+    setState({ busy: true, msg: '', error: false });
+    try {
+      const out = await checkCompanyNow({ prospectId, lookbackDays: days });
+      if (out.rows?.length) onLogged(out.rows);
+      const found = out.found || 0;
+      const logged = out.logged || 0;
+      let msg;
+      if (found === 0) msg = out.error ? `Search didn't complete: ${out.error}` : `No acquisitions found in the last ${days} days.`;
+      else if (logged === 0) msg = `${found} ${found === 1 ? 'deal' : 'deals'} found, all already logged.`;
+      else msg = `${logged} new ${logged === 1 ? 'deal' : 'deals'} logged${found > logged ? ` (${found - logged} already here)` : ''}.`;
+      setState({ busy: false, msg, error: found === 0 && !!out.error });
+    } catch (err) {
+      setState({ busy: false, msg: String(err?.message || err), error: true });
+    }
+  }
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+      <button
+        type="button"
+        style={{ ...btn(false), opacity: state.busy ? 0.6 : 1, cursor: state.busy ? 'default' : 'pointer' }}
+        disabled={state.busy || !prospectId}
+        onClick={run}
+        title="Search this company's news the same way the weekly Company Acquisition News email does, and add any deals found to this log"
+      >
+        {state.busy ? 'Checking...' : 'Check for deals now'}
+      </button>
+      <select value={days} onChange={e => setDays(Number(e.target.value))} disabled={state.busy} style={{ fontSize: '0.72rem' }} title="How far back to search">
+        {[7, 14, 30, 60].map(d => <option key={d} value={d}>last {d} days</option>)}
+      </select>
+      {state.msg && (
+        <span style={{ fontSize: '0.7rem', color: state.error ? '#B91C1C' : '#475569' }}>{state.msg}</span>
+      )}
+    </span>
+  );
+}
+
+// onAddRows takes rows the server has already written and puts them on the
+// card too, so its autosave can't write an older log back over them. It is
+// separate from onChange because it runs after a request, by which time
+// `list` here may be out of date.
+export default function PortfolioTransactions({ rows, onChange, prospectId, onAddRows }) {
   const list = useMemo(() => (Array.isArray(rows) ? rows : []), [rows]);
   const [filter, setFilter] = useState('all');
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -168,6 +218,10 @@ export default function PortfolioTransactions({ rows, onChange }) {
         <button type="button" style={btn(true)} onClick={() => add('Acquisition')}>+ Acquisition</button>
         <button type="button" style={btn(true)} onClick={() => add('Disposition')}>+ Disposition</button>
         <button type="button" style={btn(false)} onClick={() => setPasteOpen(o => !o)}>Paste from digest email</button>
+        <CheckNowControl
+          prospectId={prospectId}
+          onLogged={onAddRows}
+        />
         <span style={{ flex: 1 }} />
         {list.length > 0 && (
           <div style={{ display: 'flex', gap: 2, border: '1px solid var(--color-border)', borderRadius: 6, padding: 2 }}>
@@ -249,9 +303,9 @@ export default function PortfolioTransactions({ rows, onChange }) {
                       {r.source === 'digest' && (
                         <div
                           style={{ fontSize: '0.62rem', color: '#64748B', padding: '0 0.4rem 0.15rem' }}
-                          title={`Logged automatically by the weekly acquisition-news run${r.loggedAt ? ` on ${new Date(r.loggedAt).toLocaleDateString()}` : ''}. Check it against the source.`}
+                          title={`Logged automatically by the acquisition-news search${r.loggedAt ? ` on ${new Date(r.loggedAt).toLocaleDateString()}` : ''}. Check it against the source.`}
                         >
-                          From weekly digest
+                          From news search
                         </div>
                       )}
                     </td>

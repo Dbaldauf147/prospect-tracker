@@ -57,6 +57,19 @@ function prospectsCollection(db, uid, email) {
     : db.collection('users').doc(uid).collection('prospects');
 }
 
+// What the research needs to know about one prospect record.
+function researchEntry(id, p) {
+  return {
+    id,
+    company: String(p.company || '').trim(),
+    // Drives the "PE firm" grouping and the deeper search budget.
+    isPe: p.type === 'Private Equity',
+    type: String(p.type || '').trim(),
+    website: String(p.website || '').trim(),
+    peOwner: String(p.peOwner || '').trim(),
+  };
+}
+
 export async function loadTrackedCompanies(db, uid, email) {
   const col = prospectsCollection(db, uid, email);
 
@@ -69,15 +82,7 @@ export async function loadTrackedCompanies(db, uid, email) {
     if (p[NEWS_FLAG] !== true) continue;
     const company = String(p.company || '').trim();
     if (!company) continue;
-    out.push({
-      id: d.id,
-      company,
-      // Drives the "PE firm" grouping and the deeper search budget.
-      isPe: p.type === 'Private Equity',
-      type: String(p.type || '').trim(),
-      website: String(p.website || '').trim(),
-      peOwner: String(p.peOwner || '').trim(),
-    });
+    out.push(researchEntry(d.id, p));
   }
 
   // PE firms first, then alphabetical, so the email's densest section is
@@ -934,7 +939,7 @@ export function mergeDealsIntoLog(existing, deals, company, now = Date.now()) {
     seen.add(txKey(row));
     added.push(row);
   }
-  return { next: added.length ? [...added, ...log] : log, added: added.length };
+  return { next: added.length ? [...added, ...log] : log, added: added.length, rows: added };
 }
 
 // Write each company's new deals onto its record. A transaction per company,
@@ -945,23 +950,69 @@ export async function logDealsToRecords(db, uid, email, results, now = Date.now(
   const col = prospectsCollection(db, uid, email);
   let logged = 0;
   let failed = 0;
+  const rows = [];
   for (const r of results || []) {
     if (!r?.id || !Array.isArray(r.deals) || r.deals.length === 0) continue;
     try {
       const ref = col.doc(r.id);
+      let written = [];
       logged += await db.runTransaction(async (tx) => {
         const snap = await tx.get(ref);
         if (!snap.exists) return 0;
-        const { next, added } = mergeDealsIntoLog(snap.data()?.portfolioTransactions, r.deals, r.company, now);
+        const { next, added, rows: fresh } = mergeDealsIntoLog(snap.data()?.portfolioTransactions, r.deals, r.company, now);
         if (added) tx.update(ref, { portfolioTransactions: next });
+        // Reassigned rather than pushed: a transaction can run its body
+        // more than once, and only the last attempt's rows were written.
+        written = fresh;
         return added;
       });
+      rows.push(...written);
     } catch (err) {
       failed += 1;
       console.error('company-news: logging deals failed for', r.company, err?.message || err);
     }
   }
-  return { logged, failed };
+  return { logged, failed, rows };
+}
+
+// Search one company now and log what turns up, for the "Check for deals
+// now" button on its Acquisitions & Dispositions page. Same research and
+// same logging as the weekly run, so a deal it finds is one the digest
+// would have found, and one the digest later finds again is not logged
+// twice. Works whether or not the company is ticked for the digest.
+export async function checkCompanyNow(db, uid, email, prospectId, {
+  lookbackDays = 30, budgetMs, now = Date.now(), research = researchCompanyAcquisitions,
+  newsletters = fetchNewsletterItems,
+} = {}) {
+  const snap = await prospectsCollection(db, uid, email).doc(String(prospectId)).get();
+  if (!snap.exists) return { notFound: true };
+  const entry = researchEntry(snap.id, snap.data() || {});
+  if (!entry.company) return { notFound: true };
+
+  const since = now - lookbackDays * 24 * 60 * 60 * 1000;
+  const until = now;
+  const newsRun = await newsletters(since, until);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), budgetMs || PER_COMPANY_MS);
+  let found;
+  try {
+    found = await research(entry, since, until, { signal: controller.signal, newsletterItems: newsRun.items || [] });
+  } finally {
+    clearTimeout(timer);
+  }
+  const deals = found?.deals || [];
+  const { logged, failed, rows } = await logDealsToRecords(db, uid, email, [{ ...entry, deals }], now);
+  return {
+    company: entry.company,
+    since,
+    until,
+    found: deals.length,
+    logged,
+    failed,
+    rows,
+    error: found?.error || null,
+  };
 }
 
 export async function buildDigest(db, uid, email, {
