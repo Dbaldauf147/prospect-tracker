@@ -715,6 +715,18 @@ function RateCheck({ check }) {
     ? fmt(shown.low)
     : `${fmt(Math.min(shown.low, shown.high))} – ${fmt(Math.max(shown.low, shown.high))}`);
 
+  // Which of the rate card's fee components the check reads (Dropdowns ›
+  // Services Pricing): the one it is checked at when that is a single
+  // component, else every component on the card, each with the part of the
+  // fee model it prices.
+  const components = (() => {
+    const all = (check.parts || []).flatMap(pt => pt.cardLines.map(b => ({ label: b.basisLabel, part: pt.label, monthly: b.monthly })));
+    const one = pu?.part ? all.filter(c => c.part === pu.part && (!pu.basisLabel || c.label === pu.basisLabel)) : all;
+    const list = one.length ? one : all;
+    const multiParts = new Set(all.map(c => c.part)).size > 1;
+    return list.map(c => `${c.label}${c.monthly ? ', monthly' : ''}${multiParts || pu?.part ? ` (${c.part})` : ''}`).join(', ');
+  })();
+
   return (
     <section className={styles.section}>
       <h4 className={styles.sectionTitle}>
@@ -723,6 +735,9 @@ function RateCheck({ check }) {
       <div className={styles.rateGrid}>
         <span><span className={styles.factKey}>{pu?.perMonth || pu?.part === 'Ongoing' ? 'Cost' : 'Year 1 cost'}{per}{pu?.part === 'Ongoing' && !pu.perMonth ? ' a year' : ''}:</span> <span className={styles.rateFigure}>{fmt(shown.cost)}</span></span>
         <span><span className={styles.factKey}>{markupLabel}:</span> <span className={styles.rateFigure}>{fmt(shown.price)}{per}</span></span>
+        {components && (
+          <span><span className={styles.factKey}>Fee component:</span> <span className={styles.rateFigure}>{components}</span></span>
+        )}
         <span>
           <span className={styles.factKey}>Rate card{pu ? '' : ' range'}:</span>{' '}
           <span className={styles.rateFigure}>{check.noFee ? 'No fee' : (check.status === RATE_CHECK.INCOMPLETE && !(check.high > 0) ? 'Unknown' : (range ? `${range}${per}` : 'not set'))}</span>
