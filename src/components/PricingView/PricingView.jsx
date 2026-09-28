@@ -27,7 +27,7 @@ import { migrateS2cTags } from '../../utils/s2cTags';
 import { CalculatorTab } from './CalculatorTab';
 import { ServicesTab } from './ServicesTab';
 import { buildServiceRows } from '../../utils/serviceRows';
-import { buildPricingServiceList, costItemsForService } from '../../utils/pricingServices';
+import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow } from '../../utils/pricingServices';
 import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
 import { isSetupFeeType } from '../../utils/setupFeeFloor';
 import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
@@ -2196,6 +2196,10 @@ const LINE_ITEM_IGNORED_KEY = 'lineItemIgnored';
 // offer an "Add from Pricing Option" picker on its Scope cell without
 // needing to walk the workbook itself.
 const OPTION_SERVICES_KEY = 'pricingOptionServices';
+// Saved fee structures per service (Services subtab): { [serviceKey]:
+// { structures: [{ id, name, rows }], standardId } }. Kept on their own
+// key so they carry across SIAs and survive Clear and parser bumps.
+const SERVICE_FEE_STRUCTURES_KEY = 'serviceFeeStructures';
 const OPTION_SERVICES_EVENT = 'pricing:optionServicesChanged';
 // Raw bytes of the most-recently uploaded SIA workbook so that
 // "Save to Opp" can attach the source file to the opp without
@@ -2272,6 +2276,7 @@ export function PricingView({ settings } = {}) {
   const [linkedToOptionsList, setLinkedToOptionsList] = useState({ custom: [], hidden: [] }); // user-curated Linked To dropdown vocabulary (see LINKED_TO_OPTIONS_KEY)
   const [linkedToOptionsModal, setLinkedToOptionsModal] = useState(null); // { autoTags: string[] } - open state for the Linked To options manager
   const [lineItemServices, setLineItemServices] = useState({}); // { [lineItemKey]: string[] }
+  const [serviceFeeStructures, setServiceFeeStructures] = useState({}); // see SERVICE_FEE_STRUCTURES_KEY
   const [lineItemIgnored, setLineItemIgnored] = useState({}); // { [lineItemKey]: true } - line items the user opted to ignore (greyed out, excluded from the unmapped warning)
   const [termMonths, setTermMonths] = useState(36);
   const [annualEscalator, setAnnualEscalator] = useState(0.03);
@@ -2376,6 +2381,10 @@ export function PricingView({ settings } = {}) {
         const savedLineItemServices = await dbGet(STORE, LINE_ITEM_SERVICES_KEY);
         if (!cancelled && savedLineItemServices && typeof savedLineItemServices === 'object') {
           setLineItemServices(savedLineItemServices);
+        }
+        const savedFeeStructures = await dbGet(STORE, SERVICE_FEE_STRUCTURES_KEY);
+        if (!cancelled && savedFeeStructures && typeof savedFeeStructures === 'object') {
+          setServiceFeeStructures(savedFeeStructures);
         }
         const savedLineItemIgnored = await dbGet(STORE, LINE_ITEM_IGNORED_KEY);
         if (!cancelled && savedLineItemIgnored && typeof savedLineItemIgnored === 'object') {
@@ -2564,6 +2573,11 @@ export function PricingView({ settings } = {}) {
     if (!hydratedRef.current) return;
     dbPut(STORE, lineItemIgnored, LINE_ITEM_IGNORED_KEY).catch(err => console.warn('Failed to save ignored line items:', err));
   }, [lineItemIgnored]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, serviceFeeStructures, SERVICE_FEE_STRUCTURES_KEY).catch(err => console.warn('Failed to save service fee structures:', err));
+  }, [serviceFeeStructures]);
 
   // Derive a per-Pricing-Option services bundle by walking each option's
   // line items, looking up their saved services in lineItemServices,
@@ -4637,6 +4651,8 @@ export function PricingView({ settings } = {}) {
         type: row.type || '',
         feePerUnit: feeIsManual ? manual : (typeof auto === 'number' ? auto : null),
         feeIsManual,
+        manualStartMonth: row.startMonth != null && row.startMonth !== '' && Number(row.startMonth) > 0 ? Number(row.startMonth) : null,
+        manualGmPct: typeof row.feeGmPct === 'number' ? row.feeGmPct : null,
         unit: row.unit || '',
         unitCount: row.unitCount === '' || row.unitCount == null ? '' : row.unitCount,
         startMonth: altFeeRowStartMonth(row),
@@ -4658,6 +4674,60 @@ export function PricingView({ settings } = {}) {
       if (onSched.length === 0 && toBuild.length === 0) fees.push({ name, missing: true });
     }
     return { items, fees };
+  }
+
+  // One saved fee-structure row as the active option would bill it: the
+  // schedule row it becomes, with the fee, start month, yearly revenue and
+  // margin the page derives for blanks.
+  function previewFeeStructureRow(row) {
+    const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
+    const alt = feeStructureRowToAltRow(row, { siteCount: opt?.siteCount, accountCount: opt?.accountCount });
+    const numYears = Math.max(1, Math.ceil(termMonths / 12));
+    if (!opt || !alt.altItem) return { alt, autoFee: null, startMonth: null, years: Array(numYears).fill(0), gmPct: null };
+    const autoFee = autoFeePerUnitFor(alt);
+    return {
+      alt,
+      autoFee: typeof autoFee === 'number' ? autoFee : null,
+      autoStartMonth: autoStartMonthFor(alt) || null,
+      years: Array.from({ length: numYears }, (_, yi) => altFeeYearRevenue(alt, yi + 1)),
+      gmPct: typeof alt.feeGmPct === 'number' ? alt.feeGmPct : (altFeeMarginFor(alt.altItem)?.marginPct ?? null),
+    };
+  }
+
+  // Write a saved structure into the active option's Alternative Fee
+  // schedule: the service's current fee rows come out, the structure's go
+  // in. Fees another service shares are called out before anything moves.
+  function applyServiceFeeStructure(serviceName, structure) {
+    const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
+    if (!opt || !structure) return false;
+    const detail = serviceDetailFor(serviceName);
+    const replaceNames = [];
+    for (const f of detail.fees) if (f.name) replaceNames.push(f.name);
+    for (const it of detail.items) if (it.feeName) replaceNames.push(it.feeName);
+    const schedule = altFees[opt.optionNumber] || [];
+    const plan = applyFeeStructureToSchedule(schedule, structure.rows, {
+      replaceNames, siteCount: opt.siteCount, accountCount: opt.accountCount,
+    });
+    if (plan.added.length === 0) {
+      window.alert('This structure has no named fees to apply.');
+      return false;
+    }
+    const shared = [];
+    for (const f of detail.fees) {
+      if (f.sharedWith?.length && plan.removed.some(r => String(r.altItem || '').trim().toLowerCase() === String(f.name || '').trim().toLowerCase())) {
+        shared.push(`${f.name} (also ${f.sharedWith.join(', ')})`);
+      }
+    }
+    const lines = [
+      `Apply "${structure.name}" to the Alternative Fee schedule on ${opt.sheetName}?`,
+      '',
+      `Adds ${plan.added.length} fee row${plan.added.length === 1 ? '' : 's'}: ${plan.added.map(r => r.altItem).join(', ')}.`,
+    ];
+    if (plan.removed.length) lines.push(`Replaces ${plan.removed.length} row${plan.removed.length === 1 ? '' : 's'}: ${plan.removed.map(r => r.altItem).join(', ')}.`);
+    if (shared.length) lines.push('', `Shared with other services: ${shared.join('; ')}. Those services lose these rows too.`);
+    if (!window.confirm(lines.join('\n'))) return false;
+    replaceAltFeeRows(opt.optionNumber, plan.rows);
+    return true;
   }
 
   return (
@@ -4941,6 +5011,10 @@ export function PricingView({ settings } = {}) {
           setActiveOption={setActiveOption}
           services={pricingServiceList}
           detailFor={serviceDetailFor}
+          feeStructures={serviceFeeStructures}
+          setFeeStructures={setServiceFeeStructures}
+          previewFeeRow={previewFeeStructureRow}
+          applyFeeStructure={applyServiceFeeStructure}
           numYears={Math.max(1, Math.ceil(termMonths / 12))}
           onOpenLinkedTo={() => setPageSubtab('linkedTo')}
         />

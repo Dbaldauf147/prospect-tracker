@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react';
 import styles from './ServicesTab.module.css';
-import { SERVICE_STATUS } from '../../utils/pricingServices';
+import {
+  SERVICE_STATUS, FEE_STRUCTURE_TYPES, FEE_STRUCTURE_UNITS, serviceKey,
+  newFeeStructureId, blankFeeStructureRow, feeStructureRowsFromFees,
+} from '../../utils/pricingServices';
 
 const fmtMoney = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -20,10 +23,14 @@ const STATUS_CLASS = {
 // Line Item → Services) and the fee rows those costs price, as the
 // Alternative Fee schedule has them or would build them.
 //
-//   services   buildPricingServiceList rows
-//   detailFor  (serviceName) => { items, fees } for the active option
+//   services        buildPricingServiceList rows
+//   detailFor       (serviceName) => { items, fees } for the active option
+//   feeStructures   saved fee structures per service (serviceKey)
+//   previewFeeRow   (structureRow) => what it bills on the active option
+//   applyFeeStructure (serviceName, structure) => writes it to the schedule
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, onOpenLinkedTo,
+  feeStructures = {}, setFeeStructures, previewFeeRow, applyFeeStructure,
 }) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(null);
@@ -117,7 +124,20 @@ export function ServicesTab({
             <div className={styles.placeholder}>Pick a service to see its cost line items and fee structure.</div>
           ) : (
             <ServiceDetail
+              key={current.name}
               service={current}
+              saved={feeStructures[serviceKey(current.name)] || null}
+              setSaved={(updater) => setFeeStructures?.(prev => {
+                const k = serviceKey(current.name);
+                const before = prev[k] || { structures: [], standardId: null };
+                const after = updater(before);
+                const next = { ...prev };
+                if (!after || after.structures.length === 0) delete next[k];
+                else next[k] = after;
+                return next;
+              })}
+              previewFeeRow={previewFeeRow}
+              applyFeeStructure={applyFeeStructure}
               detail={detail}
               hasWorkbook={!!workbook}
               optionName={opt?.sheetName}
@@ -131,9 +151,46 @@ export function ServicesTab({
   );
 }
 
-function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, onOpenLinkedTo }) {
+function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, onOpenLinkedTo, saved, setSaved, previewFeeRow, applyFeeStructure }) {
   const items = detail?.items || [];
   const fees = detail?.fees || [];
+  const structures = saved?.structures || [];
+  const standardId = saved?.standardId || null;
+  // Which fee structure tab is open: 'sia' (what the loaded SIA sets up)
+  // or a saved structure's id. Opens on the standard one when there is one.
+  const [view, setView] = useState(() => (standardId && structures.some(x => x.id === standardId) ? standardId : (hasWorkbook ? 'sia' : (structures[0]?.id || 'sia'))));
+  const openStructure = structures.find(x => x.id === view) || null;
+  const [flash, setFlash] = useState('');
+  const say = (msg) => { setFlash(msg); window.setTimeout(() => setFlash(''), 3500); };
+
+  function addStructure(fromSia) {
+    const id = newFeeStructureId();
+    const rows = fromSia ? feeStructureRowsFromFees(fees) : [];
+    const name = fromSia
+      ? (structures.length === 0 ? 'Standard' : `Option ${structures.length + 1}`)
+      : `Option ${structures.length + 1}`;
+    setSaved(prev => ({
+      structures: [...prev.structures, { id, name, rows: rows.length ? rows : [blankFeeStructureRow()] }],
+      standardId: prev.standardId || id,
+    }));
+    setView(id);
+  }
+  function updateStructure(id, fn) {
+    setSaved(prev => ({ ...prev, structures: prev.structures.map(x => (x.id === id ? fn(x) : x)) }));
+  }
+  function duplicateStructure(st) {
+    const id = newFeeStructureId();
+    setSaved(prev => ({ ...prev, structures: [...prev.structures, { id, name: `${st.name} (copy)`, rows: st.rows.map(r => ({ ...r })) }] }));
+    setView(id);
+  }
+  function deleteStructure(st) {
+    if (!window.confirm(`Delete the fee structure "${st.name}"?`)) return;
+    setSaved(prev => {
+      const rest = prev.structures.filter(x => x.id !== st.id);
+      return { structures: rest, standardId: prev.standardId === st.id ? (rest[0]?.id || null) : prev.standardId };
+    });
+    setView('sia');
+  }
   const costTotal = items.reduce((s, it) => s + (typeof it.cts === 'number' ? it.cts : 0), 0);
   const meta = service.meta || {};
   const facts = [
@@ -159,7 +216,6 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, onO
       {!hasWorkbook ? (
         <div className={styles.placeholder}>Upload an SIA on the Pricing subtab to see the cost lines and fees behind this service.</div>
       ) : (
-        <>
           <section className={styles.section}>
             <h4 className={styles.sectionTitle}>
               Cost line items{optionName ? ` on ${optionName}` : ''} ({items.length})
@@ -217,72 +273,361 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, onO
               </table>
             )}
           </section>
+      )}
 
           <section className={styles.section}>
-            <h4 className={styles.sectionTitle}>Fee structure ({fees.filter(f => !f.missing).length})</h4>
-            <p className={styles.note}>
-              Fees come from the fee names on the cost lines above. A fee already on the
-              Alternative Fee schedule shows as it is there; one that isn't yet shows what
-              Build from Automated Fee Names would add.
-            </p>
+            <h4 className={styles.sectionTitle}>Fee structure</h4>
+            <FeeStructureTabs
+              structures={structures}
+              standardId={standardId}
+              view={view}
+              setView={setView}
+              hasWorkbook={hasWorkbook}
+              onAdd={addStructure}
+            />
+            {flash && <div className={styles.flash}>{flash}</div>}
+            {(view === 'sia' || !openStructure) && !hasWorkbook ? (
+              <p className={styles.note}>
+                {structures.length
+                  ? 'Pick a saved fee structure above, or upload an SIA to see how it sets this service up.'
+                  : 'No saved fee structures yet. Add one above, or upload an SIA and save its setup as one.'}
+              </p>
+            ) : view === 'sia' || !openStructure ? (
+              <>
+                <p className={styles.note}>
+                  As the loaded SIA sets it up. Fees come from the fee names on the cost lines above. A fee
+                  already on the Alternative Fee schedule shows as it is there; one that isn't yet shows what
+                  Build from Automated Fee Names would add. Save it as a fee structure to edit it.
+                </p>
             {fees.length === 0 ? (
-              <div className={styles.note}>No fee name on these cost lines, so no fee is set up for this service.</div>
+                <div className={styles.note}>No fee name on these cost lines, so no fee is set up for this service.</div>
+              ) : (
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Fee</th>
+                      <th>Source</th>
+                      <th>Type</th>
+                      <th className={styles.num}>Fee / Unit</th>
+                      <th>Unit</th>
+                      <th className={styles.num}>Unit Count</th>
+                      <th className={styles.num}>Start Month</th>
+                      {Array.from({ length: numYears }, (_, i) => <th key={i} className={styles.num}>{`Y${i + 1}`}</th>)}
+                      <th className={styles.num}>Fee GM%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fees.map((f, i) => f.missing ? (
+                      <tr key={`m-${i}`}>
+                        <td>{f.name}</td>
+                        <td colSpan={6 + numYears + 1} className={styles.muted}>
+                          No cost behind this name yet, so there is no fee to derive.
+                        </td>
+                      </tr>
+                    ) : (
+                      <tr key={`${f.name}-${f.type}-${i}`}>
+                        <td>
+                          {f.name}
+                          {f.sharedWith.length > 0 && (
+                            <div className={styles.subNote}>Shared with {f.sharedWith.join(', ')}</div>
+                          )}
+                        </td>
+                        <td>
+                          <span className={f.onSchedule ? styles.srcSchedule : styles.srcAuto}>
+                            {f.onSchedule ? 'On schedule' : 'Would be built'}
+                          </span>
+                        </td>
+                        <td>{f.type}</td>
+                        <td className={styles.num}>
+                          {fmtMoney(f.feePerUnit)}
+                          {f.feePerUnit != null && <div className={styles.subNote}>{f.feeIsManual ? 'typed' : 'auto'}</div>}
+                        </td>
+                        <td>{f.unit}</td>
+                        <td className={styles.num}>{f.unitCount}</td>
+                        <td className={styles.num}>{f.startMonth || ''}</td>
+                        {Array.from({ length: numYears }, (_, yi) => (
+                          <td key={yi} className={styles.num}>{f.years[yi] > 0 ? fmtMoney(f.years[yi]) : ''}</td>
+                        ))}
+                        <td className={styles.num}>{f.passThrough ? 'pass' : fmtPct(f.gmPct)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              </>
             ) : (
-              <table className={styles.table}>
-                <thead>
-                  <tr>
-                    <th>Fee</th>
-                    <th>Source</th>
-                    <th>Type</th>
-                    <th className={styles.num}>Fee / Unit</th>
-                    <th>Unit</th>
-                    <th className={styles.num}>Unit Count</th>
-                    <th className={styles.num}>Start Month</th>
-                    {Array.from({ length: numYears }, (_, i) => <th key={i} className={styles.num}>{`Y${i + 1}`}</th>)}
-                    <th className={styles.num}>Fee GM%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {fees.map((f, i) => f.missing ? (
-                    <tr key={`m-${i}`}>
-                      <td>{f.name}</td>
-                      <td colSpan={6 + numYears + 1} className={styles.muted}>
-                        No cost behind this name yet, so there is no fee to derive.
-                      </td>
-                    </tr>
-                  ) : (
-                    <tr key={`${f.name}-${f.type}-${i}`}>
-                      <td>
-                        {f.name}
-                        {f.sharedWith.length > 0 && (
-                          <div className={styles.subNote}>Shared with {f.sharedWith.join(', ')}</div>
-                        )}
-                      </td>
-                      <td>
-                        <span className={f.onSchedule ? styles.srcSchedule : styles.srcAuto}>
-                          {f.onSchedule ? 'On schedule' : 'Would be built'}
-                        </span>
-                      </td>
-                      <td>{f.type}</td>
-                      <td className={styles.num}>
-                        {fmtMoney(f.feePerUnit)}
-                        {f.feePerUnit != null && <div className={styles.subNote}>{f.feeIsManual ? 'typed' : 'auto'}</div>}
-                      </td>
-                      <td>{f.unit}</td>
-                      <td className={styles.num}>{f.unitCount}</td>
-                      <td className={styles.num}>{f.startMonth || ''}</td>
-                      {Array.from({ length: numYears }, (_, yi) => (
-                        <td key={yi} className={styles.num}>{f.years[yi] > 0 ? fmtMoney(f.years[yi]) : ''}</td>
-                      ))}
-                      <td className={styles.num}>{f.passThrough ? 'pass' : fmtPct(f.gmPct)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <FeeStructureEditor
+                structure={openStructure}
+                isStandard={openStructure.id === standardId}
+                hasWorkbook={hasWorkbook}
+                optionName={optionName}
+                numYears={numYears}
+                feeNameSuggestions={[...new Set([...fees.map(f => f.name), ...items.map(i => i.feeName)].filter(Boolean))]}
+                previewFeeRow={previewFeeRow}
+                onChange={(fn) => updateStructure(openStructure.id, fn)}
+                onMakeStandard={() => setSaved(prev => ({ ...prev, standardId: openStructure.id }))}
+                onDuplicate={() => duplicateStructure(openStructure)}
+                onDelete={() => deleteStructure(openStructure)}
+                onApply={() => {
+                  if (applyFeeStructure?.(service.name, openStructure)) {
+                    say(`Applied "${openStructure.name}" to ${optionName || 'the option'}'s Alternative Fee schedule.`);
+                  }
+                }}
+              />
             )}
           </section>
-        </>
+    </div>
+  );
+}
+
+// "From SIA" plus one tab per saved structure (the standard one starred),
+// and the buttons that start a new one.
+function FeeStructureTabs({ structures, standardId, view, setView, hasWorkbook, onAdd }) {
+  return (
+    <div className={styles.structTabs}>
+      {hasWorkbook && (
+        <button
+          type="button"
+          className={view === 'sia' ? styles.structTabActive : styles.structTab}
+          onClick={() => setView('sia')}
+          title="How the loaded SIA sets this service up. Read only."
+        >
+          From SIA
+        </button>
       )}
+      {structures.map(st => (
+        <button
+          key={st.id}
+          type="button"
+          className={view === st.id ? styles.structTabActive : styles.structTab}
+          onClick={() => setView(st.id)}
+          title={st.id === standardId ? 'Standard fee structure for this service' : undefined}
+        >
+          {st.id === standardId && <span className={styles.star} aria-label="Standard">★</span>}
+          {st.name || 'Untitled'}
+        </button>
+      ))}
+      {hasWorkbook && (
+        <button type="button" className={styles.structAdd} onClick={() => onAdd(true)} title="Save how the SIA sets this service up as an editable fee structure.">
+          + Save SIA setup as structure
+        </button>
+      )}
+      <button type="button" className={styles.structAdd} onClick={() => onAdd(false)} title="Start a new fee structure from a blank row.">
+        + New blank structure
+      </button>
+    </div>
+  );
+}
+
+// Text / number cell that commits on blur or Enter, so a half-typed value
+// isn't parsed on every keystroke.
+function DraftInput({ value, onCommit, placeholder, align, className, list, width }) {
+  const [draft, setDraft] = useState(null);
+  const shown = draft ?? (value ?? '');
+  return (
+    <input
+      className={className || styles.cellInput}
+      style={{ textAlign: align || 'left', width }}
+      value={shown}
+      placeholder={placeholder}
+      list={list}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => { if (draft !== null) { onCommit(draft); setDraft(null); } }}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur(); } }}
+    />
+  );
+}
+
+const parseMoney = (v) => {
+  const t = String(v ?? '').replace(/[$,\s]/g, '');
+  if (!t) return null;
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+};
+const parseCount = (v) => {
+  const t = String(v ?? '').replace(/,/g, '').trim();
+  if (!t) return null;
+  const n = Number(t);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+};
+const parsePct = (v) => {
+  const t = String(v ?? '').replace('%', '').trim();
+  if (!t) return null;
+  const n = Number(t);
+  if (!Number.isFinite(n)) return undefined;
+  return n > 1 ? n / 100 : n;
+};
+const fmtPlain = (n) => (typeof n === 'number' && Number.isFinite(n)
+  ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  : '');
+
+// One saved structure, editable. Blank Fee / Unit Count / Start Month /
+// GM% cells derive, and the placeholder shows what they derive to on the
+// loaded SIA, the same way the Alternative Fee schedule reads.
+function FeeStructureEditor({
+  structure, isStandard, hasWorkbook, optionName, numYears, feeNameSuggestions, previewFeeRow,
+  onChange, onMakeStandard, onDuplicate, onDelete, onApply,
+}) {
+  const listId = `fs-names-${structure.id}`;
+  const rows = structure.rows || [];
+  const setRow = (idx, patch) => onChange(st => ({ ...st, rows: st.rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)) }));
+  const removeRow = (idx) => onChange(st => ({ ...st, rows: st.rows.filter((_, i) => i !== idx) }));
+  const moveRow = (idx, dir) => onChange(st => {
+    const next = st.rows.slice();
+    const j = idx + dir;
+    if (j < 0 || j >= next.length) return st;
+    [next[idx], next[j]] = [next[j], next[idx]];
+    return { ...st, rows: next };
+  });
+  const previews = rows.map(r => (previewFeeRow && hasWorkbook ? previewFeeRow(r) : null));
+  const totals = Array.from({ length: numYears }, (_, yi) => previews.reduce((s, p) => s + (p?.years?.[yi] || 0), 0));
+
+  return (
+    <div className={styles.editor}>
+      <div className={styles.editorBar}>
+        <label className={styles.nameLabel}>
+          Name
+          <DraftInput
+            value={structure.name}
+            className={styles.nameInput}
+            onCommit={(v) => onChange(st => ({ ...st, name: String(v).trim() || st.name }))}
+          />
+        </label>
+        {isStandard
+          ? <span className={styles.standardTag}>★ Standard</span>
+          : <button type="button" className={styles.barBtn} onClick={onMakeStandard} title="Make this the standard fee structure for this service.">☆ Make standard</button>}
+        <button type="button" className={styles.barBtn} onClick={onDuplicate}>Duplicate</button>
+        <button type="button" className={styles.barBtnDanger} onClick={onDelete}>Delete</button>
+        <span className={styles.barSpacer} />
+        <button
+          type="button"
+          className={styles.applyBtn}
+          disabled={!hasWorkbook}
+          onClick={onApply}
+          title={hasWorkbook
+            ? `Replace this service's fee rows on ${optionName || 'the active option'}'s Alternative Fee schedule with this structure.`
+            : 'Upload an SIA to apply a structure to its fee schedule.'}
+        >
+          Apply to {optionName || 'schedule'}
+        </button>
+      </div>
+      <p className={styles.note}>
+        Leave Fee, Unit Count, Start Month or GM% blank to derive it from the SIA, the same as a blank cell on the
+        Alternative Fee schedule; the grey value shows what it derives to on {hasWorkbook ? (optionName || 'the loaded option') : 'the loaded SIA'}.
+        Saved structures stay with the service across SIAs.
+      </p>
+      <datalist id={listId}>
+        {feeNameSuggestions.map(n => <option key={n} value={n} />)}
+      </datalist>
+      <table className={`${styles.table} ${styles.editTable}`}>
+        <thead>
+          <tr>
+            <th style={{ width: 36 }} />
+            <th>Fee</th>
+            <th>Type</th>
+            <th className={styles.num}>Fee / Unit</th>
+            <th>Unit</th>
+            <th className={styles.num}>Unit Count</th>
+            <th className={styles.num}>Start Month</th>
+            {hasWorkbook && Array.from({ length: numYears }, (_, i) => <th key={i} className={styles.num}>{`Y${i + 1}`}</th>)}
+            <th className={styles.num}>Fee GM%</th>
+            <th>Pass</th>
+            <th style={{ width: 28 }} />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, idx) => {
+            const p = previews[idx];
+            return (
+              <tr key={idx}>
+                <td className={styles.moveCell}>
+                  <button type="button" className={styles.iconBtn} disabled={idx === 0} onClick={() => moveRow(idx, -1)} title="Move up">↑</button>
+                  <button type="button" className={styles.iconBtn} disabled={idx === rows.length - 1} onClick={() => moveRow(idx, 1)} title="Move down">↓</button>
+                </td>
+                <td>
+                  <DraftInput value={r.feeName} list={listId} placeholder="Fee name" width={150} onCommit={(v) => setRow(idx, { feeName: String(v).trim() })} />
+                </td>
+                <td>
+                  <select className={styles.cellSelect} style={{ width: 128 }} value={r.type || ''} onChange={(e) => setRow(idx, { type: e.target.value })}>
+                    <option value="">-</option>
+                    {FEE_STRUCTURE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </td>
+                <td className={styles.num}>
+                  <DraftInput
+                    value={typeof r.fee === 'number' ? fmtPlain(r.fee) : ''}
+                    placeholder={p?.autoFee != null ? fmtPlain(p.autoFee) : 'auto'}
+                    align="right"
+                    width={80}
+                    onCommit={(v) => { const n = parseMoney(v); if (n !== undefined) setRow(idx, { fee: n }); }}
+                  />
+                </td>
+                <td>
+                  <select className={styles.cellSelect} style={{ width: 96 }} value={r.unit || ''} onChange={(e) => setRow(idx, { unit: e.target.value })}>
+                    <option value="">-</option>
+                    {FEE_STRUCTURE_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                  </select>
+                </td>
+                <td className={styles.num}>
+                  <DraftInput
+                    value={r.unitCount ?? ''}
+                    placeholder={p?.alt ? String(p.alt.unitCount) : 'auto'}
+                    align="right"
+                    width={56}
+                    onCommit={(v) => { const n = parseCount(v); if (n !== undefined) setRow(idx, { unitCount: n }); }}
+                  />
+                </td>
+                <td className={styles.num}>
+                  <DraftInput
+                    value={r.startMonth ?? ''}
+                    placeholder={p?.autoStartMonth ? String(p.autoStartMonth) : '1'}
+                    align="right"
+                    width={44}
+                    onCommit={(v) => { const n = parseCount(v); if (n !== undefined) setRow(idx, { startMonth: n == null ? null : Math.round(n) }); }}
+                  />
+                </td>
+                {hasWorkbook && Array.from({ length: numYears }, (_, yi) => (
+                  <td key={yi} className={styles.num}>{p?.years?.[yi] > 0 ? fmtMoney(p.years[yi]) : ''}</td>
+                ))}
+                <td className={styles.num}>
+                  {r.passThrough ? <span className={styles.muted}>pass</span> : (
+                    <DraftInput
+                      value={typeof r.feeGmPct === 'number' ? (r.feeGmPct * 100).toFixed(1) : ''}
+                      placeholder={p?.gmPct != null ? fmtPct(p.gmPct) : 'auto'}
+                      align="right"
+                      width={60}
+                      onCommit={(v) => { const n = parsePct(v); if (n !== undefined) setRow(idx, { feeGmPct: n }); }}
+                    />
+                  )}
+                </td>
+                <td>
+                  <input type="checkbox" checked={r.passThrough === true} onChange={(e) => setRow(idx, { passThrough: e.target.checked })} />
+                </td>
+                <td>
+                  <button type="button" className={styles.iconBtn} onClick={() => removeRow(idx)} title="Remove fee">×</button>
+                </td>
+              </tr>
+            );
+          })}
+          {rows.length === 0 && (
+            <tr><td colSpan={hasWorkbook ? 10 + numYears : 10} className={styles.muted}>No fees yet.</td></tr>
+          )}
+        </tbody>
+        {hasWorkbook && rows.length > 0 && (
+          <tfoot>
+            <tr>
+              <td colSpan={7}>Total</td>
+              {totals.map((t, i) => <td key={i} className={styles.num}>{t > 0 ? fmtMoney(t) : ''}</td>)}
+              <td colSpan={3} />
+            </tr>
+          </tfoot>
+        )}
+      </table>
+      <div>
+        <button type="button" className={styles.barBtn} onClick={() => onChange(st => ({ ...st, rows: [...st.rows, blankFeeStructureRow()] }))}>
+          + Add fee
+        </button>
+      </div>
     </div>
   );
 }
