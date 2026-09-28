@@ -645,6 +645,10 @@ const RATE_BADGE = {
   [RATE_CHECK.NOT_ON_CARD]: ['rateUnknown', 'Not on rate card'],
 };
 
+// A per-unit rate reads to the cent: $6.75 an account, not $7.
+const fmtRate = (n) => (typeof n === 'number' && Number.isFinite(n)
+  ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  : '');
 const fmtWhole = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
   : '');
@@ -653,10 +657,20 @@ const fmtWhole = (n) => (typeof n === 'number' && Number.isFinite(n)
 // price range its Dropdowns › Services Pricing rate card quotes.
 function RateCheck({ check }) {
   const [cls, label] = RATE_BADGE[check.status];
-  const markupPct = Math.round(check.markup * 100);
-  const range = check.low == null ? '' : (Math.round(check.low) === Math.round(check.high)
-    ? fmtWhole(check.low)
-    : `${fmtWhole(Math.min(check.low, check.high))} – ${fmtWhole(Math.max(check.low, check.high))}`);
+  // A card that is one per-unit rate is read per unit: cost and price over
+  // the same count, against the rate itself.
+  const pu = check.perUnit;
+  const per = pu ? ` ${String(pu.basisLabel || `per ${pu.unitLabel || 'unit'}`).toLowerCase()}` : '';
+  const shown = pu
+    ? { ...check, cost: pu.cost, price: pu.price, low: pu.rateLow, high: pu.rateHigh }
+    : check;
+  const fmt = pu ? fmtRate : fmtWhole;
+  const markupLabel = typeof check.markup === 'number'
+    ? `Marked up ${Math.round(check.markup * 1000) / 10}%`
+    : 'Marked up per fee structure';
+  const range = shown.low == null ? '' : (fmt(shown.low) === fmt(shown.high)
+    ? fmt(shown.low)
+    : `${fmt(Math.min(shown.low, shown.high))} – ${fmt(Math.max(shown.low, shown.high))}`);
 
   return (
     <section className={styles.section}>
@@ -664,14 +678,20 @@ function RateCheck({ check }) {
         Price check <span className={styles[cls]}>{label}</span>
       </h4>
       <div className={styles.rateGrid}>
-        <span><span className={styles.factKey}>Year 1 cost:</span> <span className={styles.rateFigure}>{fmtWhole(check.cost)}</span></span>
-        <span><span className={styles.factKey}>Marked up {markupPct}%:</span> <span className={styles.rateFigure}>{fmtWhole(check.price)}</span></span>
+        <span><span className={styles.factKey}>Year 1 cost{per}:</span> <span className={styles.rateFigure}>{fmt(shown.cost)}</span></span>
+        <span><span className={styles.factKey}>{markupLabel}:</span> <span className={styles.rateFigure}>{fmt(shown.price)}{per}</span></span>
         <span>
-          <span className={styles.factKey}>Rate card range:</span>{' '}
-          <span className={styles.rateFigure}>{check.noFee ? 'No fee' : (check.status === RATE_CHECK.INCOMPLETE && !(check.high > 0) ? 'Unknown' : (range || 'not set'))}</span>
+          <span className={styles.factKey}>Rate card{pu ? '' : ' range'}:</span>{' '}
+          <span className={styles.rateFigure}>{check.noFee ? 'No fee' : (check.status === RATE_CHECK.INCOMPLETE && !(check.high > 0) ? 'Unknown' : (range ? `${range}${per}` : 'not set'))}</span>
         </span>
       </div>
-      <RateMeter check={check} />
+      {pu && (
+        <p className={styles.note}>
+          Year 1 cost of {fmtWhole(check.cost)}, marked up to {fmtWhole(check.price)}, over {pu.units.toLocaleString('en-US')} {String(pu.unitLabel || 'units').toLowerCase()}.
+          {typeof check.markup === 'number' ? '' : ' Each cost is marked up at the Markup % of the fee that bills it on the starred fee structure.'}
+        </p>
+      )}
+      <RateMeter check={shown} fmt={fmt} />
       {(check.status === RATE_CHECK.INCOMPLETE || check.status === RATE_CHECK.UNPRICED) && (
         <p className={styles.note}>
           {check.status === RATE_CHECK.INCOMPLETE
@@ -736,7 +756,7 @@ function CheckCounts({ missing = [], used = [], entered = {}, fromSia = {}, onSe
 
 // Where the marked-up price lands on a line from $0, with the rate card
 // range shaded on it. Nothing to draw without a range above $0.
-function RateMeter({ check }) {
+function RateMeter({ check, fmt = fmtWhole }) {
   if (check.low == null || check.price == null) return null;
   const lo = Math.min(check.low, check.high);
   const hi = Math.max(check.low, check.high);
@@ -748,7 +768,6 @@ function RateMeter({ check }) {
   const tone = check.status === RATE_CHECK.WITHIN ? styles.meterIn
     : (check.status === RATE_CHECK.BELOW || check.status === RATE_CHECK.ABOVE) ? styles.meterOut
       : styles.meterUnknown;
-  const fmt = fmtWhole;
   const single = fmt(lo) === fmt(hi);
   // Two range labels closer than this share one, so they never overlap.
   const joined = single || at(hi) - at(lo) < 18;
@@ -769,7 +788,7 @@ function RateMeter({ check }) {
     <div className={styles.meter} role="img" aria-label={`${priceTip}. ${rangeTip}.`}>
       <div className={styles.meterTop}>
         <span className={`${styles.meterPriceLabel} ${tone}`} style={{ left: `${labelAt(check.price)}%` }}>
-          {fmtWhole(check.price)}
+          {fmt(check.price)}
         </span>
       </div>
       {track}
@@ -777,12 +796,12 @@ function RateMeter({ check }) {
         <span className={styles.meterScaleLabel} style={{ left: 0, transform: 'none' }}>$0</span>
         {joined ? (
           <span className={styles.meterScaleLabel} style={{ left: `${labelAt((lo + hi) / 2)}%` }}>
-            {single ? `Rate card ${fmtWhole(lo)}` : `${fmtWhole(lo)} – ${fmtWhole(hi)}`}
+            {single ? `Rate card ${fmt(lo)}` : `${fmt(lo)} – ${fmt(hi)}`}
           </span>
         ) : (
           <>
-            <span className={styles.meterScaleLabel} style={{ left: `${labelAt(lo)}%` }}>{fmtWhole(lo)}</span>
-            <span className={styles.meterScaleLabel} style={{ left: `${labelAt(hi)}%` }}>{fmtWhole(hi)}</span>
+            <span className={styles.meterScaleLabel} style={{ left: `${labelAt(lo)}%` }}>{fmt(lo)}</span>
+            <span className={styles.meterScaleLabel} style={{ left: `${labelAt(hi)}%` }}>{fmt(hi)}</span>
           </>
         )}
       </div>
