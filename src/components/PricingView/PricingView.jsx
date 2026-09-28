@@ -4617,6 +4617,9 @@ export function PricingView({ settings } = {}) {
         description: item.description,
         type: t,
         cts: typeof item.cts === 'number' ? item.cts : null,
+        // Marked-up price at the row's GM, what a fee has to collect to
+        // recover this cost (see priceFor).
+        price: (() => { const pr = priceFor(item).price; return typeof pr === 'number' && Number.isFinite(pr) ? pr : null; })(),
         startMonth: effectiveItemStartMonth(item),
         feeName: String(mappingNameFor(item) || '').trim(),
         automatedName: String(resolvedLinkedTo(item) || '').trim(),
@@ -5016,6 +5019,7 @@ export function PricingView({ settings } = {}) {
           previewFeeRow={previewFeeStructureRow}
           applyFeeStructure={applyServiceFeeStructure}
           numYears={Math.max(1, Math.ceil(termMonths / 12))}
+          termMonths={termMonths}
           onOpenLinkedTo={() => setPageSubtab('linkedTo')}
         />
       )}

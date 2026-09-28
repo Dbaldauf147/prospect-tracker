@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import {
   buildPricingServiceList, costItemsForService, servicesForItems, SERVICE_STATUS,
   feeStructureRowsFromFees, feeStructureRowToAltRow, applyFeeStructureToSchedule,
+  standardFeesForStructure, costKey,
 } from '../src/utils/pricingServices.js';
 
 let failed = 0;
@@ -127,6 +128,60 @@ test('applying with nothing to replace lands above trailing blank rows', () => {
     [{ feeName: 'New', type: 'Setup', unit: 'Fixed' }],
   );
   assert.deepEqual(rows.map(r => r.altItem), ['Setup', 'New', '', '']);
+});
+
+// The standard fee behind each structure row.
+//   8. A cost lands on the row carrying its fee name unless pointed elsewhere.
+//   9. An upfront cost on a monthly fee is flagged until rolled over the
+//      term, and once rolled it adds price / months billed / units a month.
+//  10. Pointing a cost at "not covered" takes it out.
+
+const bbsCosts = [
+  { key: costKey('Building Benchmark Submission', 'One Time'), description: 'Building Benchmark Submission', type: 'One Time', price: 536, feeNames: ['Per site'] },
+  { key: costKey('BBS Monthly', 'Recurring (monthly)'), description: 'BBS Monthly', type: 'Recurring (monthly)', price: 290, feeNames: ['Program fee'] },
+];
+
+test('costs land on the row carrying their fee name by default', () => {
+  const rows = [
+    { feeName: 'Per site', type: 'One Time', unit: 'Per Site' },
+    { feeName: 'Program fee', type: 'Recurring (monthly)', unit: 'Fixed' },
+  ];
+  const { perRow, costs } = standardFeesForStructure({ rows, costs: bbsCosts, termMonths: 36, siteCount: 29 });
+  assert.deepEqual(costs.map(c => c.rowIdx), [0, 1]);
+  assert.equal(perRow[0].standardFee, 18.48); // 536 / 29
+  assert.equal(perRow[1].standardFee, 290);
+});
+
+test('an upfront cost on a monthly fee is flagged until rolled, then spread over the term', () => {
+  const rows = [{ feeName: 'BBS per site', type: 'Recurring (monthly)', unit: 'Per Site' }];
+  const allocations = { [bbsCosts[0].key]: { fee: 'bbs per site' } };
+  let r = standardFeesForStructure({ rows, costs: bbsCosts.slice(0, 1), allocations, termMonths: 36, siteCount: 29 });
+  assert.equal(r.costs[0].issue, 'upfrontOnRecurring');
+  assert.equal(r.costs[0].canRoll, true);
+  assert.equal(r.perRow[0].standardFee, null);
+  r = standardFeesForStructure({ rows, costs: bbsCosts.slice(0, 1), allocations: { [bbsCosts[0].key]: { fee: 'bbs per site', roll: true } }, termMonths: 36, siteCount: 29 });
+  assert.equal(r.costs[0].issue, '');
+  assert.equal(r.perRow[0].standardFee, 0.51); // 536 / 36 / 29
+  // Starting in month 13 leaves 24 months to recover it in.
+  r = standardFeesForStructure({ rows: [{ ...rows[0], startMonth: 13 }], costs: bbsCosts.slice(0, 1), allocations: { [bbsCosts[0].key]: { fee: 'bbs per site', roll: true } }, termMonths: 36, siteCount: 29 });
+  assert.equal(r.perRow[0].standardFee, 0.77); // 536 / 24 / 29
+});
+
+test('rolled and monthly costs add together on one monthly fee', () => {
+  const rows = [{ feeName: 'All in', type: 'Recurring (monthly)', unit: 'Fixed' }];
+  const allocations = { [bbsCosts[0].key]: { fee: 'all in', roll: true }, [bbsCosts[1].key]: { fee: 'All in' } };
+  const r = standardFeesForStructure({ rows, costs: bbsCosts, allocations, termMonths: 36 });
+  assert.equal(r.perRow[0].standardFee, Math.round((290 + 536 / 36) * 100) / 100);
+});
+
+test('a monthly cost on an upfront fee is flagged, and "not covered" takes a cost out', () => {
+  const rows = [{ feeName: 'Per site', type: 'One Time', unit: 'Fixed' }];
+  const r = standardFeesForStructure({ rows, costs: bbsCosts, allocations: { [bbsCosts[1].key]: { fee: 'per site' } } });
+  assert.equal(r.costs[1].issue, 'recurringOnUpfront');
+  assert.equal(r.perRow[0].standardFee, 536);
+  const r2 = standardFeesForStructure({ rows, costs: bbsCosts, allocations: { [bbsCosts[0].key]: { fee: '' } } });
+  assert.equal(r2.costs[0].rowIdx, -1);
+  assert.equal(r2.perRow[0].standardFee, null);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

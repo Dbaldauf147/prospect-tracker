@@ -480,3 +480,46 @@
 .editTable th {
   white-space: normal;
 }
+
+.stdFee,
+.stdFeeOff {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #b45309;
+  white-space: nowrap;
+  margin-top: 0.1rem;
+}
+
+.stdFeeOff {
+  color: #64748b;
+  font-weight: 500;
+}
+
+.coverage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.coverageTitle {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.issueRow td {
+  background: #fff7ed;
+}
+
+.warnText {
+  font-size: 0.7rem;
+  color: #b45309;
+}
+
+.rollLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  font-size: var(--font-size-xs);
+}
