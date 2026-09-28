@@ -73,7 +73,7 @@ test('a count the SIA does not carry comes back as a note', () => {
   });
   assert.ok(c.notes.some(n => /meters/i.test(n)));
   assert.equal(c.status, RATE_CHECK.INCOMPLETE);
-  assert.deepEqual(c.missing, ['meters']);
+  assert.deepEqual(c.missing, [{ key: 'meters', label: 'Meters' }]);
 });
 
 test('a $0 range from a missing count is not "above range"', () => {
@@ -85,7 +85,40 @@ test('a $0 range from a missing count is not "above range"', () => {
   });
   assert.equal(c.high, 0);
   assert.equal(c.status, RATE_CHECK.INCOMPLETE);
-  assert.deepEqual(c.missing, ['sites w/ mandate']);
+  assert.deepEqual(c.missing, [{ key: 'sites_mandate', label: 'Sites w/ Mandate' }]);
+});
+
+test('a count typed in fills the gap', () => {
+  const c = rateCardCheck({
+    items: [{ cts: 268, type: 'One-time' }],
+    entry: { basis: 'per_site_mandate', rate: 100 },
+    meta: project,
+    counts: { sites: 29, sites_mandate: 5 },
+  });
+  assert.equal(c.low, 500);
+  assert.equal(c.status, RATE_CHECK.BELOW);
+  assert.deepEqual(c.missing, []);
+});
+
+test('a percentage fee asks for, and prices on, a deal size', () => {
+  const entry = { basis: 'pct_deal', rate: 10 };
+  const before = rateCardCheck({ items: [{ cts: 100, type: 'One-time' }], entry, meta: project });
+  assert.deepEqual(before.missing, [{ key: 'dealSize', label: 'Deal size' }]);
+  const after = rateCardCheck({ items: [{ cts: 100, type: 'One-time' }], entry, meta: project, counts: { dealSize: 2000 } });
+  assert.equal(after.low, 200);
+  assert.equal(after.status, RATE_CHECK.BELOW);
+});
+
+test('only months 1 to 12 are year 1', () => {
+  const r = year1CostOf([
+    { cts: 670, type: 'One Time', startMonth: 1 },
+    { cts: 402, type: 'One Time', startMonth: 13 },
+    { cts: 100, type: 'Recurring', startMonth: 4 },
+    { cts: 100, type: 'Recurring', startMonth: 14 },
+  ]);
+  assert.equal(r.cost, 670 + 900);
+  assert.equal(r.counted, 2);
+  assert.equal(r.later, 2);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

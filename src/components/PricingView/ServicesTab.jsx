@@ -6,6 +6,7 @@ import {
   standardFeesForStructure, costKey, COST_BUCKET_UPFRONT,
 } from '../../utils/pricingServices';
 import { RATE_CHECK } from '../../utils/serviceRateCheck';
+import { unitLabelFor } from '../../utils/servicePricing';
 
 const fmtMoney = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -38,7 +39,7 @@ const STATUS_CLASS = {
 //   onIgnoreLineItem (lineItemKey) => marks the line item Ignore
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
-  feeStructures = {}, setFeeStructures, previewFeeRow, previewOnOption, applyFeeStructure,
+  onSetCount, feeStructures = {}, setFeeStructures, previewFeeRow, previewOnOption, applyFeeStructure,
   unlinked = null, tagOptions = [], onTagLineItem, onIgnoreLineItem,
 }) {
   const [query, setQuery] = useState('');
@@ -180,6 +181,7 @@ export function ServicesTab({
               siteCount={opt?.siteCount}
               accountCount={opt?.accountCount}
               onOpenLinkedTo={onOpenLinkedTo}
+              onSetCount={onSetCount}
             />
           )}
         </div>
@@ -257,7 +259,7 @@ function UnlinkedWarning({ unlinked, costTotals, optionName, tagOptions, quickTa
   );
 }
 
-function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure }) {
+function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure }) {
   const items = detail?.items || [];
   const fees = detail?.fees || [];
   const structures = saved?.structures || [];
@@ -382,7 +384,7 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
       )}
 
       {hasWorkbook && detail?.rateCheck && (
-        <RateCheck check={detail.rateCheck} counts={detail.counts} />
+        <RateCheck check={detail.rateCheck} counts={detail.counts} entered={detail.enteredCounts} onSetCount={onSetCount} optionName={optionName} />
       )}
 
           <section className={styles.section}>
@@ -692,7 +694,7 @@ const fmtWhole = (n) => (typeof n === 'number' && Number.isFinite(n)
 
 // The service's first-year cost on the SIA, marked up, set against the
 // price range its Dropdowns › Services Pricing rate card quotes.
-function RateCheck({ check, counts = {} }) {
+function RateCheck({ check, counts = {}, entered = {}, onSetCount, optionName }) {
   const [cls, label] = RATE_BADGE[check.status];
   const markupPct = Math.round(check.markup * 100);
   const range = check.low == null ? '' : (Math.round(check.low) === Math.round(check.high)
@@ -701,6 +703,9 @@ function RateCheck({ check, counts = {} }) {
   const countText = [
     counts.sites != null && `${counts.sites.toLocaleString('en-US')} sites`,
     counts.accounts != null && `${counts.accounts.toLocaleString('en-US')} accounts`,
+    ...Object.entries(entered).map(([k, v]) => (k === 'dealSize'
+      ? `${fmtWhole(v)} deal size`
+      : `${Number(v).toLocaleString('en-US')} ${unitLabelFor(k).toLowerCase()}`)),
   ].filter(Boolean).join(', ');
   let gap = '';
   if (check.status === RATE_CHECK.BELOW) gap = `${fmtWhole(Math.min(check.low, check.high) - check.price)} under the low end`;
@@ -721,18 +726,56 @@ function RateCheck({ check, counts = {} }) {
         {gap && <span className={styles.factKey}>{gap}</span>}
       </div>
       <RateMeter check={check} />
+      {onSetCount && (
+        <CheckCounts missing={check.missing} entered={entered} onSetCount={onSetCount} optionName={optionName} />
+      )}
       <p className={styles.note}>
         {check.status === RATE_CHECK.INCOMPLETE && (
-          `Part of this service's rate card is priced on ${check.missing.join(' and ')}, which the SIA doesn't carry, so the range ${check.high > 0 ? 'reads low and' : 'is unknown and'} isn't judged. `
+          `Part of this service's rate card is priced on ${check.missing.map(m => m.label.toLowerCase()).join(' and ')}, which the SIA doesn't carry, so the range ${check.high > 0 ? 'reads low and' : 'is unknown and'} isn't judged until it's filled in. `
         )}
         {check.status === RATE_CHECK.UNPRICED
           ? (check.noFee
             ? 'This service is marked No Fee on Dropdowns › Services Pricing, so there is no range to check against.'
             : 'No rate set for this service on Dropdowns › Services Pricing, so there is no range to check against.')
-          : `Year 1 cost is the CTS on the lines above, recurring lines counted as 12 months${check.passThrough ? ', pass-through lines left out' : ''}. The range is the Year 1 fee (plus setup) from Dropdowns › Services Pricing${countText ? `, priced on this option's ${countText}` : ''}.`}
+          : `Year 1 cost is the CTS on the lines above, months 1 to 12 only (a recurring line counts the months it runs in year 1)${check.later ? `, ${check.later} line${check.later === 1 ? '' : 's'} starting after month 12 left out` : ''}${check.passThrough ? ', pass-through lines left out' : ''}. The range is the Year 1 fee (plus setup) from Dropdowns › Services Pricing${countText ? `, priced on this option's ${countText}` : ''}.`}
         {check.status !== RATE_CHECK.INCOMPLETE && check.notes.length > 0 && ` Rate card note: ${check.notes.join('; ')}.`}
       </p>
     </section>
+  );
+}
+
+// Boxes for the counts the rate card needs and the SIA doesn't carry, plus
+// any already typed so they can be changed or cleared. Saved on the option.
+function CheckCounts({ missing = [], entered = {}, onSetCount, optionName }) {
+  const fields = [...missing];
+  for (const key of Object.keys(entered)) {
+    if (!fields.some(f => f.key === key)) fields.push({ key, label: key === 'dealSize' ? 'Deal size' : unitLabelFor(key) });
+  }
+  if (fields.length === 0) return null;
+  return (
+    <div className={styles.countRow}>
+      <span className={styles.factKey}>Counts for {optionName || 'this option'}:</span>
+      {fields.map(f => {
+        const isMoney = f.key === 'dealSize';
+        const v = entered[f.key];
+        return (
+          <label key={f.key} className={styles.countField}>
+            {f.label}
+            <DraftInput
+              value={typeof v === 'number' ? (isMoney ? fmtPlain(v) : String(v)) : ''}
+              placeholder={isMoney ? '$' : 'Enter'}
+              align="right"
+              width={isMoney ? 110 : 72}
+              className={`${styles.cellInput} ${v == null ? styles.countNeeded : ''}`}
+              onCommit={(raw) => {
+                const n = isMoney ? parseMoney(raw) : parseCount(raw);
+                if (n !== undefined) onSetCount(f.key, n);
+              }}
+            />
+          </label>
+        );
+      })}
+    </div>
   );
 }
 
