@@ -3,6 +3,7 @@ import styles from './ServicesTab.module.css';
 import {
   SERVICE_STATUS, FEE_STRUCTURE_TYPES, FEE_STRUCTURE_UNITS, serviceKey,
   newFeeStructureId, blankFeeStructureRow, feeStructureRowsFromFees, costTotalsByLineItem,
+  standardFeesForStructure, costKey, COST_BUCKET_UPFRONT,
 } from '../../utils/pricingServices';
 import { RATE_CHECK } from '../../utils/serviceRateCheck';
 
@@ -36,7 +37,7 @@ const STATUS_CLASS = {
 //   onTagLineItem   (lineItemKey, serviceName) => adds the service
 //   onIgnoreLineItem (lineItemKey) => marks the line item Ignore
 export function ServicesTab({
-  workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, onOpenLinkedTo,
+  workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
   feeStructures = {}, setFeeStructures, previewFeeRow, previewOnOption, applyFeeStructure,
   unlinked = null, tagOptions = [], onTagLineItem, onIgnoreLineItem,
 }) {
@@ -175,6 +176,9 @@ export function ServicesTab({
               hasWorkbook={!!workbook}
               optionName={opt?.sheetName}
               numYears={numYears}
+              termMonths={termMonths}
+              siteCount={opt?.siteCount}
+              accountCount={opt?.accountCount}
               onOpenLinkedTo={onOpenLinkedTo}
             />
           )}
@@ -253,7 +257,7 @@ function UnlinkedWarning({ unlinked, costTotals, optionName, tagOptions, quickTa
   );
 }
 
-function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, onOpenLinkedTo, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure }) {
+function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure }) {
   const items = detail?.items || [];
   const fees = detail?.fees || [];
   const structures = saved?.structures || [];
@@ -282,7 +286,7 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, onO
   }
   function duplicateStructure(st) {
     const id = newFeeStructureId();
-    setSaved(prev => ({ ...prev, structures: [...prev.structures, { id, name: `${st.name} (copy)`, rows: st.rows.map(r => ({ ...r })) }] }));
+    setSaved(prev => ({ ...prev, structures: [...prev.structures, { id, name: `${st.name} (copy)`, rows: st.rows.map(r => ({ ...r })), allocations: { ...(st.allocations || {}) } }] }));
     setView(id);
   }
   function deleteStructure(st) {
@@ -468,15 +472,19 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, onO
                 hasWorkbook={hasWorkbook}
                 optionName={optionName}
                 numYears={numYears}
+                termMonths={termMonths}
+                siteCount={siteCount}
+                accountCount={accountCount}
+                costs={items}
                 feeNameSuggestions={[...new Set([...fees.map(f => f.name), ...items.map(i => i.feeName)].filter(Boolean))]}
                 previewFeeRow={previewFeeRow}
                 onChange={(fn) => updateStructure(openStructure.id, fn)}
                 onMakeStandard={() => setSaved(prev => ({ ...prev, standardId: openStructure.id }))}
                 onDuplicate={() => duplicateStructure(openStructure)}
                 onDelete={() => deleteStructure(openStructure)}
-                onApply={() => {
-                  if (applyFeeStructure?.(service.name, openStructure)) {
-                    say(`Applied "${openStructure.name}" to ${optionName || 'the option'}'s Alternative Fee schedule.`);
+                onApply={(filled) => {
+                  if (applyFeeStructure?.(service.name, filled)) {
+                    say(`Applied "${openStructure.name}" to the Alternative Fee schedule on ${optionName || 'the option'}.`);
                   }
                 }}
               />
@@ -485,13 +493,33 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, onO
 
       {hasWorkbook && previewOnOption && (
         <OptionPreview
-          preview={previewOnOption(service.name, openStructure)}
+          preview={previewOnOption(service.name, openStructure
+            ? standardFeeContext(openStructure, items, { termMonths, siteCount, accountCount }).filled
+            : null)}
           structureName={openStructure ? `fee structure "${openStructure.name || 'Untitled'}"` : 'the SIA setup'}
           isSia={!openStructure}
         />
       )}
     </div>
   );
+}
+
+// A structure with its blank Fee cells filled by the standard fee, the
+// rows Apply writes and the option preview bills. One helper for both so
+// the preview never shows a different fee from the one Apply would write.
+function standardFeeContext(structure, costs, { termMonths = 36, siteCount, accountCount } = {}) {
+  const rows = structure?.rows || [];
+  const costInputs = (costs || []).map(c => ({
+    key: costKey(c.description, c.type),
+    description: c.description,
+    type: c.type,
+    price: c.price,
+    feeNames: [c.feeName, c.automatedName].filter(Boolean),
+  }));
+  const std = standardFeesForStructure({ rows, costs: costInputs, allocations: structure?.allocations || {}, termMonths, siteCount, accountCount });
+  const standardFee = (idx) => std.perRow[idx]?.standardFee ?? null;
+  const billed = (r, idx) => (r.fee == null && standardFee(idx) != null ? { ...r, fee: standardFee(idx) } : r);
+  return { std, standardFee, billed, filled: structure ? { ...structure, rows: rows.map(billed) } : null };
 }
 
 const sum = (arr) => arr.reduce((a, b) => a + (Number(b) || 0), 0);
@@ -851,12 +879,26 @@ const fmtPlain = (n) => (typeof n === 'number' && Number.isFinite(n)
 // GM% cells derive, and the placeholder shows what they derive to on the
 // loaded SIA, the same way the Alternative Fee schedule reads.
 function FeeStructureEditor({
-  structure, isStandard, hasWorkbook, optionName, numYears, feeNameSuggestions, previewFeeRow,
-  onChange, onMakeStandard, onDuplicate, onDelete, onApply,
+  structure, isStandard, hasWorkbook, optionName, numYears, termMonths = 36, siteCount, accountCount, costs = [],
+  feeNameSuggestions, previewFeeRow, onChange, onMakeStandard, onDuplicate, onDelete, onApply,
 }) {
   const listId = `fs-names-${structure.id}`;
   const rows = structure.rows || [];
-  const setRow = (idx, patch) => onChange(st => ({ ...st, rows: st.rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)) }));
+  const setRow = (idx, patch) => onChange(st => {
+    const next = { ...st, rows: st.rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)) };
+    // Renaming a fee keeps every cost it covers (picked, or matched by
+    // the old name) on it.
+    const before = String(st.rows[idx]?.feeName || '').trim().toLowerCase();
+    const after = String(patch.feeName ?? '').trim().toLowerCase();
+    if ('feeName' in patch && before && after && before !== after) {
+      const alloc = { ...(st.allocations || {}) };
+      for (const co of std.costs) {
+        if (co.rowIdx === idx) alloc[co.key] = { ...(alloc[co.key] || {}), fee: after };
+      }
+      next.allocations = alloc;
+    }
+    return next;
+  });
   const removeRow = (idx) => onChange(st => ({ ...st, rows: st.rows.filter((_, i) => i !== idx) }));
   const moveRow = (idx, dir) => onChange(st => {
     const next = st.rows.slice();
@@ -865,7 +907,15 @@ function FeeStructureEditor({
     [next[idx], next[j]] = [next[j], next[idx]];
     return { ...st, rows: next };
   });
-  const previews = rows.map(r => (previewFeeRow && hasWorkbook ? previewFeeRow(r) : null));
+  // The standard fee behind each row: what recovers the service's costs
+  // pointed at it (see standardFeesForStructure). A blank Fee cell bills
+  // it, and Apply writes it into the schedule.
+  const { std, standardFee, billed } = standardFeeContext(structure, costs, { termMonths, siteCount, accountCount });
+  const setAllocation = (key, patch) => onChange(st => ({
+    ...st,
+    allocations: { ...(st.allocations || {}), [key]: { ...((st.allocations || {})[key] || {}), ...patch } },
+  }));
+  const previews = rows.map((r, idx) => (previewFeeRow && hasWorkbook ? previewFeeRow(billed(r, idx)) : null));
   const totals = Array.from({ length: numYears }, (_, yi) => previews.reduce((s, p) => s + (p?.years?.[yi] || 0), 0));
 
   return (
@@ -889,7 +939,7 @@ function FeeStructureEditor({
           type="button"
           className={styles.applyBtn}
           disabled={!hasWorkbook}
-          onClick={onApply}
+          onClick={() => onApply({ ...structure, rows: rows.map(billed) })}
           title={hasWorkbook
             ? `Replace this service's fee rows on ${optionName || 'the active option'}'s Alternative Fee schedule with this structure.`
             : 'Upload an SIA to apply a structure to its fee schedule.'}
@@ -942,11 +992,19 @@ function FeeStructureEditor({
                 <td className={styles.num}>
                   <DraftInput
                     value={typeof r.fee === 'number' ? fmtPlain(r.fee) : ''}
-                    placeholder={p?.autoFee != null ? fmtPlain(p.autoFee) : 'auto'}
+                    placeholder={standardFee(idx) != null ? fmtPlain(standardFee(idx)) : (p?.autoFee != null ? fmtPlain(p.autoFee) : 'auto')}
                     align="right"
                     width={80}
                     onCommit={(v) => { const n = parseMoney(v); if (n !== undefined) setRow(idx, { fee: n }); }}
                   />
+                  {standardFee(idx) != null && (
+                    <div
+                      className={typeof r.fee === 'number' && Math.abs(r.fee - standardFee(idx)) > 0.005 ? styles.stdFeeOff : styles.stdFee}
+                      title={`Standard fee: recovers the ${std.perRow[idx].costIdx.length} cost line${std.perRow[idx].costIdx.length === 1 ? '' : 's'} this fee covers at their marked-up price.${typeof r.fee === 'number' ? '' : ' The blank cell bills it.'}`}
+                    >
+                      ★ {fmtMoney(standardFee(idx))}
+                    </div>
+                  )}
                 </td>
                 <td>
                   <select className={styles.cellSelect} style={{ width: 96 }} value={r.unit || ''} onChange={(e) => setRow(idx, { unit: e.target.value })}>
@@ -1014,6 +1072,79 @@ function FeeStructureEditor({
           + Add fee
         </button>
       </div>
+      {costs.length > 0 && (
+        <div className={styles.coverage}>
+          <h5 className={styles.coverageTitle}>Costs covered</h5>
+          <p className={styles.note}>
+            Which fee recovers each of this service's costs on {optionName || 'the loaded option'}. The ★ standard
+            fee above is built from these. A one-time or setup cost on a monthly fee can be rolled over the
+            {` ${termMonths}-month`} term so the monthly fee recovers it.
+          </p>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Line Item</th>
+                <th>Cost Type</th>
+                <th className={styles.num}>Price</th>
+                <th>Covered by</th>
+                <th>Format</th>
+              </tr>
+            </thead>
+            <tbody>
+              {costs.map((c, ci) => {
+                const co = std.costs[ci];
+                const key = co.key;
+                const row = co.rowIdx >= 0 ? rows[co.rowIdx] : null;
+                const rollMonths = co.rowIdx >= 0 ? std.perRow[co.rowIdx].rollMonths : termMonths;
+                const namedRows = rows.map((r, i) => ({ name: String(r.feeName || '').trim(), i })).filter(x => x.name);
+                return (
+                  <tr key={key} className={co.issue ? styles.issueRow : undefined}>
+                    <td>{c.description}</td>
+                    <td>{c.type}</td>
+                    <td className={styles.num}>{fmtMoney(c.price)}</td>
+                    <td>
+                      <select
+                        className={styles.cellSelect}
+                        value={co.rowIdx >= 0 ? String(row.feeName || '').trim().toLowerCase() : ''}
+                        onChange={(e) => setAllocation(key, { fee: e.target.value })}
+                      >
+                        <option value="">Not covered</option>
+                        {namedRows.map(x => (
+                          <option key={x.i} value={x.name.toLowerCase()}>{x.name}</option>
+                        ))}
+                      </select>
+                      {co.defaulted && co.rowIdx >= 0 && <div className={styles.subNote}>matched by fee name</div>}
+                    </td>
+                    <td>
+                      {co.rowIdx < 0 ? (
+                        <span className={styles.warnText}>Not recovered by any fee</span>
+                      ) : co.canRoll ? (
+                        <label className={styles.rollLabel}>
+                          <input
+                            type="checkbox"
+                            checked={co.rolled}
+                            onChange={(e) => setAllocation(key, { roll: e.target.checked, fee: String(row.feeName || '').trim().toLowerCase() })}
+                          />
+                          Roll over term
+                          {co.rolled
+                            ? <span className={styles.subNote}> {fmtMoney(c.price)} / {rollMonths} mo = {fmtMoney(c.price / rollMonths)} a month</span>
+                            : <span className={styles.warnText}> {row.type} fee, {c.type} cost: not billed until rolled</span>}
+                        </label>
+                      ) : co.issue === 'recurringOnUpfront' ? (
+                        <span className={styles.warnText}>Monthly cost on a {row.type} fee: point it at a monthly fee</span>
+                      ) : co.bucket === COST_BUCKET_UPFRONT || co.rolled ? (
+                        <span className={styles.subNote}>{co.rolled ? `Rolled over ${rollMonths} months` : 'Matches the fee'}</span>
+                      ) : (
+                        <span className={styles.subNote}>Matches the fee</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

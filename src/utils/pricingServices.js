@@ -200,6 +200,113 @@ export function applyFeeStructureToSchedule(schedule, structureRows, { replaceNa
 }
 
 // ---------------------------------------------------------------------------
+// The standard fee behind each row of a fee structure.
+//
+// Each of the service's cost lines is recovered by one fee row of the
+// structure (or by none). By default a cost goes to the row carrying its
+// fee name; the user can point it at any row instead. A row's standard fee
+// is then what recovers the costs pointed at it, at their marked-up price:
+//
+//   upfront fee (Setup / One Time)   sum of upfront cost prices / units
+//   recurring fee (monthly)          sum of monthly cost prices / units,
+//                                    plus any upfront cost rolled over the
+//                                    term: price / months billed / units
+//
+// An upfront cost on a monthly fee is billed nowhere until it is rolled
+// over the term, so it is flagged rather than silently dropped. A monthly
+// cost on an upfront fee is flagged the same way (there is no honest way
+// to collect a monthly cost once). Costs whose own type is already rolled
+// ("Setup Rolled", "One Time Rolled") roll without being asked.
+//
+//   rows          structure rows ({ feeName, type, unit, unitCount, startMonth })
+//   costs         [{ key, description, type, price, feeNames: [..] }]
+//   allocations   structure.allocations: { [cost key]: { fee, roll } } where
+//                 fee is a lowercased fee name, '' for "not covered", or
+//                 absent for the default
+//   termMonths    the deal term
+
+export const COST_BUCKET_UPFRONT = 'upfront';
+export const COST_BUCKET_RECURRING = 'recurring';
+export const COST_BUCKET_ROLLED = 'rolled';
+
+export function costKey(description, type) {
+  return `${norm(description)}::${norm(type)}`;
+}
+
+export function costBucket(type) {
+  const t = norm(type);
+  if (/\brolled\b/.test(t)) return COST_BUCKET_ROLLED;
+  if (/recurring|monthly/.test(t)) return COST_BUCKET_RECURRING;
+  if (/^(setup|one\s*time)/.test(t)) return COST_BUCKET_UPFRONT;
+  return '';
+}
+
+export function feeBucket(type) {
+  const t = norm(type);
+  if (/recurring/.test(t)) return COST_BUCKET_RECURRING;
+  if (/^(setup|one\s*time)$/.test(t)) return COST_BUCKET_UPFRONT;
+  return '';
+}
+
+export function standardFeesForStructure({ rows = [], costs = [], allocations = {}, termMonths = 36, siteCount, accountCount } = {}) {
+  const names = rows.map(r => norm(r?.feeName));
+  const perRow = rows.map(() => ({ standardFee: null, costIdx: [], monthlyTotal: 0, upfrontTotal: 0 }));
+  const costOut = costs.map((c) => {
+    const a = allocations?.[c.key];
+    let rowIdx = -1;
+    let defaulted = false;
+    if (a && typeof a.fee === 'string') {
+      rowIdx = a.fee ? names.indexOf(norm(a.fee)) : -1;
+    } else {
+      defaulted = true;
+      for (const n of c.feeNames || []) {
+        const i = names.indexOf(norm(n));
+        if (i >= 0 && norm(n)) { rowIdx = i; break; }
+      }
+    }
+    const bucket = costBucket(c.type);
+    const row = rowIdx >= 0 ? rows[rowIdx] : null;
+    const fb = row ? (feeBucket(row.type) || (bucket === COST_BUCKET_ROLLED ? COST_BUCKET_RECURRING : bucket)) : '';
+    const canRoll = bucket === COST_BUCKET_UPFRONT && fb === COST_BUCKET_RECURRING;
+    const rolled = bucket === COST_BUCKET_ROLLED || (canRoll && a?.roll === true);
+    let issue = '';
+    if (row && typeof c.price === 'number') {
+      if (fb === COST_BUCKET_RECURRING && bucket === COST_BUCKET_UPFRONT && !rolled) issue = 'upfrontOnRecurring';
+      else if (fb === COST_BUCKET_UPFRONT && (bucket === COST_BUCKET_RECURRING || bucket === COST_BUCKET_ROLLED)) issue = 'recurringOnUpfront';
+    }
+    return { key: c.key, rowIdx, defaulted, bucket, feeBucket: fb, canRoll, rolled, issue, price: c.price };
+  });
+
+  rows.forEach((row, ri) => {
+    const alt = feeStructureRowToAltRow(row, { siteCount, accountCount });
+    const units = alt.unitCount > 0 ? alt.unitCount : 1;
+    const fb = feeBucket(row?.type);
+    const start = Math.max(1, Math.round(alt.startMonth || 1));
+    const rollMonths = Math.max(1, Math.round(termMonths) - start + 1);
+    const agg = perRow[ri];
+    let any = false;
+    costOut.forEach((co, ci) => {
+      if (co.rowIdx !== ri) return;
+      agg.costIdx.push(ci);
+      if (typeof co.price !== 'number' || !Number.isFinite(co.price) || co.issue) return;
+      const effBucket = fb || co.feeBucket;
+      if (effBucket === COST_BUCKET_RECURRING) {
+        if (co.bucket === COST_BUCKET_RECURRING) { agg.monthlyTotal += co.price; any = true; }
+        else if (co.rolled) { agg.monthlyTotal += co.price / rollMonths; any = true; }
+      } else if (effBucket === COST_BUCKET_UPFRONT && co.bucket === COST_BUCKET_UPFRONT) {
+        agg.upfrontTotal += co.price;
+        any = true;
+      }
+    });
+    agg.rollMonths = rollMonths;
+    if (any) {
+      const total = (fb || costOut[agg.costIdx[0]]?.feeBucket) === COST_BUCKET_UPFRONT ? agg.upfrontTotal : agg.monthlyTotal;
+      agg.standardFee = Math.round((total / units) * 100) / 100;
+    }
+  });
+  return { perRow, costs: costOut };
+}
+
 // Tagging an unlinked cost line from the Services subtab.
 //
 // The same Line Item -> Services map the Linked To subtab edits, with one
