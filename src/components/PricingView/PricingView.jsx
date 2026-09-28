@@ -25,6 +25,9 @@ import { BrokerFeesTab } from './BrokerFeesTab';
 import { S2CTab } from './S2CTab';
 import { migrateS2cTags } from '../../utils/s2cTags';
 import { CalculatorTab } from './CalculatorTab';
+import { ServicesTab } from './ServicesTab';
+import { buildServiceRows } from '../../utils/serviceRows';
+import { buildPricingServiceList, costItemsForService } from '../../utils/pricingServices';
 import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
 import { isSetupFeeType } from '../../utils/setupFeeFloor';
 import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
@@ -2297,7 +2300,7 @@ export function PricingView({ settings } = {}) {
   useEffect(() => {
     try { localStorage.setItem('pricing-show-quick-conversions', showConversionsOnPricing ? '1' : '0'); } catch { /* noop */ }
   }, [showConversionsOnPricing]);
-  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c' | 'calculator'
+  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'services' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c' | 'calculator'
   const [optionsTabData, setOptionsTabData] = useState(null); // OptionsTab state: array of { name, years, escPct, rows: [...] }
   const [compareTabData, setCompareTabData] = useState(null); // CompareTab state: { currentLabel, nextLabel, current: [...], next: [...] }
   const [brokerFeesData, setBrokerFeesData] = useState(null); // BrokerFeesTab state: array of { company, loadEp, feeEp, rfps, loadNg, feeNg }
@@ -2454,7 +2457,7 @@ export function PricingView({ settings } = {}) {
         if (typeof saved.hideEmptyCtsRows === 'boolean') setHideEmptyCtsRows(saved.hideEmptyCtsRows);
         if (saved.summaryColWidths) setSummaryColWidths(saved.summaryColWidths);
         if (saved.summaryColVisibility) setSummaryColVisibility(saved.summaryColVisibility);
-        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options' || saved.pageSubtab === 'compare' || saved.pageSubtab === 'brokerFees' || saved.pageSubtab === 's2c' || saved.pageSubtab === 'calculator') setPageSubtab(saved.pageSubtab);
+        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'services' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options' || saved.pageSubtab === 'compare' || saved.pageSubtab === 'brokerFees' || saved.pageSubtab === 's2c' || saved.pageSubtab === 'calculator') setPageSubtab(saved.pageSubtab);
         if (Array.isArray(saved.s2cTabData)) setS2cTabData(saved.s2cTabData);
         if (Array.isArray(saved.optionsTabData)) setOptionsTabData(saved.optionsTabData);
         if (saved.compareTabData && typeof saved.compareTabData === 'object') setCompareTabData(saved.compareTabData);
@@ -2590,6 +2593,18 @@ export function PricingView({ settings } = {}) {
     }
     return out;
   }, [workbook, lineItemServices]);
+
+  // The Services subtab's list: the Dropdowns tab's catalog with each
+  // service's status, and the ones the active option's cost lines map to
+  // marked in scope and pinned to the top.
+  const pricingServiceList = useMemo(() => {
+    const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
+    return buildPricingServiceList({
+      serviceRows: buildServiceRows(settings),
+      hiddenServices: settings?.hiddenServices || [],
+      scopeServices: opt ? (pricingOptionServices[opt.sheetName] || []) : [],
+    });
+  }, [settings, workbook, activeOption, pricingOptionServices]);
 
   // Persist the derived per-Option bundle and broadcast a change so
   // Opps 2 can refresh its picker without needing the workbook itself.
@@ -4569,6 +4584,82 @@ export function PricingView({ settings } = {}) {
   // as "from SIA" rather than offering to set what is already set.
   const siaGmApplied = !!siaGm && Math.round(siaGm.pct * 1000) === Math.round(globalGmPct * 1000);
 
+
+  // What the Services subtab shows for one service on the active option:
+  // the cost lines mapped to it, and the fee rows those costs price. A fee
+  // the Alternative Fee schedule already carries shows as it is there
+  // (typed fee, else the derived one); a fee it doesn't carry yet shows
+  // as Build from Automated Fee Names would add it.
+  function serviceDetailFor(serviceName) {
+    const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
+    if (!opt) return { items: [], fees: [] };
+    const norm = (v) => String(v ?? '').trim().toLowerCase();
+    const want = norm(serviceName);
+    const allItems = (opt.sections || []).flatMap(sec => sec.items || []);
+    const items = costItemsForService(allItems, lineItemServices, serviceName).map(item => {
+      const t = effectiveType(item);
+      return {
+        id: item.id,
+        description: item.description,
+        type: t,
+        cts: typeof item.cts === 'number' ? item.cts : null,
+        startMonth: effectiveItemStartMonth(item),
+        feeName: String(mappingNameFor(item) || '').trim(),
+        automatedName: String(resolvedLinkedTo(item) || '').trim(),
+        unit: linkedToUnitDefaults?.[linkedToDefaultKey(item.description, t)] || '',
+        passThrough: isPassThrough(item),
+        otherServices: (lineItemServices?.[norm(item.description)] || []).filter(x => norm(x) && norm(x) !== want),
+      };
+    });
+
+    const feeNames = [];
+    // The name that prices each cost on the schedule (the Map by setting
+    // decides which) and its Automated Fee Name, which is what Build from
+    // Automated Fee Names would add a row for.
+    for (const it of items) {
+      for (const n of [it.feeName, it.automatedName]) {
+        if (n && !feeNames.some(x => norm(x) === norm(n))) feeNames.push(n);
+      }
+    }
+    const byFee = servicesByFeeName({
+      items: allItems.map(item => ({ description: item.description, linkedTo: resolvedLinkedTo(item) })),
+      lineItemServices,
+    });
+    const numYears = Math.max(1, Math.ceil(termMonths / 12));
+    const view = (row, onSchedule) => {
+      const manual = Number(row.fee);
+      const feeIsManual = row.fee != null && row.fee !== '' && Number.isFinite(manual) && manual >= 0;
+      const auto = feeIsManual ? null : autoFeePerUnitFor(row);
+      const margin = typeof row.feeGmPct === 'number' ? row.feeGmPct : (altFeeMarginFor(row.altItem)?.marginPct ?? null);
+      return {
+        name: row.altItem,
+        onSchedule,
+        type: row.type || '',
+        feePerUnit: feeIsManual ? manual : (typeof auto === 'number' ? auto : null),
+        feeIsManual,
+        unit: row.unit || '',
+        unitCount: row.unitCount === '' || row.unitCount == null ? '' : row.unitCount,
+        startMonth: altFeeRowStartMonth(row),
+        years: Array.from({ length: numYears }, (_, yi) => altFeeYearRevenue(row, yi + 1)),
+        gmPct: margin,
+        passThrough: row.passThrough === true,
+        sharedWith: (byFee.get(norm(row.altItem)) || []).filter(x => norm(x) !== want),
+      };
+    };
+    const schedule = altFees[opt.optionNumber] || [];
+    const built = automatedFeeBuildRows(opt);
+    const fees = [];
+    for (const name of feeNames) {
+      const k = norm(name);
+      const onSched = schedule.filter(r => norm(r.altItem) === k);
+      const toBuild = built.filter(r => norm(r.altItem) === k);
+      onSched.forEach(r => fees.push(view(r, true)));
+      toBuild.forEach(r => fees.push(view(r, false)));
+      if (onSched.length === 0 && toBuild.length === 0) fees.push({ name, missing: true });
+    }
+    return { items, fees };
+  }
+
   return (
     <div
       className={styles.wrapper}
@@ -4794,6 +4885,13 @@ export function PricingView({ settings } = {}) {
         </button>
         <button
           type="button"
+          className={pageSubtab === 'services' ? styles.subtabActive : styles.subtab}
+          onClick={() => setPageSubtab('services')}
+        >
+          Services
+        </button>
+        <button
+          type="button"
           className={pageSubtab === 'linkedTo' ? styles.subtabActive : styles.subtab}
           onClick={() => setPageSubtab('linkedTo')}
         >
@@ -4835,6 +4933,18 @@ export function PricingView({ settings } = {}) {
           Calculator
         </button>
       </div>
+
+      {pageSubtab === 'services' && (
+        <ServicesTab
+          workbook={workbook}
+          activeOption={activeOption}
+          setActiveOption={setActiveOption}
+          services={pricingServiceList}
+          detailFor={serviceDetailFor}
+          numYears={Math.max(1, Math.ceil(termMonths / 12))}
+          onOpenLinkedTo={() => setPageSubtab('linkedTo')}
+        />
+      )}
 
       {pageSubtab === 'linkedTo' && (
         <LinkedToPanel
