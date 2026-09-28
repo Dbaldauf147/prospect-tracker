@@ -625,3 +625,123 @@
 .unlinkedFoot {
   color: #92400e;
 }
+
+/* The price check meter: $0 on the left, the rate card range shaded, a dot
+   where the marked-up price lands and a thin tick for the raw cost. */
+.meter {
+  position: relative;
+  max-width: 640px;
+  padding: 0 0.25rem;
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.meterTop,
+.meterScale {
+  position: relative;
+  height: 1.2rem;
+}
+
+.meterPriceLabel,
+.meterScaleLabel {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.meterPriceLabel {
+  bottom: 0.1rem;
+  font-weight: 600;
+}
+
+.meterScaleLabel {
+  top: 0.15rem;
+  color: var(--color-text-muted);
+}
+
+.meterTrack {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: #e2e8f0;
+}
+
+.meterBand {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+  background: #86efac;
+}
+
+.meterTick {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 3px;
+  margin-left: -1.5px;
+  border-radius: 2px;
+  background: #22c55e;
+}
+
+.meterCost {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: #64748b;
+}
+
+.meterDot {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px #fff;
+}
+
+.meterIn { color: #166534; }
+.meterOut { color: #b91c1c; }
+.meterUnknown { color: #475569; }
+.meterDot.meterIn, .meterKeyDot.meterIn { background: #16a34a; }
+.meterDot.meterOut, .meterKeyDot.meterOut { background: #dc2626; }
+.meterDot.meterUnknown, .meterKeyDot.meterUnknown { background: #64748b; }
+
+.meterLegend {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 0.2rem;
+  color: var(--color-text-muted);
+}
+
+.meterLegend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.meterKeyBand {
+  display: inline-block;
+  width: 14px;
+  height: 8px;
+  border-radius: 4px;
+  background: #86efac;
+}
+
+.meterKeyDot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.meterKeyCost {
+  display: inline-block;
+  width: 2px;
+  height: 12px;
+  background: #64748b;
+}
