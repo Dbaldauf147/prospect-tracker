@@ -140,8 +140,22 @@ export function parseDigestText(text, links = []) {
       continue;
     }
     if (!cur || closed) continue;
-    if (!cur.asset) { cur.asset = tok; continue; }
-    if (/^buyer:/i.test(tok)) { cur.buyer = tok.replace(/^buyer:\s*/i, ''); continue; }
+    if (!cur.asset) {
+      // The email tags each deal BOUGHT or SOLD ahead of its name, and a
+      // copy runs the tag into the name ("SOLDAcme Services").
+      const tag = tok.match(/^(BOUGHT|SOLD)\s*(.*)$/);
+      if (tag) {
+        cur.kind = tag[1] === 'SOLD' ? 'Disposition' : 'Acquisition';
+        if (tag[2]) cur.asset = tag[2];
+        continue;
+      }
+      cur.asset = tok;
+      continue;
+    }
+    // Our side of the deal: "Buyer" on an acquisition, "Seller" on a sale.
+    if (/^(buyer|seller):/i.test(tok)) { cur.buyer = tok.replace(/^(buyer|seller):\s*/i, ''); continue; }
+    // The other side.
+    if (/^(sold to|bought from):/i.test(tok)) { cur.counterparty = tok.replace(/^(sold to|bought from):\s*/i, ''); continue; }
     if (ARROW.test(tok)) {
       cur.sourceTitle = tok.replace(ARROW, '').trim();
       cur.sourceUrl = linkFor(tok);
@@ -159,10 +173,10 @@ export function parseDigestText(text, links = []) {
   return deals
     .filter((d) => d.asset)
     .map((d) => ({
-      kind: 'Acquisition',
+      kind: d.kind || 'Acquisition',
       date: d.date,
       asset: d.asset,
-      counterparty: '',
+      counterparty: d.counterparty || '',
       // The digest's "Buyer" is the entity on our side of the deal - the
       // company itself, or the portfolio company that made an add-on.
       entity: d.buyer || '',

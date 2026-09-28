@@ -130,23 +130,27 @@ export function formatWindow(since, until) {
 // says which of them are this company buying something. Dates, URLs and
 // publishers come from the feed, so the model can no longer invent one —
 // and a company whose feed is quiet costs nothing at all.
-const NEWS_SYSTEM_PROMPT = `You are an M&A research assistant. You are given a company name and a numbered list of news headlines about it, already restricted to one date window. Decide which headlines report an acquisition THAT COMPANY MADE.
+const NEWS_SYSTEM_PROMPT = `You are an M&A research assistant. You are given a company name and a numbered list of news headlines about it, already restricted to one date window. Decide which headlines report an acquisition THAT COMPANY MADE, or a disposition (a sale) THAT COMPANY MADE.
 
-Count as a qualifying acquisition:
+Count as a qualifying acquisition (kind "Acquisition"):
 - The company acquiring another company, business unit, or asset portfolio.
 - For a private equity / investment firm: new platform investments, add-on / bolt-on acquisitions made by its portfolio companies, take-privates, and majority recapitalizations. An add-on counts even when the buyer of record is the portfolio company, as long as the firm is named as the sponsor.
 
+Count as a qualifying disposition (kind "Disposition"):
+- The company selling, divesting, or exiting a business, unit, asset portfolio, or its controlling stake in one.
+- For a private equity / investment firm: the sale of one of its portfolio companies to another buyer (an exit), including "<firm>-backed X acquired by Y" and "Y acquires X from <firm>".
+
 Do NOT count, even when the headline is about the company:
 - The company itself being acquired, or a stake in it being sold.
-- Minority investments with no control, venture rounds, and funding rounds the company merely participated in.
+- Minority investments or minority sell-downs with no change of control, venture rounds, and funding rounds the company merely participated in.
 - Fund closes, capital raises, dry powder announcements.
-- Exits, divestitures, and sales of portfolio companies.
+- IPOs and spin-offs.
 - Earnings, leadership changes, expansions, partnerships, product launches, litigation.
-- Rumoured, "exploring", "in talks", or unconfirmed deals.
+- Rumoured, "exploring", "in talks", "plans to sell", "up for sale", or otherwise unconfirmed deals.
 - Recaps, profiles, or anniversary pieces about a deal from an earlier year, even when published this week.
-- Deals where others are the buyers and the company is only named as their partner, lender, or financing source.
+- Deals where others are the buyers or sellers and the company is only named as their partner, lender, or financing source.
 
-The "buyer" field is a short entity name (e.g. "Apollo funds", "Foo Corp"), never a phrase or sentence from the headline.
+The "buyer" field is a short entity name on the company's side of the deal (e.g. "Apollo funds", "Foo Corp"), never a phrase or sentence from the headline. The "counterparty" field is the other side: the seller on an acquisition, the buyer on a disposition, or an empty string if the headline does not say.
 
 Work only from the headlines given. Do not add deals you remember from elsewhere - a deal that is not in the list does not go in the answer. When several headlines cover the same deal, return the clearest one only.
 
@@ -155,18 +159,20 @@ Return ONLY a JSON object (no prose, no markdown fences) of this exact shape:
   "deals": [
     {
       "index": the number of the headline this deal comes from,
-      "target": "name of the company/asset acquired",
-      "buyer": "the acquiring entity - the portfolio company for an add-on, otherwise the company itself",
-      "dealType": one of "Platform", "Add-on", "Take-private", "Asset purchase", "Acquisition",
+      "kind": "Acquisition" or "Disposition",
+      "target": "name of the company/asset bought or sold",
+      "buyer": "the entity on the company's side - the portfolio company for an add-on, otherwise the company itself",
+      "counterparty": "the seller on an acquisition, the buyer on a disposition, or empty string",
+      "dealType": for an acquisition one of "Platform", "Add-on", "Take-private", "Asset purchase", "Acquisition"; for a disposition one of "Exit", "Divestiture", "Asset sale", "Carve-out",
       "sector": "short sector label for the target, e.g. Industrial Services, or empty string",
       "sites": "site/facility count or footprint if the headline reports one, else empty string",
       "value": "reported deal value if disclosed, e.g. \\"$450M\\", else empty string",
-      "summary": "one sentence, max 220 characters, on what was bought and why"
+      "summary": "one sentence, max 220 characters, on what was bought or sold and why"
     }
   ]
 }
 
-If none of the headlines report an acquisition the company made, return {"deals": []}.`;
+If none of the headlines report an acquisition or disposition the company made, return {"deals": []}.`;
 
 // The digest's own errors, so callers can tell "this company had a bad day"
 // from "the whole run is dead". A wrong or unfunded API key is the second
@@ -362,9 +368,11 @@ export function classifyByRules(entry, items) {
     seen.add(key);
 
     deals.push({
+      kind: d.kind || 'Acquisition',
       target: d.target,
       buyer: d.buyer || entry.company,
-      dealType: d.dealType || 'Acquisition',
+      counterparty: d.counterparty || '',
+      dealType: d.dealType || (d.kind === 'Disposition' ? 'Divestiture' : 'Acquisition'),
       sector: '',
       sites: '',
       value: d.value || '',
@@ -392,10 +400,12 @@ Return ONLY a JSON object (no prose, no markdown fences) of this exact shape:
 {
   "deals": [
     {
-      "target": "name of the company/asset acquired",
+      "kind": "Acquisition" or "Disposition",
+      "target": "name of the company/asset bought or sold",
       "announcedOn": "YYYY-MM-DD",
-      "buyer": "the acquiring entity",
-      "dealType": one of "Platform", "Add-on", "Take-private", "Asset purchase", "Acquisition",
+      "buyer": "the entity on the company's side",
+      "counterparty": "the seller on an acquisition, the buyer on a disposition, or empty string",
+      "dealType": for an acquisition one of "Platform", "Add-on", "Take-private", "Asset purchase", "Acquisition"; for a disposition one of "Exit", "Divestiture", "Asset sale", "Carve-out",
       "sector": "short sector label for the target",
       "sites": "site/facility count or footprint if reported, else empty string",
       "value": "reported deal value if disclosed, else empty string",
@@ -406,18 +416,18 @@ Return ONLY a JSON object (no prose, no markdown fences) of this exact shape:
   ]
 }
 
-Every deal MUST have a sourceUrl you actually found via search. If there are no qualifying acquisitions in the window, return {"deals": []}. Never invent a deal, a date, or a URL.`;
+Every deal MUST have a sourceUrl you actually found via search. If there are no qualifying acquisitions or dispositions in the window, return {"deals": []}. Never invent a deal, a date, or a URL.`;
 
 export async function researchViaWebSearch(entry, since, until, { signal, feedError } = {}) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return { deals: [], error: 'ANTHROPIC_API_KEY not configured' };
 
   const peHint = entry.isPe
-    ? ` "${entry.company}" is a private equity firm: search for its new platform investments AND the add-on acquisitions its portfolio companies made with it as sponsor.`
+    ? ` "${entry.company}" is a private equity firm: search for its new platform investments, the add-on acquisitions its portfolio companies made with it as sponsor, AND its exits (portfolio companies it sold).`
     : '';
   const siteHint = entry.website ? ` Its website is ${entry.website}.` : '';
 
-  const userPrompt = `Find every acquisition made by "${entry.company}" announced between ${isoDate(since)} and ${isoDate(until)} (inclusive).${peHint}${siteHint}
+  const userPrompt = `Find every acquisition made by, and every disposition (sale or exit) made by, "${entry.company}" announced between ${isoDate(since)} and ${isoDate(until)} (inclusive).${peHint}${siteHint}
 
 Search the web before answering - do not answer from memory alone. Return the JSON object as specified.`;
 
@@ -481,15 +491,21 @@ Search the web before answering - do not answer from memory alone. Return the JS
   }
 }
 
-const DEAL_TYPES = ['Platform', 'Add-on', 'Take-private', 'Asset purchase', 'Acquisition'];
+const DEAL_TYPES = {
+  Acquisition: ['Platform', 'Add-on', 'Take-private', 'Asset purchase', 'Acquisition'],
+  Disposition: ['Exit', 'Divestiture', 'Asset sale', 'Carve-out'],
+};
 const str = (v, max) => String(v ?? '').trim().slice(0, max);
 
 function baseDeal(d) {
+  const kind = str(d.kind, 20) === 'Disposition' ? 'Disposition' : 'Acquisition';
   const dealType = str(d.dealType, 40);
   return {
+    kind,
     target: str(d.target, 200),
     buyer: str(d.buyer, 200),
-    dealType: DEAL_TYPES.includes(dealType) ? dealType : 'Acquisition',
+    counterparty: str(d.counterparty, 200),
+    dealType: DEAL_TYPES[kind].includes(dealType) ? dealType : (kind === 'Disposition' ? 'Divestiture' : 'Acquisition'),
     sector: str(d.sector, 80),
     sites: str(d.sites, 60),
     value: str(d.value, 40),
@@ -708,6 +724,7 @@ function escapeHtml(s) {
 }
 
 function dealRow(deal) {
+  const sold = deal.kind === 'Disposition';
   const meta = [deal.dealType, deal.sector, deal.value, deal.sites ? `${deal.sites} sites` : '']
     .map((s) => String(s || '').trim())
     .filter(Boolean)
@@ -720,9 +737,13 @@ function dealRow(deal) {
         ${escapeHtml(deal.announcedOn)}
       </td>
       <td style="padding:10px 12px;border-top:1px solid #E2E8F0;vertical-align:top">
-        <div style="font-weight:700;color:#0F172A;font-size:14px">${escapeHtml(deal.target)}</div>
+        <div style="font-weight:700;color:#0F172A;font-size:14px">
+          <span style="display:inline-block;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:700;vertical-align:middle;margin-right:6px;${sold ? 'background:#FEF3C7;color:#92400E' : 'background:#DCFCE7;color:#166534'}">${sold ? 'SOLD' : 'BOUGHT'}</span>${escapeHtml(deal.target)}
+        </div>
         ${meta ? `<div style="color:#475569;font-size:12px;margin-top:2px">${meta}</div>` : ''}
-        ${deal.buyer ? `<div style="color:#64748B;font-size:12px;margin-top:2px">Buyer: ${escapeHtml(deal.buyer)}</div>` : ''}
+        ${sold
+          ? `${deal.buyer ? `<div style="color:#64748B;font-size:12px;margin-top:2px">Seller: ${escapeHtml(deal.buyer)}</div>` : ''}${deal.counterparty ? `<div style="color:#64748B;font-size:12px;margin-top:2px">Sold to: ${escapeHtml(deal.counterparty)}</div>` : ''}`
+          : `${deal.buyer ? `<div style="color:#64748B;font-size:12px;margin-top:2px">Buyer: ${escapeHtml(deal.buyer)}</div>` : ''}${deal.counterparty ? `<div style="color:#64748B;font-size:12px;margin-top:2px">Bought from: ${escapeHtml(deal.counterparty)}</div>` : ''}`}
         ${deal.summary ? `<div style="color:#334155;font-size:13px;margin-top:6px;line-height:1.45">${escapeHtml(deal.summary)}</div>` : ''}
         <div style="margin-top:6px">
           <a href="${escapeHtml(deal.sourceUrl)}" style="color:#009530;font-size:12px;text-decoration:none">${escapeHtml(deal.sourceTitle)} →</a>
@@ -747,7 +768,7 @@ function companySection(result) {
                : 'Not searched this run - the digest ran out of time before reaching it. It moves to the front of the queue next run.')
            : result.error
              ? `Couldn't be researched: ${escapeHtml(result.error)}`
-             : 'No acquisitions announced in this window.'}
+             : 'No acquisitions or dispositions announced in this window.'}
        </div>`;
 
   return `
@@ -791,6 +812,12 @@ export function buildNewsEmailHtml(results, { since, until, message, newsletters
   const withDeals = results.filter(hasContent);
   const withoutDeals = results.filter((r) => !hasContent(r));
   const totalDeals = results.reduce((n, r) => n + r.deals.length, 0);
+  const totalSold = results.reduce((n, r) => n + r.deals.filter((d) => d.kind === 'Disposition').length, 0);
+  const totalBought = totalDeals - totalSold;
+  const dealCount = [
+    totalBought ? `${totalBought} acquisition${totalBought === 1 ? '' : 's'}` : '',
+    totalSold ? `${totalSold} disposition${totalSold === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(', ');
   const dealFirms = results.filter((r) => r.deals.length > 0).length;
   const totalUnsure = results.reduce((n, r) => n + (r.unsure || []).length, 0);
   const searchedCount = results.filter((r) => !r.skipped).length;
@@ -821,7 +848,7 @@ export function buildNewsEmailHtml(results, { since, until, message, newsletters
   const blocked = withoutDeals.filter((r) => r.halted);
 
   const quietList = [
-    quiet('No acquisitions found', searchedEmpty),
+    quiet('No deals found', searchedEmpty),
     quiet('Search failed', failed, (r) => ` - ${escapeHtml(String(r.error).slice(0, 160))}`),
     quiet('Not searched this run - first in line next run', notSearched),
     quiet('Not searched - the run stopped before reaching them', blocked),
@@ -849,14 +876,14 @@ export function buildNewsEmailHtml(results, { since, until, message, newsletters
       <div style="color:#64748B;font-size:12px;margin:0 0 18px">
         ${escapeHtml(formatWindow(since, until))} ·
         ${totalDeals
-          ? `${totalDeals} acquisition${totalDeals === 1 ? '' : 's'} at ${dealFirms} of ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} searched`
-          : `no acquisitions · ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} searched`}${searchedCount < results.length ? ` (${results.length} tracked)` : ''}${totalUnsure ? ` · ${totalUnsure} headline${totalUnsure === 1 ? '' : 's'} to check` : ''}
+          ? `${dealCount} at ${dealFirms} of ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} searched`
+          : `no deals · ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} searched`}${searchedCount < results.length ? ` (${results.length} tracked)` : ''}${totalUnsure ? ` · ${totalUnsure} headline${totalUnsure === 1 ? '' : 's'} to check` : ''}
       </div>
       ${haltBanner}
       ${intro}
       ${withDeals.length
         ? withDeals.map(companySection).join('')
-        : `<div style="color:#94A3B8;font-size:14px;padding:12px 0">No acquisitions were found in this window${searchedCount < results.length ? ` among the ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} this run reached` : ''}.</div>`}
+        : `<div style="color:#94A3B8;font-size:14px;padding:12px 0">No acquisitions or dispositions were found in this window${searchedCount < results.length ? ` among the ${searchedCount} ${searchedCount === 1 ? 'company' : 'companies'} this run reached` : ''}.</div>`}
       ${quietList}
       ${fellBack.length
         ? `<div style="margin-top:22px;padding-top:12px;border-top:1px solid #E2E8F0;color:#94A3B8;font-size:11px;line-height:1.5">
@@ -908,14 +935,14 @@ export function dealToTransaction(deal, company, now = Date.now()) {
   const buyer = String(deal.buyer || '').trim();
   return {
     id: `tx_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-    kind: 'Acquisition',
+    kind: deal.kind === 'Disposition' ? 'Disposition' : 'Acquisition',
     date: String(deal.announcedOn || ''),
     asset: String(deal.target || ''),
     // The digest's buyer is the company itself or the portfolio company that
     // made an add-on; only the second is worth a "Through" entry.
     // "Apollo" for Apollo Global Management is the company itself too.
     entity: buyer && !String(company || '').toLowerCase().includes(buyer.toLowerCase()) ? buyer : '',
-    counterparty: '',
+    counterparty: String(deal.counterparty || ''),
     dealType: String(deal.dealType || ''),
     sector: String(deal.sector || ''),
     value: String(deal.value || ''),
@@ -933,7 +960,7 @@ export function dealToTransaction(deal, company, now = Date.now()) {
 // ways a few days apart, so this is sameDeal's fuzzy match rather than an
 // exact asset and date.
 function onLog(log, row) {
-  return log.some(r => sameDeal({ target: r?.asset, date: r?.date }, { target: row.asset, date: row.date }));
+  return log.some(r => sameDeal({ target: r?.asset, date: r?.date, kind: r?.kind }, { target: row.asset, date: row.date, kind: row.kind }));
 }
 
 // The log with this run's new deals added, and how many were new. Pure, so

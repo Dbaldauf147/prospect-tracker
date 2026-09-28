@@ -7,7 +7,8 @@
 // comes back more than once; what matters here is that it lands on the log
 // once, that nothing typed by hand is lost, and that one bad record does
 // not stop the rest.
-import { dealToTransaction, mergeDealsIntoLog, logDealsToRecords, buildNewsEmailHtml, checkCompanyNow } from '../api/_lib/companyNews.js';
+import { dealToTransaction, mergeDealsIntoLog, logDealsToRecords, buildNewsEmailHtml, checkCompanyNow, classifyByRules, dealsFromHeadlines } from '../api/_lib/companyNews.js';
+import { parseDigestText } from '../src/utils/portfolioTransactions.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -121,6 +122,47 @@ const deal = {
   const html = buildNewsEmailHtml([{ company: 'Blackstone', deals: [deal], unsure: [] }], { since: 0, until: 1, logged: 2 });
   eq(html.includes('2 new deals were added'), true, 'footer counts the deals logged');
   eq(buildNewsEmailHtml([], { since: 0, until: 1 }).includes('Acquisitions &amp; Dispositions log'), false, 'and says nothing when none were');
+}
+
+// ── dispositions, end to end ─────────────────────────────────────────────
+{
+  const items = [
+    ['Apollo agrees to sell Gamma Logistics to KKR for $2bn - Reuters', '2026-09-20'],
+    ['Apollo acquires Acme Services - Reuters', '2026-09-21'],
+  ].map(([title, d]) => ({ title, publishedAt: Date.parse(d), link: 'https://example.com/' + d, source: 'Reuters' }));
+  const entry = { id: 'apollo', company: 'Apollo Global Management', isPe: true };
+  const { deals } = classifyByRules(entry, items);
+  const byKind = Object.fromEntries(deals.map(d => [d.kind, d]));
+  eq([byKind.Disposition?.target, byKind.Disposition?.counterparty, byKind.Disposition?.dealType, byKind.Disposition?.value],
+    ['Gamma Logistics', 'KKR', 'Exit', '$2B'], 'digest: the sale comes through as a disposition, sold to KKR');
+  eq(byKind.Acquisition?.target, 'Acme Services', 'digest: alongside the acquisition');
+
+  const html = buildNewsEmailHtml([{ ...entry, deals, unsure: [] }], { since: 0, until: 1 });
+  eq(html.includes('1 acquisition, 1 disposition'), true, 'email: the header counts each kind');
+  eq(html.includes('>SOLD</span>Gamma Logistics'), true, 'email: a sale is tagged SOLD');
+  eq(html.includes('Sold to: KKR'), true, 'email: with who bought it');
+
+  const { rows } = mergeDealsIntoLog([], deals, entry.company);
+  const sold = rows.find(r => r.kind === 'Disposition');
+  eq([sold?.asset, sold?.counterparty, sold?.dealType, sold?.entity], ['Gamma Logistics', 'KKR', 'Exit', ''], 'log: logged as a disposition with its counterparty');
+  eq(mergeDealsIntoLog([{ asset: 'Gamma Logistics', date: '2026-09-20', kind: 'Acquisition' }], [byKind.Disposition], entry.company).added, 1,
+    'log: an earlier purchase of the same company does not block its sale');
+
+  // Pasting the email back in keeps each deal's kind.
+  const text = [
+    '2026-09-20', 'SOLDGamma Logistics', 'Exit · $2B', 'Seller: Apollo', 'Sold to: KKR', 'Apollo agrees to sell Gamma.', 'Reuters →',
+    '2026-09-21', 'BOUGHT Acme Services', 'Platform', 'Buyer: Apollo', 'Bought from: Founders', 'Reuters →',
+  ].join('\n');
+  const pasted = parseDigestText(text);
+  eq(pasted.map(d => [d.kind, d.asset, d.counterparty, d.dealType]),
+    [['Disposition', 'Gamma Logistics', 'KKR', 'Exit'], ['Acquisition', 'Acme Services', 'Founders', 'Platform']], 'paste: kind, name and counterparty read off the email');
+}
+
+// The AI path: a disposition answer keeps its kind and gets a disposition type.
+{
+  const items = [{ title: 'Apollo sells Gamma', publishedAt: Date.parse('2026-09-20'), link: 'https://x', source: 'S' }];
+  const [d] = dealsFromHeadlines([{ index: 0, kind: 'Disposition', target: 'Gamma', buyer: 'Apollo', counterparty: 'KKR', dealType: 'Platform' }], items);
+  eq([d.kind, d.counterparty, d.dealType], ['Disposition', 'KKR', 'Divestiture'], 'ai: kind kept, an acquisition-only type replaced');
 }
 
 console.log(`${failed ? 'FAIL' : 'PASS'}  companyNewsAutoLog: ${passed} passed, ${failed} failed`);

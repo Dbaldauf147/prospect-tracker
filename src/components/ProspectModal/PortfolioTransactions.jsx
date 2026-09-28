@@ -70,7 +70,8 @@ function PasteDigestPanel({ existingKeys, onAdd, onClose }) {
   const [links, setLinks] = useState([]);
   const parsed = useMemo(() => parseDigestText(text, links), [text, links]);
   const fresh = parsed.filter(d => !existingKeys.has(transactionKey(d)));
-  const [kind, setKind] = useState('Acquisition');
+  // 'email' keeps each deal's own BOUGHT / SOLD tag from the digest.
+  const [kind, setKind] = useState('email');
 
   function handlePaste(e) {
     // The rendered email copies as HTML too; the source links only survive
@@ -108,7 +109,8 @@ function PasteDigestPanel({ existingKeys, onAdd, onClose }) {
         <label style={{ fontSize: '0.72rem', color: '#475569', display: 'flex', alignItems: 'center', gap: 4 }}>
           Log as
           <select value={kind} onChange={e => setKind(e.target.value)} style={{ fontSize: '0.72rem' }}>
-            {TRANSACTION_KINDS.map(k => <option key={k} value={k}>{k}s</option>)}
+            <option value="email">As in the email</option>
+            {TRANSACTION_KINDS.map(k => <option key={k} value={k}>All {k.toLowerCase()}s</option>)}
           </select>
         </label>
         <span style={{ flex: 1 }} />
@@ -118,13 +120,15 @@ function PasteDigestPanel({ existingKeys, onAdd, onClose }) {
           style={{ ...btn(true), opacity: fresh.length ? 1 : 0.5, cursor: fresh.length ? 'pointer' : 'default' }}
           disabled={!fresh.length}
           onClick={() => {
-            onAdd(fresh.map(d => blankTransaction(kind, {
-              ...d,
-              kind,
-              // A disposition's deal type comes from the other list; the
-              // digest's labels are all acquisition ones.
-              dealType: kind === 'Acquisition' ? d.dealType : '',
-            })));
+            onAdd(fresh.map(d => {
+              const k = kind === 'email' ? (d.kind || 'Acquisition') : kind;
+              return blankTransaction(k, {
+                ...d,
+                kind: k,
+                // A deal type from the other kind's list doesn't carry over.
+                dealType: DEAL_TYPES_BY_KIND[k].includes(d.dealType) ? d.dealType : '',
+              });
+            }));
             onClose();
           }}
         >
@@ -150,7 +154,7 @@ function CheckNowControl({ prospectId, onLogged }) {
       const found = out.found || 0;
       const logged = out.logged || 0;
       let msg;
-      if (found === 0) msg = out.error ? `Search didn't complete: ${out.error}` : `No acquisitions found in the last ${days} days.`;
+      if (found === 0) msg = out.error ? `Search didn't complete: ${out.error}` : `No acquisitions or dispositions found in the last ${days} days.`;
       else if (logged === 0) msg = `${found} ${found === 1 ? 'deal' : 'deals'} found, all already logged.`;
       else msg = `${logged} new ${logged === 1 ? 'deal' : 'deals'} logged${found > logged ? ` (${found - logged} already here)` : ''}.`;
       setState({ busy: false, msg, error: found === 0 && !!out.error });
@@ -166,7 +170,7 @@ function CheckNowControl({ prospectId, onLogged }) {
         style={{ ...btn(false), opacity: state.busy ? 0.6 : 1, cursor: state.busy ? 'default' : 'pointer' }}
         disabled={state.busy || !prospectId}
         onClick={run}
-        title="Search this company's news the same way the weekly Company Acquisition News email does, and add any deals found to this log"
+        title="Search this company's news for acquisitions and dispositions, the same way the weekly Company Acquisition News email does, and add any deals found to this log"
       >
         {state.busy ? 'Checking...' : 'Check for deals now'}
       </button>

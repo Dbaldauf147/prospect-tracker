@@ -42,6 +42,8 @@ function dayGap(a, b) {
 // "Acme Logistics" and "Beta Logistics" stay two deals. A target with no distinctive words
 // ("a stake") only matches its exact self.
 export function sameDeal(a, b) {
+  // Buying a company and selling it are two deals, however alike the name.
+  if ((a?.kind || 'Acquisition') !== (b?.kind || 'Acquisition')) return false;
   if (dayGap(a?.date, b?.date) > SAME_DEAL_DAYS) return false;
   const ta = new Set(dealTokens(a?.target));
   const tb = new Set(dealTokens(b?.target));
@@ -59,9 +61,9 @@ export function sameDeal(a, b) {
 export function dedupeDeals(deals) {
   const out = [];
   for (const d of deals || []) {
-    const hit = out.find(o => sameDeal({ target: o.target, date: o.announcedOn }, { target: d.target, date: d.announcedOn }));
+    const hit = out.find(o => sameDeal({ target: o.target, date: o.announcedOn, kind: o.kind }, { target: d.target, date: d.announcedOn, kind: d.kind }));
     if (!hit) { out.push({ ...d }); continue; }
-    for (const k of ['value', 'sector', 'sites', 'dealType']) {
+    for (const k of ['value', 'sector', 'sites', 'dealType', 'counterparty']) {
       if (!hit[k] && d[k]) hit[k] = d[k];
     }
   }

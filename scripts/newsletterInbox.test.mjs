@@ -110,9 +110,10 @@ const PEHUB = `
   eq(read('Apollo Global Management', first).skip, 'not about this firm',
     'pipeline: another firm does not inherit this story');
 
-  // The firm on the selling side of a sale is not buying anything.
-  eq(read('Warburg Pincus', second).skip, 'the firm is selling',
-    'pipeline: a sale is credited to the buyer, not the seller');
+  // The firm on the selling side of a sale is not buying anything: it is
+  // credited with the sale instead.
+  eq(read('Warburg Pincus', second).deal?.kind, 'Disposition',
+    'pipeline: a sale is the buyer\'s acquisition and the seller\'s disposition');
 }
 
 // ---- Reading the label ---------------------------------------------------

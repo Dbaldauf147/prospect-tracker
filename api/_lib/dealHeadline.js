@@ -43,8 +43,9 @@ const DISQUALIFIERS = [
   // Unconfirmed. A digest that reports talks as deals is worse than one
   // that reports nothing.
   [/\b(explore[sd]?|exploring|weigh[s|ed]*|weighing|mull[s|ed]*|mulling|consider(s|ing|ed)?|in talks|near(s|ing)?\b|reportedly|rumou?r|could|might|may|said to be|eyeing|eyes)\b/i, 'unconfirmed'],
-  // The firm on the exit side.
-  [/\b(divest(s|ed|ing|ment)?|offload(s|ed|ing)?|exit(s|ed|ing)?)\b/i, 'exit'],
+  // A sale being set up is not a sale. Dispositions are logged now, so
+  // the ways a seller signals one ahead of time have to be caught too.
+  [/\b(plans?\s+to|planning\s+to|prepar(es|ing)|seek(s|ing)?\s+(a\s+)?buyers?|up\s+for\s+sale|on\s+the\s+block|sale\s+process|hires?\s+(advisers|advisors|bankers)|shops?\s+around)\b/i, 'unconfirmed'],
   [/\b(ipo|initial public offering|go(es)? public|spin[- ]?off)\b/i, 'not an acquisition'],
   [/\b(earnings|results|revenue|profit|loss|appoint(s|ed|ment)?|name[sd]?\b[^.]*\b(ceo|cfo|coo|chair|partner|head)\b|hire[sd]?|promote[sd]?|step(s|ped)? down|lawsuit|sue[sd]?|settle[sd]?|fine[sd]?|probe|investigation)\b/i, 'not an acquisition'],
   // A minority position is explicitly out of scope for this digest.
@@ -93,6 +94,11 @@ const SELL_FORWARD = [
   /\b(?:to\s+)?sells?\b/i,
   /\bsold\b/i,
   /\bagree[sd]?\s+to\s+sell\b/i,
+  /\b(?:to\s+)?divest(?:s|ed)?\b/i,
+  /\b(?:to\s+)?offload(?:s|ed)?\b/i,
+  /\b(?:to\s+)?exit(?:s|ed)?\b/i,
+  /\b(?:announces?|completes?|closes?|finali[sz]es?|agrees?\s+to)\s+(?:the\s+)?(?:sale|divestiture)\s+of\b/i,
+  /\b(?:sale|divestiture)\s+of\b/i,
 ];
 
 // Shapes read with enough confidence to print as a deal. Everything else
@@ -114,7 +120,7 @@ const CONFIDENT_FORWARD = [
   /\btakes?\s+(?:majority|controlling)\s+(?:stake|interest|position)\s+in\b/i,
 ];
 
-const DEAL_WORDS = /\b(acquir|acquisition|buy|bought|purchas|takeover|take-private|merge|bolt-?on|add-?on|stake|deal|invest|back|sell|sold|sale|snap)/i;
+const DEAL_WORDS = /\b(acquir|acquisition|buy|bought|purchas|takeover|take-private|merge|bolt-?on|add-?on|stake|deal|invest|back|sell|sold|sale|snap|divest|offload|exit)/i;
 
 function firstMatch(patterns, text) {
   let best = null;
@@ -181,7 +187,7 @@ const TAIL_BOUNDARIES = [
   /\s+in\s+(?:a|an|the)\s+[^,]*\bdeal\b/i,
   /\s+in\s+[$€£][^,]*\bdeal\b/i,
   /\s+from\s+/i,          // "acquires X from Y" — X is the target
-  /\s+to\s+(?:expand|create|form|boost|strengthen|add)\b/i,
+  /\s+to\s+(?:expand|create|form|boost|strengthen|add|focus|fund|raise|pay|reduce|cut|streamline|simplify|sharpen|concentrate)\b/i,
   /\s+as\s+it\s+/i,
   /\s+amid\s+/i,
   /\s*[,:;]\s+(?:the|a|an|which|adding|expanding|marking)\b/i,
@@ -261,6 +267,68 @@ function cleanBuyer(left, company) {
   return cut;
 }
 
+// ---- Dispositions ---------------------------------------------------------
+// What the firm sold. Read with the same care as a purchase, and the same
+// rule about who the subject is: the firm has to be the seller, not a
+// bystander named in the sentence.
+
+// The kind of sale, from the words that mark one.
+function dispositionTypeFor(text, isPe) {
+  if (/\bcarve[- ]?out\b/i.test(text)) return 'Carve-out';
+  if (/\b(?:the\s+)?assets\s+of\b|\basset\s+portfolio\b|\bportfolio\s+of\s+\d|\b\d+\s+(?:plants?|facilities|sites|properties|buildings)\b/i.test(text)) return 'Asset sale';
+  return isPe ? 'Exit' : 'Divestiture';
+}
+
+// "X to Y" - the thing sold and who bought it. The verbs after "to" that
+// start a purpose clause ("to focus on", "to fund") are not a buyer.
+const PURPOSE_VERBS = '(?:expand|create|form|boost|strengthen|add|focus|fund|raise|pay|reduce|cut|streamline|simplify|sharpen|concentrate)';
+
+function splitSoldTo(s) {
+  const m = String(s || '').match(new RegExp(`^(.+?)\\s+to\\s+(?!${PURPOSE_VERBS}\\b)(.+)$`, 'i'));
+  return m ? { asset: m[1], buyer: m[2] } : { asset: s, buyer: '' };
+}
+
+// A company named as the firm's holding: "Apollo-backed Acme", "Apollo's
+// Acme", "Acme, owned by Apollo,". Hands back the company with the owner
+// taken off, or null when the side doesn't say the firm owns it.
+function ownedByFirm(side, variants) {
+  const text = String(side || '');
+  const backed = text.match(/^(.*?)-backed\s+(.+)$/i);
+  if (backed && namesFirm(backed[1], variants)) return backed[2];
+  const poss = text.match(/^(.*?)['\u2019]s?\s+(.+)$/);
+  if (poss && namesFirm(poss[1], variants)) return poss[2];
+  const owned = text.match(/^(.+?),?\s+(?:owned|backed|controlled)\s+by\s+([^,]+),?\s*(.*)$/i);
+  if (owned && namesFirm(owned[2], variants)) return `${owned[1]} ${owned[3]}`.trim();
+  const portco = text.match(/^(.*?)\s+portfolio\s+company\s+(.+)$/i);
+  if (portco && namesFirm(portco[1], variants)) return portco[2];
+  return null;
+}
+
+// "... from Apollo" - the firm as the seller in a buyer-first headline.
+// Only when the firm is not also named before "from".
+function soldFromFirm(side, variants) {
+  const m = String(side || '').match(/^(.*?)\s+from\s+(.+)$/i);
+  if (!m) return null;
+  if (!namesFirm(m[2], variants) || namesFirm(m[1], variants)) return null;
+  return { before: m[1], seller: m[2] };
+}
+
+function disposition({ target, seller, buyer, title, entry }) {
+  return {
+    deal: {
+      kind: 'Disposition',
+      target: cleanParty(target),
+      // The entity on the firm's side of the sale; the firm itself when the
+      // headline names nothing narrower.
+      buyer: cleanBuyer(seller || '', entry.company),
+      counterparty: buyer ? cleanBuyer(buyer, '') : '',
+      dealType: dispositionTypeFor(title, entry.isPe),
+      value: dealValue(title),
+      summary: title,
+    },
+  };
+}
+
 /**
  * Read one feed item as an acquisition by `entry.company`.
  *
@@ -285,7 +353,7 @@ export function classifyHeadline(item, entry, variants) {
   // way available: the span "sells … to" puts the SELLER on the left, so a
   // two-sided read records Apollo as the thing Blackstone bought. Pull the
   // three apart explicitly before any other shape is tried.
-  const sale = title.match(/^(.*?)\s+(?:has\s+|have\s+)?(?:agreed\s+to\s+|to\s+)?(?:sells?|sold)\s+(.+?)\s+to\s+(.+)$/i);
+  const sale = title.match(new RegExp(`^(.*?)\\s+(?:has\\s+|have\\s+)?(?:agreed\\s+to\\s+|to\\s+)?(?:sells?|sold)\\s+(.+?)\\s+to\\s+(?!${PURPOSE_VERBS}\\b)(.+)$`, 'i'));
   if (sale) {
     const [, seller, asset, buyer] = sale;
     if (namesFirm(buyer, variants)) {
@@ -299,23 +367,43 @@ export function classifyHeadline(item, entry, variants) {
         },
       };
     }
-    // The firm is the seller, or the thing being sold. Neither is a
-    // purchase by it.
-    if (namesFirm(seller, variants)) return { skip: 'the firm is selling' };
+    // The firm is the seller: a disposition, when it leads the sentence.
+    if (namesFirm(seller, variants)) {
+      if (!firmLeadsSide(seller, variants)) return { unsure: true };
+      return disposition({ target: asset, seller, buyer, title, entry });
+    }
+    // "KKR sells Apollo-backed Acme to X" is somebody else's exit.
     if (namesFirm(asset, variants)) return { skip: 'the firm is the target' };
     return { skip: 'a sale between other parties' };
   }
 
-  // Any other selling shape with the firm on the left is its own exit.
+  // Any other selling shape with the firm on the left is its own exit:
+  // "Apollo divests Acme", "Apollo completes sale of Acme to KKR".
   const sell = firstMatch(SELL_FORWARD, title);
   if (sell && namesFirm(title.slice(0, sell.index), variants)) {
-    return { skip: 'the firm is selling' };
+    const left = title.slice(0, sell.index);
+    const after = title.slice(sell.index + sell.length);
+    // Passive: "Apollo's Acme sold to KKR" - the left is the thing sold.
+    if (/^\s+to\s+/i.test(after)) {
+      const held = ownedByFirm(left, variants);
+      if (!held) return { skip: 'the firm is the target' };
+      return disposition({ target: held, seller: '', buyer: after.replace(/^\s+to\s+/i, ''), title, entry });
+    }
+    if (!firmLeadsSide(left, variants)) return { unsure: true };
+    const { asset, buyer } = splitSoldTo(title.slice(sell.index + sell.length));
+    // "exits stake in Acme" - the stake is how it held Acme, not the name.
+    const target = cleanParty(asset).replace(/^(?:its\s+|the\s+)?(?:remaining\s+|majority\s+|controlling\s+)?(?:stake|interest|holding)s?\s+in\s+/i, '');
+    if (!target) return { unsure: true };
+    return disposition({ target, seller: left, buyer, title, entry });
   }
 
   const reverse = firstMatch(BUY_REVERSE, title);
   if (reverse) {
     const right = title.slice(reverse.index + reverse.length);
     const left = title.slice(0, reverse.index);
+    // "Acme acquired by KKR from Apollo" - the firm sold it.
+    const from = soldFromFirm(right, variants);
+    if (from) return disposition({ target: left, seller: from.seller, buyer: from.before, title, entry });
     if (namesFirm(right, variants)) {
       return {
         deal: {
@@ -327,6 +415,10 @@ export function classifyHeadline(item, entry, variants) {
         },
       };
     }
+    // "Apollo-backed Acme acquired by KKR" - the firm's holding was sold,
+    // which is its exit.
+    const held = ownedByFirm(left, variants);
+    if (held) return disposition({ target: held, seller: '', buyer: right, title, entry });
     // The firm is on the left of "acquired by" — it is the one being
     // bought, which is the opposite of what this digest reports.
     if (namesFirm(left, variants)) return { skip: 'the firm is the target' };
@@ -346,6 +438,8 @@ export function classifyHeadline(item, entry, variants) {
       if (!confident) return { unsure: true };
       const target = cleanParty(right);
       if (!target) return { unsure: true };
+      // "acquires Acme from KKR" - who sold it, for the log's Counterparty.
+      const seller = (right.match(/\s+from\s+(.+)$/i) || [])[1] || '';
       // "CD&R-backed Foo Corp acquires Bar" — the buyer of record is the
       // portfolio company, and the left side names both.
       const sponsorOnly = /-backed\b|\bbacked\b|portfolio company/i.test(left);
@@ -353,11 +447,22 @@ export function classifyHeadline(item, entry, variants) {
         deal: {
           target,
           buyer: sponsorOnly ? cleanParty(left) : cleanBuyer(left, entry.company),
+          counterparty: seller ? cleanBuyer(seller, '') : '',
           dealType: sponsorOnly ? 'Add-on' : dealTypeFor(title, true, entry.isPe),
           value: dealValue(title),
           summary: title,
         },
       };
+    }
+    // "KKR acquires Acme from Apollo" - the firm sold it.
+    const from = soldFromFirm(right, variants);
+    if (from && CONFIDENT_FORWARD.some(re => re.test(fwd.verb))) {
+      return disposition({ target: from.before, seller: from.seller, buyer: left, title, entry });
+    }
+    // "KKR acquires Apollo-backed Acme" - the same, the other way round.
+    const held = ownedByFirm(cleanParty(right), variants);
+    if (held && CONFIDENT_FORWARD.some(re => re.test(fwd.verb))) {
+      return disposition({ target: held, seller: '', buyer: left, title, entry });
     }
     if (namesFirm(right, variants)) return { skip: 'the firm is the target' };
   }

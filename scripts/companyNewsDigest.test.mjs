@@ -193,7 +193,7 @@ const stubResearch = (ms, deals = () => []) => (entry, since, until, { signal } 
   ];
   const html = buildNewsEmailHtml(results, { since: 0, until: 86_400_000 });
 
-  ok(html.includes('No acquisitions found (1)'), 'email: searched-and-empty gets its own count');
+  ok(html.includes('No deals found (1)'), 'email: searched-and-empty gets its own count');
   ok(html.includes('Search failed (1)'), 'email: a failure is not filed under "no acquisitions found"');
   ok(html.includes('Research timed out'), 'email: the failure reason is actually printed');
   ok(html.includes('Not searched this run'), 'email: unreached companies are called out');
@@ -401,7 +401,7 @@ const feedOf = (xml) => async () => ({ ok: true, status: 200, text: async () => 
   const html = buildNewsEmailHtml(results, { since: 0, until: 86_400_000 });
   ok(html.includes('Research stopped early'), 'halt: the email leads with a banner, not a footnote');
   ok(html.includes('out of credit'), 'halt: the banner names the actual problem');
-  ok(!html.includes('No acquisitions found'), 'halt: a halted run does not claim it found nothing');
+  ok(!html.includes('No deals found'), 'halt: a halted run does not claim it found nothing');
   ok(html.includes('0 companies searched'), 'halt: the header admits nothing was searched');
 }
 
@@ -429,7 +429,7 @@ const feedOf = (xml) => async () => ({ ok: true, status: 200, text: async () => 
   ];
   const html = buildNewsEmailHtml(results, { since: 0, until: 86_400_000 });
   ok(!html.includes('Search failed'), 'fallback: a fallback with no deals is not a failure');
-  ok(html.includes('No acquisitions found'), 'fallback: it is filed as searched-and-empty');
+  ok(html.includes('No deals found'), 'fallback: it is filed as searched-and-empty');
   ok(html.includes('fell back to a slower web search'), 'fallback: the email still says the feeds were down');
   ok(html.includes('Fallback Co'), 'fallback: the affected company is named');
 
@@ -533,7 +533,7 @@ const feedOf = (xml) => async () => ({ ok: true, status: 200, text: async () => 
   ok(html.includes('Also in the news'), 'email: unplaced headlines get their own block');
   ok(html.includes('management buyout'), 'email: and the headline itself is printed');
   ok(html.includes('https://ex.com/c'), 'email: with a link to the source');
-  ok(!html.includes('No acquisitions found'), 'email: a firm with headlines is not filed as empty');
+  ok(!html.includes('No deals found'), 'email: a firm with headlines is not filed as empty');
   ok(html.includes('1 headline to check'), 'email: the header counts them');
 }
 
