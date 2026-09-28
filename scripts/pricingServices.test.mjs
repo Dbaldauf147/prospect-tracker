@@ -17,6 +17,7 @@ import {
   feeStructureRowsFromFees, feeStructureRowToAltRow, applyFeeStructureToSchedule,
   standardFeesForStructure, costKey,
   addServiceToLineItem, costTotalsByLineItem, addLaterCostFees,
+  costTypeConversion, moveCostAllocation,
 } from '../src/utils/pricingServices.js';
 
 let failed = 0;
@@ -262,6 +263,28 @@ test('later monthly and uncovered costs get rows too, one per start month and ki
     ['Feed (year 3)', 'Recurring (monthly)', 25],
     ['Audit (year 2)', 'One Time', 13],
   ]);
+});
+
+test('a one-time or setup cost on a monthly standard fee converts to its Rolled variant', () => {
+  assert.deepEqual(costTypeConversion('One Time', 'Recurring (monthly)'), { convertTo: 'One Time Rolled', feeBucket: 'recurring' });
+  assert.deepEqual(costTypeConversion('Setup', 'Recurring (monthly)'), { convertTo: 'Setup Rolled', feeBucket: 'recurring' });
+  assert.deepEqual(costTypeConversion('One Time Rolled', 'One Time'), { convertTo: 'One Time', feeBucket: 'upfront' });
+  assert.deepEqual(costTypeConversion('Recurring (monthly)', 'Setup'), { convertTo: null, feeBucket: 'upfront' });
+  assert.equal(costTypeConversion('One Time Rolled', 'Recurring (monthly)'), null);
+  assert.equal(costTypeConversion('One Time', 'Setup'), null);
+  assert.equal(costTypeConversion('Recurring (monthly)', 'Recurring (monthly)'), null);
+  assert.equal(costTypeConversion('One Time', ''), null);
+});
+
+test('a converted cost keeps the fee it was pointed at', () => {
+  const from = costKey('Audit', 'One Time', 1);
+  const to = costKey('Audit', 'One Time Rolled', 1);
+  const out = moveCostAllocation([
+    { id: 'a', allocations: { [from]: { fee: 'program fee', roll: true }, other: { fee: 'x' } } },
+    { id: 'b', rows: [] },
+  ], from, to);
+  assert.deepEqual(out[0].allocations, { other: { fee: 'x' }, [to]: { fee: 'program fee' } });
+  assert.deepEqual(out[1], { id: 'b', rows: [] });
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

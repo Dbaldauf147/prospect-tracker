@@ -249,6 +249,43 @@ export function costBucket(type) {
   return '';
 }
 
+// A cost line whose type doesn't bill the way the standard fee covering it
+// does, and the type that would make it fit. One Time or Setup on a
+// monthly fee converts to its Rolled variant (the cost is spread over the
+// fee's term); a Rolled cost on an upfront fee converts back to plain. A
+// monthly cost on an upfront fee has no conversion that keeps its meaning,
+// so it is only flagged. Null when the two agree or either is unknown.
+export function costTypeConversion(costType, feeType) {
+  const cb = costBucket(costType);
+  const fb = feeBucket(feeType);
+  if (!cb || !fb) return null;
+  const base = /^setup/i.test(String(costType || '').trim()) ? 'Setup' : 'One Time';
+  if (cb === COST_BUCKET_UPFRONT && fb === COST_BUCKET_RECURRING) {
+    return { convertTo: `${base} Rolled`, feeBucket: fb };
+  }
+  if (cb === COST_BUCKET_ROLLED && fb === COST_BUCKET_UPFRONT) {
+    return { convertTo: base, feeBucket: fb };
+  }
+  if (cb === COST_BUCKET_RECURRING && fb === COST_BUCKET_UPFRONT) {
+    return { convertTo: null, feeBucket: fb };
+  }
+  return null;
+}
+
+// Move a cost's per-structure allocation to its new key when its type
+// changes, so the fee it was pointed at follows it. The roll flag is
+// dropped: a Rolled type rolls on its own.
+export function moveCostAllocation(structures, fromKey, toKey) {
+  if (!fromKey || !toKey || fromKey === toKey) return structures;
+  return (structures || []).map(st => {
+    const a = st?.allocations?.[fromKey];
+    if (!a) return st;
+    const { [fromKey]: _drop, ...rest } = st.allocations;
+    const { roll: _roll, ...kept } = a;
+    return { ...st, allocations: { ...rest, [toKey]: kept } };
+  });
+}
+
 export function feeBucket(type) {
   const t = norm(type);
   if (/recurring/.test(t)) return COST_BUCKET_RECURRING;
