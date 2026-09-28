@@ -4698,8 +4698,12 @@ export function PricingView({ settings } = {}) {
     // are saved and cleared with the workbook they describe.
     const enteredCounts = (opt.priceCheckCounts && typeof opt.priceCheckCounts === 'object') ? opt.priceCheckCounts : {};
     Object.assign(counts, enteredCounts);
+    // Cost lines left out of the check for this service (the tickbox on the
+    // Services subtab). Per service, since one line can cover several.
+    const ignoredIds = new Set(opt.priceCheckIgnored?.[want] || []);
+    items.forEach(it => { it.ignored = ignoredIds.has(it.id); });
     const rateCheck = rateCardCheck({
-      items,
+      items: items.filter(it => !it.ignored),
       entry: pricingFor(pricing, cardName, bases),
       meta: svc?.meta || null,
       counts,
@@ -4722,6 +4726,28 @@ export function PricingView({ settings } = {}) {
           if (value == null) delete next[key];
           else next[key] = value;
           return { ...o, priceCheckCounts: next };
+        }),
+      };
+    });
+  }
+
+  // Leave a cost line out of (or put it back into) one service's price
+  // check on the active option.
+  function setPriceCheckIgnored(serviceName, itemId, ignored) {
+    const k = String(serviceName ?? '').trim().toLowerCase();
+    setWorkbook(prev => {
+      if (!prev) return prev;
+      const target = prev.options.find(o => o.optionNumber === activeOption) || prev.options[0];
+      if (!target) return prev;
+      return {
+        ...prev,
+        options: prev.options.map(o => {
+          if (o !== target) return o;
+          const all = { ...(o.priceCheckIgnored || {}) };
+          const ids = new Set(all[k] || []);
+          if (ignored) ids.add(itemId); else ids.delete(itemId);
+          if (ids.size) all[k] = [...ids]; else delete all[k];
+          return { ...o, priceCheckIgnored: all };
         }),
       };
     });
@@ -5150,6 +5176,7 @@ export function PricingView({ settings } = {}) {
           services={pricingServiceList}
           detailFor={serviceDetailFor}
           onSetCount={setPriceCheckCount}
+          onIgnoreForCheck={setPriceCheckIgnored}
           feeStructures={serviceFeeStructures}
           setFeeStructures={setServiceFeeStructures}
           previewFeeRow={previewFeeStructureRow}
