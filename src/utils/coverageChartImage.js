@@ -33,17 +33,23 @@ const PALETTE = [
 ];
 
 export const SCALE = 2;
-// Laid-out size, in CSS pixels: half the email's 800px column, less the
-// card's border and padding, and short enough that two of these plus the
-// figures under them do not push the rest of the report below the fold.
-export const CHART_W = 360;
-export const CHART_H = 132;
+// Laid-out size, in CSS pixels: the email's full 800px column, less the
+// card's border and padding, the same width as the coverage-ratio chart.
+// The two charts stack one above the other rather than sharing a row, so
+// each gets the whole width and enough height to read the weekly moves.
+export const CHART_W = 720;
+export const CHART_H = 220;
+
+// The axis labels' glyph size, in raster pixels per font pixel: half as
+// big again as the ratio chart's, so they stay in proportion to a chart
+// that has the column to itself.
+const LABEL_SIZE = 3;
 
 // Room for the "100%" up the left and the week labels along the bottom.
-const PAD_L = 30 * SCALE;
-const PAD_R = 6 * SCALE;
-const PAD_T = 7 * SCALE;
-const PAD_B = 14 * SCALE;
+const PAD_L = 42 * SCALE;
+const PAD_R = 10 * SCALE;
+const PAD_T = 10 * SCALE;
+const PAD_B = 20 * SCALE;
 
 // ---- A raster to draw on --------------------------------------------------
 
@@ -214,10 +220,10 @@ export function coverageChartImage(chart) {
   // chart this size can carry before the lines are competing with it.
   for (const pct of [25, 50, 75, 100]) {
     fill(r, plotL, yAt(pct), plotW, SCALE, GRID);
-    text(r, `${pct}%`, plotL - 4 * SCALE, yAt(pct) - GLYPH_H, LABEL, SCALE, 'right');
+    text(r, `${pct}%`, plotL - 4 * SCALE, yAt(pct) - Math.round((GLYPH_H * LABEL_SIZE) / 2), LABEL, LABEL_SIZE, 'right');
   }
   fill(r, plotL, yAt(0), plotW, SCALE, AXIS);
-  text(r, '0%', plotL - 4 * SCALE, yAt(0) - GLYPH_H, LABEL, SCALE, 'right');
+  text(r, '0%', plotL - 4 * SCALE, yAt(0) - Math.round((GLYPH_H * LABEL_SIZE) / 2), LABEL, LABEL_SIZE, 'right');
 
   // Labels along the bottom. Over a long series (the email asks for ten
   // months of weeks) each month is named once, under the first week that
@@ -229,15 +235,15 @@ export function coverageChartImage(chart) {
     const every = monthMarks.length > 7 ? 2 : 1;
     monthMarks.forEach((m, n) => {
       if ((monthMarks.length - 1 - n) % every) return;
-      const half = textWidth(m.label, SCALE) / 2;
+      const half = textWidth(m.label, LABEL_SIZE) / 2;
       const at = Math.max(plotL + half, Math.min(xAt(m.index), W - half));
-      text(r, m.label, at, plotB + 5 * SCALE, LABEL, SCALE, 'center');
+      text(r, m.label, at, plotB + 6 * SCALE, LABEL, LABEL_SIZE, 'center');
     });
   } else {
     const step = Math.max(1, Math.ceil((points.length - 1) / 4));
     for (let i = points.length - 1; i >= 0; i -= step) {
       const label = String(points[i].label || '');
-      const half = textWidth(label, SCALE) / 2;
+      const half = textWidth(label, LABEL_SIZE) / 2;
       // The last label is the week the report is about and always sits at
       // the end of the axis, so it is pinned inside the right edge rather
       // than centred on its point - centred, its tail runs off the picture
@@ -245,7 +251,7 @@ export function coverageChartImage(chart) {
       const at = Math.min(xAt(i), W - half);
       // Anywhere else, only where it clears the per-cent labels up the left.
       if (at - half < plotL - PAD_L / 2) continue;
-      text(r, label, at, plotB + 5 * SCALE, LABEL, SCALE, 'center');
+      text(r, label, at, plotB + 6 * SCALE, LABEL, LABEL_SIZE, 'center');
     }
   }
 
