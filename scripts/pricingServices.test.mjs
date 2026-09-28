@@ -17,7 +17,7 @@ import {
   feeStructureRowsFromFees, feeStructureRowToAltRow, applyFeeStructureToSchedule,
   standardFeesForStructure, costKey,
   addServiceToLineItem, costTotalsByLineItem, addLaterCostFees,
-  costTypeConversion, moveCostAllocation,
+  costTypeConversion, moveCostAllocation, buildScheduleFromStructures,
 } from '../src/utils/pricingServices.js';
 
 let failed = 0;
@@ -285,6 +285,34 @@ test('a converted cost keeps the fee it was pointed at', () => {
   ], from, to);
   assert.deepEqual(out[0].allocations, { other: { fee: 'x' }, [to]: { fee: 'program fee' } });
   assert.deepEqual(out[1], { id: 'b', rows: [] });
+});
+
+test('Fee Builder writes every picked structure, keeping untouched rows and earlier picks', () => {
+  const schedule = [
+    { altItem: 'Old BBS fee', fee: 10, unit: 'Fixed', unitCount: 1 },
+    { altItem: 'Bill pay', fee: 5, unit: 'Fixed', unitCount: 1 },
+    { altItem: 'Unrelated', fee: 7, unit: 'Fixed', unitCount: 1 },
+  ];
+  const { rows, perService, conflicts } = buildScheduleFromStructures(schedule, [
+    { service: 'BBS', structureName: 'Per site', rows: [{ feeName: 'BBS per site', type: 'Recurring (monthly)', fee: 46.45, unit: 'Per Site' }], replaceNames: ['Old BBS fee'] },
+    // Bill payment's current fee names include the one BBS just wrote; it must survive.
+    { service: 'Bill payment', structureName: 'Flat', rows: [{ feeName: 'Bill pay flat', type: 'Setup', fee: 100, unit: 'Fixed' }], replaceNames: ['Bill pay', 'BBS per site'] },
+  ], { siteCount: 29 });
+  assert.deepEqual(rows.map(r => r.altItem), ['BBS per site', 'Bill pay flat', 'Unrelated']);
+  assert.equal(rows[0].unitCount, 29);
+  assert.deepEqual(perService.map(p => p.removed.map(r => r.altItem)), [['Old BBS fee'], ['Bill pay']]);
+  assert.deepEqual(conflicts, []);
+});
+
+test('Fee Builder reports two services writing the same fee name, later one wins', () => {
+  const { rows, conflicts, perService } = buildScheduleFromStructures([], [
+    { service: 'A', rows: [{ feeName: 'Program fee', fee: 1, unit: 'Fixed' }], replaceNames: [] },
+    { service: 'B', rows: [{ feeName: 'program fee', fee: 2, unit: 'Fixed' }], replaceNames: [] },
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].fee, 2);
+  assert.deepEqual(conflicts, [{ fee: 'program fee', services: ['A', 'B'] }]);
+  assert.deepEqual(perService[1].removed, []);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

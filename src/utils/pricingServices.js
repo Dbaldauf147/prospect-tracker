@@ -446,3 +446,75 @@ export function costTotalsByLineItem(items) {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// A structure with its blank Fee cells filled by the standard fee: the rows
+// Apply writes and the option preview bills. Shared by the Services subtab
+// and the Fee Builder subtab so neither can write a different fee from the
+// one the other shows.
+//
+//   costs   the service's cost lines as the Services subtab reads them
+//           ({ description, type, price, startMonth, feeName, automatedName })
+
+export function feeStructureCostInputs(costs) {
+  return (costs || []).map(c => ({
+    key: costKey(c.description, c.type, c.startMonth),
+    description: c.description,
+    type: c.type,
+    price: c.price,
+    startMonth: c.startMonth,
+    feeNames: [c.feeName, c.automatedName].filter(Boolean),
+  }));
+}
+
+export function standardFeeContext(structure, costs, { termMonths = 36, siteCount, accountCount } = {}) {
+  const rows = structure?.rows || [];
+  const costInputs = feeStructureCostInputs(costs);
+  const std = standardFeesForStructure({ rows, costs: costInputs, allocations: structure?.allocations || {}, termMonths, siteCount, accountCount });
+  const standardFee = (idx) => std.perRow[idx]?.standardFee ?? null;
+  const billed = (r, idx) => (r.fee == null && standardFee(idx) != null ? { ...r, fee: standardFee(idx) } : r);
+  return { std, standardFee, billed, filled: structure ? { ...structure, rows: rows.map(billed) } : null };
+}
+
+// ---------------------------------------------------------------------------
+// Fee Builder: several services' fee structures written into one option's
+// Alternative Fee schedule in one go.
+//
+//   picks   [{ service, structureName, rows, replaceNames }] in list order,
+//           rows being the structure's (already filled) rows and
+//           replaceNames the service's current fee names, the same ones
+//           Apply on the Services subtab replaces
+//
+// Each pick is applied in turn with applyFeeStructureToSchedule, with one
+// difference: a fee name an earlier pick in this same build wrote is never
+// dropped because a later service happens to list it among its current fee
+// names. When a later structure writes that same fee name itself, the later
+// one wins and the clash is reported, so it can be shown rather than lost.
+export function buildScheduleFromStructures(schedule, picks, { siteCount, accountCount } = {}) {
+  let rows = [...(schedule || [])];
+  const builtBy = new Map(); // fee name -> service that wrote it in this build
+  const addedRows = new Set();
+  const perService = [];
+  const conflicts = [];
+  for (const pick of picks || []) {
+    const replaceNames = (pick.replaceNames || []).filter(n => !builtBy.has(norm(n)));
+    const plan = applyFeeStructureToSchedule(rows, pick.rows, { replaceNames, siteCount, accountCount });
+    for (const r of plan.added) {
+      const k = norm(r.altItem);
+      const prev = builtBy.get(k);
+      if (prev && prev !== pick.service) conflicts.push({ fee: r.altItem, services: [prev, pick.service] });
+      builtBy.set(k, pick.service);
+      addedRows.add(r);
+    }
+    perService.push({
+      service: pick.service,
+      structureName: pick.structureName || '',
+      added: plan.added,
+      // Only rows that were on the schedule before the build count as
+      // replaced; one a previous pick wrote shows up as a conflict instead.
+      removed: plan.removed.filter(r => !addedRows.has(r)),
+    });
+    rows = plan.rows;
+  }
+  return { rows, perService, conflicts };
+}
