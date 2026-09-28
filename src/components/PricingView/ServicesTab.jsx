@@ -39,9 +39,11 @@ const STATUS_CLASS = {
 //   onTagLineItem   (lineItemKey, serviceName) => adds the service
 //   onIgnoreLineItem (lineItemKey) => marks the line item Ignore
 //   onSetItemType   (itemId, type) => overrides a cost line's Type ('' clears it)
+//   onSetItemAnnual (itemId, on) => turns a one-time cost into an annual one
+//                   (CTS ÷ 12, Recurring monthly), or back
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
-  onSetCount, onIgnoreForCheck, feeStructures = {}, setFeeStructures, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType,
+  onSetCount, onIgnoreForCheck, feeStructures = {}, setFeeStructures, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual,
   unlinked = null, tagOptions = [], onTagLineItem, onIgnoreLineItem,
 }) {
   const [query, setQuery] = useState('');
@@ -175,6 +177,7 @@ export function ServicesTab({
               previewFeeRow={previewFeeRow}
               previewOnOption={previewOnOption}
               onSetItemType={onSetItemType}
+              onSetItemAnnual={onSetItemAnnual}
               applyFeeStructure={applyFeeStructure}
               detail={detail}
               hasWorkbook={!!workbook}
@@ -263,7 +266,7 @@ function UnlinkedWarning({ unlinked, costTotals, optionName, tagOptions, quickTa
   );
 }
 
-function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType }) {
+function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual }) {
   const items = detail?.items || [];
   const fees = detail?.fees || [];
   const structures = saved?.structures || [];
@@ -341,6 +344,18 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
     const toKey = costKey(it.description, toType, it.startMonth);
     setSaved(prev => ({ ...prev, structures: moveCostAllocation(prev.structures, fromKey, toKey) }));
   }
+  // A one-time cost that really comes round every year: billed as a twelfth
+  // of it each month, so a monthly fee recovers it. Undo puts the SIA's
+  // figure and type back.
+  function convertAnnual(it, on) {
+    if (!onSetItemAnnual) return;
+    onSetItemAnnual(it.id, on);
+    const fromKey = costKey(it.description, it.type, it.startMonth);
+    const toKey = costKey(it.description, on ? 'Recurring (monthly)' : it.siaType, it.startMonth);
+    setSaved(prev => ({ ...prev, structures: moveCostAllocation(prev.structures, fromKey, toKey) }));
+  }
+  const canAnnualize = (it) => !!onSetItemAnnual && it.annualFrom == null && typeof it.cts === 'number'
+    && /^one\s*time$/i.test(String(it.type || '').trim());
 
   return (
     <div className={styles.detail}>
@@ -358,7 +373,8 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
               <div className={styles.note}>
                 {mismatches === 1 ? 'One cost line has' : `${mismatches} cost lines have`} a type that doesn't bill the way
                 the pricing standard does. Convert {mismatches === 1 ? 'it' : 'them'} below: a one-time or setup cost on a
-                monthly fee becomes Rolled, spread over the {termMonths}-month term.
+                monthly fee becomes Rolled, spread over the {termMonths}-month term, or an annual cost (a twelfth of it
+                each month) when it comes round every year.
               </div>
             )}
             {items.length === 0 ? (
@@ -393,7 +409,14 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
                       </td>
                       <td>
                         {it.type}
-                        {it.siaType && it.siaType !== it.type && (
+                        {it.annualFrom != null ? (
+                          <div className={styles.subNote}>
+                            SIA: {it.siaType} {fmtMoney(it.annualFrom)}, now annual ({fmtMoney(it.annualFrom)} ÷ 12)
+                            {onSetItemAnnual && (
+                              <> <button type="button" className={styles.linkBtn} onClick={() => convertAnnual(it, false)}>Undo</button></>
+                            )}
+                          </div>
+                        ) : it.siaType && it.siaType !== it.type && (
                           <div className={styles.subNote}>
                             SIA: {it.siaType}
                             {onSetItemType && (
@@ -417,7 +440,18 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
                               >
                                 Convert to {typeFit[i].convertTo}
                               </button>
-                            ) : !typeFit[i].convertTo && (
+                            ) : null}
+                            {typeFit[i].feeBucket === 'recurring' && canAnnualize(it) && (
+                              <button
+                                type="button"
+                                className={styles.tagBtn}
+                                onClick={() => convertAnnual(it, true)}
+                                title={`For a cost that comes round every year. Bills ${fmtMoney(it.cts)} a year as ${fmtMoney(it.cts / 12)} a month (Recurring (monthly)), so the monthly fee recovers it every year of the term. Changes the cost on ${optionName || 'this option'}. Undo puts the SIA's figure back.`}
+                              >
+                                Convert to annual cost
+                              </button>
+                            )}
+                            {!typeFit[i].convertTo && (
                               <span className={styles.subNote}>Point it at a monthly fee instead</span>
                             )}
                           </div>
