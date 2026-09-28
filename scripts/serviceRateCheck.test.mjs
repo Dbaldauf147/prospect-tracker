@@ -249,5 +249,22 @@ test('each cost is marked up at its own markup when it carries one', () => {
   assert.ok(Math.abs(rec.price - 48000) < 1e-9);
 });
 
+test('a $0 setup line on the card does not stop a one-rate card being checked per unit', () => {
+  // Invoice variance testing: $4.80 to $5 per account a year, setup left at $0.
+  const c = rateCardCheck({
+    items: [{ cts: 114.18, type: 'Recurring (monthly)', startMonth: 1 }],
+    entry: { basis: 'per_account', rate: 4.8, rateHigh: 5, setupLines: [{ basis: 'per_account', rate: 0, rateHigh: 0 }] },
+    meta: { serviceType: 'Recurring', years: 1 },
+    counts: { accounts: 519 },
+  });
+  assert.ok(c.perUnit, 'checked per account');
+  assert.equal(c.perUnit.unitLabel, 'Accounts');
+  assert.equal(c.perUnit.units, 519);
+  assert.equal(c.perUnit.rateLow, 4.8);
+  assert.equal(c.perUnit.rateHigh, 5);
+  assert.equal(c.status, RATE_CHECK.BELOW); // $1,370 x 1.5 / 519 = $3.96 an account
+  assert.ok(!c.parts.some(p => p.key === 'setup'), 'no setup part for a $0 setup with no setup cost');
+});
+
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
 console.log('\nall passed');
