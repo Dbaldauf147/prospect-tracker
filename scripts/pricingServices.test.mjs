@@ -17,7 +17,7 @@ import {
   feeStructureRowsFromFees, feeStructureRowToAltRow, applyFeeStructureToSchedule,
   standardFeesForStructure, costKey,
   addServiceToLineItem, costTotalsByLineItem, addLaterCostFees,
-  costTypeConversion, moveCostAllocation, buildScheduleFromStructures, standardFeeContext,
+  costTypeConversion, moveCostAllocation, buildScheduleFromStructures, standardFeeContext, groupFeeRows,
 } from '../src/utils/pricingServices.js';
 
 let failed = 0;
@@ -311,7 +311,7 @@ test('Fee Builder writes every picked structure, keeping untouched rows and earl
     { altItem: 'Bill pay', fee: 5, unit: 'Fixed', unitCount: 1 },
     { altItem: 'Unrelated', fee: 7, unit: 'Fixed', unitCount: 1 },
   ];
-  const { rows, perService, conflicts } = buildScheduleFromStructures(schedule, [
+  const { rows, perService, shared } = buildScheduleFromStructures(schedule, [
     { service: 'BBS', structureName: 'Per site', rows: [{ feeName: 'BBS per site', type: 'Recurring (monthly)', fee: 46.45, unit: 'Per Site' }], replaceNames: ['Old BBS fee'] },
     // Bill payment's current fee names include the one BBS just wrote; it must survive.
     { service: 'Bill payment', structureName: 'Flat', rows: [{ feeName: 'Bill pay flat', type: 'Setup', fee: 100, unit: 'Fixed' }], replaceNames: ['Bill pay', 'BBS per site'] },
@@ -319,18 +319,48 @@ test('Fee Builder writes every picked structure, keeping untouched rows and earl
   assert.deepEqual(rows.map(r => r.altItem), ['BBS per site', 'Bill pay flat', 'Unrelated']);
   assert.equal(rows[0].unitCount, 29);
   assert.deepEqual(perService.map(p => p.removed.map(r => r.altItem)), [['Old BBS fee'], ['Bill pay']]);
-  assert.deepEqual(conflicts, []);
+  assert.deepEqual(shared, []);
 });
 
-test('Fee Builder reports two services writing the same fee name, later one wins', () => {
-  const { rows, conflicts, perService } = buildScheduleFromStructures([], [
-    { service: 'A', rows: [{ feeName: 'Program fee', fee: 1, unit: 'Fixed' }], replaceNames: [] },
-    { service: 'B', rows: [{ feeName: 'program fee', fee: 2, unit: 'Fixed' }], replaceNames: [] },
+test('Fee Builder keeps a row per service for a shared fee name, grouped together', () => {
+  const { rows, shared, perService } = buildScheduleFromStructures([{ altItem: 'Other', fee: 9 }], [
+    { service: 'A', rows: [{ feeName: 'Program fee', fee: 1, unit: 'Fixed' }, { feeName: 'A only', fee: 5, unit: 'Fixed' }], replaceNames: [] },
+    { service: 'B', rows: [{ feeName: 'program fee', fee: 2, unit: 'Fixed' }], replaceNames: ['Program fee'] },
   ]);
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].fee, 2);
-  assert.deepEqual(conflicts, [{ fee: 'program fee', services: ['A', 'B'] }]);
+  assert.deepEqual(rows.map(r => [r.altItem, r.fee]), [['Other', 9], ['Program fee', 1], ['program fee', 2], ['A only', 5]]);
+  assert.deepEqual(shared, [{ fee: 'Program fee', services: ['A', 'B'], unpriced: [] }]);
   assert.deepEqual(perService[1].removed, []);
+});
+
+test('a shared fee drops a blank row when a sibling has a fee', () => {
+  const { rows, shared } = buildScheduleFromStructures([], [
+    { service: 'A', rows: [{ feeName: 'Per account', fee: 1.5, unit: 'Per Account' }], replaceNames: [] },
+    { service: 'B', rows: [{ feeName: 'Per account', fee: null, unit: 'Per Account' }], replaceNames: [] },
+  ], { accountCount: 10 });
+  assert.deepEqual(rows.map(r => r.fee), [1.5]);
+  assert.deepEqual(shared, [{ fee: 'Per account', services: ['A'], unpriced: ['B'] }]);
+});
+
+test('groupFeeRows folds repeated names under one line', () => {
+  const g = groupFeeRows([
+    { name: 'Fee', service: 'A', type: 'Recurring (monthly)', feePerUnit: 1, unit: 'Per Site', unitCount: 5, startMonth: 4, years: [10, 20], term: 30 },
+    { name: 'Solo', service: null, type: 'Setup', feePerUnit: 3, unit: 'Fixed', unitCount: 1, startMonth: 1, years: [3, 0], term: 3 },
+    { name: 'fee', service: 'B', type: 'Recurring (monthly)', feePerUnit: 2, unit: 'Per Site', unitCount: 5, startMonth: 1, years: [1, 2], term: 3 },
+  ]);
+  assert.equal(g.length, 2);
+  assert.equal(g[0].subRows.length, 2);
+  assert.deepEqual(g[0].row.years, [11, 22]);
+  assert.equal(g[0].row.term, 33);
+  assert.equal(g[0].row.feePerUnit, 3);
+  assert.equal(g[0].row.startMonth, 1);
+  assert.equal(g[0].row.service, 'A, B');
+  assert.equal(g[1].subRows.length, 0);
+  const mixed = groupFeeRows([
+    { name: 'X', feePerUnit: 1, unit: 'Per Site', unitCount: 5, years: [] },
+    { name: 'X', feePerUnit: 2, unit: 'Fixed', unitCount: 1, years: [] },
+  ]);
+  assert.equal(mixed[0].row.feePerUnit, null);
+  assert.equal(mixed[0].row.unit, 'Mixed');
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

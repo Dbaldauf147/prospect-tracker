@@ -4793,6 +4793,28 @@ export function PricingView({ settings } = {}) {
 
   // Leave a cost line out of (or put it back into) one service's price
   // check on the active option.
+  // Mark a service done (or not) on the active option: the Services
+  // subtab lists it green. Kept on the option, so it is saved and cleared
+  // with the workbook like the price-check picks.
+  function setServiceCompleted(serviceName, on) {
+    const k = String(serviceName ?? '').trim().toLowerCase();
+    if (!k) return;
+    setWorkbook(prev => {
+      if (!prev) return prev;
+      const target = prev.options.find(o => o.optionNumber === activeOption) || prev.options[0];
+      if (!target) return prev;
+      return {
+        ...prev,
+        options: prev.options.map(o => {
+          if (o !== target) return o;
+          const done = new Set(o.servicesCompleted || []);
+          if (on) done.add(k); else done.delete(k);
+          return { ...o, servicesCompleted: [...done] };
+        }),
+      };
+    });
+  }
+
   function setPriceCheckIgnored(serviceName, itemId, ignored) {
     const k = String(serviceName ?? '').trim().toLowerCase();
     setWorkbook(prev => {
@@ -5050,7 +5072,7 @@ export function PricingView({ settings } = {}) {
       rows,
       nextSchedule: built.rows,
       perService: built.perService,
-      conflicts: built.conflicts,
+      shared: built.shared,
       before: totals(schedule),
       after: totals(built.rows),
     };
@@ -5071,8 +5093,8 @@ export function PricingView({ settings } = {}) {
       '',
       `Adds ${added} row${added === 1 ? '' : 's'}${removed ? ` and replaces ${removed}` : ''}. Rows for services left as they are stay on the schedule.`,
     ];
-    if (plan.conflicts.length) {
-      lines.push('', `Fee names written by more than one service (the later one wins): ${plan.conflicts.map(c => `${c.fee} (${c.services.join(', ')})`).join('; ')}.`);
+    if (plan.shared.length) {
+      lines.push('', `Fee names shared by more than one service, one row each: ${plan.shared.map(c => `${c.fee} (${c.services.join(', ')})`).join('; ')}.`);
     }
     if (!window.confirm(lines.join('\n'))) return false;
     replaceAltFeeRows(plan.optionNumber, plan.nextSchedule);
@@ -5374,6 +5396,7 @@ export function PricingView({ settings } = {}) {
           onSetCount={setPriceCheckCount}
           onIgnoreForCheck={setPriceCheckIgnored}
           globalGmPct={globalGmPct}
+          onSetCompleted={setServiceCompleted}
           feeStructures={serviceFeeStructures}
           setFeeStructures={setServiceFeeStructures}
           previewFeeRow={previewFeeStructureRow}
