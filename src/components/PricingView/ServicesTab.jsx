@@ -654,6 +654,7 @@ const RATE_BADGE = {
   [RATE_CHECK.BELOW]: ['rateOutside', 'Below range'],
   [RATE_CHECK.ABOVE]: ['rateOutside', 'Above range'],
   [RATE_CHECK.UNPRICED]: ['rateUnknown', 'No rate card'],
+  [RATE_CHECK.INCOMPLETE]: ['rateUnknown', 'Missing a count'],
   [RATE_CHECK.NO_COST]: ['rateUnknown', 'No cost to check'],
 };
 
@@ -687,19 +688,81 @@ function RateCheck({ check, counts = {} }) {
         <span><span className={styles.factKey}>Marked up {markupPct}%:</span> <span className={styles.rateFigure}>{fmtWhole(check.price)}</span></span>
         <span>
           <span className={styles.factKey}>Rate card range:</span>{' '}
-          <span className={styles.rateFigure}>{check.noFee ? 'No fee' : (range || 'not set')}</span>
+          <span className={styles.rateFigure}>{check.noFee ? 'No fee' : (check.status === RATE_CHECK.INCOMPLETE && !(check.high > 0) ? 'Unknown' : (range || 'not set'))}</span>
         </span>
         {gap && <span className={styles.factKey}>{gap}</span>}
       </div>
+      <RateMeter check={check} />
       <p className={styles.note}>
+        {check.status === RATE_CHECK.INCOMPLETE && (
+          `Part of this service's rate card is priced on ${check.missing.join(' and ')}, which the SIA doesn't carry, so the range ${check.high > 0 ? 'reads low and' : 'is unknown and'} isn't judged. `
+        )}
         {check.status === RATE_CHECK.UNPRICED
           ? (check.noFee
             ? 'This service is marked No Fee on Dropdowns › Services Pricing, so there is no range to check against.'
             : 'No rate set for this service on Dropdowns › Services Pricing, so there is no range to check against.')
           : `Year 1 cost is the CTS on the lines above, recurring lines counted as 12 months${check.passThrough ? ', pass-through lines left out' : ''}. The range is the Year 1 fee (plus setup) from Dropdowns › Services Pricing${countText ? `, priced on this option's ${countText}` : ''}.`}
-        {check.notes.length > 0 && ` Rate card note: ${check.notes.join('; ')}.`}
+        {check.status !== RATE_CHECK.INCOMPLETE && check.notes.length > 0 && ` Rate card note: ${check.notes.join('; ')}.`}
       </p>
     </section>
+  );
+}
+
+// Where the marked-up price lands on a line from $0, with the rate card
+// range shaded on it. Nothing to draw without a range above $0.
+function RateMeter({ check }) {
+  if (check.low == null || check.price == null) return null;
+  const lo = Math.min(check.low, check.high);
+  const hi = Math.max(check.low, check.high);
+  if (hi <= 0) return null;
+  const max = Math.max(hi, check.price) * 1.15;
+  const at = (v) => Math.max(0, Math.min(100, (v / max) * 100));
+  // Keep a centred label from running off either end.
+  const labelAt = (v) => Math.max(6, Math.min(94, at(v)));
+  const tone = check.status === RATE_CHECK.WITHIN ? styles.meterIn
+    : (check.status === RATE_CHECK.BELOW || check.status === RATE_CHECK.ABOVE) ? styles.meterOut
+      : styles.meterUnknown;
+  const single = Math.round(lo) === Math.round(hi);
+  // Two range labels closer than this share one, so they never overlap.
+  const joined = single || at(hi) - at(lo) < 18;
+  const priceTip = `Marked-up price ${fmtWhole(check.price)} (cost ${fmtWhole(check.cost)} + ${Math.round(check.markup * 100)}%)`;
+  const rangeTip = single ? `Rate card: ${fmtWhole(lo)}` : `Rate card range: ${fmtWhole(lo)} – ${fmtWhole(hi)}`;
+
+  return (
+    <div className={styles.meter} role="img" aria-label={`${priceTip}. ${rangeTip}.`}>
+      <div className={styles.meterTop}>
+        <span className={`${styles.meterPriceLabel} ${tone}`} style={{ left: `${labelAt(check.price)}%` }}>
+          {fmtWhole(check.price)}
+        </span>
+      </div>
+      <div className={styles.meterTrack}>
+        <div
+          className={single ? styles.meterTick : styles.meterBand}
+          style={single ? { left: `${at(lo)}%` } : { left: `${at(lo)}%`, width: `${at(hi) - at(lo)}%` }}
+          title={rangeTip}
+        />
+        <div className={styles.meterCost} style={{ left: `${at(check.cost)}%` }} title={`Cost ${fmtWhole(check.cost)}`} />
+        <div className={`${styles.meterDot} ${tone}`} style={{ left: `${at(check.price)}%` }} title={priceTip} />
+      </div>
+      <div className={styles.meterScale}>
+        <span className={styles.meterScaleLabel} style={{ left: 0, transform: 'none' }}>$0</span>
+        {joined ? (
+          <span className={styles.meterScaleLabel} style={{ left: `${labelAt((lo + hi) / 2)}%` }}>
+            {single ? `Rate card ${fmtWhole(lo)}` : `${fmtWhole(lo)} – ${fmtWhole(hi)}`}
+          </span>
+        ) : (
+          <>
+            <span className={styles.meterScaleLabel} style={{ left: `${labelAt(lo)}%` }}>{fmtWhole(lo)}</span>
+            <span className={styles.meterScaleLabel} style={{ left: `${labelAt(hi)}%` }}>{fmtWhole(hi)}</span>
+          </>
+        )}
+      </div>
+      <div className={styles.meterLegend}>
+        <span><span className={styles.meterKeyBand} /> Rate card range</span>
+        <span><span className={`${styles.meterKeyDot} ${tone}`} /> Marked-up price</span>
+        <span><span className={styles.meterKeyCost} /> Cost</span>
+      </div>
+    </div>
   );
 }
 

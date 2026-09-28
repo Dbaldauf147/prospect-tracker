@@ -21,6 +21,10 @@ export const RATE_CHECK = {
   BELOW: 'below',
   ABOVE: 'above',
   UNPRICED: 'unpriced',
+  // Part of the rate card prices on a count the SIA doesn't carry (sites
+  // w/ mandate, meters, a deal size), so the range reads low and can't be
+  // judged against.
+  INCOMPLETE: 'incomplete',
   NO_COST: 'noCost',
 };
 
@@ -60,15 +64,21 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
     ? [...new Set([...(est.breakdown || []), ...(est.setupBreakdown || [])].map(b => b.note).filter(Boolean))]
     : [];
 
+  const lines = priced ? [...(est.breakdown || []), ...(est.setupBreakdown || [])] : [];
+  const missing = [...new Set(lines.filter(b => b.gap).map(b => (
+    b.gap.kind === 'deal' ? 'deal size' : (b.gap.unitLabel || b.unitLabel || 'a count').toLowerCase()
+  )))];
+
   let status;
   if (!priced) status = RATE_CHECK.UNPRICED;
+  else if (missing.length) status = RATE_CHECK.INCOMPLETE;
   else if (counted === 0 || cost <= 0) status = RATE_CHECK.NO_COST;
   else if (price < Math.min(low, high)) status = RATE_CHECK.BELOW;
   else if (price > Math.max(low, high)) status = RATE_CHECK.ABOVE;
   else status = RATE_CHECK.WITHIN;
 
   return {
-    status, cost, price, markup, low, high, notes, passThrough,
+    status, cost, price, markup, low, high, notes, passThrough, missing,
     noFee: !!est?.noFee,
   };
 }
