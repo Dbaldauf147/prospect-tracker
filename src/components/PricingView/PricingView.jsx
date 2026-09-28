@@ -3934,14 +3934,18 @@ export function PricingView({ settings } = {}) {
   //                              per-unit-rounded cost that actually
   //                              lands in Total fee, so revenue less
   //                              pass-through carries no rounding ghost
-  function optionCostBreakdown(opt) {
+  //
+  // `scheduleRows` stands in for the option's saved schedule, so a
+  // schedule that isn't saved yet (a fee structure being previewed) can
+  // be costed the same way.
+  function optionCostBreakdown(opt, scheduleRows) {
     const numYears = Math.max(1, Math.ceil(termMonths / 12));
     const zeros = () => Array.from({ length: numYears }, () => 0);
     const passThroughByYear = zeros();
     const passThroughRevenueByYear = zeros();
     if (!opt) return { numYears, costByYear: zeros(), passThroughByYear, passThroughRevenueByYear };
 
-    const altRowsForOpt = altFees[opt.optionNumber] || [];
+    const altRowsForOpt = scheduleRows || altFees[opt.optionNumber] || [];
     const altTagSet = new Set(
       altRowsForOpt.map(r => (r.altItem || '').trim().toLowerCase()).filter(Boolean)
     );
@@ -3994,9 +3998,9 @@ export function PricingView({ settings } = {}) {
   // Returns nulls rather than zeros when there's nothing to divide by
   // (no fees, or no linked CTS cost at all) - a deal with no cost side
   // isn't a 100%-margin deal, it's a deal whose margin isn't known here.
-  function dealMarginForOption(opt) {
-    const { numYears, costByYear, passThroughByYear } = optionCostBreakdown(opt);
-    const rows = opt ? (altFees[opt.optionNumber] || []) : [];
+  function dealMarginForOption(opt, scheduleRows) {
+    const { numYears, costByYear, passThroughByYear } = optionCostBreakdown(opt, scheduleRows);
+    const rows = scheduleRows || (opt ? (altFees[opt.optionNumber] || []) : []);
     const feeByYear = Array.from({ length: numYears }, (_, i) =>
       rows.reduce((s, r) => s + altFeeYearRevenue(r, i + 1), 0));
     const altPassByYear = Array.from({ length: numYears }, (_, i) =>
@@ -4714,6 +4718,93 @@ export function PricingView({ settings } = {}) {
     };
   }
 
+  // How the active option reads with one fee structure in place for a
+  // service: the fee rows the service would bill, the service's own cost
+  // against them year by year, and the option's totals and Deal margin as
+  // the schedule stands now next to how they'd read with it. A null
+  // structure is the SIA setup: what the schedule carries for the
+  // service's fee names, plus what Build from Automated Fee Names would
+  // add for the ones it doesn't.
+  function previewServiceOnOption(serviceName, structure) {
+    const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
+    if (!opt) return null;
+    const norm = (v) => String(v ?? '').trim().toLowerCase();
+    const numYears = Math.max(1, Math.ceil(termMonths / 12));
+    const zeros = () => Array.from({ length: numYears }, () => 0);
+    const detail = serviceDetailFor(serviceName);
+    const schedule = altFees[opt.optionNumber] || [];
+
+    let serviceRows;
+    let nextSchedule;
+    if (structure) {
+      const replaceNames = [];
+      for (const f of detail.fees) if (f.name) replaceNames.push(f.name);
+      for (const it of detail.items) if (it.feeName) replaceNames.push(it.feeName);
+      const plan = applyFeeStructureToSchedule(schedule, structure.rows, {
+        replaceNames, siteCount: opt.siteCount, accountCount: opt.accountCount,
+      });
+      serviceRows = plan.added;
+      nextSchedule = plan.rows;
+    } else {
+      const names = new Set(detail.fees.filter(f => !f.missing).map(f => norm(f.name)));
+      const built = automatedFeeBuildRows(opt).filter(r => names.has(norm(r.altItem)));
+      serviceRows = [...schedule.filter(r => names.has(norm(r.altItem))), ...built];
+      nextSchedule = [...schedule, ...built];
+    }
+
+    const fees = serviceRows.map(r => {
+      const manual = Number(r.fee);
+      const feeIsManual = r.fee != null && r.fee !== '' && Number.isFinite(manual) && manual >= 0;
+      const auto = feeIsManual ? null : autoFeePerUnitFor(r);
+      const years = Array.from({ length: numYears }, (_, yi) => altFeeYearRevenue(r, yi + 1));
+      return {
+        name: r.altItem,
+        type: r.type || '',
+        feePerUnit: feeIsManual ? manual : (typeof auto === 'number' ? auto : null),
+        unit: r.unit || '',
+        unitCount: r.unitCount,
+        startMonth: altFeeRowStartMonth(r),
+        passThrough: r.passThrough === true,
+        years,
+        term: years.reduce((a, b) => a + b, 0),
+      };
+    });
+    const feeByYear = zeros().map((_, yi) => fees.reduce((s, f) => s + f.years[yi], 0));
+
+    // The service's cost is every cost line tied to it, billed or not; a
+    // line whose fee name none of the rows carry is called out, because
+    // the option's Deal margin only counts cost a fee on the schedule
+    // prices.
+    const allItems = (opt.sections || []).flatMap(sec => sec.items || []);
+    const rawItems = costItemsForService(allItems, lineItemServices, serviceName);
+    const billed = new Set(nextSchedule.map(r => norm(r.altItem)).filter(Boolean));
+    const costByYear = zeros().map((_, yi) => rawItems.reduce((s, it) => s + ctsItemYearCost(it, yi + 1), 0));
+    const unbilled = rawItems
+      .filter(it => !billed.has(norm(mappingNameFor(it))))
+      .map(it => ({
+        description: it.description,
+        feeName: String(mappingNameFor(it) || '').trim(),
+        termCost: zeros().reduce((s, _, yi) => s + ctsItemYearCost(it, yi + 1), 0),
+      }));
+
+    const optionTotals = (rows) => {
+      const fee = zeros().map((_, yi) => rows.reduce((s, r) => s + altFeeYearRevenue(r, yi + 1), 0));
+      const { costByYear: cost } = optionCostBreakdown(opt, rows);
+      return { feeByYear: fee, costByYear: cost, margin: dealMarginForOption(opt, rows) };
+    };
+
+    return {
+      optionName: opt.sheetName,
+      numYears,
+      fees,
+      feeByYear,
+      costByYear,
+      unbilled,
+      before: optionTotals(schedule),
+      after: optionTotals(nextSchedule),
+    };
+  }
+
   // Write a saved structure into the active option's Alternative Fee
   // schedule: the service's current fee rows come out, the structure's go
   // in. Fees another service shares are called out before anything moves.
@@ -5034,6 +5125,7 @@ export function PricingView({ settings } = {}) {
           feeStructures={serviceFeeStructures}
           setFeeStructures={setServiceFeeStructures}
           previewFeeRow={previewFeeStructureRow}
+          previewOnOption={previewServiceOnOption}
           applyFeeStructure={applyServiceFeeStructure}
           numYears={Math.max(1, Math.ceil(termMonths / 12))}
           onOpenLinkedTo={() => setPageSubtab('linkedTo')}
