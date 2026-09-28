@@ -41,12 +41,14 @@ const STATUS_CLASS = {
 //   onSetItemType   (itemId, type) => overrides a cost line's Type ('' clears it)
 //   onSetPassThrough (description, type, on) => the Linked To pass-through
 //                   setting for that Line Item + Type pair
+//   onSetCompleted  (serviceName, on) => marks the service done on the active
+//                   option (its list row turns green)
 //   onSetItemAnnual (itemId, on) => turns a one-time cost into an annual one
 //                   (CTS ÷ 12, Recurring monthly), or back
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
   onSetCount, onIgnoreForCheck, feeStructures = {}, setFeeStructures, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough,
-  unlinked = null, tagOptions = [], onTagLineItem, onIgnoreLineItem,
+  unlinked = null, tagOptions = [], onTagLineItem, onIgnoreLineItem, onSetCompleted,
 }) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(null);
@@ -54,6 +56,9 @@ export function ServicesTab({
 
   const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0] || null;
   const scopeCount = services.filter(s => s.inScope).length;
+  const completed = new Set((opt?.servicesCompleted || []).map(k => String(k).trim().toLowerCase()));
+  const isDone = (name) => completed.has(String(name ?? '').trim().toLowerCase());
+  const doneInScope = services.filter(s => s.inScope && isDone(s.name)).length;
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -131,7 +136,7 @@ export function ServicesTab({
           </div>
           <div className={styles.listSummary}>
             {workbook
-              ? `${scopeCount} of ${services.length} service${services.length === 1 ? '' : 's'} in SIA scope${opt ? ` (${opt.sheetName})` : ''}`
+              ? `${scopeCount} of ${services.length} service${services.length === 1 ? '' : 's'} in SIA scope${opt ? ` (${opt.sheetName})` : ''}${scopeCount ? `, ${doneInScope} completed` : ''}`
               : `${services.length} service${services.length === 1 ? '' : 's'}. Upload an SIA on the Pricing subtab to see which are in scope.`}
           </div>
           <ul className={styles.list}>
@@ -142,10 +147,10 @@ export function ServicesTab({
                 <li key={s.name} className={divider ? styles.dividerItem : undefined}>
                   <button
                     type="button"
-                    className={`${styles.serviceBtn} ${s.name === selected ? styles.serviceBtnActive : ''} ${s.status === SERVICE_STATUS.RETIRED || s.status === SERVICE_STATUS.HIDDEN ? styles.serviceMuted : ''}`}
+                    className={`${styles.serviceBtn} ${isDone(s.name) ? styles.serviceDone : ''} ${s.name === selected ? styles.serviceBtnActive : ''} ${s.status === SERVICE_STATUS.RETIRED || s.status === SERVICE_STATUS.HIDDEN ? styles.serviceMuted : ''}`}
                     onClick={() => setSelected(s.name === selected ? null : s.name)}
                   >
-                    <span className={styles.serviceName}>{s.name}</span>
+                    <span className={styles.serviceName}>{isDone(s.name) && <span className={styles.doneCheck} title="Completed">✓ </span>}{s.name}</span>
                     <span className={styles.serviceTags}>
                       {s.inScope && <span className={styles.scopeTag}>In SIA scope</span>}
                       <span className={styles[STATUS_CLASS[s.status]]}>{s.status}</span>
@@ -192,6 +197,8 @@ export function ServicesTab({
               onOpenLinkedTo={onOpenLinkedTo}
               onSetCount={onSetCount}
               onIgnoreForCheck={onIgnoreForCheck ? (itemId, on) => onIgnoreForCheck(current.name, itemId, on) : null}
+              completed={isDone(current.name)}
+              onSetCompleted={workbook && onSetCompleted ? (on) => onSetCompleted(current.name, on) : null}
             />
           )}
         </div>
@@ -269,7 +276,7 @@ function UnlinkedWarning({ unlinked, costTotals, optionName, tagOptions, quickTa
   );
 }
 
-function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough }) {
+function ServiceDetail({ service, completed = false, onSetCompleted, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough }) {
   const items = detail?.items || [];
   const fees = detail?.fees || [];
   const structures = saved?.structures || [];
@@ -369,6 +376,16 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
         <h3 className={styles.detailTitle}>{service.name}</h3>
         {service.inScope && <span className={styles.scopeTag}>In SIA scope</span>}
         <span className={styles[STATUS_CLASS[service.status]]}>{service.status}</span>
+        {onSetCompleted && (
+          <button
+            type="button"
+            className={completed ? styles.doneBtnOn : styles.doneBtn}
+            onClick={() => onSetCompleted(!completed)}
+            title={completed ? 'Completed on this option. Click to mark it not completed.' : 'Mark this service completed on this option'}
+          >
+            {completed ? '✓ Completed' : 'Mark completed'}
+          </button>
+        )}
       </div>
 
       {!hasWorkbook ? (
