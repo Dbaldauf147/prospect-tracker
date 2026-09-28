@@ -4667,6 +4667,9 @@ export function PricingView({ settings } = {}) {
         // Marked-up price at the row's GM, what a fee has to collect to
         // recover this cost (see priceFor).
         price: (() => { const pr = priceFor(item).price; return typeof pr === 'number' && Number.isFinite(pr) ? pr : null; })(),
+        // What the line costs (CTS plus tech depreciation), the base a fee
+        // structure row's Markup % is applied to.
+        cost: typeof item.cts === 'number' ? ctsItemEffectiveCost(item) : null,
         startMonth: effectiveItemStartMonth(item),
         feeName: String(mappingNameFor(item) || '').trim(),
         automatedName: String(resolvedLinkedTo(item) || '').trim(),
