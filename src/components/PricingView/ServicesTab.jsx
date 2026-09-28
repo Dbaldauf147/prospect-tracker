@@ -1070,11 +1070,6 @@ function FeeStructureEditor({
           Apply to {optionName || 'schedule'}
         </button>
       </div>
-      <p className={styles.note}>
-        Leave Fee, Unit Count, Start Month or GM% blank to derive it from the SIA, the same as a blank cell on the
-        Alternative Fee schedule; the grey value shows what it derives to on {hasWorkbook ? (optionName || 'the loaded option') : 'the loaded SIA'}.
-        Saved structures stay with the service across SIAs.
-      </p>
       <datalist id={listId}>
         {feeNameSuggestions.map(n => <option key={n} value={n} />)}
       </datalist>
