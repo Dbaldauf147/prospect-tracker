@@ -721,7 +721,7 @@ function RateCheck({ check }) {
         Price check <span className={styles[cls]}>{label}</span>
       </h4>
       <div className={styles.rateGrid}>
-        <span><span className={styles.factKey}>{pu?.perMonth ? 'Cost' : 'Year 1 cost'}{per}:</span> <span className={styles.rateFigure}>{fmt(shown.cost)}</span></span>
+        <span><span className={styles.factKey}>{pu?.perMonth || pu?.part === 'Ongoing' ? 'Cost' : 'Year 1 cost'}{per}{pu?.part === 'Ongoing' && !pu.perMonth ? ' a year' : ''}:</span> <span className={styles.rateFigure}>{fmt(shown.cost)}</span></span>
         <span><span className={styles.factKey}>{markupLabel}:</span> <span className={styles.rateFigure}>{fmt(shown.price)}{per}</span></span>
         <span>
           <span className={styles.factKey}>Rate card{pu ? '' : ' range'}:</span>{' '}
@@ -730,10 +730,12 @@ function RateCheck({ check }) {
       </div>
       {pu && (
         <p className={styles.note}>
-          {period} cost of {fmtWhole(pu.totalCost ?? check.cost)}, priced at {fmtWhole(pu.totalPrice ?? check.price)}, over {pu.units.toLocaleString('en-US')} {String(pu.unitLabel || 'units').toLowerCase()}.
+          {pu.part && !pu.perMonth ? `${pu.part} cost for a year` : `${period} cost`} of {fmtWhole(pu.totalCost ?? check.cost)}, priced at {fmtWhole(pu.totalPrice ?? check.price)}, over {pu.units.toLocaleString('en-US')} {String(pu.unitLabel || 'units').toLowerCase()}.
+          {check.leftOut?.length > 0 && ` Also on the rate card but not in this check, the SIA having no cost for it: ${check.leftOut.map(b => `${b.basisLabel} (${fmtMoneyRange(b.fee, b.feeHigh)})`).join(', ')}.`}
         </p>
       )}
       <RateMeter check={shown} fmt={fmt} />
+      <FeeComponents parts={check.parts} />
       {(check.status === RATE_CHECK.INCOMPLETE || check.status === RATE_CHECK.UNPRICED) && (
         <p className={styles.note}>
           {check.status === RATE_CHECK.INCOMPLETE
@@ -747,8 +749,66 @@ function RateCheck({ check }) {
   );
 }
 
+const fmtMoneyRange = (lo, hi) => (fmtWhole(lo) === fmtWhole(hi) ? fmtWhole(lo) : `${fmtWhole(Math.min(lo, hi))} – ${fmtWhole(Math.max(lo, hi))}`);
+
+// The rate card's fee components (Dropdowns › Services Pricing), one row
+// per part of the fee model, each against what the SIA's costs for that
+// part price at. Shown when the card has more than one component, so the
+// range above can be read back to the rates it is made of.
+function FeeComponents({ parts = [] }) {
+  const lines = parts.reduce((n, pt) => n + pt.cardLines.length, 0);
+  if (lines < 2) return null;
+  return (
+    <table className={styles.componentTable}>
+      <thead>
+        <tr>
+          <th>Fee component</th>
+          <th className={styles.num}>Rate card</th>
+          <th className={styles.num}>SIA cost, priced</th>
+          <th />
+        </tr>
+      </thead>
+      <tbody>
+        {parts.map(pt => {
+          const badge = RATE_BADGE[pt.status];
+          const pu = pt.perUnit;
+          const per = (b) => (b.kind === 'unit' ? ` ${String(b.basisLabel || '').toLowerCase()}` : '');
+          const month = (b) => (b.monthly ? ' a month' : (pt.key === 'recurring' ? ' a year' : ''));
+          const card = pt.cardLines.length === 0
+            ? <span className={styles.muted}>Not on the card</span>
+            : pt.cardLines.map((b, i) => (
+              <div key={i}>
+                {b.kind === 'unit'
+                  ? `${fmtRateRange(b.rate, b.rateHigh ?? b.rate)}${per(b)}${month(b)}`
+                  : `${b.basisLabel}: ${fmtMoneyRange(b.fee, b.feeHigh ?? b.fee)}`}
+              </div>
+            ));
+          const siaPrice = pt.cost > 0
+            ? (pu
+              ? `${fmtRate(pu.price)} ${String(pt.cardLines[0].basisLabel || '').toLowerCase()}${pu.perMonth ? ' a month' : ''}`
+              : fmtWhole(pt.price))
+            : <span className={styles.muted}>No cost on the SIA</span>;
+          return (
+            <tr key={pt.key}>
+              <td>{pt.label}</td>
+              <td className={styles.num}>{card}</td>
+              <td className={styles.num}>{siaPrice}</td>
+              <td>{badge && <span className={styles[badge[0]]}>{badge[1]}</span>}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+const fmtRateRange = (lo, hi) => (fmtRate(lo) === fmtRate(hi) ? fmtRate(lo) : `${fmtRate(Math.min(lo, hi))} – ${fmtRate(Math.max(lo, hi))}`);
+
 // Boxes for the counts the rate card needs and the SIA doesn't carry, plus
 // any already typed so they can be changed or cleared. Saved on the option.
+// Only the counts this service's own fee components price on are offered:
+// a count typed for another service (sites w/ mandate for BBS) stays with
+// the services whose card uses it.
 //
 // A count the SIA supplies (sites, accounts, and sites standing in for
 // sites w/ mandate) shows as the box's grey placeholder: blank means the
@@ -760,7 +820,7 @@ function CheckCounts({ missing = [], used = [], entered = {}, fromSia = {}, onSe
     if (!fields.some(f => f.key === key)) fields.push({ key, label: key === 'dealSize' ? 'Deal size' : unitLabelFor(key) });
   };
   for (const key of used) if (fromSia[key] != null) add(key);
-  for (const key of Object.keys(entered)) add(key);
+  for (const key of Object.keys(entered)) if (used.includes(key)) add(key);
   if (fields.length === 0) return null;
   return (
     <div className={styles.countStack}>
