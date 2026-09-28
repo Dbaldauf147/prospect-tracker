@@ -59,6 +59,10 @@
   .layout {
     grid-template-columns: 1fr;
   }
+  /* Stacked above the detail, a pinned list would sit on top of it. */
+  .listPane {
+    position: static;
+  }
 }
 
 .listPane {
@@ -67,6 +71,10 @@
   background: #fff;
   display: flex;
   flex-direction: column;
+  /* Pinned while the detail beside it scrolls; ServicesTab sets the
+     max-height to the scroll area's own height, this is the fallback. */
+  position: sticky;
+  top: 0;
   max-height: calc(100vh - 220px);
   min-height: 300px;
   overflow: hidden;
