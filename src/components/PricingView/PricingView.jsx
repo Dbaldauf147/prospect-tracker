@@ -114,37 +114,62 @@ function CellTextInput({ initial, placeholder, type, align, listId, onCommit, di
   );
 }
 
-// Parse tab- or comma-separated text into alt-fee rows. Each row is
-// expected to have 6 columns matching the table: Item / Type / Fee /
-// Unit / UnitCount / StartMonth. Excess columns are ignored, missing
-// ones become empty.
+// Parse tab- or comma-separated text into alt-fee rows. Without a
+// header the columns are positional: Item / Type / Fee / Unit /
+// UnitCount / StartMonth / GM% / Pass-through. When a header row is
+// pasted alongside the data (e.g. from the built-in Copy for Excel
+// button, which also carries the read-only Y1..Yn revenue columns),
+// the columns are located by their header labels instead, so extra
+// columns in between don't shift anything.
+const ALT_PASTE_POSITIONAL = { altItem: 0, type: 1, fee: 2, unit: 3, unitCount: 4, startMonth: 5, gm: 6, pass: 7 };
+function altPasteHeaderMap(cols) {
+  const cell = (i) => (cols[i] ?? '').trim();
+  if (!(/^(alternative\s*fee|item)\b/i.test(cell(0)) && /^type$/i.test(cell(1)))) return null;
+  const map = {};
+  cols.forEach((raw, i) => {
+    const h = String(raw || '').trim();
+    if (map.altItem === undefined && /^(alternative\s*fee|item)\b/i.test(h)) map.altItem = i;
+    else if (map.type === undefined && /^type$/i.test(h)) map.type = i;
+    else if (map.fee === undefined && /^fee$/i.test(h)) map.fee = i;
+    else if (map.unit === undefined && /^unit$/i.test(h)) map.unit = i;
+    else if (map.unitCount === undefined && /^unit\s*count$/i.test(h)) map.unitCount = i;
+    else if (map.startMonth === undefined && /start\s*month/i.test(h)) map.startMonth = i;
+    else if (map.gm === undefined && /gm\s*%|margin/i.test(h)) map.gm = i;
+    else if (map.pass === undefined && /pass/i.test(h)) map.pass = i;
+  });
+  return map;
+}
 function parseAltFeePaste(text) {
   if (!text) return [];
-  const lines = text.replace(/\r\n?/g, '\n').split('\n').map(l => l.trim()).filter(Boolean);
+  const lines = text.replace(/\r\n?/g, '\n').split('\n').filter(l => l.trim());
   const out = [];
+  let colMap = ALT_PASTE_POSITIONAL;
   for (const line of lines) {
     const cols = line.includes('\t') ? line.split('\t') : line.split(/\s*,\s*/);
-    const cell = (i) => (cols[i] ?? '').trim();
-    // Skip a header row pasted alongside the data (e.g. from the
-    // built-in Copy button). The first column on a header reads
-    // "Alternative Fee…" or "Item" and the second is the literal
-    // word "Type".
-    if (/^(alternative\s*fee|item)\b/i.test(cell(0)) && /^type$/i.test(cell(1))) continue;
-    const feeRaw = cell(2).replace(/[$,\s]/g, '');
+    const header = altPasteHeaderMap(cols);
+    if (header) { colMap = header; continue; }
+    const cell = (key) => {
+      const i = colMap[key];
+      return i === undefined ? '' : (cols[i] ?? '').trim();
+    };
+    if (!cols.some(c => String(c || '').trim())) continue;
+    const feeRaw = cell('fee').replace(/[$,\s]/g, '');
     const feeNum = feeRaw === '' ? null : Number(feeRaw);
-    const ucNum = Number(cell(4));
-    const smNum = Number(cell(5));
-    const gmRaw = cell(6).replace('%', '').trim();
+    const ucRaw = cell('unitCount').replace(/,/g, '');
+    const ucNum = ucRaw === '' ? NaN : Number(ucRaw);
+    const smNum = Number(cell('startMonth'));
+    const gmRaw = cell('gm').replace('%', '').trim();
     const gmNum = gmRaw === '' ? null : Number(gmRaw);
-    const passRaw = cell(7).trim().toLowerCase();
+    const passRaw = cell('pass').toLowerCase();
     const passThrough = passRaw === 'yes' || passRaw === 'y' || passRaw === 'true' || passRaw === '1' || passRaw === 'pass' || passRaw === 'pass-through' || passRaw === 'passthrough';
+    const unit = cell('unit');
     out.push({
-      altItem: cell(0),
-      type: cell(1),
+      altItem: cell('altItem'),
+      type: cell('type'),
       fee: Number.isFinite(feeNum) ? feeNum : null,
-      unit: cell(3),
-      unitCount: Number.isFinite(ucNum) ? ucNum : cell(4),
-      startMonth: cell(5) === '' ? null : (Number.isFinite(smNum) && smNum > 0 ? smNum : null),
+      unit: unit === '-' ? '' : unit,
+      unitCount: Number.isFinite(ucNum) ? ucNum : cell('unitCount'),
+      startMonth: cell('startMonth') === '' ? null : (Number.isFinite(smNum) && smNum > 0 ? smNum : null),
       feeGmPct: Number.isFinite(gmNum) ? (gmNum > 1 ? gmNum / 100 : gmNum) : null,
       passThrough,
     });
@@ -207,35 +232,57 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
   const [flash, setFlash] = useState('');
   const parsed = pasteOpen ? parseAltFeePaste(pasteText) : [];
 
-  // TSV (tab-separated) snapshot of the table — data rows only, no
-  // header. The Fee column uses the effective fee (manual if present,
-  // otherwise the auto-computed marked-up fee from linked CTS rows)
-  // so the export reflects what the user sees. Pastes cleanly into
-  // Excel and round-trips through the paste box.
+  // TSV (tab-separated) snapshot of the table as it reads on screen:
+  // a header row, then one line per fee with every visible column,
+  // Y1..Yn revenue included. Fee, Start Month and GM% use the effective
+  // values (manual if typed, otherwise the auto-derived ones shown as
+  // placeholders). Money goes out as "$1,234.56" and GM% as "50.0%",
+  // both of which Excel reads as numbers. Round-trips through the
+  // paste box, which locates columns by this header.
   function buildTsv() {
-    const lines = [];
+    const header = [
+      'Alternative Fee Structure/Schedule', 'Type', 'Fee', 'Unit', 'Unit Count', 'Fee Start Month',
+      ...Array.from({ length: numYears }, (_, i) => `Y${i + 1}`),
+      'Fee GM%', 'Pass-through',
+    ];
+    const clean = (v) => String(v ?? '').replace(/[\t\r\n]+/g, ' ').trim();
+    const lines = [header.join('\t')];
     for (const r of rows) {
       const manualFee = Number(r.fee);
       const hasManual = r.fee != null && r.fee !== '' && Number.isFinite(manualFee) && manualFee >= 0;
       const auto = !hasManual && autoFeeFor ? autoFeeFor(r) : null;
       const fee = hasManual ? manualFee : (typeof auto === 'number' ? auto : '');
-      const feeCell = typeof fee === 'number' ? fee.toFixed(2) : '';
-      const gmCell = typeof r.feeGmPct === 'number' ? (r.feeGmPct * 100).toFixed(1) + '%' : '';
+      const feeCell = typeof fee === 'number' ? fmtMoneyCell(fee) : '';
       const manualSm = Number(r.startMonth);
       const hasManualSm = r.startMonth != null && r.startMonth !== '' && Number.isFinite(manualSm) && manualSm > 0;
       const autoSm = !hasManualSm && autoStartMonthFor ? autoStartMonthFor(r) : null;
       const smCell = hasManualSm
         ? r.startMonth
         : (typeof autoSm === 'number' && autoSm > 0 ? autoSm : '');
+      const years = Array.from({ length: numYears }, (_, yi) => {
+        const rev = yearRevenue ? yearRevenue(r, yi + 1) : 0;
+        return rev > 0 ? fmtMoneyCell(rev) : '';
+      });
+      let gmCell = '';
+      if (!r.passThrough) {
+        if (typeof r.feeGmPct === 'number') gmCell = `${(r.feeGmPct * 100).toFixed(1)}%`;
+        else {
+          const computed = marginFor ? marginFor(r.altItem) : null;
+          const explicitZeroFee = typeof r.fee === 'number' && r.fee === 0;
+          if (computed) gmCell = `${(computed.marginPct * 100).toFixed(1)}%`;
+          else if (!explicitZeroFee && typeof globalGmPct === 'number') gmCell = `${(globalGmPct * 100).toFixed(1)}%`;
+        }
+      }
       lines.push([
-        r.altItem || '',
-        r.type || '',
+        clean(r.altItem),
+        clean(r.type),
         feeCell,
-        r.unit || '',
-        r.unitCount === '' || r.unitCount == null ? '' : r.unitCount,
+        clean(r.unit),
+        r.unitCount === '' || r.unitCount == null ? '' : clean(r.unitCount),
         smCell,
+        ...years,
         gmCell,
-        r.passThrough ? 'yes' : '',
+        r.passThrough ? 'Yes' : '',
       ].join('\t'));
     }
     return lines.join('\n');
@@ -245,7 +292,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
     const tsv = buildTsv();
     try {
       await navigator.clipboard.writeText(tsv);
-      setFlash(`Copied ${rows.length} row${rows.length === 1 ? '' : 's'} to clipboard: paste into Excel.`);
+      setFlash(`Copied ${rows.length} row${rows.length === 1 ? '' : 's'} with headers. Paste into Excel.`);
     } catch {
       // Clipboard API blocked (insecure context, permissions). Fall
       // back to opening the paste box prefilled so the user can copy
@@ -319,6 +366,15 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
             Build from Automated Fee Names{buildCount > 0 ? ` (${buildCount})` : ''}
           </button>
         )}
+        <button
+          type="button"
+          className={styles.actionBtn}
+          disabled={rows.length === 0}
+          onClick={handleCopy}
+          title="Copy this table, headers and yearly revenue included, then paste it straight into Excel."
+        >
+          Copy for Excel
+        </button>
       </div>
       {flash && <div className={styles.pasteFlash}>{flash}</div>}
       <datalist id={altItemListId}>
@@ -643,14 +699,6 @@ Type a value to override.`
       })()}
       <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
         <button type="button" className={styles.actionBtn} onClick={onAddRow}>+ Add row</button>
-        <button
-          type="button"
-          className={styles.actionBtn}
-          onClick={handleCopy}
-          title="Copy this table as tab-separated rows. Paste straight into Excel."
-        >
-          Copy to clipboard
-        </button>
         <button type="button" className={styles.actionBtn} onClick={() => setPasteOpen(o => !o)}>
           {pasteOpen ? 'Hide paste box' : 'Paste from spreadsheet…'}
         </button>
@@ -672,7 +720,7 @@ Type a value to override.`
       {pasteOpen && (
         <div className={styles.pasteBox}>
           <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginBottom: '0.35rem' }}>
-            Paste tab-separated rows (6 columns: Item · Type · Fee · Unit · Unit Count · Fee Start Month). Type values like "One Time" / "Recurring (monthly)" and Unit values like "Per Site" / "Per Account" will round-trip into the dropdowns.
+            Paste tab-separated rows (Item · Type · Fee · Unit · Unit Count · Fee Start Month), or a table copied with Copy for Excel, header row included. Type values like "One Time" / "Recurring (monthly)" and Unit values like "Per Site" / "Per Account" will round-trip into the dropdowns.
           </div>
           <textarea
             className={styles.pasteArea}
