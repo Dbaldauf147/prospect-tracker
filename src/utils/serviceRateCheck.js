@@ -10,8 +10,8 @@
 //   card side   estimateServiceRange's first-year fee plus setup, low and
 //               high, priced on the option's own site and account counts.
 //
-// Each cost line is marked up at its own `markup` when it carries one (the
-// Markup % on the fee structure row that bills it), else at the default.
+// Each cost line is marked up at its own `markup` when it carries one, else
+// at the default.
 //
 // When the card prices the service on one per-unit rate and nothing else
 // (BBS at $625 to $825 per site w/ mandate), that rate is what the check
