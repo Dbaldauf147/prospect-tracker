@@ -15,7 +15,7 @@
 // counts Cancelled and drives the Clients tab's contract drill-down. Cancelled
 // and expired are different events; the last block guards the gap so widening
 // one doesn't quietly widen the other.
-import { isExpiredDeal, isInactiveAgreement } from '../src/utils/dealsFormat.js';
+import { isExpiredDeal, isInactiveAgreement, isPastEndDateDeal } from '../src/utils/dealsFormat.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -75,6 +75,25 @@ check('isInactiveAgreement still counts Expired',
   isInactiveAgreement({ 'Paperwork completed': 'Expired' }), true);
 check('isInactiveAgreement ignores a past End Date too',
   isInactiveAgreement({ 'End Date': dayOffset(-30) }), false);
+
+// ---- Live but past its End Date: the Deals page flags these red ----------
+check('live deal, End Date last month → past end date',
+  isPastEndDateDeal({ 'End Date': dayOffset(-30) }), true);
+check('live deal, End Date yesterday → past end date',
+  isPastEndDateDeal({ 'End Date': dayOffset(-1) }), true);
+check('End Date today is still live',
+  isPastEndDateDeal({ 'End Date': dayOffset(0) }), false);
+check('End Date in the future is not flagged',
+  isPastEndDateDeal({ 'End Date': dayOffset(30) }), false);
+check('marked Expired is not flagged (it is greyed instead)',
+  isPastEndDateDeal({ 'Paperwork completed': 'Expired', 'End Date': dayOffset(-30) }), false);
+check('marked Cancelled is not flagged',
+  isPastEndDateDeal({ 'Paperwork completed': 'Cancelled', 'End Date': dayOffset(-30) }), false);
+check('no End Date is not flagged', isPastEndDateDeal({}), false);
+check('unparseable End Date is not flagged',
+  isPastEndDateDeal({ 'End Date': 'N/A' }), false);
+check('Excel serial End Date in the past → past end date',
+  isPastEndDateDeal({ 'End Date': 45000 }), true);
 
 console.log(failures === 0 ? '\nAll deal-expiry tests passed.' : `\n${failures} test(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
