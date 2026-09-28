@@ -151,10 +151,16 @@ export function newOppsByWeek({ records, refMs = Date.now(), weeks = TREND_WEEKS
 // weekly snapshots. Which is why a day-scoped report gets it too: "79% of
 // Tier 2 has a contact" is as true on a Tuesday as it is for the week.
 //
-// A week with no snapshot is null, not 0, for the same reason a week with
-// no email recording is: the Progress tab writes a snapshot when it is
-// opened, so a week nobody opened it has no reading, and drawing that as
-// 0% would put a cliff in the line that no account ever fell off.
+// Only the weeks that have a snapshot are points, which is how the Progress
+// tab plots them: one point per recorded week, evenly spaced, so the two
+// charts line up week for week. The tab writes a snapshot when it is
+// opened, so a week nobody opened it has no reading; drawing that as 0%
+// would put a cliff in the line that no account ever fell off, and leaving
+// a blank slot for it would stretch the chart the tab does not stretch.
+// A recorded week missing one field still reports null for that field.
+//
+// `progressWeeks` should already have the "Don't Track" clients taken out
+// (utils/progressUntracked), as the Progress tab does before it plots.
 export function coverageByWeek({ progressWeeks = [], refMs = Date.now(), weeks = COVERAGE_WEEKS, months = null } = {}) {
   const byWeek = new Map();
   for (const w of (Array.isArray(progressWeeks) ? progressWeeks : [])) {
@@ -164,8 +170,9 @@ export function coverageByWeek({ progressWeeks = [], refMs = Date.now(), weeks =
 
   // A span in months wins over a week count: it is how the email asks.
   const windows = recentWeeks(refMs, months ? coverageWeeksFor(refMs, months) : weeks);
+  const recorded = windows.filter(({ start }) => byWeek.has(localKey(start)));
   const charts = COVERAGE_CHARTS.map((c) => {
-    const points = windows.map(({ start }) => {
+    const points = recorded.map(({ start }) => {
       const snap = byWeek.get(localKey(start));
       return {
         key: localKey(start),

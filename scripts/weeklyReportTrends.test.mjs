@@ -162,10 +162,10 @@ const opp = (id, ms) => ({ id, account: `Acct ${id}`, Stage: 'Discovery', _rowUp
 }
 
 // ---- Account coverage ----------------------------------------------------
-// The Progress tab's two charts, as the email carries them. The thing worth
-// guarding is the same one the emails series has: a week the Progress tab
-// was never opened has no snapshot, and reading that as 0% would draw a
-// collapse in coverage that no account ever went through.
+// The Progress tab's two charts, as the email carries them. A week the
+// Progress tab was never opened has no snapshot; reading that as 0% would
+// draw a collapse in coverage that no account ever went through, and the
+// tab itself plots recorded weeks only, so the series leaves it out.
 {
   // The five weeks ending with the one containing REF (Sep 9 2026). Keyed
   // off local date parts, the way the Progress tab keys its snapshots -
@@ -187,17 +187,27 @@ const opp = (id, ms) => ({ id, account: `Acct ${id}`, Stage: 'Discovery', _rowUp
   ];
 
   const cov = coverageByWeek({ progressWeeks: weeks, refMs: REF, weeks: 5 });
-  eq(cov.weeks, 5, 'coverage: five weekly points');
+  eq(cov.weeks, 5, 'coverage: the window is five weeks');
   eq(cov.charts.map(c => c.id), ['contactPct', 'dmPct'], 'coverage: the two Progress charts, in tab order');
   eq(cov.charts[0].title, '% of Accounts with HubSpot Contacts', 'coverage: the chart keeps its own title');
 
   const contacts = cov.charts[0];
-  eq(contacts.points.map(p => p.t1), [88, 88, null, 100, 100], 'coverage: an unrecorded week is null, not 0');
-  eq(contacts.points.map(p => p.t2), [53, 55, null, 79, 79], 'coverage: both tiers read from the same snapshot');
-  eq(contacts.points.map(p => p.label), ['Aug 10', 'Aug 17', 'Aug 24', 'Aug 31', 'Sep 7'],
-    'coverage: every window is labelled, recorded or not');
-  eq(contacts.points[4].key, '2026-09-07', 'coverage: keyed by the Monday the Progress tab keys on');
-  eq(cov.charts[1].points.map(p => p.t1), [50, 49, null, 67, 80], 'coverage: the DM chart reads its own fields');
+  eq(contacts.points.map(p => p.t1), [88, 88, 100, 100], 'coverage: an unrecorded week is left out, not drawn as 0');
+  eq(contacts.points.map(p => p.t2), [53, 55, 79, 79], 'coverage: both tiers read from the same snapshot');
+  eq(contacts.points.map(p => p.label), ['Aug 10', 'Aug 17', 'Aug 31', 'Sep 7'],
+    'coverage: one point per recorded week, labelled as the Progress tab labels it');
+  eq(contacts.points[3].key, '2026-09-07', 'coverage: keyed by the Monday the Progress tab keys on');
+  eq(cov.charts[1].points.map(p => p.t1), [50, 49, 67, 80], 'coverage: the DM chart reads its own fields');
+
+  // A recorded week that predates one of the fields keeps its slot, with
+  // no reading for that field, rather than a 0.
+  const partial = coverageByWeek({
+    progressWeeks: [{ week: wk(1), t1ContactPct: 70 }, { week: wk(3), t1ContactPct: 75, t2ContactPct: 40 }],
+    refMs: REF,
+    weeks: 5,
+  });
+  eq(partial.charts[0].points.map(p => [p.t1, p.t2]), [[70, null], [75, 40]],
+    'coverage: a field a recorded week lacks is null, not 0');
 
   // The one line under the card: where each tier stands and how far it moved.
   eq(contacts.note, 'Tier 1 +12 pts to 100%, Tier 2 +26 pts to 79% since Aug 10.',
@@ -252,12 +262,19 @@ const opp = (id, ms) => ({ id, account: `Acct ${id}`, Stage: 'Discovery', _rowUp
   eq(COVERAGE_MONTHS, 10, 'coverage: the email asks for ten months');
   eq(coverageWeeksFor(ref, 10), 43, 'coverage: ten months is the weeks from the first month\u2019s opening Monday');
   const cov = coverageByWeek({
-    progressWeeks: [{ week: '2026-09-21', t1ContactPct: 95, t2ContactPct: 79 }], refMs: ref, months: 10,
+    progressWeeks: [
+      { week: '2025-11-24', t1ContactPct: 10, t2ContactPct: 10 },
+      { week: '2025-12-01', t1ContactPct: 60, t2ContactPct: 20 },
+      { week: '2026-04-06', t1ContactPct: 88, t2ContactPct: 53 },
+      { week: '2026-09-21', t1ContactPct: 95, t2ContactPct: 79 },
+    ],
+    refMs: ref,
+    months: 10,
   });
   eq(cov.months, 10, 'coverage: a month-built series says how many months');
-  eq(cov.weeks, 43, 'coverage: and how many weekly points');
-  eq(cov.charts[0].points[0].key, '2025-12-01', 'coverage: it starts in the week holding the first month\u2019s 1st');
-  eq(cov.charts[0].points[42].key, '2026-09-21', 'coverage: and ends on the reported week');
+  eq(cov.weeks, 43, 'coverage: and how many weeks its window spans');
+  eq(cov.charts[0].points.map(p => p.key), ['2025-12-01', '2026-04-06', '2026-09-21'],
+    'coverage: it opens in the week holding the first month\u2019s 1st and ends on the reported week');
   eq(coverageByWeek({ progressWeeks: [{ week: '2026-09-21', t1ContactPct: 50 }], refMs: ref, weeks: 5 }).months, undefined,
     'coverage: a week-count series carries no month span');
 }

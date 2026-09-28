@@ -45,12 +45,14 @@ import { PipelineFunnel } from '../PipelineView/PipelineFunnel';
 import { CloseRateTrend } from './CloseRateTrend';
 import { svgToPngDataUrl } from '../../utils/svgToPng';
 import { LiveValue, LiveValueProvider } from '../common/LiveValue';
-import { ColumnTrendChart, LineTrendChart } from './WeeklyReportCharts';
+import { ColumnTrendChart, LineTrendChart, CoverageTrendChart } from './WeeklyReportCharts';
 import {
   emailsWeekBreakdown, newOppsWeekBreakdown, coverageRatioWeekBreakdown,
   accountCoverageBreakdown, kpiBreakdown, funnelStageBreakdown,
 } from '../../utils/weeklyReportBreakdowns';
 import { COVERAGE_T1, COVERAGE_T2 } from '../../utils/progressCoverage';
+import { useClientFlagMaps } from '../../utils/rosterHooks';
+import { excludeUntrackedFromWeeks } from '../../utils/progressUntracked';
 
 const ACTIVITY_CACHE_KEY = 'hubspot-activity-cache';
 const PIPELINE_STORE = 'pipeline-dashboard';
@@ -631,9 +633,17 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   // than rasterised off the screen the way the funnel is, so the same
   // picture comes out of the cron's rebuild; this is the same call, not a
   // capture the server has to do without.
+  // Read with the clients ticked "Don't Track" taken out of every week,
+  // exactly as the Progress tab does before it plots, so the two charts
+  // and the accounts behind each point agree with it.
+  const { clientUntrackedMap } = useClientFlagMaps();
+  const trackedProgressWeeks = useMemo(
+    () => excludeUntrackedFromWeeks(progressWeeks, clientUntrackedMap).weeks,
+    [progressWeeks, clientUntrackedMap],
+  );
   const coverageSeries = useMemo(() => withCoverageImages(coverageByWeek({
-    progressWeeks, refMs: bounds.start, months: COVERAGE_MONTHS,
-  })), [progressWeeks, bounds]);
+    progressWeeks: trackedProgressWeeks, refMs: bounds.start, months: COVERAGE_MONTHS,
+  })), [trackedProgressWeeks, bounds]);
 
   // The coverage ratio by week, with today's reading standing in for this
   // week before the write above has landed, so the last bar in the email
@@ -950,18 +960,15 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
               {coverageSeries.charts.map(chart => (
                 <div key={chart.id} className={styles.chartCard}>
                   <div className={styles.chartTitle}>{chart.title}</div>
-                  <LineTrendChart
+                  <CoverageTrendChart
                     id={`cov-${chart.id}`}
                     points={chart.points}
                     series={[
                       { key: 't1', name: 'Tier 1', color: COVERAGE_T1 },
                       { key: 't2', name: 'Tier 2', color: COVERAGE_T2 },
                     ]}
-                    yMax={100}
-                    height={220}
-                    fmt={v => `${Math.round(v)}%`}
                     breakdownFor={(point, s) => accountCoverageBreakdown({
-                      chart, point, tier: s.key === 't2' ? 2 : 1, progressWeeks,
+                      chart, point, tier: s.key === 't2' ? 2 : 1, progressWeeks: trackedProgressWeeks,
                     })}
                   />
                   {chart.note && <div className={styles.chartNote}>{chart.note}</div>}

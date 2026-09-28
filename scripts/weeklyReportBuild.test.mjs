@@ -297,6 +297,36 @@ function fakeFetch(emails) {
   check('no narrative is invented', p.narrative, '');
 }
 
+// ---- account coverage, less the "Don't Track" clients --------------------
+// The Progress tab plots its coverage with the clients ticked "Don't Track"
+// taken out of every week. The scheduled send reads the same ticks from
+// their Firestore mirror and does the same, or its chart would disagree
+// with the tab it is a picture of.
+{
+  const week = (key, pct) => ({
+    week: key,
+    t1Total: 4, t1WithContacts: 2, t1ContactPct: pct,
+    t2Total: 2, t2WithContacts: 1, t2ContactPct: 50,
+    details: {
+      t1WithContacts: ['Acme', 'Beta'], t1NoContacts: ['Gamma', 'Delta'],
+      t2WithContacts: ['Echo'], t2NoContacts: ['Foxtrot'],
+    },
+  });
+  const seeded = {
+    ...docs,
+    'progressHistory/u1': { weeks: [week('2026-08-31', 50), week('2026-09-07', 50)] },
+    [`userSettings/u1/localMirrors/${MIRROR.clientUntracked}`]: { json: JSON.stringify({ gamma: true }), updatedAt: 1 },
+  };
+  const built = await buildWeeklyReport(fakeDb(seeded), UID, {
+    now: NOW, token: 'tok', fetchOpts: { fetchImpl: fakeFetch(hubspotEmails) },
+  });
+  const contacts = built.payload.coverage.charts.find(c => c.id === 'contactPct');
+  check('a ticked client leaves the Tier 1 denominator: 2 of 3, not 2 of 4',
+    contacts.points.map(p => p.t1).join(','), '67,67');
+  check('a tier with nobody ticked reads as saved', contacts.points.map(p => p.t2).join(','), '50,50');
+  check('and the ticks are read without an error', built.errors.some(e => e.startsWith('clientUntracked')), false);
+}
+
 // ---- the coverage ratio by week -----------------------------------------
 // The KPI card's ratio has no history of its own, so the build writes the
 // week it reports into the log when nobody measured it while it ran, and

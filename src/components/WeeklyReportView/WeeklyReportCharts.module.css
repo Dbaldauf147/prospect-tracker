@@ -177,3 +177,94 @@
   color: var(--color-text-muted);
   white-space: nowrap;
 }
+
+/* ---- Account coverage, sized like the Progress tab's recharts line chart:
+   11px ticks in slate, a #666 axis, a dashed #E2E8F0 grid. ---- */
+
+.covWrap { position: relative; padding-top: 8px; }
+
+.covBody { display: flex; }
+
+.covYAxis {
+  position: relative;
+  width: 60px;
+  flex: none;
+}
+
+.covYTick {
+  position: absolute;
+  right: 9px;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: #64748B;
+  white-space: nowrap;
+}
+
+/* The tick mark itself, 6px out from the axis. */
+.covYTick::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: -9px;
+  width: 6px;
+  border-top: 1px solid #666;
+}
+
+.covPlot {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  margin-right: 20px;
+}
+
+.covGrid { stroke: #E2E8F0; stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.covAxis { stroke: #666; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.covLine { stroke-width: 2; vector-effect: non-scaling-stroke; }
+.covGreen { stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+
+.covDot,
+.covDotMax {
+  border-radius: 50%;
+  transition: transform 0.1s ease;
+}
+
+.covDot { width: 9px; height: 9px; }
+.covDotMax { width: 11px; height: 11px; }
+
+.dotHit:hover .covDot,
+.dotHit:hover .covDotMax { transform: scale(1.3); }
+
+.covXAxis {
+  position: relative;
+  height: 24px;
+  margin: 0 20px 0 60px;
+}
+
+.covXTick {
+  position: absolute;
+  top: 8px;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: #64748B;
+  white-space: nowrap;
+}
+
+/* The tick mark over each shown label. */
+.covXTick::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -8px;
+  height: 6px;
+  border-left: 1px solid #666;
+}
+
+.covLegend {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 4px;
+  font-size: 14px;
+}
+
+.covLegendItem { display: inline-flex; align-items: center; gap: 4px; }
