@@ -26,29 +26,30 @@ test('recurring CTS counts twelve months, one-time once, pass-through not at all
   assert.equal(r.passThrough, 1);
 });
 
-test('marked up 50% and inside a per-site range', () => {
+test('priced at 50% margin and inside a per-site range', () => {
   const c = rateCardCheck({
     items: [{ cts: 1000, type: 'Recurring' }],
-    entry: { basis: 'per_site', rate: 100, rateHigh: 200 },
+    entry: { basis: 'per_site', rate: 100, rateHigh: 300 },
     meta: recurring,
     counts: { sites: 100 },
   });
   assert.equal(c.cost, 12000);
-  assert.equal(c.price, 18000);
+  assert.equal(c.price, 24000); // 12,000 / (1 - 50%)
+  assert.equal(c.margin, 0.5);
   assert.equal(c.low, 10000);
-  assert.equal(c.high, 20000);
+  assert.equal(c.high, 30000);
   assert.equal(c.status, RATE_CHECK.WITHIN);
 });
 
 test('below and above the range', () => {
   const entry = { basis: 'flat', rate: 10000, rateHigh: 20000 };
-  assert.equal(rateCardCheck({ items: [{ cts: 5000, type: 'One-time' }], entry, meta: project }).status, RATE_CHECK.BELOW);
+  assert.equal(rateCardCheck({ items: [{ cts: 4000, type: 'One-time' }], entry, meta: project }).status, RATE_CHECK.BELOW);
   assert.equal(rateCardCheck({ items: [{ cts: 15000, type: 'One-time' }], entry, meta: project }).status, RATE_CHECK.ABOVE);
 });
 
 test('setup fee is part of the year 1 range', () => {
   const c = rateCardCheck({
-    items: [{ cts: 10000, type: 'One-time' }],
+    items: [{ cts: 7500, type: 'One-time' }],
     entry: { basis: 'flat', rate: 5000, setupLines: [{ basis: 'flat', rate: 10000 }] },
     meta: project,
   });
@@ -93,9 +94,9 @@ test('a count typed in fills the gap', () => {
     items: [{ cts: 268, type: 'One-time' }],
     entry: { basis: 'per_site_mandate', rate: 100 },
     meta: project,
-    counts: { sites: 29, sites_mandate: 5 },
+    counts: { sites: 29, sites_mandate: 6 },
   });
-  assert.equal(c.low, 500);
+  assert.equal(c.low, 600);
   assert.equal(c.status, RATE_CHECK.BELOW);
   assert.deepEqual(c.missing, []);
 });
@@ -104,8 +105,8 @@ test('a percentage fee asks for, and prices on, a deal size', () => {
   const entry = { basis: 'pct_deal', rate: 10 };
   const before = rateCardCheck({ items: [{ cts: 100, type: 'One-time' }], entry, meta: project });
   assert.deepEqual(before.missing, [{ key: 'dealSize', label: 'Deal size' }]);
-  const after = rateCardCheck({ items: [{ cts: 100, type: 'One-time' }], entry, meta: project, counts: { dealSize: 2000 } });
-  assert.equal(after.low, 200);
+  const after = rateCardCheck({ items: [{ cts: 100, type: 'One-time' }], entry, meta: project, counts: { dealSize: 3000 } });
+  assert.equal(after.low, 300);
   assert.equal(after.status, RATE_CHECK.BELOW);
 });
 
@@ -136,14 +137,14 @@ test('each part of the fee model is checked against its own card lines', () => {
   });
   const by = Object.fromEntries(c.parts.map(p => [p.key, p]));
   assert.deepEqual(Object.keys(by), ['setup', 'recurring']);
-  // Setup: 7,585.50 × 1.5 = 11,378.25 against 5,000 to 8,000.
+  // Setup: 7,585.50 × 2 = 15,171 against 5,000 to 8,000.
   assert.equal(by.setup.status, RATE_CHECK.ABOVE);
   assert.equal(by.setup.low, 5000);
   assert.equal(by.setup.perUnit, null);
-  // Ongoing, per account: 648.75 × 12 × 1.5 / 519 = 22.50 against $10 to $20.
+  // Ongoing, per account: 648.75 × 12 × 2 / 519 = 30 against $10 to $20.
   assert.equal(by.recurring.cost, 648.75 * 12);
   assert.equal(by.recurring.perUnit.unitLabel, 'Accounts');
-  assert.ok(Math.abs(by.recurring.perUnit.price - 22.5) < 1e-9);
+  assert.ok(Math.abs(by.recurring.perUnit.price - 30) < 1e-9);
   assert.equal(by.recurring.perUnit.rateLow, 10);
   assert.equal(by.recurring.perUnit.rateHigh, 20);
   assert.equal(by.recurring.status, RATE_CHECK.ABOVE);
@@ -205,7 +206,7 @@ test('a card that is one per-unit rate is checked per unit, not on the total', (
   assert.equal(c.perUnit.units, 29);
   assert.equal(c.perUnit.basisLabel, 'Per site w/ mandate');
   assert.ok(Math.abs(c.perUnit.cost - year1 / 29) < 1e-9);
-  assert.ok(Math.abs(c.perUnit.price - year1 * 1.5 / 29) < 1e-9); // $207.72 a site
+  assert.ok(Math.abs(c.perUnit.price - year1 * 2 / 29) < 1e-9); // $276.97 a site
   assert.equal(c.perUnit.rateLow, 625);
   assert.equal(c.perUnit.rateHigh, 825);
   assert.equal(c.status, RATE_CHECK.BELOW);
@@ -219,32 +220,32 @@ test('a card that is one per-unit rate is checked per unit, not on the total', (
   assert.equal(two.perUnit, null);
 });
 
-test('each cost is marked up at its own markup when it carries one', () => {
+test('each cost is priced at its own margin when it carries one', () => {
   const c = rateCardCheck({
     items: [
-      { cts: 1000, type: 'Recurring (monthly)', startMonth: 1, markup: 3 },
-      { cts: 100, type: 'One Time', startMonth: 1, markup: 3 },
+      { cts: 1000, type: 'Recurring (monthly)', startMonth: 1, margin: 0.75 },
+      { cts: 100, type: 'One Time', startMonth: 1, margin: 0.75 },
     ],
     entry: { basis: 'per_site_mandate', rate: 625, rateHigh: 825 },
     meta: recurring,
     counts: { sites_mandate: 80 },
   });
   // (12,000 + 100) x 4 / 80 = $605 a site, just under the card.
-  assert.equal(c.markup, 3);
+  assert.equal(c.margin, 0.75);
   assert.ok(Math.abs(c.perUnit.price - 605) < 1e-9);
   assert.equal(c.status, RATE_CHECK.BELOW);
-  // Mixed markups report none, and each line keeps its own.
+  // Mixed margins report none, and each line keeps its own.
   const mixed = rateCardCheck({
     items: [
-      { cts: 1000, type: 'Recurring (monthly)', startMonth: 1, markup: 3 },
+      { cts: 1000, type: 'Recurring (monthly)', startMonth: 1, margin: 0.75 },
       { cts: 100, type: 'One Time', startMonth: 1 },
     ],
     entry: { basis: 'per_site_mandate', rate: 625, rateHigh: 825 },
     meta: recurring,
     counts: { sites_mandate: 80 },
   });
-  assert.equal(mixed.markup, null);
-  assert.ok(Math.abs(mixed.price - (12000 * 4 + 100 * 1.5)) < 1e-9);
+  assert.equal(mixed.margin, null);
+  assert.ok(Math.abs(mixed.price - (12000 * 4 + 100 * 2)) < 1e-9);
   const rec = mixed.parts.find(p => p.key === 'recurring');
   assert.ok(Math.abs(rec.price - 48000) < 1e-9);
 });
@@ -252,7 +253,7 @@ test('each cost is marked up at its own markup when it carries one', () => {
 test('a $0 setup line on the card does not stop a one-rate card being checked per unit', () => {
   // Invoice variance testing: $4.80 to $5 per account a year, setup left at $0.
   const c = rateCardCheck({
-    items: [{ cts: 114.18, type: 'Recurring (monthly)', startMonth: 1 }],
+    items: [{ cts: 100, type: 'Recurring (monthly)', startMonth: 1 }],
     entry: { basis: 'per_account', rate: 4.8, rateHigh: 5, setupLines: [{ basis: 'per_account', rate: 0, rateHigh: 0 }] },
     meta: { serviceType: 'Recurring', years: 1 },
     counts: { accounts: 519 },
@@ -262,14 +263,14 @@ test('a $0 setup line on the card does not stop a one-rate card being checked pe
   assert.equal(c.perUnit.units, 519);
   assert.equal(c.perUnit.rateLow, 4.8);
   assert.equal(c.perUnit.rateHigh, 5);
-  assert.equal(c.status, RATE_CHECK.BELOW); // $1,370 x 1.5 / 519 = $3.96 an account
+  assert.equal(c.status, RATE_CHECK.BELOW); // $1,200 x 2 / 519 = $4.62 an account
   assert.ok(!c.parts.some(p => p.key === 'setup'), 'no setup part for a $0 setup with no setup cost');
 });
 
 test('a card quoted per month is checked per month, with the totals kept annual', () => {
-  // Budgets (account level): $2 to $2.50 per account a month; $541 a month of cost.
+  // Budgets (account level): $2 to $2.50 per account a month; $500 a month of cost.
   const c = rateCardCheck({
-    items: [{ cts: 541, type: 'Recurring (monthly)', startMonth: 1 }],
+    items: [{ cts: 500, type: 'Recurring (monthly)', startMonth: 1 }],
     entry: { basis: 'per_account', rate: 2, rateHigh: 2.5, monthly: true },
     meta: { serviceType: 'Recurring', years: '3 years' },
     counts: { accounts: 519 },
@@ -277,20 +278,35 @@ test('a card quoted per month is checked per month, with the totals kept annual'
   assert.equal(c.low, 2 * 519 * 12);
   assert.equal(c.high, 2.5 * 519 * 12);
   assert.equal(c.perUnit.perMonth, true);
-  assert.equal(c.perUnit.totalCost, 541);
-  assert.ok(Math.abs(c.perUnit.price - 541 * 1.5 / 519) < 1e-9); // $1.56 an account a month
+  assert.equal(c.perUnit.totalCost, 500);
+  assert.ok(Math.abs(c.perUnit.price - 500 * 2 / 519) < 1e-9); // $1.93 an account a month
   assert.equal(c.perUnit.rateLow, 2);
   assert.equal(c.perUnit.rateHigh, 2.5);
   assert.equal(c.status, RATE_CHECK.BELOW);
   // The same card read per year compares year 1 against the rate, as before.
   const annual = rateCardCheck({
-    items: [{ cts: 541, type: 'Recurring (monthly)', startMonth: 1 }],
+    items: [{ cts: 500, type: 'Recurring (monthly)', startMonth: 1 }],
     entry: { basis: 'per_account', rate: 2, rateHigh: 2.5 },
     meta: { serviceType: 'Recurring', years: '3 years' },
     counts: { accounts: 519 },
   });
   assert.equal(annual.perUnit.perMonth, false);
   assert.equal(annual.status, RATE_CHECK.ABOVE);
+});
+
+test('tech depreciation is added before the margin: $268 at 50% is $557.44', () => {
+  // BBS reporting: $268 a year, now annual, one site w/ mandate, 4% tech depreciation.
+  const c = rateCardCheck({
+    items: [{ cts: 268 / 12, type: 'Recurring (monthly)', startMonth: 1 }],
+    entry: { basis: 'per_site_mandate', rate: 625, rateHigh: 825 },
+    meta: recurring,
+    counts: { sites_mandate: 1 },
+    techDeprPct: 0.04,
+  });
+  assert.ok(Math.abs(c.perUnit.cost - 268) < 1e-9);
+  assert.ok(Math.abs(c.perUnit.price - 557.44) < 1e-9);
+  assert.equal(c.techDeprPct, 0.04);
+  assert.equal(c.status, RATE_CHECK.BELOW);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
