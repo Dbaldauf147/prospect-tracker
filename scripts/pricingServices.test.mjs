@@ -363,6 +363,25 @@ test('groupFeeRows folds repeated names under one line', () => {
   assert.equal(mixed[0].row.unit, 'Mixed');
 });
 
+test('groupFeeRows sums cost and gives the group a margin', () => {
+  const g = groupFeeRows([
+    { name: 'Fee', years: [100], term: 100, cost: 60, margin: 0.4 },
+    { name: 'Fee', years: [100], term: 100, cost: 20, margin: 0.8 },
+  ]);
+  assert.equal(g[0].row.cost, 80);
+  assert.equal(g[0].row.margin, 0.6);
+  assert.equal(groupFeeRows([{ name: 'A', years: [1] }, { name: 'A', years: [1] }])[0].row.margin, undefined);
+});
+
+test('a dropped blank row hands its costs to the row that stays', () => {
+  const { rows } = buildScheduleFromStructures([], [
+    { service: 'A', rows: [{ feeName: 'Per account', fee: 1.5, unit: 'Fixed', costIds: ['a1'] }], replaceNames: [] },
+    { service: 'B', rows: [{ feeName: 'Per account', fee: null, unit: 'Fixed', costIds: ['b1'] }], replaceNames: [] },
+  ]);
+  assert.equal(rows.length, 1);
+  assert.deepEqual(rows[0].costIds, ['a1', 'b1']);
+});
+
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
 
 test('a cost no row names falls to the first row that can bill it', () => {
