@@ -287,10 +287,12 @@ function fakeFetch(emails) {
   check('one finished this week too', p.goals.completed[0], 'Old finished goal');
   check('the active list keeps its priority pill', p.goals.active[0], '#1 Book two site walks');
 
-  // The funnel travels as a table; the picture needs a DOM.
+  // The funnel travels with its picture, drawn without a DOM: without it
+  // the email leaves the section out, which is how the scheduled send
+  // lost the funnel.
   check('the funnel stages are carried', p.funnel.stages.length, 3);
   check('with the dashboard amounts', p.funnel.stages[1].amount, '$918,500');
-  check('and no picture, which a serverless build cannot draw', p.funnelImage, null);
+  check('and the chart, drawn server-side', /^data:image\/png;base64,/.test(p.funnelImage?.src || ''), true);
   // The recap stays the tab's on-demand piece.
   check('no narrative is invented', p.narrative, '');
 }
