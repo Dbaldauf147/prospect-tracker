@@ -219,7 +219,7 @@ export function applyFeeStructureToSchedule(schedule, structureRows, { replaceNa
 // ("Setup Rolled", "One Time Rolled") roll without being asked.
 //
 //   rows          structure rows ({ feeName, type, unit, unitCount, startMonth })
-//   costs         [{ key, description, type, price, feeNames: [..] }]
+//   costs         [{ key, description, type, price, startMonth, feeNames: [..] }]
 //   allocations   structure.allocations: { [cost key]: { fee, roll } } where
 //                 fee is a lowercased fee name, '' for "not covered", or
 //                 absent for the default
@@ -229,9 +229,17 @@ export const COST_BUCKET_UPFRONT = 'upfront';
 export const COST_BUCKET_RECURRING = 'recurring';
 export const COST_BUCKET_ROLLED = 'rolled';
 
-export function costKey(description, type) {
-  return `${norm(description)}::${norm(type)}`;
+// A cost starting after the first year (month 13 on) keeps its start month
+// in the key, so a year-2 cost with the same line item and type as a
+// year-1 one can be pointed at its own fee. Year-1 keys are unchanged.
+export const FIRST_YEAR_MONTHS = 12;
+export function costKey(description, type, startMonth) {
+  const base = `${norm(description)}::${norm(type)}`;
+  const m = Math.round(Number(startMonth) || 0);
+  return m > FIRST_YEAR_MONTHS ? `${base}::m${m}` : base;
 }
+
+const yearOfMonth = (m) => Math.max(1, Math.ceil((Math.round(Number(m) || 1)) / 12));
 
 export function costBucket(type) {
   const t = norm(type);
@@ -274,7 +282,14 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
       if (fb === COST_BUCKET_RECURRING && bucket === COST_BUCKET_UPFRONT && !rolled) issue = 'upfrontOnRecurring';
       else if (fb === COST_BUCKET_UPFRONT && (bucket === COST_BUCKET_RECURRING || bucket === COST_BUCKET_ROLLED)) issue = 'recurringOnUpfront';
     }
-    return { key: c.key, rowIdx, defaulted, bucket, feeBucket: fb, canRoll, rolled, issue, price: c.price };
+    // A cost that starts after the first year on a fee that bills from an
+    // earlier year is collected before it is spent. Flagged, not dropped:
+    // "Add fees for later costs" gives it a fee of its own.
+    const costStart = Math.round(Number(c.startMonth) || 1);
+    const rowStart = row ? Math.round(Number(row.startMonth) || 1) : 1;
+    const later = costStart > FIRST_YEAR_MONTHS;
+    const billedEarly = later && !!row && yearOfMonth(rowStart) < yearOfMonth(costStart);
+    return { key: c.key, rowIdx, defaulted, bucket, feeBucket: fb, canRoll, rolled, issue, price: c.price, startMonth: costStart, later, billedEarly };
   });
 
   rows.forEach((row, ri) => {
@@ -305,6 +320,64 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
     }
   });
   return { perRow, costs: costOut };
+}
+
+// Standard fees for the costs that start after the first year.
+//
+// Every cost starting month 13 or later that isn't already on a fee billing
+// from its own year gets one: costs are grouped by start month and by how
+// they bill (upfront or monthly), and each group becomes a fee row named
+// after the fee it sat on (or its line item) with "(year N)", starting the
+// month the costs do, carrying that fee's unit. The costs are pointed at
+// the new rows, so each row's standard fee recovers exactly them. Returns
+// the structure unchanged when there is nothing to add.
+export function addLaterCostFees(structure, costs, opts = {}) {
+  const rows = structure?.rows || [];
+  const allocations = structure?.allocations || {};
+  const { costs: out } = standardFeesForStructure({ ...opts, rows, costs, allocations });
+  const groups = new Map();
+  out.forEach((co, ci) => {
+    if (!co.later || (co.rowIdx >= 0 && !co.billedEarly)) return;
+    const monthly = co.bucket === COST_BUCKET_RECURRING || co.bucket === COST_BUCKET_ROLLED;
+    const gk = `${co.startMonth}::${monthly ? 'm' : 'u'}`;
+    if (!groups.has(gk)) groups.set(gk, { startMonth: co.startMonth, monthly, idx: [] });
+    groups.get(gk).idx.push(ci);
+  });
+  if (groups.size === 0) return structure;
+
+  const taken = new Set(rows.map(r => norm(r?.feeName)).filter(Boolean));
+  const newRows = [];
+  const nextAlloc = { ...allocations };
+  for (const g of groups.values()) {
+    const first = out[g.idx[0]];
+    // The fee it sits on now, else the one its year-1 counterpart (same
+    // line item) is on, so "BPS per site" carries on as "BPS per site
+    // (year 2)" with the same unit.
+    const twin = out.find((co, ci) => !co.later && co.rowIdx >= 0 && norm(costs[ci]?.description) === norm(costs[g.idx[0]]?.description));
+    const fromIdx = first.rowIdx >= 0 ? first.rowIdx : (twin ? twin.rowIdx : -1);
+    const from = fromIdx >= 0 ? rows[fromIdx] : null;
+    const base = String(from?.feeName || costs[g.idx[0]]?.description || 'Fee').trim()
+      .replace(/\s*\((year|y)\s*\d+\)\s*$/i, '');
+    let name = `${base} (year ${yearOfMonth(g.startMonth)})`;
+    for (let n = 2; taken.has(norm(name)); n++) name = `${base} (year ${yearOfMonth(g.startMonth)}, ${n})`;
+    taken.add(norm(name));
+    const upfrontType = from && feeBucket(from.type) === COST_BUCKET_UPFRONT ? from.type : 'One Time';
+    newRows.push({
+      feeName: name,
+      type: g.monthly ? 'Recurring (monthly)' : upfrontType,
+      fee: null,
+      unit: from?.unit || '',
+      unitCount: from?.unitCount ?? null,
+      startMonth: g.startMonth,
+      feeGmPct: null,
+      passThrough: from?.passThrough === true,
+    });
+    for (const ci of g.idx) {
+      const k = costs[ci].key;
+      nextAlloc[k] = { ...(nextAlloc[k] || {}), fee: norm(name) };
+    }
+  }
+  return { ...structure, rows: [...rows, ...newRows], allocations: nextAlloc };
 }
 
 // Tagging an unlinked cost line from the Services subtab.

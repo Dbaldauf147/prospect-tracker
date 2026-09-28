@@ -16,7 +16,7 @@ import {
   buildPricingServiceList, costItemsForService, servicesForItems, SERVICE_STATUS,
   feeStructureRowsFromFees, feeStructureRowToAltRow, applyFeeStructureToSchedule,
   standardFeesForStructure, costKey,
-  addServiceToLineItem, costTotalsByLineItem,
+  addServiceToLineItem, costTotalsByLineItem, addLaterCostFees,
 } from '../src/utils/pricingServices.js';
 
 let failed = 0;
@@ -202,6 +202,66 @@ test('cost totals group cost lines by description', () => {
     { description: 'Setup', cts: 100 }, { description: 'setup ', cts: 50 }, { description: 'Other', cts: null }, { description: '' },
   ]);
   assert.deepEqual(t, { setup: { count: 2, cts: 150 }, other: { count: 1, cts: 0 } });
+});
+
+// The BPS case: the same line item and type once in month 1 and again in
+// month 13.
+const bpsCosts = [
+  { key: costKey('BPS', 'One Time', 1), description: 'BPS', type: 'One Time', price: 1000, startMonth: 1, feeNames: [] },
+  { key: costKey('BPS', 'One Time', 13), description: 'BPS', type: 'One Time', price: 600, startMonth: 13, feeNames: [] },
+];
+const bpsStructure = {
+  rows: [{ feeName: 'BPS per site (year 1)', type: 'One Time', unit: 'Per Site', unitCount: null, startMonth: 1 }],
+  allocations: { [costKey('BPS', 'One Time', 1)]: { fee: 'bps per site (year 1)' }, [costKey('BPS', 'One Time', 13)]: { fee: 'bps per site (year 1)' } },
+};
+
+test('a cost after month 12 gets its own key; year-1 keys are unchanged', () => {
+  assert.equal(costKey('BPS', 'One Time', 1), 'bps::one time');
+  assert.equal(costKey('BPS', 'One Time'), 'bps::one time');
+  assert.equal(costKey('BPS', 'One Time', 12), 'bps::one time');
+  assert.equal(costKey('BPS', 'One Time', 13), 'bps::one time::m13');
+});
+
+test('a later cost on a fee billing from month 1 is flagged as billed early', () => {
+  const { costs } = standardFeesForStructure({ ...bpsStructure, costs: bpsCosts, siteCount: 10 });
+  assert.equal(costs[0].billedEarly, false);
+  assert.equal(costs[1].later, true);
+  assert.equal(costs[1].billedEarly, true);
+});
+
+test('adding later-cost fees splits the month-13 cost onto its own row', () => {
+  const next = addLaterCostFees(bpsStructure, bpsCosts, { siteCount: 10 });
+  assert.equal(next.rows.length, 2);
+  const added = next.rows[1];
+  assert.equal(added.feeName, 'BPS per site (year 2)');
+  assert.equal(added.type, 'One Time');
+  assert.equal(added.unit, 'Per Site');
+  assert.equal(added.startMonth, 13);
+  const { perRow, costs } = standardFeesForStructure({ ...next, costs: bpsCosts, siteCount: 10 });
+  assert.equal(perRow[0].standardFee, 100);
+  assert.equal(perRow[1].standardFee, 60);
+  assert.ok(costs.every(c => !c.billedEarly));
+  assert.equal(addLaterCostFees(next, bpsCosts, { siteCount: 10 }), next);
+});
+
+test('an uncovered later cost borrows the fee its year-1 twin is on', () => {
+  const st = { rows: bpsStructure.rows, allocations: { [costKey('BPS', 'One Time', 1)]: { fee: 'bps per site (year 1)' } } };
+  const next = addLaterCostFees(st, bpsCosts, { siteCount: 10 });
+  assert.equal(next.rows[1].feeName, 'BPS per site (year 2)');
+  assert.equal(next.rows[1].unit, 'Per Site');
+});
+
+test('later monthly and uncovered costs get rows too, one per start month and kind', () => {
+  const costs = [
+    { key: costKey('Feed', 'Recurring (monthly)', 25), description: 'Feed', type: 'Recurring (monthly)', price: 50, startMonth: 25, feeNames: [] },
+    { key: costKey('Audit', 'Setup', 13), description: 'Audit', type: 'Setup', price: 300, startMonth: 13, feeNames: [] },
+    { key: costKey('Base', 'Setup', 1), description: 'Base', type: 'Setup', price: 1, startMonth: 1, feeNames: [] },
+  ];
+  const next = addLaterCostFees({ rows: [], allocations: {} }, costs);
+  assert.deepEqual(next.rows.map(r => [r.feeName, r.type, r.startMonth]), [
+    ['Feed (year 3)', 'Recurring (monthly)', 25],
+    ['Audit (year 2)', 'One Time', 13],
+  ]);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

@@ -823,3 +823,20 @@
   height: 12px;
   background: #64748b;
 }
+
+/* Costs starting after the first year with no fee billing from then. */
+.laterNote {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid #fcd34d;
+  border-left: 4px solid #f59e0b;
+  border-radius: 6px;
+  background: #fffbeb;
+  color: #78350f;
+  font-size: var(--font-size-xs);
+}
