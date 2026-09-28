@@ -28,7 +28,7 @@ import { CalculatorTab } from './CalculatorTab';
 import { ServicesTab } from './ServicesTab';
 import { FeeBuilderTab } from './FeeBuilderTab';
 import { buildServiceRows } from '../../utils/serviceRows';
-import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, serviceKey, standardFeeContext, buildScheduleFromStructures } from '../../utils/pricingServices';
+import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees } from '../../utils/pricingServices';
 import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
 import { isSetupFeeType } from '../../utils/setupFeeFloor';
 import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
@@ -2499,6 +2499,13 @@ export function PricingView({ settings } = {}) {
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
   }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, feeDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData, s2cLineItemTags]);
 
+  // Fees the Fee Builder or a structure's Apply wrote from a standard fee
+  // carry a gmLink; they re-price here when the Global GM% moves, so the
+  // schedule, its totals and Deal margin follow the margin box.
+  useEffect(() => {
+    setAltFees(prev => repriceLinkedFees(prev, globalGmPct));
+  }, [globalGmPct]);
+
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
   // file removal). The main-cache copy above is kept for in-app
@@ -3470,6 +3477,8 @@ export function PricingView({ settings } = {}) {
     setAltFees(prev => {
       const list = (prev[optionNumber] || altFeeStarter()).slice();
       const row = { ...(list[idx] || {}), [field]: value };
+      // A typed fee is the user's price: it stops following the Global GM%.
+      if (field === 'fee') delete row.gmLink;
       list[idx] = row;
       return { ...prev, [optionNumber]: list };
     });
@@ -3517,7 +3526,8 @@ export function PricingView({ settings } = {}) {
       for (const u of updates) {
         const row = list[u.index];
         if (!row || !Number.isFinite(u.fee)) continue;
-        list[u.index] = { ...row, fee: u.fee };
+        const { gmLink: _gmLink, ...rest } = row;
+        list[u.index] = { ...rest, fee: u.fee };
       }
       return { ...prev, [optionNumber]: list };
     });
@@ -4667,6 +4677,16 @@ export function PricingView({ settings } = {}) {
         // Marked-up price at the row's GM, what a fee has to collect to
         // recover this cost (see priceFor).
         price: (() => { const pr = priceFor(item).price; return typeof pr === 'number' && Number.isFinite(pr) ? pr : null; })(),
+        // The same price split by whether it follows the Global GM%, so a
+        // fee built from it can be re-priced when the margin changes (see
+        // standardFeeContext).
+        ...(() => {
+          const { source, price: pr } = priceFor(item);
+          const ok = typeof pr === 'number' && Number.isFinite(pr);
+          return source === 'global'
+            ? { priceAtCost: ok ? ctsItemEffectiveCost(item) : 0, priceFixed: 0 }
+            : { priceAtCost: 0, priceFixed: ok ? pr : 0 };
+        })(),
         startMonth: effectiveItemStartMonth(item),
         feeName: String(mappingNameFor(item) || '').trim(),
         automatedName: String(resolvedLinkedTo(item) || '').trim(),

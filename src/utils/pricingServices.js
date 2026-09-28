@@ -166,6 +166,7 @@ export function feeStructureRowToAltRow(row, { siteCount, accountCount } = {}) {
     startMonth: numOrNull(row?.startMonth),
     feeGmPct: typeof row?.feeGmPct === 'number' ? row.feeGmPct : null,
     passThrough: row?.passThrough === true,
+    ...(row?.gmLink ? { gmLink: row.gmLink } : {}),
   };
 }
 
@@ -353,7 +354,8 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
     agg.rollMonths = rollMonths;
     if (any) {
       const total = (fb || costOut[agg.costIdx[0]]?.feeBucket) === COST_BUCKET_UPFRONT ? agg.upfrontTotal : agg.monthlyTotal;
-      agg.standardFee = Math.round((total / units) * 100) / 100;
+      agg.exactFee = total / units;
+      agg.standardFee = Math.round(agg.exactFee * 100) / 100;
     }
   });
   return { perRow, costs: costOut };
@@ -467,13 +469,64 @@ export function feeStructureCostInputs(costs) {
   }));
 }
 
+//
+// When the costs also carry priceAtCost (the cost a line is marked up from
+// when it follows the page's Global GM%, else 0) and priceFixed (the price
+// of a line that doesn't: pass-through or its own GM%), each filled fee
+// also gets a gmLink: the standard fee split into the part that moves with
+// the Global GM% and the part that doesn't. The schedule re-prices a
+// linked fee from it whenever the Global GM% changes (feeAtGm), so a
+// built fee keeps following the margin instead of freezing at the one it
+// was built at.
 export function standardFeeContext(structure, costs, { termMonths = 36, siteCount, accountCount } = {}) {
   const rows = structure?.rows || [];
   const costInputs = feeStructureCostInputs(costs);
-  const std = standardFeesForStructure({ rows, costs: costInputs, allocations: structure?.allocations || {}, termMonths, siteCount, accountCount });
+  const opts = { rows, allocations: structure?.allocations || {}, termMonths, siteCount, accountCount };
+  const std = standardFeesForStructure({ ...opts, costs: costInputs });
   const standardFee = (idx) => std.perRow[idx]?.standardFee ?? null;
-  const billed = (r, idx) => (r.fee == null && standardFee(idx) != null ? { ...r, fee: standardFee(idx) } : r);
+  const linkable = (costs || []).some(c => typeof c?.priceAtCost === 'number');
+  const split = (field) => standardFeesForStructure({
+    ...opts,
+    costs: costInputs.map((c, i) => ({ ...c, price: typeof c.price === 'number' ? (Number(costs[i]?.[field]) || 0) : c.price })),
+  }).perRow;
+  const atCost = linkable ? split('priceAtCost') : null;
+  const fixed = linkable ? split('priceFixed') : null;
+  const billed = (r, idx) => {
+    if (r.fee != null || standardFee(idx) == null) return r;
+    const out = { ...r, fee: standardFee(idx) };
+    if (linkable) out.gmLink = { atCost: atCost[idx]?.exactFee ?? 0, fixed: fixed[idx]?.exactFee ?? 0 };
+    return out;
+  };
   return { std, standardFee, billed, filled: structure ? { ...structure, rows: rows.map(billed) } : null };
+}
+
+// A linked fee's per-unit price at a Global GM%: the at-cost part marked
+// up to it, plus the part priced some other way, rounded to the cent the
+// Fee column shows.
+export function feeAtGm(gmLink, gm) {
+  if (!gmLink || typeof gm !== 'number' || !(gm < 1)) return null;
+  const v = (Number(gmLink.atCost) || 0) / (1 - gm) + (Number(gmLink.fixed) || 0);
+  return Number.isFinite(v) ? Math.round(v * 100) / 100 : null;
+}
+
+// Every option's Alternative Fee schedule with its linked fees re-priced at
+// a Global GM%. The same object back when nothing moved.
+export function repriceLinkedFees(altFees, gm) {
+  let changed = false;
+  const next = {};
+  for (const [k, rows] of Object.entries(altFees || {})) {
+    let rowsChanged = false;
+    const out = (rows || []).map(r => {
+      if (!r?.gmLink) return r;
+      const fee = feeAtGm(r.gmLink, gm);
+      if (fee == null || fee === r.fee) return r;
+      rowsChanged = true;
+      return { ...r, fee };
+    });
+    next[k] = rowsChanged ? out : rows;
+    if (rowsChanged) changed = true;
+  }
+  return changed ? next : altFees;
 }
 
 // ---------------------------------------------------------------------------
