@@ -1244,11 +1244,6 @@ function FeeStructureEditor({
           </tfoot>
         )}
       </table>
-      <div>
-        <button type="button" className={styles.barBtn} onClick={() => onChange(st => ({ ...st, rows: [...st.rows, blankFeeStructureRow()] }))}>
-          + Add fee
-        </button>
-      </div>
       {(() => {
         // Costs starting after the first year that no fee bills from
         // their own year: offer them a standard fee of their own.
