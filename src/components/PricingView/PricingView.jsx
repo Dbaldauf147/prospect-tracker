@@ -472,11 +472,14 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
                   </td>
                 );
               })()}
-              <td>
+              {/* A named fee with no Unit (or no Unit Count) can't be priced
+                  per unit, so the gap is flagged in red. */}
+              <td className={String(row.altItem || '').trim() && !row.unit ? styles.altMissingCell : undefined}>
                 <select
                   className={styles.altCellInput}
                   value={row.unit || ''}
                   onChange={(e) => handleUnitChange(idx, row, e.target.value)}
+                  title={String(row.altItem || '').trim() && !row.unit ? 'Pick a unit for this fee.' : undefined}
                 >
                   <option value="">-</option>
                   <option value="Fixed">Fixed</option>
@@ -485,7 +488,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
                   <option value="Per Meter">Per Meter</option>
                 </select>
               </td>
-              <td className={styles.numCell}>
+              <td className={`${styles.numCell} ${String(row.altItem || '').trim() && (row.unitCount == null || row.unitCount === '') ? styles.altMissingCell : ''}`}>
                 <CellTextInput
                   key={`alt-${idx}-unitCount-${row.unitCount ?? ''}`}
                   initial={row.unitCount}
