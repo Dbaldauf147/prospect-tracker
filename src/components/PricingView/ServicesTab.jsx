@@ -39,7 +39,7 @@ const STATUS_CLASS = {
 //   onIgnoreLineItem (lineItemKey) => marks the line item Ignore
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
-  onSetCount, feeStructures = {}, setFeeStructures, previewFeeRow, previewOnOption, applyFeeStructure,
+  onSetCount, onIgnoreForCheck, feeStructures = {}, setFeeStructures, previewFeeRow, previewOnOption, applyFeeStructure,
   unlinked = null, tagOptions = [], onTagLineItem, onIgnoreLineItem,
 }) {
   const [query, setQuery] = useState('');
@@ -182,6 +182,7 @@ export function ServicesTab({
               accountCount={opt?.accountCount}
               onOpenLinkedTo={onOpenLinkedTo}
               onSetCount={onSetCount}
+              onIgnoreForCheck={onIgnoreForCheck ? (itemId, on) => onIgnoreForCheck(current.name, itemId, on) : null}
             />
           )}
         </div>
@@ -259,7 +260,7 @@ function UnlinkedWarning({ unlinked, costTotals, optionName, tagOptions, quickTa
   );
 }
 
-function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure }) {
+function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure }) {
   const items = detail?.items || [];
   const fees = detail?.fees || [];
   const structures = saved?.structures || [];
@@ -300,6 +301,8 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
     setView('sia');
   }
   const costTotal = items.reduce((s, it) => s + (typeof it.cts === 'number' ? it.cts : 0), 0);
+  const ignoredCount = items.filter(it => it.ignored).length;
+  const ignoredTotal = items.reduce((s, it) => s + (it.ignored && typeof it.cts === 'number' ? it.cts : 0), 0);
   const meta = service.meta || {};
   const facts = [
     service.bucket && ['Group', service.bucket],
@@ -346,11 +349,12 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
                     <th>Fee Name</th>
                     <th>Unit</th>
                     <th>Pass-through</th>
+                    {onIgnoreForCheck && <th title="Untick to leave a line out of the price check below.">In price check</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {items.map(it => (
-                    <tr key={it.id}>
+                    <tr key={it.id} className={it.ignored ? styles.ignoredRow : undefined}>
                       <td>
                         {it.description}
                         {it.otherServices.length > 0 && (
@@ -368,14 +372,27 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
                       </td>
                       <td>{it.unit}</td>
                       <td>{it.passThrough ? 'Yes' : ''}</td>
+                      {onIgnoreForCheck && (
+                        <td className={styles.center}>
+                          <input
+                            type="checkbox"
+                            checked={!it.ignored}
+                            onChange={(e) => onIgnoreForCheck(it.id, !e.target.checked)}
+                            title={it.ignored ? 'Left out of the price check. Tick to count it again.' : 'Counted in the price check. Untick to leave it out.'}
+                          />
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr>
                     <td colSpan={2}>Total CTS</td>
-                    <td className={styles.num}>{fmtMoney(costTotal)}</td>
-                    <td colSpan={4} />
+                    <td className={styles.num}>
+                      {fmtMoney(costTotal)}
+                      {ignoredCount > 0 && <div className={styles.subNote}>{fmtMoney(costTotal - ignoredTotal)} in price check</div>}
+                    </td>
+                    <td colSpan={onIgnoreForCheck ? 5 : 4} />
                   </tr>
                 </tfoot>
               </table>
@@ -384,7 +401,7 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
       )}
 
       {hasWorkbook && detail?.rateCheck && (
-        <RateCheck check={detail.rateCheck} counts={detail.counts} entered={detail.enteredCounts} onSetCount={onSetCount} optionName={optionName} />
+        <RateCheck check={detail.rateCheck} counts={detail.counts} entered={detail.enteredCounts} ignoredCount={ignoredCount} onSetCount={onSetCount} optionName={optionName} />
       )}
 
           <section className={styles.section}>
@@ -705,7 +722,7 @@ const fmtWhole = (n) => (typeof n === 'number' && Number.isFinite(n)
 
 // The service's first-year cost on the SIA, marked up, set against the
 // price range its Dropdowns › Services Pricing rate card quotes.
-function RateCheck({ check, counts = {}, entered = {}, onSetCount, optionName }) {
+function RateCheck({ check, counts = {}, entered = {}, ignoredCount = 0, onSetCount, optionName }) {
   const [cls, label] = RATE_BADGE[check.status];
   const markupPct = Math.round(check.markup * 100);
   const range = check.low == null ? '' : (Math.round(check.low) === Math.round(check.high)
@@ -749,7 +766,7 @@ function RateCheck({ check, counts = {}, entered = {}, onSetCount, optionName })
           ? (check.noFee
             ? 'This service is marked No Fee on Dropdowns › Services Pricing, so there is no range to check against.'
             : 'No rate set for this service on Dropdowns › Services Pricing, so there is no range to check against.')
-          : `Year 1 cost is the CTS on the lines above, months 1 to 12 only (a recurring line counts the months it runs in year 1)${check.later ? `, ${check.later} line${check.later === 1 ? '' : 's'} starting after month 12 left out` : ''}${check.passThrough ? ', pass-through lines left out' : ''}. The range is the Year 1 fee (plus setup) from Dropdowns › Services Pricing${countText ? `, priced on this option's ${countText}` : ''}.`}
+          : `Year 1 cost is the CTS on the lines above, months 1 to 12 only (a recurring line counts the months it runs in year 1)${check.later ? `, ${check.later} line${check.later === 1 ? '' : 's'} starting after month 12 left out` : ''}${check.passThrough ? ', pass-through lines left out' : ''}${ignoredCount ? `, ${ignoredCount} line${ignoredCount === 1 ? '' : 's'} unticked above left out` : ''}. The range is the Year 1 fee (plus setup) from Dropdowns › Services Pricing${countText ? `, priced on this option's ${countText}` : ''}.`}
          {check.parts?.length > 0 && ' In the table, ongoing costs are a full year of the monthly cost, like the annual fee on the card, and a part quoted per unit is judged per unit: the marked-up cost divided by the count.'}
         {check.status !== RATE_CHECK.INCOMPLETE && check.notes.length > 0 && ` Rate card note: ${check.notes.join('; ')}.`}
       </p>
