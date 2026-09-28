@@ -3,7 +3,7 @@ import styles from './ServicesTab.module.css';
 import {
   SERVICE_STATUS, FEE_STRUCTURE_TYPES, FEE_STRUCTURE_UNITS, serviceKey,
   newFeeStructureId, blankFeeStructureRow, feeStructureRowsFromFees, costTotalsByLineItem,
-  standardFeesForStructure, costKey, COST_BUCKET_UPFRONT,
+  standardFeesForStructure, costKey, COST_BUCKET_UPFRONT, addLaterCostFees, FIRST_YEAR_MONTHS,
 } from '../../utils/pricingServices';
 import { RATE_CHECK } from '../../utils/serviceRateCheck';
 import { unitLabelFor } from '../../utils/servicePricing';
@@ -509,15 +509,20 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
 // A structure with its blank Fee cells filled by the standard fee, the
 // rows Apply writes and the option preview bills. One helper for both so
 // the preview never shows a different fee from the one Apply would write.
-function standardFeeContext(structure, costs, { termMonths = 36, siteCount, accountCount } = {}) {
-  const rows = structure?.rows || [];
-  const costInputs = (costs || []).map(c => ({
-    key: costKey(c.description, c.type),
+function costInputsFor(costs) {
+  return (costs || []).map(c => ({
+    key: costKey(c.description, c.type, c.startMonth),
     description: c.description,
     type: c.type,
     price: c.price,
+    startMonth: c.startMonth,
     feeNames: [c.feeName, c.automatedName].filter(Boolean),
   }));
+}
+
+function standardFeeContext(structure, costs, { termMonths = 36, siteCount, accountCount } = {}) {
+  const rows = structure?.rows || [];
+  const costInputs = costInputsFor(costs);
   const std = standardFeesForStructure({ rows, costs: costInputs, allocations: structure?.allocations || {}, termMonths, siteCount, accountCount });
   const standardFee = (idx) => std.perRow[idx]?.standardFee ?? null;
   const billed = (r, idx) => (r.fee == null && standardFee(idx) != null ? { ...r, fee: standardFee(idx) } : r);
@@ -1115,6 +1120,30 @@ function FeeStructureEditor({
           + Add fee
         </button>
       </div>
+      {(() => {
+        // Costs starting after the first year that no fee bills from
+        // their own year: offer them a standard fee of their own.
+        const later = std.costs.filter(co => co.later && (co.rowIdx < 0 || co.billedEarly));
+        if (later.length === 0) return null;
+        const months = [...new Set(later.map(co => co.startMonth))].sort((a, b) => a - b);
+        return (
+          <div className={styles.laterNote}>
+            <span>
+              {later.length === 1 ? 'One cost starts' : `${later.length} costs start`} after month {FIRST_YEAR_MONTHS}
+              {` (month ${months.join(', ')})`} but {later.length === 1 ? 'is' : 'are'} not on a fee that bills from then,
+              so {later.length === 1 ? 'it is' : 'they are'} billed early or not at all.
+            </span>
+            <button
+              type="button"
+              className={styles.barBtn}
+              onClick={() => onChange(st => addLaterCostFees(st, costInputsFor(costs), { termMonths, siteCount, accountCount }))}
+              title="Add a fee row per start month for these costs, starting the month they do, and point them at it. Its standard fee recovers exactly them."
+            >
+              + Add standard fee for costs after month {FIRST_YEAR_MONTHS}
+            </button>
+          </div>
+        );
+      })()}
       {costs.length > 0 && (
         <div className={styles.coverage}>
           <h5 className={styles.coverageTitle}>Costs covered</h5>
@@ -1128,6 +1157,7 @@ function FeeStructureEditor({
               <tr>
                 <th>Line Item</th>
                 <th>Cost Type</th>
+                <th className={styles.num}>Start Month</th>
                 <th className={styles.num}>Price</th>
                 <th>Covered by</th>
                 <th>Format</th>
@@ -1141,9 +1171,10 @@ function FeeStructureEditor({
                 const rollMonths = co.rowIdx >= 0 ? std.perRow[co.rowIdx].rollMonths : termMonths;
                 const namedRows = rows.map((r, i) => ({ name: String(r.feeName || '').trim(), i })).filter(x => x.name);
                 return (
-                  <tr key={key} className={co.issue ? styles.issueRow : undefined}>
+                  <tr key={`${key}-${ci}`} className={co.issue || co.billedEarly ? styles.issueRow : undefined}>
                     <td>{c.description}</td>
                     <td>{c.type}</td>
+                    <td className={styles.num}>{c.startMonth || ''}</td>
                     <td className={styles.num}>{fmtMoney(c.price)}</td>
                     <td>
                       <select
@@ -1157,6 +1188,11 @@ function FeeStructureEditor({
                         ))}
                       </select>
                       {co.defaulted && co.rowIdx >= 0 && <div className={styles.subNote}>matched by fee name</div>}
+                      {co.billedEarly && (
+                        <div className={styles.warnText}>
+                          Starts month {co.startMonth}; this fee bills from month {Math.round(Number(row.startMonth) || 1)}
+                        </div>
+                      )}
                     </td>
                     <td>
                       {co.rowIdx < 0 ? (
