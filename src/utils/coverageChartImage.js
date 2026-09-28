@@ -287,10 +287,10 @@ export function coverageChartImage(chart) {
   for (const s of series) {
     points.forEach((p, i) => {
       if (p[s.key] == null) return;
-      // Every week gets a marker on a short series; on a long one only the
-      // last, which is the figure the card repeats underneath.
-      if (points.length > 14 && i !== points.length - 1) return;
-      marker(r, Math.round(xAt(i)), Math.round(yAt(p[s.key])), s.colour, points.length > 14 ? 3 : 2);
+      // Every recorded week gets a dot, the way the Progress tab and the
+      // Weekly Report page draw it, so a reading stands out from the
+      // stretch of line joining it to the next.
+      marker(r, Math.round(xAt(i)), Math.round(yAt(p[s.key])), s.colour, 4 * SCALE);
     });
   }
 
