@@ -198,3 +198,34 @@ export function applyFeeStructureToSchedule(schedule, structureRows, { replaceNa
   out.splice(insertAt, 0, ...incoming);
   return { rows: out, removed, added: incoming };
 }
+
+// ---------------------------------------------------------------------------
+// Tagging an unlinked cost line from the Services subtab.
+//
+// The same Line Item -> Services map the Linked To subtab edits, with one
+// service added to one line item (keyed by the lowercased description).
+// A service already there, matched case-insensitively, leaves the map as
+// it was, so a double click can't duplicate it.
+export function addServiceToLineItem(lineItemServices, lineItemKey, service) {
+  const key = norm(lineItemKey);
+  const name = String(service ?? '').trim();
+  const map = lineItemServices || {};
+  if (!key || !name) return map;
+  const current = Array.isArray(map[key]) ? map[key] : [];
+  if (current.some(s => norm(s) === norm(name))) return map;
+  return { ...map, [key]: [...current, name] };
+}
+
+// Cost figures for the unlinked rows the warning lists: how many cost lines
+// on the option carry each description, and their summed CTS.
+export function costTotalsByLineItem(items) {
+  const out = {};
+  for (const item of items || []) {
+    const key = norm(item?.description);
+    if (!key) continue;
+    const t = out[key] || (out[key] = { count: 0, cts: 0 });
+    t.count += 1;
+    if (typeof item.cts === 'number' && Number.isFinite(item.cts)) t.cts += item.cts;
+  }
+  return out;
+}
