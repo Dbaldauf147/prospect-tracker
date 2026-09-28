@@ -268,10 +268,13 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
   const fees = detail?.fees || [];
   const structures = saved?.structures || [];
   const standardId = saved?.standardId || null;
-  // Which fee structure tab is open: 'sia' (what the loaded SIA sets up)
-  // or a saved structure's id. Opens on the standard one when there is one.
-  const [view, setView] = useState(() => (standardId && structures.some(x => x.id === standardId) ? standardId : (hasWorkbook ? 'sia' : (structures[0]?.id || 'sia'))));
-  const openStructure = structures.find(x => x.id === view) || null;
+  // Which saved fee structure is open. Opens on the standard one, and falls
+  // back to it (or the first) when the open one is deleted.
+  const [view, setView] = useState(() => standardId || structures[0]?.id || null);
+  const openStructure = structures.find(x => x.id === view)
+    || structures.find(x => x.id === standardId)
+    || structures[0]
+    || null;
   const [flash, setFlash] = useState('');
   const say = (msg) => { setFlash(msg); window.setTimeout(() => setFlash(''), 3500); };
 
@@ -301,7 +304,7 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
       const rest = prev.structures.filter(x => x.id !== st.id);
       return { structures: rest, standardId: prev.standardId === st.id ? (rest[0]?.id || null) : prev.standardId };
     });
-    setView('sia');
+    setView(null);
   }
   const costTotal = items.reduce((s, it) => s + (typeof it.cts === 'number' ? it.cts : 0), 0);
   const ignoredCount = items.filter(it => it.ignored).length;
@@ -459,7 +462,7 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
       )}
 
       {hasWorkbook && detail?.rateCheck && (
-        <RateCheck check={detail.rateCheck} counts={detail.counts} entered={detail.enteredCounts} fromSia={detail.fromSia} sia={detail.sia} ignoredCount={ignoredCount} onSetCount={onSetCount} optionName={optionName} />
+        <RateCheck check={detail.rateCheck} entered={detail.enteredCounts} fromSia={detail.fromSia} onSetCount={onSetCount} optionName={optionName} />
       )}
 
           <section className={styles.section}>
@@ -469,79 +472,11 @@ function ServiceDetail({ service, detail, hasWorkbook, optionName, numYears, ter
               standardId={standardId}
               view={view}
               setView={setView}
-              hasWorkbook={hasWorkbook}
               onAdd={addStructure}
             />
             {flash && <div className={styles.flash}>{flash}</div>}
-            {(view === 'sia' || !openStructure) && !hasWorkbook ? (
-              <p className={styles.note}>
-                {structures.length
-                  ? 'Pick a saved fee structure above, or upload an SIA to see how it sets this service up.'
-                  : 'No saved fee structures yet. Add one above, or upload an SIA and save its setup as one.'}
-              </p>
-            ) : view === 'sia' || !openStructure ? (
-              <>
-                <p className={styles.note}>
-                  As the loaded SIA sets it up. Fees come from the fee names on the cost lines above. A fee
-                  already on the Alternative Fee schedule shows as it is there; one that isn't yet shows what
-                  Build from Automated Fee Names would add. Save it as a fee structure to edit it.
-                </p>
-            {fees.length === 0 ? (
-                <div className={styles.note}>No fee name on these cost lines, so no fee is set up for this service.</div>
-              ) : (
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th>Fee</th>
-                      <th>Source</th>
-                      <th>Type</th>
-                      <th className={styles.num}>Fee / Unit</th>
-                      <th>Unit</th>
-                      <th className={styles.num}>Unit Count</th>
-                      <th className={styles.num}>Start Month</th>
-                      {Array.from({ length: numYears }, (_, i) => <th key={i} className={styles.num}>{`Y${i + 1}`}</th>)}
-                      <th className={styles.num}>Fee GM%</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {fees.map((f, i) => f.missing ? (
-                      <tr key={`m-${i}`}>
-                        <td>{f.name}</td>
-                        <td colSpan={6 + numYears + 1} className={styles.muted}>
-                          No cost behind this name yet, so there is no fee to derive.
-                        </td>
-                      </tr>
-                    ) : (
-                      <tr key={`${f.name}-${f.type}-${i}`}>
-                        <td>
-                          {f.name}
-                          {f.sharedWith.length > 0 && (
-                            <div className={styles.subNote}>Shared with {f.sharedWith.join(', ')}</div>
-                          )}
-                        </td>
-                        <td>
-                          <span className={f.onSchedule ? styles.srcSchedule : styles.srcAuto}>
-                            {f.onSchedule ? 'On schedule' : 'Would be built'}
-                          </span>
-                        </td>
-                        <td>{f.type}</td>
-                        <td className={styles.num}>
-                          {fmtMoney(f.feePerUnit)}
-                          {f.feePerUnit != null && <div className={styles.subNote}>{f.feeIsManual ? 'typed' : 'auto'}</div>}
-                        </td>
-                        <td>{f.unit}</td>
-                        <td className={styles.num}>{f.unitCount}</td>
-                        <td className={styles.num}>{f.startMonth || ''}</td>
-                        {Array.from({ length: numYears }, (_, yi) => (
-                          <td key={yi} className={styles.num}>{f.years[yi] > 0 ? fmtMoney(f.years[yi]) : ''}</td>
-                        ))}
-                        <td className={styles.num}>{f.passThrough ? 'pass' : fmtPct(f.gmPct)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-              </>
+            {!openStructure ? (
+              <p className={styles.note}>No saved fee structures yet. Start one with + New blank structure.</p>
             ) : (
               <FeeStructureEditor
                 structure={openStructure}
@@ -780,22 +715,12 @@ const fmtWhole = (n) => (typeof n === 'number' && Number.isFinite(n)
 
 // The service's first-year cost on the SIA, marked up, set against the
 // price range its Dropdowns › Services Pricing rate card quotes.
-function RateCheck({ check, counts = {}, entered = {}, fromSia = {}, sia = {}, ignoredCount = 0, onSetCount, optionName }) {
+function RateCheck({ check, entered = {}, fromSia = {}, onSetCount, optionName }) {
   const [cls, label] = RATE_BADGE[check.status];
   const markupPct = Math.round(check.markup * 100);
   const range = check.low == null ? '' : (Math.round(check.low) === Math.round(check.high)
     ? fmtWhole(check.low)
     : `${fmtWhole(Math.min(check.low, check.high))} – ${fmtWhole(Math.max(check.low, check.high))}`);
-  // Each count the card prices on, and whether it is the SIA's or typed.
-  const sheetOf = (k) => (k === 'accounts' ? sia.accountsFrom : sia.sitesFrom);
-  const countText = [
-    ...(check.unitsUsed || []).filter(k => counts[k] != null).map(k => {
-      const typed = typeof entered[k] === 'number';
-      const src = typed ? 'typed' : (fromSia[k] != null ? `from the SIA${sheetOf(k) ? ` (${sheetOf(k)})` : ''}` : '');
-      return `${Number(counts[k]).toLocaleString('en-US')} ${unitLabelFor(k).toLowerCase()}${src ? `, ${src}` : ''}`;
-    }),
-    typeof entered.dealSize === 'number' && `${fmtWhole(entered.dealSize)} deal size`,
-  ].filter(Boolean).join('; ');
 
   return (
     <section className={styles.section}>
@@ -815,18 +740,15 @@ function RateCheck({ check, counts = {}, entered = {}, fromSia = {}, sia = {}, i
       {onSetCount && (
         <CheckCounts missing={check.missing} used={check.unitsUsed} entered={entered} fromSia={fromSia} onSetCount={onSetCount} optionName={optionName} />
       )}
-      <p className={styles.note}>
-        {check.status === RATE_CHECK.INCOMPLETE && (
-          `Part of this service's rate card is priced on ${check.missing.map(m => m.label.toLowerCase()).join(' and ')}, which the SIA doesn't carry, so the range ${check.high > 0 ? 'reads low and' : 'is unknown and'} isn't judged until it's filled in. `
-        )}
-        {check.status === RATE_CHECK.UNPRICED
-          ? (check.noFee
-            ? 'This service is marked No Fee on Dropdowns › Services Pricing, so there is no range to check against.'
-            : 'No rate set for this service on Dropdowns › Services Pricing, so there is no range to check against.')
-          : `Year 1 cost is the CTS on the lines above, months 1 to 12 only (a recurring line counts the months it runs in year 1)${check.later ? `, ${check.later} line${check.later === 1 ? '' : 's'} starting after month 12 left out` : ''}${check.passThrough ? ', pass-through lines left out' : ''}${ignoredCount ? `, ${ignoredCount} line${ignoredCount === 1 ? '' : 's'} unticked above left out` : ''}. The range is the Year 1 fee (plus setup) from Dropdowns › Services Pricing${countText ? `, priced on ${countText}` : ''}.`}
-         {check.parts?.length > 0 && ' In the table, ongoing costs are a full year of the monthly cost, like the annual fee on the card, and a part quoted per unit is judged per unit: the marked-up cost divided by the count.'}
-        {check.status !== RATE_CHECK.INCOMPLETE && check.notes.length > 0 && ` Rate card note: ${check.notes.join('; ')}.`}
-      </p>
+      {(check.status === RATE_CHECK.INCOMPLETE || check.status === RATE_CHECK.UNPRICED) && (
+        <p className={styles.note}>
+          {check.status === RATE_CHECK.INCOMPLETE
+            ? `Part of this service's rate card is priced on ${check.missing.map(m => m.label.toLowerCase()).join(' and ')}, which the SIA doesn't carry, so the range ${check.high > 0 ? 'reads low and' : 'is unknown and'} isn't judged until it's filled in.`
+            : (check.noFee
+              ? 'This service is marked No Fee on Dropdowns › Services Pricing, so there is no range to check against.'
+              : 'No rate set for this service on Dropdowns › Services Pricing, so there is no range to check against.')}
+        </p>
+      )}
     </section>
   );
 }
@@ -1010,21 +932,11 @@ function RateMeter({ check, compact = false }) {
   );
 }
 
-// "From SIA" plus one tab per saved structure (the standard one starred),
-// and the buttons that start a new one.
-function FeeStructureTabs({ structures, standardId, view, setView, hasWorkbook, onAdd }) {
+// One tab per saved structure (the standard one starred), and the button
+// that starts a new one.
+function FeeStructureTabs({ structures, standardId, view, setView, onAdd }) {
   return (
     <div className={styles.structTabs}>
-      {hasWorkbook && (
-        <button
-          type="button"
-          className={view === 'sia' ? styles.structTabActive : styles.structTab}
-          onClick={() => setView('sia')}
-          title="How the loaded SIA sets this service up. Read only."
-        >
-          From SIA
-        </button>
-      )}
       {structures.map(st => (
         <button
           key={st.id}
@@ -1037,11 +949,6 @@ function FeeStructureTabs({ structures, standardId, view, setView, hasWorkbook, 
           {st.name || 'Untitled'}
         </button>
       ))}
-      {hasWorkbook && (
-        <button type="button" className={styles.structAdd} onClick={() => onAdd(true)} title="Save how the SIA sets this service up as an editable fee structure.">
-          + Save SIA setup as structure
-        </button>
-      )}
       <button type="button" className={styles.structAdd} onClick={() => onAdd(false)} title="Start a new fee structure from a blank row.">
         + New blank structure
       </button>
