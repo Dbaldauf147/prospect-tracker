@@ -46,6 +46,77 @@
   color: var(--color-text-muted);
 }
 
+/* The per-service "done" checklist: a tick column, and a ticked row goes green. */
+.doneCol {
+  width: 3rem;
+  text-align: center;
+}
+
+.doneCol input {
+  cursor: pointer;
+}
+
+.doneRow td {
+  background: #dcfce7;
+}
+
+.doneCount {
+  font-size: var(--font-size-xs);
+  color: #047857;
+  background: #d1fae5;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+}
+
+/* Columns menu over the service table. */
+.colMenuWrap {
+  position: relative;
+}
+
+.colMenu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.4rem;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+}
+
+.colMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: var(--font-size-xs);
+  padding: 0.25rem 0.35rem;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.colMenuItem:hover {
+  background: #f8fafc;
+}
+
+.colMenuReset {
+  margin-top: 0.2rem;
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  padding: 0.25rem 0.35rem;
+  border: none;
+  border-top: 1px solid var(--color-border);
+  background: none;
+  color: var(--color-accent);
+  text-align: left;
+  cursor: pointer;
+}
+
 .newRow td {
   background: #f5f7ff;
 }
