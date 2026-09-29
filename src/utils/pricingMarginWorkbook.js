@@ -15,6 +15,7 @@
 // module formats, it does no pricing math of its own.
 
 import { sanitizeExcelWorkbook, stripDashes } from './exportSanitize.js';
+import { addFeeSummarySheet, addFeeComparisonSheet } from './feeSummarySheets.js';
 
 const SE_GREEN = 'FF3DCD58';
 const SE_GREEN_DARK = 'FF009530';
@@ -120,6 +121,9 @@ export async function downloadPricingMarginWorkbook(p) {
     `mapped by ${p.mapBy}`,
     dateStr,
   ].filter(Boolean).join('  ·  ');
+
+  // Fee Summary first: the fee lines as a client would read them.
+  if (Array.isArray(p.feeSummaryRows)) addFeeSummarySheet(wb, { rows: p.feeSummaryRows, subtitle: sub });
 
   // ── Sheet 1: Summary ──────────────────────────────────────────────────
   {
@@ -316,6 +320,9 @@ export async function downloadPricingMarginWorkbook(p) {
       );
     }
   }
+
+  // The Pricing tab's schedule against the one the Fee Builder would build.
+  if (p.comparison) addFeeComparisonSheet(wb, { ...p.comparison, numYears: nY, subtitle: sub });
 
   sanitizeExcelWorkbook(wb);
   const buf = await wb.xlsx.writeBuffer();

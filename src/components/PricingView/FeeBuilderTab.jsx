@@ -3,6 +3,7 @@ import { sanitizeExcelWorkbook } from '../../utils/exportSanitize';
 import styles from './ServicesTab.module.css';
 import own from './FeeBuilderTab.module.css';
 import { serviceKey, groupFeeRows } from '../../utils/pricingServices';
+import { addFeeSummarySheet, addFeeComparisonSheet } from '../../utils/feeSummarySheets';
 
 const fmtMoney = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -45,6 +46,8 @@ async function exportPlan(plan) {
   const fill = (argb) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
 
   const wb = new Workbook();
+  const sub = `${plan.optionName || 'Option'}  ·  as built by the Fee Builder`;
+  addFeeSummarySheet(wb, { rows: plan.rows, subtitle: sub });
   const ws = wb.addWorksheet('As built', { properties: { outlineProperties: { summaryBelow: false } } });
   const headers = ['Fee', 'From', 'Type', 'Fee / Unit', 'Unit', 'Unit Count', 'Start Month', ...yearIdx.map(i => `Y${i + 1}`), 'Term', 'Margin'];
   const moneyCols = [4, ...yearIdx.map(i => 8 + i), 8 + numYears];
@@ -98,6 +101,13 @@ async function exportPlan(plan) {
     r.getCell(numYears + 4).numFmt = PCT;
     if (label === 'As built') r.eachCell(c => { c.font = { bold: true }; });
   }
+
+  addFeeComparisonSheet(wb, {
+    pricing: { rows: plan.beforeRows || [], totals: plan.before },
+    builder: { rows: plan.rows, totals: plan.after },
+    numYears,
+    subtitle: sub,
+  });
 
   sanitizeExcelWorkbook(wb);
   const buf = await wb.xlsx.writeBuffer();
