@@ -203,6 +203,27 @@ test('a monthly fee starting after its monthly cost catches up the months it mis
   assert.equal(r.perRow[0].standardFee, 10); // 3300 / 33 / 10
 });
 
+test('a monthly fee allows for the fee and cost escalators, so the term lands on the target margin', () => {
+  const cost = { key: costKey('Data', 'Recurring (monthly)'), description: 'Data', type: 'Recurring (monthly)', price: 100, startMonth: 1, feeNames: ['Fee'] };
+  const row = { feeName: 'Fee', type: 'Recurring (monthly)', unit: 'Fixed' };
+  const esc = { feeEscalator: 0.05, costEscalator: 0.0385 };
+  // Term price of the cost: 100 a month, rising 3.85% a year.
+  const costTerm = (from) => { let t = 0; for (let m = from; m <= 36; m++) t += 100 * Math.pow(1.0385, Math.ceil(m / 12) - 1); return t; };
+  const feeTerm = (fee, from) => { let t = 0; for (let m = from; m <= 36; m++) t += fee * Math.pow(1.05, Math.ceil(m / 12) - 1); return t; };
+  let r = standardFeesForStructure({ rows: [row], costs: [cost], termMonths: 36, ...esc });
+  assert.ok(Math.abs(feeTerm(r.perRow[0].exactFee, 1) - costTerm(1)) < 1e-6);
+  assert.ok(r.perRow[0].standardFee < 100);
+  // Starting in month 4, it still recovers the cost's 36 months.
+  r = standardFeesForStructure({ rows: [{ ...row, startMonth: 4 }], costs: [cost], termMonths: 36, ...esc });
+  assert.ok(Math.abs(feeTerm(r.perRow[0].exactFee, 4) - costTerm(1)) < 1e-6);
+  // Equal escalators leave the monthly price as it is.
+  r = standardFeesForStructure({ rows: [row], costs: [cost], termMonths: 36, feeEscalator: 0.04, costEscalator: 0.04 });
+  assert.equal(r.perRow[0].standardFee, 100);
+  // A rolled cost is spread so the escalating fee bills exactly it.
+  r = standardFeesForStructure({ rows: [row], costs: [{ ...cost, type: 'Setup Rolled', price: 3600 }], termMonths: 36, ...esc });
+  assert.ok(Math.abs(feeTerm(r.perRow[0].exactFee, 1) - 3600) < 1e-6);
+});
+
 test('rolled and monthly costs add together on one monthly fee', () => {
   const rows = [{ feeName: 'All in', type: 'Recurring (monthly)', unit: 'Fixed' }];
   const allocations = { [bbsCosts[0].key]: { fee: 'all in', roll: true }, [bbsCosts[1].key]: { fee: 'All in' } };
