@@ -2399,6 +2399,7 @@ export function PricingView({ settings } = {}) {
     return () => window.removeEventListener(SERVICE_RENAMED_EVENT, onRenamed);
   }, []);
   const [feeBuilderPicks, setFeeBuilderPicks] = useState({}); // Fee Builder subtab: { [serviceKey]: structureId | '' } - '' leaves the service's fees as they are; absent means its standard structure
+  const [feeBuilderOverrides, setFeeBuilderOverrides] = useState({}); // Fee Builder subtab: { [optionNumber]: { [rowKey]: fee per unit } } - a Fee / Unit typed over the built one
   const [lineItemPriority, setLineItemPriority] = useState({}); // { [lineItemKey]: true } - services in priority order, first in scope takes the cost
   const [lineItemIgnored, setLineItemIgnored] = useState({}); // { [lineItemKey]: true } - line items the user opted to ignore (greyed out, excluded from the unmapped warning)
   const [termMonths, setTermMonths] = useState(36);
@@ -5288,6 +5289,30 @@ export function PricingView({ settings } = {}) {
     });
     const fromService = new Map();
     for (const ps of built.perService) for (const r of ps.added) fromService.set(r, ps.service);
+    // A Fee / Unit typed over a built row on the preview replaces the row's
+    // fee, so its years, margin, the totals and the Build all follow it.
+    // Rows are told apart by service and fee name (and their order among
+    // rows sharing both), which holds while the picks are changed around.
+    const typed = feeBuilderOverrides[opt.optionNumber] || {};
+    const seenKey = new Map();
+    const rowKeyOf = new Map();
+    built.rows = built.rows.map(r => {
+      const base = `${fromService.get(r) || ''}|${String(r?.altItem || '').trim().toLowerCase()}`;
+      const n = seenKey.get(base) || 0;
+      seenKey.set(base, n + 1);
+      const key = `${base}|${n}`;
+      const v = typed[key];
+      // A typed fee the row already carries (the schedule built with it) is
+      // no longer an override.
+      const next = typeof v === 'number' && Number.isFinite(v) && v >= 0 && !(r.fee !== '' && r.fee != null && Number(r.fee) === v)
+        ? { ...r, fee: v } : r;
+      if (next !== r) {
+        fromService.set(next, fromService.get(r));
+        for (const ps of built.perService) ps.added = ps.added.map(x => (x === r ? next : x));
+      }
+      rowKeyOf.set(next, { key, overridden: next !== r, src: r });
+      return next;
+    });
     // Each row's term cost: the cost lines its structure row prices, or,
     // for a row already on the schedule, the lines carrying its fee name
     // that no built row took, shared across those rows by their fees.
@@ -5326,10 +5351,19 @@ export function PricingView({ settings } = {}) {
         const feeIsManual = r.fee != null && r.fee !== '' && Number.isFinite(manual) && manual >= 0;
         const auto = feeIsManual ? null : autoFeePerUnitFor(r);
         const years = Array.from({ length: numYears }, (_, yi) => altFeeYearRevenue(r, yi + 1));
+        const typedAt = rowKeyOf.get(r);
+        const builtFee = (() => {
+          if (!typedAt?.overridden) return null;
+          const f = Number(typedAt.src.fee);
+          if (typedAt.src.fee != null && typedAt.src.fee !== '' && Number.isFinite(f) && f >= 0) return f;
+          const au = autoFeePerUnitFor(typedAt.src);
+          return typeof au === 'number' ? au : null;
+        })();
         return {
           name: r.altItem,
           type: r.type || '',
           feePerUnit: feeIsManual ? manual : (typeof auto === 'number' ? auto : null),
+          ...(typedAt ? { key: typedAt.key, overridden: typedAt.overridden, builtFee } : {}),
           unit: r.unit || '',
           unitCount: r.unitCount,
           startMonth: altFeeRowStartMonth(r),
@@ -5408,10 +5442,11 @@ export function PricingView({ settings } = {}) {
   }
 
   function applyFeeBuilderPlan(plan) {
-    if (!plan || plan.perService.length === 0) return false;
+    const typedRows = (plan?.rows || []).filter(r => r.overridden);
+    if (!plan || (plan.perService.length === 0 && typedRows.length === 0)) return false;
     const added = plan.perService.reduce((s, p) => s + p.added.length, 0);
     const removed = plan.perService.reduce((s, p) => s + p.removed.length, 0);
-    if (added === 0) {
+    if (added === 0 && typedRows.length === 0) {
       window.alert('The picked structures have no named fees to write.');
       return false;
     }
@@ -5422,6 +5457,9 @@ export function PricingView({ settings } = {}) {
       '',
       `Adds ${added} row${added === 1 ? '' : 's'}${removed ? ` and replaces ${removed}` : ''}. Rows for services left as they are stay on the schedule.`,
     ];
+    if (typedRows.length) {
+      lines.push('', `Fee / Unit typed over on ${typedRows.length} row${typedRows.length === 1 ? '' : 's'}: ${typedRows.map(r => `${r.name}${r.service ? ` (${r.service})` : ''} ${fmtMoney(r.feePerUnit)}`).join('; ')}.`);
+    }
     if (plan.shared.length) {
       lines.push('', `Fee names shared by more than one service, one row each: ${plan.shared.map(c => `${c.fee} (${c.services.join(', ')})`).join('; ')}.`);
     }
@@ -5799,6 +5837,12 @@ export function PricingView({ settings } = {}) {
           setPicks={setFeeBuilderPicks}
           planFor={feeBuilderPlan}
           onApply={applyFeeBuilderPlan}
+          setFeeOverrides={(optionNumber, updater) => setFeeBuilderOverrides(prev => {
+            const next = updater(prev[optionNumber] || {});
+            const out = { ...prev };
+            if (Object.keys(next).length) out[optionNumber] = next; else delete out[optionNumber];
+            return out;
+          })}
           onOpenServices={() => setPageSubtab('services')}
         />
       )}
