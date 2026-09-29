@@ -4163,8 +4163,10 @@ export function PricingView({ settings } = {}) {
   //
   // `scheduleRows` stands in for the option's saved schedule, so a
   // schedule that isn't saved yet (a fee structure being previewed) can
-  // be costed the same way.
-  function optionCostBreakdown(opt, scheduleRows) {
+  // be costed the same way. `feeNameOverrides` (item id -> fee name) does
+  // the same for cost lines a build would move onto another fee.
+  function optionCostBreakdown(opt, scheduleRows, feeNameOverrides) {
+    const nameOf = (it) => String(feeNameOverrides?.get(it.id) ?? mappingNameFor(it) ?? '');
     const numYears = Math.max(1, Math.ceil(termMonths / 12));
     const zeros = () => Array.from({ length: numYears }, () => 0);
     const passThroughByYear = zeros();
@@ -4185,7 +4187,7 @@ export function PricingView({ settings } = {}) {
     // shim object so the year / startMonth / escalator logic stays in
     // one place.
     function ctsItemPassThroughRevenue(it, yearIndex) {
-      const tag = mappingNameFor(it).trim().toLowerCase();
+      const tag = nameOf(it).trim().toLowerCase();
       const altRow = tag ? altRowByTag.get(tag) : null;
       const uc = altRow ? Number(altRow.unitCount) : NaN;
       if (!altRow || !Number.isFinite(uc) || uc <= 0) {
@@ -4200,7 +4202,7 @@ export function PricingView({ settings } = {}) {
       let sum = 0;
       for (const sec of (opt.sections || [])) {
         for (const it of (sec.items || [])) {
-          const tag = mappingNameFor(it).trim().toLowerCase();
+          const tag = nameOf(it).trim().toLowerCase();
           if (!tag || !altTagSet.has(tag)) continue;
           const c = ctsItemYearCost(it, yi + 1);
           sum += c;
@@ -4224,8 +4226,8 @@ export function PricingView({ settings } = {}) {
   // Returns nulls rather than zeros when there's nothing to divide by
   // (no fees, or no linked CTS cost at all) - a deal with no cost side
   // isn't a 100%-margin deal, it's a deal whose margin isn't known here.
-  function dealMarginForOption(opt, scheduleRows) {
-    const { numYears, costByYear, passThroughByYear } = optionCostBreakdown(opt, scheduleRows);
+  function dealMarginForOption(opt, scheduleRows, feeNameOverrides) {
+    const { numYears, costByYear, passThroughByYear } = optionCostBreakdown(opt, scheduleRows, feeNameOverrides);
     const rows = scheduleRows || (opt ? (altFees[opt.optionNumber] || []) : []);
     const feeByYear = Array.from({ length: numYears }, (_, i) =>
       rows.reduce((s, r) => s + altFeeYearRevenue(r, i + 1), 0));
@@ -5359,21 +5361,34 @@ export function PricingView({ settings } = {}) {
     const afterNames = loggedOn(built.rows);
     const pricedBy = new Map();
     for (const r of built.rows) for (const id of r.costIds || []) if (!pricedBy.has(id)) pricedBy.set(id, String(r.altItem || '').trim());
+    // A cost priced into a built fee whose own fee name the build takes off
+    // the schedule (a structure fee named differently from the SIA's) would
+    // be priced in but counted nowhere. The build moves it onto the fee it
+    // is priced into, and everything here reads it there already.
+    const moves = [];
+    for (const item of itemById.values()) {
+      const to = pricedBy.get(item.id);
+      const from = String(mappingNameFor(item) || '').trim();
+      if (!to || (from && afterNames.has(from.toLowerCase()))) continue;
+      moves.push({ itemId: item.id, lineItem: item.description || '', from, to });
+    }
+    const movedTo = new Map(moves.map(m => [m.itemId, m.to]));
     const costLines = [...itemById.values()].map(item => {
       const k = String(mappingNameFor(item) || '').trim().toLowerCase();
       return {
         lineItem: item.description || '',
         type: effectiveType(item),
         pricingFee: (k && beforeNames.get(k)) || null,
-        builderFee: (k && afterNames.get(k)) || null,
+        builderFee: movedTo.get(item.id) || (k && afterNames.get(k)) || null,
         pricedInto: pricedBy.get(item.id) || null,
+        moved: movedTo.has(item.id),
         byYear: Array.from({ length: numYears }, (_, yi) => ctsItemYearCost(item, yi + 1)),
       };
     });
-    const totals = (list) => {
-      const { costByYear } = optionCostBreakdown(opt, list);
+    const totals = (list, nameOverrides) => {
+      const { costByYear } = optionCostBreakdown(opt, list, nameOverrides);
       const feeByYear = Array.from({ length: numYears }, (_, yi) => list.reduce((s, r) => s + altFeeYearRevenue(r, yi + 1), 0));
-      return { feeByYear, costByYear, margin: dealMarginForOption(opt, list) };
+      return { feeByYear, costByYear, margin: dealMarginForOption(opt, list, nameOverrides) };
     };
     return {
       optionName: opt.sheetName,
@@ -5386,8 +5401,9 @@ export function PricingView({ settings } = {}) {
       nextSchedule: built.rows.map(r => { const { costIds: _costIds, ...rest } = r; return rest; }),
       perService: built.perService,
       shared: built.shared,
+      moves,
       before: totals(schedule),
-      after: totals(built.rows),
+      after: totals(built.rows, movedTo),
     };
   }
 
@@ -5409,8 +5425,21 @@ export function PricingView({ settings } = {}) {
     if (plan.shared.length) {
       lines.push('', `Fee names shared by more than one service, one row each: ${plan.shared.map(c => `${c.fee} (${c.services.join(', ')})`).join('; ')}.`);
     }
+    if (plan.moves?.length) {
+      lines.push('', `Moves ${plan.moves.length} cost line${plan.moves.length === 1 ? '' : 's'} onto the fee ${plan.moves.length === 1 ? 'it is' : 'they are'} priced into: ${plan.moves.map(m => `${m.lineItem} to ${m.to}`).join('; ')}.`);
+    }
     if (!window.confirm(lines.join('\n'))) return false;
     replaceAltFeeRows(plan.optionNumber, plan.nextSchedule);
+    if (plan.moves?.length) {
+      // The column the page matches costs by (see mappingNameFor), set per
+      // cost line so only this option's lines move.
+      const field = feeMapBy === 'automated' ? 'linkedTo' : 'siaFee';
+      setOverrides(prev => {
+        const next = { ...prev };
+        for (const m of plan.moves) next[m.itemId] = { ...next[m.itemId], [field]: m.to };
+        return next;
+      });
+    }
     return true;
   }
 
