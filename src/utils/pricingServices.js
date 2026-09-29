@@ -8,8 +8,6 @@
 // be looked up from its side: which cost lines it covers, and so which fees
 // price it.
 
-import { recurringFeePerUnit } from './altFeePricing.js';
-
 const norm = (s) => String(s ?? '').trim().toLowerCase();
 
 // Status labels, in the order the list sorts them within a group.
@@ -267,6 +265,15 @@ export function applyFeeStructureToSchedule(schedule, structureRows, { replaceNa
 //                 fee is a lowercased fee name, '' for "not covered", or
 //                 absent for the default
 //   termMonths    the deal term
+//   startMonthFor (altRow) => the month a row with no Start Month of its own
+//                 bills from on the schedule (its fee's saved default, or its
+//                 costs' earliest), so the standard fee is priced over the
+//                 months the fee actually bills. Rows fall back to month 1.
+//
+// A fee that starts after a monthly cost it covers misses the cost's first
+// months. The standard fee catches them up: the cost's months over the
+// term, spread over the fee's months (a $100 cost from month 1 on a fee
+// from month 4 of 36 bills $100 x 36 / 33), so the term still recovers it.
 
 export const COST_BUCKET_UPFRONT = 'upfront';
 export const COST_BUCKET_RECURRING = 'recurring';
@@ -336,16 +343,14 @@ export function feeBucket(type) {
   return '';
 }
 
-// A monthly row is priced to the term, the way the schedule's own auto fee
-// is (recurringFeePerUnit): what its costs need over the months they run,
-// spread over the months the fee bills. A fee that starts billing after its
-// costs do, or escalates at a different rate, would otherwise miss its
-// margin by exactly those months. feeStartMonth(row) is the month a row
-// with no Start Month of its own will bill from once it is on the schedule;
-// a cost's billStartMonth is when its cost starts, where that differs from
-// the startMonth its allocation is keyed by.
-export function standardFeesForStructure({ rows = [], costs = [], allocations = {}, termMonths = 36, siteCount, accountCount, annualEscalator = 0, costEscalator = 0, feeStartMonth } = {}) {
+export function standardFeesForStructure({ rows = [], costs = [], allocations = {}, termMonths = 36, siteCount, accountCount, startMonthFor } = {}) {
   const names = rows.map(r => norm(r?.feeName));
+  const alts = rows.map(r => feeStructureRowToAltRow(r, { siteCount, accountCount }));
+  const rowStartOf = (ri) => {
+    const own = Number(alts[ri]?.startMonth);
+    const auto = own > 0 ? own : Number(startMonthFor?.(alts[ri]));
+    return Math.max(1, Math.round(auto > 0 ? auto : 1));
+  };
   const perRow = rows.map(() => ({ standardFee: null, costIdx: [], monthlyTotal: 0, upfrontTotal: 0 }));
   const costOut = costs.map((c) => {
     const a = allocations?.[c.key];
@@ -390,22 +395,26 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
     // earlier year is collected before it is spent. Flagged, not dropped:
     // "Add fees for later costs" gives it a fee of its own.
     const costStart = Math.round(Number(c.startMonth) || 1);
-    const rowStart = row ? Math.round(Number(row.startMonth) || 1) : 1;
+    const rowStart = row ? rowStartOf(rowIdx) : 1;
     const later = costStart > FIRST_YEAR_MONTHS;
     const billedEarly = later && !!row && yearOfMonth(rowStart) < yearOfMonth(costStart);
+    // When the cost itself starts running, which is what the margin charges
+    // from. startMonth can carry a Linked To start month that only moves
+    // the fee; a cost from month 1 with a default of 4 still costs months
+    // 1 to 3, and the fee has to catch them up.
     const billStart = Math.max(1, Math.round(Number(c.billStartMonth ?? c.startMonth) || 1));
-    return { key: c.key, rowIdx, defaulted, fellBack, bucket, feeBucket: fb, canRoll, rolled, issue, price: c.price, startMonth: costStart, billStartMonth: billStart, later, billedEarly };
+    return { key: c.key, rowIdx, defaulted, fellBack, bucket, feeBucket: fb, canRoll, rolled, issue, price: c.price, startMonth: costStart, billStartMonth: billStart, later, billedEarly, catchUpMonths: 0 };
   });
 
+  const term = Math.max(1, Math.round(termMonths));
   rows.forEach((row, ri) => {
-    const alt = feeStructureRowToAltRow(row, { siteCount, accountCount });
+    const alt = alts[ri];
     const units = alt.unitCount > 0 ? alt.unitCount : 1;
     const fb = feeBucket(row?.type);
-    const start = Math.max(1, Math.round(alt.startMonth || (typeof feeStartMonth === 'function' ? Number(feeStartMonth(row)) : 0) || 1));
-    const rollMonths = Math.max(1, Math.round(termMonths) - start + 1);
+    const start = rowStartOf(ri);
+    const rollMonths = Math.max(1, term - start + 1);
     const agg = perRow[ri];
-    const recurringCosts = [];
-    const rolledCosts = [];
+    agg.startMonth = start;
     let any = false;
     costOut.forEach((co, ci) => {
       if (co.rowIdx !== ri) return;
@@ -415,28 +424,25 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
       const effBucket = fb || co.feeBucket;
       if (effBucket === COST_BUCKET_RECURRING) {
         if (co.bucket === COST_BUCKET_RECURRING) {
-          agg.monthlyTotal += price;
-          recurringCosts.push({ price, startMonth: co.billStartMonth });
-          any = true;
-        } else if (co.rolled) {
-          agg.monthlyTotal += price / rollMonths;
-          rolledCosts.push({ price, startMonth: co.billStartMonth });
+          // Months the cost runs before the fee starts are caught up over
+          // the months the fee bills.
+          const costMonths = Math.max(0, term - co.billStartMonth + 1);
+          const catchUp = co.billStartMonth < start && costMonths > rollMonths;
+          co.catchUpMonths = catchUp ? start - co.billStartMonth : 0;
+          agg.monthlyTotal += catchUp ? price * costMonths / rollMonths : price;
           any = true;
         }
+        else if (co.rolled) { agg.monthlyTotal += price / rollMonths; any = true; }
       } else if (effBucket === COST_BUCKET_UPFRONT && co.bucket === COST_BUCKET_UPFRONT) {
         agg.upfrontTotal += price;
         any = true;
       }
     });
     agg.rollMonths = rollMonths;
-    agg.startMonth = start;
     if (any) {
-      const upfront = (fb || costOut[agg.costIdx[0]]?.feeBucket) === COST_BUCKET_UPFRONT;
-      const exact = upfront
-        ? agg.upfrontTotal / units
-        : recurringFeePerUnit({ recurringCosts, rolledCosts, feeStartMonth: start, annualEscalator, costEscalator, termMonths, unitCount: units });
-      agg.exactFee = exact ?? 0;
-      agg.standardFee = exact == null ? null : Math.round(exact * 100) / 100;
+      const total = (fb || costOut[agg.costIdx[0]]?.feeBucket) === COST_BUCKET_UPFRONT ? agg.upfrontTotal : agg.monthlyTotal;
+      agg.exactFee = total / units;
+      agg.standardFee = Math.round(agg.exactFee * 100) / 100;
     }
   });
   return { perRow, costs: costOut };
@@ -597,10 +603,10 @@ export function feeStructureCostInputs(costs) {
 // linked fee from it whenever the Global GM% changes (feeAtGm), so a
 // built fee keeps following the margin instead of freezing at the one it
 // was built at.
-export function standardFeeContext(structure, costs, { termMonths = 36, siteCount, accountCount, annualEscalator, costEscalator, feeStartMonth } = {}) {
+export function standardFeeContext(structure, costs, { termMonths = 36, siteCount, accountCount, startMonthFor } = {}) {
   const rows = structure?.rows || [];
   const costInputs = feeStructureCostInputs(costs);
-  const opts = { rows, allocations: structure?.allocations || {}, termMonths, siteCount, accountCount, annualEscalator, costEscalator, feeStartMonth };
+  const opts = { rows, allocations: structure?.allocations || {}, termMonths, siteCount, accountCount, startMonthFor };
   const std = standardFeesForStructure({ ...opts, costs: costInputs });
   const standardFee = (idx) => std.perRow[idx]?.standardFee ?? null;
   const linkable = (costs || []).some(c => typeof c?.priceAtCost === 'number');

@@ -32,6 +32,8 @@ const STATUS_CLASS = {
 //   detailFor       (serviceName) => { items, fees } for the active option
 //   feeStructures   saved fee structures per service (serviceKey)
 //   previewFeeRow   (structureRow) => what it bills on the active option
+//   autoStartMonthFor (altRow) => the month a fee with no Start Month of its
+//                   own bills from (priced into its standard fee)
 //   previewOnOption (serviceName, structure|null) => the option with it in place
 //   applyFeeStructure (serviceName, structure) => writes it to the schedule
 //   unlinked        unmappedLineItems() for the active option: cost lines
@@ -50,8 +52,8 @@ const STATUS_CLASS = {
 //                   line at one of the rate card's fee components for the
 //                   price check ('' puts it back on Auto)
 export function ServicesTab({
-  workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, feePricing, onOpenLinkedTo,
-  onSetCount, onIgnoreForCheck, onSetFeeComponent, feeStructures = {}, setFeeStructures, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough,
+  workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
+  onSetCount, onIgnoreForCheck, onSetFeeComponent, feeStructures = {}, setFeeStructures, previewFeeRow, autoStartMonthFor, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough,
   unlinked = null, tagOptions = [], onTagLineItem, onIgnoreLineItem, onSetCompleted, globalGmPct = null,
 }) {
   const [query, setQuery] = useState('');
@@ -213,6 +215,7 @@ export function ServicesTab({
                 return next;
               })}
               previewFeeRow={previewFeeRow}
+              autoStartMonthFor={autoStartMonthFor}
               previewOnOption={previewOnOption}
               onSetItemType={onSetItemType}
               onSetItemAnnual={onSetItemAnnual}
@@ -224,7 +227,6 @@ export function ServicesTab({
               optionCtsTotal={optionCtsTotal}
               numYears={numYears}
               termMonths={termMonths}
-              feePricing={feePricing}
               siteCount={detail?.sia?.sites ?? opt?.siteCount}
               accountCount={detail?.sia?.accounts ?? opt?.accountCount}
               onOpenLinkedTo={onOpenLinkedTo}
@@ -311,7 +313,7 @@ function UnlinkedWarning({ unlinked, costTotals, optionName, tagOptions, quickTa
   );
 }
 
-function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted, detail, hasWorkbook, optionName, optionCtsTotal = 0, numYears, termMonths, feePricing, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, onSetFeeComponent, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough }) {
+function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted, detail, hasWorkbook, optionName, optionCtsTotal = 0, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, onSetFeeComponent, saved, setSaved, previewFeeRow, autoStartMonthFor, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough }) {
   const items = detail?.items || [];
   const fees = detail?.fees || [];
   const structures = saved?.structures || [];
@@ -375,7 +377,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
   // Dropdowns service type. A mismatch offers the type that fits.
   const standard = structures.find(x => x.id === standardId) || null;
   const stdCosts = standard && hasWorkbook
-    ? standardFeeContext(standard, items, { ...feePricing, termMonths, siteCount, accountCount }).std.costs
+    ? standardFeeContext(standard, items, { termMonths, siteCount, accountCount, startMonthFor: autoStartMonthFor }).std.costs
     : [];
   const stdBuckets = standard ? [...new Set((standard.rows || []).map(r => feeBucket(r.type)).filter(Boolean))] : [];
   const stdOneType = stdBuckets.length === 1 ? (standard.rows.find(r => feeBucket(r.type))?.type || '') : '';
@@ -678,12 +680,12 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                 optionName={optionName}
                 numYears={numYears}
                 termMonths={termMonths}
-                feePricing={feePricing}
                 siteCount={siteCount}
                 accountCount={accountCount}
                 costs={items}
                 feeNameSuggestions={[...new Set([...fees.map(f => f.name), ...items.map(i => i.feeName)].filter(Boolean))]}
                 previewFeeRow={previewFeeRow}
+                autoStartMonthFor={autoStartMonthFor}
                 onChange={(fn) => updateStructure(openStructure.id, fn)}
                 onMakeStandard={() => setSaved(prev => ({ ...prev, standardId: openStructure.id }))}
                 onDuplicate={() => duplicateStructure(openStructure)}
@@ -700,7 +702,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
       {hasWorkbook && previewOnOption && (
         <OptionPreview
           preview={previewOnOption(service.name, openStructure
-            ? standardFeeContext(openStructure, items, { ...feePricing, termMonths, siteCount, accountCount }).filled
+            ? standardFeeContext(openStructure, items, { termMonths, siteCount, accountCount, startMonthFor: autoStartMonthFor }).filled
             : null)}
         />
       )}
@@ -1293,8 +1295,8 @@ const fmtPlain = (n) => (typeof n === 'number' && Number.isFinite(n)
 // GM% cells derive, and the placeholder shows what they derive to on the
 // loaded SIA, the same way the Alternative Fee schedule reads.
 function FeeStructureEditor({
-  structure, globalGmPct, isStandard, hasWorkbook, optionName, numYears, termMonths = 36, feePricing, siteCount, accountCount, costs = [],
-  feeNameSuggestions, previewFeeRow, onChange, onMakeStandard, onDuplicate, onDelete, onApply,
+  structure, globalGmPct, isStandard, hasWorkbook, optionName, numYears, termMonths = 36, siteCount, accountCount, costs = [],
+  feeNameSuggestions, previewFeeRow, autoStartMonthFor, onChange, onMakeStandard, onDuplicate, onDelete, onApply,
 }) {
   const listId = `fs-names-${structure.id}`;
   const rows = structure.rows || [];
@@ -1325,7 +1327,15 @@ function FeeStructureEditor({
   // The standard fee behind each row: what recovers the service's costs
   // pointed at it (see standardFeesForStructure). A blank Fee cell bills
   // it, and Apply writes it into the schedule.
-  const { std, standardFee, billed } = standardFeeContext(structure, costs, { ...feePricing, termMonths, siteCount, accountCount });
+  const { std, standardFee, billed } = standardFeeContext(structure, costs, { termMonths, siteCount, accountCount, startMonthFor: autoStartMonthFor });
+  // A fee starting after a monthly cost it covers catches up the months it
+  // missed, so the term still recovers the cost.
+  const catchUpNote = (idx) => {
+    const missed = Math.max(0, ...(std.perRow[idx]?.costIdx || []).map(ci => std.costs[ci]?.catchUpMonths || 0));
+    if (!missed) return '';
+    const start = std.perRow[idx].startMonth;
+    return ` It starts in month ${start}, after ${missed === 1 ? 'a cost it covers' : 'costs it covers'}, so it is raised to catch up the ${missed === 1 ? 'month' : `${missed} months`} before then over the ${std.perRow[idx].rollMonths} months it bills.`;
+  };
   const previews = rows.map((r, idx) => (previewFeeRow && hasWorkbook ? previewFeeRow(billed(r, idx)) : null));
   // Pass-through lines with no fee row of their own yet, billed per account
   // or as a fixed fee as picked in the price check.
@@ -1435,7 +1445,7 @@ function FeeStructureEditor({
                   {standardFee(idx) != null && (
                     <div
                       className={typeof r.fee === 'number' && Math.abs(r.fee - standardFee(idx)) > 0.005 ? styles.stdFeeOff : styles.stdFee}
-                      title={`Standard fee: recovers the ${std.perRow[idx].costIdx.length} cost line${std.perRow[idx].costIdx.length === 1 ? '' : 's'} this fee covers at their marked-up price (the Global GM% at the top of the page).${typeof r.fee === 'number' ? '' : ' The blank cell bills it.'}`}
+                      title={`Standard fee: recovers the ${std.perRow[idx].costIdx.length} cost line${std.perRow[idx].costIdx.length === 1 ? '' : 's'} this fee covers at their marked-up price (the Global GM% at the top of the page).${catchUpNote(idx)}${typeof r.fee === 'number' ? '' : ' The blank cell bills it.'}`}
                     >
                       ★ {fmtMoney(standardFee(idx))}
                     </div>
@@ -1507,7 +1517,7 @@ function FeeStructureEditor({
             <button
               type="button"
               className={styles.barBtn}
-              onClick={() => onChange(st => addLaterCostFees(st, feeStructureCostInputs(costs), { ...feePricing, termMonths, siteCount, accountCount }))}
+              onClick={() => onChange(st => addLaterCostFees(st, feeStructureCostInputs(costs), { termMonths, siteCount, accountCount, startMonthFor: autoStartMonthFor }))}
               title="Add a fee row per start month for these costs, starting the month they do, and point them at it. Its standard fee recovers exactly them."
             >
               + Add standard fee for costs after month {FIRST_YEAR_MONTHS}

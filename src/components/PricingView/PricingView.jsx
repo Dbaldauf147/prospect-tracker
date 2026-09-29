@@ -4875,7 +4875,7 @@ export function PricingView({ settings } = {}) {
         startMonth: effectiveItemStartMonth(item),
         // When the cost itself starts, which the margin charges from; the
         // start month above can be a Linked To default that only moves the
-        // fee.
+        // fee (see ctsItemStartMonth).
         billStartMonth: ctsItemStartMonth(item),
         feeName: String(mappingNameFor(item) || '').trim(),
         automatedName: String(resolvedLinkedTo(item) || '').trim(),
@@ -5197,16 +5197,6 @@ export function PricingView({ settings } = {}) {
     return true;
   }
 
-  // What a structure's standard fees are priced against, so a fee built
-  // from one recovers its costs over the months it will bill on the
-  // schedule: the escalators, and the start month a row with none of its
-  // own derives there (altFeeRowStartMonth).
-  const structureFeePricing = {
-    annualEscalator,
-    costEscalator,
-    feeStartMonth: (row) => autoStartMonthFor({ altItem: row?.feeName, type: row?.type }),
-  };
-
   // Fee Builder subtab: which saved fee structure each service would use.
   // A service with no pick uses its standard (★) structure when it is in
   // SIA scope; '' leaves its fees on the schedule as they are.
@@ -5252,10 +5242,10 @@ export function PricingView({ settings } = {}) {
       });
       if (!structure) continue;
       const ctx = standardFeeContext(structure, detail.items, {
-        ...structureFeePricing,
         termMonths,
         siteCount: detail.sia?.sites ?? opt.siteCount,
         accountCount: detail.sia?.accounts ?? opt.accountCount,
+        startMonthFor: autoStartMonthFor,
       });
       // Which of the service's cost lines each row prices, for the
       // preview's margin column.
@@ -5680,6 +5670,7 @@ export function PricingView({ settings } = {}) {
           feeStructures={serviceFeeStructures}
           setFeeStructures={setServiceFeeStructures}
           previewFeeRow={previewFeeStructureRow}
+          autoStartMonthFor={autoStartMonthFor}
           previewOnOption={previewServiceOnOption}
           onSetItemType={setItemType}
           onSetItemAnnual={setItemAnnual}
@@ -5687,7 +5678,6 @@ export function PricingView({ settings } = {}) {
           applyFeeStructure={applyServiceFeeStructure}
           numYears={Math.max(1, Math.ceil(termMonths / 12))}
           termMonths={termMonths}
-          feePricing={structureFeePricing}
           onOpenLinkedTo={() => setPageSubtab('linkedTo')}
           unlinked={unmappedForBanner}
           tagOptions={solutionsOptions}
