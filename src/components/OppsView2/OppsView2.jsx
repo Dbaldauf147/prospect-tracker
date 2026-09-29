@@ -176,6 +176,7 @@ import { companiesMatch } from '../../utils/listFlags';
 // by a sale).
 import { scopeServiceStatuses, scopeStatusTitle } from '../../utils/scopeServiceStatus';
 import { SERVICE_STATUS_COLORS } from '../../utils/serviceStatusColors';
+import { effectiveLineItemServices } from '../../utils/pricingServices';
 // The Columns menu every other table on the site carries, and the layout it
 // saves, so the estimate table's columns are picked the same way.
 import { ColumnToggle } from '../common/ColumnToggle';
@@ -13858,6 +13859,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   const [pricingOptionServicesCache, setPricingOptionServicesCache] = useState({});
   const [pricingWorkbook, setPricingWorkbook] = useState(null);
   const [lineItemServices, setLineItemServices] = useState({});
+  const [lineItemPriority, setLineItemPriority] = useState({});
   useEffect(() => {
     let cancelled = false;
     const loadWorkbook = () => dbGet('pricing-cache', 'current')
@@ -13866,11 +13868,15 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     const loadMapping = () => dbGet('pricing-cache', 'lineItemServices')
       .then(val => { if (!cancelled && val && typeof val === 'object') setLineItemServices(val); })
       .catch(() => {});
+    const loadPriority = () => dbGet('pricing-cache', 'lineItemPriority')
+      .then(val => { if (!cancelled && val && typeof val === 'object') setLineItemPriority(val); })
+      .catch(() => {});
     const loadDerived = () => dbGet('pricing-cache', 'pricingOptionServices')
       .then(val => { if (!cancelled && val && typeof val === 'object') setPricingOptionServicesCache(val); })
       .catch(() => {});
     loadWorkbook();
     loadMapping();
+    loadPriority();
     loadDerived();
     const onMapping = (e) => {
       const detail = e?.detail;
@@ -13882,11 +13888,17 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       // Workbook changes ride along with derived-bundle changes — refresh.
       loadWorkbook();
     };
+    const onPriority = (e) => {
+      const detail = e?.detail;
+      if (detail && typeof detail === 'object') setLineItemPriority(detail); else loadPriority();
+    };
     window.addEventListener('pricing:lineItemServicesChanged', onMapping);
+    window.addEventListener('pricing:lineItemPriorityChanged', onPriority);
     window.addEventListener('pricing:optionServicesChanged', onDerived);
     return () => {
       cancelled = true;
       window.removeEventListener('pricing:lineItemServicesChanged', onMapping);
+      window.removeEventListener('pricing:lineItemPriorityChanged', onPriority);
       window.removeEventListener('pricing:optionServicesChanged', onDerived);
     };
   }, []);
@@ -13902,10 +13914,13 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       for (const o of pricingWorkbook.options) {
         const seen = new Set();
         const services = [];
+        // A "first in scope only" line item counts for the one service
+        // that takes it on this option, as on the Pricing tab.
+        const onOption = effectiveLineItemServices((o.sections || []).flatMap(sec => sec.items || []), lineItemServices, lineItemPriority);
         for (const sec of (o.sections || [])) {
           for (const item of (sec.items || [])) {
             const key = String(item.description || '').trim().toLowerCase();
-            const mapped = key ? lineItemServices?.[key] : null;
+            const mapped = key ? onOption?.[key] : null;
             if (!Array.isArray(mapped)) continue;
             for (const s of mapped) {
               const k = String(s || '').toLowerCase();
@@ -13920,7 +13935,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       return out;
     }
     return pricingOptionServicesCache;
-  }, [pricingWorkbook, lineItemServices, pricingOptionServicesCache]);
+  }, [pricingWorkbook, lineItemServices, lineItemPriority, pricingOptionServicesCache]);
   // Persisting only kicks in after the initial hydration finishes —
   // otherwise the seed value would be written back, wiping the saved
   // state for any user who happens to refresh before the load
