@@ -5241,6 +5241,7 @@ export function PricingView({ settings } = {}) {
         termMonths,
         siteCount: detail.sia?.sites ?? opt.siteCount,
         accountCount: detail.sia?.accounts ?? opt.accountCount,
+        startMonthFor: autoStartMonthFor,
       });
       // Which of the service's cost lines each row prices, for the
       // preview's margin column.
@@ -5665,6 +5666,7 @@ export function PricingView({ settings } = {}) {
           feeStructures={serviceFeeStructures}
           setFeeStructures={setServiceFeeStructures}
           previewFeeRow={previewFeeStructureRow}
+          autoStartMonthFor={autoStartMonthFor}
           previewOnOption={previewServiceOnOption}
           onSetItemType={setItemType}
           onSetItemAnnual={setItemAnnual}
