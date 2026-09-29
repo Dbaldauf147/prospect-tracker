@@ -691,6 +691,20 @@
   color: #92400e;
 }
 
+/* One meter per fee component, each under its own name. */
+.meterStack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.meterLabel {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 0.1rem;
+}
+
 /* The price check meter: $0 on the left, the rate card range shaded, a dot
    where the marked-up price lands and a thin tick for the raw cost. */
 .meter {

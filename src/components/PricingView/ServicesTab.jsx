@@ -841,7 +841,7 @@ function RateCheck({ check, ctsShare = null }) {
           {check.leftOut?.length > 0 && ` Also on the rate card but not in this check, the SIA having no cost for it: ${check.leftOut.map(b => `${b.basisLabel} (${fmtMoneyRange(b.fee, b.feeHigh)})`).join(', ')}.`}
         </p>
       )}
-      <RateMeter check={shown} fmt={fmt} />
+      {componentMeters(check.parts) || <RateMeter check={shown} fmt={fmt} />}
       <FeeComponents parts={check.parts} />
       {(check.status === RATE_CHECK.INCOMPLETE || check.status === RATE_CHECK.UNPRICED) && (
         <p className={styles.note}>
@@ -853,6 +853,47 @@ function RateCheck({ check, ctsShare = null }) {
         </p>
       )}
     </section>
+  );
+}
+
+// A card split into fee components gets a meter per component, each in
+// that component's own terms (a per-unit rate is drawn per unit), in place
+// of the one meter for the whole service. A part left whole draws its own
+// meter beside them. Null when nothing on the card is split.
+function componentMeters(parts = []) {
+  if (!parts.some(pt => pt.components)) return null;
+  const meters = [];
+  const add = (key, label, row) => {
+    if (!(row.lineCount > 0 || row.cost > 0) || row.low == null) return;
+    const pu = row.perUnit;
+    meters.push({
+      key,
+      label,
+      fmt: pu ? fmtRate : fmtWhole,
+      check: pu
+        ? { status: row.status, low: pu.rateLow, high: pu.rateHigh, price: pu.price, cost: row.cost / pu.units / (pu.perMonth ? 12 : 1) }
+        : { status: row.status, low: row.low, high: row.high, price: row.price, cost: row.cost },
+    });
+  };
+  for (const pt of parts) {
+    const split = pt.components;
+    if (!split) {
+      if (pt.cardLines.length) add(pt.key, pt.label, pt);
+      continue;
+    }
+    for (const r of split.rows) if (!r.shared) add(r.id, `${pt.label}, ${r.card.basisLabel}`, r);
+    if (split.shared) add(`${pt.key}:shared`, `${pt.label}, ${split.shared.labels.join(' + ')} together`, split.shared);
+  }
+  if (meters.length === 0) return null;
+  return (
+    <div className={styles.meterStack}>
+      {meters.map(m => (
+        <div key={m.key}>
+          <div className={styles.meterLabel}>{m.label}</div>
+          <RateMeter check={m.check} fmt={m.fmt} />
+        </div>
+      ))}
+    </div>
   );
 }
 
