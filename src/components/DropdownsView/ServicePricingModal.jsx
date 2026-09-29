@@ -51,11 +51,19 @@ function breakdownRows(bases) {
   return [...bases].sort((a, b) => rank(a.key) - rank(b.key));
 }
 
+// Typed into a rate cell, "N/A" (or "NA", any case, any spacing) marks
+// that half of the row N/A.
+const isNaTyped = (t) => ['na', 'n/a'].includes(t.replace(/\s+/g, '').toLowerCase());
+
 // One rate cell. Shows the figure, edits as a bare number, commits on blur
 // or Enter and reverts on Escape — the same rules as every other number on
 // this panel, so a cell clicked into and back out of can't blank a rate.
-function RateCell({ value, percent, disabled, title, placeholder, onCommit }) {
-  const initial = value === null || value === undefined ? '' : String(value);
+//
+// A cell whose half of the row is marked N/A shows that instead of a
+// figure. Typing "N/A" marks it, clearing the box takes the mark off, and
+// typing a rate replaces it (the save path drops the mark).
+function RateCell({ value, percent, disabled, title, placeholder, na = false, onCommit, onNa }) {
+  const initial = na ? 'N/A' : (value === null || value === undefined ? '' : String(value));
   const [draft, setDraft] = useState(null);
   const inputRef = useRef(null);
   const editing = draft !== null;
@@ -64,8 +72,9 @@ function RateCell({ value, percent, disabled, title, placeholder, onCommit }) {
   function commit() {
     const typed = (draft ?? '').trim();
     setDraft(null);
+    if (isNaTyped(typed)) { if (!na) onNa?.(true); return; }
     if (typed === initial) return;
-    if (typed === '') { onCommit(''); return; }
+    if (typed === '') { if (na) onNa?.(false); else onCommit(''); return; }
     const n = parseMoney(typed);
     // Not a number: leave what's stored alone rather than clearing it.
     if (n === null || n < 0) return;
@@ -73,9 +82,11 @@ function RateCell({ value, percent, disabled, title, placeholder, onCommit }) {
   }
 
   if (!editing) {
-    const shown = value === null || value === undefined
-      ? ''
-      : (percent ? `${value}%` : formatMoney(value));
+    const shown = na
+      ? <span className={styles.feeGridNa}>N/A</span>
+      : (value === null || value === undefined
+        ? ''
+        : (percent ? `${value}%` : formatMoney(value)));
     return (
       <button
         type="button"
@@ -91,13 +102,11 @@ function RateCell({ value, percent, disabled, title, placeholder, onCommit }) {
   return (
     <input
       ref={inputRef}
-      type="number"
-      min="0"
-      step="0.01"
+      type="text"
       inputMode="decimal"
       className={styles.feeGridInput}
       value={draft}
-      placeholder={percent ? '%' : '$'}
+      placeholder={percent ? '% or N/A' : '$ or N/A'}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
@@ -135,7 +144,7 @@ function FeeCell({ value, title }) {
  * into the Year 1 columns on the right, which are what those rates come to
  * under the scenario the tab behind is set to.
  */
-function FeeBreakdown({ row, bases, onSaveLine, onSaveSetupLine }) {
+function FeeBreakdown({ row, bases, onSaveLine, onSaveSetupLine, onSaveLineNa }) {
   const rows = useMemo(() => breakdownRows(bases), [bases]);
   const priced = useMemo(
     () => new Map((row._breakdown || []).map(p => [p.basis, p])),
@@ -147,6 +156,7 @@ function FeeBreakdown({ row, bases, onSaveLine, onSaveSetupLine }) {
     () => new Map((row._setupBreakdown || []).map(p => [p.basis, p])),
     [row._setupBreakdown],
   );
+  const naSet = useMemo(() => new Set(row.naLines || []), [row.naLines]);
   const setupRates = useMemo(
     () => new Map((row.setupLines || []).map(l => [l.basis, l])),
     [row.setupLines],
@@ -189,6 +199,8 @@ function FeeBreakdown({ row, bases, onSaveLine, onSaveSetupLine }) {
           const setupRate = setupLine?.rate ?? null;
           const setupRateHigh = setupLine?.rateHigh ?? null;
           const hasSetup = setupRate !== null && setupRate !== undefined;
+          const setupNa = !hasSetup && naSet.has(`setup:${b.key}`);
+          const recurringNa = !has && naSet.has(`recurring:${b.key}`);
           // Year 1 is the two halves added, and a row priced on only one of
           // them still has a first year: a setup-only line bills its setup,
           // a recurring-only line bills its annual. A row priced on neither
@@ -204,7 +216,7 @@ function FeeBreakdown({ row, bases, onSaveLine, onSaveSetupLine }) {
           return (
             <div
               key={b.key}
-              className={`${styles.feeGridRow} ${has || hasSetup ? styles.feeGridRowOn : ''}`}
+              className={`${styles.feeGridRow} ${has || hasSetup || setupNa || recurringNa ? styles.feeGridRowOn : ''}`}
               role="row"
             >
               <span className={styles.feeGridLabel} title={b.recurs
@@ -220,17 +232,24 @@ function FeeBreakdown({ row, bases, onSaveLine, onSaveSetupLine }) {
                 value={setupRate}
                 percent={percent}
                 placeholder={percent ? '%' : '$'}
-                title={`What this service charges once, up front, on ${b.label.toLowerCase()} - billed in year one and never again`}
+                na={setupNa}
+                title={setupNa
+                  ? 'No setup on this line. Type a rate to price it, or clear the box to take N/A off.'
+                  : `What this service charges once, up front, on ${b.label.toLowerCase()} - billed in year one and never again. Type N/A if there is none.`}
                 onCommit={(v) => onSaveSetupLine(b.key, { rate: v })}
+                onNa={(on) => onSaveLineNa?.('setup', b.key, on)}
               />
               <RateCell
                 value={setupRateHigh}
                 percent={percent}
                 disabled={!hasSetup}
+                na={setupNa}
                 placeholder={hasSetup ? (percent ? '%' : '$') : ''}
-                title={hasSetup
-                  ? 'Optional. Fill it in and this setup line prices to a range.'
-                  : 'Set the low setup rate first - a range needs both ends.'}
+                title={setupNa
+                  ? 'No setup on this line.'
+                  : (hasSetup
+                    ? 'Optional. Fill it in and this setup line prices to a range.'
+                    : 'Set the low setup rate first - a range needs both ends.')}
                 onCommit={(v) => onSaveSetupLine(b.key, { rateHigh: v })}
               />
 
@@ -238,17 +257,24 @@ function FeeBreakdown({ row, bases, onSaveLine, onSaveSetupLine }) {
                 value={rate}
                 percent={percent}
                 placeholder={percent ? '%' : '$'}
-                title={`The low ${percent ? 'percentage' : 'rate'} this service is charged on ${b.label.toLowerCase()}`}
+                na={recurringNa}
+                title={recurringNa
+                  ? 'No recurring fee on this line. Type a rate to price it, or clear the box to take N/A off.'
+                  : `The low ${percent ? 'percentage' : 'rate'} this service is charged on ${b.label.toLowerCase()}. Type N/A if there is none.`}
                 onCommit={(v) => onSaveLine(b.key, { rate: v })}
+                onNa={(on) => onSaveLineNa?.('recurring', b.key, on)}
               />
               <RateCell
                 value={rateHigh}
                 percent={percent}
                 disabled={!has}
+                na={recurringNa}
                 placeholder={has ? (percent ? '%' : '$') : ''}
-                title={has
-                  ? 'Optional. Fill it in and this line prices to a range.'
-                  : 'Set the low rate first - a range needs both ends.'}
+                title={recurringNa
+                  ? 'No recurring fee on this line.'
+                  : (has
+                    ? 'Optional. Fill it in and this line prices to a range.'
+                    : 'Set the low rate first - a range needs both ends.')}
                 onCommit={(v) => onSaveLine(b.key, { rateHigh: v })}
               />
 
@@ -272,7 +298,7 @@ function FeeBreakdown({ row, bases, onSaveLine, onSaveSetupLine }) {
       <div className={styles.pricingModalHint}>
         The four rate columns are what you charge - dollars per unit, or a percentage. Setup is
         billed once and lands in year one; the recurring columns bill again every {monthly ? 'month (twelve times a year)' : 'year'} and run for
-        the term. The Year 1 columns are the two added together under the estimate open on the Deal
+        the term. Type N/A in a setup or recurring box when that half of the line does not apply. The Year 1 columns are the two added together under the estimate open on the Deal
         Pricing subtab. The Total row adds dollars, not rates.
       </div>
     </>
@@ -286,6 +312,7 @@ export function ServicePricingModal({
   onSaveField,
   onSaveLine,
   onSaveSetupLine,
+  onSaveLineNa,
   onToggleScope,
   onToggleNoFee,
   onClose,
@@ -370,6 +397,7 @@ export function ServicePricingModal({
             bases={bases}
             onSaveLine={onSaveLine}
             onSaveSetupLine={onSaveSetupLine}
+            onSaveLineNa={onSaveLineNa}
           />
 
           {/* The other side of the row: what the service is worth to the

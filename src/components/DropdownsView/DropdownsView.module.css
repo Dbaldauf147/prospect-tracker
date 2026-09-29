@@ -2981,6 +2981,13 @@
   opacity: 0.65;
 }
 
+.feeGridNa {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 .feeGridTotal {
   border-top: 2px solid var(--color-border);
   background: var(--color-bg-subtle, #f6f7f9);
