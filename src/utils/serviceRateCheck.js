@@ -171,6 +171,28 @@ export const PASS_THROUGH_MODELS = [
   { id: 'pass:per_account', label: 'Per account' },
 ];
 
+// The rate card component (or pass-through model) a cost line takes from
+// the fee structure fee it goes on, read off that fee's unit: Per Account
+// to the part's per-account component, Per Site to per site, Per Meter to
+// per meter, Fixed to a component that is no count (flat, recurring
+// annual). `choices` is rateCardCheck's componentChoices. Null when the
+// part has one component (nothing to pick) or none matches, so the line
+// is checked on Auto.
+export function componentForFeeUnit(it, unit, choices = {}) {
+  const u = String(unit || '').trim().toLowerCase();
+  if (it?.passThrough) return u === 'per account' ? 'pass:per_account' : 'pass:fixed';
+  const part = checkPartOf(it);
+  const list = part ? choices[part] : null;
+  if (!list || !u) return null;
+  const basisOf = (id) => String(id).split(':')[1]?.replace(/#\d+$/, '') || '';
+  const want = u === 'fixed' ? null : u.replace(/\s+/g, '_');
+  const hit = list.find(c => {
+    const b = basisOf(c.id);
+    return want ? b === want : !/^per_|^pct_/.test(b);
+  });
+  return hit ? hit.id : null;
+}
+
 // A pick made while pass-through lines still sat in the rate card's
 // components ('recurring:per_account') reads as the per-account model.
 export function passThroughModelOf(it) {
