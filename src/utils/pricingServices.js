@@ -343,7 +343,7 @@ export function feeBucket(type) {
   return '';
 }
 
-export function standardFeesForStructure({ rows = [], costs = [], allocations = {}, termMonths = 36, siteCount, accountCount, startMonthFor } = {}) {
+export function standardFeesForStructure({ rows = [], costs = [], allocations = {}, termMonths = 36, siteCount, accountCount, startMonthFor, feeEscalator = 0, costEscalator = 0 } = {}) {
   const names = rows.map(r => norm(r?.feeName));
   const alts = rows.map(r => feeStructureRowToAltRow(r, { siteCount, accountCount }));
   const rowStartOf = (ri) => {
@@ -407,12 +407,28 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
   });
 
   const term = Math.max(1, Math.round(termMonths));
+  // Months from `from` to the end of the term, each weighted by the
+  // escalator of the year it falls in (1 in year 1, 1 + esc in year 2...).
+  // With no escalator it is the month count.
+  const fe = Number(feeEscalator) || 0;
+  const ce = Number(costEscalator) || 0;
+  const weightedMonths = (from, esc) => {
+    let w = 0;
+    for (let m = Math.max(1, from); m <= term; m++) w += Math.pow(1 + esc, Math.ceil(m / 12) - 1);
+    return w;
+  };
   rows.forEach((row, ri) => {
     const alt = alts[ri];
     const units = alt.unitCount > 0 ? alt.unitCount : 1;
     const fb = feeBucket(row?.type);
     const start = rowStartOf(ri);
     const rollMonths = Math.max(1, term - start + 1);
+    // What one dollar of monthly fee bills over the term, escalating with
+    // the fee escalator. A monthly fee is priced so its term revenue is the
+    // term price of the costs on it, each escalating with the cost
+    // escalator: at the target GM in every year when the two escalators
+    // match, and over the term when they don't.
+    const feeWeight = Math.max(1e-9, weightedMonths(start, fe));
     const agg = perRow[ri];
     agg.startMonth = start;
     let any = false;
@@ -425,20 +441,24 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
       if (effBucket === COST_BUCKET_RECURRING) {
         if (co.bucket === COST_BUCKET_RECURRING) {
           // Months the cost runs before the fee starts are caught up over
-          // the months the fee bills.
+          // the months the fee bills. A cost starting after the fee is
+          // priced as if from the fee's start, so it isn't billed below
+          // its monthly price.
           const costMonths = Math.max(0, term - co.billStartMonth + 1);
           const catchUp = co.billStartMonth < start && costMonths > rollMonths;
           co.catchUpMonths = catchUp ? start - co.billStartMonth : 0;
-          agg.monthlyTotal += catchUp ? price * costMonths / rollMonths : price;
+          const costWeight = weightedMonths(Math.min(co.billStartMonth, start), ce);
+          agg.monthlyTotal += price * costWeight / feeWeight;
           any = true;
         }
-        else if (co.rolled) { agg.monthlyTotal += price / rollMonths; any = true; }
+        else if (co.rolled) { agg.monthlyTotal += price / feeWeight; any = true; }
       } else if (effBucket === COST_BUCKET_UPFRONT && co.bucket === COST_BUCKET_UPFRONT) {
         agg.upfrontTotal += price;
         any = true;
       }
     });
     agg.rollMonths = rollMonths;
+    agg.escalated = fe !== ce;
     if (any) {
       const total = (fb || costOut[agg.costIdx[0]]?.feeBucket) === COST_BUCKET_UPFRONT ? agg.upfrontTotal : agg.monthlyTotal;
       agg.exactFee = total / units;
@@ -603,10 +623,10 @@ export function feeStructureCostInputs(costs) {
 // linked fee from it whenever the Global GM% changes (feeAtGm), so a
 // built fee keeps following the margin instead of freezing at the one it
 // was built at.
-export function standardFeeContext(structure, costs, { termMonths = 36, siteCount, accountCount, startMonthFor } = {}) {
+export function standardFeeContext(structure, costs, { termMonths = 36, siteCount, accountCount, startMonthFor, feeEscalator = 0, costEscalator = 0 } = {}) {
   const rows = structure?.rows || [];
   const costInputs = feeStructureCostInputs(costs);
-  const opts = { rows, allocations: structure?.allocations || {}, termMonths, siteCount, accountCount, startMonthFor };
+  const opts = { rows, allocations: structure?.allocations || {}, termMonths, siteCount, accountCount, startMonthFor, feeEscalator, costEscalator };
   const std = standardFeesForStructure({ ...opts, costs: costInputs });
   const standardFee = (idx) => std.perRow[idx]?.standardFee ?? null;
   const linkable = (costs || []).some(c => typeof c?.priceAtCost === 'number');

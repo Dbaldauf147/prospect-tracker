@@ -5346,6 +5346,8 @@ export function PricingView({ settings } = {}) {
         siteCount: detail.sia?.sites ?? opt.siteCount,
         accountCount: detail.sia?.accounts ?? opt.accountCount,
         startMonthFor: autoStartMonthFor,
+        feeEscalator: annualEscalator,
+        costEscalator,
       });
       // Which of the service's cost lines each row prices, for the
       // preview's margin column.
@@ -5899,6 +5901,7 @@ export function PricingView({ settings } = {}) {
           setFeeStructures={setServiceFeeStructures}
           previewFeeRow={previewFeeStructureRow}
           autoStartMonthFor={autoStartMonthFor}
+          escalators={{ feeEscalator: annualEscalator, costEscalator }}
           previewOnOption={previewServiceOnOption}
           onSetItemType={setItemType}
           onSetItemAnnual={setItemAnnual}
