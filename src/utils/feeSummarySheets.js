@@ -187,7 +187,9 @@ export function addFeeSummarySheet(wb, { rows: given = [], subtitle = '', title 
 // way the Deal margin counts cost. `pricedInto` is the Fee Builder fee
 // whose standard fee was priced from the cost, which can be a fee the cost
 // is not logged on (a structure fee named differently from the SIA's).
-//   costLines  [{ lineItem, type, pricingFee, builderFee, pricedInto, byYear: [..] }]
+// `moved` marks a cost the build moves onto the fee it is priced into, so
+// builderFee is that fee.
+//   costLines  [{ lineItem, type, pricingFee, builderFee, pricedInto, moved, byYear: [..] }]
 export function compareCostLines(costLines = []) {
   return costLines.map(c => {
     const total = sum(c.byYear);
@@ -198,8 +200,11 @@ export function compareCostLines(costLines = []) {
     else if (!c.pricingFee && c.builderFee) status = 'Only in Fee Builder';
     else if (!c.pricingFee && !c.builderFee) status = 'On no fee in either';
     if (!c.builderFee && c.pricedInto) status = `${status}; priced into "${c.pricedInto}" but not logged on it`;
+    else if (c.moved) status = c.pricingFee ? `Moved from "${c.pricingFee}" onto "${c.builderFee}", the fee it is priced into` : `Moved onto "${c.builderFee}", the fee it is priced into`;
     else if (norm(c.pricingFee) !== norm(c.builderFee)) status = 'On a different fee';
-    return { ...c, pricing, builder, delta: builder - pricing, status, match: status === 'Match' || status === 'On no fee in either' };
+    const delta = builder - pricing;
+    const match = status === 'Match' || status === 'On no fee in either' || (!!c.moved && Math.abs(delta) < 0.005);
+    return { ...c, pricing, builder, delta, status, match };
   });
 }
 

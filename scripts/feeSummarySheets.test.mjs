@@ -32,6 +32,12 @@ test('cost lines say which fee each side logs them on', () => {
   assert.equal(c[1].status, 'Only on Pricing tab; priced into "Per account monthly" but not logged on it');
   assert.equal(c[2].status, 'On no fee in either');
   assert.equal(compareCostLines([{ ...costLines[0], builderFee: 'Other' }])[0].status, 'On a different fee');
+  // A cost the build moves onto the fee it is priced into counts there: no
+  // cost delta, and the status says where it went.
+  const moved = compareCostLines([{ ...costLines[1], builderFee: 'Per account monthly', moved: true }])[0];
+  assert.equal(moved.delta, 0);
+  assert.equal(moved.match, true);
+  assert.equal(moved.status, 'Moved from "Per account" onto "Per account monthly", the fee it is priced into');
 });
 
 test('fees are matched by name and every delta is named', () => {

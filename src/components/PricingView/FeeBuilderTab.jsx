@@ -328,6 +328,14 @@ export function FeeBuilderTab({
               ))}
             </div>
           )}
+          {plan.moves?.length > 0 && (
+            <div className={own.info}>
+              Building moves {plan.moves.length} cost line{plan.moves.length === 1 ? '' : 's'} onto the fee{' '}
+              {plan.moves.length === 1 ? 'it is' : 'they are'} priced into, since the fee{' '}
+              {plan.moves.length === 1 ? 'it is' : 'they are'} logged on now leaves the schedule:{' '}
+              {plan.moves.map(m => `${m.lineItem} (${m.from || 'no fee'} to ${m.to})`).join('; ')}.
+            </div>
+          )}
           {plan.rows.length === 0 ? (
             <p className={styles.note}>No fee rows.</p>
           ) : (
