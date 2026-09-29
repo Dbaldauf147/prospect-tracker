@@ -78,25 +78,35 @@ export function rowMonthRevenue(row, month, termYears, escPct) {
 // (billed at face cost, no margin) is carved out of BOTH sides so it
 // can't dilute the percentage.
 //
-//   margin(year N) = (Σfee₁..ₙ − ΣctsPass₁..ₙ − ΣaltPass₁..ₙ − (Σcost₁..ₙ − ΣctsPass₁..ₙ))
+//   margin(year N) = (Σfee₁..ₙ − ΣctsPass₁..ₙ − ΣaltPass₁..ₙ − (Σcost₁..ₙ − ΣctsPass₁..ₙ − ΣaltPassCost₁..ₙ))
 //                    ÷ (Σfee₁..ₙ − ΣctsPass₁..ₙ − ΣaltPass₁..ₙ)
+//
+// ctsPass is pass-through cost folded into an ordinary fee (its revenue
+// is inside that fee, so it comes off both sides). altPass is the
+// revenue of fee rows ticked Pass, and altPassCost the cost logged on
+// those rows: that cost is already billed through altPass, so it comes
+// off the cost side only. A pass-through cost line on a Pass fee row
+// belongs in altPassCost, never also in ctsPass, or its revenue would
+// be taken off twice.
 //
 // Returns one entry per year (null where there's no billable revenue to
 // take a ratio against) plus the term totals behind the last entry.
-export function cumulativeDealMargins({ feeByYear = [], costByYear = [], ctsPassByYear = [], altPassByYear = [] } = {}) {
+export function cumulativeDealMargins({ feeByYear = [], costByYear = [], ctsPassByYear = [], altPassByYear = [], altPassCostByYear = [] } = {}) {
   const at = (arr, i) => (Array.isArray(arr) ? Number(arr[i]) || 0 : 0);
   let cumFee = 0;
   let cumCost = 0;
   let cumCtsPass = 0;
   let cumAltPass = 0;
+  let cumAltPassCost = 0;
   const marginByYear = feeByYear.map((fee, i) => {
     cumFee += Number(fee) || 0;
     cumCost += at(costByYear, i);
     cumCtsPass += at(ctsPassByYear, i);
     cumAltPass += at(altPassByYear, i);
+    cumAltPassCost += at(altPassCostByYear, i);
     const adjFee = cumFee - cumCtsPass - cumAltPass;
     if (adjFee <= 0) return null;
-    const adjCost = cumCost - cumCtsPass;
+    const adjCost = cumCost - cumCtsPass - cumAltPassCost;
     return (adjFee - adjCost) / adjFee;
   });
   return {
@@ -106,7 +116,7 @@ export function cumulativeDealMargins({ feeByYear = [], costByYear = [], ctsPass
     // gets quoted as the deal's margin.
     finalMargin: marginByYear.length ? marginByYear[marginByYear.length - 1] : null,
     termRevenue: cumFee - cumCtsPass - cumAltPass,
-    termCost: cumCost - cumCtsPass,
+    termCost: cumCost - cumCtsPass - cumAltPassCost,
   };
 }
 

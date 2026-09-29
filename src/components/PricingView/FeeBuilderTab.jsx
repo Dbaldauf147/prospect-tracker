@@ -121,8 +121,10 @@ async function exportPlan(plan) {
       sub.getCell(1).font = { color: { argb: 'FF64748B' } };
     }
   }
-  const termAll = sum(plan.rows.map(r => r.term));
-  const costAll = sum(plan.rows.map(r => r.cost));
+  // Pass-through rows bill at cost, so they sit out of the margin.
+  const marginRows = plan.rows.filter(r => !r.passThrough);
+  const termAll = sum(marginRows.map(r => r.term));
+  const costAll = sum(marginRows.map(r => r.cost));
   const total = ws.addRow(['Total', '', '', null, '', null, null, ...yearIdx.map(i => money(plan.after.feeByYear[i])),
     money(sum(plan.after.feeByYear)), termAll > 0 ? (termAll - costAll) / termAll : null]);
   formats(total);
@@ -503,9 +505,13 @@ export function FeeBuilderTab({
                   <td className={styles.num}>{fmtMoney(sum(plan.after.feeByYear))}</td>
                   <td
                     className={styles.num}
-                    title="Fees against the cost lines they price. Deal margin below also counts cost no fee prices."
+                    title="Fees against the cost lines they price, leaving out pass-through fees. Deal margin below also counts cost no fee prices."
                   >
-                    {(() => { const t = sum(plan.rows.map(r => r.term)); return t > 0 ? fmtPct((t - sum(plan.rows.map(r => r.cost))) / t) : ''; })()}
+                    {(() => {
+                      const kept = plan.rows.filter(r => !r.passThrough);
+                      const t = sum(kept.map(r => r.term));
+                      return t > 0 ? fmtPct((t - sum(kept.map(r => r.cost))) / t) : '';
+                    })()}
                   </td>
                 </tr>
               </tbody>
