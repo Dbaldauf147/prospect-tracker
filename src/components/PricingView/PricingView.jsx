@@ -4879,6 +4879,10 @@ export function PricingView({ settings } = {}) {
           return source !== 'global' && source !== 'passThrough' && typeof gm === 'number' ? { margin: gm } : {};
         })(),
         startMonth: effectiveItemStartMonth(item),
+        // When the cost itself starts, which the margin charges from; the
+        // start month above can be a Linked To default that only moves the
+        // fee (see ctsItemStartMonth).
+        billStartMonth: ctsItemStartMonth(item),
         feeName: String(mappingNameFor(item) || '').trim(),
         automatedName: String(resolvedLinkedTo(item) || '').trim(),
         unit: linkedToUnitDefaults?.[linkedToDefaultKey(item.description, t)] || '',

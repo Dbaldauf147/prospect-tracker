@@ -398,7 +398,12 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
     const rowStart = row ? rowStartOf(rowIdx) : 1;
     const later = costStart > FIRST_YEAR_MONTHS;
     const billedEarly = later && !!row && yearOfMonth(rowStart) < yearOfMonth(costStart);
-    return { key: c.key, rowIdx, defaulted, fellBack, bucket, feeBucket: fb, canRoll, rolled, issue, price: c.price, startMonth: costStart, later, billedEarly, catchUpMonths: 0 };
+    // When the cost itself starts running, which is what the margin charges
+    // from. startMonth can carry a Linked To start month that only moves
+    // the fee; a cost from month 1 with a default of 4 still costs months
+    // 1 to 3, and the fee has to catch them up.
+    const billStart = Math.max(1, Math.round(Number(c.billStartMonth ?? c.startMonth) || 1));
+    return { key: c.key, rowIdx, defaulted, fellBack, bucket, feeBucket: fb, canRoll, rolled, issue, price: c.price, startMonth: costStart, billStartMonth: billStart, later, billedEarly, catchUpMonths: 0 };
   });
 
   const term = Math.max(1, Math.round(termMonths));
@@ -421,9 +426,9 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
         if (co.bucket === COST_BUCKET_RECURRING) {
           // Months the cost runs before the fee starts are caught up over
           // the months the fee bills.
-          const costMonths = Math.max(0, term - co.startMonth + 1);
-          const catchUp = co.startMonth < start && costMonths > rollMonths;
-          co.catchUpMonths = catchUp ? start - co.startMonth : 0;
+          const costMonths = Math.max(0, term - co.billStartMonth + 1);
+          const catchUp = co.billStartMonth < start && costMonths > rollMonths;
+          co.catchUpMonths = catchUp ? start - co.billStartMonth : 0;
           agg.monthlyTotal += catchUp ? price * costMonths / rollMonths : price;
           any = true;
         }
@@ -584,6 +589,7 @@ export function feeStructureCostInputs(costs) {
     type: c.type,
     price: c.price,
     startMonth: c.startMonth,
+    billStartMonth: c.billStartMonth ?? c.startMonth,
     feeNames: [c.feeName, c.automatedName].filter(Boolean),
   }));
 }

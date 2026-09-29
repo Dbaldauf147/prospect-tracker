@@ -189,6 +189,15 @@ test('a monthly fee starting after its monthly cost catches up the months it mis
   // A cost starting with (or after) the fee is not raised.
   r = standardFeesForStructure({ rows: [{ ...row, startMonth: 4 }], costs: [{ ...cost, startMonth: 4 }], termMonths: 36, accountCount: 10 });
   assert.equal(r.perRow[0].standardFee, 10);
+  // A Linked To start month of 4 on a cost that really runs from month 1
+  // moves only the fee: the cost still bills months 1 to 3, so the fee
+  // still catches them up (billStartMonth is when the cost starts).
+  r = standardFeesForStructure({ rows: [row], costs: [{ ...cost, startMonth: 4, billStartMonth: 1 }], termMonths: 36, accountCount: 10, startMonthFor: () => 4 });
+  assert.equal(r.perRow[0].standardFee, Math.round(100 * 36 / 33 / 10 * 100) / 100);
+  assert.equal(r.costs[0].catchUpMonths, 3);
+  assert.equal(r.costs[0].startMonth, 4, 'the allocation key and later-cost checks still read the default');
+  const ctx = standardFeeContext({ rows: [row] }, [{ description: 'Data', type: 'Recurring (monthly)', price: 100, startMonth: 4, billStartMonth: 1, feeName: 'Per account monthly' }], { termMonths: 36, accountCount: 10, startMonthFor: () => 4 });
+  assert.equal(ctx.filled.rows[0].fee, Math.round(100 * 36 / 33 / 10 * 100) / 100);
   // Rolled costs spread over the months the auto start leaves.
   r = standardFeesForStructure({ rows: [row], costs: [{ ...cost, type: 'Setup Rolled', price: 3300 }], termMonths: 36, accountCount: 10, startMonthFor: () => 4 });
   assert.equal(r.perRow[0].standardFee, 10); // 3300 / 33 / 10
