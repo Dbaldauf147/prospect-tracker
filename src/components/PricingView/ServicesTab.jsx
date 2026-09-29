@@ -117,7 +117,7 @@ export function ServicesTab({
     <div className={styles.wrapper} ref={wrapperRef}>
       <p className={styles.intro}>
         Every service on the Dropdowns tab, with its status there. Services tied to a cost line on the
-        attached SIA are tagged <span className={styles.scopeTag}>In SIA scope</span> and listed first.
+        attached SIA are marked with a blue dot <span className={styles.scopeDot} aria-hidden="true" /> and listed first.
         A cost line is tied to a service on the <strong>Linked To</strong> subtab (Line Item → Services).
       </p>
 
@@ -182,8 +182,8 @@ export function ServicesTab({
                   >
                     <span className={styles.serviceName}>{isDone(s.name) && <span className={styles.doneCheck} title="Completed">✓ </span>}{s.name}</span>
                     <span className={styles.serviceTags}>
-                      {s.inScope && <span className={styles.scopeTag}>In SIA scope</span>}
-                      <span className={styles[STATUS_CLASS[s.status]]}>{s.status}</span>
+                      {s.inScope && <span className={styles.scopeDot} title="In SIA scope" aria-label="In SIA scope" />}
+                      {s.status !== SERVICE_STATUS.ACTIVE && <span className={styles[STATUS_CLASS[s.status]]}>{s.status}</span>}
                     </span>
                     {s.bucket && <span className={styles.bucket}>{s.bucket}</span>}
                   </button>
