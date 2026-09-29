@@ -44,7 +44,7 @@ const STATUS_CLASS = {
 //   onSetItemType   (itemId, type) => overrides a cost line's Type ('' clears it)
 //   onSetPassThrough (description, type, on) => the Linked To pass-through
 //                   setting for that Line Item + Type pair
-//   onSetCompleted  (serviceName, on) => marks the service done on the active
+//   onSetCompleted  (serviceName, on) => marks the service done on every
 //                   option (its list row turns green)
 //   onSetItemAnnual (itemId, on) => turns a one-time cost into an annual one
 //                   (CTS ÷ 12, Recurring monthly), or back
@@ -82,7 +82,10 @@ export function ServicesTab({
 
   const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0] || null;
   const scopeCount = services.filter(s => s.inScope).length;
-  const completed = new Set((opt?.servicesCompleted || []).map(k => String(k).trim().toLowerCase()));
+  // Completed means the service's fee structure is settled, which holds on
+  // every option, so a mark on any option counts (older saves kept it on
+  // just the one it was clicked on).
+  const completed = new Set((workbook?.options || []).flatMap(o => o.servicesCompleted || []).map(k => String(k).trim().toLowerCase()));
   const isDone = (name) => completed.has(String(name ?? '').trim().toLowerCase());
   const doneInScope = services.filter(s => s.inScope && isDone(s.name)).length;
 
@@ -109,6 +112,21 @@ export function ServicesTab({
       .reduce((sum, it) => sum + (typeof it.cts === 'number' && Number.isFinite(it.cts) ? it.cts : 0), 0),
     [opt],
   );
+  // In-scope services whose price check on the active option lands outside
+  // the rate card's range, flagged with a ! in the list.
+  const outOfRange = useMemo(() => {
+    const out = new Map();
+    if (!workbook || !detailFor) return out;
+    for (const s of services) {
+      if (!s.inScope) continue;
+      const d = detailFor(s.name);
+      if (!d?.rateCheck) continue;
+      const { status } = rateVerdict(d.rateCheck, ctsShareOf(d.items, optionCtsTotal));
+      if (status === RATE_CHECK.BELOW || status === RATE_CHECK.ABOVE) out.set(s.name, status);
+    }
+    return out;
+  }, [workbook, detailFor, services, optionCtsTotal]);
+
   // The picked service can take a one-click tag only when it's one the
   // Dropdowns catalog still offers; tagging to anything else would leave
   // the warning standing.
@@ -185,6 +203,13 @@ export function ServicesTab({
                   >
                     <span className={styles.serviceName}>{isDone(s.name) && <span className={styles.doneCheck} title="Completed">✓ </span>}{s.name}</span>
                     <span className={styles.serviceTags}>
+                      {outOfRange.has(s.name) && (
+                        <span
+                          className={styles.rangeWarn}
+                          title={`Price check ${outOfRange.get(s.name) === RATE_CHECK.BELOW ? 'below' : 'above'} the rate card range on ${opt?.sheetName || 'this option'}`}
+                          aria-label="Outside the rate card range"
+                        >!</span>
+                      )}
                       {s.inScope && <span className={styles.scopeDot} title="In SIA scope" aria-label="In SIA scope" />}
                       {s.status !== SERVICE_STATUS.ACTIVE && <span className={styles[STATUS_CLASS[s.status]]}>{s.status}</span>}
                     </span>
@@ -442,7 +467,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
             type="button"
             className={completed ? styles.doneBtnOn : styles.doneBtn}
             onClick={() => onSetCompleted(!completed)}
-            title={completed ? 'Completed on this option. Click to mark it not completed.' : 'Mark this service completed on this option'}
+            title={completed ? 'Fee structure settled, completed on every option. Click to mark it not completed.' : 'Mark this service completed: its fee structure is established and ready to go. Applies to every option.'}
           >
             {completed ? '✓ Completed' : 'Mark completed'}
           </button>
@@ -655,7 +680,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
       {hasWorkbook && detail?.rateCheck && (
         <RateCheck
           check={detail.rateCheck}
-          ctsShare={optionCtsTotal > 0 ? (costTotal - ignoredTotal) / optionCtsTotal : null}
+          ctsShare={ctsShareOf(items, optionCtsTotal)}
         />
       )}
 
@@ -780,6 +805,39 @@ const fmtWhole = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
   : '');
 
+// A card priced as a % of deal size, read against the service's share of
+// the option's total CTS: the two percentages side by side, so the cut
+// the card takes can be set against the cut of the cost this service is.
+// Every cost is marked up the same, so the service's share of the cost is
+// its share of the price. On a card that is nothing but a % of deal size,
+// that share is the check: the deal size it waits on would only scale
+// both sides. A card with other components keeps its own verdict, the
+// share shown beside it. Shared by the Price check and the list's ! flag.
+function rateVerdict(check, ctsShare = null) {
+  const pctLines = (check.parts || []).flatMap(pt => pt.cardLines).filter(b => b.kind === 'percent');
+  const pctShare = pctLines.length > 0 && typeof ctsShare === 'number' && Number.isFinite(ctsShare)
+    ? (() => {
+      const rates = pctLines.flatMap(b => [b.rate, b.rateHigh ?? b.rate]).map(Number).filter(Number.isFinite);
+      if (rates.length === 0) return null;
+      const lo = Math.min(...rates) / 100;
+      const hi = Math.max(...rates) / 100;
+      return { share: ctsShare, lo, hi, status: ctsShare < lo ? RATE_CHECK.BELOW : (ctsShare > hi ? RATE_CHECK.ABOVE : RATE_CHECK.WITHIN) };
+    })()
+    : null;
+  const pctOnly = !!pctShare
+    && (check.parts || []).every(pt => pt.cardLines.every(b => b.kind === 'percent'))
+    && (check.missing || []).every(m => m.key === 'dealSize');
+  return { pctShare, pctOnly, status: pctOnly ? pctShare.status : check.status };
+}
+
+// The share of the option's CTS a service's cost lines make up, less the
+// lines left out of its price check.
+function ctsShareOf(items, optionCtsTotal) {
+  if (!(optionCtsTotal > 0)) return null;
+  const counted = (items || []).reduce((s, it) => s + (!it.ignored && typeof it.cts === 'number' ? it.cts : 0), 0);
+  return counted / optionCtsTotal;
+}
+
 // The service's first-year cost on the SIA, marked up, set against the
 // price range its Dropdowns › Services Pricing rate card quotes.
 function RateCheck({ check, ctsShare = null }) {
@@ -814,28 +872,7 @@ function RateCheck({ check, ctsShare = null }) {
     return list.map(c => `${c.label}${c.monthly ? ', monthly' : ''}${multiParts || pu?.part ? ` (${c.part})` : ''}`).join(', ');
   })();
 
-  // A card priced as a % of deal size, read against the service's share of
-  // the option's total CTS: the two percentages side by side, so the cut
-  // the card takes can be set against the cut of the cost this service is.
-  const pctLines = (check.parts || []).flatMap(pt => pt.cardLines).filter(b => b.kind === 'percent');
-  const pctShare = pctLines.length > 0 && typeof ctsShare === 'number' && Number.isFinite(ctsShare)
-    ? (() => {
-      const rates = pctLines.flatMap(b => [b.rate, b.rateHigh ?? b.rate]).map(Number).filter(Number.isFinite);
-      if (rates.length === 0) return null;
-      const lo = Math.min(...rates) / 100;
-      const hi = Math.max(...rates) / 100;
-      return { share: ctsShare, lo, hi, status: ctsShare < lo ? RATE_CHECK.BELOW : (ctsShare > hi ? RATE_CHECK.ABOVE : RATE_CHECK.WITHIN) };
-    })()
-    : null;
-  // Every cost is marked up the same, so the service's share of the cost is
-  // its share of the price. On a card that is nothing but a % of deal size,
-  // that share is the check: the deal size it waits on would only scale
-  // both sides. A card with other components keeps its own verdict, the
-  // share shown beside it.
-  const pctOnly = !!pctShare
-    && (check.parts || []).every(pt => pt.cardLines.every(b => b.kind === 'percent'))
-    && (check.missing || []).every(m => m.key === 'dealSize');
-  const status = pctOnly ? pctShare.status : check.status;
+  const { pctShare, pctOnly, status } = rateVerdict(check, ctsShare);
   const [cls, label] = RATE_BADGE[status];
   const pctRange = pctShare
     ? (pct(pctShare.lo) === pct(pctShare.hi) ? pct(pctShare.lo) : `${pct(pctShare.lo)} – ${pct(pctShare.hi)}`)
