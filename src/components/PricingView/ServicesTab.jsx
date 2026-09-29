@@ -96,6 +96,13 @@ export function ServicesTab({
     () => costTotalsByLineItem((opt?.sections || []).flatMap(sec => sec.items || [])),
     [opt],
   );
+  // Every cost line's CTS on the active option, the whole the picked
+  // service's Total CTS is shown as a share of.
+  const optionCtsTotal = useMemo(
+    () => (opt?.sections || []).flatMap(sec => sec.items || [])
+      .reduce((sum, it) => sum + (typeof it.cts === 'number' && Number.isFinite(it.cts) ? it.cts : 0), 0),
+    [opt],
+  );
   // The picked service can take a one-click tag only when it's one the
   // Dropdowns catalog still offers; tagging to anything else would leave
   // the warning standing.
@@ -210,6 +217,7 @@ export function ServicesTab({
               detail={detail}
               hasWorkbook={!!workbook}
               optionName={opt?.sheetName}
+              optionCtsTotal={optionCtsTotal}
               numYears={numYears}
               termMonths={termMonths}
               siteCount={detail?.sia?.sites ?? opt?.siteCount}
@@ -297,7 +305,7 @@ function UnlinkedWarning({ unlinked, costTotals, optionName, tagOptions, quickTa
   );
 }
 
-function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough }) {
+function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted, detail, hasWorkbook, optionName, optionCtsTotal = 0, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough }) {
   const items = detail?.items || [];
   const fees = detail?.fees || [];
   const structures = saved?.structures || [];
@@ -545,6 +553,14 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                     <td colSpan={2}>Total CTS</td>
                     <td className={styles.num}>
                       {fmtMoney(costTotal - ignoredTotal)}
+                      {optionCtsTotal > 0 && (
+                        <div
+                          className={styles.subNote}
+                          title={`This service's Total CTS as a share of the CTS on every cost line on ${optionName || 'this option'}. A line tied to more than one service counts in full for each.`}
+                        >
+                          {fmtPct((costTotal - ignoredTotal) / optionCtsTotal)} of {fmtMoney(optionCtsTotal)} total
+                        </div>
+                      )}
                       {ignoredTotal > 0 && (
                         <div className={styles.subNote}>
                           {fmtMoney(ignoredTotal)} left out, not counted
