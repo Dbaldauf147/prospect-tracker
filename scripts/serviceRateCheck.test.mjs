@@ -4,7 +4,7 @@
 //   node scripts/serviceRateCheck.test.mjs
 
 import assert from 'node:assert/strict';
-import { rateCardCheck, year1CostOf, RATE_CHECK, siaCountsFor, priceCheckCounts } from '../src/utils/serviceRateCheck.js';
+import { rateCardCheck, year1CostOf, RATE_CHECK, siaCountsFor, priceCheckCounts, checkPartOf } from '../src/utils/serviceRateCheck.js';
 
 let failed = 0;
 function test(name, fn) {
@@ -428,6 +428,40 @@ test('lines left on Auto when every component has its own are reported, not drop
   const { loose } = ongoingOf(c).components;
   assert.equal(loose.lineCount, 1);
   assert.equal(loose.cost, 84);
+});
+
+test('a Setup Rolled cost is ongoing money, spread over the term, and can pick an ongoing component', () => {
+  const c = rateCardCheck({
+    items: [
+      { id: 'r', cts: 3600, type: 'Setup Rolled', startMonth: 1 },
+      { id: 's', cts: 500, type: 'Setup', startMonth: 1 },
+    ],
+    entry: twoComponents,
+    meta: recurring,
+    counts: { accounts: 519 },
+    termMonths: 36,
+  });
+  // $3,600 over 36 months is $100 a month: $1,200 a year, ongoing.
+  const on = ongoingOf(c);
+  assert.equal(on.cost, 1200);
+  assert.equal(c.parts.find(p => p.key === 'setup').cost, 500);
+  assert.equal(c.cost, 1700);
+  assert.equal(c.setupOffCard, true);
+  assert.equal(checkPartOf({ cts: 1, type: 'Setup Rolled' }), 'recurring');
+  assert.equal(checkPartOf({ cts: 1, type: 'Setup' }), 'setup');
+  // A 6-month term puts all of it in year 1.
+  const short = rateCardCheck({ items: [{ cts: 600, type: 'Setup Rolled' }], entry: twoComponents, meta: recurring, counts: { accounts: 519 }, termMonths: 6 });
+  assert.equal(short.cost, 600);
+});
+
+test('a card with a setup fee is not setup-off-card', () => {
+  const c = rateCardCheck({
+    items: [{ cts: 100, type: 'Setup' }],
+    entry: { basis: 'per_site', rate: 39, setupLines: [{ basis: 'flat', rate: 500 }] },
+    meta: recurring,
+    counts: { sites: 29 },
+  });
+  assert.equal(c.setupOffCard, false);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

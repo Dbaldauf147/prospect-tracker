@@ -4,8 +4,9 @@
 // Both sides are put on the same footing, the first year:
 //   cost side   the service's cost lines on the option. A recurring CTS is
 //               monthly (the same reading the rest of the Pricing page
-//               gives it), so it counts twelve times; anything else is
-//               one-time money and counts once. Pass-through lines are
+//               gives it), so it counts twelve times; a Rolled one (Setup
+//               Rolled) is spread over the term and counts as ongoing;
+//               anything else is one-time money and counts once. Pass-through lines are
 //               billed at cost, never marked up, so they stay out.
 //   card side   estimateServiceRange's first-year fee plus setup, low and
 //               high, priced on the option's own site and account counts.
@@ -30,6 +31,7 @@
 import { estimateServiceRange, PRICING_BASES } from './servicePricing.js';
 
 export const DEFAULT_MARGIN = 0.5;
+export const DEFAULT_TERM_MONTHS = 36;
 
 // What one dollar of CTS is priced at.
 const priceFactor = (margin, techDeprPct) => (1 + (Number(techDeprPct) || 0)) / (1 - Math.min(margin, 0.99));
@@ -50,8 +52,10 @@ export const RATE_CHECK = {
 };
 
 const isRecurringType = (t) => /^recurring/i.test(String(t || '').trim());
-// "Setup" and "Setup Rolled": standing the service up, whichever way the
-// SIA spreads it.
+// "Setup Rolled" and "One Time Rolled": an upfront cost billed monthly,
+// spread across the term, so the ongoing fee is what recovers it.
+const isRolledType = (t) => /\brolled\b/i.test(String(t || '').trim());
+// "Setup": standing the service up, billed once.
 const isSetupType = (t) => /^setup\b/i.test(String(t || '').trim());
 
 // The parts a fee model has, in the order they read on a quote.
@@ -65,6 +69,7 @@ const startOf = (it) => (Number(it?.startMonth) >= 1 ? Math.floor(Number(it.star
 
 // Which part of the fee model a cost line pays for.
 function partOfCost(it) {
+  if (isRolledType(it.type) || isRecurringType(it.type)) return 'recurring';
   if (isSetupType(it.type)) return 'setup';
   if (isRecurringType(it.type)) return 'recurring';
   return 'oneTime';
@@ -80,7 +85,10 @@ function partOfCost(it) {
 // line at its own `margin` when it has one, else at `margin`, with tech
 // depreciation added. `margins` lists the distinct margins the counted
 // lines were priced at.
-export function year1CostOf(items = [], margin = DEFAULT_MARGIN, techDeprPct = 0) {
+//
+// A Rolled line is ongoing money: its CTS spread evenly over `termMonths`,
+// so year 1 carries twelve of those months (fewer on a shorter term).
+export function year1CostOf(items = [], margin = DEFAULT_MARGIN, techDeprPct = 0, termMonths = DEFAULT_TERM_MONTHS) {
   const parts = { setup: 0, recurring: 0, oneTime: 0 };
   const priced = { setup: 0, recurring: 0, oneTime: 0 };
   const lines = { setup: 0, recurring: 0, oneTime: 0 };
@@ -90,7 +98,7 @@ export function year1CostOf(items = [], margin = DEFAULT_MARGIN, techDeprPct = 0
   let later = 0;
   const margins = new Set();
   for (const it of items) {
-    const y = lineYear(it, margin, techDeprPct);
+    const y = lineYear(it, margin, techDeprPct, termMonths);
     if (!y) continue;
     if (y.skip === 'passThrough') { passThrough += 1; continue; }
     if (y.skip === 'later') { later += 1; continue; }
@@ -110,7 +118,7 @@ export function year1CostOf(items = [], margin = DEFAULT_MARGIN, techDeprPct = 0
 // One cost line's share of year 1, the arithmetic year1CostOf sums: null
 // with no CTS, `skip` set for a pass-through line or one landing after
 // month 12.
-function lineYear(it, margin, techDeprPct) {
+function lineYear(it, margin, techDeprPct, termMonths = DEFAULT_TERM_MONTHS) {
   if (typeof it?.cts !== 'number' || !Number.isFinite(it.cts)) return null;
   if (it.passThrough) return { skip: 'passThrough' };
   const start = startOf(it);
@@ -118,6 +126,17 @@ function lineYear(it, margin, techDeprPct) {
   const m = typeof it.margin === 'number' && Number.isFinite(it.margin) ? it.margin : margin;
   const f = priceFactor(m, techDeprPct);
   const part = partOfCost(it);
+  if (part === 'recurring' && isRolledType(it.type)) {
+    const term = Number(termMonths) > 0 ? Number(termMonths) : DEFAULT_TERM_MONTHS;
+    const monthly = it.cts / term;
+    const months = Math.max(0, Math.min(13 - start, term - start + 1));
+    const yearMonths = Math.min(12, term);
+    return {
+      part, margin: m,
+      cost: monthly * months, price: monthly * months * f,
+      runRate: monthly * yearMonths, pricedRunRate: monthly * yearMonths * f,
+    };
+  }
   if (part === 'recurring') {
     return {
       part, margin: m,
@@ -261,9 +280,10 @@ function splitPart(key, cardLines, costLines) {
  *          for the check; `dealSize` is what a percentage fee is a cut of
  * margin       0.5 means half the price is margin: cost ÷ 0.5
  * techDeprPct  added to each cost first, as the Pricing page does
+ * termMonths   the deal term a Rolled cost is spread over
  */
-export function rateCardCheck({ items = [], entry = null, meta = null, counts = {}, margin = DEFAULT_MARGIN, techDeprPct = 0, bases = PRICING_BASES } = {}) {
-  const year1 = year1CostOf(items, margin, techDeprPct);
+export function rateCardCheck({ items = [], entry = null, meta = null, counts = {}, margin = DEFAULT_MARGIN, techDeprPct = 0, termMonths = DEFAULT_TERM_MONTHS, bases = PRICING_BASES } = {}) {
+  const year1 = year1CostOf(items, margin, techDeprPct, termMonths);
   const { cost, price, counted, passThrough, later } = year1;
   // The one margin every counted line was priced at, or null when they
   // differ.
@@ -318,7 +338,7 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
   // Every counted cost line's own share, for splitting a part across its
   // components.
   const costLines = items
-    .map(it => ({ it, y: lineYear(it, margin, techDeprPct) }))
+    .map(it => ({ it, y: lineYear(it, margin, techDeprPct, termMonths) }))
     .filter(({ y }) => y && !y.skip)
     .map(({ it, y }) => ({ ...y, id: it.id ?? null, component: it.feeComponent || null }));
   const parts = priced
@@ -405,6 +425,9 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
 
   return {
     componentChoices,
+    // The card is priced and charges no setup: a Setup cost has no setup
+    // fee to recover it, so it belongs rolled into the ongoing fee.
+    setupOffCard: priced && cardFor.setup.length === 0,
     status, cost, price, margin: appliedMargin, techDeprPct: Number(techDeprPct) || 0, low, high, notes, passThrough, later, missing, parts, unitsUsed, perUnit, leftOut,
     noFee: !!est?.noFee,
   };
