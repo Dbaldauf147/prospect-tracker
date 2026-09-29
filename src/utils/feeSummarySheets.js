@@ -3,7 +3,8 @@
 //
 //   Fee Summary              the fee lines as a client would read them:
 //                            Fee line item, Type, Fee, Unit, Units, Start
-//                            Month, one row per schedule row.
+//                            Month, one row per schedule row (or, on the
+//                            Fee Builder's export, like lines combined).
 //   Pricing vs Fee Builder   the Pricing tab's schedule next to the one the
 //                            Fee Builder would build, fee by fee and year by
 //                            year, with the delta between them, so a
@@ -118,8 +119,44 @@ function writeRow(ws, r, cells, { header = false, bold = false, shade = null } =
   });
 }
 
+// Fee lines that bill the same way folded into one: same name, type, unit,
+// unit count and start month, with the per-unit fees added together. The
+// Fee Builder often writes one fee from several services (three "Program
+// monthly" lines, each Fixed x 1 from month 1), which a client should read
+// as the one fee it is. Lines that differ in any of those keep their own
+// row, so a fee that starts in month 4 on one line and month 1 on another
+// still shows both. First appearance sets the order.
+export function condenseFeeRows(rows) {
+  const out = new Map();
+  for (const row of rows || []) {
+    const name = String(row?.name || '').trim();
+    if (!name) continue;
+    const units = num(Number(row.unitCount));
+    const start = num(Number(row.startMonth)) ?? 1;
+    const k = [norm(name), norm(row.type), norm(row.unit), units ?? '', start].join('|');
+    const fee = num(row.feePerUnit);
+    const prev = out.get(k);
+    if (!prev) {
+      out.set(k, { ...row, name, unitCount: units, startMonth: start, feePerUnit: fee });
+      continue;
+    }
+    if (fee != null) prev.feePerUnit = round2((prev.feePerUnit ?? 0) + fee);
+    for (const f of ['term', 'cost']) {
+      if (typeof row[f] === 'number' || typeof prev[f] === 'number') prev[f] = (Number(prev[f]) || 0) + (Number(row[f]) || 0);
+    }
+    if (Array.isArray(row.years) || Array.isArray(prev.years)) {
+      const a = prev.years || [];
+      const b = row.years || [];
+      prev.years = Array.from({ length: Math.max(a.length, b.length) }, (_, i) => (Number(a[i]) || 0) + (Number(b[i]) || 0));
+    }
+  }
+  return [...out.values()];
+}
+
 // Fee Summary: Fee line item, Type, Fee, Unit, Units, Start Month.
-export function addFeeSummarySheet(wb, { rows = [], subtitle = '', title = 'Fee Summary' } = {}) {
+// `condense` folds like fee lines into one (see condenseFeeRows).
+export function addFeeSummarySheet(wb, { rows: given = [], subtitle = '', title = 'Fee Summary', condense = false } = {}) {
+  const rows = condense ? condenseFeeRows(given) : given;
   const ws = wb.addWorksheet('Fee Summary', {
     properties: { tabColor: { argb: 'FF3DCD58' } },
     views: [{ state: 'frozen', ySplit: 3, showGridLines: false }],

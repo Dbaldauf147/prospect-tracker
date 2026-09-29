@@ -59,3 +59,43 @@ test('the sheets write the summary columns and the comparison', async () => {
   assert.ok(text.some(t => t.startsWith('Program fee|') && t.endsWith('Differs: Fee, Term fees')));
   assert.ok(text.some(t => t.startsWith('Per site benchmarking|') && t.endsWith('Only in Fee Builder')));
 });
+
+test('condensed Fee Summary folds lines with the same name and structure', async () => {
+  const m = (name, fee, unit, units, start, type = 'Recurring (monthly)') => ({ name, type, feePerUnit: fee, unit, unitCount: units, startMonth: start });
+  const rows = [
+    m('Per account monthly', 1, 'Per Account', 519, 4),
+    m('Per account monthly', 0.23, 'Per Account', 519, 4),
+    m('Per account monthly', 0.42, 'Per Account', 519, 1),
+    m('Program fee', 146.94, 'Fixed', 1, 1),
+    m('Program fee', 15.13, 'Fixed', 1, 1),
+    m('Direct Bill Payment Setup', 9.32, 'Per Account', 519, 1, 'Setup'),
+    m('Program monthly', 2725.64, 'Fixed', 1, 1),
+    m('Program monthly', 55.97, 'Fixed', 1, 1),
+    m('program monthly ', 143.71, 'Fixed', 1, 1),
+    m('ESPM Link per site', 1.56, 'Per Site', 29, 1),
+    m('BBS per site', 1224.69, 'Per Site', 1, 1),
+  ];
+  const wb = new exceljs.Workbook();
+  addFeeSummarySheet(wb, { rows, subtitle: 'Option 1', condense: true });
+  const back = new exceljs.Workbook();
+  await back.xlsx.load(await wb.xlsx.writeBuffer());
+  const s = back.getWorksheet('Fee Summary');
+  const body = [];
+  s.eachRow((r, i) => { if (i > 3) body.push(r.values.slice(1)); });
+  assert.deepEqual(body, [
+    ['Per account monthly', 'Recurring (monthly)', 1.23, 'Per Account', 519, 4],
+    ['Per account monthly', 'Recurring (monthly)', 0.42, 'Per Account', 519, 1],
+    ['Program fee', 'Recurring (monthly)', 162.07, 'Fixed', 1, 1],
+    ['Direct Bill Payment Setup', 'Setup', 9.32, 'Per Account', 519, 1],
+    ['Program monthly', 'Recurring (monthly)', 2925.32, 'Fixed', 1, 1],
+    ['ESPM Link per site', 'Recurring (monthly)', 1.56, 'Per Site', 29, 1],
+    ['BBS per site', 'Recurring (monthly)', 1224.69, 'Per Site', 1, 1],
+  ]);
+});
+
+test('without condense every line keeps its own row', async () => {
+  const row = { name: 'Program fee', type: 'Recurring (monthly)', feePerUnit: 10, unit: 'Fixed', unitCount: 1, startMonth: 1 };
+  const wb = new exceljs.Workbook();
+  addFeeSummarySheet(wb, { rows: [row, row] });
+  assert.equal(wb.getWorksheet('Fee Summary').rowCount, 5);
+});
