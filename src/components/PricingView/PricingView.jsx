@@ -5007,20 +5007,19 @@ export function PricingView({ settings } = {}) {
 
   // Leave a cost line out of (or put it back into) one service's price
   // check on the active option.
-  // Mark a service done (or not) on the active option: the Services
-  // subtab lists it green. Kept on the option, so it is saved and cleared
-  // with the workbook like the price-check picks.
+  // Mark a service done (or not): its fee structure is established, which
+  // holds on every option, so the mark goes on (or comes off) all of them
+  // and the Services subtab lists it green whichever is open. Kept on the
+  // options, so it is saved and cleared with the workbook like the
+  // price-check picks.
   function setServiceCompleted(serviceName, on) {
     const k = String(serviceName ?? '').trim().toLowerCase();
     if (!k) return;
     setWorkbook(prev => {
       if (!prev) return prev;
-      const target = prev.options.find(o => o.optionNumber === activeOption) || prev.options[0];
-      if (!target) return prev;
       return {
         ...prev,
         options: prev.options.map(o => {
-          if (o !== target) return o;
           const done = new Set(o.servicesCompleted || []);
           if (on) done.add(k); else done.delete(k);
           return { ...o, servicesCompleted: [...done] };
