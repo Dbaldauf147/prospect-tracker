@@ -4944,6 +4944,10 @@ export function PricingView({ settings } = {}) {
     // Services subtab). Per service, since one line can cover several.
     const ignoredIds = new Set(opt.priceCheckIgnored?.[want] || []);
     items.forEach(it => { it.ignored = ignoredIds.has(it.id); });
+    // The fee component each cost line was pointed at on the Services
+    // subtab, for a rate card that prices a part on more than one.
+    const picks = opt.priceCheckComponents?.[want] || {};
+    items.forEach(it => { it.feeComponent = picks[it.id] || null; });
     const rateCheck = rateCardCheck({
       items: items.filter(it => !it.ignored),
       entry: pricingFor(pricing, cardName, bases),
@@ -5013,6 +5017,29 @@ export function PricingView({ settings } = {}) {
           if (ignored) ids.add(itemId); else ids.delete(itemId);
           if (ids.size) all[k] = [...ids]; else delete all[k];
           return { ...o, priceCheckIgnored: all };
+        }),
+      };
+    });
+  }
+
+  // Point a cost line at one of the rate card's fee components for this
+  // service's price check ('' or null puts it back on Auto). Per service,
+  // on the active option, like the price-check tickbox.
+  function setPriceCheckComponent(serviceName, itemId, componentId) {
+    const k = String(serviceName ?? '').trim().toLowerCase();
+    setWorkbook(prev => {
+      if (!prev) return prev;
+      const target = prev.options.find(o => o.optionNumber === activeOption) || prev.options[0];
+      if (!target) return prev;
+      return {
+        ...prev,
+        options: prev.options.map(o => {
+          if (o !== target) return o;
+          const all = { ...(o.priceCheckComponents || {}) };
+          const picks = { ...(all[k] || {}) };
+          if (componentId) picks[itemId] = componentId; else delete picks[itemId];
+          if (Object.keys(picks).length) all[k] = picks; else delete all[k];
+          return { ...o, priceCheckComponents: all };
         }),
       };
     });
@@ -5628,6 +5655,7 @@ export function PricingView({ settings } = {}) {
           detailFor={serviceDetailFor}
           onSetCount={setPriceCheckCount}
           onIgnoreForCheck={setPriceCheckIgnored}
+          onSetFeeComponent={setPriceCheckComponent}
           globalGmPct={globalGmPct}
           onSetCompleted={setServiceCompleted}
           feeStructures={serviceFeeStructures}

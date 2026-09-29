@@ -347,5 +347,88 @@ test('two components the SIA has costs for stay a check on the total', () => {
   assert.deepEqual(c.leftOut, []);
 });
 
+// Ongoing on two components: $42,000 to $84,000 a year, plus $32 to $46 per
+// account a year, over 519 accounts.
+const twoComponents = { basis: 'recurring_annual', rate: 42000, rateHigh: 84000, lines: [{ basis: 'per_account', rate: 32, rateHigh: 46 }] };
+const ongoingOf = (c) => c.parts.find(p => p.key === 'recurring');
+
+test('an ongoing part on two components lists each, checked together until lines are picked', () => {
+  const c = rateCardCheck({
+    items: [{ id: 'a', cts: 200, type: 'Recurring (monthly)' }, { id: 'b', cts: 80, type: 'Recurring (monthly)' }],
+    entry: twoComponents,
+    meta: recurring,
+    counts: { accounts: 519 },
+  });
+  assert.deepEqual(c.componentChoices.recurring.map(x => x.id), ['recurring:recurring_annual', 'recurring:per_account']);
+  const { rows, shared, loose } = ongoingOf(c).components;
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].low, 42000);
+  assert.equal(rows[1].low, 32 * 519);
+  assert.ok(rows.every(r => r.shared && r.lineCount === 0));
+  assert.equal(shared.cost, 280 * 12);
+  assert.equal(shared.low, 42000 + 32 * 519);
+  assert.equal(shared.status, RATE_CHECK.BELOW);
+  assert.equal(loose, null);
+});
+
+test('a line picked for one component leaves the rest to the other', () => {
+  const c = rateCardCheck({
+    items: [
+      { id: 'a', cts: 4000, type: 'Recurring (monthly)' },
+      { id: 'b', cts: 1000, type: 'Recurring (monthly)', feeComponent: 'recurring:per_account' },
+    ],
+    entry: twoComponents,
+    meta: recurring,
+    counts: { accounts: 519 },
+  });
+  const { rows, shared } = ongoingOf(c).components;
+  assert.equal(shared, null);
+  const [flat, perAccount] = rows;
+  // 4,000 x 12 x 2 = $96,000 a year, over the $84,000 top.
+  assert.equal(flat.auto, 1);
+  assert.equal(flat.price, 96000);
+  assert.equal(flat.status, RATE_CHECK.ABOVE);
+  // 1,000 x 12 x 2 / 519 = $46.24 an account, just over $46.
+  assert.equal(perAccount.picked, 1);
+  assert.ok(Math.abs(perAccount.perUnit.price - 24000 / 519) < 1e-9);
+  assert.equal(perAccount.status, RATE_CHECK.ABOVE);
+  // The whole-service check is untouched by the split.
+  assert.equal(c.price, 5000 * 12 * 2);
+});
+
+test('a component with nothing on it reads no cost, and a pick for another part is ignored', () => {
+  const c = rateCardCheck({
+    items: [
+      { id: 'a', cts: 1000, type: 'Recurring (monthly)', feeComponent: 'recurring:recurring_annual' },
+      { id: 'b', cts: 50, type: 'Recurring (monthly)', feeComponent: 'setup:flat' },
+    ],
+    entry: twoComponents,
+    meta: recurring,
+    counts: { accounts: 519 },
+  });
+  const [flat, perAccount] = ongoingOf(c).components.rows;
+  assert.equal(flat.picked, 1);
+  assert.equal(flat.cost, 12000);
+  // The stray pick is treated as Auto and lands on the open component.
+  assert.equal(perAccount.auto, 1);
+  assert.equal(perAccount.cost, 600);
+});
+
+test('lines left on Auto when every component has its own are reported, not dropped', () => {
+  const c = rateCardCheck({
+    items: [
+      { id: 'a', cts: 1000, type: 'Recurring (monthly)', feeComponent: 'recurring:recurring_annual' },
+      { id: 'b', cts: 100, type: 'Recurring (monthly)', feeComponent: 'recurring:per_account' },
+      { id: 'c', cts: 7, type: 'Recurring (monthly)' },
+    ],
+    entry: twoComponents,
+    meta: recurring,
+    counts: { accounts: 519 },
+  });
+  const { loose } = ongoingOf(c).components;
+  assert.equal(loose.lineCount, 1);
+  assert.equal(loose.cost, 84);
+});
+
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
 console.log('\nall passed');

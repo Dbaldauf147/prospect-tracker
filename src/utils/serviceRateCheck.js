@@ -90,29 +90,49 @@ export function year1CostOf(items = [], margin = DEFAULT_MARGIN, techDeprPct = 0
   let later = 0;
   const margins = new Set();
   for (const it of items) {
-    if (typeof it?.cts !== 'number' || !Number.isFinite(it.cts)) continue;
-    if (it.passThrough) { passThrough += 1; continue; }
-    const start = startOf(it);
-    if (start > 12) { later += 1; continue; }
-    const m = typeof it.margin === 'number' && Number.isFinite(it.margin) ? it.margin : margin;
-    margins.add(m);
-    const f = priceFactor(m, techDeprPct);
-    const part = partOfCost(it);
-    if (part === 'recurring') {
-      parts.recurring += it.cts * (13 - start);
-      priced.recurring += it.cts * (13 - start) * f;
-      runRate += it.cts * 12;
-      pricedRunRate += it.cts * 12 * f;
-    } else {
-      parts[part] += it.cts;
-      priced[part] += it.cts * f;
-    }
-    lines[part] += 1;
+    const y = lineYear(it, margin, techDeprPct);
+    if (!y) continue;
+    if (y.skip === 'passThrough') { passThrough += 1; continue; }
+    if (y.skip === 'later') { later += 1; continue; }
+    margins.add(y.margin);
+    parts[y.part] += y.cost;
+    priced[y.part] += y.price;
+    runRate += y.runRate;
+    pricedRunRate += y.pricedRunRate;
+    lines[y.part] += 1;
   }
   const cost = parts.setup + parts.recurring + parts.oneTime;
   const price = priced.setup + priced.recurring + priced.oneTime;
   const counted = lines.setup + lines.recurring + lines.oneTime;
   return { cost, price, counted, passThrough, later, parts, priced, lines, runRate, pricedRunRate, margins: [...margins] };
+}
+
+// One cost line's share of year 1, the arithmetic year1CostOf sums: null
+// with no CTS, `skip` set for a pass-through line or one landing after
+// month 12.
+function lineYear(it, margin, techDeprPct) {
+  if (typeof it?.cts !== 'number' || !Number.isFinite(it.cts)) return null;
+  if (it.passThrough) return { skip: 'passThrough' };
+  const start = startOf(it);
+  if (start > 12) return { skip: 'later' };
+  const m = typeof it.margin === 'number' && Number.isFinite(it.margin) ? it.margin : margin;
+  const f = priceFactor(m, techDeprPct);
+  const part = partOfCost(it);
+  if (part === 'recurring') {
+    return {
+      part, margin: m,
+      cost: it.cts * (13 - start), price: it.cts * (13 - start) * f,
+      runRate: it.cts * 12, pricedRunRate: it.cts * 12 * f,
+    };
+  }
+  return { part, margin: m, cost: it.cts, price: it.cts * f, runRate: 0, pricedRunRate: 0 };
+}
+
+// The part of the fee model a cost line would be checked in (setup,
+// recurring, oneTime), or null when the check leaves it out altogether.
+export function checkPartOf(it) {
+  const y = lineYear(it, DEFAULT_MARGIN, 0);
+  return y && !y.skip ? y.part : null;
 }
 
 const statusOf = (price, low, high) => {
@@ -127,7 +147,7 @@ const statusOf = (price, low, high) => {
 //
 // Ongoing is taken over a full year (monthly × 12), not year 1's months:
 // the card's recurring fee is an annual one, so that is the like for like.
-function feePart({ key, label, cost: year1Cost, price: year1Price, lineCount, runRate, pricedRunRate, cardLines }) {
+function feePart({ key, label, cost: year1Cost, price: year1Price, lineCount, runRate, pricedRunRate, cardLines, costLines = [] }) {
   const cost = key === 'recurring' ? runRate : year1Cost;
   const price = key === 'recurring' ? pricedRunRate : year1Price;
   const onCard = cardLines.length > 0;
@@ -160,11 +180,77 @@ function feePart({ key, label, cost: year1Cost, price: year1Price, lineCount, ru
   return {
     key, label, status, cost, price, monthly: key === 'recurring', low: onCard ? low : null, high: onCard ? high : null,
     perUnit,
-    cardLines: cardLines.map(b => ({
-      basisLabel: b.basisLabel, kind: b.kind, unitLabel: b.unitLabel, monthly: !!b.monthly,
-      rate: b.rate, rateHigh: b.rateHigh, units: b.units, fee: b.fee, feeHigh: b.feeHigh,
-    })),
+    cardLines: cardLines.map(cardLineOut),
+    components: cardLines.length > 1 ? splitPart(key, cardLines, costLines) : null,
   };
+}
+
+const cardLineOut = (b) => ({
+  id: b.id, basisLabel: b.basisLabel, kind: b.kind, unitLabel: b.unitLabel, monthly: !!b.monthly,
+  rate: b.rate, rateHigh: b.rateHigh, units: b.units, fee: b.fee, feeHigh: b.feeHigh,
+});
+
+// A part the card prices on more than one component (Ongoing at $42,000 to
+// $84,000 a year plus $32 to $46 per account a year), checked a component
+// at a time. Each cost line picked for a component (`feeComponent`, set on
+// the Services subtab) is priced against that component alone. Lines left
+// on Auto go to the one component nothing was picked for; when several
+// are open they are checked together, against those components' combined
+// range, in one `shared` row. `loose` is cost left on Auto when every
+// component already has lines of its own.
+//
+// Ongoing is read over a full year, as feePart reads it.
+function splitPart(key, cardLines, costLines) {
+  const ids = new Set(cardLines.map(b => b.id));
+  const costOf = (list) => list.reduce((t, c) => t + (key === 'recurring' ? c.runRate : c.cost), 0);
+  const priceOf = (list) => list.reduce((t, c) => t + (key === 'recurring' ? c.pricedRunRate : c.price), 0);
+  const picked = (b) => costLines.filter(c => c.component === b.id);
+  const auto = costLines.filter(c => !ids.has(c.component));
+  const open = cardLines.filter(b => picked(b).length === 0);
+
+  const judge = (lines, card) => {
+    const cost = costOf(lines);
+    const price = priceOf(lines);
+    const low = card.reduce((t, b) => t + (b.fee || 0), 0);
+    const high = card.reduce((t, b) => t + (b.feeHigh ?? b.fee ?? 0), 0);
+    const b = card[0];
+    let perUnit = null;
+    if (card.length === 1 && b.kind === 'unit' && b.units > 0 && lines.length > 0) {
+      const perMonth = !!b.monthly && key === 'recurring';
+      perUnit = {
+        units: b.units, perMonth,
+        price: price / b.units / (perMonth ? 12 : 1),
+        rateLow: Math.min(b.rate, b.rateHigh ?? b.rate),
+        rateHigh: Math.max(b.rate, b.rateHigh ?? b.rate),
+      };
+    }
+    let status;
+    if (card.some(x => x.gap)) status = RATE_CHECK.INCOMPLETE;
+    else if (lines.length === 0 || cost <= 0) status = RATE_CHECK.NO_COST;
+    else if (perUnit) status = statusOf(perUnit.price, perUnit.rateLow, perUnit.rateHigh);
+    else status = statusOf(price, low, high);
+    return { cost, price, low, high, perUnit, status, lineCount: lines.length };
+  };
+
+  const shareAuto = open.length > 1 && auto.length > 0;
+  const rows = cardLines.map(b => {
+    const mine = picked(b);
+    const takesAuto = mine.length === 0 && open.length === 1;
+    const lines = takesAuto ? auto : mine;
+    return {
+      id: b.id, card: cardLineOut(b),
+      picked: mine.length, auto: takesAuto ? auto.length : 0,
+      shared: shareAuto && mine.length === 0,
+      ...judge(lines, [b]),
+    };
+  });
+  const shared = shareAuto
+    ? { ids: open.map(b => b.id), labels: open.map(b => b.basisLabel), ...judge(auto, open) }
+    : null;
+  const loose = open.length === 0 && auto.length > 0
+    ? { lineCount: auto.length, cost: costOf(auto), price: priceOf(auto) }
+    : null;
+  return { rows, shared, loose };
 }
 
 /**
@@ -215,6 +301,26 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
     recurring: priced ? charged(est.breakdown).filter(b => b.recurs) : [],
     oneTime: priced ? charged(est.breakdown).filter(b => !b.recurs) : [],
   };
+  // Each component named for the part and the basis it prices on
+  // ('recurring:per_account'), which is what a cost line's `feeComponent`
+  // points at. Stable across loads, so a pick survives a new SIA. Set on
+  // the estimate's own lines (fresh each call), so `lines` above and the
+  // parts below keep reading the same objects.
+  for (const [k, list] of Object.entries(cardFor)) {
+    const seen = new Map();
+    for (const b of list) {
+      const base = `${k}:${b.basis || 'line'}`;
+      const n = seen.get(base) || 0;
+      seen.set(base, n + 1);
+      b.id = n ? `${base}#${n + 1}` : base;
+    }
+  }
+  // Every counted cost line's own share, for splitting a part across its
+  // components.
+  const costLines = items
+    .map(it => ({ it, y: lineYear(it, margin, techDeprPct) }))
+    .filter(({ y }) => y && !y.skip)
+    .map(({ it, y }) => ({ ...y, id: it.id ?? null, component: it.feeComponent || null }));
   const parts = priced
     ? FEE_PARTS.map(({ key, label }) => feePart({
       key, label,
@@ -224,6 +330,7 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
       runRate: year1.runRate,
       pricedRunRate: year1.pricedRunRate,
       cardLines: cardFor[key],
+      costLines: costLines.filter(c => c.part === key),
     })).filter(p => p.status)
     : [];
 
@@ -289,7 +396,15 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
   // can show each one and where it came from.
   const unitsUsed = [...new Set(lines.filter(b => b.kind === 'unit' && b.unit).map(b => b.unit))];
 
+  // The components a cost line can be pointed at, per part, for a part the
+  // card prices on more than one.
+  const componentChoices = {};
+  for (const [k, list] of Object.entries(cardFor)) {
+    if (list.length > 1) componentChoices[k] = list.map(b => ({ id: b.id, label: b.basisLabel }));
+  }
+
   return {
+    componentChoices,
     status, cost, price, margin: appliedMargin, techDeprPct: Number(techDeprPct) || 0, low, high, notes, passThrough, later, missing, parts, unitsUsed, perUnit, leftOut,
     noFee: !!est?.noFee,
   };
