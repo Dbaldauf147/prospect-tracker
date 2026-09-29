@@ -4,7 +4,7 @@
 //   node scripts/serviceRateCheck.test.mjs
 
 import assert from 'node:assert/strict';
-import { rateCardCheck, year1CostOf, RATE_CHECK, siaCountsFor, priceCheckCounts, checkPartOf } from '../src/utils/serviceRateCheck.js';
+import { rateCardCheck, year1CostOf, RATE_CHECK, siaCountsFor, priceCheckCounts, checkPartOf, feeUnitCountsFor } from '../src/utils/serviceRateCheck.js';
 
 let failed = 0;
 function test(name, fn) {
@@ -508,6 +508,20 @@ test('a card with a setup fee is not setup-off-card', () => {
     counts: { sites: 29 },
   });
   assert.equal(c.setupOffCard, false);
+});
+
+test('fee rows bill on the count typed in the cost section', () => {
+  const sia = { sites: 29, accounts: 40 };
+  const typed = { counts: priceCheckCounts(sia, { sites_mandate: 22 }).counts, sia };
+  // BBS prices on sites w/ mandate: its Per Site fee follows the 22 typed.
+  assert.deepEqual(feeUnitCountsFor({ ...typed, rateCheck: { unitsUsed: ['sites_mandate'] } }), { siteCount: 22, accountCount: 40 });
+  // A service that doesn't price on it keeps the SIA's sites.
+  assert.deepEqual(feeUnitCountsFor({ ...typed, rateCheck: { unitsUsed: ['sites'] } }), { siteCount: 29, accountCount: 40 });
+  // A typed override of the SIA's sites and accounts carries down too.
+  const over = { counts: priceCheckCounts(sia, { sites: 31, accounts: 12 }).counts, sia, rateCheck: { unitsUsed: ['sites'] } };
+  assert.deepEqual(feeUnitCountsFor(over), { siteCount: 31, accountCount: 12 });
+  // Nothing typed: the SIA's.
+  assert.deepEqual(feeUnitCountsFor({ counts: priceCheckCounts(sia, {}).counts, sia, rateCheck: { unitsUsed: ['sites_mandate'] } }), { siteCount: 29, accountCount: 40 });
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

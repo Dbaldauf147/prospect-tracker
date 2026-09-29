@@ -41,7 +41,7 @@ import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/p
 import { setOppPricingSnapshot } from '../../utils/oppsPricingSnapshot';
 import { servicesByFeeName } from '../../utils/siaScopeCompare';
 import { getServicePricing, pricingFor, resolvePricingBases } from '../../utils/servicePricing';
-import { rateCardCheck, siaCountsFor, priceCheckCounts } from '../../utils/serviceRateCheck';
+import { rateCardCheck, siaCountsFor, priceCheckCounts, feeUnitCountsFor } from '../../utils/serviceRateCheck';
 import { saveOppSourceFile, sourceFileMeta } from '../../utils/oppPricingSourceFile';
 import {
   loadOptionLinks,
@@ -5168,10 +5168,12 @@ export function PricingView({ settings } = {}) {
   // One saved fee-structure row as the active option would bill it: the
   // schedule row it becomes, with the fee, start month, yearly revenue and
   // margin the page derives for blanks.
-  function previewFeeStructureRow(row) {
+  // `counts` ({ siteCount, accountCount }) are the service's own
+  // (feeUnitCountsFor); without them, the SIA's.
+  function previewFeeStructureRow(row, counts) {
     const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
     const sia = siaCountsFor(workbook, opt);
-    const alt = feeStructureRowToAltRow(row, { siteCount: sia.sites ?? undefined, accountCount: sia.accounts ?? undefined });
+    const alt = feeStructureRowToAltRow(row, counts || { siteCount: sia.sites ?? undefined, accountCount: sia.accounts ?? undefined });
     const numYears = Math.max(1, Math.ceil(termMonths / 12));
     if (!opt || !alt.altItem) return { alt, autoFee: null, startMonth: null, years: Array(numYears).fill(0), gmPct: null };
     const autoFee = autoFeePerUnitFor(alt);
@@ -5206,9 +5208,8 @@ export function PricingView({ settings } = {}) {
       const replaceNames = [];
       for (const f of detail.fees) if (f.name) replaceNames.push(f.name);
       for (const it of detail.items) if (it.feeName) replaceNames.push(it.feeName);
-      const sia = siaCountsFor(workbook, opt);
       const plan = applyFeeStructureToSchedule(schedule, structure.rows, {
-        replaceNames, siteCount: sia.sites ?? undefined, accountCount: sia.accounts ?? undefined,
+        replaceNames, ...feeUnitCountsFor(detail),
       });
       serviceRows = plan.added;
       nextSchedule = plan.rows;
@@ -5283,9 +5284,8 @@ export function PricingView({ settings } = {}) {
     for (const f of detail.fees) if (f.name) replaceNames.push(f.name);
     for (const it of detail.items) if (it.feeName) replaceNames.push(it.feeName);
     const schedule = altFees[opt.optionNumber] || [];
-    const sia = siaCountsFor(workbook, opt);
     const plan = applyFeeStructureToSchedule(schedule, structure.rows, {
-      replaceNames, siteCount: sia.sites ?? undefined, accountCount: sia.accounts ?? undefined,
+      replaceNames, ...feeUnitCountsFor(detail),
     });
     if (plan.added.length === 0) {
       window.alert('This structure has no named fees to apply.');
@@ -5353,10 +5353,11 @@ export function PricingView({ settings } = {}) {
         currentFees: detail.fees.filter(f => f.onSchedule).map(f => f.name),
       });
       if (!structure) continue;
+      const svcCounts = feeUnitCountsFor(detail);
       const ctx = standardFeeContext(structure, detail.items, {
         termMonths,
-        siteCount: detail.sia?.sites ?? opt.siteCount,
-        accountCount: detail.sia?.accounts ?? opt.accountCount,
+        siteCount: svcCounts.siteCount ?? opt.siteCount,
+        accountCount: svcCounts.accountCount ?? opt.accountCount,
         startMonthFor: autoStartMonthFor,
         feeEscalator: annualEscalator,
         costEscalator,
@@ -5373,7 +5374,7 @@ export function PricingView({ settings } = {}) {
       const replaceNames = [];
       for (const f of detail.fees) if (f.name) replaceNames.push(f.name);
       for (const it of detail.items) if (it.feeName) replaceNames.push(it.feeName);
-      picks.push({ service: svc.name, structureName: structure.name || 'Untitled', rows: filled.rows, replaceNames });
+      picks.push({ service: svc.name, structureName: structure.name || 'Untitled', rows: filled.rows, replaceNames, ...svcCounts });
     }
     const schedule = altFees[opt.optionNumber] || [];
     // Only fees written by a structure from the Services subtab: a row on

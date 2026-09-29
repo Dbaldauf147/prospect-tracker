@@ -757,11 +757,14 @@ export function buildScheduleFromStructures(schedule, picks, { siteCount, accoun
     const own = incoming.filter(r => !builtBy.has(norm(r.feeName)));
     const joins = incoming.filter(r => builtBy.has(norm(r.feeName)));
     const replaceNames = (pick.replaceNames || []).filter(n => !builtBy.has(norm(n)));
-    const plan = applyFeeStructureToSchedule(rows, own, { replaceNames, siteCount, accountCount });
+    // A pick can carry its service's own counts (one typed on the Services
+    // subtab), which win over the option's.
+    const counts = { siteCount: pick.siteCount ?? siteCount, accountCount: pick.accountCount ?? accountCount };
+    const plan = applyFeeStructureToSchedule(rows, own, { replaceNames, ...counts });
     rows = plan.rows;
     const added = [...plan.added];
     for (const jr of joins) {
-      const alt = feeStructureRowToAltRow(jr, { siteCount, accountCount });
+      const alt = feeStructureRowToAltRow(jr, counts);
       const k = norm(alt.altItem);
       let at = -1;
       rows.forEach((r, i) => { if (addedRows.has(r) && norm(r.altItem) === k) at = i; });
