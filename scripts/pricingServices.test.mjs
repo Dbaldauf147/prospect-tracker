@@ -356,6 +356,22 @@ test('Fee Builder writes every picked structure, keeping untouched rows and earl
   assert.deepEqual(shared, []);
 });
 
+test('structuresOnly: only fees a picked structure writes stay on the schedule', () => {
+  const schedule = [
+    { altItem: 'Old BBS fee', fee: 10, unit: 'Fixed', unitCount: 1 },
+    { altItem: 'Bill pay monthly - SE', fee: 1.68, unit: 'Per Account', unitCount: 519 },
+    { altItem: '', fee: null },
+  ];
+  const { rows, dropped, perService } = buildScheduleFromStructures(schedule, [
+    { service: 'BBS', structureName: 'Per site', rows: [{ feeName: 'BBS per site', type: 'Recurring (monthly)', fee: 46.45, unit: 'Per Site' }], replaceNames: ['Old BBS fee'] },
+  ], { siteCount: 29, structuresOnly: true });
+  assert.deepEqual(rows.map(r => r.altItem), ['BBS per site', '']);
+  assert.deepEqual(dropped.map(r => r.altItem), ['Bill pay monthly - SE']);
+  assert.deepEqual(perService[0].removed.map(r => r.altItem), ['Old BBS fee']);
+  // Without it the untouched row stays, as before.
+  assert.deepEqual(buildScheduleFromStructures(schedule, [], {}).dropped, []);
+});
+
 test('Fee Builder keeps a row per service for a shared fee name, grouped together', () => {
   const { rows, shared, perService } = buildScheduleFromStructures([{ altItem: 'Other', fee: 9 }], [
     { service: 'A', rows: [{ feeName: 'Program fee', fee: 1, unit: 'Fixed' }, { feeName: 'A only', fee: 5, unit: 'Fixed' }], replaceNames: [] },

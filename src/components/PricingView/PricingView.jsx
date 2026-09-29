@@ -5362,8 +5362,10 @@ export function PricingView({ settings } = {}) {
       picks.push({ service: svc.name, structureName: structure.name || 'Untitled', rows: filled.rows, replaceNames });
     }
     const schedule = altFees[opt.optionNumber] || [];
+    // Only fees written by a structure from the Services subtab: a row on
+    // the schedule no structure wrote comes off (built.dropped).
     const built = buildScheduleFromStructures(schedule, picks, {
-      siteCount: sia.sites ?? undefined, accountCount: sia.accounts ?? undefined,
+      siteCount: sia.sites ?? undefined, accountCount: sia.accounts ?? undefined, structuresOnly: true,
     });
     const fromService = new Map();
     for (const ps of built.perService) for (const r of ps.added) fromService.set(r, ps.service);
@@ -5512,6 +5514,7 @@ export function PricingView({ settings } = {}) {
       costLines,
       nextSchedule: built.rows.map(r => { const { costIds: _costIds, ...rest } = r; return rest; }),
       perService: built.perService,
+      dropped: built.dropped,
       shared: built.shared,
       moves,
       before: totals(schedule),
@@ -5521,10 +5524,10 @@ export function PricingView({ settings } = {}) {
 
   function applyFeeBuilderPlan(plan) {
     const typedRows = (plan?.rows || []).filter(r => r.overridden);
-    if (!plan || (plan.perService.length === 0 && typedRows.length === 0)) return false;
+    if (!plan || (plan.perService.length === 0 && typedRows.length === 0 && !plan.dropped?.length)) return false;
     const added = plan.perService.reduce((s, p) => s + p.added.length, 0);
     const removed = plan.perService.reduce((s, p) => s + p.removed.length, 0);
-    if (added === 0 && typedRows.length === 0) {
+    if (added === 0 && typedRows.length === 0 && !plan.dropped?.length) {
       window.alert('The picked structures have no named fees to write.');
       return false;
     }
@@ -5533,8 +5536,11 @@ export function PricingView({ settings } = {}) {
       '',
       ...plan.perService.map(p => `${p.service}: "${p.structureName}", ${p.added.length} fee row${p.added.length === 1 ? '' : 's'}${p.removed.length ? `, replaces ${p.removed.map(r => r.altItem).join(', ')}` : ''}`),
       '',
-      `Adds ${added} row${added === 1 ? '' : 's'}${removed ? ` and replaces ${removed}` : ''}. Rows for services left as they are stay on the schedule.`,
+      `Adds ${added} row${added === 1 ? '' : 's'}${removed ? ` and replaces ${removed}` : ''}. Only fees from structures on the Services subtab are kept.`,
     ];
+    if (plan.dropped?.length) {
+      lines.push('', `Takes off ${plan.dropped.length} row${plan.dropped.length === 1 ? '' : 's'} no structure wrote: ${plan.dropped.map(r => r.altItem).join(', ')}.`);
+    }
     if (typedRows.length) {
       lines.push('', `Fee / Unit typed over on ${typedRows.length} row${typedRows.length === 1 ? '' : 's'}: ${typedRows.map(r => `${r.name}${r.service ? ` (${r.service})` : ''} ${fmtMoney(r.feePerUnit)}`).join('; ')}.`);
     }
