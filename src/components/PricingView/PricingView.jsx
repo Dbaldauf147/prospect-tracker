@@ -5284,7 +5284,12 @@ export function PricingView({ settings } = {}) {
         term: years.reduce((a, b) => a + b, 0),
       };
     });
-    const feeByYear = zeros().map((_, yi) => fees.reduce((s, f) => s + f.years[yi], 0));
+    // Pass-through bills at cost, so it sits out of the service's fee
+    // against cost on both sides: the fee rows ticked Pass, and the cost
+    // lines that are pass-through or logged on one of those rows.
+    const feeByYear = zeros().map((_, yi) => fees.reduce((s, f) => (f.passThrough ? s : s + f.years[yi]), 0));
+    const passFeeNames = new Set(serviceRows.filter(r => r.passThrough === true).map(r => norm(r.altItem)).filter(Boolean));
+    const isPassCost = (it) => isPassThrough(it) || passFeeNames.has(norm(mappingNameFor(it)));
 
     // The service's cost is every cost line tied to it, billed or not; a
     // line whose fee name none of the rows carry is called out, because
@@ -5293,7 +5298,7 @@ export function PricingView({ settings } = {}) {
     const allItems = (opt.sections || []).flatMap(sec => sec.items || []);
     const rawItems = costItemsForService(allItems, servicesOnOption(opt), serviceName);
     const billed = new Set(nextSchedule.map(r => norm(r.altItem)).filter(Boolean));
-    const costByYear = zeros().map((_, yi) => rawItems.reduce((s, it) => s + ctsItemYearCost(it, yi + 1), 0));
+    const costByYear = zeros().map((_, yi) => rawItems.reduce((s, it) => (isPassCost(it) ? s : s + ctsItemYearCost(it, yi + 1)), 0));
     const unbilled = rawItems
       .filter(it => !billed.has(norm(mappingNameFor(it))))
       .map(it => ({
