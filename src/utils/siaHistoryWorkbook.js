@@ -1,6 +1,7 @@
 // One SIA History entry as an Excel workbook, for the Download button on
 // the SIA History subtab. Four sheets:
-//   Summary     - the file, when it was loaded, and one row per option
+//   Summary     - the file, when it was loaded, the SIA's key facts
+//                 (company, date, spend, kWh, gas), and one row per option
 //   Details     - every header-block line (Date, Salesperson, Client, ...)
 //   Cost Lines  - every cost line on every option
 //   Alt Fees    - the SIA's own alternative fee rows, when it had any
@@ -12,6 +13,7 @@ import { siaHistorySummary } from './siaHistoryEntry.js';
 
 const MONEY = '"$"#,##0.00';
 const PCT = '0.0%';
+const WHOLE = '#,##0';
 
 function sheetFrom(rows, { widths = [], formats = {} } = {}) {
   const ws = XLSX.utils.aoa_to_sheet(rows);
@@ -35,12 +37,20 @@ export function buildSiaHistoryWorkbook(entry) {
   const s = siaHistorySummary(entry);
   const loaded = new Date(entry?.loadedAt || 0);
 
-  const summary = [
+  const head = [
     ['File', entry?.fileName || ''],
     ['Loaded', Number.isNaN(loaded.getTime()) ? '' : loaded.toLocaleString('en-US')],
+    ['Company', s.company],
+    ['SIA Date', s.date],
+    ['Annual Spend', orBlank(s.annualSpend)],
+    ['Annual kWh', orBlank(s.annualKwh)],
+    [`Annual ${s.gasUnit || 'MMBtu/Dth'}`, orBlank(s.annualGas)],
     ['Salesperson', s.salesperson],
     ['Cost lines', s.costLines],
     ['Total CTS', s.ctsTotal],
+  ];
+  const summary = [
+    ...head,
     [],
     ['Option', 'Hidden', 'Sites', 'Accounts', 'Target GM%', 'Use Target', 'Solution description', 'Cost lines', 'Total CTS'],
     ...options.map(o => [
@@ -57,9 +67,12 @@ export function buildSiaHistoryWorkbook(entry) {
   ];
   const summaryWs = sheetFrom(summary, { widths: [22, 10, 10, 10, 12, 11, 40, 11, 14] });
   // The header block above the option table has its own formats.
-  const totalCell = summaryWs[XLSX.utils.encode_cell({ r: 4, c: 1 })];
-  if (totalCell) totalCell.z = MONEY;
-  for (let r = 7; r < summary.length; r++) {
+  const headFormats = { 'Annual Spend': MONEY, 'Total CTS': MONEY, 'Annual kWh': WHOLE, [head[6][0]]: WHOLE };
+  head.forEach(([label], r) => {
+    const cell = summaryWs[XLSX.utils.encode_cell({ r, c: 1 })];
+    if (cell?.t === 'n' && headFormats[label]) cell.z = headFormats[label];
+  });
+  for (let r = head.length + 2; r < summary.length; r++) {
     const pct = summaryWs[XLSX.utils.encode_cell({ r, c: 4 })];
     if (pct?.t === 'n') pct.z = PCT;
     const money = summaryWs[XLSX.utils.encode_cell({ r, c: 8 })];

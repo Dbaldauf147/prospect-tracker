@@ -10,6 +10,10 @@ const fmtMoney = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
   : '');
 const fmtNum = (n) => (typeof n === 'number' && Number.isFinite(n) ? n.toLocaleString('en-US') : '');
+const fmtWhole = (n) => (typeof n === 'number' && Number.isFinite(n) ? Math.round(n).toLocaleString('en-US') : '');
+const fmtSpend = (n) => (typeof n === 'number' && Number.isFinite(n)
+  ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
+  : '');
 const fmtPct = (n) => (typeof n === 'number' && Number.isFinite(n) ? `${(n * 100).toFixed(1)}%` : '');
 const fmtWhen = (ms) => {
   const d = new Date(ms);
@@ -47,6 +51,8 @@ export function SiaHistoryTab({ currentId }) {
       const hay = [
         entry.fileName,
         summary.salesperson,
+        summary.company,
+        summary.date,
         ...(entry.options || []).flatMap(o => [o.sheetName, o.solutionDescription, ...(o.headerDetails || []).map(d => d.value)]),
       ].join(' ').toLowerCase();
       return hay.includes(q);
@@ -69,8 +75,8 @@ export function SiaHistoryTab({ currentId }) {
   return (
     <div className={styles.wrapper}>
       <div className={styles.intro}>
-        Every SIA uploaded on the Pricing subtab is recorded here with its details (sites, accounts, salesperson,
-        solution description, target GM%) and its cost line items, so an earlier SIA can be looked back on after
+        Every SIA uploaded on the Pricing subtab is recorded here with its details (company, SIA date, annual spend,
+        annual kWh, annual MMBtu/Dth, sites, accounts, salesperson, solution description, target GM%) and its cost line items, so an earlier SIA can be looked back on after
         another one replaces it. Click a row to see it option by option.
       </div>
 
@@ -78,7 +84,7 @@ export function SiaHistoryTab({ currentId }) {
         <input
           type="search"
           className={styles.search}
-          placeholder="Filter by file name, salesperson, or any SIA detail"
+          placeholder="Filter by company, file name, salesperson, or any SIA detail"
           value={filter}
           onChange={e => setFilter(e.target.value)}
         />
@@ -97,7 +103,12 @@ export function SiaHistoryTab({ currentId }) {
             <tr>
               <th />
               <th>Loaded</th>
+              <th>Company</th>
+              <th>SIA Date</th>
               <th>File</th>
+              <th className={styles.num}>Annual Spend</th>
+              <th className={styles.num}>Annual kWh</th>
+              <th className={styles.num} title="Annual gas usage, in the unit the SIA gives it (MMBtu or Dth)">Annual MMBtu/Dth</th>
               <th>Salesperson</th>
               <th className={styles.num}>Options</th>
               <th className={styles.num}>Sites</th>
@@ -115,10 +126,15 @@ export function SiaHistoryTab({ currentId }) {
                   <tr className={open ? styles.rowOpen : styles.row} onClick={() => setOpenId(open ? null : entry.id)}>
                     <td className={styles.caret}>{open ? '▾' : '▸'}</td>
                     <td className={styles.nowrap}>{fmtWhen(entry.loadedAt)}</td>
+                    <td>{summary.company}</td>
+                    <td className={styles.nowrap}>{summary.date}</td>
                     <td>
                       {entry.fileName}
                       {entry.id === currentId && <span className={styles.currentTag}>On screen</span>}
                     </td>
+                    <td className={styles.num}>{fmtSpend(summary.annualSpend)}</td>
+                    <td className={styles.num}>{fmtWhole(summary.annualKwh)}</td>
+                    <td className={styles.num}>{summary.annualGas == null ? '' : `${fmtWhole(summary.annualGas)} ${summary.gasUnit}`}</td>
                     <td>{summary.salesperson}</td>
                     <td className={styles.num}>{summary.optionCount}</td>
                     <td className={styles.num}>{fmtNum(summary.sites)}</td>
@@ -148,7 +164,7 @@ export function SiaHistoryTab({ currentId }) {
                   </tr>
                   {open && (
                     <tr>
-                      <td colSpan={10} className={styles.detailCell}>
+                      <td colSpan={15} className={styles.detailCell}>
                         {(entry.options || []).map(opt => <OptionDetail key={`${opt.optionNumber}-${opt.sheetName}`} opt={opt} />)}
                       </td>
                     </tr>
