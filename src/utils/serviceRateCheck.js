@@ -75,11 +75,12 @@ function partOfCost(it) {
   return 'oneTime';
 }
 
-// The first-year cost of a set of cost lines, split by part. A pass-through
-// line is counted at cost: billed with no margin and no tech depreciation,
-// but still money the fee model has to carry, so it sits in its part (and
-// can be pointed at a fee component) like any other line. `passThrough`
-// counts those lines. Only months 1 to 12 count: a recurring line starting in month 4
+// The first-year cost of a set of cost lines, split by part. Pass-through
+// lines are left out of the parts: the rate card never priced them, so
+// they are listed on their own instead (see passThroughLinesOf).
+// `passThrough` counts them.
+//
+// Only months 1 to 12 count: a recurring line starting in month 4
 // pays nine of them, and a cost landing in month 13 or later is a year 2
 // cost. `runRate` is the recurring lines' full year (monthly × 12), which
 // is how an annual per-unit rate is quoted.
@@ -104,10 +105,8 @@ export function year1CostOf(items = [], margin = DEFAULT_MARGIN, techDeprPct = 0
     const y = lineYear(it, margin, techDeprPct, termMonths);
     if (!y) continue;
     if (y.skip === 'later') { later += 1; continue; }
-    // A pass-through line's 0% is not a margin anybody chose, so it stays
-    // out of `margins` and the check still reads "At 50% margin".
-    if (y.passThrough) passThrough += 1;
-    else margins.add(y.margin);
+    if (y.passThrough) { passThrough += 1; continue; }
+    margins.add(y.margin);
     parts[y.part] += y.cost;
     priced[y.part] += y.price;
     runRate += y.runRate;
@@ -162,6 +161,52 @@ function lineYearAt(it, part, m, f, start, termMonths) {
 export function checkPartOf(it) {
   const y = lineYear(it, DEFAULT_MARGIN, 0);
   return y && !y.skip ? y.part : null;
+}
+
+// How a pass-through line is shown below the rate card's components: the
+// cost as one fixed fee, or cut per account. The id is what the line's
+// `feeComponent` holds.
+export const PASS_THROUGH_MODELS = [
+  { id: 'pass:fixed', label: 'Fixed fee' },
+  { id: 'pass:per_account', label: 'Per account' },
+];
+
+// A pick made while pass-through lines still sat in the rate card's
+// components ('recurring:per_account') reads as the per-account model.
+export function passThroughModelOf(it) {
+  return /per_account/.test(String(it?.feeComponent || '')) ? 'pass:per_account' : 'pass:fixed';
+}
+
+// Each pass-through line on its own, billed at cost: no margin, no tech
+// depreciation. An ongoing line is read over a full year (monthly × 12),
+// the rest as the amount it is. Per account divides that by the account
+// count; `needsAccounts` when there is none to divide by. Lines landing
+// after month 12 are left out, as they are from the check.
+export function passThroughLinesOf(items = [], counts = {}, termMonths = DEFAULT_TERM_MONTHS) {
+  const accounts = Number(counts?.accounts) > 0 ? Number(counts.accounts) : null;
+  const out = [];
+  for (const it of items) {
+    if (!it?.passThrough) continue;
+    const y = lineYear(it, 0, 0, termMonths);
+    if (!y || y.skip) continue;
+    const annual = y.part === 'recurring';
+    const amount = annual ? y.runRate : y.cost;
+    const model = passThroughModelOf(it);
+    const perAccount = model === 'pass:per_account';
+    out.push({
+      id: it.id ?? null,
+      description: it.description || '',
+      part: y.part,
+      partLabel: FEE_PARTS.find(x => x.key === y.part).label,
+      model,
+      annual,
+      amount,
+      accounts: perAccount ? accounts : null,
+      perUnit: perAccount && accounts ? amount / accounts : null,
+      needsAccounts: perAccount && !accounts,
+    });
+  }
+  return out;
 }
 
 const statusOf = (price, low, high) => {
@@ -349,7 +394,7 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
   // components.
   const costLines = items
     .map(it => ({ it, y: lineYear(it, margin, techDeprPct, termMonths) }))
-    .filter(({ y }) => y && !y.skip)
+    .filter(({ y }) => y && !y.skip && !y.passThrough)
     .map(({ it, y }) => ({ ...y, id: it.id ?? null, component: it.feeComponent || null }));
   const parts = priced
     ? FEE_PARTS.map(({ key, label }) => feePart({
@@ -435,6 +480,7 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
 
   return {
     componentChoices,
+    passThroughLines: passThroughLinesOf(items, counts, termMonths),
     // The card is priced and charges no setup: a Setup cost has no setup
     // fee to recover it, so it belongs rolled into the ongoing fee.
     setupOffCard: priced && cardFor.setup.length === 0,
