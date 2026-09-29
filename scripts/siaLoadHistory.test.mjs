@@ -10,6 +10,7 @@
 import * as XLSX from 'xlsx';
 import { parsePricingWorkbook } from '../src/utils/pricingParse.js';
 import { buildSiaHistoryEntry, siaHistorySummary, mergeSiaHistory } from '../src/utils/siaHistoryEntry.js';
+import { buildSiaHistoryWorkbook, siaHistoryFileName } from '../src/utils/siaHistoryWorkbook.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -77,6 +78,28 @@ const entry = buildSiaHistoryEntry({ id: 'wb_1', fileName: 'Acme SIA.xlsx', load
   const b = { id: 'b', loadedAt: 3 };
   const a2 = { id: 'a', loadedAt: 2, fileName: 'newer' };
   check('newest first, one per id', mergeSiaHistory([a, b], [a2]).map(e => [e.id, e.loadedAt]), [['b', 3], ['a', 2]]);
+}
+
+// --- Excel download ----------------------------------------------------
+// Written and read back, the way the file lands on the user's disk.
+{
+  const out = XLSX.read(XLSX.write(buildSiaHistoryWorkbook(entry), { type: 'array', bookType: 'xlsx' }), { type: 'array', cellNF: true });
+  const rows = (name) => XLSX.utils.sheet_to_json(out.Sheets[name], { header: 1, raw: true });
+  check('sheets, no Alt Fees when the SIA had none', out.SheetNames, ['Summary', 'Details', 'Cost Lines']);
+  check('summary header', rows('Summary').slice(0, 5), [['File', 'Acme SIA.xlsx'], ['Loaded', new Date(1000).toLocaleString('en-US')], ['Salesperson', 'Pat'], ['Cost lines', 4], ['Total CTS', 3000]]);
+  check('one summary row per option', rows('Summary').slice(7).map(r => [r[0], r[2], r[3], r[7], r[8]]), [['Option 1', 12, 40, 2, 1500], ['Option 2', '', '', 2, 1500]]);
+  check('cost lines across options, CTS as numbers', rows('Cost Lines').map(r => [r[0], r[2], r[4]]), [
+    ['Option', 'Line Item', 'CTS'],
+    ['Option 1', 'Bill processing', 1200], ['Option 1', 'Onboarding', 300],
+    ['Option 2', 'Bill processing', 1200], ['Option 2', 'Onboarding', 300],
+  ]);
+  check('CTS cells carry a money format', out.Sheets['Cost Lines'].E2.z, '"$"#,##0.00');
+  check('details keep the header block', rows('Details').find(r => r[1] === 'Client'), ['Option 1', 'Client', 'Acme Corp']);
+  const withFees = { ...entry, options: [{ ...entry.options[0], altFees: [{ altItem: 'Bill pay', type: 'Recurring (monthly)', fee: 250, unit: 'Per Site', unitCount: 12, startMonth: 1 }] }] };
+  const out2 = XLSX.read(XLSX.write(buildSiaHistoryWorkbook(withFees), { type: 'array', bookType: 'xlsx' }), { type: 'array' });
+  check('Alt Fees sheet when the SIA had fees', XLSX.utils.sheet_to_json(out2.Sheets['Alt Fees'], { header: 1 })[1], ['Option 1', 'Bill pay', 'Recurring (monthly)', 250, 'Per Site', 12, 1]);
+  check('file name', siaHistoryFileName({ fileName: 'Acme SIA v2.xlsx', loadedAt: Date.UTC(2026, 8, 29, 12) }), 'Acme SIA v2 (history 2026-09-29).xlsx');
+  check('file name strips unsafe characters', siaHistoryFileName({ fileName: 'a/b:c.xlsm', loadedAt: Date.UTC(2026, 0, 2, 12) }), 'a b c (history 2026-01-02).xlsx');
 }
 
 console.log(`${failed ? 'FAIL' : 'PASS'} siaLoadHistory: ${passed} passed, ${failed} failed`);
