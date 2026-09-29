@@ -24,6 +24,38 @@ const STATUS_RANK = {
   [SERVICE_STATUS.HIDDEN]: 3,
 };
 
+// Line items tagged "first in scope only" (lineItemPriority, keyed like the
+// mapping) list their services in priority order, and the cost goes to one
+// of them, not all: the first one some other line item on the option ties
+// to, else the first one. So Direct Bill Payment - Partner A/C Setup SE,
+// tagged Bill payment then Invoice collection, is Bill payment's cost when
+// Bill payment is in the deal through its other lines, and Invoice
+// collection's when it isn't.
+//
+// Only the other, ordinary line items say what is in scope: a priority
+// line can't vouch for a service itself, or its first pick would always
+// win. Returns the mapping with each priority line narrowed to its one
+// service, for the cost lines of one option; every other entry is as it
+// was.
+export function effectiveLineItemServices(items, lineItemServices, lineItemPriority) {
+  const map = lineItemServices || {};
+  const prio = lineItemPriority || {};
+  if (!Object.keys(prio).some(k => prio[k] && Array.isArray(map[k]) && map[k].length > 1)) return map;
+  const anchored = new Set();
+  for (const item of items || []) {
+    const k = norm(item?.description);
+    if (!k || prio[k]) continue;
+    for (const s of Array.isArray(map[k]) ? map[k] : []) if (norm(s)) anchored.add(norm(s));
+  }
+  const out = { ...map };
+  for (const k of Object.keys(prio)) {
+    const list = Array.isArray(map[k]) ? map[k].filter(s => norm(s)) : [];
+    if (!prio[k] || list.length < 2) continue;
+    out[k] = [list.find(s => anchored.has(norm(s))) || list[0]];
+  }
+  return out;
+}
+
 // Services the given cost lines are mapped to, deduped case-insensitively,
 // first casing wins.
 export function servicesForItems(items, lineItemServices) {

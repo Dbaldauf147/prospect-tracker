@@ -30,7 +30,7 @@ import { SERVICE_RENAMED_EVENT } from '../../utils/serviceRenameRunner';
 import { renameLineItemServices, renameFeeStructures, renameWorkbookServices } from '../../utils/serviceRenamePlans';
 import { FeeBuilderTab } from './FeeBuilderTab';
 import { buildServiceRows } from '../../utils/serviceRows';
-import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees } from '../../utils/pricingServices';
+import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices } from '../../utils/pricingServices';
 import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
 import { isSetupFeeType } from '../../utils/setupFeeFloor';
 import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
@@ -883,7 +883,7 @@ function isKnownService(service, solutionsOptions) {
 // matches case-insensitively. Rows come from two sources combined:
 // every line item in the current workbook option plus every saved
 // mapping (so entries stay reachable after the workbook is cleared).
-function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemServices, lineItemIgnored, setLineItemIgnored, solutionsOptions }) {
+function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemServices, lineItemPriority, setLineItemPriority, lineItemIgnored, setLineItemIgnored, solutionsOptions }) {
   const [draftItem, setDraftItem] = useState('');
   const [filter, setFilter] = useState('');
 
@@ -907,6 +907,20 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
     }
     setLineItemServices(next);
   }
+
+  function togglePriority(key) {
+    if (!setLineItemPriority) return;
+    const next = { ...(lineItemPriority || {}) };
+    if (next[key]) delete next[key];
+    else next[key] = true;
+    setLineItemPriority(next);
+  }
+
+  // Which service takes each priority line's cost on the active option.
+  const onOption = useMemo(
+    () => effectiveLineItemServices(workbookItems, lineItemServices, lineItemPriority),
+    [workbookItems, lineItemServices, lineItemPriority],
+  );
 
   function toggleIgnore(key) {
     const next = { ...(lineItemIgnored || {}) };
@@ -944,7 +958,10 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
         Tie each pricing Line Item to one or more services from the Dropdowns tab's
         Solutions / Service Catalog. Opps' Scope column can then bulk-add the
         union of services across every line item in a Pricing Option from an
-        "Add from Pricing Option" picker.
+        "Add from Pricing Option" picker. A line item tied to several services
+        is shared by all of them; tick <strong>First in scope only</strong> to
+        make the list a priority order instead, so the cost goes to the first
+        service another line item on the option ties to.
       </p>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
         <input
@@ -1021,6 +1038,8 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
             {filteredRows.map(row => {
               const services = Array.isArray(lineItemServices?.[row.key]) ? lineItemServices[row.key] : [];
               const ignored = !!lineItemIgnored?.[row.key];
+              const ordered = !!lineItemPriority?.[row.key] && services.length > 1;
+              const winner = ordered ? (onOption?.[row.key]?.[0] || null) : null;
               return (
                 <tr key={row.key} style={ignored ? { opacity: 0.5 } : undefined}>
                   <td>{row.name}</td>
@@ -1029,7 +1048,20 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
                       selected={services}
                       options={solutionsOptions}
                       onChange={(next) => updateServices(row.key, next)}
+                      ordered={ordered}
+                      winner={winner}
                     />
+                    {services.length > 1 && setLineItemPriority && (
+                      <label
+                        className={styles.priorityToggle}
+                        title={ordered
+                          ? `Priority order: the cost goes to the first of these services that another line item on the option ties to${winner ? ` (${winner} on this option)` : ''}. Untick to share it with all of them.`
+                          : 'Shared: every service listed here counts this cost. Tick to make the list a priority order, so the cost goes to only one of them.'}
+                      >
+                        <input type="checkbox" checked={!!lineItemPriority?.[row.key]} onChange={() => togglePriority(row.key)} />
+                        First in scope only
+                      </label>
+                    )}
                   </td>
                   <td style={{ textAlign: 'center' }}>
                     <input
@@ -1066,7 +1098,11 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
 // the currently-picked services as chips with × buttons, plus a
 // dropdown that adds the next pick. Keeping selection inline (no
 // popover) so a long table of mappings stays scannable.
-function ServicesPicker({ selected, options, onChange }) {
+//
+// With `ordered` the chips are a priority list: numbered, movable, and the
+// `winner` (the one taking the cost on the active option) stands out while
+// the rest fade.
+function ServicesPicker({ selected, options, onChange, ordered = false, winner = null }) {
   const [adding, setAdding] = useState('');
   const selectedSet = useMemo(() => new Set(selected.map(s => s.toLowerCase())), [selected]);
   const remaining = useMemo(() => options.filter(o => !selectedSet.has(o.toLowerCase())), [options, selectedSet]);
@@ -1080,19 +1116,33 @@ function ServicesPicker({ selected, options, onChange }) {
   function removeService(service) {
     onChange(selected.filter(s => s.toLowerCase() !== service.toLowerCase()));
   }
+  function moveService(idx, dir) {
+    const j = idx + dir;
+    if (j < 0 || j >= selected.length) return;
+    const next = selected.slice();
+    [next[idx], next[j]] = [next[j], next[idx]];
+    onChange(next);
+  }
+  const arrowBtn = {
+    padding: 0, width: 12, lineHeight: 1, background: 'transparent', border: 'none',
+    color: 'inherit', cursor: 'pointer', fontSize: '0.75rem',
+  };
 
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', alignItems: 'center' }}>
-      {selected.map(s => {
+      {selected.map((s, idx) => {
         // A pick the Dropdowns catalog no longer lists - renamed or deleted
         // there since this mapping was made. It reads as mapped but feeds
         // the Scope picker a service that doesn't exist, so it's called out
         // in red rather than left looking done.
         const known = isKnownService(s, options);
+        const lost = ordered && winner && winner.toLowerCase() !== s.toLowerCase();
         return (
           <span
             key={s}
-            title={known ? undefined : `"${s}" is not in the Dropdowns tab's Solutions / Service Catalog. Remove it and pick a current service, or add it back on the Dropdowns tab.`}
+            title={!known
+              ? `"${s}" is not in the Dropdowns tab's Solutions / Service Catalog. Remove it and pick a current service, or add it back on the Dropdowns tab.`
+              : (ordered ? (lost ? `${winner} takes this cost on this option, so ${s} doesn't count it.` : `${s} takes this cost on this option.`) : undefined)}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
               padding: '2px 6px 2px 8px',
@@ -1101,9 +1151,19 @@ function ServicesPicker({ selected, options, onChange }) {
               border: `1px solid ${known ? '#86EFAC' : '#FCA5A5'}`,
               borderRadius: 999,
               fontSize: '0.75rem', fontWeight: 600,
+              opacity: lost ? 0.45 : 1,
             }}
           >
+            {ordered && (
+              <>
+                {idx > 0 && <button type="button" style={arrowBtn} onClick={() => moveService(idx, -1)} title={`Move ${s} up the priority order`} aria-label={`Move ${s} earlier`}>‹</button>}
+                <span style={{ fontWeight: 700 }}>{idx + 1}.</span>
+              </>
+            )}
             {known ? s : `⚠ ${s}`}
+            {ordered && idx < selected.length - 1 && (
+              <button type="button" style={arrowBtn} onClick={() => moveService(idx, 1)} title={`Move ${s} down the priority order`} aria-label={`Move ${s} later`}>›</button>
+            )}
             <button
               type="button"
               onClick={() => removeService(s)}
@@ -1456,6 +1516,8 @@ function LinkedToPanel({
   removeLinkedToDefault,
   lineItemServices,
   setLineItemServices,
+  lineItemPriority,
+  setLineItemPriority,
   lineItemIgnored,
   setLineItemIgnored,
   solutionsOptions,
@@ -1844,6 +1906,8 @@ function LinkedToPanel({
         workbookItems={flatItems}
         lineItemServices={lineItemServices}
         setLineItemServices={setLineItemServices}
+        lineItemPriority={lineItemPriority}
+        setLineItemPriority={setLineItemPriority}
         lineItemIgnored={lineItemIgnored}
         setLineItemIgnored={setLineItemIgnored}
         solutionsOptions={solutionsOptions}
@@ -2225,6 +2289,12 @@ const LINE_ITEM_SERVICES_EVENT = 'pricing:lineItemServicesChanged';
 // and Clear-button wipes. Ignored rows are greyed out and excluded from
 // the "missing a service mapping" warning.
 const LINE_ITEM_IGNORED_KEY = 'lineItemIgnored';
+// Line items whose services are a priority order rather than a shared
+// list: { [lineItemKey]: true }. The cost goes to the first of them in
+// scope on the option (see effectiveLineItemServices). Own key, like the
+// mapping, and broadcast so Opps 2's Scope picker reads the same.
+const LINE_ITEM_PRIORITY_KEY = 'lineItemPriority';
+const LINE_ITEM_PRIORITY_EVENT = 'pricing:lineItemPriorityChanged';
 // Per-Option services bundle derived from the loaded workbook + the
 // Line Item → Services mapping. Persisted separately so Opps 2 can
 // offer an "Add from Pricing Option" picker on its Scope cell without
@@ -2326,6 +2396,7 @@ export function PricingView({ settings } = {}) {
     return () => window.removeEventListener(SERVICE_RENAMED_EVENT, onRenamed);
   }, []);
   const [feeBuilderPicks, setFeeBuilderPicks] = useState({}); // Fee Builder subtab: { [serviceKey]: structureId | '' } - '' leaves the service's fees as they are; absent means its standard structure
+  const [lineItemPriority, setLineItemPriority] = useState({}); // { [lineItemKey]: true } - services in priority order, first in scope takes the cost
   const [lineItemIgnored, setLineItemIgnored] = useState({}); // { [lineItemKey]: true } - line items the user opted to ignore (greyed out, excluded from the unmapped warning)
   const [termMonths, setTermMonths] = useState(36);
   const [annualEscalator, setAnnualEscalator] = useState(0.03);
@@ -2434,6 +2505,10 @@ export function PricingView({ settings } = {}) {
         const savedFeeStructures = await dbGet(STORE, SERVICE_FEE_STRUCTURES_KEY);
         if (!cancelled && savedFeeStructures && typeof savedFeeStructures === 'object') {
           setServiceFeeStructures(savedFeeStructures);
+        }
+        const savedLineItemPriority = await dbGet(STORE, LINE_ITEM_PRIORITY_KEY);
+        if (!cancelled && savedLineItemPriority && typeof savedLineItemPriority === 'object') {
+          setLineItemPriority(savedLineItemPriority);
         }
         const savedLineItemIgnored = await dbGet(STORE, LINE_ITEM_IGNORED_KEY);
         if (!cancelled && savedLineItemIgnored && typeof savedLineItemIgnored === 'object') {
@@ -2632,6 +2707,20 @@ export function PricingView({ settings } = {}) {
 
   useEffect(() => {
     if (!hydratedRef.current) return;
+    dbPut(STORE, lineItemPriority, LINE_ITEM_PRIORITY_KEY).catch(err => console.warn('Failed to save line-item priority:', err));
+    try {
+      window.dispatchEvent(new CustomEvent(LINE_ITEM_PRIORITY_EVENT, { detail: lineItemPriority }));
+    } catch { /* CustomEvent unavailable */ }
+  }, [lineItemPriority]);
+
+  // The mapping as it reads on one option: a priority line item narrowed
+  // to the one service that takes its cost there.
+  const servicesOnOption = (o) => effectiveLineItemServices(
+    (o?.sections || []).flatMap(sec => sec.items || []), lineItemServices, lineItemPriority,
+  );
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
     dbPut(STORE, serviceFeeStructures, SERVICE_FEE_STRUCTURES_KEY).catch(err => console.warn('Failed to save service fee structures:', err));
   }, [serviceFeeStructures]);
 
@@ -2646,10 +2735,11 @@ export function PricingView({ settings } = {}) {
     for (const o of workbook.options) {
       const seen = new Set();
       const services = [];
+      const onOption = servicesOnOption(o);
       for (const sec of (o.sections || [])) {
         for (const item of (sec.items || [])) {
           const key = String(item.description || '').trim().toLowerCase();
-          const mapped = key && lineItemServices ? lineItemServices[key] : null;
+          const mapped = key && onOption ? onOption[key] : null;
           if (!Array.isArray(mapped)) continue;
           for (const s of mapped) {
             const k = String(s || '').toLowerCase();
@@ -2662,7 +2752,8 @@ export function PricingView({ settings } = {}) {
       out[o.sheetName] = services;
     }
     return out;
-  }, [workbook, lineItemServices]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- servicesOnOption reads only the deps listed
+  }, [workbook, lineItemServices, lineItemPriority]);
 
   // The Services subtab's list: the Dropdowns tab's catalog with each
   // service's status, and the ones the active option's cost lines map to
@@ -4742,7 +4833,8 @@ export function PricingView({ settings } = {}) {
     const norm = (v) => String(v ?? '').trim().toLowerCase();
     const want = norm(serviceName);
     const allItems = (opt.sections || []).flatMap(sec => sec.items || []);
-    const items = costItemsForService(allItems, lineItemServices, serviceName).map(item => {
+    const onOption = servicesOnOption(opt);
+    const items = costItemsForService(allItems, onOption, serviceName).map(item => {
       const t = effectiveType(item);
       return {
         id: item.id,
@@ -4773,7 +4865,7 @@ export function PricingView({ settings } = {}) {
         automatedName: String(resolvedLinkedTo(item) || '').trim(),
         unit: linkedToUnitDefaults?.[linkedToDefaultKey(item.description, t)] || '',
         passThrough: isPassThrough(item),
-        otherServices: (lineItemServices?.[norm(item.description)] || []).filter(x => norm(x) && norm(x) !== want),
+        otherServices: (onOption?.[norm(item.description)] || []).filter(x => norm(x) && norm(x) !== want),
       };
     });
 
@@ -4788,7 +4880,7 @@ export function PricingView({ settings } = {}) {
     }
     const byFee = servicesByFeeName({
       items: allItems.map(item => ({ description: item.description, linkedTo: resolvedLinkedTo(item) })),
-      lineItemServices,
+      lineItemServices: onOption,
     });
     const numYears = Math.max(1, Math.ceil(termMonths / 12));
     const view = (row, onSchedule) => {
@@ -4995,7 +5087,7 @@ export function PricingView({ settings } = {}) {
     // the option's Deal margin only counts cost a fee on the schedule
     // prices.
     const allItems = (opt.sections || []).flatMap(sec => sec.items || []);
-    const rawItems = costItemsForService(allItems, lineItemServices, serviceName);
+    const rawItems = costItemsForService(allItems, servicesOnOption(opt), serviceName);
     const billed = new Set(nextSchedule.map(r => norm(r.altItem)).filter(Boolean));
     const costByYear = zeros().map((_, yi) => rawItems.reduce((s, it) => s + ctsItemYearCost(it, yi + 1), 0));
     const unbilled = rawItems
@@ -5574,6 +5666,8 @@ export function PricingView({ settings } = {}) {
           removeLinkedToDefault={removeLinkedToDefault}
           lineItemServices={lineItemServices}
           setLineItemServices={setLineItemServices}
+          lineItemPriority={lineItemPriority}
+          setLineItemPriority={setLineItemPriority}
           lineItemIgnored={lineItemIgnored}
           setLineItemIgnored={setLineItemIgnored}
           solutionsOptions={solutionsOptions}
@@ -6863,7 +6957,7 @@ export function PricingView({ settings } = {}) {
                   description: item.description,
                   linkedTo: resolvedLinkedTo(item),
                 }))),
-                lineItemServices,
+                lineItemServices: servicesOnOption(opt),
               });
               const rows = altRowsForOpt.map(r => {
                 const manualFee = Number(r.fee);

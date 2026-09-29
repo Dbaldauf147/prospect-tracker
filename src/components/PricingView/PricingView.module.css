@@ -1608,3 +1608,14 @@ select.altCellInput::-ms-expand {
   background: #fee2e2;
   box-shadow: inset 0 0 0 1px #ef4444;
 }
+
+/* "First in scope only" under a line item's service chips */
+.priorityToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+  font-size: 0.74rem;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}

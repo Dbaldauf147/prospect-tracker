@@ -17,7 +17,7 @@ import {
   feeStructureRowsFromFees, feeStructureRowToAltRow, applyFeeStructureToSchedule,
   standardFeesForStructure, costKey,
   addServiceToLineItem, costTotalsByLineItem, addLaterCostFees,
-  costTypeConversion, moveCostAllocation, buildScheduleFromStructures, standardFeeContext, groupFeeRows,
+  costTypeConversion, moveCostAllocation, buildScheduleFromStructures, standardFeeContext, groupFeeRows, effectiveLineItemServices,
 } from '../src/utils/pricingServices.js';
 
 let failed = 0;
@@ -409,4 +409,26 @@ test('a cost no row names falls to the first row that can bill it', () => {
   assert.equal(r.perRow[0].standardFee, 40);
   r = standardFeesForStructure({ rows: [...monthly, { feeName: 'BBS per site', type: 'Recurring (monthly)', unit: 'Fixed' }], costs, termMonths: 36 });
   assert.deepEqual(r.costs.map(c => [c.rowIdx, c.fellBack]), [[1, false], [1, false]]);
+});
+
+test('a first-in-scope line item goes to the first service another line ties to', () => {
+  const map = {
+    'dbp setup': ['Bill payment', 'Invoice collection'],
+    'dbp pay now': ['Bill payment'],
+    'collections': ['Invoice collection'],
+  };
+  const prio = { 'dbp setup': true };
+  const withBp = effectiveLineItemServices([{ description: 'DBP Setup' }, { description: 'DBP Pay Now' }], map, prio);
+  assert.deepEqual(withBp['dbp setup'], ['Bill payment']);
+  assert.deepEqual(withBp['dbp pay now'], ['Bill payment']);
+  // No other line ties to Bill payment: the next service that is in scope takes it.
+  const withoutBp = effectiveLineItemServices([{ description: 'DBP Setup' }, { description: 'Collections' }], map, prio);
+  assert.deepEqual(withoutBp['dbp setup'], ['Invoice collection']);
+  // Nothing else in scope: the first pick.
+  assert.deepEqual(effectiveLineItemServices([{ description: 'DBP Setup' }], map, prio)['dbp setup'], ['Bill payment']);
+  // Not flagged: shared by every service, as before.
+  assert.equal(effectiveLineItemServices([{ description: 'DBP Setup' }], map, {}), map);
+  // And the costs follow it.
+  const items = [{ description: 'DBP Setup' }, { description: 'Collections' }];
+  assert.deepEqual(costItemsForService(items, withBp, 'Invoice collection').map(i => i.description), ['Collections']);
 });
