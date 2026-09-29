@@ -28,6 +28,7 @@ import { CalculatorTab } from './CalculatorTab';
 import { ServicesTab } from './ServicesTab';
 import { SERVICE_RENAMED_EVENT } from '../../utils/serviceRenameRunner';
 import { renameLineItemServices, renameFeeStructures, renameWorkbookServices } from '../../utils/serviceRenamePlans';
+import { renameInLowerList, renameInLowerKeyMap } from '../../utils/serviceNameMerges';
 import { FeeBuilderTab } from './FeeBuilderTab';
 import { SiaHistoryTab } from './SiaHistoryTab';
 import { buildSiaHistoryEntry, siaKeyFacts } from '../../utils/siaHistoryEntry';
@@ -2307,6 +2308,19 @@ const OPTION_SERVICES_KEY = 'pricingOptionServices';
 // { structures: [{ id, name, rows }], standardId } }. Kept on their own
 // key so they carry across SIAs and survive Clear and parser bumps.
 const SERVICE_FEE_STRUCTURES_KEY = 'serviceFeeStructures';
+// Services marked completed on the Services subtab (their fee structure
+// is settled): a list of lower-cased service names. Kept on their own key
+// like the fee structures, so a new SIA, a Clear or a parser bump that
+// drops the cached workbook doesn't take the marks with it.
+const SERVICES_COMPLETED_KEY = 'servicesCompleted';
+// Cost lines left out of a service's price check (the In price check
+// tickbox): { [serviceKey]: [lineItemKey] }, by the line's description so
+// the pick holds on every option and carries to the next SIA.
+const PRICE_CHECK_EXCLUDED_KEY = 'priceCheckExcluded';
+// The rate card fee component each cost line is checked at (the Fee
+// component pick): { [serviceKey]: { [lineItemKey]: componentId } }, by
+// description for the same reason.
+const PRICE_CHECK_COMPONENTS_KEY = 'priceCheckComponentPicks';
 const OPTION_SERVICES_EVENT = 'pricing:optionServicesChanged';
 // Raw bytes of the most-recently uploaded SIA workbook so that
 // "Save to Opp" can attach the source file to the opp without
@@ -2384,6 +2398,9 @@ export function PricingView({ settings } = {}) {
   const [linkedToOptionsModal, setLinkedToOptionsModal] = useState(null); // { autoTags: string[] } - open state for the Linked To options manager
   const [lineItemServices, setLineItemServices] = useState({}); // { [lineItemKey]: string[] }
   const [serviceFeeStructures, setServiceFeeStructures] = useState({}); // see SERVICE_FEE_STRUCTURES_KEY
+  const [servicesCompleted, setServicesCompleted] = useState([]); // see SERVICES_COMPLETED_KEY
+  const [priceCheckExcluded, setPriceCheckExcluded] = useState({}); // see PRICE_CHECK_EXCLUDED_KEY
+  const [priceCheckComponentPicks, setPriceCheckComponentPicks] = useState({}); // see PRICE_CHECK_COMPONENTS_KEY
   // A service renamed elsewhere (see utils/serviceRenameRunner.js) is
   // applied to what this page holds too, or its next save would put the
   // old name back into the cache the rename just cleaned.
@@ -2393,6 +2410,9 @@ export function PricingView({ settings } = {}) {
       if (!from || !to) return;
       setLineItemServices(prev => renameLineItemServices(prev, from, to) || prev);
       setServiceFeeStructures(prev => renameFeeStructures(prev, from, to) || prev);
+      setServicesCompleted(prev => renameInLowerList(prev, from, to) || prev);
+      setPriceCheckExcluded(prev => renameInLowerKeyMap(prev, from, to) || prev);
+      setPriceCheckComponentPicks(prev => renameInLowerKeyMap(prev, from, to) || prev);
       setWorkbook(prev => renameWorkbookServices(prev, from, to) || prev);
     };
     window.addEventListener(SERVICE_RENAMED_EVENT, onRenamed);
@@ -2510,6 +2530,12 @@ export function PricingView({ settings } = {}) {
         if (!cancelled && savedFeeStructures && typeof savedFeeStructures === 'object') {
           setServiceFeeStructures(savedFeeStructures);
         }
+        const savedCompleted = await dbGet(STORE, SERVICES_COMPLETED_KEY);
+        if (!cancelled && Array.isArray(savedCompleted)) setServicesCompleted(savedCompleted);
+        const savedExcluded = await dbGet(STORE, PRICE_CHECK_EXCLUDED_KEY);
+        if (!cancelled && savedExcluded && typeof savedExcluded === 'object') setPriceCheckExcluded(savedExcluded);
+        const savedComponentPicks = await dbGet(STORE, PRICE_CHECK_COMPONENTS_KEY);
+        if (!cancelled && savedComponentPicks && typeof savedComponentPicks === 'object') setPriceCheckComponentPicks(savedComponentPicks);
         const savedLineItemPriority = await dbGet(STORE, LINE_ITEM_PRIORITY_KEY);
         if (!cancelled && savedLineItemPriority && typeof savedLineItemPriority === 'object') {
           setLineItemPriority(savedLineItemPriority);
@@ -2727,6 +2753,21 @@ export function PricingView({ settings } = {}) {
     if (!hydratedRef.current) return;
     dbPut(STORE, serviceFeeStructures, SERVICE_FEE_STRUCTURES_KEY).catch(err => console.warn('Failed to save service fee structures:', err));
   }, [serviceFeeStructures]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, servicesCompleted, SERVICES_COMPLETED_KEY).catch(err => console.warn('Failed to save completed services:', err));
+  }, [servicesCompleted]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, priceCheckExcluded, PRICE_CHECK_EXCLUDED_KEY).catch(err => console.warn('Failed to save price check picks:', err));
+  }, [priceCheckExcluded]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, priceCheckComponentPicks, PRICE_CHECK_COMPONENTS_KEY).catch(err => console.warn('Failed to save fee component picks:', err));
+  }, [priceCheckComponentPicks]);
 
   // Derive a per-Pricing-Option services bundle by walking each option's
   // line items, looking up their saved services in lineItemServices,
@@ -4969,12 +5010,18 @@ export function PricingView({ settings } = {}) {
     const { counts, fromSia } = priceCheckCounts(sia, enteredCounts);
     // Cost lines left out of the check for this service (the tickbox on the
     // Services subtab). Per service, since one line can cover several.
+    // Saved by the line's description (priceCheckExcluded), with the
+    // older per-option picks by line id still read.
     const ignoredIds = new Set(opt.priceCheckIgnored?.[want] || []);
-    items.forEach(it => { it.ignored = ignoredIds.has(it.id); });
+    const ignoredLines = new Set(priceCheckExcluded[want] || []);
+    items.forEach(it => { it.ignored = ignoredIds.has(it.id) || ignoredLines.has(norm(it.description)); });
     // The fee component each cost line was pointed at on the Services
     // subtab, for a rate card that prices a part on more than one.
+    // Saved by the line's description, the older per-option picks by id
+    // still read.
     const picks = opt.priceCheckComponents?.[want] || {};
-    items.forEach(it => { it.feeComponent = picks[it.id] || null; });
+    const linePicks = priceCheckComponentPicks[want] || {};
+    items.forEach(it => { it.feeComponent = linePicks[norm(it.description)] || picks[it.id] || null; });
     const rateCheck = rateCardCheck({
       items: items.filter(it => !it.ignored),
       entry: pricingFor(pricing, cardName, bases),
@@ -5009,66 +5056,97 @@ export function PricingView({ settings } = {}) {
     });
   }
 
-  // Leave a cost line out of (or put it back into) one service's price
-  // check on the active option.
   // Mark a service done (or not): its fee structure is established, which
-  // holds on every option, so the mark goes on (or comes off) all of them
-  // and the Services subtab lists it green whichever is open. Kept on the
-  // options, so it is saved and cleared with the workbook like the
-  // price-check picks.
+  // holds on every option and every SIA, so it is kept on its own key
+  // (SERVICES_COMPLETED_KEY) and the Services subtab lists it green
+  // whichever option or file is open.
   function setServiceCompleted(serviceName, on) {
     const k = String(serviceName ?? '').trim().toLowerCase();
     if (!k) return;
-    setWorkbook(prev => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        options: prev.options.map(o => {
-          const done = new Set(o.servicesCompleted || []);
-          if (on) done.add(k); else done.delete(k);
-          return { ...o, servicesCompleted: [...done] };
-        }),
-      };
+    setServicesCompleted(prev => {
+      const done = new Set(prev);
+      if (on) done.add(k); else done.delete(k);
+      return [...done];
     });
+    // Older marks were kept on the workbook's options; taking one off
+    // clears those too, or it would still read as done.
+    if (!on) {
+      setWorkbook(prev => {
+        if (!prev || !prev.options.some(o => (o.servicesCompleted || []).some(x => String(x).trim().toLowerCase() === k))) return prev;
+        return {
+          ...prev,
+          options: prev.options.map(o => ({ ...o, servicesCompleted: (o.servicesCompleted || []).filter(x => String(x).trim().toLowerCase() !== k) })),
+        };
+      });
+    }
   }
 
+  // Leave a cost line out of (or put it back into) one service's price
+  // check. Saved by the line's description, so it holds on every option
+  // and on the next SIA that carries the same line.
   function setPriceCheckIgnored(serviceName, itemId, ignored) {
     const k = String(serviceName ?? '').trim().toLowerCase();
-    setWorkbook(prev => {
-      if (!prev) return prev;
-      const target = prev.options.find(o => o.optionNumber === activeOption) || prev.options[0];
-      if (!target) return prev;
-      return {
-        ...prev,
-        options: prev.options.map(o => {
-          if (o !== target) return o;
-          const all = { ...(o.priceCheckIgnored || {}) };
-          const ids = new Set(all[k] || []);
-          if (ignored) ids.add(itemId); else ids.delete(itemId);
-          if (ids.size) all[k] = [...ids]; else delete all[k];
-          return { ...o, priceCheckIgnored: all };
-        }),
-      };
+    const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
+    const item = (opt?.sections || []).flatMap(sec => sec.items || []).find(it => it.id === itemId);
+    const line = String(item?.description ?? '').trim().toLowerCase();
+    if (!k || !line) return;
+    setPriceCheckExcluded(prev => {
+      const lines = new Set(prev[k] || []);
+      if (ignored) lines.add(line); else lines.delete(line);
+      const next = { ...prev };
+      if (lines.size) next[k] = [...lines]; else delete next[k];
+      return next;
     });
+    // Older picks were kept per option by line id; putting a line back
+    // clears those too.
+    if (!ignored) {
+      setWorkbook(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          options: prev.options.map(o => {
+            const ids = o.priceCheckIgnored?.[k];
+            if (!ids?.includes(itemId)) return o;
+            const all = { ...o.priceCheckIgnored };
+            const left = ids.filter(id => id !== itemId);
+            if (left.length) all[k] = left; else delete all[k];
+            return { ...o, priceCheckIgnored: all };
+          }),
+        };
+      });
+    }
   }
 
   // Point a cost line at one of the rate card's fee components for this
-  // service's price check ('' or null puts it back on Auto). Per service,
-  // on the active option, like the price-check tickbox.
+  // service's price check ('' or null puts it back on Auto). Saved by the
+  // line's description, like the price-check tickbox, so it holds on
+  // every option and on the next SIA that carries the same line.
   function setPriceCheckComponent(serviceName, itemId, componentId) {
     const k = String(serviceName ?? '').trim().toLowerCase();
+    const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
+    const item = (opt?.sections || []).flatMap(sec => sec.items || []).find(it => it.id === itemId);
+    const line = String(item?.description ?? '').trim().toLowerCase();
+    if (!k || !line) return;
+    setPriceCheckComponentPicks(prev => {
+      const picks = { ...(prev[k] || {}) };
+      if (componentId) picks[line] = componentId; else delete picks[line];
+      const next = { ...prev };
+      if (Object.keys(picks).length) next[k] = picks; else delete next[k];
+      return next;
+    });
+    // Older picks were kept per option by line id; the new pick replaces
+    // them, or putting it back on Auto would leave the old one showing.
     setWorkbook(prev => {
       if (!prev) return prev;
-      const target = prev.options.find(o => o.optionNumber === activeOption) || prev.options[0];
-      if (!target) return prev;
       return {
         ...prev,
         options: prev.options.map(o => {
-          if (o !== target) return o;
-          const all = { ...(o.priceCheckComponents || {}) };
-          const picks = { ...(all[k] || {}) };
-          if (componentId) picks[itemId] = componentId; else delete picks[itemId];
-          if (Object.keys(picks).length) all[k] = picks; else delete all[k];
+          const picks = o.priceCheckComponents?.[k];
+          if (!picks || !(itemId in picks)) return o;
+          const all = { ...o.priceCheckComponents };
+          const left = { ...picks };
+          delete left[itemId];
+          if (Object.keys(left).length) all[k] = left; else delete all[k];
           return { ...o, priceCheckComponents: all };
         }),
       };
@@ -5810,6 +5888,7 @@ export function PricingView({ settings } = {}) {
           onSetFeeComponent={setPriceCheckComponent}
           globalGmPct={globalGmPct}
           onSetCompleted={setServiceCompleted}
+          completedServices={servicesCompleted}
           feeStructures={serviceFeeStructures}
           setFeeStructures={setServiceFeeStructures}
           previewFeeRow={previewFeeStructureRow}

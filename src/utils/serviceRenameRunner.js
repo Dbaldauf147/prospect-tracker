@@ -33,6 +33,7 @@ import {
   planOppsRename, renameLineItemServices, renamePricingOptionServices, renameFeeStructures,
   renameWorkbookServices, renameClientScopeMap, renameEstimate, renamePipeline, renameHiddenBands,
 } from './serviceRenamePlans';
+import { renameInLowerList, renameInLowerKeyMap } from './serviceNameMerges';
 
 // Fired with { from, to } once a rename has been written, so a view holding
 // its own copy (Pricing, Opps) can apply it to what it has on screen rather
@@ -115,6 +116,12 @@ export async function renameServiceLocal(uid, { from, to }) {
     if (pos) await put('pricingOptionServices', pos);
     const fs = renameFeeStructures(await dbGet(PRICING_STORE, 'serviceFeeStructures'), from, to);
     if (fs) await put('serviceFeeStructures', fs);
+    const done = renameInLowerList(await dbGet(PRICING_STORE, 'servicesCompleted'), from, to);
+    if (done) await put('servicesCompleted', done);
+    for (const key of ['priceCheckExcluded', 'priceCheckComponentPicks']) {
+      const m = renameInLowerKeyMap(await dbGet(PRICING_STORE, key), from, to);
+      if (m) await put(key, m);
+    }
     const current = await dbGet(PRICING_STORE, 'current');
     if (current && typeof current === 'object') {
       const wb = renameWorkbookServices(current.workbook, from, to);
