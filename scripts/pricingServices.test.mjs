@@ -170,6 +170,33 @@ test('an upfront cost on a monthly fee is flagged until rolled, then spread over
   assert.equal(r.perRow[0].standardFee, 0.77); // 536 / 24 / 29
 });
 
+test('a monthly fee starting after its costs recovers them over the months it bills', () => {
+  const rows = [{ feeName: 'Program fee', type: 'Recurring (monthly)', unit: 'Fixed' }];
+  const costs = [bbsCosts[1]];
+  // Both from month 1, no escalators: the monthly price itself.
+  let r = standardFeesForStructure({ rows, costs, termMonths: 36 });
+  assert.equal(r.perRow[0].standardFee, 290);
+  // The fee bills from month 4 (its own Start Month, or the one the
+  // schedule would derive for it) while the cost runs all 36 months.
+  r = standardFeesForStructure({ rows: [{ ...rows[0], startMonth: 4 }], costs, termMonths: 36 });
+  assert.equal(r.perRow[0].standardFee, Math.round((290 * 36 / 33) * 100) / 100);
+  r = standardFeesForStructure({ rows, costs, termMonths: 36, feeStartMonth: () => 4 });
+  assert.equal(r.perRow[0].standardFee, Math.round((290 * 36 / 33) * 100) / 100);
+  assert.equal(r.perRow[0].startMonth, 4);
+  // A cost that starts later itself (billStartMonth) costs fewer months.
+  r = standardFeesForStructure({ rows, costs: [{ ...costs[0], startMonth: 4, billStartMonth: 1 }], termMonths: 36, feeStartMonth: () => 4 });
+  assert.equal(r.perRow[0].standardFee, Math.round((290 * 36 / 33) * 100) / 100);
+  r = standardFeesForStructure({ rows, costs: [{ ...costs[0], startMonth: 4 }], termMonths: 36, feeStartMonth: () => 4 });
+  assert.equal(r.perRow[0].standardFee, 290);
+  // Escalators are honoured the way the schedule's auto fee honours them:
+  // term fee revenue equals the cost's term price.
+  r = standardFeesForStructure({ rows, costs, termMonths: 36, feeStartMonth: () => 4, annualEscalator: 0.03, costEscalator: 0.04 });
+  const exact = r.perRow[0].exactFee;
+  const feeTerm = exact * (9 + 12 * 1.03 + 12 * 1.03 ** 2);
+  const costTerm = 290 * (12 + 12 * 1.04 + 12 * 1.04 ** 2);
+  assert.ok(Math.abs(feeTerm - costTerm) < 1e-6);
+});
+
 test('rolled and monthly costs add together on one monthly fee', () => {
   const rows = [{ feeName: 'All in', type: 'Recurring (monthly)', unit: 'Fixed' }];
   const allocations = { [bbsCosts[0].key]: { fee: 'all in', roll: true }, [bbsCosts[1].key]: { fee: 'All in' } };
