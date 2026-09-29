@@ -633,7 +633,10 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
       )}
 
       {hasWorkbook && detail?.rateCheck && (
-        <RateCheck check={detail.rateCheck} />
+        <RateCheck
+          check={detail.rateCheck}
+          ctsShare={optionCtsTotal > 0 ? (costTotal - ignoredTotal) / optionCtsTotal : null}
+        />
       )}
 
           <section className={styles.section}>
@@ -758,7 +761,7 @@ const fmtWhole = (n) => (typeof n === 'number' && Number.isFinite(n)
 
 // The service's first-year cost on the SIA, marked up, set against the
 // price range its Dropdowns › Services Pricing rate card quotes.
-function RateCheck({ check }) {
+function RateCheck({ check, ctsShare = null }) {
   const [cls, label] = RATE_BADGE[check.status];
   // A card that is one per-unit rate is read per unit: cost and price over
   // the same count, against the rate itself.
@@ -791,6 +794,20 @@ function RateCheck({ check }) {
     return list.map(c => `${c.label}${c.monthly ? ', monthly' : ''}${multiParts || pu?.part ? ` (${c.part})` : ''}`).join(', ');
   })();
 
+  // A card priced as a % of deal size, read against the service's share of
+  // the option's total CTS: the two percentages side by side, so the cut
+  // the card takes can be set against the cut of the cost this service is.
+  const pctLines = (check.parts || []).flatMap(pt => pt.cardLines).filter(b => b.kind === 'percent');
+  const pctShare = pctLines.length > 0 && typeof ctsShare === 'number' && Number.isFinite(ctsShare)
+    ? (() => {
+      const rates = pctLines.flatMap(b => [b.rate, b.rateHigh ?? b.rate]).map(Number).filter(Number.isFinite);
+      if (rates.length === 0) return null;
+      const lo = Math.min(...rates) / 100;
+      const hi = Math.max(...rates) / 100;
+      return { share: ctsShare, lo, hi, status: ctsShare < lo ? RATE_CHECK.BELOW : (ctsShare > hi ? RATE_CHECK.ABOVE : RATE_CHECK.WITHIN) };
+    })()
+    : null;
+
   return (
     <section className={styles.section}>
       <h4 className={styles.sectionTitle}>
@@ -806,6 +823,17 @@ function RateCheck({ check }) {
           <span className={styles.factKey}>Rate card{pu ? '' : ' range'}:</span>{' '}
           <span className={styles.rateFigure}>{check.noFee ? 'No fee' : (check.status === RATE_CHECK.INCOMPLETE && !(check.high > 0) ? 'Unknown' : (range ? `${range}${per}` : 'not set'))}</span>
         </span>
+        {pctShare && (
+          <span title="This service's Total CTS as a share of every cost line's CTS on the option, set against the % of deal size range on its rate card.">
+            <span className={styles.factKey}>Share of total CTS:</span>{' '}
+            <span className={styles.rateFigure}>{pct(pctShare.share)}</span>{' '}
+            <span className={styles.factKey}>vs rate card</span>{' '}
+            <span className={styles.rateFigure}>
+              {pct(pctShare.lo) === pct(pctShare.hi) ? pct(pctShare.lo) : `${pct(pctShare.lo)} – ${pct(pctShare.hi)}`}
+            </span>{' '}
+            <span className={styles[RATE_BADGE[pctShare.status][0]]}>{RATE_BADGE[pctShare.status][1]}</span>
+          </span>
+        )}
       </div>
       {pu && (
         <p className={styles.note}>
