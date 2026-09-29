@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import styles from './ServicesTab.module.css';
 import {
   SERVICE_STATUS, FEE_STRUCTURE_TYPES, FEE_STRUCTURE_UNITS, serviceKey,
@@ -1214,11 +1214,48 @@ function CheckCounts({ missing = [], used = [], entered = {}, fromSia = {}, onSe
 
 // Where the marked-up price lands on a line from $0, with the rate card
 // range shaded on it. Nothing to draw without a range above $0.
-function RateMeter({ check, fmt = fmtWhole, zero = '$0', priceName = 'Marked-up price' }) {
+function RateMeter(props) {
+  const { check } = props;
   if (check.low == null || check.price == null) return null;
+  if (Math.max(check.low, check.high) <= 0) return null;
+  return <RateMeterLine {...props} />;
+}
+
+// Lays the scale labels out left to right once their widths are known: each
+// sits centred on its mark where there is room, else is pushed just clear of
+// the one before it (and kept inside the line), so a range close to $0
+// never prints on top of the $0.
+function useNoOverlapLabels(scaleRef, deps) {
+  useLayoutEffect(() => {
+    const box = scaleRef.current;
+    if (!box) return undefined;
+    const place = () => {
+      const width = box.clientWidth;
+      const gap = 8;
+      let right = -Infinity;
+      for (const el of box.children) {
+        el.style.transform = 'none';
+        el.style.left = '0px';
+        const w = el.offsetWidth;
+        const want = el.dataset.anchor === 'start' ? 0 : (parseFloat(el.dataset.at) / 100) * width - w / 2;
+        const left = Math.max(0, Math.min(width - w, Math.max(want, right + gap)));
+        el.style.left = `${left}px`;
+        right = left + w;
+      }
+    };
+    place();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(place);
+    ro.observe(box);
+    return () => ro.disconnect();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+}
+
+function RateMeterLine({ check, fmt = fmtWhole, zero = '$0', priceName = 'Marked-up price' }) {
+  const scaleRef = useRef(null);
   const lo = Math.min(check.low, check.high);
   const hi = Math.max(check.low, check.high);
-  if (hi <= 0) return null;
   const max = Math.max(hi, check.price) * 1.15;
   const at = (v) => Math.max(0, Math.min(100, (v / max) * 100));
   // Keep a centred label from running off either end.
@@ -1229,6 +1266,7 @@ function RateMeter({ check, fmt = fmtWhole, zero = '$0', priceName = 'Marked-up 
   const single = fmt(lo) === fmt(hi);
   // Two range labels closer than this share one, so they never overlap.
   const joined = single || at(hi) - at(lo) < 18;
+  useNoOverlapLabels(scaleRef, [lo, hi, joined, single, zero, fmt]);
   const priceTip = check.cost == null ? `${priceName} ${fmt(check.price)}` : `${priceName} ${fmt(check.price)} (cost ${fmt(check.cost)})`;
   const rangeTip = single ? `Rate card: ${fmt(lo)}` : `Rate card range: ${fmt(lo)} – ${fmt(hi)}`;
   const track = (
@@ -1252,16 +1290,16 @@ function RateMeter({ check, fmt = fmtWhole, zero = '$0', priceName = 'Marked-up 
         </span>
       </div>
       {track}
-      <div className={styles.meterScale}>
-        <span className={styles.meterScaleLabel} style={{ left: 0, transform: 'none' }}>{zero}</span>
+      <div className={styles.meterScale} ref={scaleRef}>
+        <span className={styles.meterScaleLabel} data-anchor="start" style={{ left: 0, transform: 'none' }}>{zero}</span>
         {joined ? (
-          <span className={styles.meterScaleLabel} style={{ left: `${labelAt((lo + hi) / 2)}%` }}>
+          <span className={styles.meterScaleLabel} data-at={at((lo + hi) / 2)} style={{ left: `${labelAt((lo + hi) / 2)}%` }}>
             {single ? `Rate card ${fmt(lo)}` : `${fmt(lo)} – ${fmt(hi)}`}
           </span>
         ) : (
           <>
-            <span className={styles.meterScaleLabel} style={{ left: `${labelAt(lo)}%` }}>{fmt(lo)}</span>
-            <span className={styles.meterScaleLabel} style={{ left: `${labelAt(hi)}%` }}>{fmt(hi)}</span>
+            <span className={styles.meterScaleLabel} data-at={at(lo)} style={{ left: `${labelAt(lo)}%` }}>{fmt(lo)}</span>
+            <span className={styles.meterScaleLabel} data-at={at(hi)} style={{ left: `${labelAt(hi)}%` }}>{fmt(hi)}</span>
           </>
         )}
       </div>
