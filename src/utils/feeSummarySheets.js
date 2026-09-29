@@ -5,10 +5,12 @@
 //                            Fee line item, Type, Fee, Unit, Units, Start
 //                            Month, one row per schedule row (or, on the
 //                            Fee Builder's export, like lines combined).
-//   Pricing vs Fee Builder   the Pricing tab's schedule next to the one the
-//                            Fee Builder would build, fee by fee and year by
-//                            year, with the delta between them, so a
-//                            difference in fees or costs shows up.
+//   Cost deltas              every cost line on the option, the fee each
+//                            side logs it on and its term cost there, with
+//                            the option's cost year by year.
+//   Fee deltas               the Pricing tab's fees next to the ones the Fee
+//                            Builder would build, fee by fee and year by
+//                            year, with the delta between them.
 //
 // Both exports are fed the same two schedules (feeBuilderPlan's `beforeRows`
 // and `rows`), so the two files agree with each other. Rows look like
@@ -179,92 +181,157 @@ export function addFeeSummarySheet(wb, { rows: given = [], subtitle = '', title 
   return ws;
 }
 
-// Pricing vs Fee Builder: totals by year, then fee by fee.
-export function addFeeComparisonSheet(wb, { pricing, builder, numYears = 1, subtitle = '' } = {}) {
-  const nY = Math.max(1, numYears);
-  const yrs = Array.from({ length: nY }, (_, i) => i);
-  const ws = wb.addWorksheet('Pricing vs Fee Builder', {
+// A cost line on each side: the fee it is logged on, or null when no fee
+// on that side carries it (so its cost is not counted there). A cost is
+// logged on the fee named for it (its Fee Name / Automated Fee Name), the
+// way the Deal margin counts cost. `pricedInto` is the Fee Builder fee
+// whose standard fee was priced from the cost, which can be a fee the cost
+// is not logged on (a structure fee named differently from the SIA's).
+//   costLines  [{ lineItem, type, pricingFee, builderFee, pricedInto, byYear: [..] }]
+export function compareCostLines(costLines = []) {
+  return costLines.map(c => {
+    const total = sum(c.byYear);
+    const pricing = c.pricingFee ? total : 0;
+    const builder = c.builderFee ? total : 0;
+    let status = 'Match';
+    if (c.pricingFee && !c.builderFee) status = 'Only on Pricing tab';
+    else if (!c.pricingFee && c.builderFee) status = 'Only in Fee Builder';
+    else if (!c.pricingFee && !c.builderFee) status = 'On no fee in either';
+    if (!c.builderFee && c.pricedInto) status = `${status}; priced into "${c.pricedInto}" but not logged on it`;
+    else if (norm(c.pricingFee) !== norm(c.builderFee)) status = 'On a different fee';
+    return { ...c, pricing, builder, delta: builder - pricing, status, match: status === 'Match' || status === 'On no fee in either' };
+  });
+}
+
+const DIFF = 'FFFEF3C7';
+
+function sheetFor(wb, name, span, title, subtitle, widths) {
+  const ws = wb.addWorksheet(name, {
     properties: { tabColor: { argb: 'FF009530' } },
     views: [{ showGridLines: false }],
   });
-  const SPAN = 19;
-  ws.columns = [{ width: 34 }, ...Array.from({ length: SPAN - 1 }, () => ({ width: 13 }))];
-  let r = titleRows(ws, SPAN, 'Pricing tab vs Fee Builder', subtitle);
-
-  const band = (text) => {
-    ws.mergeCells(r, 1, r, SPAN);
-    const c = ws.getCell(r, 1);
+  ws.columns = widths.map(width => ({ width }));
+  const box = { r: titleRows(ws, span, title, subtitle) };
+  box.band = (text) => {
+    ws.mergeCells(box.r, 1, box.r, span);
+    const c = ws.getCell(box.r, 1);
     c.value = text;
     c.font = { name: FONT, size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
     c.fill = fill('FF009530');
     c.alignment = { vertical: 'middle', indent: 1 };
-    r++;
+    box.r++;
   };
-  const DIFF = 'FFFEF3C7';
+  box.groups = (groups) => {
+    for (const [label, from, to] of groups) {
+      if (to > from) ws.mergeCells(box.r, from, box.r, to);
+      const c = ws.getCell(box.r, from);
+      c.value = label;
+      c.font = { name: FONT, size: 10, bold: true, color: { argb: 'FF1E293B' } };
+      c.alignment = { horizontal: 'center' };
+      c.fill = fill('FFE2E8F0');
+    }
+    box.r++;
+  };
+  return { ws, box };
+}
 
-  // Totals, year by year.
-  band('Option totals');
-  writeRow(ws, r++, ['', ...yrs.map(i => `Y${i + 1}`), 'Term', 'Deal margin'].map(h => [h, null, h ? 'right' : 'left']), { header: true });
-  const pSide = pricing?.totals || { feeByYear: [], costByYear: [] };
-  const bSide = builder?.totals || { feeByYear: [], costByYear: [] };
-  const line = (label, vals, fmt, extra = [], opts = {}) => writeRow(ws, r++, [
-    [label], ...yrs.map(i => [num(vals[i]) ?? 0, fmt]), [sum(vals.slice(0, nY)), fmt], ...extra,
+// Pricing tab, Fee Builder and delta, year by year, for one figure.
+function yearlyBlock(ws, box, nY, label, pVals, bVals, extra = null) {
+  const yrs = Array.from({ length: nY }, (_, i) => i);
+  writeRow(ws, box.r++, ['', ...yrs.map(i => `Y${i + 1}`), 'Term', ...(extra ? [extra.header] : [])].map(h => [h, null, h ? 'right' : 'left']), { header: true });
+  const row = (name, vals, ex, opts) => writeRow(ws, box.r++, [
+    [name], ...yrs.map(i => [num(vals[i]) ?? 0, MONEY]), [sum(vals.slice(0, nY)), MONEY], ...(extra ? [[ex, extra.fmt]] : []),
   ], opts);
-  const marginOf = (t) => (typeof t?.margin?.finalMargin === 'number' ? t.margin.finalMargin : (typeof t?.margin === 'number' ? t.margin : null));
-  const deltaFee = yrs.map(i => (bSide.feeByYear[i] || 0) - (pSide.feeByYear[i] || 0));
-  const deltaCost = yrs.map(i => (bSide.costByYear[i] || 0) - (pSide.costByYear[i] || 0));
-  const pm = marginOf(pSide);
-  const bm = marginOf(bSide);
-  line('Fees, Pricing tab', pSide.feeByYear, MONEY, [[pm, PCT1]]);
-  line('Fees, Fee Builder', bSide.feeByYear, MONEY, [[bm, PCT1]]);
-  line('Fees, delta', deltaFee, MONEY, [[pm != null && bm != null ? bm - pm : null, PCT1]], { bold: true, shade: deltaFee.some(v => Math.abs(v) >= 0.5) ? DIFF : null });
-  line('Cost, Pricing tab', pSide.costByYear, MONEY, [['']]);
-  line('Cost, Fee Builder', bSide.costByYear, MONEY, [['']]);
-  line('Cost, delta', deltaCost, MONEY, [['']], { bold: true, shade: deltaCost.some(v => Math.abs(v) >= 0.5) ? DIFF : null });
-  const carried = (side) => sum((side?.rows || []).map(x => x.cost));
-  const pNoFee = sum(pSide.costByYear.slice(0, nY)) - carried(pricing);
-  const bNoFee = sum(bSide.costByYear.slice(0, nY)) - carried(builder);
-  r++;
-  writeRow(ws, r++, [['Term cost with no fee behind it'], ['Pricing tab', null, 'right'], [pNoFee, MONEY], ['Fee Builder', null, 'right'], [bNoFee, MONEY], ['Delta', null, 'right'], [bNoFee - pNoFee, MONEY]],
-    { shade: Math.abs(bNoFee - pNoFee) >= 0.5 ? DIFF : null });
-  r++;
+  const delta = yrs.map(i => (bVals[i] || 0) - (pVals[i] || 0));
+  row(`${label}, Pricing tab`, pVals, extra?.pricing ?? null);
+  row(`${label}, Fee Builder`, bVals, extra?.builder ?? null);
+  row(`${label}, delta`, delta, extra && extra.pricing != null && extra.builder != null ? extra.builder - extra.pricing : null,
+    { bold: true, shade: delta.some(v => Math.abs(v) >= 0.5) ? DIFF : null });
+}
 
-  // Fee by fee.
-  const cmp = compareFeeSchedules(pricing?.rows, builder?.rows);
-  const differ = cmp.filter(c => !c.match).length;
-  band(`Fee lines  ·  ${cmp.length} fee${cmp.length === 1 ? '' : 's'}, ${differ} with a delta`);
-  // Group labels over the three blocks.
-  const groups = [['Pricing tab', 2, 8], ['Fee Builder', 9, 15], ['Delta', 16, 18]];
-  for (const [label, from, to] of groups) {
-    ws.mergeCells(r, from, r, to);
-    const c = ws.getCell(r, from);
-    c.value = label;
-    c.font = { name: FONT, size: 10, bold: true, color: { argb: 'FF1E293B' } };
-    c.alignment = { horizontal: 'center' };
-    c.fill = fill('FFE2E8F0');
-  }
-  r++;
-  const side = ['Type', 'Fee', 'Unit', 'Units', 'Start Month', 'Term fees', 'Term cost'];
-  writeRow(ws, r++, [['Fee line item'], ...[...side, ...side, 'Fee', 'Term fees', 'Term cost', 'Status'].map(h => [h, null, 'right'])], { header: true });
-  const cellsOf = (s) => (s
-    ? [[s.type || '', null, 'right'], [typeof s.feePerUnit === 'number' ? s.feePerUnit : (s.feePerUnit ?? null), MONEY2], [s.unit || '', null, 'right'], [num(s.unitCount), INT], [s.startMonth ?? null, INT], [s.term, MONEY], [s.cost, MONEY]]
-    : Array.from({ length: 7 }, () => ['']));
-  for (const c of cmp) {
-    writeRow(ws, r++, [
-      [c.name],
-      ...cellsOf(c.pricing),
-      ...cellsOf(c.builder),
-      [c.feeDelta, MONEY2], [c.termDelta, MONEY], [c.costDelta, MONEY],
+// Cost deltas: every cost line on the option, the fee each side logs it on,
+// and what it costs over the term on each side. A cost only counts on a
+// side where a fee carries it, the same way the Deal margin counts it.
+export function addCostDeltaSheet(wb, { costLines = [], pricing, builder, numYears = 1, subtitle = '' } = {}) {
+  const nY = Math.max(1, numYears);
+  const SPAN = 9;
+  const { ws, box } = sheetFor(wb, 'Cost deltas', SPAN, 'Cost deltas: Pricing tab vs Fee Builder', subtitle,
+    [44, 20, 30, 14, 30, 14, 30, 14, 40]);
+  box.band('Option cost');
+  yearlyBlock(ws, box, nY, 'Cost', pricing?.totals?.costByYear || [], builder?.totals?.costByYear || []);
+  box.r++;
+
+  const cmp = compareCostLines(costLines);
+  const differ = cmp.filter(c => !c.match);
+  box.band(`Cost lines  ·  ${cmp.length} line${cmp.length === 1 ? '' : 's'}, ${differ.length} with a delta`);
+  box.groups([['Pricing tab', 3, 4], ['Fee Builder', 5, 7]]);
+  writeRow(ws, box.r++, ['Cost line item', 'Type', 'Logged on fee', 'Term cost', 'Logged on fee', 'Term cost', 'Priced into fee', 'Delta', 'Status']
+    .map((h, i) => [h, null, i === 3 || i === 5 || i === 7 ? 'right' : 'left']), { header: true });
+  // Lines with a delta first, biggest first, then the rest in their order.
+  const ordered = [...differ.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)), ...cmp.filter(c => c.match)];
+  for (const c of ordered) {
+    writeRow(ws, box.r++, [
+      [c.lineItem || '(unnamed line item)'],
+      [c.type || '', null, 'left'],
+      [c.pricingFee || 'No fee', null, 'left'],
+      [c.pricing, MONEY],
+      [c.builderFee || 'No fee', null, 'left'],
+      [c.builder, MONEY],
+      [c.pricedInto || '', null, 'left'],
+      [c.delta, MONEY],
       [c.status, null, 'left'],
+    ], { shade: c.match ? null : DIFF });
+  }
+  const tp = sum(cmp.map(c => c.pricing));
+  const tb = sum(cmp.map(c => c.builder));
+  writeRow(ws, box.r++, [['Total'], '', '', [tp, MONEY], '', [tb, MONEY], '', [tb - tp, MONEY], ''], { bold: true, shade: 'FFF6F9F4' });
+  return ws;
+}
+
+// Fee deltas: the option's fees year by year, then fee by fee.
+export function addFeeDeltaSheet(wb, { pricing, builder, numYears = 1, subtitle = '' } = {}) {
+  const nY = Math.max(1, numYears);
+  const SPAN = 16;
+  const { ws, box } = sheetFor(wb, 'Fee deltas', SPAN, 'Fee deltas: Pricing tab vs Fee Builder', subtitle,
+    [34, 20, 12, 13, 8, 8, 13, 20, 12, 13, 8, 8, 13, 12, 13, 30]);
+  const marginOf = (t) => (typeof t?.margin?.finalMargin === 'number' ? t.margin.finalMargin : (typeof t?.margin === 'number' ? t.margin : null));
+  box.band('Option fees');
+  yearlyBlock(ws, box, nY, 'Fees', pricing?.totals?.feeByYear || [], builder?.totals?.feeByYear || [],
+    { header: 'Deal margin', fmt: PCT1, pricing: marginOf(pricing?.totals), builder: marginOf(builder?.totals) });
+  box.r++;
+
+  const cmp = compareFeeSchedules(pricing?.rows, builder?.rows).map(c => {
+    // Fees only here: a difference in the cost behind a fee is on the
+    // Cost deltas sheet.
+    const reasons = c.pricing && c.builder ? c.status.replace(/^Differs: /, '').split(', ').filter(x => x !== 'Term cost') : [];
+    const status = c.pricing && c.builder ? (reasons.length ? `Differs: ${reasons.join(', ')}` : 'Match') : c.status;
+    return { ...c, status, match: status === 'Match' };
+  });
+  const differ = cmp.filter(c => !c.match).length;
+  box.band(`Fee lines  ·  ${cmp.length} fee${cmp.length === 1 ? '' : 's'}, ${differ} with a delta`);
+  box.groups([['Pricing tab', 2, 7], ['Fee Builder', 8, 13], ['Delta', 14, 15]]);
+  const side = ['Type', 'Fee', 'Unit', 'Units', 'Start Month', 'Term fees'];
+  writeRow(ws, box.r++, [['Fee line item'], ...[...side, ...side, 'Fee', 'Term fees', 'Status']
+    .map(h => [h, null, h === 'Type' || h === 'Status' ? 'left' : 'right'])], { header: true });
+  const cellsOf = (x) => (x
+    ? [[x.type || '', null, 'left'], [typeof x.feePerUnit === 'number' ? x.feePerUnit : (x.feePerUnit ?? null), MONEY2, 'right'], [x.unit || '', null, 'right'], [num(x.unitCount), INT], [x.startMonth ?? null, INT, 'right'], [x.term, MONEY]]
+    : Array.from({ length: 6 }, () => ['']));
+  for (const c of cmp) {
+    writeRow(ws, box.r++, [
+      [c.name], ...cellsOf(c.pricing), ...cellsOf(c.builder),
+      [c.feeDelta, MONEY2], [c.termDelta, MONEY], [c.status, null, 'left'],
     ], { shade: c.match ? null : DIFF });
   }
   const tp = sum((pricing?.rows || []).map(x => x.term));
   const tb = sum((builder?.rows || []).map(x => x.term));
-  const cp = carried(pricing);
-  const cb = carried(builder);
-  writeRow(ws, r++, [
-    ['Total'], '', '', '', '', '', [tp, MONEY], [cp, MONEY], '', '', '', '', '', [tb, MONEY], [cb, MONEY], '', [tb - tp, MONEY], [cb - cp, MONEY], '',
+  writeRow(ws, box.r++, [
+    ['Total'], '', '', '', '', '', [tp, MONEY], '', '', '', '', '', [tb, MONEY], '', [tb - tp, MONEY], '',
   ], { bold: true, shade: 'FFF6F9F4' });
-  ws.getColumn(SPAN).width = 34;
   return ws;
+}
+
+// Both comparison sheets, costs then fees.
+export function addFeeComparisonSheet(wb, opts = {}) {
+  addCostDeltaSheet(wb, opts);
+  addFeeDeltaSheet(wb, opts);
 }

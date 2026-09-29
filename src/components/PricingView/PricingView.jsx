@@ -4594,6 +4594,7 @@ export function PricingView({ settings } = {}) {
       await downloadPricingMarginWorkbook({
         feeSummaryRows: plan?.beforeRows || [],
         comparison: plan ? {
+          costLines: plan.costLines,
           pricing: { rows: plan.beforeRows, totals: plan.before },
           builder: { rows: plan.rows, totals: plan.after },
         } : null,
@@ -5343,6 +5344,32 @@ export function PricingView({ settings } = {}) {
         return { ...rest, cost, margin: row.term > 0 ? (row.term - cost) / row.term : null };
       });
     const rows = rowsOf(built.rows);
+    // Every cost line on the option and the fee it is logged on on each
+    // side (by its fee name, as the Deal margin counts cost), plus the
+    // built fee priced from it, for the exports' Cost deltas sheet.
+    const loggedOn = (list) => {
+      const m = new Map();
+      for (const r of list) {
+        const k = String(r?.altItem || '').trim().toLowerCase();
+        if (k && !m.has(k)) m.set(k, String(r.altItem).trim());
+      }
+      return m;
+    };
+    const beforeNames = loggedOn(schedule);
+    const afterNames = loggedOn(built.rows);
+    const pricedBy = new Map();
+    for (const r of built.rows) for (const id of r.costIds || []) if (!pricedBy.has(id)) pricedBy.set(id, String(r.altItem || '').trim());
+    const costLines = [...itemById.values()].map(item => {
+      const k = String(mappingNameFor(item) || '').trim().toLowerCase();
+      return {
+        lineItem: item.description || '',
+        type: effectiveType(item),
+        pricingFee: (k && beforeNames.get(k)) || null,
+        builderFee: (k && afterNames.get(k)) || null,
+        pricedInto: pricedBy.get(item.id) || null,
+        byYear: Array.from({ length: numYears }, (_, yi) => ctsItemYearCost(item, yi + 1)),
+      };
+    });
     const totals = (list) => {
       const { costByYear } = optionCostBreakdown(opt, list);
       const feeByYear = Array.from({ length: numYears }, (_, yi) => list.reduce((s, r) => s + altFeeYearRevenue(r, yi + 1), 0));
@@ -5355,6 +5382,7 @@ export function PricingView({ settings } = {}) {
       services,
       rows,
       beforeRows: rowsOf(schedule),
+      costLines,
       nextSchedule: built.rows.map(r => { const { costIds: _costIds, ...rest } = r; return rest; }),
       perService: built.perService,
       shared: built.shared,
