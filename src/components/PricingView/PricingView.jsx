@@ -2650,11 +2650,12 @@ export function PricingView({ settings } = {}) {
   }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, feeDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData, s2cLineItemTags]);
 
   // Fees the Fee Builder or a structure's Apply wrote from a standard fee
-  // carry a gmLink; they re-price here when the Global GM% moves, so the
-  // schedule, its totals and Deal margin follow the margin box.
+  // carry a gmLink; they re-price here when the Global GM%, the Escalator,
+  // the Cost Esc. or the term moves, so the schedule, its totals and Deal
+  // margin follow the boxes at the top of the page.
   useEffect(() => {
-    setAltFees(prev => repriceLinkedFees(prev, globalGmPct));
-  }, [globalGmPct]);
+    setAltFees(prev => repriceLinkedFees(prev, globalGmPct, { feeEscalator: annualEscalator, costEscalator, termMonths }));
+  }, [globalGmPct, annualEscalator, costEscalator, termMonths]);
 
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
@@ -5387,7 +5388,12 @@ export function PricingView({ settings } = {}) {
       // A typed fee the row already carries (the schedule built with it) is
       // no longer an override.
       const next = typeof v === 'number' && Number.isFinite(v) && v >= 0 && !(r.fee !== '' && r.fee != null && Number(r.fee) === v)
-        ? { ...r, fee: v } : r;
+        ? (() => {
+          // A typed fee is the user's price: it stops following the Global
+          // GM% and the escalators.
+          const { gmLink: _gmLink, ...rest } = r;
+          return { ...rest, fee: v };
+        })() : r;
       if (next !== r) {
         fromService.set(next, fromService.get(r));
         for (const ps of built.perService) ps.added = ps.added.map(x => (x === r ? next : x));
