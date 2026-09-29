@@ -105,6 +105,7 @@ async function exportPlan(plan) {
   }
 
   addFeeComparisonSheet(wb, {
+    costLines: plan.costLines || [],
     pricing: { rows: plan.beforeRows || [], totals: plan.before },
     builder: { rows: plan.rows, totals: plan.after },
     numYears,
