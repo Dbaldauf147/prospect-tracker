@@ -265,6 +265,15 @@ export function applyFeeStructureToSchedule(schedule, structureRows, { replaceNa
 //                 fee is a lowercased fee name, '' for "not covered", or
 //                 absent for the default
 //   termMonths    the deal term
+//   startMonthFor (altRow) => the month a row with no Start Month of its own
+//                 bills from on the schedule (its fee's saved default, or its
+//                 costs' earliest), so the standard fee is priced over the
+//                 months the fee actually bills. Rows fall back to month 1.
+//
+// A fee that starts after a monthly cost it covers misses the cost's first
+// months. The standard fee catches them up: the cost's months over the
+// term, spread over the fee's months (a $100 cost from month 1 on a fee
+// from month 4 of 36 bills $100 x 36 / 33), so the term still recovers it.
 
 export const COST_BUCKET_UPFRONT = 'upfront';
 export const COST_BUCKET_RECURRING = 'recurring';
@@ -334,8 +343,14 @@ export function feeBucket(type) {
   return '';
 }
 
-export function standardFeesForStructure({ rows = [], costs = [], allocations = {}, termMonths = 36, siteCount, accountCount } = {}) {
+export function standardFeesForStructure({ rows = [], costs = [], allocations = {}, termMonths = 36, siteCount, accountCount, startMonthFor } = {}) {
   const names = rows.map(r => norm(r?.feeName));
+  const alts = rows.map(r => feeStructureRowToAltRow(r, { siteCount, accountCount }));
+  const rowStartOf = (ri) => {
+    const own = Number(alts[ri]?.startMonth);
+    const auto = own > 0 ? own : Number(startMonthFor?.(alts[ri]));
+    return Math.max(1, Math.round(auto > 0 ? auto : 1));
+  };
   const perRow = rows.map(() => ({ standardFee: null, costIdx: [], monthlyTotal: 0, upfrontTotal: 0 }));
   const costOut = costs.map((c) => {
     const a = allocations?.[c.key];
@@ -380,19 +395,21 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
     // earlier year is collected before it is spent. Flagged, not dropped:
     // "Add fees for later costs" gives it a fee of its own.
     const costStart = Math.round(Number(c.startMonth) || 1);
-    const rowStart = row ? Math.round(Number(row.startMonth) || 1) : 1;
+    const rowStart = row ? rowStartOf(rowIdx) : 1;
     const later = costStart > FIRST_YEAR_MONTHS;
     const billedEarly = later && !!row && yearOfMonth(rowStart) < yearOfMonth(costStart);
-    return { key: c.key, rowIdx, defaulted, fellBack, bucket, feeBucket: fb, canRoll, rolled, issue, price: c.price, startMonth: costStart, later, billedEarly };
+    return { key: c.key, rowIdx, defaulted, fellBack, bucket, feeBucket: fb, canRoll, rolled, issue, price: c.price, startMonth: costStart, later, billedEarly, catchUpMonths: 0 };
   });
 
+  const term = Math.max(1, Math.round(termMonths));
   rows.forEach((row, ri) => {
-    const alt = feeStructureRowToAltRow(row, { siteCount, accountCount });
+    const alt = alts[ri];
     const units = alt.unitCount > 0 ? alt.unitCount : 1;
     const fb = feeBucket(row?.type);
-    const start = Math.max(1, Math.round(alt.startMonth || 1));
-    const rollMonths = Math.max(1, Math.round(termMonths) - start + 1);
+    const start = rowStartOf(ri);
+    const rollMonths = Math.max(1, term - start + 1);
     const agg = perRow[ri];
+    agg.startMonth = start;
     let any = false;
     costOut.forEach((co, ci) => {
       if (co.rowIdx !== ri) return;
@@ -401,7 +418,15 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
       if (typeof price !== 'number' || !Number.isFinite(price) || co.issue) return;
       const effBucket = fb || co.feeBucket;
       if (effBucket === COST_BUCKET_RECURRING) {
-        if (co.bucket === COST_BUCKET_RECURRING) { agg.monthlyTotal += price; any = true; }
+        if (co.bucket === COST_BUCKET_RECURRING) {
+          // Months the cost runs before the fee starts are caught up over
+          // the months the fee bills.
+          const costMonths = Math.max(0, term - co.startMonth + 1);
+          const catchUp = co.startMonth < start && costMonths > rollMonths;
+          co.catchUpMonths = catchUp ? start - co.startMonth : 0;
+          agg.monthlyTotal += catchUp ? price * costMonths / rollMonths : price;
+          any = true;
+        }
         else if (co.rolled) { agg.monthlyTotal += price / rollMonths; any = true; }
       } else if (effBucket === COST_BUCKET_UPFRONT && co.bucket === COST_BUCKET_UPFRONT) {
         agg.upfrontTotal += price;
@@ -572,10 +597,10 @@ export function feeStructureCostInputs(costs) {
 // linked fee from it whenever the Global GM% changes (feeAtGm), so a
 // built fee keeps following the margin instead of freezing at the one it
 // was built at.
-export function standardFeeContext(structure, costs, { termMonths = 36, siteCount, accountCount } = {}) {
+export function standardFeeContext(structure, costs, { termMonths = 36, siteCount, accountCount, startMonthFor } = {}) {
   const rows = structure?.rows || [];
   const costInputs = feeStructureCostInputs(costs);
-  const opts = { rows, allocations: structure?.allocations || {}, termMonths, siteCount, accountCount };
+  const opts = { rows, allocations: structure?.allocations || {}, termMonths, siteCount, accountCount, startMonthFor };
   const std = standardFeesForStructure({ ...opts, costs: costInputs });
   const standardFee = (idx) => std.perRow[idx]?.standardFee ?? null;
   const linkable = (costs || []).some(c => typeof c?.priceAtCost === 'number');
