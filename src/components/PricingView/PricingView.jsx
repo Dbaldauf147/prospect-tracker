@@ -4586,7 +4586,17 @@ export function PricingView({ settings } = {}) {
       totals.margin = totals.termRevenue > 0
         ? (totals.termRevenue - totals.termCost) / totals.termRevenue : null;
 
+      // The schedule as the Fee Builder would build it, for the Fee
+      // Summary and the Pricing vs Fee Builder sheets (the Fee Builder's
+      // own export carries the same two).
+      const plan = feeBuilderPlan();
+
       await downloadPricingMarginWorkbook({
+        feeSummaryRows: plan?.beforeRows || [],
+        comparison: plan ? {
+          pricing: { rows: plan.beforeRows, totals: plan.before },
+          builder: { rows: plan.rows, totals: plan.after },
+        } : null,
         generatedAt: new Date(),
         fileName: workbook?.fileName || '',
         optionName: optNow.sheetName || `Option ${optNow.optionNumber}`,
@@ -5279,30 +5289,35 @@ export function PricingView({ settings } = {}) {
     // Each row's term cost: the cost lines its structure row prices, or,
     // for a row already on the schedule, the lines carrying its fee name
     // that no built row took, shared across those rows by their fees.
+    // The Pricing tab's own schedule is read the same way (no row there
+    // carries costIds), so the exports can compare the two.
     const itemById = new Map();
     for (const sec of opt.sections || []) for (const item of sec.items || []) itemById.set(item.id, item);
-    const claimed = new Set(built.rows.flatMap(r => r.costIds || []));
-    const nameCost = new Map();
-    for (const item of itemById.values()) {
-      if (claimed.has(item.id)) continue;
-      const k = String(mappingNameFor(item) || '').trim().toLowerCase();
-      if (k) nameCost.set(k, (nameCost.get(k) || 0) + ctsItemTermCost(item));
-    }
     const termOf = (r) => Array.from({ length: numYears }, (_, yi) => altFeeYearRevenue(r, yi + 1)).reduce((a, b) => a + b, 0);
-    const nameTerm = new Map();
-    for (const r of built.rows) {
-      if (r.costIds) continue;
-      const k = String(r?.altItem || '').trim().toLowerCase();
-      if (k) nameTerm.set(k, (nameTerm.get(k) || 0) + termOf(r));
-    }
-    const rowCost = (r, term) => {
-      if (r.costIds) return r.costIds.reduce((s, id) => s + (itemById.has(id) ? ctsItemTermCost(itemById.get(id)) : 0), 0);
-      const k = String(r?.altItem || '').trim().toLowerCase();
-      const all = nameCost.get(k) || 0;
-      const share = nameTerm.get(k) > 0 ? term / nameTerm.get(k) : 1;
-      return all * share;
+    const rowsOf = (list) => {
+      const claimed = new Set(list.flatMap(r => r.costIds || []));
+      const nameCost = new Map();
+      for (const item of itemById.values()) {
+        if (claimed.has(item.id)) continue;
+        const k = String(mappingNameFor(item) || '').trim().toLowerCase();
+        if (k) nameCost.set(k, (nameCost.get(k) || 0) + ctsItemTermCost(item));
+      }
+      const nameTerm = new Map();
+      for (const r of list) {
+        if (r.costIds) continue;
+        const k = String(r?.altItem || '').trim().toLowerCase();
+        if (k) nameTerm.set(k, (nameTerm.get(k) || 0) + termOf(r));
+      }
+      const rowCost = (r, term) => {
+        if (r.costIds) return r.costIds.reduce((s, id) => s + (itemById.has(id) ? ctsItemTermCost(itemById.get(id)) : 0), 0);
+        const k = String(r?.altItem || '').trim().toLowerCase();
+        const all = nameCost.get(k) || 0;
+        const share = nameTerm.get(k) > 0 ? term / nameTerm.get(k) : 1;
+        return all * share;
+      };
+      return scheduleRows(list, rowCost);
     };
-    const rows = built.rows
+    const scheduleRows = (list, rowCost) => list
       .filter(r => String(r?.altItem || '').trim())
       .map(r => {
         const manual = Number(r.fee);
@@ -5328,6 +5343,7 @@ export function PricingView({ settings } = {}) {
         const { _src, ...rest } = row;
         return { ...rest, cost, margin: row.term > 0 ? (row.term - cost) / row.term : null };
       });
+    const rows = rowsOf(built.rows);
     const totals = (list) => {
       const { costByYear } = optionCostBreakdown(opt, list);
       const feeByYear = Array.from({ length: numYears }, (_, yi) => list.reduce((s, r) => s + altFeeYearRevenue(r, yi + 1), 0));
@@ -5339,6 +5355,7 @@ export function PricingView({ settings } = {}) {
       numYears,
       services,
       rows,
+      beforeRows: rowsOf(schedule),
       nextSchedule: built.rows.map(r => { const { costIds: _costIds, ...rest } = r; return rest; }),
       perService: built.perService,
       shared: built.shared,
