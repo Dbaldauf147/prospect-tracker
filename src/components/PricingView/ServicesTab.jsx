@@ -762,7 +762,6 @@ const fmtWhole = (n) => (typeof n === 'number' && Number.isFinite(n)
 // The service's first-year cost on the SIA, marked up, set against the
 // price range its Dropdowns › Services Pricing rate card quotes.
 function RateCheck({ check, ctsShare = null }) {
-  const [cls, label] = RATE_BADGE[check.status];
   // A card that is one per-unit rate is read per unit: cost and price over
   // the same count, against the rate itself.
   const pu = check.perUnit;
@@ -807,6 +806,27 @@ function RateCheck({ check, ctsShare = null }) {
       return { share: ctsShare, lo, hi, status: ctsShare < lo ? RATE_CHECK.BELOW : (ctsShare > hi ? RATE_CHECK.ABOVE : RATE_CHECK.WITHIN) };
     })()
     : null;
+  // Every cost is marked up the same, so the service's share of the cost is
+  // its share of the price. On a card that is nothing but a % of deal size,
+  // that share is the check: the deal size it waits on would only scale
+  // both sides. A card with other components keeps its own verdict, the
+  // share shown beside it.
+  const pctOnly = !!pctShare
+    && (check.parts || []).every(pt => pt.cardLines.every(b => b.kind === 'percent'))
+    && (check.missing || []).every(m => m.key === 'dealSize');
+  const status = pctOnly ? pctShare.status : check.status;
+  const [cls, label] = RATE_BADGE[status];
+  const pctRange = pctShare
+    ? (pct(pctShare.lo) === pct(pctShare.hi) ? pct(pctShare.lo) : `${pct(pctShare.lo)} – ${pct(pctShare.hi)}`)
+    : '';
+  const pctMeter = pctShare && (
+    <RateMeter
+      check={{ status: pctShare.status, low: pctShare.lo, high: pctShare.hi, price: pctShare.share, cost: null }}
+      fmt={pct}
+      zero="0%"
+      priceName="Share of total CTS"
+    />
+  );
 
   return (
     <section className={styles.section}>
@@ -821,16 +841,20 @@ function RateCheck({ check, ctsShare = null }) {
         )}
         <span>
           <span className={styles.factKey}>Rate card{pu ? '' : ' range'}:</span>{' '}
-          <span className={styles.rateFigure}>{check.noFee ? 'No fee' : (check.status === RATE_CHECK.INCOMPLETE && !(check.high > 0) ? 'Unknown' : (range ? `${range}${per}` : 'not set'))}</span>
+          <span className={styles.rateFigure}>{check.noFee ? 'No fee' : (pctOnly ? `${pctRange} of deal size` : (check.status === RATE_CHECK.INCOMPLETE && !(check.high > 0) ? 'Unknown' : (range ? `${range}${per}` : 'not set')))}</span>
         </span>
-        {pctShare && (
+        {pctOnly && (
+          <span title="This service's Total CTS as a share of every cost line's CTS on the option. Every cost is marked up the same, so it is also the service's share of the price.">
+            <span className={styles.factKey}>Share of total CTS:</span>{' '}
+            <span className={styles.rateFigure}>{pct(pctShare.share)}</span>
+          </span>
+        )}
+        {pctShare && !pctOnly && (
           <span title="This service's Total CTS as a share of every cost line's CTS on the option, set against the % of deal size range on its rate card.">
             <span className={styles.factKey}>Share of total CTS:</span>{' '}
             <span className={styles.rateFigure}>{pct(pctShare.share)}</span>{' '}
             <span className={styles.factKey}>vs rate card</span>{' '}
-            <span className={styles.rateFigure}>
-              {pct(pctShare.lo) === pct(pctShare.hi) ? pct(pctShare.lo) : `${pct(pctShare.lo)} – ${pct(pctShare.hi)}`}
-            </span>{' '}
+            <span className={styles.rateFigure}>{pctRange}</span>{' '}
             <span className={styles[RATE_BADGE[pctShare.status][0]]}>{RATE_BADGE[pctShare.status][1]}</span>
           </span>
         )}
@@ -841,9 +865,27 @@ function RateCheck({ check, ctsShare = null }) {
           {check.leftOut?.length > 0 && ` Also on the rate card but not in this check, the SIA having no cost for it: ${check.leftOut.map(b => `${b.basisLabel} (${fmtMoneyRange(b.fee, b.feeHigh)})`).join(', ')}.`}
         </p>
       )}
-      {componentMeters(check.parts) || <RateMeter check={shown} fmt={fmt} />}
+      {pctOnly ? pctMeter : (
+        <>
+          {componentMeters(check.parts) || <RateMeter check={shown} fmt={fmt} />}
+          {pctShare && (
+            <div className={styles.meterStack}>
+              <div>
+                <div className={styles.meterLabel}>% of deal size, against the share of total CTS</div>
+                {pctMeter}
+              </div>
+            </div>
+          )}
+        </>
+      )}
       <FeeComponents parts={check.parts} />
-      {(check.status === RATE_CHECK.INCOMPLETE || check.status === RATE_CHECK.UNPRICED) && (
+      {pctOnly && (
+        <p className={styles.note}>
+          Priced as a % of deal size, so this service is checked on its share of the option's total CTS
+          ({pct(pctShare.share)}). Every cost is marked up the same, so that is also its share of the price.
+        </p>
+      )}
+      {!pctOnly && (check.status === RATE_CHECK.INCOMPLETE || check.status === RATE_CHECK.UNPRICED) && (
         <p className={styles.note}>
           {check.status === RATE_CHECK.INCOMPLETE
             ? `Part of this service's rate card is priced on ${check.missing.map(m => m.label.toLowerCase()).join(' and ')}, which the SIA doesn't carry, so the range ${check.high > 0 ? 'reads low and' : 'is unknown and'} isn't judged until it's filled in.`
@@ -1071,7 +1113,7 @@ function CheckCounts({ missing = [], used = [], entered = {}, fromSia = {}, onSe
 
 // Where the marked-up price lands on a line from $0, with the rate card
 // range shaded on it. Nothing to draw without a range above $0.
-function RateMeter({ check, fmt = fmtWhole }) {
+function RateMeter({ check, fmt = fmtWhole, zero = '$0', priceName = 'Marked-up price' }) {
   if (check.low == null || check.price == null) return null;
   const lo = Math.min(check.low, check.high);
   const hi = Math.max(check.low, check.high);
@@ -1086,7 +1128,7 @@ function RateMeter({ check, fmt = fmtWhole }) {
   const single = fmt(lo) === fmt(hi);
   // Two range labels closer than this share one, so they never overlap.
   const joined = single || at(hi) - at(lo) < 18;
-  const priceTip = `Marked-up price ${fmt(check.price)} (cost ${fmt(check.cost)})`;
+  const priceTip = check.cost == null ? `${priceName} ${fmt(check.price)}` : `${priceName} ${fmt(check.price)} (cost ${fmt(check.cost)})`;
   const rangeTip = single ? `Rate card: ${fmt(lo)}` : `Rate card range: ${fmt(lo)} – ${fmt(hi)}`;
   const track = (
     <div className={styles.meterTrack}>
@@ -1095,7 +1137,9 @@ function RateMeter({ check, fmt = fmtWhole }) {
         style={single ? { left: `${at(lo)}%` } : { left: `${at(lo)}%`, width: `${at(hi) - at(lo)}%` }}
         title={rangeTip}
       />
-      <div className={styles.meterCost} style={{ left: `${at(check.cost)}%` }} title={`Cost ${fmt(check.cost)}`} />
+      {check.cost != null && (
+        <div className={styles.meterCost} style={{ left: `${at(check.cost)}%` }} title={`Cost ${fmt(check.cost)}`} />
+      )}
       <div className={`${styles.meterDot} ${tone}`} style={{ left: `${at(check.price)}%` }} title={priceTip} />
     </div>
   );
@@ -1108,7 +1152,7 @@ function RateMeter({ check, fmt = fmtWhole }) {
       </div>
       {track}
       <div className={styles.meterScale}>
-        <span className={styles.meterScaleLabel} style={{ left: 0, transform: 'none' }}>$0</span>
+        <span className={styles.meterScaleLabel} style={{ left: 0, transform: 'none' }}>{zero}</span>
         {joined ? (
           <span className={styles.meterScaleLabel} style={{ left: `${labelAt((lo + hi) / 2)}%` }}>
             {single ? `Rate card ${fmt(lo)}` : `${fmt(lo)} – ${fmt(hi)}`}
