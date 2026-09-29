@@ -107,6 +107,52 @@ function FeeCell({ value, overridden, builtFee, onCommit, label }) {
   );
 }
 
+// A Unit Count that can be typed over, the same way as FeeCell: the fee per
+// unit stays and bills on the new count. A cleared box puts the built count
+// back.
+function UnitCountCell({ value, overridden, builtCount, onCommit, label }) {
+  const [draft, setDraft] = useState(null);
+  const shown = draft ?? (value ?? '');
+  const commit = () => {
+    if (draft == null) return;
+    const t = draft.replace(/[,\s]/g, '');
+    setDraft(null);
+    if (t === '') { onCommit(null); return; }
+    const n = Number(t);
+    if (Number.isFinite(n) && n > 0) onCommit(n);
+  };
+  const built = builtCount != null && builtCount !== '' ? builtCount : null;
+  return (
+    <div className={own.feeCell}>
+      <input
+        className={`${own.feeInput} ${overridden ? own.feeInputTyped : ''}`}
+        inputMode="decimal"
+        value={shown}
+        aria-label={`Unit count for ${label}`}
+        title={overridden
+          ? `Typed over${built != null ? `, built at ${built}` : ''}. Clear it to put the built count back.`
+          : 'Type a unit count to override the built one. The fee per unit stays; the years, margin and totals follow it.'}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          // Live: a whole number typed so far bills straight away.
+          const n = Number(e.target.value.replace(/[,\s]/g, ''));
+          if (e.target.value.trim() !== '' && Number.isFinite(n) && n > 0) onCommit(n);
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur(); }
+        }}
+      />
+      {overridden && (
+        <button type="button" className={own.resetBtn} onClick={() => { setDraft(null); onCommit(null); }} title={`Put the built count back${built != null ? ` (${built})` : ''}`}>
+          ↺
+        </button>
+      )}
+    </div>
+  );
+}
+
 // The as-built schedule as a workbook: a fee several services share is one
 // line with a grouped (collapsible) sub-row per service under it, then the
 // total and the option's totals now and as built. Group lines and totals
@@ -260,7 +306,7 @@ export function FeeBuilderTab({
   const yearIdx = Array.from({ length: numYears }, (_, i) => i);
   const building = plan?.perService?.length || 0;
   const covered = coveredByFee(plan?.shared);
-  const typedCount = (plan?.rows || []).filter(r => r.overridden).length;
+  const typedCount = (plan?.rows || []).filter(r => r.overridden || r.unitsOverridden).length;
   const canType = !!setFeeOverrides && !!plan;
   // One row's fee typed over, or put back (null).
   const setFee = (updates) => setFeeOverrides?.(plan.optionNumber, prev => {
@@ -440,11 +486,12 @@ export function FeeBuilderTab({
           {flash && <div className={styles.flash}>{flash}</div>}
           <p className={styles.note}>
             A preview. Nothing changes on the Pricing subtab until you build it. Every row comes from a service&apos;s
-            picked structure on the Services subtab. Type over a Fee / Unit to override it; the
-            years, margins and totals follow. A grouped fee shares the typed total across its rows.
+            picked structure on the Services subtab. Type over a Fee / Unit or a Unit Count to override it; the
+            years, margins and totals follow. A grouped fee shares the typed total across its rows, and a typed
+            count goes on each of them.
             {typedCount > 0 && (
               <>
-                {' '}{typedCount} fee{typedCount === 1 ? '' : 's'} typed over.{' '}
+                {' '}{typedCount} row{typedCount === 1 ? '' : 's'} typed over.{' '}
                 <button type="button" className={styles.linkBtn} onClick={() => setFeeOverrides(plan.optionNumber, () => ({}))}>
                   Put all back
                 </button>
@@ -503,11 +550,11 @@ export function FeeBuilderTab({
                   const open = isGroup && !collapsed[key];
                   const editable = (r) => canType && !!r.key;
                   const subsEditable = isGroup && g.subRows.every(editable) && typeof g.row.feePerUnit === 'number';
-                  const cells = (r, fee) => (
+                  const cells = (r, fee, count) => (
                     <>
                       <td className={styles.num}>{fee || fmtMoney(r.feePerUnit)}</td>
                       <td>{r.unit}</td>
-                      <td className={styles.num}>{r.unitCount ?? ''}</td>
+                      <td className={styles.num}>{count || (r.unitCount ?? '')}</td>
                       <td className={styles.num}>{r.startMonth ?? ''}</td>
                       {yearIdx.map(yi => <td key={yi} className={styles.num}>{r.years[yi] ? fmtMoney(r.years[yi]) : ''}</td>)}
                       <td className={styles.num}>{r.term ? fmtMoney(r.term) : ''}</td>
@@ -524,6 +571,9 @@ export function FeeBuilderTab({
                         {cells(r, editable(r) && (
                           <FeeCell value={r.feePerUnit} overridden={r.overridden} builtFee={r.builtFee} label={r.name}
                             onCommit={(v) => setFee([[r.key, v]])} />
+                        ), editable(r) && (
+                          <UnitCountCell value={r.unitCount} overridden={r.unitsOverridden} builtCount={r.builtUnitCount} label={r.name}
+                            onCommit={(v) => setFee([[r.unitsKey, v]])} />
                         ))}
                       </tr>
                     );
@@ -553,6 +603,15 @@ export function FeeBuilderTab({
                             label={g.row.name}
                             onCommit={(v) => setGroupFee(g.subRows, v)}
                           />
+                        ), isGroup && g.subRows.every(editable) && (
+                          // The count typed on a grouped fee goes on every row under it.
+                          <UnitCountCell
+                            value={g.row.unitCount}
+                            overridden={g.subRows.some(r => r.unitsOverridden)}
+                            builtCount={g.subRows[0].builtUnitCount}
+                            label={g.row.name}
+                            onCommit={(v) => setFee(g.subRows.map(r => [r.unitsKey, v]))}
+                          />
                         ))}
                       </tr>
                       {open && g.subRows.map((r, si) => (
@@ -563,6 +622,9 @@ export function FeeBuilderTab({
                           {cells(r, editable(r) && (
                             <FeeCell value={r.feePerUnit} overridden={r.overridden} builtFee={r.builtFee} label={`${r.name}, ${r.service || 'on the schedule'}`}
                               onCommit={(v) => setFee([[r.key, v]])} />
+                          ), editable(r) && (
+                            <UnitCountCell value={r.unitCount} overridden={r.unitsOverridden} builtCount={r.builtUnitCount} label={`${r.name}, ${r.service || 'on the schedule'}`}
+                              onCommit={(v) => setFee([[r.unitsKey, v]])} />
                           ))}
                         </tr>
                       ))}

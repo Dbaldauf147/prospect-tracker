@@ -5435,18 +5435,31 @@ export function PricingView({ settings } = {}) {
       const v = typed[key];
       // A typed fee the row already carries (the schedule built with it) is
       // no longer an override.
-      const next = typeof v === 'number' && Number.isFinite(v) && v >= 0 && !(r.fee !== '' && r.fee != null && Number(r.fee) === v)
+      const feeTyped = typeof v === 'number' && Number.isFinite(v) && v >= 0 && !(r.fee !== '' && r.fee != null && Number(r.fee) === v);
+      let next = feeTyped
         ? (() => {
           // A typed fee is the user's price: it stops following the Global
           // GM% and the escalators.
           const { gmLink: _gmLink, ...rest } = r;
           return { ...rest, fee: v };
         })() : r;
+      // A typed Unit Count keeps the fee per unit and bills it on the new
+      // count, so the years, margin and totals scale with it. A row with no
+      // fee of its own derives it from its costs over the count, which
+      // would spread the same cost thinner instead; its fee is pinned at
+      // what the built count gives first.
+      const u = typed[`${key}|units`];
+      const unitsTyped = typeof u === 'number' && Number.isFinite(u) && u > 0 && Number(r.unitCount) !== u;
+      if (unitsTyped) {
+        const hasFee = next.fee !== '' && next.fee != null && Number.isFinite(Number(next.fee));
+        const pinned = hasFee ? null : autoFeePerUnitFor(next);
+        next = { ...next, unitCount: u, ...(typeof pinned === 'number' ? { fee: pinned } : {}) };
+      }
       if (next !== r) {
         fromService.set(next, fromService.get(r));
         for (const ps of built.perService) ps.added = ps.added.map(x => (x === r ? next : x));
       }
-      rowKeyOf.set(next, { key, overridden: next !== r, src: r });
+      rowKeyOf.set(next, { key, overridden: feeTyped, unitsTyped, src: r });
       return next;
     });
     // Each row's term cost: the cost lines its structure row prices, or,
@@ -5499,7 +5512,10 @@ export function PricingView({ settings } = {}) {
           name: r.altItem,
           type: r.type || '',
           feePerUnit: feeIsManual ? manual : (typeof auto === 'number' ? auto : null),
-          ...(typedAt ? { key: typedAt.key, overridden: typedAt.overridden, builtFee } : {}),
+          ...(typedAt ? {
+            key: typedAt.key, overridden: typedAt.overridden, builtFee,
+            unitsKey: `${typedAt.key}|units`, unitsOverridden: typedAt.unitsTyped, builtUnitCount: typedAt.src.unitCount,
+          } : {}),
           unit: r.unit || '',
           unitCount: r.unitCount,
           startMonth: altFeeRowStartMonth(r),
@@ -5579,7 +5595,7 @@ export function PricingView({ settings } = {}) {
   }
 
   function applyFeeBuilderPlan(plan) {
-    const typedRows = (plan?.rows || []).filter(r => r.overridden);
+    const typedRows = (plan?.rows || []).filter(r => r.overridden || r.unitsOverridden);
     if (!plan || (plan.perService.length === 0 && typedRows.length === 0 && !plan.dropped?.length)) return false;
     const added = plan.perService.reduce((s, p) => s + p.added.length, 0);
     const removed = plan.perService.reduce((s, p) => s + p.removed.length, 0);
@@ -5598,7 +5614,8 @@ export function PricingView({ settings } = {}) {
       lines.push('', `Takes off ${plan.dropped.length} row${plan.dropped.length === 1 ? '' : 's'} no structure wrote: ${plan.dropped.map(r => r.altItem).join(', ')}.`);
     }
     if (typedRows.length) {
-      lines.push('', `Fee / Unit typed over on ${typedRows.length} row${typedRows.length === 1 ? '' : 's'}: ${typedRows.map(r => `${r.name}${r.service ? ` (${r.service})` : ''} ${fmtMoney(r.feePerUnit)}`).join('; ')}.`);
+      const typedLabel = (r) => [r.overridden && fmtMoney(r.feePerUnit), r.unitsOverridden && `${r.unitCount} units`].filter(Boolean).join(', ');
+      lines.push('', `Typed over on ${typedRows.length} row${typedRows.length === 1 ? '' : 's'}: ${typedRows.map(r => `${r.name}${r.service ? ` (${r.service})` : ''} ${typedLabel(r)}`).join('; ')}.`);
     }
     if (plan.shared.length) {
       lines.push('', `Fee names shared by more than one service, one row each: ${plan.shared.map(c => `${c.fee} (${c.services.join(', ')})`).join('; ')}.`);
