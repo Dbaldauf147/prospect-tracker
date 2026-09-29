@@ -514,6 +514,44 @@ export function costTotalsByLineItem(items) {
 //   costs   the service's cost lines as the Services subtab reads them
 //           ({ description, type, price, cost, startMonth, feeName, automatedName })
 
+// The service's pass-through cost lines that no fee row covers yet, each
+// as the fee row that would bill it: named after the line, typed the way
+// it bills (Setup / One Time up front, Recurring (monthly) for a monthly
+// or rolled cost), ticked Pass so it bills at cost, starting when the
+// cost does. `unitOf(item)` says 'Per Account' or 'Fixed' (the model
+// picked for the line in the price check). Lines left out of the check,
+// with no CTS, or already named by a row are skipped.
+export function passThroughFeeRows(structure, costs, { unitOf = () => 'Fixed' } = {}) {
+  const have = new Set((structure?.rows || []).map(r => norm(r?.feeName)).filter(Boolean));
+  const out = [];
+  for (const c of costs || []) {
+    if (!c?.passThrough || c.ignored || typeof c.cts !== 'number') continue;
+    const feeName = String(c.description || '').trim();
+    if (!feeName || have.has(norm(feeName))) continue;
+    have.add(norm(feeName));
+    const bucket = costBucket(c.type);
+    const type = bucket === COST_BUCKET_UPFRONT
+      ? (/^setup/i.test(String(c.type || '').trim()) ? 'Setup' : 'One Time')
+      : 'Recurring (monthly)';
+    const start = Math.round(Number(c.startMonth) || 1);
+    out.push({
+      row: { ...blankFeeStructureRow(), feeName, type, unit: unitOf(c) === 'Per Account' ? 'Per Account' : 'Fixed', startMonth: start > 1 ? start : null, passThrough: true },
+      key: costKey(c.description, c.type, c.startMonth),
+    });
+  }
+  return out;
+}
+
+// Add those rows to the structure, each cost pointed at its own row so it
+// stops falling to whichever row it defaulted to before.
+export function addPassThroughFees(structure, costs, opts) {
+  const add = passThroughFeeRows(structure, costs, opts);
+  if (add.length === 0) return structure;
+  const allocations = { ...(structure?.allocations || {}) };
+  for (const a of add) allocations[a.key] = { ...(allocations[a.key] || {}), fee: norm(a.row.feeName) };
+  return { ...structure, rows: [...(structure?.rows || []), ...add.map(a => a.row)], allocations };
+}
+
 export function feeStructureCostInputs(costs) {
   return (costs || []).map(c => ({
     key: costKey(c.description, c.type, c.startMonth),

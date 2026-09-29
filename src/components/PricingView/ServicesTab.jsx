@@ -5,6 +5,7 @@ import {
   newFeeStructureId, blankFeeStructureRow, feeStructureRowsFromFees, costTotalsByLineItem,
   costKey, addLaterCostFees, FIRST_YEAR_MONTHS, feeStructureCostInputs,
   costTypeConversion, moveCostAllocation, feeBucket, standardFeeContext,
+  passThroughFeeRows, addPassThroughFees,
 } from '../../utils/pricingServices';
 import { RATE_CHECK, checkPartOf, PASS_THROUGH_MODELS, passThroughModelOf } from '../../utils/serviceRateCheck';
 import { unitLabelFor } from '../../utils/servicePricing';
@@ -1324,6 +1325,10 @@ function FeeStructureEditor({
   // it, and Apply writes it into the schedule.
   const { std, standardFee, billed } = standardFeeContext(structure, costs, { termMonths, siteCount, accountCount });
   const previews = rows.map((r, idx) => (previewFeeRow && hasWorkbook ? previewFeeRow(billed(r, idx)) : null));
+  // Pass-through lines with no fee row of their own yet, billed per account
+  // or as a fixed fee as picked in the price check.
+  const passOpts = { unitOf: (it) => (passThroughModelOf(it) === 'pass:per_account' ? 'Per Account' : 'Fixed') };
+  const passToAdd = passThroughFeeRows(structure, costs, passOpts).length;
   const totals = Array.from({ length: numYears }, (_, yi) => previews.reduce((s, p) => s + (p?.years?.[yi] || 0), 0));
 
   return (
@@ -1340,6 +1345,24 @@ function FeeStructureEditor({
         {isStandard
           ? <span className={styles.standardTag}>★ Standard</span>
           : <button type="button" className={styles.barBtn} onClick={onMakeStandard} title="Make this the standard fee structure for this service.">☆ Make standard</button>}
+        <button
+          type="button"
+          className={styles.barBtn}
+          onClick={() => onChange(st => ({ ...st, rows: [...(st.rows || []), blankFeeStructureRow()] }))}
+          title="Add a blank fee row to this structure."
+        >
+          + Add fee
+        </button>
+        {passToAdd > 0 && (
+          <button
+            type="button"
+            className={styles.barBtn}
+            onClick={() => onChange(st => addPassThroughFees(st, costs, passOpts))}
+            title="Add a fee row for each pass-through cost line that has none: ticked Pass so it bills at cost, per account or as a fixed fee as picked in the price check, and that cost pointed at it."
+          >
+            + Add pass-through fees ({passToAdd})
+          </button>
+        )}
         <button type="button" className={styles.barBtn} onClick={onDuplicate}>Duplicate</button>
         <button type="button" className={styles.barBtnDanger} onClick={onDelete}>Delete</button>
         <span className={styles.barSpacer} />

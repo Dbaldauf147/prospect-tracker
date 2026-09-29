@@ -18,6 +18,7 @@ import {
   standardFeesForStructure, costKey,
   addServiceToLineItem, costTotalsByLineItem, addLaterCostFees,
   costTypeConversion, moveCostAllocation, buildScheduleFromStructures, standardFeeContext, groupFeeRows, effectiveLineItemServices,
+  passThroughFeeRows, addPassThroughFees,
 } from '../src/utils/pricingServices.js';
 
 let failed = 0;
@@ -382,8 +383,6 @@ test('a dropped blank row hands its costs to the row that stays', () => {
   assert.deepEqual(rows[0].costIds, ['a1', 'b1']);
 });
 
-if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
-
 test('a cost no row names falls to the first row that can bill it', () => {
   // A "Program fee" structure on a service whose costs carry "BBS per site".
   const costs = [
@@ -432,3 +431,30 @@ test('a first-in-scope line item goes to the first service another line ties to'
   const items = [{ description: 'DBP Setup' }, { description: 'Collections' }];
   assert.deepEqual(costItemsForService(items, withBp, 'Invoice collection').map(i => i.description), ['Collections']);
 });
+
+test('pass-through lines each get a fee row of their own, at cost', () => {
+  const costs = [
+    { description: 'Invoice - Data', type: 'Recurring (monthly)', cts: 227.84, startMonth: 4 },
+    { description: 'DBP - Partner A/C Setup & Imp.', type: 'Setup', cts: 4835.5, startMonth: 1, passThrough: true },
+    { description: 'DBP - Partner Ongoing', type: 'Recurring (monthly)', cts: 648.75, startMonth: 4, passThrough: true, perAccount: true },
+    { description: 'Left out', type: 'Setup', cts: 10, passThrough: true, ignored: true },
+  ];
+  const unitOf = (c) => (c.perAccount ? 'Per Account' : 'Fixed');
+  const st = { id: 's', name: 'Per account monthly', rows: [{ feeName: 'Per account monthly', type: 'Recurring (monthly)', unit: 'Per Account' }] };
+  const next = addPassThroughFees(st, costs, { unitOf });
+  assert.deepEqual(next.rows.slice(1).map(r => [r.feeName, r.type, r.unit, r.startMonth, r.passThrough]), [
+    ['DBP - Partner A/C Setup & Imp.', 'Setup', 'Fixed', null, true],
+    ['DBP - Partner Ongoing', 'Recurring (monthly)', 'Per Account', 4, true],
+  ]);
+  assert.equal(next.rows[0].feeName, 'Per account monthly', 'existing row kept first');
+  // Each cost pinned to its own row.
+  assert.equal(next.allocations[costKey('DBP - Partner Ongoing', 'Recurring (monthly)', 4)].fee, 'dbp - partner ongoing');
+  const std = standardFeesForStructure({ rows: next.rows, costs: costs.filter(c => !c.ignored).map(c => ({ key: costKey(c.description, c.type, c.startMonth), description: c.description, type: c.type, price: c.cts, startMonth: c.startMonth, feeNames: [] })), allocations: next.allocations, accountCount: 519 });
+  assert.equal(std.costs[1].rowIdx, 1);
+  assert.equal(std.costs[2].rowIdx, 2);
+  // Run again: nothing left to add.
+  assert.equal(passThroughFeeRows(next, costs, { unitOf }).length, 0);
+  assert.equal(addPassThroughFees(next, costs, { unitOf }), next);
+});
+
+if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
