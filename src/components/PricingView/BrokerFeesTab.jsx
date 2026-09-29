@@ -1,5 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import styles from './BrokerFeesTab.module.css';
+import { SIA_HISTORY_EVENT, listSiaHistory } from '../../utils/siaLoadHistory';
+import { siaHistorySummary } from '../../utils/siaHistoryEntry';
+import { brokerFeeImportFor, mergeSiaImports } from '../../utils/brokerFeesSiaImport';
 
 const EMPTY_ROW = () => ({
   company: '',
@@ -147,6 +150,58 @@ export function BrokerFeesTab({ rows, setRows }) {
   // rows array stays in its persisted order so updateRow / removeRow
   // hit the right cell after a sort.
   const [sortConfig, setSortConfig] = useState(null);
+  // "Import from SIA" picker: every SIA in the SIA History subtab that
+  // carries a company, kWh or gas figure, ticked ones merged into the table.
+  const [siaOpen, setSiaOpen] = useState(false);
+  const [siaEntries, setSiaEntries] = useState(null);
+  const [siaPicked, setSiaPicked] = useState(() => new Set());
+  const [siaFilter, setSiaFilter] = useState('');
+
+  useEffect(() => {
+    if (!siaOpen) return undefined;
+    let cancelled = false;
+    const load = () => {
+      listSiaHistory({ onRemote: list => { if (!cancelled) setSiaEntries(list); } })
+        .then(list => { if (!cancelled) setSiaEntries(list); })
+        .catch(() => { if (!cancelled) setSiaEntries([]); });
+    };
+    load();
+    window.addEventListener(SIA_HISTORY_EVENT, load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(SIA_HISTORY_EVENT, load);
+    };
+  }, [siaOpen]);
+
+  const siaChoices = (siaEntries || [])
+    .map(entry => ({ entry, imp: brokerFeeImportFor(entry), summary: siaHistorySummary(entry) }))
+    .filter(c => c.imp);
+  const siaQ = siaFilter.trim().toLowerCase();
+  const siaShown = siaQ
+    ? siaChoices.filter(c => [c.imp.company, c.entry.fileName, c.summary.date].join(' ').toLowerCase().includes(siaQ))
+    : siaChoices;
+
+  function toggleSiaPick(id) {
+    setSiaPicked(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function importFromSia() {
+    const imports = siaChoices.filter(c => siaPicked.has(c.entry.id)).map(c => c.imp);
+    if (!imports.length) return;
+    const { rows: merged, updated, added } = mergeSiaImports(safeRows, imports);
+    setRows(merged);
+    setSiaPicked(new Set());
+    setSiaOpen(false);
+    const parts = [];
+    if (added) parts.push(`added ${added} row${added === 1 ? '' : 's'}`);
+    if (updated) parts.push(`updated ${updated} row${updated === 1 ? '' : 's'}`);
+    setFlash(`Imported from SIA: ${parts.join(', ')}.`);
+    window.setTimeout(() => setFlash(''), 3000);
+  }
 
   const updateRow = (idx, key, value) => {
     const next = safeRows.slice();
@@ -289,6 +344,14 @@ export function BrokerFeesTab({ rows, setRows }) {
         <button type="button" className={styles.btn} onClick={() => setPasteOpen(o => !o)}>
           {pasteOpen ? 'Close paste' : 'Paste from Excel'}
         </button>
+        <button
+          type="button"
+          className={styles.btn}
+          title="Pull the company name, annual kWh and annual Dth from SIAs in the SIA History subtab."
+          onClick={() => setSiaOpen(o => !o)}
+        >
+          {siaOpen ? 'Close SIA import' : 'Import from SIA'}
+        </button>
         <button type="button" className={styles.btn} onClick={addRow}>+ Row</button>
         <button
           type="button"
@@ -335,6 +398,85 @@ export function BrokerFeesTab({ rows, setRows }) {
               }}
             >Replace rows</button>
             <button type="button" className={styles.btn} onClick={() => { setPasteText(''); setPasteOpen(false); }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {siaOpen && (
+        <div className={styles.pasteBox}>
+          <div className={styles.pasteHint}>
+            Tick the SIAs to bring in. Each one's company name, annual kWh and annual gas (Dth; an MMBtu figure
+            is the same number) goes into the table. A company already in the table has its loads updated and
+            keeps its fees; anything else is added as a new row.
+          </div>
+          <div className={styles.siaToolbar}>
+            <input
+              type="search"
+              className={styles.siaSearch}
+              placeholder="Search company, file or SIA date"
+              value={siaFilter}
+              onChange={(e) => setSiaFilter(e.target.value)}
+            />
+            <button
+              type="button"
+              className={styles.btn}
+              disabled={!siaShown.length}
+              onClick={() => setSiaPicked(prev => {
+                const allOn = siaShown.every(c => prev.has(c.entry.id));
+                const next = new Set(prev);
+                for (const c of siaShown) { if (allOn) next.delete(c.entry.id); else next.add(c.entry.id); }
+                return next;
+              })}
+            >{siaShown.length && siaShown.every(c => siaPicked.has(c.entry.id)) ? 'Untick all' : 'Tick all'}</button>
+          </div>
+          {siaEntries == null && <div className={styles.pasteHint}>Loading SIA history...</div>}
+          {siaEntries != null && siaChoices.length === 0 && (
+            <div className={styles.pasteHint}>
+              No SIA in the SIA History subtab carries a company, kWh or gas figure yet. Upload one on the Pricing subtab first.
+            </div>
+          )}
+          {siaShown.length > 0 && (
+            <div className={styles.siaListWrap}>
+              <table className={styles.siaList}>
+                <thead>
+                  <tr>
+                    <th />
+                    <th>Company</th>
+                    <th>SIA Date</th>
+                    <th>File</th>
+                    <th className={styles.numCell}>Annual kWh</th>
+                    <th className={styles.numCell}>Annual Dth</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {siaShown.map(({ entry, imp, summary }) => (
+                    <tr key={entry.id} onClick={() => toggleSiaPick(entry.id)}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={siaPicked.has(entry.id)}
+                          onChange={() => toggleSiaPick(entry.id)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </td>
+                      <td>{imp.company || <span className={styles.muted}>(no company)</span>}</td>
+                      <td>{summary.date}</td>
+                      <td className={styles.muted}>{entry.fileName}</td>
+                      <td className={styles.numCell}>{imp.loadEp ? Number(imp.loadEp).toLocaleString('en-US') : ''}</td>
+                      <td className={styles.numCell}>{imp.loadNg ? Number(imp.loadNg).toLocaleString('en-US') : ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className={styles.pasteActions}>
+            <button type="button" className={styles.btn} disabled={!siaPicked.size} onClick={importFromSia}>
+              Import {siaPicked.size || ''} selected
+            </button>
+            <button type="button" className={styles.btn} onClick={() => { setSiaPicked(new Set()); setSiaOpen(false); }}>
               Cancel
             </button>
           </div>

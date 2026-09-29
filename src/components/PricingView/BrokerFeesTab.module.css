@@ -249,3 +249,58 @@
 .benchmarkRow td {
   font-weight: 700;
 }
+
+.siaToolbar {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.siaSearch {
+  flex: 0 1 320px;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+}
+
+.siaListWrap {
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
+.siaList {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.siaList th {
+  position: sticky;
+  top: 0;
+  background: #f1f5f9;
+  text-align: left;
+  font-weight: 600;
+  color: #475569;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.siaList td {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid #f1f5f9;
+  cursor: pointer;
+}
+
+.siaList tbody tr:hover {
+  background: #f8fafc;
+}
+
+.muted {
+  color: var(--color-text-muted);
+}
