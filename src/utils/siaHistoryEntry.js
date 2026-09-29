@@ -137,3 +137,21 @@ export function siaKeyFacts(options) {
     gasUnit,
   };
 }
+
+// The cost lines of one history entry that a search matches, for the SIA
+// History filter. A line matches when the text is anywhere in its line
+// item, section, type or comments (case-insensitive). Returns one array of
+// matching line indexes per option, in the entry's option order, so the
+// page can list the hits and mark them in the option view.
+export function siaCostLineMatches(entry, query) {
+  const q = String(query ?? '').trim().toLowerCase();
+  return (entry?.options || []).map(o => {
+    if (!q) return [];
+    const hits = [];
+    (o.costItems || []).forEach((it, i) => {
+      const hay = [it.description, it.section, it.type, it.comments].join(' ').toLowerCase();
+      if (hay.includes(q)) hits.push(i);
+    });
+    return hits;
+  });
+}
