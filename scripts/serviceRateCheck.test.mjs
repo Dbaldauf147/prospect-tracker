@@ -512,3 +512,41 @@ test('a card with a setup fee is not setup-off-card', () => {
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
 console.log('\nall passed');
+
+test('lines starting after month 1 are judged over a full year, so the headline agrees with its components', () => {
+  // Ongoing at $1,500 to $3,000 a year plus $10 to $15 per account a year,
+  // every cost from month 4: year 1 bills nine months and would read low.
+  const c = rateCardCheck({
+    items: [
+      { id: 'a', cts: 70, type: 'Recurring (monthly)', startMonth: 4, feeComponent: 'recurring:recurring_annual' },
+      { id: 'b', cts: 240, type: 'Recurring (monthly)', startMonth: 4, feeComponent: 'recurring:per_account' },
+    ],
+    entry: { basis: 'recurring_annual', rate: 1500, rateHigh: 3000, lines: [{ basis: 'per_account', rate: 10, rateHigh: 15 }] },
+    meta: recurring,
+    counts: { accounts: 519 },
+  });
+  const { rows } = ongoingOf(c).components;
+  assert.ok(rows.every(r => r.status === RATE_CHECK.WITHIN));
+  assert.equal(c.low, 1500 + 10 * 519);
+  // A full year: 310 x 12 x 2 = $7,440, within $6,690 to $10,785.
+  assert.equal(c.price, 310 * 12 * 2);
+  assert.equal(c.year1Price, 310 * 9 * 2);
+  assert.equal(c.status, RATE_CHECK.WITHIN);
+});
+
+test('the headline is out of range when one component is, even if the total is not', () => {
+  const c = rateCardCheck({
+    items: [
+      { id: 'a', cts: 40, type: 'Recurring (monthly)', feeComponent: 'recurring:recurring_annual' },
+      { id: 'b', cts: 290, type: 'Recurring (monthly)', feeComponent: 'recurring:per_account' },
+    ],
+    entry: { basis: 'recurring_annual', rate: 1500, rateHigh: 3000, lines: [{ basis: 'per_account', rate: 10, rateHigh: 15 }] },
+    meta: recurring,
+    counts: { accounts: 519 },
+  });
+  // $960 a year is under $1,500; $6,960 over 519 accounts is $13.41, within.
+  const [flat, perAccount] = ongoingOf(c).components.rows;
+  assert.equal(flat.status, RATE_CHECK.BELOW);
+  assert.equal(perAccount.status, RATE_CHECK.WITHIN);
+  assert.equal(c.status, RATE_CHECK.BELOW);
+});
