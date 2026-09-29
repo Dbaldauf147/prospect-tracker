@@ -705,6 +705,7 @@ export function setPricingSetupLine(pricing, name, basisKey, patch, bases = PRIC
   // A setup rate is money too, so it takes the no-fee mark off exactly as a
   // recurring one does — see setPricingLine.
   if (out.length > 0) delete row.noFee;
+  if (rate !== null && rate >= 0) writeNaLines(row, naLinesFor(row).filter(k => k !== naKey('setup', basis.key)));
   // The legacy list was read into `lines` above, so whatever it said is
   // either in `setupLines` now or was just cleared on purpose. Leaving it
   // behind would double the fee on the next pass either way.
@@ -834,6 +835,8 @@ export function pricingFor(pricing, name, bases = PRICING_BASES) {
     avgFee: null,
     setupLines: setupLinesFor(row, bases),
     lines: normalizePricingLines(row?.lines, bases, basis ? basis.key : ''),
+    // Halves of a breakdown row marked N/A - see setPricingLineNa.
+    naLines: naLinesFor(row),
     notes: String(row?.notes || ''),
     // Which figure elsewhere on the site measures this service. A key
     // off a source the list no longer carries is dropped here, the same
@@ -953,6 +956,63 @@ function writePricingLines(row, lines, bases = PRICING_BASES) {
   return next;
 }
 
+// N/A marks on the fee breakdown. An empty setup or recurring pair reads
+// as "nobody has filled this in yet"; N/A says somebody looked and this
+// half of the line does not apply - a recurring fee with no setup, a
+// one-off with nothing after it. It is a statement, not money: a marked
+// half prices exactly as an empty one does.
+//
+// Stored on the entry as `naLines`, a list of "<half>:<basisKey>" strings
+// where half is 'setup' or 'recurring'.
+const NA_HALVES = ['setup', 'recurring'];
+const naKey = (half, basisKey) => `${half}:${basisKey}`;
+
+export function naLinesFor(row) {
+  if (!Array.isArray(row?.naLines)) return [];
+  const seen = new Set();
+  for (const k of row.naLines) {
+    const [half, basisKey] = String(k ?? '').split(':');
+    if (NA_HALVES.includes(half) && basisKey) seen.add(naKey(half, basisKey));
+  }
+  return [...seen];
+}
+
+// Whether one half of one breakdown row is marked N/A.
+export function isLineNa(entry, half, basisKey) {
+  return naLinesFor(entry).includes(naKey(half, basisKey));
+}
+
+function writeNaLines(row, list) {
+  if (list.length === 0) delete row.naLines;
+  else row.naLines = list;
+  return row;
+}
+
+/**
+ * Mark one half ('setup' or 'recurring') of one breakdown row N/A, or take
+ * the mark off. Marking clears whatever rates that half carried - N/A and a
+ * figure can't both be the answer - and typing a rate into the half later
+ * takes the mark off again (see setPricingLine / setPricingSetupLine).
+ */
+export function setPricingLineNa(pricing, name, half, basisKey, on = true, bases = PRICING_BASES) {
+  const basis = basisFor(basisKey, bases);
+  if (!basis || !NA_HALVES.includes(half)) return pricing;
+  let next = pricing || {};
+  if (on) {
+    next = half === 'setup'
+      ? setPricingSetupLine(next, name, basis.key, { rate: '', rateHigh: '' }, bases)
+      : setPricingLine(next, name, basis.key, { rate: '', rateHigh: '' }, bases);
+  }
+  next = { ...next };
+  const row = { ...(next[name] || {}) };
+  const key = naKey(half, basis.key);
+  const rest = naLinesFor(row).filter(k => k !== key);
+  writeNaLines(row, on ? [...rest, key] : rest);
+  if (Object.keys(row).length === 0) delete next[name];
+  else next[name] = row;
+  return next;
+}
+
 /**
  * Set one row of the fee breakdown: the low and/or high rate charged on one
  * basis. `patch` is { rate?, rateHigh? }, where '' or null clears.
@@ -986,6 +1046,9 @@ export function setPricingLine(pricing, name, basisKey, patch, bases = PRICING_B
   }
 
   const written = writePricingLines(row, out, bases);
+  // A rate typed is the later answer to "does this line charge?", so it
+  // takes an N/A mark on the same half of the row off.
+  if (rate !== null && rate >= 0) writeNaLines(written, naLinesFor(written).filter(k => k !== naKey('recurring', basis.key)));
   // Money on a row that says it charges nothing is a contradiction, and the
   // rate just typed is the later answer: it takes the mark off rather than
   // being swallowed by it. Clearing the last line leaves the mark alone —
@@ -1077,7 +1140,7 @@ export function isGraveyardBucket(bucket) {
   return String(bucket ?? '').toLowerCase().includes('graveyard');
 }
 
-const PRICE_FIELDS = ['basis', 'rate', 'rateHigh', 'lines', 'units', 'setupLines', 'setup'];
+const PRICE_FIELDS = ['basis', 'rate', 'rateHigh', 'lines', 'units', 'setupLines', 'setup', 'naLines'];
 
 /**
  * Mark one or more services as charging nothing — or take the mark off.

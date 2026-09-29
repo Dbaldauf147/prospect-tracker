@@ -27,6 +27,7 @@ import {
   setPricingField,
   setPricingLine,
   setPricingSetupLine,
+  setPricingLineNa,
 } from '../../utils/servicePricing';
 import { IMPACT_SOURCES, impactLabel, impactTitle } from '../../utils/serviceImpact';
 import styles from './DropdownsView.module.css';
@@ -186,6 +187,11 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     updateSettings?.({ servicePricing: setPricingSetupLine(pricing, name, basisKey, patch, bases) });
   }
 
+  // Marks one half of a breakdown row N/A, or takes the mark off.
+  function savePricingLineNa(name, half, basisKey, on) {
+    updateSettings?.({ servicePricing: setPricingLineNa(pricing, name, half, basisKey, on, bases) });
+  }
+
   // The service whose pricing panel is open, by name. Null when nothing is
   // open. Clicking a row opens it: the table is eleven columns wide, so
   // pricing one service otherwise means scrolling sideways with the name
@@ -295,6 +301,8 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         // estimate on the Deal Pricing subtab — the panel's rate columns
         // show the first, its Year 1 columns the second.
         setupLines: entry.setupLines,
+        // Setup / recurring halves marked N/A on the pricing panel.
+        naLines: entry.naLines,
         _setupBreakdown: est?.setupBreakdown || [],
         _setupFee: est?.setup ?? 0,
         _setupFeeHigh: est?.setupHigh ?? 0,
@@ -937,6 +945,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             onSaveField={(field, value) => savePricingField(row.name, field, value)}
             onSaveLine={(basisKey, patch) => savePricingLine(row.name, basisKey, patch)}
             onSaveSetupLine={(basisKey, patch) => savePricingSetupLine(row.name, basisKey, patch)}
+            onSaveLineNa={(half, basisKey, on) => savePricingLineNa(row.name, half, basisKey, on)}
             // The same write the bulk bar makes, on one service: marking
             // clears the rates, so it asks first when there are any.
             onToggleNoFee={() => toggleNoFee(row.name, !row.noFee)}

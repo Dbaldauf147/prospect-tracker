@@ -12,7 +12,8 @@
 import {
   estimateService, estimateScope, pricingFor, setPricingField, contractYears, formatMoney,
   feeBasisLabel, projectServiceLines, formatMoneyRange, formatRate, avgMoney,
-  normalizeSetupLines, setupLinesFor, estimateSetup, formatSetupSummary, setPricingSetupLine, formatYear1
+  normalizeSetupLines, setupLinesFor, estimateSetup, formatSetupSummary, setPricingSetupLine, formatYear1,
+  setPricingLine, setPricingLineNa, isLineNa, setNoFee
 } from '../src/utils/servicePricing.js';
 
 let passed = 0, failed = 0;
@@ -688,6 +689,34 @@ const PROJECT = { serviceType: 'Project', years: '1 year' };
   pricing = setPricingField(pricing, 'Budgets', 'period', 'annual');
   check('annual is the default and stored as nothing', pricing.Budgets.period, undefined);
   check('and prices per year again', estimateService({ entry: pricingFor(pricing, 'Budgets'), meta: RECURRING, counts: { accounts: 100 }, dealSize: '' }).fee, 200);
+}
+
+// ── N/A on one half of a breakdown row ────────────────────────────────
+//
+// A recurring-only line used to need $0 typed into its setup boxes to stop
+// looking unfinished. N/A says the half doesn't apply without claiming a
+// $0 rate, and it prices exactly as an empty half does.
+{
+  let p = setPricingLine({}, 'Bill payment', 'recurring_annual', { rate: 42000, rateHigh: 84000 });
+  p = setPricingSetupLine(p, 'Bill payment', 'recurring_annual', { rate: 0 });
+  p = setPricingLineNa(p, 'Bill payment', 'setup', 'recurring_annual', true);
+  check('N/A is stored on the entry', p['Bill payment'].naLines, ['setup:recurring_annual']);
+  check('marking N/A clears the setup rate it replaces', p['Bill payment'].setupLines, undefined);
+  check('the recurring half is untouched', p['Bill payment'].rate, 42000);
+  check('isLineNa reads the mark', isLineNa(pricingFor(p, 'Bill payment'), 'setup', 'recurring_annual'), true);
+  check('the other half is not marked', isLineNa(pricingFor(p, 'Bill payment'), 'recurring', 'recurring_annual'), false);
+  const est = estimateService({ entry: pricingFor(p, 'Bill payment'), meta: RECURRING, counts: {}, dealSize: '' });
+  check('an N/A setup adds nothing', est.setup ?? 0, 0);
+  check('and the recurring fee still prices', est.fee, 42000);
+
+  const typed = setPricingSetupLine(p, 'Bill payment', 'recurring_annual', { rate: 500 });
+  check('typing a setup rate takes the N/A off', typed['Bill payment'].naLines, undefined);
+  const recur = setPricingLineNa({}, 'X', 'recurring', 'flat', true);
+  check('recurring N/A on an empty card', recur.X, { naLines: ['recurring:flat'] });
+  check('typing a recurring rate takes it off', setPricingLine(recur, 'X', 'flat', { rate: 10 }).X.naLines, undefined);
+  check('unmarking the last N/A removes the entry', setPricingLineNa(recur, 'X', 'recurring', 'flat', false).X, undefined);
+  check('an unknown half is ignored', setPricingLineNa({}, 'X', 'monthly', 'flat', true), {});
+  check('no fee clears N/A marks', setNoFee(recur, 'X').X, { noFee: true });
 }
 
 console.log(`${passed} passed, ${failed} failed`);
