@@ -4204,7 +4204,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       defaultWidth: 120,
       render: (row) => {
         const classification = classifyMarket(row, utilityKey);
-        if (!classification) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>-</span>;
+        // Unknown: a competitive market with no utility or supplier on file
+        // to say which side of it the site is on (or no state / country).
+        if (!classification) return <span title={`${label}: Unknown. ${marketBasis(row, utilityKey)}`} style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>Unknown</span>;
         const isRegulated = classification === 'Regulated';
         // Deregulated = green (opportunity), Regulated = orange.
         const color = isRegulated
@@ -4220,7 +4222,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           >{classification}</span>
         );
       },
-      exportValue: (row) => classifyMarket(row, utilityKey) || '',
+      exportValue: (row) => classifyMarket(row, utilityKey) || 'Unknown',
     });
     const makeGacOpportunityCol = () => ({
       key: 'gac_opportunity',
@@ -11991,8 +11993,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // the name didn't match a municipal / coop pattern.
         const isUSSite = /^(united states|usa|us)$/i.test(rawCountry);
         const isCASite = /^(canada|ca)$/i.test(rawCountry);
-        const electricMarket = classifyMarket(r, 'electric') || '';
-        const gasMarket = classifyMarket(r, 'gas') || '';
+        // Never blank: a site the classifier can't place (a competitive
+        // state with no utility or supplier on file) reads Unknown, so
+        // every row says Regulated, Deregulated or Unknown.
+        const electricMarket = classifyMarket(r, 'electric') || 'Unknown';
+        const gasMarket = classifyMarket(r, 'gas') || 'Unknown';
         // ISO / RTO market for the site, resolved the same fine way as the
         // ISO tab — electric utility first, then ZIP, then state / province.
         // Only US/CA sites carry a market; everything else (and NA sites
