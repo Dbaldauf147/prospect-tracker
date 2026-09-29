@@ -208,6 +208,16 @@
   color: #1e40af;
 }
 
+.scopeDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2563eb;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
 .statusActive {
   background: #dcfce7;
   color: #166534;
