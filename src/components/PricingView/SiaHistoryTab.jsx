@@ -2,6 +2,9 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import styles from './SiaHistoryTab.module.css';
 import { SIA_HISTORY_EVENT, deleteSiaHistoryEntry, listSiaHistory } from '../../utils/siaLoadHistory';
 import { siaHistorySummary } from '../../utils/siaHistoryEntry';
+import * as XLSX from 'xlsx';
+import { buildSiaHistoryWorkbook, siaHistoryFileName } from '../../utils/siaHistoryWorkbook';
+import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize.js';
 
 const fmtMoney = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -49,6 +52,12 @@ export function SiaHistoryTab({ currentId }) {
       return hay.includes(q);
     });
   }, [entries, filter]);
+
+  function download(entry) {
+    const wb = buildSiaHistoryWorkbook(entry);
+    sanitizeSheetJsWorkbook(wb);
+    XLSX.writeFile(wb, siaHistoryFileName(entry));
+  }
 
   async function remove(entry) {
     if (!window.confirm(`Remove "${entry.fileName}" (loaded ${fmtWhen(entry.loadedAt)}) from the SIA history?`)) return;
@@ -117,14 +126,24 @@ export function SiaHistoryTab({ currentId }) {
                     <td className={styles.num}>{summary.costLines}</td>
                     <td className={styles.num}>{fmtMoney(summary.ctsTotal)}</td>
                     <td>
-                      <button
-                        type="button"
-                        className={styles.removeBtn}
-                        onClick={e => { e.stopPropagation(); remove(entry); }}
-                        title="Remove this load from the history"
-                      >
-                        Remove
-                      </button>
+                      <div className={styles.actions}>
+                        <button
+                          type="button"
+                          className={styles.downloadBtn}
+                          onClick={e => { e.stopPropagation(); download(entry); }}
+                          title="Download this SIA's details and cost lines as an Excel workbook"
+                        >
+                          Download Excel
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.removeBtn}
+                          onClick={e => { e.stopPropagation(); remove(entry); }}
+                          title="Remove this load from the history"
+                        >
+                          Remove
+                        </button>
+                      </div>
                     </td>
                   </tr>
                   {open && (

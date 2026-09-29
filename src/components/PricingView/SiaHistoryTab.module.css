@@ -127,6 +127,26 @@
   color: #b91c1c;
 }
 
+.actions {
+  white-space: nowrap;
+  display: flex;
+  gap: 0.35rem;
+}
+
+.downloadBtn {
+  border: 1px solid var(--color-border);
+  background: #fff;
+  border-radius: 4px;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+  color: #1d4ed8;
+}
+
+.downloadBtn:hover {
+  background: #eff6ff;
+}
+
 .removeBtn:hover {
   background: #fef2f2;
 }
