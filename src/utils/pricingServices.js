@@ -808,3 +808,38 @@ export function groupFeeRows(rows) {
     };
   });
 }
+
+// ---------------------------------------------------------------------------
+// The option's cost by year, split by the kind of cost line: One Time,
+// Setup and Recurring (a Rolled line stays with the kind it rolls). Only
+// lines the side counts are summed (`counted(line)`), so the Total row
+// matches the Term cost the Fee Builder's totals show. `Other` holds any
+// type that is none of the three and is left out when empty.
+//
+//   costLines  feeBuilderPlan's costLines ({ type, byYear: [..] })
+export const COST_KINDS = ['One Time', 'Setup', 'Recurring'];
+export function costKindOf(type) {
+  const t = norm(type);
+  if (/^setup/.test(t)) return 'Setup';
+  if (/^one\s*-?\s*time/.test(t)) return 'One Time';
+  if (/recurring|monthly|annual/.test(t)) return 'Recurring';
+  return 'Other';
+}
+export function costsByKind(costLines, numYears, counted = () => true) {
+  const zeros = () => Array.from({ length: Math.max(1, numYears) }, () => 0);
+  const out = Object.fromEntries([...COST_KINDS, 'Other'].map(k => [k, zeros()]));
+  const total = zeros();
+  for (const c of costLines || []) {
+    if (!counted(c)) continue;
+    const row = out[costKindOf(c.type)];
+    total.forEach((_, i) => {
+      const v = Number(c.byYear?.[i]) || 0;
+      row[i] += v;
+      total[i] += v;
+    });
+  }
+  const rows = [...COST_KINDS, 'Other']
+    .filter(k => k !== 'Other' || out.Other.some(v => Math.abs(v) > 0.005))
+    .map(kind => ({ kind, byYear: out[kind] }));
+  return { rows, total };
+}

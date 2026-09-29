@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import {
   buildPricingServiceList, costItemsForService, servicesForItems, SERVICE_STATUS,
   feeStructureRowsFromFees, feeStructureRowToAltRow, applyFeeStructureToSchedule,
-  standardFeesForStructure, costKey,
+  standardFeesForStructure, costKey, costsByKind, costKindOf,
   addServiceToLineItem, costTotalsByLineItem, addLaterCostFees,
   costTypeConversion, moveCostAllocation, buildScheduleFromStructures, standardFeeContext, groupFeeRows, effectiveLineItemServices,
   passThroughFeeRows, addPassThroughFees,
@@ -491,3 +491,23 @@ test('pass-through lines each get a fee row of their own, at cost', () => {
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
+
+test('costs by kind split a side\'s counted cost lines into One Time, Setup and Recurring by year', () => {
+  const lines = [
+    { type: 'One Time', byYear: [100, 0, 0], on: true },
+    { type: 'One Time Rolled', byYear: [10, 10, 10], on: true },
+    { type: 'Setup', byYear: [500, 0, 0], on: true },
+    { type: 'Recurring (monthly)', byYear: [1200, 1246, 1294], on: true },
+    { type: 'Recurring (monthly)', byYear: [999, 999, 999], on: false },
+  ];
+  const { rows, total } = costsByKind(lines, 3, (c) => c.on);
+  assert.deepEqual(rows.map(r => [r.kind, r.byYear]), [
+    ['One Time', [110, 10, 10]],
+    ['Setup', [500, 0, 0]],
+    ['Recurring', [1200, 1246, 1294]],
+  ]);
+  assert.deepEqual(total, [1810, 1256, 1304]);
+  assert.equal(costKindOf('Setup Rolled'), 'Setup');
+  const other = costsByKind([{ type: 'Fee = $6.75/account', byYear: [5] }], 1);
+  assert.deepEqual(other.rows.map(r => r.kind), ['One Time', 'Setup', 'Recurring', 'Other']);
+});
