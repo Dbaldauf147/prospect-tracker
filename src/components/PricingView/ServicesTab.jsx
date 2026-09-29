@@ -54,7 +54,7 @@ const STATUS_CLASS = {
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
   onSetCount, onIgnoreForCheck, onSetFeeComponent, feeStructures = {}, setFeeStructures, previewFeeRow, autoStartMonthFor, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough,
-  unlinked = null, tagOptions = [], onTagLineItem, onIgnoreLineItem, onSetCompleted, globalGmPct = null,
+  unlinked = null, tagOptions = [], onTagLineItem, onIgnoreLineItem, onSetCompleted, completedServices = [], globalGmPct = null,
 }) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(null);
@@ -83,9 +83,9 @@ export function ServicesTab({
   const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0] || null;
   const scopeCount = services.filter(s => s.inScope).length;
   // Completed means the service's fee structure is settled, which holds on
-  // every option, so a mark on any option counts (older saves kept it on
-  // just the one it was clicked on).
-  const completed = new Set((workbook?.options || []).flatMap(o => o.servicesCompleted || []).map(k => String(k).trim().toLowerCase()));
+  // every option and SIA, so it is saved apart from the workbook
+  // (completedServices). Marks older saves kept on an option still count.
+  const completed = new Set([...completedServices, ...(workbook?.options || []).flatMap(o => o.servicesCompleted || [])].map(k => String(k).trim().toLowerCase()));
   const isDone = (name) => completed.has(String(name ?? '').trim().toLowerCase());
   const doneInScope = services.filter(s => s.inScope && isDone(s.name)).length;
 
@@ -634,7 +634,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                             type="checkbox"
                             checked={!it.ignored}
                             onChange={(e) => onIgnoreForCheck(it.id, !e.target.checked)}
-                            title={it.ignored ? 'Left out of the price check. Tick to count it again.' : 'Counted in the price check. Untick to leave it out.'}
+                            title={it.ignored ? 'Left out of the price check on every option. Tick to count it again.' : 'Counted in the price check. Untick to leave it out, on every option and the next SIA with this line.'}
                           />
                         </td>
                       )}
