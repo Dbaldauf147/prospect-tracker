@@ -407,16 +407,9 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
   });
 
   const term = Math.max(1, Math.round(termMonths));
-  // Months from `from` to the end of the term, each weighted by the
-  // escalator of the year it falls in (1 in year 1, 1 + esc in year 2...).
-  // With no escalator it is the month count.
   const fe = Number(feeEscalator) || 0;
   const ce = Number(costEscalator) || 0;
-  const weightedMonths = (from, esc) => {
-    let w = 0;
-    for (let m = Math.max(1, from); m <= term; m++) w += Math.pow(1 + esc, Math.ceil(m / 12) - 1);
-    return w;
-  };
+  const weightedMonths = (from, esc) => escalatedMonths(from, esc, term);
   rows.forEach((row, ri) => {
     const alt = alts[ri];
     const units = alt.unitCount > 0 ? alt.unitCount : 1;
@@ -431,6 +424,15 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
     const feeWeight = Math.max(1e-9, weightedMonths(start, fe));
     const agg = perRow[ri];
     agg.startMonth = start;
+    // What the monthly fee is made of, before the escalators weigh it:
+    // [kind, from, amount] with kind 'm' for a monthly cost from month
+    // `from` and 'l' for a lump spread over the fee's months. Kept on an
+    // applied fee's gmLink so it re-prices when the escalators move.
+    const escTerms = new Map();
+    const addTerm = (kind, from, amount) => {
+      const k = `${kind}:${from}`;
+      escTerms.set(k, [kind, from, (escTerms.get(k)?.[2] || 0) + amount]);
+    };
     let any = false;
     costOut.forEach((co, ci) => {
       if (co.rowIdx !== ri) return;
@@ -449,9 +451,10 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
           co.catchUpMonths = catchUp ? start - co.billStartMonth : 0;
           const costWeight = weightedMonths(Math.min(co.billStartMonth, start), ce);
           agg.monthlyTotal += price * costWeight / feeWeight;
+          addTerm('m', Math.min(co.billStartMonth, start), price);
           any = true;
         }
-        else if (co.rolled) { agg.monthlyTotal += price / feeWeight; any = true; }
+        else if (co.rolled) { agg.monthlyTotal += price / feeWeight; addTerm('l', 0, price); any = true; }
       } else if (effBucket === COST_BUCKET_UPFRONT && co.bucket === COST_BUCKET_UPFRONT) {
         agg.upfrontTotal += price;
         any = true;
@@ -460,8 +463,12 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
     agg.rollMonths = rollMonths;
     agg.escalated = fe !== ce;
     if (any) {
-      const total = (fb || costOut[agg.costIdx[0]]?.feeBucket) === COST_BUCKET_UPFRONT ? agg.upfrontTotal : agg.monthlyTotal;
+      const upfront = (fb || costOut[agg.costIdx[0]]?.feeBucket) === COST_BUCKET_UPFRONT;
+      const total = upfront ? agg.upfrontTotal : agg.monthlyTotal;
       agg.exactFee = total / units;
+      if (!upfront && escTerms.size) {
+        agg.escTerms = [...escTerms.values()].map(([kind, from, amount]) => [kind, from, amount / units]);
+      }
       agg.standardFee = Math.round(agg.exactFee * 100) / 100;
     }
   });
@@ -642,7 +649,18 @@ export function standardFeeContext(structure, costs, { termMonths = 36, siteCoun
   const billed = (r, idx) => {
     if (r.fee != null || standardFee(idx) == null) return r;
     const out = { ...r, fee: standardFee(idx) };
-    if (linkable) out.gmLink = { atCost: atCost[idx]?.exactFee ?? 0, fixed: fixed[idx]?.exactFee ?? 0 };
+    if (linkable) {
+      out.gmLink = { atCost: atCost[idx]?.exactFee ?? 0, fixed: fixed[idx]?.exactFee ?? 0 };
+      // A monthly fee also keeps what it is made of, per unit, so it
+      // re-prices when the Escalator, Cost Esc. or term moves.
+      if (atCost[idx]?.escTerms || fixed[idx]?.escTerms) {
+        out.gmLink.esc = {
+          feeFrom: std.perRow[idx].startMonth,
+          atCost: atCost[idx]?.escTerms || [],
+          fixed: fixed[idx]?.escTerms || [],
+        };
+      }
+    }
     return out;
   };
   return { std, standardFee, billed, filled: structure ? { ...structure, rows: rows.map(billed) } : null };
@@ -651,22 +669,51 @@ export function standardFeeContext(structure, costs, { termMonths = 36, siteCoun
 // A linked fee's per-unit price at a Global GM%: the at-cost part marked
 // up to it, plus the part priced some other way, rounded to the cent the
 // Fee column shows.
-export function feeAtGm(gmLink, gm) {
+//
+// With `esc` ({ feeEscalator, costEscalator, termMonths, startMonth }) a
+// monthly fee that kept its make-up (gmLink.esc) is also re-priced for
+// the escalators, the term and its start month (the row's own, else the
+// one it was built from), the same way standardFeesForStructure prices it.
+export function feeAtGm(gmLink, gm, esc = null) {
   if (!gmLink || typeof gm !== 'number' || !(gm < 1)) return null;
-  const v = (Number(gmLink.atCost) || 0) / (1 - gm) + (Number(gmLink.fixed) || 0);
+  let atCost = Number(gmLink.atCost) || 0;
+  let fixed = Number(gmLink.fixed) || 0;
+  if (esc && gmLink.esc) {
+    const term = Math.max(1, Math.round(Number(esc.termMonths) || 36));
+    const own = Math.round(Number(esc.startMonth));
+    const feeFrom = own > 0 ? own : (Number(gmLink.esc.feeFrom) || 1);
+    const feeWeight = Math.max(1e-9, escalatedMonths(feeFrom, Number(esc.feeEscalator) || 0, term));
+    const partOf = (terms) => (terms || []).reduce((t, [kind, from, amount]) => t + (kind === 'm'
+      ? amount * escalatedMonths(Math.min(from, feeFrom), Number(esc.costEscalator) || 0, term)
+      : amount), 0) / feeWeight;
+    atCost = partOf(gmLink.esc.atCost);
+    fixed = partOf(gmLink.esc.fixed);
+  }
+  const v = atCost / (1 - gm) + fixed;
   return Number.isFinite(v) ? Math.round(v * 100) / 100 : null;
 }
 
+// Months from `from` to the end of a `term`-month deal, each weighted by
+// the escalator of the year it falls in (1 in year 1, 1 + esc in year 2,
+// ...). With no escalator it is the month count.
+export function escalatedMonths(from, esc, term) {
+  let w = 0;
+  for (let m = Math.max(1, Math.round(from) || 1); m <= term; m++) w += Math.pow(1 + esc, Math.ceil(m / 12) - 1);
+  return w;
+}
+
 // Every option's Alternative Fee schedule with its linked fees re-priced at
-// a Global GM%. The same object back when nothing moved.
-export function repriceLinkedFees(altFees, gm) {
+// a Global GM% (and, given `esc` { feeEscalator, costEscalator,
+// termMonths }, for the escalators too). The same object back when
+// nothing moved.
+export function repriceLinkedFees(altFees, gm, esc = null) {
   let changed = false;
   const next = {};
   for (const [k, rows] of Object.entries(altFees || {})) {
     let rowsChanged = false;
     const out = (rows || []).map(r => {
       if (!r?.gmLink) return r;
-      const fee = feeAtGm(r.gmLink, gm);
+      const fee = feeAtGm(r.gmLink, gm, esc ? { ...esc, startMonth: r.startMonth } : null);
       if (fee == null || fee === r.fee) return r;
       rowsChanged = true;
       return { ...r, fee };
