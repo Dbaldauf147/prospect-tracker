@@ -256,8 +256,9 @@ async function exportPlan(plan) {
 // rebuild the option's Alternative Fee schedule: a preview first, then one
 // Build button writes it.
 //
-//   setPicks      updates { [serviceKey]: structureId | '' }, '' = leave as
-//                 is, absent = the service's standard structure when in scope
+//   setPicks      (optionNumber, updater) updates that option's
+//                 { [serviceKey]: structureId | '' }, '' = leave as is,
+//                 absent = the service's standard structure when in scope
 //   planFor       () => the services, their picks, the rebuilt schedule and
 //                 the option's totals for the active option
 //   onApply       (plan) => writes it, true when it did
@@ -286,8 +287,11 @@ export function FeeBuilderTab({
   const listed = rows.filter(r => r.inScope || showAll);
   const hiddenCount = rows.length - listed.length;
   const noStructures = listed.filter(r => r.structures.length === 0).length;
-  const setPick = (name, id) => setPicks?.(prev => ({ ...prev, [serviceKey(name)]: id }));
-  const setAll = (mode) => setPicks?.(() => {
+  // Picks are kept per option, so each option's fee structures stay put
+  // while another is being worked on.
+  const optionNumber = plan?.optionNumber ?? opt?.optionNumber;
+  const setPick = (name, id) => setPicks?.(optionNumber, prev => ({ ...prev, [serviceKey(name)]: id }));
+  const setAll = (mode) => setPicks?.(optionNumber, () => {
     const next = {};
     for (const r of rows) {
       if (mode === 'none') next[serviceKey(r.name)] = '';
@@ -298,7 +302,6 @@ export function FeeBuilderTab({
   // SIA and option (see feeBuilderChecklist.js).
   const hidden = Array.isArray(hiddenColumns) ? hiddenColumns : [];
   const showCol = (key) => !hidden.includes(key);
-  const optionNumber = plan?.optionNumber ?? opt?.optionNumber;
   const isDone = (name) => isServiceDone(doneState, workbook.id, optionNumber, name);
   const setDone = (name, on) => setDoneState?.(prev => setServiceDone(prev, workbook.id, optionNumber, name, on));
   const doneCount = listed.filter(r => isDone(r.name)).length;

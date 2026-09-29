@@ -38,3 +38,15 @@ export function toggleHiddenColumn(hidden, key) {
   const list = Array.isArray(hidden) ? hidden : [];
   return list.includes(key) ? list.filter(k => k !== key) : [...list, key];
 }
+
+// The Fee Builder keeps its picks and typed fees per option:
+// { [optionNumber]: { ... } }. Runs `updater` on one option's map and puts
+// the result back, dropping the option once its map is empty so a cleared
+// option reads the same as one never touched.
+export function updateForOption(byOption, optionNumber, updater) {
+  const prev = byOption && typeof byOption === 'object' ? byOption : {};
+  const next = updater(prev[optionNumber] || {});
+  const out = { ...prev };
+  if (next && Object.keys(next).length) out[optionNumber] = next; else delete out[optionNumber];
+  return out;
+}

@@ -30,6 +30,7 @@ import { SERVICE_RENAMED_EVENT } from '../../utils/serviceRenameRunner';
 import { renameLineItemServices, renameFeeStructures, renameWorkbookServices } from '../../utils/serviceRenamePlans';
 import { renameInLowerList, renameInLowerKeyMap } from '../../utils/serviceNameMerges';
 import { FeeBuilderTab } from './FeeBuilderTab';
+import { updateForOption } from '../../utils/feeBuilderChecklist';
 import { SiaHistoryTab } from './SiaHistoryTab';
 import { buildSiaHistoryEntry, siaKeyFacts } from '../../utils/siaHistoryEntry';
 import { saveSiaHistoryEntry } from '../../utils/siaLoadHistory';
@@ -2419,7 +2420,7 @@ export function PricingView({ settings } = {}) {
     window.addEventListener(SERVICE_RENAMED_EVENT, onRenamed);
     return () => window.removeEventListener(SERVICE_RENAMED_EVENT, onRenamed);
   }, []);
-  const [feeBuilderPicks, setFeeBuilderPicks] = useState({}); // Fee Builder subtab: { [serviceKey]: structureId | '' } - '' leaves the service's fees as they are; absent means its standard structure
+  const [feeBuilderPicks, setFeeBuilderPicks] = useState({}); // Fee Builder subtab: { [optionNumber]: { [serviceKey]: structureId | '' } } - '' leaves the service's fees as they are; absent means its standard structure. Saved with the page until the SIA is cleared or replaced
   const [feeBuilderOverrides, setFeeBuilderOverrides] = useState({}); // Fee Builder subtab: { [optionNumber]: { [rowKey]: fee per unit } } - a Fee / Unit typed over the built one
   const [feeBuilderHiddenCols, setFeeBuilderHiddenCols] = useState([]); // Fee Builder subtab: keys of the service-table columns hidden from its Columns menu
   const [feeBuilderDone, setFeeBuilderDone] = useState(null); // Fee Builder subtab: services ticked off as done, { workbookId, done } - see feeBuilderChecklist.js
@@ -2630,6 +2631,8 @@ export function PricingView({ settings } = {}) {
         if (Array.isArray(saved.brokerFeesData)) setBrokerFeesData(saved.brokerFeesData);
         if (Array.isArray(saved.feeBuilderHiddenCols)) setFeeBuilderHiddenCols(saved.feeBuilderHiddenCols);
         if (saved.feeBuilderDone && typeof saved.feeBuilderDone === 'object') setFeeBuilderDone(saved.feeBuilderDone);
+        if (saved.feeBuilderPicks && typeof saved.feeBuilderPicks === 'object') setFeeBuilderPicks(saved.feeBuilderPicks);
+        if (saved.feeBuilderOverrides && typeof saved.feeBuilderOverrides === 'object') setFeeBuilderOverrides(saved.feeBuilderOverrides);
         // Rehydrate the uploaded SIA workbook bytes so "Save to Opp"
         // can still attach the source file after a page reload.
         try {
@@ -2650,9 +2653,9 @@ export function PricingView({ settings } = {}) {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, feeDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData, s2cLineItemTags, feeBuilderHiddenCols, feeBuilderDone };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, feeDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData, s2cLineItemTags, feeBuilderHiddenCols, feeBuilderDone, feeBuilderPicks, feeBuilderOverrides };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, feeDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData, s2cLineItemTags, feeBuilderHiddenCols, feeBuilderDone]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, feeDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData, s2cLineItemTags, feeBuilderHiddenCols, feeBuilderDone, feeBuilderPicks, feeBuilderOverrides]);
 
   // Fees the Fee Builder or a structure's Apply wrote from a standard fee
   // carry a gmLink; they re-price here when the Global GM%, the Escalator,
@@ -3390,6 +3393,10 @@ export function PricingView({ settings } = {}) {
         loadedAt: Date.now(),
       };
       setWorkbook(loaded);
+      // A new SIA starts the Fee Builder over: picks and typed fees were
+      // made for the outgoing file's options.
+      setFeeBuilderPicks({});
+      setFeeBuilderOverrides({});
       // Every load goes into the SIA History subtab: header details and
       // cost lines, so the file can be looked back on after the next one
       // replaces it. Best-effort - a failed save must not fail the upload.
@@ -3552,6 +3559,10 @@ export function PricingView({ settings } = {}) {
     setOverrides({});
     setActiveOption(null);
     setAltFees({});
+    // The Fee Builder's picks, typed fees and done ticks belong to this SIA.
+    setFeeBuilderPicks({});
+    setFeeBuilderOverrides({});
+    setFeeBuilderDone(null);
     setError('');
     // Linked-To defaults live under their own key (LINKED_TO_DEFAULTS_KEY)
     // and are intentionally preserved across Clear / file changes.
@@ -5348,11 +5359,11 @@ export function PricingView({ settings } = {}) {
   // Fee Builder subtab: which saved fee structure each service would use.
   // A service with no pick uses its standard (★) structure when it is in
   // SIA scope; '' leaves its fees on the schedule as they are.
-  function feeBuilderPickFor(svc) {
+  function feeBuilderPickFor(svc, optionNumber) {
     const k = serviceKey(svc.name);
     const saved = serviceFeeStructures[k];
     const structures = saved?.structures || [];
-    const picked = feeBuilderPicks[k];
+    const picked = feeBuilderPicks[optionNumber]?.[k];
     if (picked === '') return null;
     if (picked) return structures.find(x => x.id === picked) || null;
     if (!svc.inScope) return null;
@@ -5374,7 +5385,7 @@ export function PricingView({ settings } = {}) {
       const k = serviceKey(svc.name);
       const saved = serviceFeeStructures[k];
       if (!svc.inScope && !(saved?.structures?.length)) continue;
-      const structure = feeBuilderPickFor(svc);
+      const structure = feeBuilderPickFor(svc, opt.optionNumber);
       const detail = serviceDetailFor(svc.name);
       const costCts = detail.items.reduce((s, it) => s + (typeof it.cts === 'number' ? it.cts : 0), 0);
       services.push({
@@ -5993,15 +6004,10 @@ export function PricingView({ settings } = {}) {
           workbook={workbook}
           activeOption={activeOption}
           setActiveOption={setActiveOption}
-          setPicks={setFeeBuilderPicks}
+          setPicks={(optionNumber, updater) => setFeeBuilderPicks(prev => updateForOption(prev, optionNumber, updater))}
           planFor={feeBuilderPlan}
           onApply={applyFeeBuilderPlan}
-          setFeeOverrides={(optionNumber, updater) => setFeeBuilderOverrides(prev => {
-            const next = updater(prev[optionNumber] || {});
-            const out = { ...prev };
-            if (Object.keys(next).length) out[optionNumber] = next; else delete out[optionNumber];
-            return out;
-          })}
+          setFeeOverrides={(optionNumber, updater) => setFeeBuilderOverrides(prev => updateForOption(prev, optionNumber, updater))}
           onOpenServices={() => setPageSubtab('services')}
           hiddenColumns={feeBuilderHiddenCols}
           setHiddenColumns={setFeeBuilderHiddenCols}
