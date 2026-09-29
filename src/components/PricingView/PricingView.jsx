@@ -4872,6 +4872,12 @@ export function PricingView({ settings } = {}) {
             ? { priceAtCost: ok ? ctsItemEffectiveCost(item) : 0, priceFixed: 0 }
             : { priceAtCost: 0, priceFixed: ok ? pr : 0 };
         })(),
+        // A line with a GM% of its own is price-checked at it, as the
+        // fees built from it are; the rest follow the Global GM%.
+        ...(() => {
+          const { source, gm } = priceFor(item);
+          return source !== 'global' && source !== 'passThrough' && typeof gm === 'number' ? { margin: gm } : {};
+        })(),
         startMonth: effectiveItemStartMonth(item),
         feeName: String(mappingNameFor(item) || '').trim(),
         automatedName: String(resolvedLinkedTo(item) || '').trim(),
@@ -4957,6 +4963,9 @@ export function PricingView({ settings } = {}) {
       meta: svc?.meta || null,
       counts,
       bases,
+      // Marked up at the Global GM%, the margin the fee structures price
+      // blank fees at, so the check and the fees built from it agree.
+      margin: typeof globalGmPct === 'number' ? globalGmPct : undefined,
       techDeprPct,
       termMonths,
     });
