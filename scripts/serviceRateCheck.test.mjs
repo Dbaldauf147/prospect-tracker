@@ -14,16 +14,41 @@ function test(name, fn) {
 const recurring = { serviceType: 'Recurring', years: '3 years' };
 const project = { serviceType: 'Project', years: '1 year' };
 
-test('recurring CTS counts twelve months, one-time once, pass-through not at all', () => {
+test('recurring CTS counts twelve months, one-time once, pass-through at cost', () => {
   const r = year1CostOf([
     { cts: 100, type: 'Recurring' },
     { cts: 500, type: 'One-time' },
-    { cts: 999, type: 'Recurring', passThrough: true },
+    { cts: 10, type: 'Recurring', passThrough: true },
     { cts: null, type: 'Recurring' },
-  ]);
-  assert.equal(r.cost, 1700);
-  assert.equal(r.counted, 2);
+  ], 0.5, 0.04);
+  assert.equal(r.cost, 1820);
+  assert.equal(r.counted, 3);
   assert.equal(r.passThrough, 1);
+  // 1,700 marked up at 50% with 4% tech depr., plus the 120 pass-through
+  // as it is: no margin, no depreciation.
+  assert.equal(Math.round(r.price * 100) / 100, Math.round((1700 * 1.04 / 0.5 + 120) * 100) / 100);
+  // Its 0% is not a chosen margin, so the check still reads one margin.
+  assert.deepEqual(r.margins, [0.5]);
+});
+
+test('a pass-through line can be pointed at a fee component', () => {
+  assert.equal(checkPartOf({ cts: 648.75, type: 'Recurring (monthly)', passThrough: true }), 'recurring');
+  const c = rateCardCheck({
+    items: [
+      { id: 'mgmt', cts: 1000, type: 'Recurring' },
+      { id: 'partner', cts: 519, type: 'Recurring', passThrough: true, feeComponent: 'recurring:per_account' },
+    ],
+    entry: { basis: 'flat', rate: 20000, rateHigh: 30000, lines: [{ basis: 'per_account', rate: 10, rateHigh: 20 }] },
+    meta: recurring,
+    counts: { accounts: 519 },
+  });
+  const ongoing = c.parts.find(p => p.key === 'recurring');
+  const perAccount = ongoing?.components?.rows.find(r => r.id === 'recurring:per_account');
+  assert.ok(perAccount, 'per-account component row');
+  assert.equal(perAccount.picked, 1);
+  // 519 a month for 519 accounts: $12 per account a year, at cost.
+  assert.equal(perAccount.perUnit.price, 12);
+  assert.equal(c.passThrough, 1);
 });
 
 test('priced at 50% margin and inside a per-site range', () => {

@@ -774,9 +774,14 @@ function RateCheck({ check, ctsShare = null }) {
   const fmt = pu ? fmtRate : fmtWhole;
   const pct = (n) => `${Math.round(n * 1000) / 10}%`;
   const deprNote = check.techDeprPct > 0 ? ` + ${pct(check.techDeprPct)} tech depr.` : '';
+  // Pass-through lines are in the check too, at cost: say so, or the
+  // margin reads as though it covered them.
+  const passNote = check.passThrough > 0
+    ? `, ${check.passThrough} pass-through line${check.passThrough === 1 ? '' : 's'} at cost`
+    : '';
   const markupLabel = typeof check.margin === 'number'
-    ? `At ${pct(check.margin)} margin${deprNote}`
-    : `At each line's margin${deprNote}`;
+    ? `At ${pct(check.margin)} margin${deprNote}${passNote}`
+    : `At each line's margin${deprNote}${passNote}`;
   const range = shown.low == null ? '' : (fmt(shown.low) === fmt(shown.high)
     ? fmt(shown.low)
     : `${fmt(Math.min(shown.low, shown.high))} – ${fmt(Math.max(shown.low, shown.high))}`);

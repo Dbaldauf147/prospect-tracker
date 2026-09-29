@@ -75,8 +75,11 @@ function partOfCost(it) {
   return 'oneTime';
 }
 
-// The first-year cost of a set of cost lines, pass-through left out, split
-// by part. Only months 1 to 12 count: a recurring line starting in month 4
+// The first-year cost of a set of cost lines, split by part. A pass-through
+// line is counted at cost: billed with no margin and no tech depreciation,
+// but still money the fee model has to carry, so it sits in its part (and
+// can be pointed at a fee component) like any other line. `passThrough`
+// counts those lines. Only months 1 to 12 count: a recurring line starting in month 4
 // pays nine of them, and a cost landing in month 13 or later is a year 2
 // cost. `runRate` is the recurring lines' full year (monthly × 12), which
 // is how an annual per-unit rate is quoted.
@@ -100,9 +103,11 @@ export function year1CostOf(items = [], margin = DEFAULT_MARGIN, techDeprPct = 0
   for (const it of items) {
     const y = lineYear(it, margin, techDeprPct, termMonths);
     if (!y) continue;
-    if (y.skip === 'passThrough') { passThrough += 1; continue; }
     if (y.skip === 'later') { later += 1; continue; }
-    margins.add(y.margin);
+    // A pass-through line's 0% is not a margin anybody chose, so it stays
+    // out of `margins` and the check still reads "At 50% margin".
+    if (y.passThrough) passThrough += 1;
+    else margins.add(y.margin);
     parts[y.part] += y.cost;
     priced[y.part] += y.price;
     runRate += y.runRate;
@@ -116,16 +121,21 @@ export function year1CostOf(items = [], margin = DEFAULT_MARGIN, techDeprPct = 0
 }
 
 // One cost line's share of year 1, the arithmetic year1CostOf sums: null
-// with no CTS, `skip` set for a pass-through line or one landing after
-// month 12.
+// with no CTS, `skip` set for a line landing after month 12. A pass-through
+// line is priced at cost and flagged `passThrough`.
 function lineYear(it, margin, techDeprPct, termMonths = DEFAULT_TERM_MONTHS) {
   if (typeof it?.cts !== 'number' || !Number.isFinite(it.cts)) return null;
-  if (it.passThrough) return { skip: 'passThrough' };
   const start = startOf(it);
   if (start > 12) return { skip: 'later' };
-  const m = typeof it.margin === 'number' && Number.isFinite(it.margin) ? it.margin : margin;
-  const f = priceFactor(m, techDeprPct);
+  const passThrough = !!it.passThrough;
+  const m = passThrough ? 0 : (typeof it.margin === 'number' && Number.isFinite(it.margin) ? it.margin : margin);
+  const f = passThrough ? 1 : priceFactor(m, techDeprPct);
   const part = partOfCost(it);
+  const y = lineYearAt(it, part, m, f, start, termMonths);
+  return passThrough ? { ...y, passThrough } : y;
+}
+
+function lineYearAt(it, part, m, f, start, termMonths) {
   if (part === 'recurring' && isRolledType(it.type)) {
     const term = Number(termMonths) > 0 ? Number(termMonths) : DEFAULT_TERM_MONTHS;
     const monthly = it.cts / term;
