@@ -209,6 +209,24 @@ export function passThroughLinesOf(items = [], counts = {}, termMonths = DEFAULT
   return out;
 }
 
+// The card's verdict from the rows the page lists under it: each part, or
+// for a part split into components, each component (and the shared row).
+// Out of range when any row is (below before above), within when every
+// row is. Null when any row can't be judged (a card line with no cost
+// under it, a cost with no card line, a missing count): the costs don't
+// line up with the card's parts then, and the total decides.
+function verdictOfRows(parts = []) {
+  const judged = [RATE_CHECK.WITHIN, RATE_CHECK.BELOW, RATE_CHECK.ABOVE];
+  const rows = parts.flatMap(pt => (pt.components
+    ? [...pt.components.rows.filter(r => !r.shared), ...(pt.components.shared ? [pt.components.shared] : [])]
+    : [pt]));
+  const statuses = rows.map(r => r.status);
+  if (statuses.length === 0 || !statuses.every(st => judged.includes(st))) return null;
+  if (statuses.includes(RATE_CHECK.BELOW)) return RATE_CHECK.BELOW;
+  if (statuses.includes(RATE_CHECK.ABOVE)) return RATE_CHECK.ABOVE;
+  return RATE_CHECK.WITHIN;
+}
+
 const statusOf = (price, low, high) => {
   if (price < Math.min(low, high)) return RATE_CHECK.BELOW;
   if (price > Math.max(low, high)) return RATE_CHECK.ABOVE;
@@ -460,12 +478,20 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
   // the check up.
   const blocking = perUnit && onlyPart ? [] : missing;
 
+  // The whole card is read over a full year too, the way each part and
+  // component below it is: setup and one-time money plus a year of the
+  // ongoing lines. Year 1 alone runs short when an ongoing line starts
+  // after month 1, which would call a card low that every one of its
+  // components calls within range.
+  const yearCost = year1.parts.setup + year1.parts.oneTime + year1.runRate;
+  const yearPrice = year1.priced.setup + year1.priced.oneTime + year1.pricedRunRate;
+
   let status;
   if (!priced) status = RATE_CHECK.UNPRICED;
   else if (blocking.length) status = RATE_CHECK.INCOMPLETE;
   else if (counted === 0 || cost <= 0) status = RATE_CHECK.NO_COST;
   else if (perUnit) status = statusOf(perUnit.price, perUnit.rateLow, perUnit.rateHigh);
-  else status = statusOf(price, low, high);
+  else status = verdictOfRows(parts) || statusOf(yearPrice, low, high);
 
   // The counts the card multiplies by (sites, accounts, ...), so the page
   // can show each one and where it came from.
@@ -484,7 +510,13 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
     // The card is priced and charges no setup: a Setup cost has no setup
     // fee to recover it, so it belongs rolled into the ongoing fee.
     setupOffCard: priced && cardFor.setup.length === 0,
-    status, cost, price, margin: appliedMargin, techDeprPct: Number(techDeprPct) || 0, low, high, notes, passThrough, later, missing, parts, unitsUsed, perUnit, leftOut,
+    status,
+    // What the card is judged on: a full year (see yearCost). Year 1's own
+    // figures are kept for the note that says how far year 1 falls short.
+    cost: perUnit ? cost : yearCost,
+    price: perUnit ? price : yearPrice,
+    year1Cost: cost, year1Price: price,
+    margin: appliedMargin, techDeprPct: Number(techDeprPct) || 0, low, high, notes, passThrough, later, missing, parts, unitsUsed, perUnit, leftOut,
     noFee: !!est?.noFee,
   };
 }

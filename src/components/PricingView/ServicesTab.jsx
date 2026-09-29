@@ -892,8 +892,16 @@ function RateCheck({ check, ctsShare = null }) {
         Price check <span className={styles[cls]}>{label}</span>
       </h4>
       <div className={styles.rateGrid}>
-        <span><span className={styles.factKey}>{pu?.perMonth || pu?.part === 'Ongoing' ? 'Cost' : 'Year 1 cost'}{per}{pu?.part === 'Ongoing' && !pu.perMonth ? ' a year' : ''}:</span> <span className={styles.rateFigure}>{fmt(shown.cost)}</span></span>
+        <span><span className={styles.factKey}>{pu?.perMonth || pu?.part === 'Ongoing' || !pu ? 'Cost' : 'Year 1 cost'}{per}{(pu?.part === 'Ongoing' && !pu.perMonth) || !pu ? ' a year' : ''}:</span> <span className={styles.rateFigure}>{fmt(shown.cost)}</span></span>
         <span><span className={styles.factKey}>{markupLabel}:</span> <span className={styles.rateFigure}>{fmt(shown.price)}{per}</span></span>
+        {!pu && typeof check.year1Price === 'number' && Math.abs(check.year1Price - check.price) >= 0.5 && (
+          <span
+            className={styles.factKey}
+            title="Ongoing lines are read over a full year (monthly x 12), the way the rate card quotes them. Year 1 is shorter when a line starts after month 1."
+          >
+            Year 1 only: {fmtWhole(check.year1Cost)} cost, {fmtWhole(check.year1Price)} priced
+          </span>
+        )}
         {components && (
           <span><span className={styles.factKey}>Fee component:</span> <span className={styles.rateFigure}>{components}</span></span>
         )}
