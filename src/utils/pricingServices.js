@@ -680,7 +680,7 @@ export function repriceLinkedFees(altFees, gm) {
 // sibling has a fee the blank row is dropped, and when none has one only
 // the first is kept. The services that lost their row that way are listed
 // under unpriced.
-export function buildScheduleFromStructures(schedule, picks, { siteCount, accountCount } = {}) {
+export function buildScheduleFromStructures(schedule, picks, { siteCount, accountCount, structuresOnly = false } = {}) {
   let rows = [...(schedule || [])];
   const builtBy = new Map(); // fee name -> services that wrote it in this build
   const addedRows = new Set();
@@ -749,7 +749,16 @@ export function buildScheduleFromStructures(schedule, picks, { siteCount, accoun
       unpriced: [...new Set(drop.map(r => serviceOf.get(r)))].filter(x => !kept.includes(x)),
     });
   }
-  return { rows, perService, shared };
+  // `structuresOnly`: the schedule is the picked structures' fees and
+  // nothing else. Every named row no structure wrote comes off (`dropped`),
+  // the ones a structure replaced included; blank starter rows stay.
+  let dropped = [];
+  if (structuresOnly) {
+    const replaced = new Set(perService.flatMap(ps => ps.removed));
+    dropped = rows.filter(r => !serviceOf.has(r) && String(r?.altItem || '').trim() && !replaced.has(r));
+    rows = rows.filter(r => serviceOf.has(r) || !String(r?.altItem || '').trim());
+  }
+  return { rows, perService, shared, dropped };
 }
 
 // The as-built rows with every fee name that shows more than once folded

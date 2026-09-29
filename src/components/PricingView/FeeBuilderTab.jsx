@@ -256,7 +256,7 @@ export function FeeBuilderTab({
           <h4 className={styles.sectionTitle}>Fee structure by service</h4>
           <span className={styles.barSpacer} />
           <button type="button" className={own.smallBtn} onClick={() => setAll('standard')}>Use standard for all</button>
-          <button type="button" className={own.smallBtn} onClick={() => setAll('none')}>Leave all as is</button>
+          <button type="button" className={own.smallBtn} onClick={() => setAll('none')}>No fees for all</button>
           <label className={own.toggle}>
             <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
             Show services outside SIA scope{hiddenCount > 0 && !showAll ? ` (${hiddenCount})` : ''}
@@ -304,7 +304,7 @@ export function FeeBuilderTab({
                           value={r.pickedId}
                           onChange={(e) => setPick(r.name, e.target.value)}
                         >
-                          <option value="">Leave as is</option>
+                          <option value="">No fees</option>
                           {r.structures.map(st => (
                             <option key={st.id} value={st.id}>
                               {st.id === r.standardId ? '★ ' : ''}{st.name || 'Untitled'}
@@ -321,7 +321,7 @@ export function FeeBuilderTab({
                             <div className={styles.subNote}>Replaces {built.removed.map(x => x.altItem).join(', ')}</div>
                           )}
                         </>
-                      ) : <span className={own.muted}>Unchanged</span>}
+                      ) : <span className={own.muted}>No fees</span>}
                     </td>
                   </tr>
                 );
@@ -331,8 +331,8 @@ export function FeeBuilderTab({
         )}
         {noStructures > 0 && (
           <p className={styles.note}>
-            {noStructures} service{noStructures === 1 ? ' has' : 's have'} no saved fee structure yet, so {noStructures === 1 ? 'its' : 'their'} fees
-            stay as they are. Save one from the SIA setup on the Services subtab.
+            {noStructures} service{noStructures === 1 ? ' has' : 's have'} no saved fee structure yet, so {noStructures === 1 ? 'it adds' : 'they add'} no
+            fees. Save one from the SIA setup on the Services subtab.
           </p>
         )}
       </section>
@@ -367,8 +367,8 @@ export function FeeBuilderTab({
           </div>
           {flash && <div className={styles.flash}>{flash}</div>}
           <p className={styles.note}>
-            A preview. Nothing changes on the Pricing subtab until you build it. Rows marked with a service come from its
-            picked structure; the rest are already on the schedule and stay. Type over a Fee / Unit to override it; the
+            A preview. Nothing changes on the Pricing subtab until you build it. Every row comes from a service&apos;s
+            picked structure on the Services subtab. Type over a Fee / Unit to override it; the
             years, margins and totals follow. A grouped fee shares the typed total across its rows.
             {typedCount > 0 && (
               <>
@@ -389,6 +389,13 @@ export function FeeBuilderTab({
                   that row is left off rather than billing the other service&apos;s costs twice.
                 </Fragment>
               ))}
+            </div>
+          )}
+          {plan.dropped?.length > 0 && (
+            <div className={own.info}>
+              Only fees from the Services subtab are built. Building takes {plan.dropped.length === 1 ? 'this row' : `these ${plan.dropped.length} rows`} off
+              the schedule, since no picked structure writes {plan.dropped.length === 1 ? 'it' : 'them'}:{' '}
+              {plan.dropped.map(r => r.altItem).join(', ')}.
             </div>
           )}
           {plan.moves?.length > 0 && (
