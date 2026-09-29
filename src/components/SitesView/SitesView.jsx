@@ -4206,7 +4206,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         const classification = classifyMarket(row, utilityKey);
         // Unknown: a competitive market with no utility or supplier on file
         // to say which side of it the site is on (or no state / country).
-        if (!classification) return <span title={`${label}: Unknown. ${marketBasis(row, utilityKey)}`} style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>Unknown</span>;
+        if (!classification) {
+          const text = marketLabel(row, utilityKey);
+          return <span title={`${label}: ${text}. ${marketBasis(row, utilityKey)}`} style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>{text}</span>;
+        }
         const isRegulated = classification === 'Regulated';
         // Deregulated = green (opportunity), Regulated = orange.
         const color = isRegulated
@@ -4222,7 +4225,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           >{classification}</span>
         );
       },
-      exportValue: (row) => classifyMarket(row, utilityKey) || 'Unknown',
+      exportValue: (row) => marketLabel(row, utilityKey),
     });
     const makeGacOpportunityCol = () => ({
       key: 'gac_opportunity',
@@ -5128,6 +5131,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // can't confirm it per site until a utility file is loaded.
     if (!provider) return null;
     return 'Regulated';
+  }
+
+  // classifyMarket as a label that is never blank, for the Market column
+  // and the Site Detail export. A competitive state with no utility or
+  // supplier on file says so, rather than a bare Unknown: the state is
+  // known to allow supplier choice, only the site's utility is missing.
+  // Unknown is left for a site with no state and no recognized country.
+  function marketLabel(row, commodity) {
+    const classification = classifyMarket(row, commodity);
+    if (classification) return classification;
+    const state = effectiveStateCode(row);
+    const map = commodity === 'electric' ? ELECTRIC_DEREGULATION : GAS_DEREGULATION;
+    if (state && map[state]) return 'Deregulated State (Missing Utility)';
+    return 'Unknown';
   }
 
   // Plain-English account of which clause above decided the row, for the
@@ -11859,7 +11876,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       { label: 'Electric Utility', get: (s) => s.electricUtility, width: 22 },
       { label: 'ISO / RTO', get: (s) => s.iso, width: 11 },
       { label: 'Electric Supplier', get: (s) => s.electricSupplier, width: 22 },
-      { label: 'Electric Market', get: (s) => s.electricMarket, width: 18 },
+      { label: 'Electric Market', get: (s) => s.electricMarket, width: 32 },
       { label: 'Reg. Rate Savings Opportunity', get: (s) => s.regRateOpportunity, width: 28 },
       { label: 'Annual Electric (kWh)', get: (s) => s.kwh, numFmt: '#,##0', width: 18, estimated: (s) => s.kwhEstimated },
       // Indicative market rate, the blended rate the site's own uploaded
@@ -11876,7 +11893,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       { label: 'Electric Contract End', get: (s) => s.electricEnd, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
       { label: 'Gas Utility', get: (s) => s.gasUtility, width: 22 },
       { label: 'Gas Supplier', get: (s) => s.gasSupplier, width: 22 },
-      { label: 'Gas Market', get: (s) => s.gasMarket, width: 18 },
+      { label: 'Gas Market', get: (s) => s.gasMarket, width: 32 },
       { label: 'Annual Gas (Dth)', get: (s) => s.dth, numFmt: '#,##0', width: 16, estimated: (s) => s.thermsEstimated },
       { label: 'Est. Gas Rate ($/Dth)', get: (s) => s.gasRate, numFmt: '"$"0.00', width: 15, estimated: () => true },
       { label: 'Actual Gas Rate ($/Dth)', get: (s) => s.actualGasRate, numFmt: '"$"0.00', width: 16 },
@@ -11993,11 +12010,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // the name didn't match a municipal / coop pattern.
         const isUSSite = /^(united states|usa|us)$/i.test(rawCountry);
         const isCASite = /^(canada|ca)$/i.test(rawCountry);
-        // Never blank: a site the classifier can't place (a competitive
-        // state with no utility or supplier on file) reads Unknown, so
-        // every row says Regulated, Deregulated or Unknown.
-        const electricMarket = classifyMarket(r, 'electric') || 'Unknown';
-        const gasMarket = classifyMarket(r, 'gas') || 'Unknown';
+        // Never blank: a competitive state with no utility or supplier on
+        // file reads Deregulated State (Missing Utility), and a site with
+        // no state or country Unknown. See marketLabel.
+        const electricMarket = marketLabel(r, 'electric');
+        const gasMarket = marketLabel(r, 'gas');
         // ISO / RTO market for the site, resolved the same fine way as the
         // ISO tab — electric utility first, then ZIP, then state / province.
         // Only US/CA sites carry a market; everything else (and NA sites
