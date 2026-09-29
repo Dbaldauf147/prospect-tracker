@@ -2421,6 +2421,8 @@ export function PricingView({ settings } = {}) {
   }, []);
   const [feeBuilderPicks, setFeeBuilderPicks] = useState({}); // Fee Builder subtab: { [serviceKey]: structureId | '' } - '' leaves the service's fees as they are; absent means its standard structure
   const [feeBuilderOverrides, setFeeBuilderOverrides] = useState({}); // Fee Builder subtab: { [optionNumber]: { [rowKey]: fee per unit } } - a Fee / Unit typed over the built one
+  const [feeBuilderHiddenCols, setFeeBuilderHiddenCols] = useState([]); // Fee Builder subtab: keys of the service-table columns hidden from its Columns menu
+  const [feeBuilderDone, setFeeBuilderDone] = useState(null); // Fee Builder subtab: services ticked off as done, { workbookId, done } - see feeBuilderChecklist.js
   const [lineItemPriority, setLineItemPriority] = useState({}); // { [lineItemKey]: true } - services in priority order, first in scope takes the cost
   const [lineItemIgnored, setLineItemIgnored] = useState({}); // { [lineItemKey]: true } - line items the user opted to ignore (greyed out, excluded from the unmapped warning)
   const [termMonths, setTermMonths] = useState(36);
@@ -2626,6 +2628,8 @@ export function PricingView({ settings } = {}) {
         if (Array.isArray(saved.optionsTabData)) setOptionsTabData(saved.optionsTabData);
         if (saved.compareTabData && typeof saved.compareTabData === 'object') setCompareTabData(saved.compareTabData);
         if (Array.isArray(saved.brokerFeesData)) setBrokerFeesData(saved.brokerFeesData);
+        if (Array.isArray(saved.feeBuilderHiddenCols)) setFeeBuilderHiddenCols(saved.feeBuilderHiddenCols);
+        if (saved.feeBuilderDone && typeof saved.feeBuilderDone === 'object') setFeeBuilderDone(saved.feeBuilderDone);
         // Rehydrate the uploaded SIA workbook bytes so "Save to Opp"
         // can still attach the source file after a page reload.
         try {
@@ -2646,9 +2650,9 @@ export function PricingView({ settings } = {}) {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, feeDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData, s2cLineItemTags };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, feeDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData, s2cLineItemTags, feeBuilderHiddenCols, feeBuilderDone };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, feeDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData, s2cLineItemTags]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, feeMapBy, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, feeDefaults, linkedToOptionsList, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, chartUnitCounts, techDeprPct, colVisibility, hideEmptyCtsRows, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData, s2cLineItemTags, feeBuilderHiddenCols, feeBuilderDone]);
 
   // Fees the Fee Builder or a structure's Apply wrote from a standard fee
   // carry a gmLink; they re-price here when the Global GM%, the Escalator,
@@ -5950,6 +5954,10 @@ export function PricingView({ settings } = {}) {
             return out;
           })}
           onOpenServices={() => setPageSubtab('services')}
+          hiddenColumns={feeBuilderHiddenCols}
+          setHiddenColumns={setFeeBuilderHiddenCols}
+          doneState={feeBuilderDone}
+          setDoneState={setFeeBuilderDone}
         />
       )}
 

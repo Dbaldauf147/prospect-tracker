@@ -1,9 +1,47 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { sanitizeExcelWorkbook } from '../../utils/exportSanitize';
 import styles from './ServicesTab.module.css';
 import own from './FeeBuilderTab.module.css';
 import { serviceKey, groupFeeRows, costsByKind } from '../../utils/pricingServices';
 import { addFeeSummarySheet, addFeeComparisonSheet } from '../../utils/feeSummarySheets';
+import { FEE_BUILDER_COLUMNS, isServiceDone, setServiceDone, toggleHiddenColumn } from '../../utils/feeBuilderChecklist';
+
+// The Columns menu over the service table: a checkbox per column that can be
+// hidden. Closes on a click anywhere outside it.
+function ColumnsMenu({ hidden, onToggle, onShowAll }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+  const shown = FEE_BUILDER_COLUMNS.filter(c => !hidden.includes(c.key)).length;
+  return (
+    <div className={own.colMenuWrap} ref={ref}>
+      <button type="button" className={own.smallBtn} onClick={() => setOpen(o => !o)}>
+        Columns ({shown + 1}/{FEE_BUILDER_COLUMNS.length + 1})
+      </button>
+      {open && (
+        <div className={own.colMenu}>
+          <label className={own.colMenuItem} title="The service names the row, so it always shows">
+            <input type="checkbox" checked disabled /> Service
+          </label>
+          {FEE_BUILDER_COLUMNS.map(c => (
+            <label key={c.key} className={own.colMenuItem}>
+              <input type="checkbox" checked={!hidden.includes(c.key)} onChange={() => onToggle(c.key)} />
+              {c.label}
+            </label>
+          ))}
+          {hidden.length > 0 && (
+            <button type="button" className={own.colMenuReset} onClick={onShowAll}>Show all columns</button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const fmtMoney = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -179,6 +217,7 @@ async function exportPlan(plan) {
 //   onApply       (plan) => writes it, true when it did
 export function FeeBuilderTab({
   workbook, activeOption, setActiveOption, setPicks, planFor, onApply, onOpenServices, setFeeOverrides,
+  hiddenColumns, setHiddenColumns, doneState, setDoneState,
 }) {
   const [showAll, setShowAll] = useState(false);
   const [collapsed, setCollapsed] = useState({});
@@ -209,6 +248,14 @@ export function FeeBuilderTab({
     }
     return next;
   });
+  // Columns the user has hidden, and the per-service "done" ticks for this
+  // SIA and option (see feeBuilderChecklist.js).
+  const hidden = Array.isArray(hiddenColumns) ? hiddenColumns : [];
+  const showCol = (key) => !hidden.includes(key);
+  const optionNumber = plan?.optionNumber ?? opt?.optionNumber;
+  const isDone = (name) => isServiceDone(doneState, workbook.id, optionNumber, name);
+  const setDone = (name, on) => setDoneState?.(prev => setServiceDone(prev, workbook.id, optionNumber, name, on));
+  const doneCount = listed.filter(r => isDone(r.name)).length;
   const numYears = plan?.numYears || 1;
   const yearIdx = Array.from({ length: numYears }, (_, i) => i);
   const building = plan?.perService?.length || 0;
@@ -256,7 +303,17 @@ export function FeeBuilderTab({
       <section className={styles.section}>
         <div className={own.bar}>
           <h4 className={styles.sectionTitle}>Fee structure by service</h4>
+          {listed.length > 0 && (
+            <span className={own.doneCount}>{doneCount} of {listed.length} done</span>
+          )}
           <span className={styles.barSpacer} />
+          {setHiddenColumns && (
+            <ColumnsMenu
+              hidden={hidden}
+              onToggle={(key) => setHiddenColumns(prev => toggleHiddenColumn(prev, key))}
+              onShowAll={() => setHiddenColumns([])}
+            />
+          )}
           <button type="button" className={own.smallBtn} onClick={() => setAll('standard')}>Use standard for all</button>
           <button type="button" className={own.smallBtn} onClick={() => setAll('none')}>No fees for all</button>
           <label className={own.toggle}>
@@ -272,19 +329,32 @@ export function FeeBuilderTab({
           <table className={styles.table}>
             <thead>
               <tr>
+                {setDoneState && <th className={own.doneCol} title="Tick a service off once its fees are sorted">Done</th>}
                 <th>Service</th>
-                <th className={styles.num}>Cost lines</th>
-                <th className={styles.num}>CTS</th>
-                <th>On the schedule now</th>
-                <th>Fee structure</th>
-                <th>Fees it writes</th>
+                {showCol('costLines') && <th className={styles.num}>Cost lines</th>}
+                {showCol('cts') && <th className={styles.num}>CTS</th>}
+                {showCol('current') && <th>On the schedule now</th>}
+                {showCol('structure') && <th>Fee structure</th>}
+                {showCol('writes') && <th>Fees it writes</th>}
               </tr>
             </thead>
             <tbody>
               {listed.map(r => {
                 const built = plan.perService.find(p => p.service === r.name);
+                const done = isDone(r.name);
                 return (
-                  <tr key={r.name}>
+                  <tr key={r.name} className={done ? own.doneRow : undefined}>
+                    {setDoneState && (
+                      <td className={own.doneCol}>
+                        <input
+                          type="checkbox"
+                          checked={done}
+                          onChange={(e) => setDone(r.name, e.target.checked)}
+                          aria-label={`Mark ${r.name} done`}
+                          title={done ? 'Done. Untick to mark it as still to do.' : 'Mark this service done'}
+                        />
+                      </td>
+                    )}
                     <td>
                       <div>{r.name}</div>
                       <div className={styles.subNote}>
@@ -292,10 +362,10 @@ export function FeeBuilderTab({
                         {r.bucket ? ` ${r.bucket}` : ''}
                       </div>
                     </td>
-                    <td className={styles.num}>{r.costCount || ''}</td>
-                    <td className={styles.num}>{r.costCts ? fmtMoney(r.costCts) : ''}</td>
-                    <td className={own.muted}>{r.currentFees.length ? r.currentFees.join(', ') : 'Nothing'}</td>
-                    <td>
+                    {showCol('costLines') && <td className={styles.num}>{r.costCount || ''}</td>}
+                    {showCol('cts') && <td className={styles.num}>{r.costCts ? fmtMoney(r.costCts) : ''}</td>}
+                    {showCol('current') && <td className={own.muted}>{r.currentFees.length ? r.currentFees.join(', ') : 'Nothing'}</td>}
+                    {showCol('structure') && <td>
                       {r.structures.length === 0 ? (
                         <button type="button" className={styles.linkBtn} onClick={onOpenServices}>
                           No saved structures, set one up
@@ -314,8 +384,8 @@ export function FeeBuilderTab({
                           ))}
                         </select>
                       )}
-                    </td>
-                    <td>
+                    </td>}
+                    {showCol('writes') && <td>
                       {built ? (
                         <>
                           {built.added.map(a => a.altItem).join(', ') || <span className={own.muted}>No named fees</span>}
@@ -324,7 +394,7 @@ export function FeeBuilderTab({
                           )}
                         </>
                       ) : <span className={own.muted}>No fees</span>}
-                    </td>
+                    </td>}
                   </tr>
                 );
               })}
