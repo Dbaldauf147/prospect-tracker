@@ -6,7 +6,7 @@ import {
   costKey, addLaterCostFees, FIRST_YEAR_MONTHS, feeStructureCostInputs,
   costTypeConversion, moveCostAllocation, feeBucket, standardFeeContext,
 } from '../../utils/pricingServices';
-import { RATE_CHECK } from '../../utils/serviceRateCheck';
+import { RATE_CHECK, checkPartOf } from '../../utils/serviceRateCheck';
 import { unitLabelFor } from '../../utils/servicePricing';
 
 const fmtMoney = (n) => (typeof n === 'number' && Number.isFinite(n)
@@ -45,9 +45,12 @@ const STATUS_CLASS = {
 //                   option (its list row turns green)
 //   onSetItemAnnual (itemId, on) => turns a one-time cost into an annual one
 //                   (CTS ÷ 12, Recurring monthly), or back
+//   onSetFeeComponent (serviceName, itemId, componentId) => points a cost
+//                   line at one of the rate card's fee components for the
+//                   price check ('' puts it back on Auto)
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
-  onSetCount, onIgnoreForCheck, feeStructures = {}, setFeeStructures, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough,
+  onSetCount, onIgnoreForCheck, onSetFeeComponent, feeStructures = {}, setFeeStructures, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough,
   unlinked = null, tagOptions = [], onTagLineItem, onIgnoreLineItem, onSetCompleted, globalGmPct = null,
 }) {
   const [query, setQuery] = useState('');
@@ -217,6 +220,7 @@ export function ServicesTab({
               onOpenLinkedTo={onOpenLinkedTo}
               onSetCount={onSetCount}
               onIgnoreForCheck={onIgnoreForCheck ? (itemId, on) => onIgnoreForCheck(current.name, itemId, on) : null}
+              onSetFeeComponent={onSetFeeComponent ? (itemId, id) => onSetFeeComponent(current.name, itemId, id) : null}
               globalGmPct={globalGmPct}
               completed={isDone(current.name)}
               onSetCompleted={workbook && onSetCompleted ? (on) => onSetCompleted(current.name, on) : null}
@@ -297,7 +301,7 @@ function UnlinkedWarning({ unlinked, costTotals, optionName, tagOptions, quickTa
   );
 }
 
-function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough }) {
+function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted, detail, hasWorkbook, optionName, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, onSetFeeComponent, saved, setSaved, previewFeeRow, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough }) {
   const items = detail?.items || [];
   const fees = detail?.fees || [];
   const structures = saved?.structures || [];
@@ -346,6 +350,10 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
   const costTotal = items.reduce((s, it) => s + (typeof it.cts === 'number' ? it.cts : 0), 0);
   const ignoredCount = items.filter(it => it.ignored).length;
   const ignoredTotal = items.reduce((s, it) => s + (it.ignored && typeof it.cts === 'number' ? it.cts : 0), 0);
+  // A Fee component column when the rate card prices a part of the fee
+  // model on more than one component, so each cost can be pointed at one.
+  const componentChoices = (hasWorkbook && detail?.rateCheck?.componentChoices) || {};
+  const showComponents = !!onSetFeeComponent && Object.keys(componentChoices).length > 0;
   const meta = service.meta || {};
 
   // Each cost line's type against the fee that prices it in the pricing
@@ -438,6 +446,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                     <th className={styles.num}>Start Month</th>
                     <th>Unit</th>
                     <th>Pass-through</th>
+                    {showComponents && <th title="Which of the rate card's fee components this cost pays for, in the price check below. Auto checks it with the other unpicked lines.">Fee component</th>}
                     {onIgnoreForCheck && <th title="Untick to leave a line out of the price check below.">In price check</th>}
                   </tr>
                 </thead>
@@ -527,6 +536,27 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                           />
                         ) : (it.passThrough ? 'Yes' : '')}
                       </td>
+                      {showComponents && (
+                        <td>
+                          {(() => {
+                            const part = it.ignored ? null : checkPartOf(it);
+                            const choices = part ? componentChoices[part] : null;
+                            if (!choices) return null;
+                            const value = choices.some(c => c.id === it.feeComponent) ? it.feeComponent : '';
+                            return (
+                              <select
+                                className={styles.tagSelect}
+                                value={value}
+                                onChange={(e) => onSetFeeComponent(it.id, e.target.value)}
+                                aria-label={`Fee component for ${it.description}`}
+                              >
+                                <option value="">Auto</option>
+                                {choices.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                              </select>
+                            );
+                          })()}
+                        </td>
+                      )}
                       {onIgnoreForCheck && (
                         <td className={styles.center}>
                           <input
@@ -551,7 +581,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                         </div>
                       )}
                     </td>
-                    <td colSpan={onIgnoreForCheck ? 4 : 3}>
+                    <td colSpan={3 + (onIgnoreForCheck ? 1 : 0) + (showComponents ? 1 : 0)}>
                       {ignoredCount > 0 && (
                         <span className={styles.subNote}>
                           {ignoredCount === 1 ? '1 line' : `${ignoredCount} lines`} left out of the price check.{' '}
@@ -770,50 +800,115 @@ const fmtMoneyRange = (lo, hi) => (fmtWhole(lo) === fmtWhole(hi) ? fmtWhole(lo) 
 // per part of the fee model, each against what the SIA's costs for that
 // part price at. Shown when the card has more than one component, so the
 // range above can be read back to the rates it is made of.
+//
+// A part the card prices on more than one component (Ongoing as a flat fee
+// a year plus so much per account) gets a row per component, each checked
+// on the cost lines picked for it in the cost line table above. Lines left
+// on Auto are checked together against whichever components have none.
 function FeeComponents({ parts = [] }) {
   const lines = parts.reduce((n, pt) => n + pt.cardLines.length, 0);
   if (lines < 2) return null;
+  const month = (key, b) => (b.monthly ? ' a month' : (key === 'recurring' ? ' a year' : ''));
+  const cardText = (key, b) => (b.kind === 'unit'
+    ? `${fmtRateRange(b.rate, b.rateHigh ?? b.rate)} ${String(b.basisLabel || '').toLowerCase()}${month(key, b)}`
+    : `${b.basisLabel}: ${fmtMoneyRange(b.fee, b.feeHigh ?? b.fee)}`);
+  const badgeOf = (status) => {
+    const badge = RATE_BADGE[status];
+    return badge ? <span className={styles[badge[0]]}>{badge[1]}</span> : null;
+  };
+  const priced = (row, b) => (row.cost > 0
+    ? (row.perUnit
+      ? `${fmtRate(row.perUnit.price)} ${String(b?.basisLabel || '').toLowerCase()}${row.perUnit.perMonth ? ' a month' : ''}`
+      : fmtWhole(row.price))
+    : <span className={styles.muted}>No cost on the SIA</span>);
+  const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
+  const anyShared = parts.some(pt => pt.components?.shared);
+
   return (
-    <table className={styles.componentTable}>
-      <thead>
-        <tr>
-          <th>Fee component</th>
-          <th className={styles.num}>Rate card</th>
-          <th className={styles.num}>SIA cost, priced</th>
-          <th />
-        </tr>
-      </thead>
-      <tbody>
-        {parts.map(pt => {
-          const badge = RATE_BADGE[pt.status];
-          const pu = pt.perUnit;
-          const per = (b) => (b.kind === 'unit' ? ` ${String(b.basisLabel || '').toLowerCase()}` : '');
-          const month = (b) => (b.monthly ? ' a month' : (pt.key === 'recurring' ? ' a year' : ''));
-          const card = pt.cardLines.length === 0
-            ? <span className={styles.muted}>Not on the card</span>
-            : pt.cardLines.map((b, i) => (
-              <div key={i}>
-                {b.kind === 'unit'
-                  ? `${fmtRateRange(b.rate, b.rateHigh ?? b.rate)}${per(b)}${month(b)}`
-                  : `${b.basisLabel}: ${fmtMoneyRange(b.fee, b.feeHigh ?? b.fee)}`}
-              </div>
+    <>
+      <table className={styles.componentTable}>
+        <thead>
+          <tr>
+            <th>Fee component</th>
+            <th className={styles.num}>Rate card</th>
+            <th className={styles.num}>SIA cost, priced</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {parts.flatMap(pt => {
+            const split = pt.components;
+            if (!split) {
+              const card = pt.cardLines.length === 0
+                ? <span className={styles.muted}>Not on the card</span>
+                : pt.cardLines.map((b, i) => <div key={i}>{cardText(pt.key, b)}</div>);
+              return [(
+                <tr key={pt.key}>
+                  <td>{pt.label}</td>
+                  <td className={styles.num}>{card}</td>
+                  <td className={styles.num}>{priced(pt, pt.cardLines[0])}</td>
+                  <td>{badgeOf(pt.status)}</td>
+                </tr>
+              )];
+            }
+            const rows = split.rows.map(r => (
+              <tr key={r.id}>
+                <td>{pt.label}, {r.card.basisLabel}</td>
+                <td className={styles.num}>{cardText(pt.key, r.card)}</td>
+                <td className={styles.num}>
+                  {r.shared
+                    ? <span className={styles.muted}>Checked together below</span>
+                    : (
+                      <>
+                        {priced(r, r.card)}
+                        {(r.picked > 0 || r.auto > 0) && (
+                          <div className={styles.subNote}>
+                            {r.picked > 0 ? `${plural(r.picked, 'line')} picked` : `${plural(r.auto, 'line')} on Auto`}
+                          </div>
+                        )}
+                      </>
+                    )}
+                </td>
+                <td>{!r.shared && badgeOf(r.status)}</td>
+              </tr>
             ));
-          const siaPrice = pt.cost > 0
-            ? (pu
-              ? `${fmtRate(pu.price)} ${String(pt.cardLines[0].basisLabel || '').toLowerCase()}${pu.perMonth ? ' a month' : ''}`
-              : fmtWhole(pt.price))
-            : <span className={styles.muted}>No cost on the SIA</span>;
-          return (
-            <tr key={pt.key}>
-              <td>{pt.label}</td>
-              <td className={styles.num}>{card}</td>
-              <td className={styles.num}>{siaPrice}</td>
-              <td>{badge && <span className={styles[badge[0]]}>{badge[1]}</span>}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+            if (split.shared) {
+              const sh = split.shared;
+              rows.push(
+                <tr key={`${pt.key}:shared`}>
+                  <td>{pt.label}, {sh.labels.join(' + ')} together</td>
+                  <td className={styles.num}>{fmtMoneyRange(sh.low, sh.high)}{pt.key === 'recurring' ? ' a year' : ''}</td>
+                  <td className={styles.num}>
+                    {priced(sh)}
+                    <div className={styles.subNote}>{plural(sh.lineCount, 'line')} on Auto</div>
+                  </td>
+                  <td>{badgeOf(sh.status)}</td>
+                </tr>,
+              );
+            }
+            if (split.loose) {
+              rows.push(
+                <tr key={`${pt.key}:loose`}>
+                  <td>{pt.label}, not picked</td>
+                  <td className={styles.num}><span className={styles.muted}>Every component has its own lines</span></td>
+                  <td className={styles.num}>
+                    {fmtWhole(split.loose.price)}
+                    <div className={styles.subNote}>{plural(split.loose.lineCount, 'line')} on Auto, in no component</div>
+                  </td>
+                  <td />
+                </tr>,
+              );
+            }
+            return rows;
+          })}
+        </tbody>
+      </table>
+      {anyShared && (
+        <p className={styles.note}>
+          Pick a fee component for each cost line in the Fee component column above to check each component on its own.
+        </p>
+      )}
+    </>
   );
 }
 
