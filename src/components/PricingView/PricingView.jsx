@@ -215,7 +215,7 @@ function parseAltFeePaste(text) {
   return out;
 }
 
-function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onReplaceRows, onAppendRows, onClearRows, onBuildRows, buildRows = [], automatedNameCount = 0, globalGmPct, marginFor, yearRevenue, autoFeeFor, autoStartMonthFor, siteCount, accountCount, altItemSuggestions = [], costByYear, passThroughByYear, passThroughRevenueByYear, numYears = 1 }) {
+function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onReplaceRows, onAppendRows, onClearRows, onBuildRows, buildRows = [], automatedNameCount = 0, globalGmPct, marginFor, yearRevenue, autoFeeFor, autoStartMonthFor, siteCount, accountCount, altItemSuggestions = [], costByYear, passThroughByYear, passThroughRevenueByYear, passFeeCostByYear, numYears = 1 }) {
   const altItemListId = useId();
   const [dragFrom, setDragFrom] = useState(null); // row currently being dragged
   const [dragOverIdx, setDragOverIdx] = useState(null); // insertion point (0..rows.length)
@@ -659,6 +659,7 @@ Type a value to override.`
           costByYear: costs,
           ctsPassByYear: ctsPasses,
           altPassByYear: altPasses,
+          altPassCostByYear: passFeeCostByYear,
         });
         const fmtPctCell = (n) => n == null ? '' : `${(n * 100).toFixed(1)}%`;
         const hasCost = Array.isArray(costByYear);
@@ -4198,7 +4199,13 @@ export function PricingView({ settings } = {}) {
   // warns about those separately).
   //
   //   costByYear               - all linked CTS cost in that year
-  //   passThroughByYear        - the pass-through slice of it (cost side)
+  //   passThroughByYear        - the pass-through slice of it (cost side),
+  //                              folded into an ordinary fee
+  //   passFeeCostByYear        - cost logged on a fee ticked Pass: billed
+  //                              through that fee at cost, so it's off the
+  //                              margin's cost side and, since the fee's
+  //                              own revenue is carved out as alt
+  //                              pass-through, kept out of the two above
   //   passThroughRevenueByYear - the same rows' revenue side, using the
   //                              per-unit-rounded cost that actually
   //                              lands in Total fee, so revenue less
@@ -4214,7 +4221,8 @@ export function PricingView({ settings } = {}) {
     const zeros = () => Array.from({ length: numYears }, () => 0);
     const passThroughByYear = zeros();
     const passThroughRevenueByYear = zeros();
-    if (!opt) return { numYears, costByYear: zeros(), passThroughByYear, passThroughRevenueByYear };
+    const passFeeCostByYear = zeros();
+    if (!opt) return { numYears, costByYear: zeros(), passThroughByYear, passThroughRevenueByYear, passFeeCostByYear };
 
     const altRowsForOpt = scheduleRows || altFees[opt.optionNumber] || [];
     const altTagSet = new Set(
@@ -4249,7 +4257,9 @@ export function PricingView({ settings } = {}) {
           if (!tag || !altTagSet.has(tag)) continue;
           const c = ctsItemYearCost(it, yi + 1);
           sum += c;
-          if (isPassThrough(it)) {
+          if (altRowByTag.get(tag)?.passThrough === true) {
+            passFeeCostByYear[yi] += c;
+          } else if (isPassThrough(it)) {
             passThroughByYear[yi] += c;
             passThroughRevenueByYear[yi] += ctsItemPassThroughRevenue(it, yi + 1);
           }
@@ -4257,7 +4267,7 @@ export function PricingView({ settings } = {}) {
       }
       return sum;
     });
-    return { numYears, costByYear, passThroughByYear, passThroughRevenueByYear };
+    return { numYears, costByYear, passThroughByYear, passThroughRevenueByYear, passFeeCostByYear };
   }
 
   // The option's Deal margin - the same cumulative, pass-through-net
@@ -4270,7 +4280,7 @@ export function PricingView({ settings } = {}) {
   // (no fees, or no linked CTS cost at all) - a deal with no cost side
   // isn't a 100%-margin deal, it's a deal whose margin isn't known here.
   function dealMarginForOption(opt, scheduleRows, feeNameOverrides) {
-    const { numYears, costByYear, passThroughByYear } = optionCostBreakdown(opt, scheduleRows, feeNameOverrides);
+    const { numYears, costByYear, passThroughByYear, passFeeCostByYear } = optionCostBreakdown(opt, scheduleRows, feeNameOverrides);
     const rows = scheduleRows || (opt ? (altFees[opt.optionNumber] || []) : []);
     const feeByYear = Array.from({ length: numYears }, (_, i) =>
       rows.reduce((s, r) => s + altFeeYearRevenue(r, i + 1), 0));
@@ -4285,6 +4295,7 @@ export function PricingView({ settings } = {}) {
       costByYear,
       ctsPassByYear: passThroughByYear,
       altPassByYear,
+      altPassCostByYear: passFeeCostByYear,
     });
   }
 
@@ -6931,6 +6942,7 @@ export function PricingView({ settings } = {}) {
                           costByYear,
                           passThroughByYear,
                           passThroughRevenueByYear,
+                          passFeeCostByYear,
                         } = optionCostBreakdown(opt);
                         // Fee tags on this option, used below to flag cost
                         // rows that aren't linked to any fee.
@@ -7013,6 +7025,7 @@ export function PricingView({ settings } = {}) {
                             costByYear={costByYear}
                             passThroughByYear={passThroughByYear}
                             passThroughRevenueByYear={passThroughRevenueByYear}
+                            passFeeCostByYear={passFeeCostByYear}
                             numYears={numYearsLocal}
                             onChange={(idx, field, value) => updateAltFeeCell(opt.optionNumber, idx, field, value)}
                             onAddRow={() => addAltFeeRow(opt.optionNumber)}
