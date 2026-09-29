@@ -30,7 +30,7 @@ import { SERVICE_RENAMED_EVENT } from '../../utils/serviceRenameRunner';
 import { renameLineItemServices, renameFeeStructures, renameWorkbookServices } from '../../utils/serviceRenamePlans';
 import { FeeBuilderTab } from './FeeBuilderTab';
 import { SiaHistoryTab } from './SiaHistoryTab';
-import { buildSiaHistoryEntry } from '../../utils/siaHistoryEntry';
+import { buildSiaHistoryEntry, siaKeyFacts } from '../../utils/siaHistoryEntry';
 import { saveSiaHistoryEntry } from '../../utils/siaLoadHistory';
 import { buildServiceRows } from '../../utils/serviceRows';
 import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices } from '../../utils/pricingServices';
@@ -5547,6 +5547,29 @@ export function PricingView({ settings } = {}) {
                 {sites != null && accounts != null && ' · '}
                 {accounts != null && <span title="Pulled from the SIA metadata block">{accounts.toLocaleString()} account{accounts === 1 ? '' : 's'}</span>}
               </>
+            );
+          })()}
+          {(() => {
+            // The SIA's key facts, read from its header block. Recorded in
+            // the SIA History subtab too.
+            const f = siaKeyFacts(workbook.options);
+            const parts = [
+              f.company && ['Company', f.company],
+              f.date && ['SIA date', f.date],
+              f.annualSpend != null && ['Annual spend', f.annualSpend.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })],
+              f.annualKwh != null && ['Annual kWh', Math.round(f.annualKwh).toLocaleString('en-US')],
+              f.annualGas != null && [`Annual ${f.gasUnit}`, Math.round(f.annualGas).toLocaleString('en-US')],
+            ].filter(Boolean);
+            if (parts.length === 0) return null;
+            return (
+              <div style={{ marginTop: '0.2rem' }} title="Pulled from the SIA metadata block">
+                {parts.map(([k, v], i) => (
+                  <span key={k}>
+                    {i > 0 && ' · '}
+                    {k}: <strong>{v}</strong>
+                  </span>
+                ))}
+              </div>
             );
           })()}
         </div>

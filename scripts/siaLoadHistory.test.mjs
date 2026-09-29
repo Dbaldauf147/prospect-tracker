@@ -9,7 +9,7 @@
 // summary takes sites and accounts off whichever option carries them.
 import * as XLSX from 'xlsx';
 import { parsePricingWorkbook } from '../src/utils/pricingParse.js';
-import { buildSiaHistoryEntry, siaHistorySummary, mergeSiaHistory } from '../src/utils/siaHistoryEntry.js';
+import { buildSiaHistoryEntry, siaHistorySummary, mergeSiaHistory, siaKeyFacts } from '../src/utils/siaHistoryEntry.js';
 import { buildSiaHistoryWorkbook, siaHistoryFileName } from '../src/utils/siaHistoryWorkbook.js';
 
 let passed = 0, failed = 0;
@@ -29,6 +29,9 @@ function optionSheet({ sites, accounts, salesperson }) {
   if (sites != null) rows[3] = ['# of Sites', sites];
   if (accounts != null) rows[4] = ['# of Accounts', accounts];
   rows[5] = ['Solution description', 'Bill pay and sourcing'];
+  rows[6] = ['Annual Spend', '$1,250,000.50'];
+  rows[7] = ['Annual kWh', 8400000];
+  rows[8] = ['Annual Gas (Dth)', 52000];
   rows.push(['Delivery Team Inputs']);
   rows.push(['Line Item', 'Type', 'CTS', 'Start Month', 'Comments']);
   rows.push(['Bill processing', 'Recurring', 1200, '1', 'per month']);
@@ -68,8 +71,26 @@ const entry = buildSiaHistoryEntry({ id: 'wb_1', fileName: 'Acme SIA.xlsx', load
 // --- summary -----------------------------------------------------------
 {
   const s = siaHistorySummary(entry);
-  check('summary', s, { optionCount: 2, sites: 12, accounts: 40, costLines: 4, ctsTotal: 3000, salesperson: 'Pat' });
-  check('empty entry', siaHistorySummary({}), { optionCount: 0, sites: null, accounts: null, costLines: 0, ctsTotal: 0, salesperson: '' });
+  check('summary', s, {
+    optionCount: 2, sites: 12, accounts: 40, costLines: 4, ctsTotal: 3000, salesperson: 'Pat',
+    company: 'Acme Corp', date: '2025-12-09', annualSpend: 1250000.5, annualKwh: 8400000, annualGas: 52000, gasUnit: 'Dth',
+  });
+  check('empty entry', siaHistorySummary({}), {
+    optionCount: 0, sites: null, accounts: null, costLines: 0, ctsTotal: 0, salesperson: '',
+    company: '', date: '', annualSpend: null, annualKwh: null, annualGas: null, gasUnit: '',
+  });
+}
+
+// --- key facts ---------------------------------------------------------
+// Labels differ between SIA templates; the gas unit follows the label.
+{
+  const facts = (details) => siaKeyFacts([{ headerDetails: details.map(([label, value]) => ({ label, value })) }]);
+  check('company name label, MMBtu gas', facts([['Company Name', 'Globex'], ['SIA Date', '2026-01-05'], ['Annual MMBtu', '1,200']]), {
+    company: 'Globex', date: '2026-01-05', annualSpend: null, annualKwh: null, annualGas: 1200, gasUnit: 'MMBtu',
+  });
+  check('a text value is not a figure', facts([['Annual Spend', 'TBD'], ['Annual Utility Spend', '$9,000']]).annualSpend, 9000);
+  check('# of Accounts is not the company', facts([['# of Accounts', '40'], ['Customer', 'Initech']]).company, 'Initech');
+  check('later option fills a gap', siaKeyFacts([{ headerDetails: [] }, { headerDetails: [{ label: 'Client', value: 'Umbrella' }] }]).company, 'Umbrella');
 }
 
 // --- merge -------------------------------------------------------------
@@ -86,8 +107,13 @@ const entry = buildSiaHistoryEntry({ id: 'wb_1', fileName: 'Acme SIA.xlsx', load
   const out = XLSX.read(XLSX.write(buildSiaHistoryWorkbook(entry), { type: 'array', bookType: 'xlsx' }), { type: 'array', cellNF: true });
   const rows = (name) => XLSX.utils.sheet_to_json(out.Sheets[name], { header: 1, raw: true });
   check('sheets, no Alt Fees when the SIA had none', out.SheetNames, ['Summary', 'Details', 'Cost Lines']);
-  check('summary header', rows('Summary').slice(0, 5), [['File', 'Acme SIA.xlsx'], ['Loaded', new Date(1000).toLocaleString('en-US')], ['Salesperson', 'Pat'], ['Cost lines', 4], ['Total CTS', 3000]]);
-  check('one summary row per option', rows('Summary').slice(7).map(r => [r[0], r[2], r[3], r[7], r[8]]), [['Option 1', 12, 40, 2, 1500], ['Option 2', '', '', 2, 1500]]);
+  check('summary header', rows('Summary').slice(0, 10), [
+    ['File', 'Acme SIA.xlsx'], ['Loaded', new Date(1000).toLocaleString('en-US')],
+    ['Company', 'Acme Corp'], ['SIA Date', '2025-12-09'], ['Annual Spend', 1250000.5], ['Annual kWh', 8400000], ['Annual Dth', 52000],
+    ['Salesperson', 'Pat'], ['Cost lines', 4], ['Total CTS', 3000],
+  ]);
+  check('annual spend carries a money format', out.Sheets.Summary.B5.z, '"$"#,##0.00');
+  check('one summary row per option', rows('Summary').slice(12).map(r => [r[0], r[2], r[3], r[7], r[8]]), [['Option 1', 12, 40, 2, 1500], ['Option 2', '', '', 2, 1500]]);
   check('cost lines across options, CTS as numbers', rows('Cost Lines').map(r => [r[0], r[2], r[4]]), [
     ['Option', 'Line Item', 'CTS'],
     ['Option 1', 'Bill processing', 1200], ['Option 1', 'Onboarding', 300],

@@ -35,7 +35,7 @@ export async function saveSiaHistoryEntry(entry) {
   try {
     const s = siaHistorySummary(entry);
     await writeChunkedDoc(doc(itemsCol(userId), entry.id), entry, {
-      meta: { fileName: entry.fileName, loadedAt: entry.loadedAt, costLines: s.costLines },
+      meta: { fileName: entry.fileName, loadedAt: entry.loadedAt, costLines: s.costLines, company: s.company },
     });
   } catch (err) {
     console.warn('SIA history Firestore backup failed', entry.id, err);

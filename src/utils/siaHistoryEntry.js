@@ -53,7 +53,10 @@ export function buildSiaHistoryEntry({ id, fileName, loadedAt, sizeBytes, option
 
 // The one-line figures the history list shows per load. Sites and accounts
 // come off the first option that carries them, the way the Services
-// subtab's price check reads them (an SIA often fills them on one sheet).
+// subtab's price check reads them (an SIA often fills them on one sheet);
+// the key facts (company, date, spend, kWh, gas) the same way. Worked out
+// from the stored header details rather than saved alongside them, so
+// loads recorded before these columns existed fill in too.
 export function siaHistorySummary(entry) {
   const options = entry?.options || [];
   const first = (k) => options.find(o => typeof o[k] === 'number' && o[k] > 0)?.[k] ?? null;
@@ -75,6 +78,7 @@ export function siaHistorySummary(entry) {
     costLines,
     ctsTotal,
     salesperson,
+    ...siaKeyFacts(options),
   };
 }
 
@@ -89,4 +93,47 @@ export function mergeSiaHistory(...lists) {
     }
   }
   return Array.from(byId.values()).sort((a, b) => (b.loadedAt || 0) - (a.loadedAt || 0));
+}
+
+// The five figures that identify an SIA at a glance: who it is for, when it
+// was drawn up, and how big the book is (annual spend, electric kWh, gas in
+// MMBtu or Dth). All five sit in the header block as label / value pairs,
+// so they are read back out of headerDetails, first option that carries
+// each one winning. Labels vary between SIA templates ("Client" vs
+// "Company Name", "Annual Gas (Dth)" vs "Annual MMBtu"), hence the loose
+// matching. The gas unit is taken from whichever label matched, so the
+// figure is never shown against the wrong unit.
+const COMPANY_RE = /^((client|company|customer)(\s*name)?|account\s*name)$/i;
+const DATE_RE = /^(sia\s*)?date$/i;
+const SPEND_RE = /\bspend\b/i;
+const KWH_RE = /\bkwh\b/i;
+const GAS_RE = /\b(mmbtu|dth|decatherms?|dekatherms?)\b/i;
+
+function factNumber(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  const s = String(v ?? '').replace(/[$,\s]/g, '');
+  if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function siaKeyFacts(options) {
+  const details = (options || []).flatMap(o => o?.headerDetails || [])
+    .map(d => ({ label: String(d?.label ?? '').trim(), value: String(d?.value ?? '').trim() }))
+    .filter(d => d.label && d.value);
+  const find = (re, { numeric = false } = {}) => details.find(d => re.test(d.label) && (!numeric || factNumber(d.value) != null));
+  const company = find(COMPANY_RE);
+  const date = find(DATE_RE);
+  const spend = find(SPEND_RE, { numeric: true });
+  const kwh = find(KWH_RE, { numeric: true });
+  const gas = details.find(d => GAS_RE.test(d.label) && !KWH_RE.test(d.label) && factNumber(d.value) != null);
+  const gasUnit = gas ? (/mmbtu/i.test(gas.label) ? 'MMBtu' : 'Dth') : '';
+  return {
+    company: company?.value || '',
+    date: date?.value || '',
+    annualSpend: spend ? factNumber(spend.value) : null,
+    annualKwh: kwh ? factNumber(kwh.value) : null,
+    annualGas: gas ? factNumber(gas.value) : null,
+    gasUnit,
+  };
 }
