@@ -858,6 +858,7 @@ function OptionPreview({ preview }) {
   return (
     <section className={styles.section}>
       <div className={styles.previewLabel}>This service, fee against cost</div>
+      <p className={styles.note}>Pass-through fees and costs are left out: they bill at cost and carry no margin.</p>
       <table className={styles.table}>
         <thead>
           <tr>
