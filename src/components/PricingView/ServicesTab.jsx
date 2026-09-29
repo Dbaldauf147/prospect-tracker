@@ -386,14 +386,31 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
     return conv ? { ...conv, feeType, from } : null;
   });
   const mismatches = typeFit.filter(Boolean).length;
+  // A card that charges no setup leaves a Setup cost nothing to recover
+  // it but the ongoing fee, so such a line is rolled over the term as soon
+  // as it shows here, the same as its Convert to Setup Rolled button.
+  const setupOffCard = hasWorkbook && !!detail?.rateCheck?.setupOffCard;
+  const isPlainSetup = (t) => /^setup$/i.test(String(t || '').trim());
+  const toRoll = setupOffCard && onSetItemType
+    ? items.filter(it => !it.typeSet && !it.passThrough && !it.ignored && typeof it.cts === 'number' && isPlainSetup(it.type))
+    : [];
+  const toRollKey = toRoll.map(it => it.id).join('|');
   function convertType(it, toType) {
     if (!onSetItemType) return;
-    // Back to the SIA's own type clears the override rather than pinning it.
-    onSetItemType(it.id, toType === it.siaType ? '' : toType);
+    // Back to the SIA's own type clears the override rather than pinning
+    // it, except for a Setup the card has no setup fee for: that one is
+    // pinned, so it isn't rolled again the moment it is put back.
+    const pin = setupOffCard && isPlainSetup(toType);
+    onSetItemType(it.id, toType === it.siaType && !pin ? '' : toType);
     const fromKey = costKey(it.description, it.type, it.startMonth);
     const toKey = costKey(it.description, toType, it.startMonth);
     setSaved(prev => ({ ...prev, structures: moveCostAllocation(prev.structures, fromKey, toKey) }));
   }
+  useEffect(() => {
+    toRoll.forEach(it => convertType(it, 'Setup Rolled'));
+    // Keyed on the lines still to roll; each drops out once converted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toRollKey]);
   // A one-time cost that really comes round every year: billed as a twelfth
   // of it each month, so a monthly fee recovers it. Undo puts the SIA's
   // figure and type back.
@@ -479,6 +496,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                         ) : it.siaType && it.siaType !== it.type && (
                           <div className={styles.subNote}>
                             SIA: {it.siaType}
+                            {setupOffCard && isPlainSetup(it.siaType) && /rolled/i.test(it.type) && ', rolled: no setup fee on the rate card'}
                             {onSetItemType && (
                               <> <button type="button" className={styles.linkBtn} onClick={() => convertType(it, it.siaType)}>Undo</button></>
                             )}

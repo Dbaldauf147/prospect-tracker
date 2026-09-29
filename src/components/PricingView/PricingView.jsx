@@ -4852,6 +4852,9 @@ export function PricingView({ settings } = {}) {
         // The type the SIA itself gives the line, so a converted one can
         // say what it was and be put back.
         siaType: item.type || '',
+        // The type was set by hand (a conversion, or an Undo that pins the
+        // SIA's own type), so nothing converts it automatically.
+        typeSet: !!overrides[item.id]?.typeOverride,
         // Set when the one-time cost was turned into an annual one: the
         // SIA's figure, now billed as a twelfth of it every month.
         annualFrom: typeof item.annualFromCts === 'number' ? item.annualFromCts : null,
@@ -4955,6 +4958,7 @@ export function PricingView({ settings } = {}) {
       counts,
       bases,
       techDeprPct,
+      termMonths,
     });
     return { items, fees, rateCheck, counts, enteredCounts, fromSia, sia };
   }
