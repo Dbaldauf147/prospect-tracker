@@ -196,3 +196,13 @@
   font-weight: 700;
   border-top: 1px solid var(--color-border);
 }
+
+/* Cost lines a search matched, listed under the SIA's row. */
+.hitsCell {
+  padding: 0.35rem 0.75rem 0.75rem 2rem !important;
+  background: #fffdf5;
+}
+
+.hitRow td {
+  background: #fef9c3;
+}

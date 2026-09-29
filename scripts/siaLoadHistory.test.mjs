@@ -9,7 +9,7 @@
 // summary takes sites and accounts off whichever option carries them.
 import * as XLSX from 'xlsx';
 import { parsePricingWorkbook } from '../src/utils/pricingParse.js';
-import { buildSiaHistoryEntry, siaHistorySummary, mergeSiaHistory, siaKeyFacts } from '../src/utils/siaHistoryEntry.js';
+import { buildSiaHistoryEntry, siaHistorySummary, mergeSiaHistory, siaKeyFacts, siaCostLineMatches } from '../src/utils/siaHistoryEntry.js';
 import { buildSiaHistoryWorkbook, siaHistoryFileName } from '../src/utils/siaHistoryWorkbook.js';
 
 let passed = 0, failed = 0;
@@ -91,6 +91,15 @@ const entry = buildSiaHistoryEntry({ id: 'wb_1', fileName: 'Acme SIA.xlsx', load
   check('a text value is not a figure', facts([['Annual Spend', 'TBD'], ['Annual Utility Spend', '$9,000']]).annualSpend, 9000);
   check('# of Accounts is not the company', facts([['# of Accounts', '40'], ['Customer', 'Initech']]).company, 'Initech');
   check('later option fills a gap', siaKeyFacts([{ headerDetails: [] }, { headerDetails: [{ label: 'Client', value: 'Umbrella' }] }]).company, 'Umbrella');
+}
+
+// --- cost line search ---------------------------------------------------
+{
+  check('matches a line item, per option', siaCostLineMatches(entry, 'bill PROC'), [[0], [0]]);
+  check('matches comments and type too', siaCostLineMatches(entry, 'per month'), [[0], [0]]);
+  check('matches the section', siaCostLineMatches(entry, 'delivery team').map(h => h.length), [2, 2]);
+  check('no match', siaCostLineMatches(entry, 'zzz'), [[], []]);
+  check('empty search matches nothing', siaCostLineMatches(entry, '  '), [[], []]);
 }
 
 // --- merge -------------------------------------------------------------

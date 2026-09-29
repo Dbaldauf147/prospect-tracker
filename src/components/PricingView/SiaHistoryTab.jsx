@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import styles from './SiaHistoryTab.module.css';
 import { SIA_HISTORY_EVENT, deleteSiaHistoryEntry, listSiaHistory } from '../../utils/siaLoadHistory';
-import { siaHistorySummary } from '../../utils/siaHistoryEntry';
+import { siaCostLineMatches, siaHistorySummary } from '../../utils/siaHistoryEntry';
 import * as XLSX from 'xlsx';
 import { buildSiaHistoryWorkbook, siaHistoryFileName } from '../../utils/siaHistoryWorkbook';
 import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize.js';
@@ -43,11 +43,18 @@ export function SiaHistoryTab({ currentId }) {
     };
   }, []);
 
+  // A search matches an SIA on its details or on any of its cost lines.
+  // Cost line hits are listed under the SIA's row straight away, so a line
+  // item can be looked up across every SIA without opening each one.
+  const q = filter.trim().toLowerCase();
   const shown = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    const list = (entries || []).map(e => ({ entry: e, summary: siaHistorySummary(e) }));
+    const list = (entries || []).map(e => {
+      const lineHits = siaCostLineMatches(e, q);
+      return { entry: e, summary: siaHistorySummary(e), lineHits, hitCount: lineHits.reduce((n, h) => n + h.length, 0) };
+    });
     if (!q) return list;
-    return list.filter(({ entry, summary }) => {
+    return list.filter(({ entry, summary, hitCount }) => {
+      if (hitCount > 0) return true;
       const hay = [
         entry.fileName,
         summary.salesperson,
@@ -57,7 +64,8 @@ export function SiaHistoryTab({ currentId }) {
       ].join(' ').toLowerCase();
       return hay.includes(q);
     });
-  }, [entries, filter]);
+  }, [entries, q]);
+  const totalHits = shown.reduce((n, s) => n + s.hitCount, 0);
 
   function download(entry) {
     const wb = buildSiaHistoryWorkbook(entry);
@@ -77,19 +85,21 @@ export function SiaHistoryTab({ currentId }) {
       <div className={styles.intro}>
         Every SIA uploaded on the Pricing subtab is recorded here with its details (company, SIA date, annual spend,
         annual kWh, annual MMBtu/Dth, sites, accounts, salesperson, solution description, target GM%) and its cost line items, so an earlier SIA can be looked back on after
-        another one replaces it. Click a row to see it option by option.
+        another one replaces it. Click a row to see it option by option. The search box also looks through every
+        cost line, listing the matches under each SIA.
       </div>
 
       <div className={styles.toolbar}>
         <input
           type="search"
           className={styles.search}
-          placeholder="Filter by company, file name, salesperson, or any SIA detail"
+          placeholder="Search company, file, salesperson, SIA details, or cost lines"
           value={filter}
           onChange={e => setFilter(e.target.value)}
         />
         <span className={styles.count}>
           {entries == null ? 'Loading...' : `${shown.length} of ${entries.length} load${entries.length === 1 ? '' : 's'}`}
+          {q && totalHits > 0 && ` · ${totalHits} matching cost line${totalHits === 1 ? '' : 's'}`}
         </span>
       </div>
 
@@ -119,7 +129,7 @@ export function SiaHistoryTab({ currentId }) {
             </tr>
           </thead>
           <tbody>
-            {shown.map(({ entry, summary }) => {
+            {shown.map(({ entry, summary, lineHits, hitCount }) => {
               const open = openId === entry.id;
               return (
                 <Fragment key={entry.id}>
@@ -162,10 +172,19 @@ export function SiaHistoryTab({ currentId }) {
                       </div>
                     </td>
                   </tr>
+                  {!open && hitCount > 0 && (
+                    <tr>
+                      <td colSpan={15} className={styles.hitsCell}>
+                        <MatchingLines entry={entry} lineHits={lineHits} />
+                      </td>
+                    </tr>
+                  )}
                   {open && (
                     <tr>
                       <td colSpan={15} className={styles.detailCell}>
-                        {(entry.options || []).map(opt => <OptionDetail key={`${opt.optionNumber}-${opt.sheetName}`} opt={opt} />)}
+                        {(entry.options || []).map((opt, oi) => (
+                          <OptionDetail key={`${opt.optionNumber}-${opt.sheetName}`} opt={opt} hits={q ? lineHits[oi] : null} />
+                        ))}
                       </td>
                     </tr>
                   )}
@@ -179,7 +198,44 @@ export function SiaHistoryTab({ currentId }) {
   );
 }
 
-function OptionDetail({ opt }) {
+// The cost lines a search matched on one SIA, across its options, shown
+// under the SIA's row without opening it.
+function MatchingLines({ entry, lineHits }) {
+  const rows = (entry.options || []).flatMap((opt, oi) => (lineHits[oi] || []).map(i => ({ opt, it: opt.costItems[i], key: `${oi}-${i}` })));
+  return (
+    <table className={styles.itemTable}>
+      <thead>
+        <tr>
+          <th>Option</th>
+          <th>Section</th>
+          <th>Line Item</th>
+          <th>Type</th>
+          <th className={styles.num}>CTS</th>
+          <th className={styles.num}>GM%</th>
+          <th>Start Month</th>
+          <th>Comments</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(({ opt, it, key }) => (
+          <tr key={key}>
+            <td className={styles.nowrap}>{opt.sheetName || `Option ${opt.optionNumber}`}</td>
+            <td>{it.section}</td>
+            <td>{it.description}</td>
+            <td>{it.type}</td>
+            <td className={styles.num}>{fmtMoney(it.cts)}</td>
+            <td className={styles.num}>{fmtPct(it.gmPct)}</td>
+            <td>{it.startMonth}</td>
+            <td>{it.comments}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function OptionDetail({ opt, hits }) {
+  const hitSet = new Set(hits || []);
   const ctsTotal = (opt.costItems || []).reduce((s, it) => s + (typeof it.cts === 'number' ? it.cts : 0), 0);
   // The parsed figures first, then whatever else the header block carried
   // that is not already one of them.
@@ -225,7 +281,7 @@ function OptionDetail({ opt }) {
           </thead>
           <tbody>
             {opt.costItems.map((it, i) => (
-              <tr key={i}>
+              <tr key={i} className={hitSet.has(i) ? styles.hitRow : undefined}>
                 <td>{it.section}</td>
                 <td>{it.description}</td>
                 <td>{it.type}</td>
