@@ -14,41 +14,62 @@ function test(name, fn) {
 const recurring = { serviceType: 'Recurring', years: '3 years' };
 const project = { serviceType: 'Project', years: '1 year' };
 
-test('recurring CTS counts twelve months, one-time once, pass-through at cost', () => {
+test('recurring CTS counts twelve months, one-time once, pass-through on its own', () => {
   const r = year1CostOf([
     { cts: 100, type: 'Recurring' },
     { cts: 500, type: 'One-time' },
-    { cts: 10, type: 'Recurring', passThrough: true },
+    { cts: 999, type: 'Recurring', passThrough: true },
     { cts: null, type: 'Recurring' },
-  ], 0.5, 0.04);
-  assert.equal(r.cost, 1820);
-  assert.equal(r.counted, 3);
+  ]);
+  assert.equal(r.cost, 1700);
+  assert.equal(r.counted, 2);
   assert.equal(r.passThrough, 1);
-  // 1,700 marked up at 50% with 4% tech depr., plus the 120 pass-through
-  // as it is: no margin, no depreciation.
-  assert.equal(Math.round(r.price * 100) / 100, Math.round((1700 * 1.04 / 0.5 + 120) * 100) / 100);
-  // Its 0% is not a chosen margin, so the check still reads one margin.
-  assert.deepEqual(r.margins, [0.5]);
 });
 
-test('a pass-through line can be pointed at a fee component', () => {
-  assert.equal(checkPartOf({ cts: 648.75, type: 'Recurring (monthly)', passThrough: true }), 'recurring');
+test('pass-through lines stay out of the rate card components and get a line each', () => {
   const c = rateCardCheck({
     items: [
       { id: 'mgmt', cts: 1000, type: 'Recurring' },
-      { id: 'partner', cts: 519, type: 'Recurring', passThrough: true, feeComponent: 'recurring:per_account' },
+      { id: 'data', cts: 200, type: 'Recurring', feeComponent: 'recurring:per_account' },
+      { id: 'ongoing', description: 'Partner Ongoing', cts: 648.75, type: 'Recurring (monthly)', startMonth: '4', passThrough: true, feeComponent: 'pass:per_account' },
+      { id: 'setup', description: 'Partner Setup', cts: 4835.5, type: 'Setup', passThrough: true },
+      { id: 'old', description: 'Picked before', cts: 10, type: 'Recurring', passThrough: true, feeComponent: 'recurring:per_account' },
     ],
     entry: { basis: 'flat', rate: 20000, rateHigh: 30000, lines: [{ basis: 'per_account', rate: 10, rateHigh: 20 }] },
     meta: recurring,
     counts: { accounts: 519 },
   });
   const ongoing = c.parts.find(p => p.key === 'recurring');
-  const perAccount = ongoing?.components?.rows.find(r => r.id === 'recurring:per_account');
-  assert.ok(perAccount, 'per-account component row');
+  const perAccount = ongoing.components.rows.find(r => r.id === 'recurring:per_account');
+  // Only the one non-pass-through line picked for it: 200 × 12.
   assert.equal(perAccount.picked, 1);
-  // 519 a month for 519 accounts: $12 per account a year, at cost.
-  assert.equal(perAccount.perUnit.price, 12);
-  assert.equal(c.passThrough, 1);
+  assert.equal(perAccount.cost, 2400);
+  assert.equal(c.parts.find(p => p.key === 'setup'), undefined, 'no setup bucket from a pass-through cost');
+  assert.equal(c.passThrough, 3);
+
+  const [on, set, old] = c.passThroughLines;
+  // A year of the monthly cost, at cost, over 519 accounts.
+  assert.equal(on.amount, 7785);
+  assert.equal(on.model, 'pass:per_account');
+  assert.equal(on.perUnit, 15);
+  assert.equal(on.partLabel, 'Ongoing');
+  // A setup line is pickable too; with nothing picked it is a fixed fee.
+  assert.equal(set.model, 'pass:fixed');
+  assert.equal(set.amount, 4835.5);
+  assert.equal(set.perUnit, null);
+  assert.equal(set.partLabel, 'Setup');
+  // A pick from when pass-through sat in the components carries over.
+  assert.equal(old.model, 'pass:per_account');
+});
+
+test('per account with no account count says so', () => {
+  const c = rateCardCheck({
+    items: [{ id: 'x', cts: 100, type: 'Setup', passThrough: true, feeComponent: 'pass:per_account' }],
+    entry: { basis: 'flat', rate: 1000 },
+    meta: recurring,
+  });
+  assert.equal(c.passThroughLines[0].needsAccounts, true);
+  assert.equal(c.passThroughLines[0].perUnit, null);
 });
 
 test('priced at 50% margin and inside a per-site range', () => {

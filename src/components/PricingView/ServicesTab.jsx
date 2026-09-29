@@ -6,7 +6,7 @@ import {
   costKey, addLaterCostFees, FIRST_YEAR_MONTHS, feeStructureCostInputs,
   costTypeConversion, moveCostAllocation, feeBucket, standardFeeContext,
 } from '../../utils/pricingServices';
-import { RATE_CHECK, checkPartOf } from '../../utils/serviceRateCheck';
+import { RATE_CHECK, checkPartOf, PASS_THROUGH_MODELS, passThroughModelOf } from '../../utils/serviceRateCheck';
 import { unitLabelFor } from '../../utils/servicePricing';
 
 const fmtMoney = (n) => (typeof n === 'number' && Number.isFinite(n)
@@ -361,7 +361,10 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
   // A Fee component column when the rate card prices a part of the fee
   // model on more than one component, so each cost can be pointed at one.
   const componentChoices = (hasWorkbook && detail?.rateCheck?.componentChoices) || {};
-  const showComponents = !!onSetFeeComponent && Object.keys(componentChoices).length > 0;
+  // Pass-through lines get the column too: each picks how it is shown in
+  // its own row below the price check (a fixed fee, or per account).
+  const hasPassThrough = hasWorkbook && items.some(it => it.passThrough && !it.ignored);
+  const showComponents = !!onSetFeeComponent && (Object.keys(componentChoices).length > 0 || hasPassThrough);
   const meta = service.meta || {};
 
   // Each cost line's type against the fee that prices it in the pricing
@@ -565,6 +568,19 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                       {showComponents && (
                         <td>
                           {(() => {
+                            if (it.passThrough && !it.ignored) {
+                              return (
+                                <select
+                                  className={styles.tagSelect}
+                                  value={passThroughModelOf(it)}
+                                  onChange={(e) => onSetFeeComponent(it.id, e.target.value)}
+                                  aria-label={`Pass-through fee model for ${it.description}`}
+                                  title="Pass-through: billed at cost, on its own line below the price check rather than in the rate card's components."
+                                >
+                                  {PASS_THROUGH_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+                                </select>
+                              );
+                            }
                             const part = it.ignored ? null : checkPartOf(it);
                             const choices = part ? componentChoices[part] : null;
                             if (!choices) return null;
@@ -774,14 +790,9 @@ function RateCheck({ check, ctsShare = null }) {
   const fmt = pu ? fmtRate : fmtWhole;
   const pct = (n) => `${Math.round(n * 1000) / 10}%`;
   const deprNote = check.techDeprPct > 0 ? ` + ${pct(check.techDeprPct)} tech depr.` : '';
-  // Pass-through lines are in the check too, at cost: say so, or the
-  // margin reads as though it covered them.
-  const passNote = check.passThrough > 0
-    ? `, ${check.passThrough} pass-through line${check.passThrough === 1 ? '' : 's'} at cost`
-    : '';
   const markupLabel = typeof check.margin === 'number'
-    ? `At ${pct(check.margin)} margin${deprNote}${passNote}`
-    : `At each line's margin${deprNote}${passNote}`;
+    ? `At ${pct(check.margin)} margin${deprNote}`
+    : `At each line's margin${deprNote}`;
   const range = shown.low == null ? '' : (fmt(shown.low) === fmt(shown.high)
     ? fmt(shown.low)
     : `${fmt(Math.min(shown.low, shown.high))} – ${fmt(Math.max(shown.low, shown.high))}`);
@@ -884,6 +895,7 @@ function RateCheck({ check, ctsShare = null }) {
         </>
       )}
       <FeeComponents parts={check.parts} />
+      <PassThroughLines lines={check.passThroughLines} />
       {pctOnly && (
         <p className={styles.note}>
           Priced as a % of deal size, so this service is checked on its share of the option's total CTS
@@ -941,6 +953,48 @@ function componentMeters(parts = []) {
         </div>
       ))}
     </div>
+  );
+}
+
+// Pass-through lines, one row each, under the rate card's components and
+// never inside them: the card never priced them and they bill at cost. Each
+// reads as a fixed fee or per account, as picked in the cost line table.
+function PassThroughLines({ lines = [] }) {
+  if (!lines.length) return null;
+  const when = (l) => (l.annual ? ' a year' : (l.part === 'setup' ? ' setup' : ' one-time'));
+  return (
+    <table className={styles.componentTable}>
+      <thead>
+        <tr>
+          <th>Pass-through line</th>
+          <th>Fee model</th>
+          <th className={styles.num}>Billed at cost</th>
+        </tr>
+      </thead>
+      <tbody>
+        {lines.map((l, i) => (
+          <tr key={l.id ?? i}>
+            <td>
+              {l.description}
+              <div className={styles.subNote}>{l.partLabel}, pass-through</div>
+            </td>
+            <td>{PASS_THROUGH_MODELS.find(m => m.id === l.model)?.label}</td>
+            <td className={styles.num}>
+              {l.model === 'pass:per_account'
+                ? (l.needsAccounts
+                  ? <span className={styles.muted}>No account count on the SIA</span>
+                  : (
+                    <>
+                      {fmtRate(l.perUnit)} per account{when(l)}
+                      <div className={styles.subNote}>{fmtWhole(l.amount)}{when(l)} over {l.accounts.toLocaleString('en-US')} accounts</div>
+                    </>
+                  ))
+                : <>{fmtWhole(l.amount)}{when(l)}</>}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
