@@ -556,3 +556,20 @@ export function priceCheckCounts(sia = {}, entered = {}) {
   }
   return { counts, fromSia };
 }
+
+// The site and account counts a service's fee rows bill on: the counts its
+// price check uses, so a count typed in the Unit column of the cost lines
+// (sites w/ mandate for BBS, or an override of the SIA's sites) carries
+// down to a Per Site / Per Account fee's Unit Count. Falls back to the
+// SIA's own counts. `detail` is what the Pricing page builds per service
+// ({ counts, sia, rateCheck }).
+export function feeUnitCountsFor(detail) {
+  const counts = detail?.counts || {};
+  const used = detail?.rateCheck?.unitsUsed || [];
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined);
+  const siteKey = ['sites_mandate', 'sites'].find(k => used.includes(k) && num(counts[k]) != null) || 'sites';
+  return {
+    siteCount: num(counts[siteKey]) ?? num(detail?.sia?.sites),
+    accountCount: num(counts.accounts) ?? num(detail?.sia?.accounts),
+  };
+}

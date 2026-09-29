@@ -7,7 +7,7 @@ import {
   costTypeConversion, moveCostAllocation, feeBucket, standardFeeContext,
   passThroughFeeRows, addPassThroughFees,
 } from '../../utils/pricingServices';
-import { RATE_CHECK, checkPartOf, PASS_THROUGH_MODELS, passThroughModelOf } from '../../utils/serviceRateCheck';
+import { RATE_CHECK, checkPartOf, PASS_THROUGH_MODELS, passThroughModelOf, feeUnitCountsFor } from '../../utils/serviceRateCheck';
 import { unitLabelFor } from '../../utils/servicePricing';
 
 const fmtMoney = (n) => (typeof n === 'number' && Number.isFinite(n)
@@ -255,8 +255,8 @@ export function ServicesTab({
               optionCtsTotal={optionCtsTotal}
               numYears={numYears}
               termMonths={termMonths}
-              siteCount={detail?.sia?.sites ?? opt?.siteCount}
-              accountCount={detail?.sia?.accounts ?? opt?.accountCount}
+              siteCount={feeUnitCountsFor(detail).siteCount ?? opt?.siteCount}
+              accountCount={feeUnitCountsFor(detail).accountCount ?? opt?.accountCount}
               onOpenLinkedTo={onOpenLinkedTo}
               onSetCount={onSetCount}
               onIgnoreForCheck={onIgnoreForCheck ? (itemId, on) => onIgnoreForCheck(current.name, itemId, on) : null}
@@ -1423,7 +1423,7 @@ function FeeStructureEditor({
     const start = std.perRow[idx].startMonth;
     return ` It starts in month ${start}, after ${missed === 1 ? 'a cost it covers' : 'costs it covers'}, so it is raised to catch up the ${missed === 1 ? 'month' : `${missed} months`} before then over the ${std.perRow[idx].rollMonths} months it bills.`;
   };
-  const previews = rows.map((r, idx) => (previewFeeRow && hasWorkbook ? previewFeeRow(billed(r, idx)) : null));
+  const previews = rows.map((r, idx) => (previewFeeRow && hasWorkbook ? previewFeeRow(billed(r, idx), { siteCount, accountCount }) : null));
   // Pass-through lines with no fee row of their own yet, billed per account
   // or as a fixed fee as picked in the price check.
   const passOpts = { unitOf: (it) => (passThroughModelOf(it) === 'pass:per_account' ? 'Per Account' : 'Fixed') };
