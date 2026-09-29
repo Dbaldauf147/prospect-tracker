@@ -47,7 +47,9 @@ async function exportPlan(plan) {
 
   const wb = new Workbook();
   const sub = `${plan.optionName || 'Option'}  ·  as built by the Fee Builder`;
-  addFeeSummarySheet(wb, { rows: plan.rows, subtitle: sub });
+  // Fee Summary reads the way a client would: lines with the same name and
+  // structure are one fee. The As built sheet below keeps every line.
+  addFeeSummarySheet(wb, { rows: plan.rows, subtitle: `${sub}  ·  like fees combined`, condense: true });
   const ws = wb.addWorksheet('As built', { properties: { outlineProperties: { summaryBelow: false } } });
   const headers = ['Fee', 'From', 'Type', 'Fee / Unit', 'Unit', 'Unit Count', 'Start Month', ...yearIdx.map(i => `Y${i + 1}`), 'Term', 'Margin'];
   const moneyCols = [4, ...yearIdx.map(i => 8 + i), 8 + numYears];
