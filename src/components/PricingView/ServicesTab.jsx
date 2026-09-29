@@ -250,6 +250,7 @@ export function ServicesTab({
               onSetPassThrough={onSetPassThrough}
               applyFeeStructure={applyFeeStructure}
               detail={detail}
+              detailForStructure={detailFor ? (st) => detailFor(current.name, st) : null}
               hasWorkbook={!!workbook}
               optionName={opt?.sheetName}
               optionCtsTotal={optionCtsTotal}
@@ -341,9 +342,7 @@ function UnlinkedWarning({ unlinked, costTotals, optionName, tagOptions, quickTa
   );
 }
 
-function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted, detail, hasWorkbook, optionName, optionCtsTotal = 0, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, onSetFeeComponent, saved, setSaved, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough }) {
-  const items = detail?.items || [];
-  const fees = detail?.fees || [];
+function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted, detail: standardDetail, detailForStructure = null, hasWorkbook, optionName, optionCtsTotal = 0, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, onSetFeeComponent, saved, setSaved, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough }) {
   const structures = saved?.structures || [];
   const standardId = saved?.standardId || null;
   // Which saved fee structure is open. Opens on the standard one, and falls
@@ -353,6 +352,14 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
     || structures.find(x => x.id === standardId)
     || structures[0]
     || null;
+  // The price check's fee components follow the open structure's fees, so
+  // a structure other than the standard one reads its own check.
+  const standardStructure = structures.find(x => x.id === standardId) || structures[0] || null;
+  const detail = openStructure && openStructure !== standardStructure && detailForStructure
+    ? detailForStructure(openStructure)
+    : standardDetail;
+  const items = detail?.items || [];
+  const fees = detail?.fees || [];
   const [flash, setFlash] = useState('');
   const say = (msg) => { setFlash(msg); window.setTimeout(() => setFlash(''), 3500); };
   // Lines left out of the price check are hidden from the cost table and
@@ -559,7 +566,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                     <th className={styles.num}>Start Month</th>
                     <th>Unit</th>
                     <th>Pass-through</th>
-                    {showComponents && <th title="Which of the rate card's fee components this cost pays for, in the price check below. Auto checks it with the other unpicked lines.">Fee component</th>}
+                    {showComponents && <th title={openStructure ? `Which of the rate card's fee components this cost pays for, in the price check below: the one matching the unit of the fee it goes on in "${openStructure.name}". Auto checks it with the other lines left on Auto.` : "Which of the rate card's fee components this cost pays for, in the price check below. Auto checks it with the other unpicked lines."}>Fee component</th>}
                     {onIgnoreForCheck && <th title="Untick to leave a line out of the price check below.">In price check</th>}
                     {showStructureFee && (
                       <th
@@ -661,6 +668,28 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                       {showComponents && (
                         <td>
                           {(() => {
+                            // With a fee structure the component follows the
+                            // structure fee the line goes on, by its unit, so
+                            // it is shown rather than picked.
+                            const from = it.componentFrom;
+                            if (from && !it.ignored) {
+                              const part = checkPartOf(it);
+                              const choices = part ? componentChoices[part] : null;
+                              if (!it.passThrough && !choices) return null;
+                              const label = it.passThrough
+                                ? PASS_THROUGH_MODELS.find(m => m.id === passThroughModelOf(it))?.label
+                                : (choices.find(c => c.id === it.feeComponent)?.label || 'Auto');
+                              return (
+                                <span
+                                  title={from.fee
+                                    ? `Follows "${from.fee}" (${from.unit || 'no unit'}) in the "${from.structure}" fee structure. Change the fee this line goes on, or that fee's unit, to change it.`
+                                    : `On no fee in the "${from.structure}" fee structure, so it is checked on Auto.`}
+                                >
+                                  {label}
+                                  <div className={styles.subNote}>{from.fee ? `from ${from.fee}` : 'on no fee'}</div>
+                                </span>
+                              );
+                            }
                             if (it.passThrough && !it.ignored) {
                               return (
                                 <select
@@ -1236,7 +1265,8 @@ function FeeComponents({ parts = [] }) {
       </table>
       {anyShared && (
         <p className={styles.note}>
-          Pick a fee component for each cost line in the Fee component column above to check each component on its own.
+          Point each cost line at a fee in the fee structure (its unit picks the component), or pick a fee component
+          in the column above, to check each component on its own.
         </p>
       )}
     </>

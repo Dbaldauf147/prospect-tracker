@@ -41,7 +41,7 @@ import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/p
 import { setOppPricingSnapshot } from '../../utils/oppsPricingSnapshot';
 import { servicesByFeeName } from '../../utils/siaScopeCompare';
 import { getServicePricing, pricingFor, resolvePricingBases } from '../../utils/servicePricing';
-import { rateCardCheck, siaCountsFor, priceCheckCounts, feeUnitCountsFor } from '../../utils/serviceRateCheck';
+import { rateCardCheck, siaCountsFor, priceCheckCounts, feeUnitCountsFor, componentForFeeUnit } from '../../utils/serviceRateCheck';
 import { saveOppSourceFile, sourceFileMeta } from '../../utils/oppPricingSourceFile';
 import {
   loadOptionLinks,
@@ -4903,7 +4903,11 @@ export function PricingView({ settings } = {}) {
   // the Alternative Fee schedule already carries shows as it is there
   // (typed fee, else the derived one); a fee it doesn't carry yet shows
   // as Build from Automated Fee Names would add it.
-  function serviceDetailFor(serviceName) {
+  //
+  // `structureOverride`: the fee structure the price check's fee
+  // components follow, when not the service's standard one (the one open
+  // on the Services subtab).
+  function serviceDetailFor(serviceName, structureOverride = null) {
     const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
     if (!opt) return { items: [], fees: [] };
     const norm = (v) => String(v ?? '').trim().toLowerCase();
@@ -5034,7 +5038,7 @@ export function PricingView({ settings } = {}) {
     const picks = opt.priceCheckComponents?.[want] || {};
     const linePicks = priceCheckComponentPicks[want] || {};
     items.forEach(it => { it.feeComponent = linePicks[norm(it.description)] || picks[it.id] || null; });
-    const rateCheck = rateCardCheck({
+    const checkWith = () => rateCardCheck({
       items: items.filter(it => !it.ignored),
       entry: pricingFor(pricing, cardName, bases),
       meta: svc?.meta || null,
@@ -5046,6 +5050,34 @@ export function PricingView({ settings } = {}) {
       techDeprPct,
       termMonths,
     });
+    let rateCheck = checkWith();
+    // With a fee structure (the one asked for, else the service's
+    // standard), each line's fee component follows the structure fee it
+    // goes on, by that fee's unit (see componentForFeeUnit), in place of
+    // a pick. A line on no fee is checked on Auto.
+    const saved = serviceFeeStructures[serviceKey(serviceName)];
+    const structure = structureOverride
+      || (saved?.structures || []).find(x => x.id === saved?.standardId)
+      || (saved?.structures || [])[0]
+      || null;
+    if (structure && items.length) {
+      const { std } = standardFeeContext(structure, items, {
+        termMonths,
+        siteCount: sia.sites ?? opt.siteCount,
+        accountCount: sia.accounts ?? opt.accountCount,
+        startMonthFor: autoStartMonthFor,
+        feeEscalator: annualEscalator,
+        costEscalator,
+      });
+      const choices = rateCheck.componentChoices || {};
+      items.forEach((it, i) => {
+        const co = std.costs[i];
+        const row = co && co.rowIdx >= 0 ? structure.rows[co.rowIdx] : null;
+        it.feeComponent = row ? componentForFeeUnit(it, row.unit, choices) : null;
+        it.componentFrom = { structure: structure.name || 'Untitled', fee: row?.feeName || null, unit: row?.unit || null };
+      });
+      rateCheck = checkWith();
+    }
     return { items, fees, rateCheck, counts, enteredCounts, fromSia, sia };
   }
 

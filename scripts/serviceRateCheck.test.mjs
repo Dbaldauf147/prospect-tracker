@@ -4,7 +4,7 @@
 //   node scripts/serviceRateCheck.test.mjs
 
 import assert from 'node:assert/strict';
-import { rateCardCheck, year1CostOf, RATE_CHECK, siaCountsFor, priceCheckCounts, checkPartOf, feeUnitCountsFor } from '../src/utils/serviceRateCheck.js';
+import { rateCardCheck, year1CostOf, RATE_CHECK, siaCountsFor, priceCheckCounts, checkPartOf, feeUnitCountsFor, componentForFeeUnit } from '../src/utils/serviceRateCheck.js';
 
 let failed = 0;
 function test(name, fn) {
@@ -522,6 +522,22 @@ test('fee rows bill on the count typed in the cost section', () => {
   assert.deepEqual(feeUnitCountsFor(over), { siteCount: 31, accountCount: 12 });
   // Nothing typed: the SIA's.
   assert.deepEqual(feeUnitCountsFor({ counts: priceCheckCounts(sia, {}).counts, sia, rateCheck: { unitsUsed: ['sites_mandate'] } }), { siteCount: 29, accountCount: 40 });
+});
+
+test('a line takes its fee component from the unit of the structure fee it goes on', () => {
+  const choices = { recurring: [{ id: 'recurring:recurring_annual', label: 'Recurring annual' }, { id: 'recurring:per_account', label: 'Per account' }] };
+  const monthly = { cts: 100, type: 'Recurring (monthly)', startMonth: 1 };
+  assert.equal(componentForFeeUnit(monthly, 'Per Account', choices), 'recurring:per_account');
+  assert.equal(componentForFeeUnit(monthly, 'Fixed', choices), 'recurring:recurring_annual');
+  assert.equal(componentForFeeUnit(monthly, 'Per Site', choices), null);
+  assert.equal(componentForFeeUnit(monthly, '', choices), null);
+  // A rolled setup is ongoing money, so it reads the ongoing components.
+  assert.equal(componentForFeeUnit({ cts: 100, type: 'Setup Rolled', startMonth: 1 }, 'Fixed', choices), 'recurring:recurring_annual');
+  // A part with one component has nothing to pick.
+  assert.equal(componentForFeeUnit({ cts: 100, type: 'Setup', startMonth: 1 }, 'Per Account', choices), null);
+  // Pass-through lines take the fee's model.
+  assert.equal(componentForFeeUnit({ ...monthly, passThrough: true }, 'Per Account', choices), 'pass:per_account');
+  assert.equal(componentForFeeUnit({ ...monthly, passThrough: true }, 'Fixed', choices), 'pass:fixed');
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
