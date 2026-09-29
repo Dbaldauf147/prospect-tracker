@@ -366,7 +366,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
       ? (structures.length === 0 ? 'Standard' : `Option ${structures.length + 1}`)
       : `Option ${structures.length + 1}`;
     setSaved(prev => ({
-      structures: [...prev.structures, { id, name, rows: rows.length ? rows : [blankFeeStructureRow()] }],
+      structures: [...prev.structures, { id, name, rows: rows.length ? rows : [blankFeeStructureRow()], needsAllocation: items.length > 0 }],
       standardId: prev.standardId || id,
     }));
     setView(id);
@@ -376,7 +376,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
   }
   function duplicateStructure(st) {
     const id = newFeeStructureId();
-    setSaved(prev => ({ ...prev, structures: [...prev.structures, { id, name: `${st.name} (copy)`, rows: st.rows.map(r => ({ ...r })), allocations: { ...(st.allocations || {}) } }] }));
+    setSaved(prev => ({ ...prev, structures: [...prev.structures, { id, name: `${st.name} (copy)`, rows: st.rows.map(r => ({ ...r })), allocations: { ...(st.allocations || {}) }, needsAllocation: items.length > 0 }] }));
     setView(id);
   }
   function deleteStructure(st) {
@@ -386,6 +386,43 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
       return { structures: rest, standardId: prev.standardId === st.id ? (rest[0]?.id || null) : prev.standardId };
     });
     setView(null);
+  }
+  // Which fee of the open structure each cost line goes on. Each structure
+  // keeps its own (structure.allocations, by cost key): Auto lets a cost
+  // fall to the fee carrying its fee name, else the first fee that can
+  // bill it; a pick points it at one fee, or at none ("Not covered").
+  const openStd = openStructure && hasWorkbook
+    ? standardFeeContext(openStructure, items, { termMonths, siteCount, accountCount, startMonthFor: autoStartMonthFor, ...escalators })
+    : null;
+  const openFees = openStructure
+    ? [...new Map((openStructure.rows || []).map(r => String(r.feeName || '').trim()).filter(Boolean).map(n => [n.toLowerCase(), n])).values()]
+    : [];
+  const showStructureFee = !!openStructure && items.length > 0;
+  const allocOf = (it) => openStructure?.allocations?.[costKey(it.description, it.type, it.startMonth)] || null;
+  const structureFeeValue = (it) => {
+    const a = allocOf(it);
+    if (!a || typeof a.fee !== 'string') return '';
+    if (a.fee === '') return '__none';
+    return openFees.find(n => n.toLowerCase() === a.fee) || '';
+  };
+  const autoFeeLabel = (i) => {
+    const co = openStd?.std?.costs?.[i];
+    const row = co && co.rowIdx >= 0 ? openStructure.rows[co.rowIdx] : null;
+    return row?.feeName ? `Auto: ${row.feeName}` : 'Auto: not covered';
+  };
+  function setStructureFee(it, value) {
+    if (!openStructure) return;
+    const k = costKey(it.description, it.type, it.startMonth);
+    updateStructure(openStructure.id, st => {
+      const alloc = { ...(st.allocations || {}) };
+      const { fee: _fee, ...rest } = alloc[k] || {};
+      if (value === '') {
+        if (Object.keys(rest).length) alloc[k] = rest; else delete alloc[k];
+      } else {
+        alloc[k] = { ...rest, fee: value === '__none' ? '' : value.toLowerCase() };
+      }
+      return { ...st, allocations: alloc };
+    });
   }
   const costTotal = items.reduce((s, it) => s + (typeof it.cts === 'number' ? it.cts : 0), 0);
   const ignoredCount = items.filter(it => it.ignored).length;
@@ -489,6 +526,22 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                 each month) when it comes round every year.
               </div>
             )}
+            {showStructureFee && openStructure.needsAllocation && (
+              <div className={styles.laterNote}>
+                <span>
+                  New fee structure &quot;{openStructure.name}&quot;: pick the fee each cost line goes on in the
+                  highlighted <strong>Fee in {openStructure.name}</strong> column, so this structure has its own fee setup.
+                  {openFees.length === 0 && ' Name its fees below first.'}
+                </span>
+                <button
+                  type="button"
+                  className={styles.barBtn}
+                  onClick={() => updateStructure(openStructure.id, st => { const { needsAllocation: _n, ...rest } = st; return rest; })}
+                >
+                  Done
+                </button>
+              </div>
+            )}
             {items.length === 0 ? (
               <div className={styles.note}>
                 No cost line on this option is tied to this service.
@@ -508,6 +561,14 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                     <th>Pass-through</th>
                     {showComponents && <th title="Which of the rate card's fee components this cost pays for, in the price check below. Auto checks it with the other unpicked lines.">Fee component</th>}
                     {onIgnoreForCheck && <th title="Untick to leave a line out of the price check below.">In price check</th>}
+                    {showStructureFee && (
+                      <th
+                        className={openStructure.needsAllocation ? styles.allocHead : undefined}
+                        title={`Which fee of the "${openStructure.name}" fee structure below this cost goes on. Each fee structure keeps its own.`}
+                      >
+                        Fee in {openStructure.name}
+                      </th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -641,6 +702,20 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                           />
                         </td>
                       )}
+                      {showStructureFee && (
+                        <td className={openStructure.needsAllocation ? styles.allocCell : undefined}>
+                          <select
+                            className={styles.tagSelect}
+                            value={structureFeeValue(it)}
+                            onChange={(e) => setStructureFee(it, e.target.value)}
+                            aria-label={`Fee in ${openStructure.name} for ${it.description}`}
+                          >
+                            <option value="">{autoFeeLabel(i)}</option>
+                            {openFees.map(n => <option key={n} value={n}>{n}</option>)}
+                            <option value="__none">Not covered</option>
+                          </select>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -663,7 +738,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                         </div>
                       )}
                     </td>
-                    <td colSpan={3 + (onIgnoreForCheck ? 1 : 0) + (showComponents ? 1 : 0)}>
+                    <td colSpan={3 + (onIgnoreForCheck ? 1 : 0) + (showComponents ? 1 : 0) + (showStructureFee ? 1 : 0)}>
                       {ignoredCount > 0 && (
                         <span className={styles.subNote}>
                           {ignoredCount === 1 ? '1 line' : `${ignoredCount} lines`} left out of the price check.{' '}
@@ -730,9 +805,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
 
       {hasWorkbook && previewOnOption && (
         <OptionPreview
-          preview={previewOnOption(service.name, openStructure
-            ? standardFeeContext(openStructure, items, { termMonths, siteCount, accountCount, startMonthFor: autoStartMonthFor, ...escalators }).filled
-            : null)}
+          preview={previewOnOption(service.name, openStd ? openStd.filled : null)}
         />
       )}
     </div>

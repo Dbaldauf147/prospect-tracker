@@ -925,3 +925,7 @@
 .componentTable .num {
   text-align: right;
 }
+
+/* A new fee structure asking which of its fees each cost line goes on. */
+.table th.allocHead { background: #fef3c7; }
+.table td.allocCell { background: #fffbeb; }
