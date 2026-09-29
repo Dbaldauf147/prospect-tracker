@@ -29,6 +29,9 @@ import { ServicesTab } from './ServicesTab';
 import { SERVICE_RENAMED_EVENT } from '../../utils/serviceRenameRunner';
 import { renameLineItemServices, renameFeeStructures, renameWorkbookServices } from '../../utils/serviceRenamePlans';
 import { FeeBuilderTab } from './FeeBuilderTab';
+import { SiaHistoryTab } from './SiaHistoryTab';
+import { buildSiaHistoryEntry } from '../../utils/siaHistoryEntry';
+import { saveSiaHistoryEntry } from '../../utils/siaLoadHistory';
 import { buildServiceRows } from '../../utils/serviceRows';
 import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices } from '../../utils/pricingServices';
 import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
@@ -2425,7 +2428,7 @@ export function PricingView({ settings } = {}) {
   useEffect(() => {
     try { localStorage.setItem('pricing-show-quick-conversions', showConversionsOnPricing ? '1' : '0'); } catch { /* noop */ }
   }, [showConversionsOnPricing]);
-  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'services' | 'feeBuilder' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c' | 'calculator'
+  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'services' | 'feeBuilder' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c' | 'calculator' | 'history'
   const [optionsTabData, setOptionsTabData] = useState(null); // OptionsTab state: array of { name, years, escPct, rows: [...] }
   const [compareTabData, setCompareTabData] = useState(null); // CompareTab state: { currentLabel, nextLabel, current: [...], next: [...] }
   const [brokerFeesData, setBrokerFeesData] = useState(null); // BrokerFeesTab state: array of { company, loadEp, feeEp, rfps, loadNg, feeNg }
@@ -2590,7 +2593,7 @@ export function PricingView({ settings } = {}) {
         if (typeof saved.hideEmptyCtsRows === 'boolean') setHideEmptyCtsRows(saved.hideEmptyCtsRows);
         if (saved.summaryColWidths) setSummaryColWidths(saved.summaryColWidths);
         if (saved.summaryColVisibility) setSummaryColVisibility(saved.summaryColVisibility);
-        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'services' || saved.pageSubtab === 'feeBuilder' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options' || saved.pageSubtab === 'compare' || saved.pageSubtab === 'brokerFees' || saved.pageSubtab === 's2c' || saved.pageSubtab === 'calculator') setPageSubtab(saved.pageSubtab);
+        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'services' || saved.pageSubtab === 'feeBuilder' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options' || saved.pageSubtab === 'compare' || saved.pageSubtab === 'brokerFees' || saved.pageSubtab === 's2c' || saved.pageSubtab === 'calculator' || saved.pageSubtab === 'history') setPageSubtab(saved.pageSubtab);
         if (Array.isArray(saved.s2cTabData)) setS2cTabData(saved.s2cTabData);
         if (Array.isArray(saved.optionsTabData)) setOptionsTabData(saved.optionsTabData);
         if (saved.compareTabData && typeof saved.compareTabData === 'object') setCompareTabData(saved.compareTabData);
@@ -3331,13 +3334,19 @@ export function PricingView({ settings } = {}) {
       // incoming file gets its own id, so it starts with no links of
       // its own even if its sheet names match the outgoing ones.
       await clearLoadedWorkbookOptionLinks(workbook);
-      setWorkbook({
+      const loaded = {
         id: newWorkbookId(),
         fileName: file.name,
         options: parsed.options,
         sheetNames: parsed.sheetNames,
         loadedAt: Date.now(),
-      });
+      };
+      setWorkbook(loaded);
+      // Every load goes into the SIA History subtab: header details and
+      // cost lines, so the file can be looked back on after the next one
+      // replaces it. Best-effort - a failed save must not fail the upload.
+      saveSiaHistoryEntry(buildSiaHistoryEntry({ ...loaded, sizeBytes: buf.byteLength }))
+        .catch(err => console.warn('Failed to save SIA history:', err));
       setOverrides({});
       // Fresh file → reset the global margin to the 50% default so a
       // stale saved value from a prior workbook doesn't carry over.
@@ -5599,7 +5608,16 @@ export function PricingView({ settings } = {}) {
         >
           Calculator
         </button>
+        <button
+          type="button"
+          className={pageSubtab === 'history' ? styles.subtabActive : styles.subtab}
+          onClick={() => setPageSubtab('history')}
+        >
+          SIA History
+        </button>
       </div>
+
+      {pageSubtab === 'history' && <SiaHistoryTab currentId={workbook?.id || null} />}
 
       {pageSubtab === 'services' && (
         <ServicesTab

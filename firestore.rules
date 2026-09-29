@@ -216,6 +216,18 @@ service cloud.firestore {
       allow read, write: if owns(userId);
     }
 
+    // Every SIA loaded on the Pricing page: its header details (sites,
+    // accounts, salesperson, ...) and cost lines, one entry per load.
+    match /siaLoadHistory/{userId} {
+      allow read, write: if owns(userId);
+    }
+    match /siaLoadHistory/{userId}/items/{entryId} {
+      allow read, write: if owns(userId);
+    }
+    match /siaLoadHistory/{userId}/items/{entryId}/chunks/{chunkId} {
+      allow read, write: if owns(userId);
+    }
+
     // Portfolio source-file attachments — the workbook uploaded against a
     // PE portfolio company. Same shape as the opp files above.
     match /portfolioSourceFiles/{userId} {

@@ -201,6 +201,25 @@ function parseOptionSheet(sheet, sheetName) {
     }
   }
 
+  // Everything else the header block says (Date, Salesperson, Client,
+  // Currency Conversion, ...), as label / value pairs in sheet order. The
+  // load history keeps these beside the cost lines so a past SIA can be
+  // read back without the file. A label is a text cell; its value is the
+  // next non-empty cell to the right on the same row.
+  const headerDetails = [];
+  for (let i = 0; i < Math.min(rows.length, startIdx); i++) {
+    const row = rows[i] || [];
+    for (let c = 0; c < row.length; c++) {
+      const label = cellStr(row[c]).replace(/\s*:\s*$/, '');
+      if (!label || typeof row[c] !== 'string') continue;
+      let j = c + 1;
+      while (j < row.length && cellStr(row[j]) === '') j++;
+      if (j >= row.length) continue;
+      headerDetails.push({ label, value: headerValue(label, row[j]) });
+      c = j;
+    }
+  }
+
   // Target GM % / Use Target — the SIA's own margin, so the Pricing page can
   // offer it instead of the user typing one. Scanned across the whole sheet
   // (see the label regexes above); the value is the first usable cell to the
@@ -414,6 +433,7 @@ function parseOptionSheet(sheet, sheetName) {
     solutionDescription,
     siteCount,
     accountCount,
+    headerDetails,
     targetGmPct,
     useTargetGm,
     sections,
@@ -449,6 +469,18 @@ function toFlag(v) {
   if (/^(y|yes|true|x|1)$/.test(s)) return true;
   if (/^(n|no|false|0)$/.test(s)) return false;
   return null;
+}
+
+// A header value as display text. Dates arrive as Excel serial numbers
+// (the sheet is read with cellDates off), so a "Date" row's number is
+// turned back into YYYY-MM-DD.
+function headerValue(label, v) {
+  if (typeof v === 'number' && /date/i.test(label) && v > 20000 && v < 80000) {
+    // Excel day 0 is 1899-12-30 (the 1900 leap-year bug folded in).
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(v) * 86400000);
+    return d.toISOString().slice(0, 10);
+  }
+  return cellStr(v);
 }
 
 function toNumber(v) {

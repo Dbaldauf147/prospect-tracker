@@ -40,6 +40,8 @@ const STORES = [
   // local half of oppRfpTemplate.js — the Firestore mirror there is what
   // makes an attachment cross-device.
   { name: 'rfp-templates',       keyPath: null },
+  // One entry per SIA loaded on the Pricing page - see siaLoadHistory.js.
+  { name: 'sia-load-history',    keyPath: null },
 ];
 
 let dbPromise = null;
