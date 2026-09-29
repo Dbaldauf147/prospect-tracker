@@ -2,7 +2,7 @@ import { Fragment, useState } from 'react';
 import { sanitizeExcelWorkbook } from '../../utils/exportSanitize';
 import styles from './ServicesTab.module.css';
 import own from './FeeBuilderTab.module.css';
-import { serviceKey, groupFeeRows } from '../../utils/pricingServices';
+import { serviceKey, groupFeeRows, costsByKind } from '../../utils/pricingServices';
 import { addFeeSummarySheet, addFeeComparisonSheet } from '../../utils/feeSummarySheets';
 
 const fmtMoney = (n) => (typeof n === 'number' && Number.isFinite(n)
@@ -438,6 +438,44 @@ export function FeeBuilderTab({
                   <td className={styles.num}>{t.margin?.finalMargin != null ? fmtPct(t.margin.finalMargin) : '-'}</td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+
+          <div className={styles.previewLabel}>{plan.optionName} costs by type</div>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th />
+                {yearIdx.map(i => <th key={i} className={styles.num}>{`Y${i + 1} cost`}</th>)}
+                <th className={styles.num}>Term cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                ['Now on the schedule', (c) => !!c.pricingFee],
+                ['As built', (c) => !!c.builderFee],
+              ].map(([label, counted]) => {
+                // The cost lines each side logs on a fee, by kind; the
+                // Total matches the Term cost above.
+                const { rows: kinds, total } = costsByKind(plan.costLines, plan.numYears || 1, counted);
+                return (
+                  <Fragment key={label}>
+                    <tr><td colSpan={yearIdx.length + 2}><strong>{label}</strong></td></tr>
+                    {kinds.map(k => (
+                      <tr key={k.kind}>
+                        <td style={{ paddingLeft: 24 }}>{k.kind}</td>
+                        {yearIdx.map(yi => <td key={yi} className={styles.num}>{fmtMoney(k.byYear[yi])}</td>)}
+                        <td className={styles.num}>{fmtMoney(sum(k.byYear))}</td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td style={{ paddingLeft: 24 }}><strong>Total</strong></td>
+                      {yearIdx.map(yi => <td key={yi} className={styles.num}><strong>{fmtMoney(total[yi])}</strong></td>)}
+                      <td className={styles.num}><strong>{fmtMoney(sum(total))}</strong></td>
+                    </tr>
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </section>
