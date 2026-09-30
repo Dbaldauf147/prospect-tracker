@@ -30,7 +30,7 @@ import { SERVICE_RENAMED_EVENT } from '../../utils/serviceRenameRunner';
 import { renameLineItemServices, renameFeeStructures, renameWorkbookServices } from '../../utils/serviceRenamePlans';
 import { renameInLowerList, renameInLowerKeyMap } from '../../utils/serviceNameMerges';
 import { FeeBuilderTab } from './FeeBuilderTab';
-import { updateForOption } from '../../utils/feeBuilderChecklist';
+import { updateForOption, copyPicksBetweenOptions } from '../../utils/feeBuilderChecklist';
 import { SiaHistoryTab } from './SiaHistoryTab';
 import { buildSiaHistoryEntry, siaKeyFacts } from '../../utils/siaHistoryEntry';
 import { saveSiaHistoryEntry } from '../../utils/siaLoadHistory';
@@ -5375,6 +5375,37 @@ export function PricingView({ settings } = {}) {
     return structures.find(x => x.id === saved?.standardId) || structures[0] || null;
   }
 
+  // Fee Builder subtab: the target option picks the same fee structure for
+  // every service as the source option does. Its own picks are replaced.
+  function copyFeeBuilderPicks(fromOption, toOption) {
+    const listFor = (n) => {
+      const o = workbook?.options?.find(x => x.optionNumber === n);
+      return buildPricingServiceList({
+        serviceRows: buildServiceRows(settings),
+        hiddenServices: settings?.hiddenServices || [],
+        scopeServices: o ? (pricingOptionServices[o.sheetName] || []) : [],
+      });
+    };
+    const scopeOf = (list) => new Set(list.filter(s => s.inScope).map(s => serviceKey(s.name)));
+    const fromList = listFor(fromOption);
+    const toList = listFor(toOption);
+    const keys = new Set([...fromList, ...toList].map(s => serviceKey(s.name)));
+    for (const k of Object.keys(serviceFeeStructures || {})) keys.add(k);
+    const services = [...keys].map(key => {
+      const saved = serviceFeeStructures[key];
+      const structures = saved?.structures || [];
+      const std = structures.find(x => x.id === saved?.standardId) || structures[0] || null;
+      return { key, standardId: std?.id || '' };
+    });
+    const next = copyPicksBetweenOptions({
+      services,
+      fromPicks: feeBuilderPicks[fromOption],
+      fromScope: scopeOf(fromList),
+      toScope: scopeOf(toList),
+    });
+    setFeeBuilderPicks(prev => updateForOption(prev, toOption, () => next));
+  }
+
   // The active option's Alternative Fee schedule rebuilt from the picked
   // structure of every service, as the Services subtab's Apply would write
   // each one (blank fees filled with the standard fee, the service's
@@ -6011,6 +6042,7 @@ export function PricingView({ settings } = {}) {
           setActiveOption={setActiveOption}
           setPicks={(optionNumber, updater) => setFeeBuilderPicks(prev => updateForOption(prev, optionNumber, updater))}
           planFor={feeBuilderPlan}
+          onCopyPicks={copyFeeBuilderPicks}
           onApply={applyFeeBuilderPlan}
           setFeeOverrides={(optionNumber, updater) => setFeeBuilderOverrides(prev => updateForOption(prev, optionNumber, updater))}
           onOpenServices={() => setPageSubtab('services')}

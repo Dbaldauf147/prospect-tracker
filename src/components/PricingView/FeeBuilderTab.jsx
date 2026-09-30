@@ -261,14 +261,17 @@ async function exportPlan(plan) {
 //                 absent = the service's standard structure when in scope
 //   planFor       () => the services, their picks, the rebuilt schedule and
 //                 the option's totals for the active option
+//   onCopyPicks   (fromOption, toOption) gives toOption the same picks as
+//                 fromOption, replacing its own
 //   onApply       (plan) => writes it, true when it did
 export function FeeBuilderTab({
-  workbook, activeOption, setActiveOption, setPicks, planFor, onApply, onOpenServices, setFeeOverrides,
+  workbook, activeOption, setActiveOption, setPicks, planFor, onCopyPicks, onApply, onOpenServices, setFeeOverrides,
   hiddenColumns, setHiddenColumns, doneState, setDoneState,
 }) {
   const [showAll, setShowAll] = useState(false);
   const [collapsed, setCollapsed] = useState({});
   const [flash, setFlash] = useState('');
+  const [copyFlash, setCopyFlash] = useState('');
   const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0] || null;
 
   if (!workbook) {
@@ -363,6 +366,28 @@ export function FeeBuilderTab({
               onShowAll={() => setHiddenColumns([])}
             />
           )}
+          {onCopyPicks && workbook.options.length > 1 && (
+            <select
+              className={own.copySelect}
+              value=""
+              aria-label="Copy the fee structures from another option"
+              title={`Pick the same fee structure for every service as another option does. ${plan?.optionName || 'This option'}'s own picks are replaced.`}
+              onChange={(e) => {
+                const from = workbook.options.find(o => String(o.optionNumber) === e.target.value);
+                if (!from) return;
+                const to = plan?.optionName || opt?.sheetName || 'this option';
+                if (!window.confirm(`Copy the fee structure picks from ${from.sheetName} to ${to}? The picks on ${to} are replaced.`)) return;
+                onCopyPicks(from.optionNumber, optionNumber);
+                setCopyFlash(`Copied the fee structure picks from ${from.sheetName} to ${to}.`);
+                window.setTimeout(() => setCopyFlash(''), 4000);
+              }}
+            >
+              <option value="">Copy from option...</option>
+              {workbook.options.filter(o => o.optionNumber !== optionNumber).map(o => (
+                <option key={o.sheetName} value={String(o.optionNumber)}>{o.sheetName}</option>
+              ))}
+            </select>
+          )}
           <button type="button" className={own.smallBtn} onClick={() => setAll('standard')}>Use standard for all</button>
           <button type="button" className={own.smallBtn} onClick={() => setAll('none')}>No fees for all</button>
           <label className={own.toggle}>
@@ -370,6 +395,7 @@ export function FeeBuilderTab({
             Show services outside SIA scope{hiddenCount > 0 && !showAll ? ` (${hiddenCount})` : ''}
           </label>
         </div>
+        {copyFlash && <div className={styles.flash}>{copyFlash}</div>}
         {listed.length === 0 ? (
           <p className={styles.note}>
             No services in SIA scope on {plan?.optionName || 'this option'}. Tie cost lines to services on the <strong>Linked To</strong> subtab.

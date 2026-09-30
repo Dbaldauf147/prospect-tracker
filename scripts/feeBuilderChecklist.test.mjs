@@ -1,7 +1,7 @@
 // Assertion tests for the Fee Builder checklist and column picker.
 // Plain Node - no test framework. Run:
 //   node scripts/feeBuilderChecklist.test.mjs
-import { isServiceDone, setServiceDone, toggleHiddenColumn, updateForOption } from '../src/utils/feeBuilderChecklist.js';
+import { isServiceDone, setServiceDone, toggleHiddenColumn, updateForOption, copyPicksBetweenOptions } from '../src/utils/feeBuilderChecklist.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -39,6 +39,25 @@ const before = JSON.stringify(picks);
 const reset = updateForOption(picks, 1, () => ({}));
 check('an emptied option drops out, the other stays', reset, { 2: { 'bill payment': '' } });
 check('input not mutated', JSON.stringify(picks), before);
+
+// Copying picks: explicit picks carry over; a fallback that would land
+// differently under the target's scope is written out.
+const svcs = [
+  { key: 'bbs', standardId: 'std-bbs' },
+  { key: 'budgets', standardId: 'std-b' },
+  { key: 'open close', standardId: '' },
+  { key: 'only on target', standardId: 'std-t' },
+  { key: 'only on source', standardId: 'std-s' },
+];
+const copied = copyPicksBetweenOptions({
+  services: svcs,
+  fromPicks: { bbs: 'site', budgets: '' },
+  fromScope: new Set(['bbs', 'budgets', 'open close', 'only on source']),
+  toScope: new Set(['bbs', 'budgets', 'open close', 'only on target']),
+});
+check('copied picks', copied, { bbs: 'site', budgets: '', 'only on target': '', 'only on source': 'std-s' });
+check('nothing picked, same scope: nothing written',
+  copyPicksBetweenOptions({ services: svcs, fromPicks: undefined, fromScope: new Set(['bbs']), toScope: new Set(['bbs']) }), {});
 
 console.log(`${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
