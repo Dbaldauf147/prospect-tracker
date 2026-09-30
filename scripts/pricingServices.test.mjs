@@ -19,6 +19,7 @@ import {
   addServiceToLineItem, moveLineItemService, moveCostLineService, servicesForCostLine, costTotalsByLineItem, addLaterCostFees,
   costTypeConversion, moveCostAllocation, buildScheduleFromStructures, standardFeeContext, groupFeeRows, effectiveLineItemServices,
   passThroughFeeRows, addPassThroughFees, sharedLineItemsToSplit, setCostLineService, sharedSignature,
+  lineItemServicesOnOption, setOptionCostLineService,
 } from '../src/utils/pricingServices.js';
 
 let failed = 0;
@@ -598,6 +599,34 @@ test('a shared line item asks which service each of its cost lines goes to', () 
   // A blank pick puts the line back on the shared list.
   map = setCostLineService(map, items[0], '');
   assert.deepEqual(servicesForCostLine(map, items[0]), ['Sustainability Reports', 'Marketing Collateral']);
+});
+
+test('a split on one option stays on that option and off the Linked To mapping', () => {
+  const items = [
+    { description: 'Communication Support', type: 'One Time', cts: 100 },
+    { description: 'Communication Support', type: 'Setup', cts: 50 },
+  ];
+  const mapping = { 'communication support': ['Sustainability Reports', 'Marketing Collateral'] };
+  const opt5 = { optionNumber: 5 };
+  opt5.costLineServices = setOptionCostLineService(opt5.costLineServices, mapping, items[0], 'Marketing Collateral');
+  // The mapping itself is untouched.
+  assert.deepEqual(Object.keys(mapping), ['communication support']);
+  const on5 = lineItemServicesOnOption(opt5, mapping);
+  assert.deepEqual(servicesForCostLine(on5, items[0]), ['Marketing Collateral']);
+  assert.deepEqual(servicesForCostLine(on5, items[1]), ['Sustainability Reports', 'Marketing Collateral']);
+  assert.deepEqual(sharedLineItemsToSplit(items, on5)[0].lines.map(l => l.pick), ['Marketing Collateral', null]);
+  // Another option still reads the shared list.
+  const on4 = lineItemServicesOnOption({ optionNumber: 4 }, mapping);
+  assert.equal(on4, mapping);
+  assert.deepEqual(servicesForCostLine(on4, items[0]), ['Sustainability Reports', 'Marketing Collateral']);
+  // Blank puts it back to shared on the option.
+  opt5.costLineServices = setOptionCostLineService(opt5.costLineServices, mapping, items[0], '');
+  assert.deepEqual(opt5.costLineServices, {});
+  // An older page-wide per-line split is overridden back to shared here only.
+  const older = setCostLineService(mapping, items[0], 'Sustainability Reports');
+  const picks = setOptionCostLineService({}, older, items[0], '');
+  assert.deepEqual(servicesForCostLine(lineItemServicesOnOption({ costLineServices: picks }, older), items[0]), ['Sustainability Reports', 'Marketing Collateral']);
+  assert.deepEqual(servicesForCostLine(older, items[0]), ['Sustainability Reports']);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

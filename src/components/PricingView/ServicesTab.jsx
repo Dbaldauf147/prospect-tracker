@@ -50,8 +50,10 @@ const STATUS_CLASS = {
 //                   items tied to several services with no priority order,
 //                   whose cost lines are asked which service they go to
 //   onSplitCostLine ({ description, type }, service) => points that cost
-//                   line at the one service ('' puts it back on the list)
-//   onKeepShared    (sharedToSplit row) => keeps the line item shared
+//                   line at the one service on the active option only
+//                   ('' puts it back on the list)
+//   onKeepShared    (sharedToSplit row) => keeps the line item shared on
+//                   the active option
 //   onSetItemType   (itemId, type) => overrides a cost line's Type ('' clears it)
 //   onSetPassThrough (description, type, on) => the Linked To pass-through
 //                   setting for that Line Item + Type pair
@@ -321,7 +323,7 @@ function SharedSplitPrompt({ rows, optionName, onSplit, onKeepShared, onOpenLink
         <span className={styles.unlinkedText}>
           <strong>{n} line item{n === 1 ? '' : 's'}</strong>
           {optionName ? ` on ${optionName}` : ''} {n === 1 ? 'is' : 'are'} tied to several services with no priority order,
-          so every one of them counts the full cost. Pick the service each cost line belongs to, or keep it shared.
+          so every one of them counts the full cost. Pick the service each cost line belongs to on this option, or keep it shared. Other options and the Linked To subtab are not changed.
         </span>
         <button type="button" className={styles.linkBtn} onClick={() => setOpen(o => !o)}>{open ? 'Hide' : 'Show'}</button>
       </div>
@@ -339,7 +341,7 @@ function SharedSplitPrompt({ rows, optionName, onSplit, onKeepShared, onOpenLink
                     type="button"
                     className={styles.ignoreBtn}
                     onClick={() => onKeepShared(row)}
-                    title="Every service listed keeps counting this cost. Asks again if the list of services changes."
+                    title="Every service listed keeps counting this cost on this option. Asks again if the list of services changes."
                   >
                     Keep shared
                   </button>

@@ -35,7 +35,7 @@ import { SiaHistoryTab } from './SiaHistoryTab';
 import { buildSiaHistoryEntry, siaKeyFacts } from '../../utils/siaHistoryEntry';
 import { saveSiaHistoryEntry } from '../../utils/siaLoadHistory';
 import { buildServiceRows } from '../../utils/serviceRows';
-import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, moveCostLineService, servicesForCostLine, isCostLineServiceKey, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices, sharedLineItemsToSplit, setCostLineService, sharedSignature } from '../../utils/pricingServices';
+import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, moveCostLineService, servicesForCostLine, isCostLineServiceKey, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices, sharedLineItemsToSplit, sharedSignature, lineItemServicesOnOption, setOptionCostLineService } from '../../utils/pricingServices';
 import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
 import { isSetupFeeType } from '../../utils/setupFeeFloor';
 import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
@@ -2774,13 +2774,31 @@ export function PricingView({ settings } = {}) {
   const sharedToSplit = useMemo(() => {
     const opt = workbook?.options.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
     const items = opt ? opt.sections.flatMap(sec => sec.items) : [];
-    return sharedLineItemsToSplit(items, lineItemServices, { priority: lineItemPriority, ignored: lineItemIgnored, sharedOk: lineItemSharedOk });
+    // The option's own picks and kept-shared marks count on top of the
+    // page-wide ones, so a split made on this option shows here only.
+    return sharedLineItemsToSplit(items, lineItemServicesOnOption(opt, lineItemServices), {
+      priority: lineItemPriority,
+      ignored: lineItemIgnored,
+      sharedOk: { ...(lineItemSharedOk || {}), ...(opt?.sharedOk || {}) },
+    });
   }, [workbook, activeOption, lineItemServices, lineItemPriority, lineItemIgnored, lineItemSharedOk]);
 
-  // The mapping as it reads on one option: a priority line item narrowed
-  // to the one service that takes its cost there.
+  // A split or Keep shared from the Services subtab's prompt, saved on the
+  // active option (see lineItemServicesOnOption) rather than in the Linked
+  // To mapping, so the other options keep their own answer.
+  function updateActiveOption(fn) {
+    setWorkbook(prev => {
+      if (!prev || !Array.isArray(prev.options) || prev.options.length === 0) return prev;
+      const target = prev.options.find(o => o.optionNumber === activeOption) || prev.options[0];
+      return { ...prev, options: prev.options.map(o => (o === target ? fn(o) : o)) };
+    });
+  }
+
+  // The mapping as it reads on one option: the option's own cost-line
+  // picks laid over it, and a priority line item narrowed to the one
+  // service that takes its cost there.
   const servicesOnOption = (o) => effectiveLineItemServices(
-    (o?.sections || []).flatMap(sec => sec.items || []), lineItemServices, lineItemPriority,
+    (o?.sections || []).flatMap(sec => sec.items || []), lineItemServicesOnOption(o, lineItemServices), lineItemPriority,
   );
 
   useEffect(() => {
@@ -6084,8 +6102,8 @@ export function PricingView({ settings } = {}) {
           onMoveLineItem={(line, from, to) => setLineItemServices(prev => moveCostLineService(prev, line, from, to))}
           onIgnoreLineItem={(key) => setLineItemIgnored(prev => ({ ...(prev || {}), [key]: true }))}
           sharedToSplit={sharedToSplit}
-          onSplitCostLine={(line, service) => setLineItemServices(prev => setCostLineService(prev, line, service))}
-          onKeepShared={(row) => setLineItemSharedOk(prev => ({ ...(prev || {}), [row.key]: sharedSignature(row.services) }))}
+          onSplitCostLine={(line, service) => updateActiveOption(o => ({ ...o, costLineServices: setOptionCostLineService(o.costLineServices, lineItemServices, line, service) }))}
+          onKeepShared={(row) => updateActiveOption(o => ({ ...o, sharedOk: { ...(o.sharedOk || {}), [row.key]: sharedSignature(row.services) } }))}
         />
       )}
 

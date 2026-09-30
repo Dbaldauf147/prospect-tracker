@@ -92,7 +92,8 @@ export const renameFeeStructures = renameInLowerKeyMap;
 
 // The saved workbook's per-option service marks: servicesCompleted (a list
 // of lowercased names), priceCheckIgnored, priceCheckComponents and
-// priceCheckCountsByService (all keyed by lowercased name).
+// priceCheckCountsByService (all keyed by lowercased name), and the
+// option's own cost-line picks (costLineServices, lists of names).
 export function renameWorkbookServices(workbook, from, to) {
   if (!workbook || !Array.isArray(workbook.options)) return null;
   let changed = false;
@@ -101,7 +102,8 @@ export function renameWorkbookServices(workbook, from, to) {
     const ignored = renameInLowerKeyMap(o?.priceCheckIgnored, from, to);
     const picks = renameInLowerKeyMap(o?.priceCheckComponents, from, to);
     const counts = renameInLowerKeyMap(o?.priceCheckCountsByService, from, to);
-    if (!done && !ignored && !picks && !counts) return o;
+    const lines = renameLineItemServices(o?.costLineServices, from, to);
+    if (!done && !ignored && !picks && !counts && !lines) return o;
     changed = true;
     return {
       ...o,
@@ -109,6 +111,7 @@ export function renameWorkbookServices(workbook, from, to) {
       ...(ignored ? { priceCheckIgnored: ignored } : {}),
       ...(picks ? { priceCheckComponents: picks } : {}),
       ...(counts ? { priceCheckCountsByService: counts } : {}),
+      ...(lines ? { costLineServices: lines } : {}),
     };
   });
   return changed ? { ...workbook, options } : null;

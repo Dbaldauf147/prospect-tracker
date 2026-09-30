@@ -36,6 +36,44 @@ export function servicesForCostLine(lineItemServices, item) {
   return lineItemServices?.[norm(item?.description)];
 }
 
+// Picks made for ONE option (the Services subtab's shared-line prompt).
+//
+// Splitting a shared line item there answers "which service is this cost
+// line on this deal", which can differ from option to option, so the
+// answer is saved on the option (option.costLineServices, keyed like the
+// per-line picks above) rather than in the Linked To mapping every option
+// reads. Reading an option lays its own picks over the mapping; the Linked
+// To subtab and every other option never see them.
+export function lineItemServicesOnOption(option, lineItemServices) {
+  const own = option?.costLineServices;
+  if (!own || typeof own !== 'object' || Object.keys(own).length === 0) return lineItemServices || {};
+  return { ...(lineItemServices || {}), ...own };
+}
+
+// The option's own pick for one cost line. A service points the line at
+// it on this option only. A blank one puts the line back to shared on this
+// option: its own pick is dropped, unless the mapping carries a per-line
+// pick of its own (an older split made before picks were per option), in
+// which case the line item's shared list is written instead so "Shared by
+// all" still means that here.
+export function setOptionCostLineService(optionPicks, lineItemServices, item, service) {
+  const key = costLineServiceKey(item?.description, item?.type);
+  const own = { ...(optionPicks && typeof optionPicks === 'object' ? optionPicks : {}) };
+  if (!key) return own;
+  const name = String(service ?? '').trim();
+  if (name) {
+    own[key] = [name];
+    return own;
+  }
+  delete own[key];
+  const map = lineItemServices || {};
+  if (Array.isArray(map[key])) {
+    const shared = Array.isArray(map[norm(item?.description)]) ? map[norm(item.description)] : [];
+    own[key] = [...shared];
+  }
+  return own;
+}
+
 // Status labels, in the order the list sorts them within a group.
 export const SERVICE_STATUS = {
   ACTIVE: 'Active',
