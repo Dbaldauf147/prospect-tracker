@@ -20,6 +20,7 @@ import { loadCoaItemOptions, COA_ITEM_OPTIONS_EVENT } from '../../utils/coaItemO
 import { ServicesPricingTab } from './ServicesPricingTab';
 import { buildServiceRows } from '../../utils/serviceRows';
 import { TimelinesTab } from './TimelinesTab';
+import ServiceBucketsPanel from './ServiceBucketsPanel';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
 import { getServicePricing, renameServicePricing, isGraveyardBucket } from '../../utils/servicePricing';
 import { LIBRARY_KEY, getTreeLibrary, hasSavedTrees, renameServiceInLibrary } from '../../utils/treeLibrary';
@@ -1354,6 +1355,8 @@ export function DropdownsView({ settings, updateSettings }) {
   // the row's popup opens on the new service so they can be filled in on
   // one screen rather than hunted across a horizontal scrollbar.
   const [addingService, setAddingService] = useState(false);
+  // The bucket editor above the table (see ServiceBucketsPanel).
+  const [editingBuckets, setEditingBuckets] = useState(false);
   const [newServiceName, setNewServiceName] = useState('');
   const [addServiceNote, setAddServiceNote] = useState('');
   const newServiceRef = useRef(null);
@@ -1912,7 +1915,22 @@ export function DropdownsView({ settings, updateSettings }) {
               onClick={() => (addingService ? closeAddService() : setAddingService(true))}
               title="Add a service to the Solutions list"
             >{addingService ? 'Done adding' : '+ Add service'}</button>
+            <button
+              type="button"
+              className={styles.addServiceBtn}
+              onClick={() => setEditingBuckets(v => !v)}
+              title="Add, rename, reorder or delete the buckets services are grouped into"
+            >{editingBuckets ? 'Done with buckets' : 'Edit buckets'}</button>
           </div>
+
+          {editingBuckets && (
+            <ServiceBucketsPanel
+              categories={serviceCategories}
+              unfiledCount={serviceRows.filter(r => !r.bucket || r.bucket === UNGROUPED_SERVICES).length}
+              onSave={next => updateSettings?.({ customServiceCategories: next })}
+              onClose={() => setEditingBuckets(false)}
+            />
+          )}
 
           {/* Why rows nobody added here are in the table. Only shown while
               the board is actually contributing some — once the list carries
