@@ -13,6 +13,7 @@ import { computeCloseNotSoldOpps, computeCloseNotSoldMissingData } from './close
 import { buildOppNumberMap } from './oppNumbers';
 import { dealSoldDate, daysToFollowUpGoal, followUpGoalDate, postSaleFollowUpRows } from './postSaleFollowUp';
 import { incompleteHandoffDeals } from './dealHandoff';
+import { oppScopeOffList } from './oppScopeOffList';
 import {
   buildOppStagesByClient,
   buildServiceCatalog,
@@ -434,6 +435,49 @@ function detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects = [],
   return issues;
 }
 
+// ---- Opp Scope naming a service the Dropdowns list doesn't have ----
+// An opp's Scope column (the services on the deal) holds service names as
+// text, so a service renamed or deleted on Dropdowns › Services, or a name
+// typed or pasted in by hand, leaves the opp naming a service that no
+// longer exists. Coverage, the Pricing tab's mapping and the BFO prompts
+// all match services by name, so such an opp silently drops out of them.
+//
+// `knownServices` is the Dropdowns tab's Solutions / Service Catalog list
+// (retired services included: they're still on the list, so an old deal
+// naming one is fine), plus any display names from serviceRenames. With
+// no list to check against (not loaded yet, or the list hidden) nothing is
+// flagged, rather than every service on every opp. One row per opp, naming
+// every unmatched service on it, so each opp is snoozed on its own.
+function detectOppScopeOffList({ oppsCache = null, knownServices = null, prospects = [], oppNumbers = new Map() }) {
+  const hits = oppScopeOffList(oppsCache?.records, knownServices);
+  if (hits.length === 0) return [];
+  const prospectIdByNorm = new Map();
+  for (const p of prospects) {
+    const norm = normalizeBfoCompany(p.company);
+    if (norm && !prospectIdByNorm.has(norm)) prospectIdByNorm.set(norm, p.id);
+  }
+  const issues = [];
+  for (const { record: r, off } of hits) {
+    const account = String(r.Account || '').trim();
+    const stage = String(r.Stage || '').trim();
+    const quoted = off.map(s => `"${s}"`).join(', ');
+    issues.push({
+      // Keyed by the unmatched names too, so fixing one and mistyping
+      // another brings a snoozed row back.
+      id: `opp-scope-off-list:${r._id != null ? r._id : account}:${off.map(s => s.toLowerCase()).sort().join('|')}`,
+      source: 'Opps',
+      type: 'Service not in Dropdowns',
+      company: account || '-',
+      oppNumber: oppNumbers.get(r._id) ?? null,
+      prospectId: prospectIdByNorm.get(normalizeBfoCompany(account)) || null,
+      daysUntil: null,
+      expirationDate: null,
+      detail: `${off.length === 1 ? 'Service' : 'Services'} ${quoted} in this opp's Scope${stage ? ` (${stage})` : ''} ${off.length === 1 ? "isn't" : "aren't"} on the Dropdowns › Services list: pick the matching service in the opp's Scope, or add it on the Dropdowns tab.`,
+    });
+  }
+  return issues;
+}
+
 // ---- New BFO Opp prompt missing data ----
 // Mirrors the red banner on the Agents page: an opp that needs a fresh
 // BFO Guided Opportunity created ("BFO Link" == "-") but is missing one
@@ -699,7 +743,7 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
 //
 // Service Exploration Coverage is deliberately not among them — see
 // computeServiceCoverageGaps above; it feeds the Prospecting ladder.
-export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {} }) {
+export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, knownServices = null }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   // Opp `_id` → the visible "Opp #" the Opps tab shows. Built once here and
   // handed to the opp-derived detectors so every issue row names its opp by
@@ -713,6 +757,7 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectMarketingLeadStatuses({ marketingLeads }));
   issues.push(...detectUntaggedBfoOppNames({ bfoActivity, oppsCache }));
   issues.push(...detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects, oppNumbers }));
+  issues.push(...detectOppScopeOffList({ oppsCache, knownServices, prospects, oppNumbers }));
   issues.push(...detectNewBfoMissingData({ prospects, oppsCache, serviceOverrides, oppNumbers }));
   issues.push(...detectCloseNotSoldMissingData({ oppsCache, bfoActivity, prospects, oppNumbers }));
   issues.push(...detectPostSaleFollowUpOverdue({ dealsList, prospects }));

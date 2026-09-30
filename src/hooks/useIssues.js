@@ -5,6 +5,7 @@ import { loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT, loadClientStatusMap, CL
 import { loadIssueSnoozedMap, issueSnoozeState, pruneExpiredSnoozes, ISSUE_SNOOZED_EVENT } from '../utils/issueSnoozeStore';
 import { loadMyAccountsFlags, MY_ACCOUNTS_FLAGS_EVENT, MY_ACCOUNTS_FLAGS_KEY } from '../utils/myAccountsFlagsStore';
 import { dbGet } from '../utils/db';
+import { getEffectiveDropdownLists } from '../utils/dropdownListsStore';
 import { useOpps2Data } from './useOpps2Data';
 import { computeIssues, computeServiceCoverageGaps } from '../utils/clientIssues';
 import { loadPipelineDashboard, coverageServicesOf, PIPELINE_DASHBOARD_EVENT } from '../utils/pipelineDashboardStore';
@@ -76,6 +77,19 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
     serviceRenames: settings?.serviceRenames,
     customServiceCategories: settings?.customServiceCategories,
   }), [settings?.hiddenServices, settings?.serviceRenames, settings?.customServiceCategories]);
+
+  // The Dropdowns tab's services (the Solutions / Service Catalog list, plus
+  // any renamed display names) an opp's Scope is checked against. Built
+  // from the whole settings object, which changes on any edit, so it goes
+  // through a string key: only a real change to the list re-runs
+  // computeIssues. Null while the list is hidden, so nothing is flagged.
+  const knownServicesKey = useMemo(() => {
+    const list = getEffectiveDropdownLists(settings).find(l => l.key === 'solutions');
+    if (!list) return '';
+    const renames = settings?.serviceRenames && typeof settings.serviceRenames === 'object' ? Object.values(settings.serviceRenames) : [];
+    return JSON.stringify([...(list.options || []), ...renames].map(s => String(s ?? '').trim()).filter(Boolean));
+  }, [settings]);
+  const knownServices = useMemo(() => (knownServicesKey ? JSON.parse(knownServicesKey) : null), [knownServicesKey]);
 
   // Re-read once the per-user localStorage scope is established (and on any
   // later account switch), since the initial reads above may have run
@@ -158,12 +172,12 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   }, []);
 
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices });
     return rows.map((r) => {
       const { snoozed, until } = issueSnoozeState(snoozedMap, r.id);
       return { ...r, snoozed, snoozeUntil: until };
     });
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices]);
 
   // Services the client base hasn't explored yet. Not issues — outreach —
   // so they're returned alongside rather than mixed in, and the snooze map
