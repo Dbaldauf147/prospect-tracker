@@ -1166,7 +1166,7 @@ function componentMeters(parts = []) {
 // reads as a fixed fee or per account, as picked in the cost line table.
 function PassThroughLines({ lines = [] }) {
   if (!lines.length) return null;
-  const when = (l) => (l.annual ? ' a year' : (l.part === 'setup' ? ' setup' : ' one-time'));
+  const when = (l) => (l.annual ? ' a year' : ' one-time');
   return (
     <table className={styles.componentTable}>
       <thead>
