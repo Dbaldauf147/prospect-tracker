@@ -104,6 +104,9 @@ test('the Pricing cache, Deal Sizing, Account Potential, pipeline and bands', ()
   assert.deepEqual(wb.options[0].servicesCompleted, ['budgets (site level)']);
   assert.deepEqual(wb.options[0].priceCheckIgnored, { 'budgets (site level)': ['i1'] });
   assert.deepEqual(wb.options[0].priceCheckComponents, { 'budgets (site level)': { i2: 'recurring:per_account' } });
+  const split = renameWorkbookServices({ options: [{ costLineServices: { 'x::setup': ['Budgets'] } }, { optionNumber: 2 }] }, FROM, TO);
+  assert.deepEqual(split.options[0].costLineServices, { 'x::setup': [TO] });
+  assert.deepEqual(split.options[1], { optionNumber: 2 });
   const scopes = renameClientScopeMap({ acme: { services: ['Budgets'], serviceUnits: { Budgets: 4 } }, beta: { services: ['GHG'] } }, FROM, TO);
   assert.deepEqual(scopes.acme, { services: [TO], serviceUnits: { [TO]: 4 } });
   assert.deepEqual(scopes.beta, { services: ['GHG'] });

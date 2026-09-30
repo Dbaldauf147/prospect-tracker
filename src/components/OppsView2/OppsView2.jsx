@@ -176,7 +176,7 @@ import { companiesMatch } from '../../utils/listFlags';
 // by a sale).
 import { scopeServiceStatuses, scopeStatusTitle } from '../../utils/scopeServiceStatus';
 import { SERVICE_STATUS_COLORS } from '../../utils/serviceStatusColors';
-import { effectiveLineItemServices, servicesForCostLine } from '../../utils/pricingServices';
+import { effectiveLineItemServices, servicesForCostLine, lineItemServicesOnOption } from '../../utils/pricingServices';
 // The Columns menu every other table on the site carries, and the layout it
 // saves, so the estimate table's columns are picked the same way.
 import { ColumnToggle } from '../common/ColumnToggle';
@@ -13916,7 +13916,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         const services = [];
         // A "first in scope only" line item counts for the one service
         // that takes it on this option, as on the Pricing tab.
-        const onOption = effectiveLineItemServices((o.sections || []).flatMap(sec => sec.items || []), lineItemServices, lineItemPriority);
+        const onOption = effectiveLineItemServices((o.sections || []).flatMap(sec => sec.items || []), lineItemServicesOnOption(o, lineItemServices), lineItemPriority);
         for (const sec of (o.sections || [])) {
           for (const item of (sec.items || [])) {
             const mapped = servicesForCostLine(onOption, item);
