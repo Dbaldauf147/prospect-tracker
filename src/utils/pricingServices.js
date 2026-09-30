@@ -397,6 +397,29 @@ export function costKey(description, type, startMonth) {
   return m > FIRST_YEAR_MONTHS ? `${base}::m${m}` : base;
 }
 
+// Each cost line's key within one list of lines. Two lines with the same
+// line item, type and start month (two "Communication Support" monthly
+// lines) would share a key and so a fee pick; the second and later ones
+// get "::n2", "::n3", ... so each can be pointed at its own fee.
+export function costKeysFor(costs) {
+  const seen = new Map();
+  return (costs || []).map(c => {
+    const k = costKey(c?.description, c?.type, c?.startMonth);
+    const n = (seen.get(k) || 0) + 1;
+    seen.set(k, n);
+    return n > 1 ? `${k}::n${n}` : k;
+  });
+}
+
+// A line's allocation: its own, else the one saved under the shared key
+// before lines were told apart, so an older pick still applies to all.
+export function allocationFor(allocations, key) {
+  if (!allocations || !key) return null;
+  if (allocations[key]) return allocations[key];
+  const base = String(key).replace(/::n\d+$/, '');
+  return base !== key ? (allocations[base] || null) : null;
+}
+
 const yearOfMonth = (m) => Math.max(1, Math.ceil((Math.round(Number(m) || 1)) / 12));
 
 export function costBucket(type) {
@@ -461,7 +484,7 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
   };
   const perRow = rows.map(() => ({ standardFee: null, costIdx: [], monthlyTotal: 0, upfrontTotal: 0 }));
   const costOut = costs.map((c) => {
-    const a = allocations?.[c.key];
+    const a = allocationFor(allocations, c.key);
     let rowIdx = -1;
     let defaulted = false;
     if (a && typeof a.fee === 'string') {
@@ -634,7 +657,7 @@ export function addLaterCostFees(structure, costs, opts = {}) {
     });
     for (const ci of g.idx) {
       const k = costs[ci].key;
-      nextAlloc[k] = { ...(nextAlloc[k] || {}), fee: norm(name) };
+      nextAlloc[k] = { ...(allocationFor(nextAlloc, k) || {}), fee: norm(name) };
     }
   }
   return { ...structure, rows: [...rows, ...newRows], allocations: nextAlloc };
@@ -853,8 +876,9 @@ export function addPassThroughFees(structure, costs, opts) {
 }
 
 export function feeStructureCostInputs(costs) {
-  return (costs || []).map(c => ({
-    key: costKey(c.description, c.type, c.startMonth),
+  const keys = costKeysFor(costs);
+  return (costs || []).map((c, i) => ({
+    key: keys[i],
     description: c.description,
     type: c.type,
     price: c.price,

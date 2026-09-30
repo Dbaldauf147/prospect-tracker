@@ -4,7 +4,7 @@ import styles from './ServicesTab.module.css';
 import {
   SERVICE_STATUS, FEE_STRUCTURE_TYPES, FEE_STRUCTURE_UNITS, serviceKey,
   newFeeStructureId, blankFeeStructureRow, feeStructureRowsFromFees, costTotalsByLineItem,
-  costKey, addLaterCostFees, FIRST_YEAR_MONTHS, feeStructureCostInputs,
+  costKey, costKeysFor, allocationFor, addLaterCostFees, FIRST_YEAR_MONTHS, feeStructureCostInputs,
   costTypeConversion, moveCostAllocation, feeBucket, standardFeeContext,
   passThroughFeeRows, addPassThroughFees,
 } from '../../utils/pricingServices';
@@ -685,9 +685,12 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
     ? [...new Map((openStructure.rows || []).map(r => String(r.feeName || '').trim()).filter(Boolean).map(n => [n.toLowerCase(), n])).values()]
     : [];
   const showStructureFee = !!openStructure && items.length > 0;
-  const allocOf = (it) => openStructure?.allocations?.[costKey(it.description, it.type, it.startMonth)] || null;
-  const structureFeeValue = (it) => {
-    const a = allocOf(it);
+  // Keyed per line, so two lines with the same line item, type and start
+  // month each keep their own pick.
+  const itemKeys = costKeysFor(items);
+  const allocOf = (i) => allocationFor(openStructure?.allocations, itemKeys[i]);
+  const structureFeeValue = (i) => {
+    const a = allocOf(i);
     if (!a || typeof a.fee !== 'string') return '';
     if (a.fee === '') return '__none';
     return openFees.find(n => n.toLowerCase() === a.fee) || '';
@@ -697,14 +700,25 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
     const row = co && co.rowIdx >= 0 ? openStructure.rows[co.rowIdx] : null;
     return row?.feeName ? `Auto: ${row.feeName}` : 'Auto: not covered';
   };
-  function setStructureFee(it, value) {
+  function setStructureFee(i, value) {
     if (!openStructure) return;
-    const k = costKey(it.description, it.type, it.startMonth);
+    const k = itemKeys[i];
+    const base = k.replace(/::n\d+$/, '');
     updateStructure(openStructure.id, st => {
       const alloc = { ...(st.allocations || {}) };
-      const { fee: _fee, ...rest } = alloc[k] || {};
+      // A pick saved under the shared key before lines were told apart
+      // covered every line of the group. Pin it on each other line first,
+      // so changing this one leaves them where they were.
+      if (alloc[base]) {
+        itemKeys.forEach(ok => {
+          if (ok !== k && ok !== base && ok.replace(/::n\d+$/, '') === base && !alloc[ok]) alloc[ok] = { ...alloc[base] };
+        });
+      }
+      const { fee: _fee, ...rest } = allocationFor(alloc, k) || {};
       if (value === '') {
-        if (Object.keys(rest).length) alloc[k] = rest; else delete alloc[k];
+        // An empty entry on a later line keeps it on Auto rather than
+        // falling back to the shared pick.
+        if (Object.keys(rest).length || (k !== base && alloc[base])) alloc[k] = rest; else delete alloc[k];
       } else {
         alloc[k] = { ...rest, fee: value === '__none' ? '' : value.toLowerCase() };
       }
@@ -1044,8 +1058,8 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                         <td className={openStructure.needsAllocation ? styles.allocCell : undefined}>
                           <select
                             className={styles.tagSelect}
-                            value={structureFeeValue(it)}
-                            onChange={(e) => setStructureFee(it, e.target.value)}
+                            value={structureFeeValue(i)}
+                            onChange={(e) => setStructureFee(i, e.target.value)}
                             aria-label={`Fee in ${openStructure.name} for ${it.description}`}
                           >
                             <option value="">{autoFeeLabel(i)}</option>
@@ -1810,7 +1824,7 @@ function FeeStructureEditor({
     if ('feeName' in patch && before && after && before !== after) {
       const alloc = { ...(st.allocations || {}) };
       for (const co of std.costs) {
-        if (co.rowIdx === idx && !co.fellBack) alloc[co.key] = { ...(alloc[co.key] || {}), fee: after };
+        if (co.rowIdx === idx && !co.fellBack) alloc[co.key] = { ...(allocationFor(alloc, co.key) || {}), fee: after };
       }
       next.allocations = alloc;
     }

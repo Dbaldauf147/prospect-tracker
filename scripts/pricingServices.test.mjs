@@ -20,6 +20,7 @@ import {
   costTypeConversion, moveCostAllocation, buildScheduleFromStructures, standardFeeContext, groupFeeRows, effectiveLineItemServices,
   passThroughFeeRows, addPassThroughFees, sharedLineItemsToSplit, setCostLineService, sharedSignature,
   lineItemServicesOnOption, setOptionCostLineService, setOptionItemService, clearOptionItemPicks,
+  costKeysFor, allocationFor, feeStructureCostInputs,
 } from '../src/utils/pricingServices.js';
 
 let failed = 0;
@@ -683,3 +684,27 @@ test('costs by kind split a side\'s counted cost lines into One Time, Setup and 
   const other = costsByKind([{ type: 'Fee = $6.75/account', byYear: [5] }], 1);
   assert.deepEqual(other.rows.map(r => r.kind), ['One Time', 'Setup', 'Recurring', 'Other']);
 });
+
+test('two cost lines with the same line item and type each keep their own fee pick', () => {
+  const lines = [
+    { description: 'Communication Support', type: 'Recurring (monthly)', startMonth: 1, price: 2750 },
+    { description: 'Communication Support', type: 'Recurring (monthly)', startMonth: 1, price: 1375 },
+  ];
+  const keys = costKeysFor(lines);
+  assert.equal(keys[0], costKey('Communication Support', 'Recurring (monthly)', 1));
+  assert.equal(keys[1], `${keys[0]}::n2`);
+  const rows = [
+    { feeName: 'Exec', type: 'Recurring (monthly)', unit: 'Fixed' },
+    { feeName: 'Field', type: 'Recurring (monthly)', unit: 'Fixed' },
+  ];
+  const costs = feeStructureCostInputs(lines);
+  const split = standardFeesForStructure({ rows, costs, allocations: { [keys[0]]: { fee: 'exec' }, [keys[1]]: { fee: 'field' } } });
+  assert.deepEqual(split.costs.map(c => c.rowIdx), [0, 1]);
+  // A pick saved under the shared key before still covers both lines.
+  const legacy = standardFeesForStructure({ rows, costs, allocations: { [keys[0]]: { fee: 'field' } } });
+  assert.deepEqual(legacy.costs.map(c => c.rowIdx), [1, 1]);
+  assert.deepEqual(allocationFor({ [keys[0]]: { fee: 'x' } }, keys[1]), { fee: 'x' });
+  assert.deepEqual(allocationFor({ [keys[0]]: { fee: 'x' }, [keys[1]]: {} }, keys[1]), {});
+});
+
+if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
