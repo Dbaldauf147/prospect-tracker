@@ -16,7 +16,7 @@ import {
   buildPricingServiceList, costItemsForService, servicesForItems, SERVICE_STATUS,
   feeStructureRowsFromFees, feeStructureRowToAltRow, applyFeeStructureToSchedule,
   standardFeesForStructure, costKey, costsByKind, costKindOf,
-  addServiceToLineItem, costTotalsByLineItem, addLaterCostFees,
+  addServiceToLineItem, moveLineItemService, costTotalsByLineItem, addLaterCostFees,
   costTypeConversion, moveCostAllocation, buildScheduleFromStructures, standardFeeContext, groupFeeRows, effectiveLineItemServices,
   passThroughFeeRows, addPassThroughFees,
 } from '../src/utils/pricingServices.js';
@@ -269,6 +269,21 @@ test('tagging an unlinked line item adds the service once', () => {
   assert.equal(addServiceToLineItem(b, 'site setup', 'budgets'), b);
   assert.equal(addServiceToLineItem(b, '', 'Budgets'), b);
   assert.equal(addServiceToLineItem(b, 'x', '  '), b);
+});
+
+test('moving a cost line swaps one service for another', () => {
+  const start = { 'site setup': ['Budgets', 'ENERGY STAR'], other: ['Budgets'] };
+  const a = moveLineItemService(start, 'Site Setup', 'budgets', 'Utility Bill Pay');
+  assert.deepEqual(a['site setup'], ['Utility Bill Pay', 'ENERGY STAR']);
+  assert.deepEqual(a.other, ['Budgets']);
+  assert.deepEqual(start['site setup'], ['Budgets', 'ENERGY STAR']);
+  // Already on the target: the old pick just drops.
+  assert.deepEqual(moveLineItemService(start, 'site setup', 'Budgets', 'energy star')['site setup'], ['ENERGY STAR']);
+  // Nothing to move from, or nowhere to go.
+  assert.equal(moveLineItemService(start, 'other', 'ENERGY STAR', 'Budgets'), start);
+  assert.equal(moveLineItemService(start, 'other', 'Budgets', 'budgets'), start);
+  assert.equal(moveLineItemService(start, 'other', 'Budgets', ''), start);
+  assert.equal(moveLineItemService(start, 'missing', 'Budgets', 'X'), start);
 });
 
 test('cost totals group cost lines by description', () => {

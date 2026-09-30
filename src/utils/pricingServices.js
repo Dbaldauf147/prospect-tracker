@@ -548,6 +548,28 @@ export function addServiceToLineItem(lineItemServices, lineItemKey, service) {
   return { ...map, [key]: [...current, name] };
 }
 
+// Moving a cost line from one service to another on the Services subtab.
+//
+// The same map again: the line item's pick of the one service is swapped
+// for the other, in place, so a "first in scope only" line keeps its
+// priority order. When the line item already names the service it is
+// moving to, the old pick is simply dropped. A line item that doesn't name
+// the service it is moving from is left as it was.
+export function moveLineItemService(lineItemServices, lineItemKey, fromService, toService) {
+  const key = norm(lineItemKey);
+  const from = norm(fromService);
+  const name = String(toService ?? '').trim();
+  const map = lineItemServices || {};
+  if (!key || !from || !name || from === norm(name)) return map;
+  const current = Array.isArray(map[key]) ? map[key] : [];
+  if (!current.some(s => norm(s) === from)) return map;
+  const has = current.some(s => norm(s) === norm(name));
+  const next = has
+    ? current.filter(s => norm(s) !== from)
+    : current.map(s => (norm(s) === from ? name : s));
+  return { ...map, [key]: next };
+}
+
 // Cost figures for the unlinked rows the warning lists: how many cost lines
 // on the option carry each description, and their summed CTS.
 export function costTotalsByLineItem(items) {
