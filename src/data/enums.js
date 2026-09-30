@@ -197,7 +197,20 @@ export const SERVICE_CATEGORIES = [
     items: [
       'Bespoke consulting SUCON', 'Materiality assessment SUCON',
       'Peer benchmarking SUCON', 'Sustainability exchange SUCON',
-      'ESG marketing', 'ESG report', 'Communication Services', 'Due Diligence',
+      'ESG marketing', 'ESG report', 'Due Diligence',
+    ],
+  },
+  {
+    name: 'Communication Services',
+    items: [
+      'Messaging Frameworks', 'Internal / External Communications',
+      'Supply Chain Communications', 'Program & Campaign Branding',
+      'PR & Reputation Advisory', 'Framework-aligned Sustainability Reports',
+      'Climate Risk Disclosure & Climate Transition Plans',
+      'Gap & Readiness Analysis', 'Design Concept & Layout',
+      'Impactful Design & Data Storytelling', 'Marketing Collateral',
+      'Interactive Content', 'Video Storytelling',
+      'Digital Marketing Strategy and Demand Generation',
     ],
   },
   {
