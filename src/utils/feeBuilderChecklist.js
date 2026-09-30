@@ -50,3 +50,26 @@ export function updateForOption(byOption, optionNumber, updater) {
   if (next && Object.keys(next).length) out[optionNumber] = next; else delete out[optionNumber];
   return out;
 }
+
+// One option's Fee Builder picks rebuilt so another option picks the same
+// structure for every service. A service with no pick of its own falls back
+// on the option's SIA scope (standard when in scope, no fees when not), and
+// scope differs between options, so a fallback that would land differently
+// on the target is written out as an explicit pick.
+//
+//   services   [{ key, standardId }] - every service the builder knows
+//   fromPicks  the source option's { [key]: structureId | '' }
+//   fromScope  Set of keys in SIA scope on the source option
+//   toScope    Set of keys in SIA scope on the target option
+export function copyPicksBetweenOptions({ services, fromPicks, fromScope, toScope }) {
+  const src = fromPicks && typeof fromPicks === 'object' ? fromPicks : {};
+  const out = {};
+  for (const { key, standardId } of services || []) {
+    if (Object.prototype.hasOwnProperty.call(src, key)) { out[key] = src[key]; continue; }
+    const wasIn = fromScope.has(key);
+    const isIn = toScope.has(key);
+    if (wasIn === isIn) continue;
+    out[key] = wasIn ? (standardId || '') : '';
+  }
+  return out;
+}
