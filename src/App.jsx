@@ -10,7 +10,7 @@ import { SERVICE_MERGES, planServiceMerge, SERVICE_RENAME_LOG_KEY, serviceRename
 import { renameServiceShared, renameServiceLocal } from './utils/serviceRenameRunner';
 import { useSheetSync } from './hooks/useSheetSync';
 import { planSheetSyncSetup } from './utils/sheetSyncSettings';
-import { SERVICE_BOX_ADDITIONS, planServiceBoxAddition } from './utils/serviceBoxAdditions';
+import { SERVICE_BOX_ADDITIONS, SERVICE_BOX_ADDITIONS_KEY, planServiceBoxAddition } from './utils/serviceBoxAdditions';
 import { useFilters } from './hooks/useFilters';
 import { useUserSettings } from './hooks/useUserSettings';
 import { useIssues } from './hooks/useIssues';
@@ -327,22 +327,26 @@ function App() {
   }, [user, settingsLoaded, updateSettings]);
 
   // New boxes on the services board, carried onto a layout somebody has
-  // already saved (see utils/serviceBoxAdditions.js). Once per browser, and
-  // gated on settings for the same reason as above: planned against {} it
-  // would find nothing to do and set its flag for good.
+  // already saved (see utils/serviceBoxAdditions.js). Planned again whenever
+  // the layout or the done list changes, because the first snapshot can
+  // arrive before the real layout does; the plan records itself done in
+  // settings only once the stored layout carries the box, so it settles
+  // after one write.
+  const boxLayout = settings?.customServiceCategories;
+  const boxAdditionsDone = settings?.[SERVICE_BOX_ADDITIONS_KEY];
   useEffect(() => {
     if (!user || !settingsLoaded) return;
     let working = settingsRef.current || {};
+    let patch = {};
     for (const addition of SERVICE_BOX_ADDITIONS) {
-      if (userLsGet(addition.flag)) continue;
-      userLsSet(addition.flag, new Date().toISOString());
-      const patch = planServiceBoxAddition(addition, working);
-      if (!patch) continue;
-      console.log(`Adding the "${addition.box}" box to the services board`);
-      working = { ...working, ...patch };
-      updateSettings(patch);
+      const step = planServiceBoxAddition(addition, working);
+      if (!step) continue;
+      if (step.customServiceCategories) console.log(`Adding the "${addition.box}" box to the services board`);
+      working = { ...working, ...step };
+      patch = { ...patch, ...step };
     }
-  }, [user, settingsLoaded, updateSettings]);
+    if (Object.keys(patch).length) updateSettings(patch);
+  }, [user, settingsLoaded, updateSettings, boxLayout, boxAdditionsDone]);
 
   // Service renames, carried to every place a service name is stored (see
   // utils/serviceNameMerges.js and utils/serviceRenameRunner.js): the board

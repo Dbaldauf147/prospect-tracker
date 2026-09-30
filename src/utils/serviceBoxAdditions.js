@@ -5,10 +5,16 @@
 // moved a service: the moment anyone drags a service or picks a bucket, the
 // whole layout is stored in settings.customServiceCategories and the seed is
 // never read again (see serviceCategoriesStore.js). So each box added to the
-// seed ships with an entry here, and App.jsx runs it once per browser.
+// seed ships with an entry here, and App.jsx plans it whenever settings
+// change.
+//
+// Done is recorded in settings (SERVICE_BOX_ADDITIONS_KEY), not per browser,
+// and only once the stored layout actually carries the box. A per-browser
+// flag set on load was marked done by an early, empty settings snapshot and
+// then never looked again when the real layout arrived. Recorded in
+// settings, a bucket the user later deletes stays deleted.
 //
 // The pass is planned as pure data so it can be tested without a Firestore.
-// Running it against a layout that already has the box plans to nothing.
 
 import { SERVICE_CATEGORIES } from '../data/enums.js';
 
@@ -26,6 +32,8 @@ export const SERVICE_BOX_ADDITIONS = [
   },
 ];
 
+export const SERVICE_BOX_ADDITIONS_KEY = 'serviceBoxAdditionsDone';
+
 const norm = s => String(s || '').trim().toLowerCase();
 
 // The seed's own copy of the box: the services it ships holding.
@@ -35,13 +43,18 @@ function seedItems(box) {
 
 /**
  * What one addition changes, as a settings patch, or null when there is
- * nothing to do: the layout is still the seed (which already has the box),
- * or the stored layout already carries it.
+ * nothing to do: it is already recorded done, or the layout is still the
+ * seed (which already has the box, and must not be recorded done: the real
+ * layout may simply not have loaded yet). A stored layout that already
+ * carries the box only gets the done mark.
  */
 export function planServiceBoxAddition(addition, settings = {}) {
+  const done = Array.isArray(settings?.[SERVICE_BOX_ADDITIONS_KEY]) ? settings[SERVICE_BOX_ADDITIONS_KEY] : [];
+  if (done.includes(addition.flag)) return null;
   const stored = settings?.customServiceCategories;
   if (!Array.isArray(stored) || !stored.length) return null;
-  if (stored.some(c => norm(c?.name) === norm(addition.box))) return null;
+  const mark = { [SERVICE_BOX_ADDITIONS_KEY]: [...done, addition.flag] };
+  if (stored.some(c => norm(c?.name) === norm(addition.box))) return mark;
 
   const items = seedItems(addition.box);
   const take = new Set([...items, ...(addition.retire || [])].map(norm));
@@ -54,7 +67,7 @@ export function planServiceBoxAddition(addition, settings = {}) {
   const at = next.findIndex(c => c.name === addition.after);
   next.splice(at === -1 ? next.length : at + 1, 0, { name: addition.box, items: [...items] });
 
-  const patch = { customServiceCategories: next };
+  const patch = { customServiceCategories: next, ...mark };
 
   const retire = new Set((addition.retire || []).map(norm));
   const solutions = settings?.dropdownLists?.solutions;
