@@ -35,7 +35,7 @@ import { SiaHistoryTab } from './SiaHistoryTab';
 import { buildSiaHistoryEntry, siaKeyFacts } from '../../utils/siaHistoryEntry';
 import { saveSiaHistoryEntry } from '../../utils/siaLoadHistory';
 import { buildServiceRows } from '../../utils/serviceRows';
-import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, moveCostLineService, servicesForCostLine, isCostLineServiceKey, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices } from '../../utils/pricingServices';
+import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, moveCostLineService, servicesForCostLine, isCostLineServiceKey, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices, sharedLineItemsToSplit, setCostLineService, sharedSignature } from '../../utils/pricingServices';
 import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
 import { isSetupFeeType } from '../../utils/setupFeeFloor';
 import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
@@ -2303,6 +2303,11 @@ const LINE_ITEM_IGNORED_KEY = 'lineItemIgnored';
 // mapping, and broadcast so Opps 2's Scope picker reads the same.
 const LINE_ITEM_PRIORITY_KEY = 'lineItemPriority';
 const LINE_ITEM_PRIORITY_EVENT = 'pricing:lineItemPriorityChanged';
+// Line items tied to several services that were kept shared on purpose
+// when the Services subtab asked to split them: { [lineItemKey]:
+// sharedSignature(services) }. Holding the list accepted means a change to
+// it asks again.
+const LINE_ITEM_SHARED_OK_KEY = 'lineItemSharedOk';
 // Per-Option services bundle derived from the loaded workbook + the
 // Line Item → Services mapping. Persisted separately so Opps 2 can
 // offer an "Add from Pricing Option" picker on its Scope cell without
@@ -2427,6 +2432,7 @@ export function PricingView({ settings } = {}) {
   const [feeBuilderHiddenCols, setFeeBuilderHiddenCols] = useState([]); // Fee Builder subtab: keys of the service-table columns hidden from its Columns menu
   const [feeBuilderDone, setFeeBuilderDone] = useState(null); // Fee Builder subtab: services ticked off as done, { workbookId, done } - see feeBuilderChecklist.js
   const [lineItemPriority, setLineItemPriority] = useState({}); // { [lineItemKey]: true } - services in priority order, first in scope takes the cost
+  const [lineItemSharedOk, setLineItemSharedOk] = useState({}); // { [lineItemKey]: sharedSignature } - shared line items kept shared on the Services subtab
   const [lineItemIgnored, setLineItemIgnored] = useState({}); // { [lineItemKey]: true } - line items the user opted to ignore (greyed out, excluded from the unmapped warning)
   const [termMonths, setTermMonths] = useState(36);
   const [annualEscalator, setAnnualEscalator] = useState(0.03);
@@ -2545,6 +2551,10 @@ export function PricingView({ settings } = {}) {
         const savedLineItemPriority = await dbGet(STORE, LINE_ITEM_PRIORITY_KEY);
         if (!cancelled && savedLineItemPriority && typeof savedLineItemPriority === 'object') {
           setLineItemPriority(savedLineItemPriority);
+        }
+        const savedLineItemSharedOk = await dbGet(STORE, LINE_ITEM_SHARED_OK_KEY);
+        if (!cancelled && savedLineItemSharedOk && typeof savedLineItemSharedOk === 'object') {
+          setLineItemSharedOk(savedLineItemSharedOk);
         }
         const savedLineItemIgnored = await dbGet(STORE, LINE_ITEM_IGNORED_KEY);
         if (!cancelled && savedLineItemIgnored && typeof savedLineItemIgnored === 'object') {
@@ -2753,6 +2763,19 @@ export function PricingView({ settings } = {}) {
       window.dispatchEvent(new CustomEvent(LINE_ITEM_PRIORITY_EVENT, { detail: lineItemPriority }));
     } catch { /* CustomEvent unavailable */ }
   }, [lineItemPriority]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, lineItemSharedOk, LINE_ITEM_SHARED_OK_KEY).catch(err => console.warn('Failed to save kept-shared line items:', err));
+  }, [lineItemSharedOk]);
+
+  // Line items on the active option tied to several services with no
+  // priority order, whose cost lines the Services subtab asks to split.
+  const sharedToSplit = useMemo(() => {
+    const opt = workbook?.options.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
+    const items = opt ? opt.sections.flatMap(sec => sec.items) : [];
+    return sharedLineItemsToSplit(items, lineItemServices, { priority: lineItemPriority, ignored: lineItemIgnored, sharedOk: lineItemSharedOk });
+  }, [workbook, activeOption, lineItemServices, lineItemPriority, lineItemIgnored, lineItemSharedOk]);
 
   // The mapping as it reads on one option: a priority line item narrowed
   // to the one service that takes its cost there.
@@ -6060,6 +6083,9 @@ export function PricingView({ settings } = {}) {
           onTagLineItem={(key, service) => setLineItemServices(prev => addServiceToLineItem(prev, key, service))}
           onMoveLineItem={(line, from, to) => setLineItemServices(prev => moveCostLineService(prev, line, from, to))}
           onIgnoreLineItem={(key) => setLineItemIgnored(prev => ({ ...(prev || {}), [key]: true }))}
+          sharedToSplit={sharedToSplit}
+          onSplitCostLine={(line, service) => setLineItemServices(prev => setCostLineService(prev, line, service))}
+          onKeepShared={(row) => setLineItemSharedOk(prev => ({ ...(prev || {}), [row.key]: sharedSignature(row.services) }))}
         />
       )}
 

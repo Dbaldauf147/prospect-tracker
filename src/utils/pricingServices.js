@@ -644,6 +644,77 @@ export function costTotalsByLineItem(items) {
   return out;
 }
 
+// Splitting a shared line item on the Services subtab.
+//
+// A line item tied to several services with no priority order counts its
+// cost under every one of them. The Services subtab asks which of those
+// services each of its cost lines really belongs to. A cost line here is a
+// line item plus the type the SIA gives it (the same granularity Move to
+// works at, see costLineServiceKey), so the Setup half can go to one
+// service and the Recurring half to another.
+//
+// Returns the line items on the option still waiting on that answer, in
+// the order the SIA lists them:
+//   { key, name, services, lines: [{ description, type, count, cts, choices, pick }] }
+// `choices` are the services that line is tied to now (its own pick, else
+// the line item's), `pick` the one service it is split to (null while it
+// is still shared). A line item drops out once every one of its cost lines
+// is down to a single service, or when it is Ignored, marked "first in
+// scope only" (that already picks one service), or kept shared on purpose:
+// `sharedOk[key]` holds sharedSignature() of the list that was accepted, so
+// adding or removing a service asks again.
+export function sharedSignature(services) {
+  return [...new Set((services || []).map(norm).filter(Boolean))].sort().join('|');
+}
+export function sharedLineItemsToSplit(items, lineItemServices, { priority = {}, ignored = {}, sharedOk = {} } = {}) {
+  const map = lineItemServices || {};
+  const groups = new Map();
+  for (const item of items || []) {
+    const key = norm(item?.description);
+    if (!key || priority?.[key] || ignored?.[key]) continue;
+    const shared = (Array.isArray(map[key]) ? map[key] : []).filter(s => norm(s));
+    if (shared.length < 2) continue;
+    if (sharedOk?.[key] && sharedOk[key] === sharedSignature(shared)) continue;
+    let g = groups.get(key);
+    if (!g) {
+      g = { key, name: String(item.description).trim(), services: shared, lines: [], byType: new Map() };
+      groups.set(key, g);
+    }
+    const typeKey = norm(item.type);
+    let line = g.byType.get(typeKey);
+    if (!line) {
+      const current = servicesForCostLine(map, item);
+      const choices = (Array.isArray(current) ? current : []).filter(s => norm(s));
+      line = { description: item.description, type: item.type || '', count: 0, cts: 0, choices, pick: choices.length === 1 ? choices[0] : null };
+      g.byType.set(typeKey, line);
+      g.lines.push(line);
+    }
+    line.count += 1;
+    if (typeof item.cts === 'number' && Number.isFinite(item.cts)) line.cts += item.cts;
+  }
+  const out = [];
+  for (const g of groups.values()) {
+    if (!g.lines.some(l => l.choices.length > 1)) continue;
+    out.push({ key: g.key, name: g.name, services: g.services, lines: g.lines });
+  }
+  return out;
+}
+
+// Pointing one cost line (a line item + SIA type) at one service, or with a
+// blank service back at its line item's shared list. Writes the line's own
+// pick (see costLineServiceKey); every other cost line carrying the same
+// description keeps what it had.
+export function setCostLineService(lineItemServices, item, service) {
+  const map = lineItemServices || {};
+  const key = costLineServiceKey(item?.description, item?.type);
+  if (!key) return map;
+  const name = String(service ?? '').trim();
+  const out = { ...map };
+  if (!name) delete out[key];
+  else out[key] = [name];
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // A structure with its blank Fee cells filled by the standard fee: the rows
 // Apply writes and the option preview bills. Shared by the Services subtab
