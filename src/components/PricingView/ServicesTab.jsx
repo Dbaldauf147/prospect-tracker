@@ -42,6 +42,8 @@ const STATUS_CLASS = {
 //                   with no service yet, warned about above the list
 //   tagOptions      the Dropdowns catalog a cost line can be tagged to
 //   onTagLineItem   (lineItemKey, serviceName) => adds the service
+//   onMoveLineItem  (lineItemKey, fromService, toService) => swaps one
+//                   service for another on the line item's Linked To picks
 //   onIgnoreLineItem (lineItemKey) => marks the line item Ignore
 //   onSetItemType   (itemId, type) => overrides a cost line's Type ('' clears it)
 //   onSetPassThrough (description, type, on) => the Linked To pass-through
@@ -56,7 +58,7 @@ const STATUS_CLASS = {
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
   onSetCount, onIgnoreForCheck, onSetFeeComponent, feeStructures = {}, setFeeStructures, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough,
-  unlinked = null, tagOptions = [], onTagLineItem, onIgnoreLineItem, onSetCompleted, completedServices = [], globalGmPct = null,
+  unlinked = null, tagOptions = [], onTagLineItem, onMoveLineItem, onIgnoreLineItem, onSetCompleted, completedServices = [], globalGmPct = null,
 }) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(null);
@@ -248,6 +250,9 @@ export function ServicesTab({
               onSetItemType={onSetItemType}
               onSetItemAnnual={onSetItemAnnual}
               onSetPassThrough={onSetPassThrough}
+              moveTargets={services.filter(s => s.inScope && s.name !== current.name).map(s => s.name)}
+              onMoveItem={workbook && onMoveLineItem ? (description, to) => onMoveLineItem(description, current.name, to) : null}
+              onOpenService={setSelected}
               applyFeeStructure={applyFeeStructure}
               detail={detail}
               detailForStructure={detailFor ? (st) => detailFor(current.name, st) : null}
@@ -342,7 +347,7 @@ function UnlinkedWarning({ unlinked, costTotals, optionName, tagOptions, quickTa
   );
 }
 
-function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted, detail: standardDetail, detailForStructure = null, hasWorkbook, optionName, optionCtsTotal = 0, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, onSetFeeComponent, saved, setSaved, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough }) {
+function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted, detail: standardDetail, detailForStructure = null, hasWorkbook, optionName, optionCtsTotal = 0, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, onSetFeeComponent, saved, setSaved, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough, moveTargets = [], onMoveItem = null, onOpenService }) {
   const structures = saved?.structures || [];
   const standardId = saved?.standardId || null;
   // Which saved fee structure is open. Opens on the standard one, and falls
@@ -365,6 +370,16 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
   // Lines left out of the price check are hidden from the cost table and
   // its total. "Show" brings them back so they can be ticked in again.
   const [showIgnored, setShowIgnored] = useState(false);
+  // The last cost line moved off to another service, said above the table
+  // since the line itself leaves it.
+  const [moved, setMoved] = useState(null);
+  const sameLine = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
+  function moveItem(it, to) {
+    if (!onMoveItem || !to) return;
+    const count = items.filter(x => sameLine(x.description, it.description)).length;
+    onMoveItem(it.description, to);
+    setMoved({ name: it.description, to, count });
+  }
 
   function addStructure(fromSia) {
     const id = newFeeStructureId();
@@ -549,6 +564,16 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                 </button>
               </div>
             )}
+            {moved && (
+              <div className={styles.movedNote}>
+                <span>
+                  Moved {moved.count === 1 ? '' : `${moved.count} cost lines of `}&quot;{moved.name}&quot; to <strong>{moved.to}</strong>.
+                </span>
+                {onOpenService && (
+                  <button type="button" className={styles.linkBtn} onClick={() => onOpenService(moved.to)}>Open {moved.to}</button>
+                )}
+              </div>
+            )}
             {items.length === 0 ? (
               <div className={styles.note}>
                 No cost line on this option is tied to this service.
@@ -585,6 +610,25 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                         {it.description}
                         {it.otherServices.length > 0 && (
                           <div className={styles.subNote}>Also covers {it.otherServices.join(', ')}</div>
+                        )}
+                        {onMoveItem && moveTargets.length > 0 && (
+                          <div className={styles.moveRow}>
+                            <select
+                              className={styles.moveSelect}
+                              value=""
+                              onChange={(e) => moveItem(it, e.target.value)}
+                              aria-label={`Move ${it.description} to another service`}
+                              title={(() => {
+                                const n = items.filter(x => sameLine(x.description, it.description)).length;
+                                return `Move this cost line to another service in scope on ${optionName || 'this option'}. `
+                                  + `It changes the Line Item's pick on the Linked To subtab (${service.name} becomes the one picked here), `
+                                  + `so it holds on every option${n > 1 ? `, and the ${n} "${it.description}" lines move together` : ''}.`;
+                              })()}
+                            >
+                              <option value="">Move to...</option>
+                              {moveTargets.map(n => <option key={n} value={n}>{n}</option>)}
+                            </select>
+                          </div>
                         )}
                       </td>
                       <td>
