@@ -1,7 +1,7 @@
 // Assertion tests for carrying a new services-board box onto a saved layout.
 // Plain Node, no test framework. Run:
 //   node scripts/serviceBoxAdditions.test.mjs
-import { planServiceBoxAddition, SERVICE_BOX_ADDITIONS } from '../src/utils/serviceBoxAdditions.js';
+import { planServiceBoxAddition, SERVICE_BOX_ADDITIONS, SERVICE_BOX_ADDITIONS_KEY } from '../src/utils/serviceBoxAdditions.js';
 import { SERVICE_CATEGORIES } from '../src/data/enums.js';
 
 let failures = 0;
@@ -34,8 +34,16 @@ for (const a of SERVICE_BOX_ADDITIONS) {
 // --- nothing to do -----------------------------------------------------------
 eq('an unsaved layout is the seed, which has the box already',
   planServiceBoxAddition(COMMS, {}), null);
-eq('a saved layout that already has the box is left alone',
-  planServiceBoxAddition(COMMS, { customServiceCategories: [{ name: 'Communication Services', items: ['X'] }] }), null);
+eq('an unsaved layout is not marked done either: the real one may not have loaded yet',
+  planServiceBoxAddition(COMMS, { [SERVICE_BOX_ADDITIONS_KEY]: [] }), null);
+eq('a saved layout that already has the box only gets the done mark',
+  planServiceBoxAddition(COMMS, { customServiceCategories: [{ name: 'Communication Services', items: ['X'] }] }),
+  { [SERVICE_BOX_ADDITIONS_KEY]: [COMMS.flag] });
+eq('once done, a layout without the box (the user deleted it) is left alone',
+  planServiceBoxAddition(COMMS, {
+    customServiceCategories: [{ name: 'DATA', items: [] }],
+    [SERVICE_BOX_ADDITIONS_KEY]: ['older-flag', COMMS.flag],
+  }), null);
 
 // --- a saved layout ------------------------------------------------------------
 const saved = {
@@ -51,6 +59,9 @@ const cats = patch.customServiceCategories;
 eq('box lands after Consulting Services',
   cats.map(c => c.name), ['DATA', 'Consulting Services', 'Communication Services', 'Graveyard']);
 eq('box holds the seed services', cats[2].items, seedBox.items);
+eq('the same write records it done', patch[SERVICE_BOX_ADDITIONS_KEY], [COMMS.flag]);
+eq('applying the patch settles: the next plan is nothing',
+  planServiceBoxAddition(COMMS, { ...saved, ...patch }), null);
 eq('a service filed elsewhere moves into the box', cats[0].items, ['IDM']);
 eq('the old single service is retired from its box', cats[1].items, ['ESG report']);
 eq('the old single service leaves the Solutions list',
