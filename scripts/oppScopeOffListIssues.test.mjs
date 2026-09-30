@@ -2,7 +2,7 @@
 // opp whose Scope names a service the Dropdowns tab's services list doesn't
 // have. Plain Node, no test framework (the project has none). Run:
 //   node scripts/oppScopeOffListIssues.test.mjs
-import { oppScopeOffList } from '../src/utils/oppScopeOffList.js';
+import { oppScopeOffList, remapScopeService, scopeRemapPatches, suggestServiceMatch } from '../src/utils/oppScopeOffList.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -28,6 +28,27 @@ eq(oppScopeOffList([{ Scope: 'Foo, foo' }], knownServices)[0].off, ['Foo'], 'ded
 eq(oppScopeOffList(records, null).length, 0, 'no list to check against flags nothing');
 eq(oppScopeOffList(records, []).length, 0, 'an empty list flags nothing');
 eq(oppScopeOffList(records, [...knownServices, 'carbon thing', 'Typo Svc']).length, 0, 'adding the names on Dropdowns clears it');
+
+// ---- Fix popup: mapping an unmatched name onto a listed service ----
+eq(remapScopeService('GHG, Typo Svc, Budgets', 'typo svc', 'Carbon', knownServices), 'GHG, Carbon, Budgets', 'remap swaps the name in place, matched case-insensitively');
+eq(remapScopeService('GHG, Typo Svc', 'Typo Svc', 'GHG', knownServices), 'GHG', 'remapping onto a service the opp already names drops the duplicate');
+eq(remapScopeService('Cat 3, 5, 6, and 7 (part of GHG), Typo Svc', 'Typo Svc', 'Budgets', knownServices), 'Cat 3, 5, 6, and 7 (part of GHG), Budgets', 'a service with commas in its name survives the rewrite');
+eq(remapScopeService('GHG, Budgets', 'Typo Svc', 'Carbon', knownServices), 'GHG, Budgets', 'a Scope not naming it is returned untouched');
+{
+  const recs = [
+    { _id: 1, Scope: 'Typo Svc' },
+    { _id: 2, Scope: 'GHG, typo svc, Carbon Thing' },
+    { _id: 3, Scope: 'GHG' },
+  ];
+  const remaps = [{ from: 'Typo Svc', to: 'Budgets' }, { from: 'Carbon Thing', to: 'GHG' }];
+  eq(scopeRemapPatches(recs, remaps, knownServices), { 1: { Scope: 'Budgets' }, 2: { Scope: 'GHG, Budgets' } }, 'patches every opp naming it, and only those');
+  eq(scopeRemapPatches(recs, remaps, knownServices, [2]), { 2: { Scope: 'GHG, Budgets' } }, 'limited to one opp when asked');
+  const fixed = recs.map(r => ({ ...r, ...(scopeRemapPatches(recs, remaps, knownServices)[r._id] || {}) }));
+  eq(oppScopeOffList(fixed, knownServices).length, 0, 'after the remap nothing is flagged');
+}
+eq(suggestServiceMatch('Risk managment', ['Risk Management', 'Recap']), 'Risk Management', 'suggests the close spelling');
+eq(suggestServiceMatch('becs', ['BECS', 'GHG']), 'BECS', 'suggests a case-only match');
+eq(suggestServiceMatch('Cleantech', ['Risk Management', 'GHG']), '', 'no guess for an unrelated name');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
