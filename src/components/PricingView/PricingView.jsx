@@ -5035,9 +5035,13 @@ export function PricingView({ settings } = {}) {
     // The SIA's own sites and accounts (another option sheet's when this
     // one doesn't carry them), with counts typed on the Services subtab on
     // top (meters, a deal size, or an override). Typed ones are kept on
-    // the option, so they are saved and cleared with the workbook.
+    // the option, per service (priceCheckCountsByService), so a count
+    // typed for one service never reprices the others in scope. Counts
+    // typed before that were per option (priceCheckCounts) and still
+    // apply until the service sets its own; a null there means the
+    // service went back to the SIA's.
     const sia = siaCountsFor(workbook, opt);
-    const enteredCounts = (opt.priceCheckCounts && typeof opt.priceCheckCounts === 'object') ? opt.priceCheckCounts : {};
+    const enteredCounts = serviceEnteredCounts(opt, want);
     const { counts, fromSia } = priceCheckCounts(sia, enteredCounts);
     // Cost lines left out of the check for this service (the tickbox on the
     // Services subtab). Per service, since one line can cover several.
@@ -5096,8 +5100,24 @@ export function PricingView({ settings } = {}) {
     return { items, fees, rateCheck, counts, enteredCounts, fromSia, sia };
   }
 
-  // Type (or clear, with null) one of those counts on the active option.
-  function setPriceCheckCount(key, value) {
+  // The counts typed for one service on an option: its own, over the
+  // older per-option ones it hasn't replaced.
+  function serviceEnteredCounts(opt, serviceName) {
+    const k = String(serviceName ?? '').trim().toLowerCase();
+    const legacy = (opt?.priceCheckCounts && typeof opt.priceCheckCounts === 'object') ? opt.priceCheckCounts : {};
+    const own = opt?.priceCheckCountsByService?.[k] || {};
+    const out = {};
+    for (const [key, v] of Object.entries({ ...legacy, ...own })) {
+      if (typeof v === 'number' && Number.isFinite(v)) out[key] = v;
+    }
+    return out;
+  }
+
+  // Type (or clear, with null) one of those counts for one service on the
+  // active option. The other services in scope keep theirs.
+  function setPriceCheckCount(serviceName, key, value) {
+    const k = String(serviceName ?? '').trim().toLowerCase();
+    if (!k) return;
     setWorkbook(prev => {
       if (!prev) return prev;
       const target = prev.options.find(o => o.optionNumber === activeOption) || prev.options[0];
@@ -5106,10 +5126,16 @@ export function PricingView({ settings } = {}) {
         ...prev,
         options: prev.options.map(o => {
           if (o !== target) return o;
-          const next = { ...(o.priceCheckCounts || {}) };
-          if (value == null) delete next[key];
-          else next[key] = value;
-          return { ...o, priceCheckCounts: next };
+          const all = { ...(o.priceCheckCountsByService || {}) };
+          const next = { ...(all[k] || {}) };
+          // Cleared: back to the SIA's. A null shadows an older per-option
+          // count so that one stops applying to this service too.
+          if (value == null) {
+            if (typeof o.priceCheckCounts?.[key] === 'number') next[key] = null;
+            else delete next[key];
+          } else next[key] = value;
+          if (Object.keys(next).length) all[k] = next; else delete all[k];
+          return { ...o, priceCheckCountsByService: all };
         }),
       };
     });

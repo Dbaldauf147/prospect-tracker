@@ -99,7 +99,8 @@ test('the Pricing cache, Deal Sizing, Account Potential, pipeline and bands', ()
   assert.equal(renameLineItemServices({ other: ['GHG'] }, FROM, TO), null);
   const fs = renameFeeStructures({ budgets: { standardId: 's' }, ghg: {} }, FROM, TO);
   assert.deepEqual(Object.keys(fs).sort(), ['budgets (site level)', 'ghg']);
-  const wb = renameWorkbookServices({ options: [{ servicesCompleted: ['budgets'], priceCheckIgnored: { budgets: ['i1'] }, priceCheckComponents: { budgets: { i2: 'recurring:per_account' } } }] }, FROM, TO);
+  const wb = renameWorkbookServices({ options: [{ servicesCompleted: ['budgets'], priceCheckIgnored: { budgets: ['i1'] }, priceCheckComponents: { budgets: { i2: 'recurring:per_account' } }, priceCheckCountsByService: { budgets: { sites: 12 } } }] }, FROM, TO);
+  assert.deepEqual(wb.options[0].priceCheckCountsByService, { 'budgets (site level)': { sites: 12 } });
   assert.deepEqual(wb.options[0].servicesCompleted, ['budgets (site level)']);
   assert.deepEqual(wb.options[0].priceCheckIgnored, { 'budgets (site level)': ['i1'] });
   assert.deepEqual(wb.options[0].priceCheckComponents, { 'budgets (site level)': { i2: 'recurring:per_account' } });
