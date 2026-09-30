@@ -6,7 +6,8 @@
 //               monthly (the same reading the rest of the Pricing page
 //               gives it), so it counts twelve times; a Rolled one (Setup
 //               Rolled) is spread over the term and counts as ongoing;
-//               anything else is one-time money and counts once. Pass-through lines are
+//               anything else (Setup or One-time) is upfront money and
+//               counts once. Pass-through lines are
 //               billed at cost, never marked up, so they stay out.
 //   card side   estimateServiceRange's first-year fee plus setup, low and
 //               high, priced on the option's own site and account counts.
@@ -55,14 +56,14 @@ const isRecurringType = (t) => /^recurring/i.test(String(t || '').trim());
 // "Setup Rolled" and "One Time Rolled": an upfront cost billed monthly,
 // spread across the term, so the ongoing fee is what recovers it.
 const isRolledType = (t) => /\brolled\b/i.test(String(t || '').trim());
-// "Setup": standing the service up, billed once.
-const isSetupType = (t) => /^setup\b/i.test(String(t || '').trim());
 
-// The parts a fee model has, in the order they read on a quote.
+// The parts a fee model has, in the order they read on a quote. Setup and
+// one-time money are one part: both are paid once, upfront, so a one-time
+// cost is checked against the card's setup lines and a setup cost against
+// its one-time lines, rather than each reading as off the card.
 export const FEE_PARTS = [
-  { key: 'setup', label: 'Setup' },
+  { key: 'setup', label: 'Setup / one-time' },
   { key: 'recurring', label: 'Ongoing' },
-  { key: 'oneTime', label: 'One-time' },
 ];
 
 const startOf = (it) => (Number(it?.startMonth) >= 1 ? Math.floor(Number(it.startMonth)) : 1);
@@ -70,9 +71,7 @@ const startOf = (it) => (Number(it?.startMonth) >= 1 ? Math.floor(Number(it.star
 // Which part of the fee model a cost line pays for.
 function partOfCost(it) {
   if (isRolledType(it.type) || isRecurringType(it.type)) return 'recurring';
-  if (isSetupType(it.type)) return 'setup';
-  if (isRecurringType(it.type)) return 'recurring';
-  return 'oneTime';
+  return 'setup';
 }
 
 // The first-year cost of a set of cost lines, split by part. Pass-through
@@ -93,9 +92,9 @@ function partOfCost(it) {
 // A Rolled line is ongoing money: its CTS spread evenly over `termMonths`,
 // so year 1 carries twelve of those months (fewer on a shorter term).
 export function year1CostOf(items = [], margin = DEFAULT_MARGIN, techDeprPct = 0, termMonths = DEFAULT_TERM_MONTHS) {
-  const parts = { setup: 0, recurring: 0, oneTime: 0 };
-  const priced = { setup: 0, recurring: 0, oneTime: 0 };
-  const lines = { setup: 0, recurring: 0, oneTime: 0 };
+  const parts = { setup: 0, recurring: 0 };
+  const priced = { setup: 0, recurring: 0 };
+  const lines = { setup: 0, recurring: 0 };
   let runRate = 0;
   let pricedRunRate = 0;
   let passThrough = 0;
@@ -113,9 +112,9 @@ export function year1CostOf(items = [], margin = DEFAULT_MARGIN, techDeprPct = 0
     pricedRunRate += y.pricedRunRate;
     lines[y.part] += 1;
   }
-  const cost = parts.setup + parts.recurring + parts.oneTime;
-  const price = priced.setup + priced.recurring + priced.oneTime;
-  const counted = lines.setup + lines.recurring + lines.oneTime;
+  const cost = parts.setup + parts.recurring;
+  const price = priced.setup + priced.recurring;
+  const counted = lines.setup + lines.recurring;
   return { cost, price, counted, passThrough, later, parts, priced, lines, runRate, pricedRunRate, margins: [...margins] };
 }
 
@@ -156,8 +155,8 @@ function lineYearAt(it, part, m, f, start, termMonths) {
   return { part, margin: m, cost: it.cts, price: it.cts * f, runRate: 0, pricedRunRate: 0 };
 }
 
-// The part of the fee model a cost line would be checked in (setup,
-// recurring, oneTime), or null when the check leaves it out altogether.
+// The part of the fee model a cost line would be checked in (setup or
+// recurring), or null when the check leaves it out altogether.
 export function checkPartOf(it) {
   const y = lineYear(it, DEFAULT_MARGIN, 0);
   return y && !y.skip ? y.part : null;
@@ -408,13 +407,12 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
     if (m.key && !missing.some(x => x.key === m.key)) missing.push(m);
   }
 
-  // The card's lines, sorted into the same parts as the cost lines: setup
-  // lines are setup, a line that bills every year is ongoing, the rest is
-  // one-time money.
+  // The card's lines, sorted into the same parts as the cost lines: a line
+  // that bills every year is ongoing, the rest (setup lines and one-time
+  // fees alike) is upfront money.
   const cardFor = {
-    setup: priced ? charged(est.setupBreakdown) : [],
+    setup: priced ? [...charged(est.setupBreakdown), ...charged(est.breakdown).filter(b => !b.recurs)] : [],
     recurring: priced ? charged(est.breakdown).filter(b => b.recurs) : [],
-    oneTime: priced ? charged(est.breakdown).filter(b => !b.recurs) : [],
   };
   // Each component named for the part and the basis it prices on
   // ('recurring:per_account'), which is what a cost line's `feeComponent`
@@ -501,12 +499,12 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
   const blocking = perUnit && onlyPart ? [] : missing;
 
   // The whole card is read over a full year too, the way each part and
-  // component below it is: setup and one-time money plus a year of the
+  // component below it is: upfront money plus a year of the
   // ongoing lines. Year 1 alone runs short when an ongoing line starts
   // after month 1, which would call a card low that every one of its
   // components calls within range.
-  const yearCost = year1.parts.setup + year1.parts.oneTime + year1.runRate;
-  const yearPrice = year1.priced.setup + year1.priced.oneTime + year1.pricedRunRate;
+  const yearCost = year1.parts.setup + year1.runRate;
+  const yearPrice = year1.priced.setup + year1.pricedRunRate;
 
   let status;
   if (!priced) status = RATE_CHECK.UNPRICED;
@@ -529,8 +527,9 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
   return {
     componentChoices,
     passThroughLines: passThroughLinesOf(items, counts, termMonths),
-    // The card is priced and charges no setup: a Setup cost has no setup
-    // fee to recover it, so it belongs rolled into the ongoing fee.
+    // The card is priced and charges no setup or one-time fee: a Setup cost
+    // has nothing upfront to recover it, so it belongs rolled into the
+    // ongoing fee.
     setupOffCard: priced && cardFor.setup.length === 0,
     status,
     // What the card is judged on: a full year (see yearCost). Year 1's own

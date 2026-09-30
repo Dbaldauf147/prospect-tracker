@@ -57,7 +57,7 @@ test('pass-through lines stay out of the rate card components and get a line eac
   assert.equal(set.model, 'pass:fixed');
   assert.equal(set.amount, 4835.5);
   assert.equal(set.perUnit, null);
-  assert.equal(set.partLabel, 'Setup');
+  assert.equal(set.partLabel, 'Setup / one-time');
   // A pick from when pass-through sat in the components carries over.
   assert.equal(old.model, 'pass:per_account');
 });
@@ -508,6 +508,20 @@ test('a card with a setup fee is not setup-off-card', () => {
     counts: { sites: 29 },
   });
   assert.equal(c.setupOffCard, false);
+});
+
+test('a one-time cost is checked against the card\'s setup lines, as the same part', () => {
+  const c = rateCardCheck({
+    items: [{ cts: 1000, type: 'One-time' }],
+    entry: { basis: 'per_site', rate: 39, setupLines: [{ basis: 'flat', rate: 500, rateHigh: 5000 }] },
+    meta: recurring,
+    counts: { sites: 29 },
+  });
+  assert.deepEqual(c.parts.map(p => p.key), ['setup', 'recurring']);
+  const setup = c.parts.find(p => p.key === 'setup');
+  assert.equal(setup.status, RATE_CHECK.WITHIN);
+  assert.equal(setup.cost, 1000);
+  assert.ok(!c.parts.some(p => p.status === RATE_CHECK.NOT_ON_CARD));
 });
 
 test('fee rows bill on the count typed in the cost section', () => {
