@@ -42,8 +42,9 @@ const STATUS_CLASS = {
 //                   with no service yet, warned about above the list
 //   tagOptions      the Dropdowns catalog a cost line can be tagged to
 //   onTagLineItem   (lineItemKey, serviceName) => adds the service
-//   onMoveLineItem  (lineItemKey, fromService, toService) => swaps one
-//                   service for another on the line item's Linked To picks
+//   onMoveLineItem  ({ description, type }, fromService, toService) => swaps
+//                   one service for another on that one cost line (type as
+//                   the SIA gives it); the line item's other cost lines stay
 //   onIgnoreLineItem (lineItemKey) => marks the line item Ignore
 //   onSetItemType   (itemId, type) => overrides a cost line's Type ('' clears it)
 //   onSetPassThrough (description, type, on) => the Linked To pass-through
@@ -251,7 +252,7 @@ export function ServicesTab({
               onSetItemAnnual={onSetItemAnnual}
               onSetPassThrough={onSetPassThrough}
               moveTargets={services.filter(s => s.inScope && s.name !== current.name).map(s => s.name)}
-              onMoveItem={workbook && onMoveLineItem ? (description, to) => onMoveLineItem(description, current.name, to) : null}
+              onMoveItem={workbook && onMoveLineItem ? (line, to) => onMoveLineItem(line, current.name, to) : null}
               onOpenService={setSelected}
               applyFeeStructure={applyFeeStructure}
               detail={detail}
@@ -373,12 +374,15 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
   // The last cost line moved off to another service, said above the table
   // since the line itself leaves it.
   const [moved, setMoved] = useState(null);
-  const sameLine = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
+  // A move is one cost line: its line item and the type the SIA gives it.
+  // Two lines alike in both (rare) can't be told apart, so they go together.
+  const lc = (v) => String(v ?? '').trim().toLowerCase();
+  const sameLine = (a, b) => lc(a.description) === lc(b.description) && lc(a.siaType) === lc(b.siaType);
   function moveItem(it, to) {
     if (!onMoveItem || !to) return;
-    const count = items.filter(x => sameLine(x.description, it.description)).length;
-    onMoveItem(it.description, to);
-    setMoved({ name: it.description, to, count });
+    const count = items.filter(x => sameLine(x, it)).length;
+    onMoveItem({ description: it.description, type: it.siaType }, to);
+    setMoved({ name: it.description, type: it.type, to, count });
   }
 
   function addStructure(fromSia) {
@@ -567,7 +571,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
             {moved && (
               <div className={styles.movedNote}>
                 <span>
-                  Moved {moved.count === 1 ? '' : `${moved.count} cost lines of `}&quot;{moved.name}&quot; to <strong>{moved.to}</strong>.
+                  Moved {moved.count === 1 ? '' : `${moved.count} cost lines of `}&quot;{moved.name}&quot;{moved.type ? ` (${moved.type})` : ''} to <strong>{moved.to}</strong>.
                 </span>
                 {onOpenService && (
                   <button type="button" className={styles.linkBtn} onClick={() => onOpenService(moved.to)}>Open {moved.to}</button>
@@ -619,10 +623,10 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                               onChange={(e) => moveItem(it, e.target.value)}
                               aria-label={`Move ${it.description} to another service`}
                               title={(() => {
-                                const n = items.filter(x => sameLine(x.description, it.description)).length;
-                                return `Move this cost line to another service in scope on ${optionName || 'this option'}. `
-                                  + `It changes the Line Item's pick on the Linked To subtab (${service.name} becomes the one picked here), `
-                                  + `so it holds on every option${n > 1 ? `, and the ${n} "${it.description}" lines move together` : ''}.`;
+                                const n = items.filter(x => sameLine(x, it)).length;
+                                return `Move this one cost line to another service in scope on ${optionName || 'this option'}. `
+                                  + `Only this "${it.description}" line moves${it.siaType ? ` (${it.siaType})` : ''}; other lines with the same Line Item stay where they are. `
+                                  + `It holds on every option${n > 1 ? `, and the ${n} identical lines move together` : ''}.`;
                               })()}
                             >
                               <option value="">Move to...</option>

@@ -16,7 +16,7 @@ import {
   buildPricingServiceList, costItemsForService, servicesForItems, SERVICE_STATUS,
   feeStructureRowsFromFees, feeStructureRowToAltRow, applyFeeStructureToSchedule,
   standardFeesForStructure, costKey, costsByKind, costKindOf,
-  addServiceToLineItem, moveLineItemService, costTotalsByLineItem, addLaterCostFees,
+  addServiceToLineItem, moveLineItemService, moveCostLineService, servicesForCostLine, costTotalsByLineItem, addLaterCostFees,
   costTypeConversion, moveCostAllocation, buildScheduleFromStructures, standardFeeContext, groupFeeRows, effectiveLineItemServices,
   passThroughFeeRows, addPassThroughFees,
 } from '../src/utils/pricingServices.js';
@@ -284,6 +284,28 @@ test('moving a cost line swaps one service for another', () => {
   assert.equal(moveLineItemService(start, 'other', 'Budgets', 'budgets'), start);
   assert.equal(moveLineItemService(start, 'other', 'Budgets', ''), start);
   assert.equal(moveLineItemService(start, 'missing', 'Budgets', 'X'), start);
+});
+
+test('moving one cost line leaves the other lines of its line item where they were', () => {
+  const start = { 'nam': ['GHG'] };
+  const setup = { description: 'NAM', type: 'Setup' };
+  const monthly = { description: 'nam', type: 'Recurring (monthly)' };
+  const a = moveCostLineService(start, setup, 'ghg', 'Utility feeds');
+  assert.deepEqual(a.nam, ['GHG']);
+  assert.deepEqual(servicesForCostLine(a, setup), ['Utility feeds']);
+  assert.deepEqual(servicesForCostLine(a, monthly), ['GHG']);
+  assert.deepEqual(costItemsForService([setup, monthly], a, 'GHG'), [monthly]);
+  assert.deepEqual(costItemsForService([setup, monthly], a, 'Utility feeds'), [setup]);
+  assert.deepEqual(servicesForItems([setup, monthly], a), ['Utility feeds', 'GHG']);
+  // Moving it back drops the line's own pick rather than keeping a copy.
+  assert.deepEqual(moveCostLineService(a, setup, 'Utility feeds', 'GHG'), start);
+  // Not on the service it's moving from, or nowhere to go: unchanged.
+  assert.equal(moveCostLineService(a, monthly, 'Utility feeds', 'X'), a);
+  assert.equal(moveCostLineService(a, monthly, 'GHG', 'ghg'), a);
+  // A priority line item's other lines still anchor through a moved line.
+  const eff = effectiveLineItemServices([setup, { description: 'Pay', type: 'Setup' }],
+    { ...a, pay: ['Budgets', 'Utility feeds'] }, { pay: true });
+  assert.deepEqual(eff.pay, ['Utility feeds']);
 });
 
 test('cost totals group cost lines by description', () => {

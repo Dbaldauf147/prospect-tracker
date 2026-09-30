@@ -176,7 +176,7 @@ import { companiesMatch } from '../../utils/listFlags';
 // by a sale).
 import { scopeServiceStatuses, scopeStatusTitle } from '../../utils/scopeServiceStatus';
 import { SERVICE_STATUS_COLORS } from '../../utils/serviceStatusColors';
-import { effectiveLineItemServices } from '../../utils/pricingServices';
+import { effectiveLineItemServices, servicesForCostLine } from '../../utils/pricingServices';
 // The Columns menu every other table on the site carries, and the layout it
 // saves, so the estimate table's columns are picked the same way.
 import { ColumnToggle } from '../common/ColumnToggle';
@@ -13919,8 +13919,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         const onOption = effectiveLineItemServices((o.sections || []).flatMap(sec => sec.items || []), lineItemServices, lineItemPriority);
         for (const sec of (o.sections || [])) {
           for (const item of (sec.items || [])) {
-            const key = String(item.description || '').trim().toLowerCase();
-            const mapped = key ? onOption?.[key] : null;
+            const mapped = servicesForCostLine(onOption, item);
             if (!Array.isArray(mapped)) continue;
             for (const s of mapped) {
               const k = String(s || '').toLowerCase();
