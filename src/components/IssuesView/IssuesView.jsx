@@ -11,7 +11,7 @@ import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { lookupCloseNotSold, reasonOptionsForCompetition, hasCloseNotSoldRules } from '../../data/closeNotSoldRules';
 import { BfoCloseOutPreview } from '../BfoCloseOutPreview';
 import { setOppField, loadOpps2Newest, bulkSetOppFields } from '../../utils/opps2Store';
-import { scopeRemapPatches, suggestServiceMatch } from '../../utils/oppScopeOffList';
+import { scopeRemapPatches, suggestServiceMatch, rankServiceMatches } from '../../utils/oppScopeOffList';
 
 // Issues tab — a running list of outstanding items that need to be
 // addressed across the app. Each row is one problem surfaced by a
@@ -211,10 +211,131 @@ function CloseNotSoldReasonModal({ row, reasonOptions, competitionOptions, savin
   );
 }
 
+// Type-ahead picker for the Fix popup's "Map to an existing service": the
+// services picked so far as chips (× to drop one), and a box that suggests
+// services as you type (starts-with first, then word starts, then anywhere).
+// Enter or a click adds the highlighted suggestion; arrow keys move it
+// (ArrowDown in an empty box lists every service);
+// Backspace in an empty box drops the last chip. Retired services are
+// offered too, marked as such.
+function ServiceTypeahead({ services, retired, picked, onChange, inputStyle }) {
+  const [text, setText] = useState('');
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+  const inputRef = useRef(null);
+  const matches = useMemo(
+    () => rankServiceMatches(text, services, { exclude: picked, limit: 50 }),
+    [text, services, picked],
+  );
+  const active = Math.min(hi, Math.max(0, matches.length - 1));
+
+  function add(name) {
+    if (!name) return;
+    onChange([...picked, name]);
+    setText('');
+    setHi(0);
+    setOpen(false);
+    inputRef.current?.focus();
+  }
+  function onKeyDown(e) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setHi(Math.min(active + 1, matches.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHi(Math.max(active - 1, 0)); }
+    else if (e.key === 'Enter') { if (open && matches[active]) { e.preventDefault(); add(matches[active]); } }
+    else if (e.key === 'Escape' && open) { e.preventDefault(); e.stopPropagation(); setOpen(false); }
+    else if (e.key === 'Backspace' && !text && picked.length) onChange(picked.slice(0, -1));
+  }
+
+  return (
+    <div>
+      <div
+        onClick={() => inputRef.current?.focus()}
+        style={{ ...inputStyle, display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center', padding: '0.3rem 0.4rem', cursor: 'text' }}
+      >
+        {picked.map(name => (
+          <span
+            key={name}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '1px 4px 1px 8px', borderRadius: 999,
+              background: '#EFF6FF', border: '1px solid #93C5FD', color: '#0A66C2',
+              fontSize: '0.74rem', fontWeight: 600,
+            }}
+          >
+            {name}{retired.has(name) && <span style={{ fontWeight: 400, color: '#64748B' }}> (retired)</span>}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onChange(picked.filter(p => p !== name)); }}
+              aria-label={`Remove ${name}`}
+              style={{ border: 'none', background: 'transparent', color: '#0A66C2', cursor: 'pointer', padding: '0 2px', fontSize: '0.8rem', lineHeight: 1 }}
+            >×</button>
+          </span>
+        ))}
+        <input
+          ref={inputRef}
+          type="text"
+          value={text}
+          onChange={(e) => { setText(e.target.value); setOpen(true); setHi(0); }}
+          onBlur={() => setOpen(false)}
+          onKeyDown={onKeyDown}
+          placeholder={picked.length ? 'Add another service...' : 'Type a service name'}
+          role="combobox"
+          aria-expanded={open}
+          aria-autocomplete="list"
+          style={{ flex: '1 0 140px', minWidth: 120, border: 'none', outline: 'none', fontSize: '0.8rem', fontFamily: 'inherit', padding: '0.15rem 0.2rem', background: 'transparent', color: '#1E293B' }}
+        />
+      </div>
+      {open && (
+        <ul
+          role="listbox"
+          style={{
+            // In the flow rather than floating, so the popup's scrolling body
+            // can't clip it.
+            margin: '2px 0 0', padding: 0,
+            listStyle: 'none', maxHeight: 220, overflowY: 'auto', background: '#fff',
+            border: '1px solid #CBD5E1', borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.15)',
+          }}
+        >
+          {matches.length === 0 ? (
+            <li style={{ padding: '0.4rem 0.6rem', fontSize: '0.76rem', color: '#64748B' }}>
+              {text.trim() ? 'No service matches. Use Add as a new service instead.' : 'Every service is picked.'}
+            </li>
+          ) : matches.map((name, k) => (
+            <li
+              key={name}
+              role="option"
+              aria-selected={k === active}
+              // mousedown, not click, so the input's blur doesn't close the list first
+              onMouseDown={(e) => { e.preventDefault(); add(name); }}
+              onMouseEnter={() => setHi(k)}
+              style={{
+                padding: '0.35rem 0.6rem', fontSize: '0.8rem', cursor: 'pointer',
+                background: k === active ? '#EFF6FF' : '#fff', color: '#1E293B',
+                display: 'flex', justifyContent: 'space-between', gap: 8,
+              }}
+            >
+              <span><Highlight text={name} term={text} /></span>
+              {retired.has(name) && <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>Retired</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// The part of a suggestion that matches what was typed, in bold.
+function Highlight({ text, term }) {
+  const q = String(term || '').trim();
+  const at = q ? text.toLowerCase().indexOf(q.toLowerCase()) : -1;
+  if (at < 0) return text;
+  return <>{text.slice(0, at)}<strong>{text.slice(at, at + q.length)}</strong>{text.slice(at + q.length)}</>;
+}
+
 // Fix popup for a "Service not in Dropdowns" row: each service the opp's
 // Scope names that the Dropdowns › Services list doesn't have is settled
 // one of two ways. "Map to an existing service" swaps the name in the
-// Scope for one already on the list (the closest spelling is pre-picked).
+// Scope for one or more already on the list (the closest spelling is
+// pre-picked; more can be added through the type-ahead).
 // "Add as a new service" puts it on the list, under the name as typed or
 // a corrected spelling. When the opp ends up naming something other than
 // what it names now, the other opps naming the same thing are rewritten
@@ -223,7 +344,7 @@ function ServiceFixModal({ row, services, retired, otherCounts, saving, error, o
   const off = row.scopeFix?.off || [];
   const [choices, setChoices] = useState(() => off.map((name) => {
     const target = suggestServiceMatch(name, services);
-    return { name, mode: target ? 'map' : 'add', target, newName: name, filter: '' };
+    return { name, mode: target ? 'map' : 'add', targets: target ? [target] : [], newName: name };
   }));
   const [allOpps, setAllOpps] = useState(true);
 
@@ -233,16 +354,17 @@ function ServiceFixModal({ row, services, retired, otherCounts, saving, error, o
 
   const retiredSet = useMemo(() => new Set(retired), [retired]);
   const lcServices = useMemo(() => new Map(services.map(s => [s.toLowerCase(), s])), [services]);
-  // What each choice resolves to: the name the Scope should carry, and
-  // whether that name has to be added to the list first.
+  // What each choice resolves to: the names the Scope should carry in its
+  // place (one or several when mapped), and whether the one typed as a new
+  // service has to be added to the list first.
   const resolved = choices.map((c) => {
-    if (c.mode === 'map') return { from: c.name, to: c.target, add: false };
+    if (c.mode === 'map') return { from: c.name, to: c.targets, add: false };
     const typed = c.newName.trim();
     const existing = lcServices.get(typed.toLowerCase());
-    return { from: c.name, to: existing || typed, add: !!typed && !existing };
+    return { from: c.name, to: typed ? [existing || typed] : [], add: !!typed && !existing };
   });
-  const complete = resolved.every(r => !!r.to);
-  const renames = resolved.filter(r => r.to && r.to !== r.from);
+  const complete = resolved.every(r => r.to.length > 0);
+  const renames = resolved.filter(r => r.to.length > 0 && !(r.to.length === 1 && r.to[0] === r.from));
   const others = renames.reduce((n, r) => n + (otherCounts[r.from.toLowerCase()] || 0), 0);
   const canSave = !saving && complete;
 
@@ -295,10 +417,6 @@ function ServiceFixModal({ row, services, retired, otherCounts, saving, error, o
 
         <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '1rem', overflowY: 'auto' }}>
           {choices.map((c, i) => {
-            const term = c.filter.trim().toLowerCase();
-            const shown = term ? services.filter(s => s.toLowerCase().includes(term) || s === c.target) : services;
-            const live = shown.filter(s => !retiredSet.has(s));
-            const dead = shown.filter(s => retiredSet.has(s));
             const r = resolved[i];
             return (
               <div key={c.name} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -309,33 +427,25 @@ function ServiceFixModal({ row, services, retired, otherCounts, saving, error, o
                   <button type="button" onClick={() => patch(i, { mode: 'map' })} style={{ ...tabStyle(c.mode === 'map'), borderRadius: '4px 0 0 4px' }}>
                     Map to an existing service
                   </button>
-                  <button type="button" onClick={() => patch(i, { mode: 'add' })} style={{ ...tabStyle(c.mode === 'add'), borderRadius: '0 4px 4px 0', borderLeft: 'none' }}>
+                  <button type="button" onClick={() => patch(i, { mode: 'add' })} style={{ ...tabStyle(c.mode === 'add'), borderRadius: '0 4px 4px 0', marginLeft: -1 }}>
                     Add as a new service
                   </button>
                 </div>
                 {c.mode === 'map' ? (
                   <div>
-                    <label style={labelStyle}>Service on Dropdowns</label>
-                    <input
-                      type="text"
-                      value={c.filter}
-                      onChange={(e) => patch(i, { filter: e.target.value })}
-                      placeholder="Type to narrow the list"
-                      style={{ ...inputStyle, marginBottom: 4, fontSize: '0.78rem' }}
+                    <label style={labelStyle}>Service{c.targets.length > 1 ? 's' : ''} on Dropdowns</label>
+                    <ServiceTypeahead
+                      services={services}
+                      retired={retiredSet}
+                      picked={c.targets}
+                      onChange={(targets) => patch(i, { targets })}
+                      inputStyle={inputStyle}
                     />
-                    <select
-                      value={c.target}
-                      onChange={(e) => patch(i, { target: e.target.value })}
-                      style={inputStyle}
-                    >
-                      <option value="">(Select a service)</option>
-                      {live.map(s => <option key={s} value={s}>{s}</option>)}
-                      {dead.length > 0 && (
-                        <optgroup label="Retired">
-                          {dead.map(s => <option key={s} value={s}>{s}</option>)}
-                        </optgroup>
-                      )}
-                    </select>
+                    {c.targets.length > 1 && (
+                      <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: 4 }}>
+                        The Scope lists all {c.targets.length} in place of <strong>{c.name}</strong>.
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div>
@@ -347,11 +457,11 @@ function ServiceFixModal({ row, services, retired, otherCounts, saving, error, o
                       style={inputStyle}
                     />
                     <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: 4 }}>
-                      {!r.to
+                      {!r.to.length
                         ? 'Enter a name.'
                         : r.add
-                          ? <>Adds <strong>{r.to}</strong> to Dropdowns › Services. Fill in its details there.</>
-                          : <><strong>{r.to}</strong> is already on the list, so the opp is pointed at it.</>}
+                          ? <>Adds <strong>{r.to[0]}</strong> to Dropdowns › Services. Fill in its details there.</>
+                          : <><strong>{r.to[0]}</strong> is already on the list, so the opp is pointed at it.</>}
                     </div>
                   </div>
                 )}
@@ -605,7 +715,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
     try {
       const adds = [];
       for (const r of resolved) {
-        if (r.add && !adds.some(a => a.toLowerCase() === r.to.toLowerCase())) adds.push(r.to);
+        if (r.add && !adds.some(a => a.toLowerCase() === r.to[0].toLowerCase())) adds.push(r.to[0]);
       }
       if (adds.length > 0) {
         const hidden = Array.isArray(settings?.hiddenServices) ? settings.hiddenServices : [];
@@ -615,7 +725,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
         if (hidden.some(h => adds.includes(h))) updates.hiddenServices = hidden.filter(h => !adds.includes(h));
         updateSettings?.(updates);
       }
-      const remaps = resolved.filter(r => r.to && r.to !== r.from);
+      const remaps = resolved.filter(r => r.to.length > 0 && !(r.to.length === 1 && r.to[0] === r.from));
       if (remaps.length > 0) {
         if (!allOpps && fix.oppId == null) throw new Error('This issue has no linked Opps row to update.');
         const data = await loadOpps2Newest(user?.uid);
