@@ -2,7 +2,7 @@
 // opp whose Scope names a service the Dropdowns tab's services list doesn't
 // have. Plain Node, no test framework (the project has none). Run:
 //   node scripts/oppScopeOffListIssues.test.mjs
-import { oppScopeOffList, remapScopeService, scopeRemapPatches, suggestServiceMatch } from '../src/utils/oppScopeOffList.js';
+import { oppScopeOffList, remapScopeService, scopeRemapPatches, suggestServiceMatch, rankServiceMatches } from '../src/utils/oppScopeOffList.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -46,6 +46,11 @@ eq(remapScopeService('GHG, Budgets', 'Typo Svc', 'Carbon', knownServices), 'GHG,
   const fixed = recs.map(r => ({ ...r, ...(scopeRemapPatches(recs, remaps, knownServices)[r._id] || {}) }));
   eq(oppScopeOffList(fixed, knownServices).length, 0, 'after the remap nothing is flagged');
 }
+eq(remapScopeService('Budgets, RA & GHG, Carbon', 'RA & GHG', ['GHG', 'Risk Management'], knownServices), 'Budgets, GHG, Risk Management, Carbon', 'one name can map to several services, in place');
+eq(remapScopeService('GHG, RA & GHG', 'ra & ghg', ['GHG', 'Budgets'], knownServices), 'GHG, Budgets', 'several targets skip the ones the opp already names');
+eq(scopeRemapPatches([{ _id: 7, Scope: 'RA & GHG' }], [{ from: 'RA & GHG', to: ['GHG', 'Budgets'] }], knownServices), { 7: { Scope: 'GHG, Budgets' } }, 'patches carry every target');
+eq(rankServiceMatches('gh', ['Budgets', 'Scope 3 GHG', 'GHG', 'Highlights']), ['GHG', 'Scope 3 GHG', 'Highlights'], 'type-ahead: starts-with, then word start, then anywhere');
+eq(rankServiceMatches('', ['A', 'B', 'C'], { exclude: ['b'] }), ['A', 'C'], 'type-ahead with nothing typed lists all but the picked ones');
 eq(suggestServiceMatch('Risk managment', ['Risk Management', 'Recap']), 'Risk Management', 'suggests the close spelling');
 eq(suggestServiceMatch('becs', ['BECS', 'GHG']), 'BECS', 'suggests a case-only match');
 eq(suggestServiceMatch('Cleantech', ['Risk Management', 'GHG']), '', 'no guess for an unrelated name');

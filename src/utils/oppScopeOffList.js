@@ -34,25 +34,28 @@ export function oppScopeOffList(records, knownServices) {
 // opp should carry differs from what it carries now, every opp naming the
 // old one gets its Scope rewritten, so one fix clears every row it caused.
 
-// One Scope with `from` swapped for `to`, in place. If the opp already
-// names `to` the swapped entry is dropped rather than listed twice. The
-// result is written the way Scope is stored (comma-separated). Returns the
-// cell unchanged when it doesn't name `from`.
+// One Scope with `from` swapped for `to`, in place. `to` is one service or
+// a list of them (an unmatched name like "RA & GHG" can stand for several),
+// which go in where `from` was, in the order given. Anything the opp
+// already names is dropped rather than listed twice. The result is written
+// the way Scope is stored (comma-separated). Returns the cell unchanged
+// when it doesn't name `from`.
 export function remapScopeService(scope, from, to, knownServices) {
   const fromKey = String(from ?? '').trim().toLowerCase();
-  const target = String(to ?? '').trim();
-  if (!fromKey || !target) return scope;
+  const targets = (Array.isArray(to) ? to : [to]).map(t => String(t ?? '').trim()).filter(Boolean);
+  if (!fromKey || targets.length === 0) return scope;
   const names = splitServiceNames(scope, knownServices);
   if (!names.some(n => n.trim().toLowerCase() === fromKey)) return scope;
   const out = [];
   for (const n of names) {
-    const next = n.trim().toLowerCase() === fromKey ? target : n.trim();
-    if (!out.some(x => x.toLowerCase() === next.toLowerCase())) out.push(next);
+    const next = n.trim().toLowerCase() === fromKey ? targets : [n.trim()];
+    for (const x of next) if (!out.some(y => y.toLowerCase() === x.toLowerCase())) out.push(x);
   }
   return joinServiceNames(out);
 }
 
-// Scope patches for a set of remaps ({ from, to } pairs) across records:
+// Scope patches for a set of remaps ({ from, to } pairs, `to` one name or
+// a list) across records:
 // { [oppId]: { Scope } } for each opp whose Scope actually changes. With
 // `onlyIds`, opps outside it are left alone (the "just this opp" choice).
 export function scopeRemapPatches(records, remaps, knownServices, onlyIds = null) {
@@ -99,4 +102,28 @@ function editDistance(a, b) {
     prev = cur;
   }
   return prev[b.length];
+}
+
+// Services on the list matching what has been typed so far, best first, for
+// the Fix popup's type-ahead: names starting with it, then names with a word
+// starting with it, then names containing it anywhere. Ties keep the list's
+// order. Names in `exclude` (already picked) are left out.
+export function rankServiceMatches(query, services, { exclude = [], limit = 12 } = {}) {
+  const q = String(query ?? '').trim().toLowerCase();
+  const skip = new Set((exclude || []).map(x => String(x ?? '').trim().toLowerCase()));
+  const scored = [];
+  (services || []).forEach((s, i) => {
+    const name = String(s ?? '').trim();
+    const k = name.toLowerCase();
+    if (!k || skip.has(k)) return;
+    let rank;
+    if (!q) rank = 3;
+    else if (k.startsWith(q)) rank = 0;
+    else if (k.split(/[^a-z0-9]+/).some(w => w && w.startsWith(q))) rank = 1;
+    else if (k.includes(q)) rank = 2;
+    else return;
+    scored.push({ name, rank, i });
+  });
+  scored.sort((a, b) => a.rank - b.rank || a.i - b.i);
+  return scored.slice(0, limit).map(x => x.name);
 }
