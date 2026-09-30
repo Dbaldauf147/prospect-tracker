@@ -247,3 +247,59 @@ export function renameServiceInCategories(categories, from, to) {
   });
   return found ? next : null;
 }
+
+// Box edits: add, rename, delete and reorder. All work on the stored layout
+// (getServiceCategories), never on buildServiceBoard's view, so the "Other
+// services" card can't be written back as a box. Each returns
+// { categories } to save, or { error } to show the user when the edit
+// can't be made. The error strings are shown on screen.
+
+const boxKey = s => String(s || '').trim().toLowerCase();
+
+function checkBoxName(categories, name, except) {
+  const clean = String(name || '').trim();
+  if (!clean) return { error: 'Give the bucket a name.' };
+  if (boxKey(clean) === boxKey(UNGROUPED_SERVICES)) {
+    return { error: `"${UNGROUPED_SERVICES}" is the board's card for unfiled services. Pick another name.` };
+  }
+  const taken = (categories || []).find(c => boxKey(c.name) === boxKey(clean) && c.name !== except);
+  if (taken) return { error: `There is already a bucket called "${taken.name}".` };
+  return { name: clean };
+}
+
+// A new, empty box on the end of the board, above the graveyard (which
+// getServiceCategories sinks on the way out anyway).
+export function addServiceBox(categories, name) {
+  const checked = checkBoxName(categories, name);
+  if (checked.error) return checked;
+  return { categories: [...(categories || []).map(c => ({ ...c })), { name: checked.name, items: [] }] };
+}
+
+// The box renamed, its services and position untouched. Changing only the
+// capitalisation is allowed.
+export function renameServiceBox(categories, oldName, newName) {
+  const checked = checkBoxName(categories, newName, oldName);
+  if (checked.error) return checked;
+  if (checked.name === oldName) return { categories: null };
+  if (!(categories || []).some(c => c.name === oldName)) return { error: `No bucket called "${oldName}".` };
+  return { categories: categories.map(c => (c.name === oldName ? { ...c, name: checked.name } : { ...c })) };
+}
+
+// The box removed. Its services are not deleted or hidden: they leave every
+// box and show on the "Other services" card until somebody files them.
+export function deleteServiceBox(categories, name) {
+  if (!(categories || []).some(c => c.name === name)) return { error: `No bucket called "${name}".` };
+  return { categories: categories.filter(c => c.name !== name).map(c => ({ ...c })) };
+}
+
+// The box moved one place up (-1) or down (+1) in board order. Null at
+// either end, so the caller can skip the write.
+export function moveServiceBox(categories, name, delta) {
+  const list = (categories || []).map(c => ({ ...c }));
+  const from = list.findIndex(c => c.name === name);
+  const to = from + delta;
+  if (from === -1 || to < 0 || to >= list.length) return { categories: null };
+  const [box] = list.splice(from, 1);
+  list.splice(to, 0, box);
+  return { categories: list };
+}

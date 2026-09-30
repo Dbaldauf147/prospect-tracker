@@ -3727,3 +3727,156 @@
   color: var(--color-accent);
 }
 
+
+/* The bucket editor on the Services subtab (ServiceBucketsPanel): one row
+   per box of the services board, in board order. */
+.bucketPanel {
+  margin: 0 1.25rem 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.bucketPanelHead {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+  font-size: var(--font-size-sm);
+}
+
+.bucketPanelHead > span {
+  flex: 1;
+  min-width: 200px;
+}
+
+.bucketList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.bucketRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.2rem 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.bucketMoves {
+  display: flex;
+  gap: 2px;
+}
+
+.bucketIconBtn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-size: 0.55rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.bucketIconBtn:hover:not(:disabled) {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.bucketIconBtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.bucketName {
+  width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  font-family: inherit;
+  text-align: left;
+  cursor: text;
+}
+
+.bucketName:hover {
+  border-color: var(--color-border);
+}
+
+.bucketNameDead {
+  color: var(--color-text-muted);
+}
+
+.bucketNameInput {
+  width: 280px;
+  box-sizing: border-box;
+  padding: 2px 4px;
+  border: 1px solid var(--color-accent);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.bucketNameInput:focus {
+  outline: none;
+}
+
+.bucketCount {
+  min-width: 80px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.bucketActions {
+  display: flex;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+
+.bucketDeleteBtn {
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.bucketDeleteBtn:hover {
+  color: #DC2626;
+  border-color: #DC2626;
+}
+
+.bucketError {
+  flex-basis: 100%;
+  font-size: var(--font-size-xs);
+  color: #DC2626;
+}
+
+.bucketAddRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--color-border);
+}

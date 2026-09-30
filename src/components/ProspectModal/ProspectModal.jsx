@@ -29,7 +29,7 @@ import { useCompanyContracts } from '../../hooks/useCompanyContracts';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 import { STATUSES, STATUS_COLORS, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { peStageOf } from '../../utils/peStages';
-import { getServiceCategories, buildServiceBoard, moveServiceToBucket, serviceBucketOf, UNGROUPED_SERVICES } from '../../utils/serviceCategoriesStore';
+import { getServiceCategories, buildServiceBoard, moveServiceToBucket, serviceBucketOf, UNGROUPED_SERVICES, addServiceBox, renameServiceBox } from '../../utils/serviceCategoriesStore';
 import { isCoverageTracked } from '../../utils/pipelineDashboardStore';
 import { coverageRowStyle } from '../../utils/coverageMark';
 import { useCoverageServices } from '../../hooks/useCoverageServices';
@@ -9759,8 +9759,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 // one named after a placeholder.
                 function renameCategoryBox(oldName, newName) {
                   if (!newName.trim() || newName === oldName || isUngrouped(oldName)) return;
-                  const next = storedCategories.map(c => c.name === oldName ? { ...c, name: newName.trim() } : c);
-                  saveCategories(next);
+                  const result = renameServiceBox(storedCategories, oldName, newName);
+                  if (result.error) { alert(result.error); return; }
+                  if (result.categories) saveCategories(result.categories);
                 }
                 function deleteCategoryBox(catName) {
                   if (isUngrouped(catName)) return;
@@ -10133,8 +10134,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       onClick={() => {
                         const name = prompt('New box name:');
                         if (!name?.trim()) return;
-                        if (categories.some(c => c.name === name.trim())) { alert('A box with that name already exists.'); return; }
-                        saveCategories([...categories, { name: name.trim(), items: [] }]);
+                        // The stored layout, not `categories`: that one can
+                        // carry the "Other services" card, which is a view.
+                        const result = addServiceBox(storedCategories, name);
+                        if (result.error) { alert(result.error); return; }
+                        saveCategories(result.categories);
                       }}
                       style={{ breakInside: 'avoid', border: '2px dashed var(--color-border)', borderRadius: '5px', padding: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--color-text-muted)', fontSize: '0.72rem', fontWeight: 600, marginBottom: '0.4rem' }}
                       onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)'; }}
