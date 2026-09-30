@@ -18,7 +18,7 @@ import {
   standardFeesForStructure, costKey, costsByKind, costKindOf,
   addServiceToLineItem, moveLineItemService, moveCostLineService, servicesForCostLine, costTotalsByLineItem, addLaterCostFees,
   costTypeConversion, moveCostAllocation, buildScheduleFromStructures, standardFeeContext, groupFeeRows, effectiveLineItemServices,
-  passThroughFeeRows, addPassThroughFees,
+  passThroughFeeRows, addPassThroughFees, sharedLineItemsToSplit, setCostLineService, sharedSignature,
 } from '../src/utils/pricingServices.js';
 
 let failed = 0;
@@ -562,6 +562,42 @@ test('pass-through lines each get a fee row of their own, at cost', () => {
   // Run again: nothing left to add.
   assert.equal(passThroughFeeRows(next, costs, { unitOf }).length, 0);
   assert.equal(addPassThroughFees(next, costs, { unitOf }), next);
+});
+
+test('a shared line item asks which service each of its cost lines goes to', () => {
+  const items = [
+    { description: 'Communication Support', type: 'Setup', cts: 100 },
+    { description: 'Communication Support', type: 'Recurring', cts: 40 },
+    { description: 'Communication Support', type: 'Recurring', cts: 60 },
+    { description: 'Commercial Client Management NAM', type: 'Recurring', cts: 10 },
+  ];
+  let map = {
+    'communication support': ['Sustainability Reports', 'Marketing Collateral'],
+    'commercial client management nam': ['GHG'],
+  };
+  let rows = sharedLineItemsToSplit(items, map);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].key, 'communication support');
+  assert.deepEqual(rows[0].lines.map(l => [l.type, l.count, l.cts, l.pick]), [['Setup', 1, 100, null], ['Recurring', 2, 100, null]]);
+  // Priority, ignored and kept-shared line items aren't asked about.
+  assert.equal(sharedLineItemsToSplit(items, map, { priority: { 'communication support': true } }).length, 0);
+  assert.equal(sharedLineItemsToSplit(items, map, { ignored: { 'communication support': true } }).length, 0);
+  const ok = { 'communication support': sharedSignature(['marketing collateral', 'Sustainability Reports']) };
+  assert.equal(sharedLineItemsToSplit(items, map, { sharedOk: ok }).length, 0);
+  // ...until the list changes.
+  const grown = { ...map, 'communication support': [...map['communication support'], 'GHG'] };
+  assert.equal(sharedLineItemsToSplit(items, grown, { sharedOk: ok }).length, 1);
+  // Splitting one line keeps asking about the other; splitting both settles it.
+  map = setCostLineService(map, items[0], 'Marketing Collateral');
+  rows = sharedLineItemsToSplit(items, map);
+  assert.deepEqual(rows[0].lines.map(l => l.pick), ['Marketing Collateral', null]);
+  assert.deepEqual(servicesForCostLine(map, items[1]), ['Sustainability Reports', 'Marketing Collateral']);
+  map = setCostLineService(map, items[1], 'Sustainability Reports');
+  assert.equal(sharedLineItemsToSplit(items, map).length, 0);
+  assert.deepEqual(costItemsForService(items, map, 'Marketing Collateral').map(i => i.type), ['Setup']);
+  // A blank pick puts the line back on the shared list.
+  map = setCostLineService(map, items[0], '');
+  assert.deepEqual(servicesForCostLine(map, items[0]), ['Sustainability Reports', 'Marketing Collateral']);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

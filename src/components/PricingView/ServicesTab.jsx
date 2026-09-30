@@ -46,6 +46,12 @@ const STATUS_CLASS = {
 //                   one service for another on that one cost line (type as
 //                   the SIA gives it); the line item's other cost lines stay
 //   onIgnoreLineItem (lineItemKey) => marks the line item Ignore
+//   sharedToSplit   sharedLineItemsToSplit() for the active option: line
+//                   items tied to several services with no priority order,
+//                   whose cost lines are asked which service they go to
+//   onSplitCostLine ({ description, type }, service) => points that cost
+//                   line at the one service ('' puts it back on the list)
+//   onKeepShared    (sharedToSplit row) => keeps the line item shared
 //   onSetItemType   (itemId, type) => overrides a cost line's Type ('' clears it)
 //   onSetPassThrough (description, type, on) => the Linked To pass-through
 //                   setting for that Line Item + Type pair
@@ -59,7 +65,7 @@ const STATUS_CLASS = {
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
   onSetCount, onIgnoreForCheck, onSetFeeComponent, feeStructures = {}, setFeeStructures, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough,
-  unlinked = null, tagOptions = [], onTagLineItem, onMoveLineItem, onIgnoreLineItem, onSetCompleted, completedServices = [], globalGmPct = null,
+  unlinked = null, tagOptions = [], onTagLineItem, onMoveLineItem, onIgnoreLineItem, sharedToSplit = [], onSplitCostLine, onKeepShared, onSetCompleted, completedServices = [], globalGmPct = null,
 }) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(null);
@@ -175,6 +181,16 @@ export function ServicesTab({
         />
       )}
 
+      {workbook && sharedToSplit.length > 0 && onSplitCostLine && (
+        <SharedSplitPrompt
+          rows={sharedToSplit}
+          optionName={opt?.sheetName}
+          onSplit={onSplitCostLine}
+          onKeepShared={onKeepShared}
+          onOpenLinkedTo={onOpenLinkedTo}
+        />
+      )}
+
       <div className={styles.layout}>
         <div className={styles.listPane} style={listMaxHeight ? { maxHeight: listMaxHeight } : undefined}>
           <div className={styles.listTools}>
@@ -275,6 +291,89 @@ export function ServicesTab({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// The services a cost line can be split to: its line item's list, plus
+// whatever the line is on now, deduped case-insensitively.
+function splitChoices(row, line) {
+  const seen = new Set();
+  return [...row.services, ...line.choices].filter(s => {
+    const k = String(s).trim().toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+// Line items on the active option tied to several services with no
+// priority order, so each service counts the whole cost. Each cost line
+// (line item + SIA type) gets a menu of those services to say which one it
+// really belongs to; Keep shared settles it as it is.
+function SharedSplitPrompt({ rows, optionName, onSplit, onKeepShared, onOpenLinkedTo }) {
+  const [open, setOpen] = useState(true);
+  const n = rows.length;
+  return (
+    <div className={styles.unlinked} role="alert">
+      <div className={styles.unlinkedHead}>
+        <span aria-hidden="true">⚠</span>
+        <span className={styles.unlinkedText}>
+          <strong>{n} line item{n === 1 ? '' : 's'}</strong>
+          {optionName ? ` on ${optionName}` : ''} {n === 1 ? 'is' : 'are'} tied to several services with no priority order,
+          so every one of them counts the full cost. Pick the service each cost line belongs to, or keep it shared.
+        </span>
+        <button type="button" className={styles.linkBtn} onClick={() => setOpen(o => !o)}>{open ? 'Hide' : 'Show'}</button>
+      </div>
+      {open && (
+        <ul className={styles.unlinkedList}>
+          {rows.map(row => (
+            <li key={row.key} className={styles.splitRow}>
+              <div className={styles.splitHead}>
+                <span className={styles.unlinkedName}>
+                  {row.name}
+                  <span className={styles.subNote}>Shared by {row.services.join(', ')}</span>
+                </span>
+                {onKeepShared && (
+                  <button
+                    type="button"
+                    className={styles.ignoreBtn}
+                    onClick={() => onKeepShared(row)}
+                    title="Every service listed keeps counting this cost. Asks again if the list of services changes."
+                  >
+                    Keep shared
+                  </button>
+                )}
+              </div>
+              {row.lines.map(line => (
+                <div key={line.type || '(none)'} className={styles.splitLine}>
+                  <span className={styles.splitLineName}>
+                    {line.type || 'No type'}
+                    <span className={styles.subNote}>
+                      {`${line.count} cost line${line.count === 1 ? '' : 's'}${line.cts ? `, ${fmtMoney(line.cts)} CTS` : ''}`}
+                    </span>
+                  </span>
+                  <select
+                    className={`${styles.tagSelect} ${line.pick ? '' : styles.splitPending}`}
+                    value={line.pick || ''}
+                    onChange={(e) => onSplit({ description: line.description, type: line.type }, e.target.value)}
+                    aria-label={`Service for ${row.name}, ${line.type || 'no type'}`}
+                  >
+                    <option value="">Shared by all ({row.services.length})</option>
+                    {splitChoices(row, line).map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              ))}
+            </li>
+          ))}
+        </ul>
+      )}
+      {open && onOpenLinkedTo && (
+        <div className={styles.unlinkedFoot}>
+          To make the list a priority order instead, tick First in scope only on the{' '}
+          <button type="button" className={styles.linkBtn} onClick={onOpenLinkedTo}>Linked To</button> subtab.
+        </div>
+      )}
     </div>
   );
 }

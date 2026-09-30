@@ -704,6 +704,46 @@
   max-width: 220px;
 }
 
+.splitRow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid #fef3c7;
+  color: var(--color-text);
+}
+
+.splitRow:last-child {
+  border-bottom: none;
+}
+
+.splitHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.splitLine {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding-left: 1rem;
+}
+
+.splitLineName {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+}
+
+.splitPending {
+  border-color: #f59e0b;
+}
+
 .unlinkedFoot {
   color: #92400e;
 }
