@@ -264,7 +264,7 @@ export function ServicesTab({
               siteCount={feeUnitCountsFor(detail).siteCount ?? opt?.siteCount}
               accountCount={feeUnitCountsFor(detail).accountCount ?? opt?.accountCount}
               onOpenLinkedTo={onOpenLinkedTo}
-              onSetCount={onSetCount}
+              onSetCount={onSetCount ? (key, value) => onSetCount(current.name, key, value) : null}
               onIgnoreForCheck={onIgnoreForCheck ? (itemId, on) => onIgnoreForCheck(current.name, itemId, on) : null}
               onSetFeeComponent={onSetFeeComponent ? (itemId, id) => onSetFeeComponent(current.name, itemId, id) : null}
               globalGmPct={globalGmPct}
@@ -688,7 +688,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                         {it.unit}
                         {/* The counts the price check prices on (the SIA's, or
                             typed), shown against the lines they price. They are
-                            the option's, so every line shows the same boxes. */}
+                            this service's own, so every line shows the same boxes. */}
                         {hasWorkbook && onSetCount && detail?.rateCheck && !it.ignored && (
                           <CheckCounts
                             missing={detail.rateCheck.missing}
