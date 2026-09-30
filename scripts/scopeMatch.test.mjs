@@ -88,7 +88,9 @@ const wentSilent = probes.filter(t => items.some(i => oldMatch(t, i)) && !items.
 eq(wentSilent, [], 'no token that used to match something now matches nothing');
 
 // And the headline: how far the over-matching actually went.
-eq(items.filter(i => oldMatch('RA', i)).length, 14, 'the old rule matched 14 services for a scope of "RA"');
+// (21 since the Communication Services box: "Frameworks", "Branding" and the
+// rest all carry an "ra".)
+eq(items.filter(i => oldMatch('RA', i)).length, 21, 'the old rule matched 21 services for a scope of "RA"');
 eq(items.filter(i => scopeTokenMatchesService('RA', i)).length, 6, 'the new one matches the 6 that are really RA');
 
 // ---- a whole Scope cell -----------------------------------------------------

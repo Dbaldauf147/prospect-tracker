@@ -10,6 +10,7 @@ import { SERVICE_MERGES, planServiceMerge, SERVICE_RENAME_LOG_KEY, serviceRename
 import { renameServiceShared, renameServiceLocal } from './utils/serviceRenameRunner';
 import { useSheetSync } from './hooks/useSheetSync';
 import { planSheetSyncSetup } from './utils/sheetSyncSettings';
+import { SERVICE_BOX_ADDITIONS, planServiceBoxAddition } from './utils/serviceBoxAdditions';
 import { useFilters } from './hooks/useFilters';
 import { useUserSettings } from './hooks/useUserSettings';
 import { useIssues } from './hooks/useIssues';
@@ -323,6 +324,24 @@ function App() {
     if (!patch) return;
     console.log('Updating the sheet sync configuration');
     updateSettings(patch);
+  }, [user, settingsLoaded, updateSettings]);
+
+  // New boxes on the services board, carried onto a layout somebody has
+  // already saved (see utils/serviceBoxAdditions.js). Once per browser, and
+  // gated on settings for the same reason as above: planned against {} it
+  // would find nothing to do and set its flag for good.
+  useEffect(() => {
+    if (!user || !settingsLoaded) return;
+    let working = settingsRef.current || {};
+    for (const addition of SERVICE_BOX_ADDITIONS) {
+      if (userLsGet(addition.flag)) continue;
+      userLsSet(addition.flag, new Date().toISOString());
+      const patch = planServiceBoxAddition(addition, working);
+      if (!patch) continue;
+      console.log(`Adding the "${addition.box}" box to the services board`);
+      working = { ...working, ...patch };
+      updateSettings(patch);
+    }
   }, [user, settingsLoaded, updateSettings]);
 
   // Service renames, carried to every place a service name is stored (see
