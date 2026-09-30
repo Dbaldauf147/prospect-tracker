@@ -472,7 +472,10 @@ function detectOppScopeOffList({ oppsCache = null, knownServices = null, prospec
       prospectId: prospectIdByNorm.get(normalizeBfoCompany(account)) || null,
       daysUntil: null,
       expirationDate: null,
-      detail: `${off.length === 1 ? 'Service' : 'Services'} ${quoted} in this opp's Scope${stage ? ` (${stage})` : ''} ${off.length === 1 ? "isn't" : "aren't"} on the Dropdowns › Services list: pick the matching service in the opp's Scope, or add it on the Dropdowns tab.`,
+      detail: `${off.length === 1 ? 'Service' : 'Services'} ${quoted} in this opp's Scope${stage ? ` (${stage})` : ''} ${off.length === 1 ? "isn't" : "aren't"} on the Dropdowns › Services list: use Fix to map it to an existing service, or add it as a new one.`,
+      // What the row's Fix popup needs: the opp to rewrite and the names
+      // to settle.
+      scopeFix: { oppId: r._id ?? null, scope: String(r.Scope ?? ''), off },
     });
   }
   return issues;

@@ -191,5 +191,5 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
 
   const openCount = useMemo(() => issues.reduce((n, r) => n + (r.snoozed ? 0 : 1), 0), [issues]);
 
-  return { issues, openCount, serviceGaps };
+  return { issues, openCount, serviceGaps, knownServices };
 }

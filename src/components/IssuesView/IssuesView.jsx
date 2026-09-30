@@ -10,7 +10,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { lookupCloseNotSold, reasonOptionsForCompetition, hasCloseNotSoldRules } from '../../data/closeNotSoldRules';
 import { BfoCloseOutPreview } from '../BfoCloseOutPreview';
-import { setOppField } from '../../utils/opps2Store';
+import { setOppField, loadOpps2Newest, bulkSetOppFields } from '../../utils/opps2Store';
+import { scopeRemapPatches, suggestServiceMatch } from '../../utils/oppScopeOffList';
 
 // Issues tab — a running list of outstanding items that need to be
 // addressed across the app. Each row is one problem surfaced by a
@@ -210,6 +211,204 @@ function CloseNotSoldReasonModal({ row, reasonOptions, competitionOptions, savin
   );
 }
 
+// Fix popup for a "Service not in Dropdowns" row: each service the opp's
+// Scope names that the Dropdowns › Services list doesn't have is settled
+// one of two ways. "Map to an existing service" swaps the name in the
+// Scope for one already on the list (the closest spelling is pre-picked).
+// "Add as a new service" puts it on the list, under the name as typed or
+// a corrected spelling. When the opp ends up naming something other than
+// what it names now, the other opps naming the same thing are rewritten
+// too unless that box is unticked, so one fix clears every row it caused.
+function ServiceFixModal({ row, services, retired, otherCounts, saving, error, onSave, onClose }) {
+  const off = row.scopeFix?.off || [];
+  const [choices, setChoices] = useState(() => off.map((name) => {
+    const target = suggestServiceMatch(name, services);
+    return { name, mode: target ? 'map' : 'add', target, newName: name, filter: '' };
+  }));
+  const [allOpps, setAllOpps] = useState(true);
+
+  function patch(i, next) {
+    setChoices(prev => prev.map((c, j) => (j === i ? { ...c, ...next } : c)));
+  }
+
+  const retiredSet = useMemo(() => new Set(retired), [retired]);
+  const lcServices = useMemo(() => new Map(services.map(s => [s.toLowerCase(), s])), [services]);
+  // What each choice resolves to: the name the Scope should carry, and
+  // whether that name has to be added to the list first.
+  const resolved = choices.map((c) => {
+    if (c.mode === 'map') return { from: c.name, to: c.target, add: false };
+    const typed = c.newName.trim();
+    const existing = lcServices.get(typed.toLowerCase());
+    return { from: c.name, to: existing || typed, add: !!typed && !existing };
+  });
+  const complete = resolved.every(r => !!r.to);
+  const renames = resolved.filter(r => r.to && r.to !== r.from);
+  const others = renames.reduce((n, r) => n + (otherCounts[r.from.toLowerCase()] || 0), 0);
+  const canSave = !saving && complete;
+
+  const labelStyle = { fontSize: '0.72rem', fontWeight: 600, color: '#1E293B', display: 'block', marginBottom: 4 };
+  const inputStyle = {
+    width: '100%', boxSizing: 'border-box',
+    padding: '0.45rem 0.55rem',
+    border: '1px solid #CBD5E1', borderRadius: 4,
+    fontSize: '0.85rem', fontFamily: 'inherit',
+    background: '#fff', color: '#1E293B',
+  };
+  const btnStyle = {
+    padding: '0.4rem 0.9rem', borderRadius: 4, fontFamily: 'inherit',
+    fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer',
+  };
+  const tabStyle = (on) => ({
+    flex: 1, padding: '0.35rem 0.5rem', fontFamily: 'inherit', fontSize: '0.74rem', fontWeight: 600,
+    cursor: 'pointer', border: '1px solid ' + (on ? '#0A66C2' : '#CBD5E1'),
+    background: on ? '#EFF6FF' : '#fff', color: on ? '#0A66C2' : '#475569',
+  });
+
+  const backdropMouseDown = useRef(false);
+
+  return createPortal(
+    <div
+      onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) onClose(); }}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } }}
+        style={{
+          width: 520, maxWidth: '92vw', maxHeight: '88vh',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid #E2E8F0' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>Fix service{off.length === 1 ? '' : 's'} not in Dropdowns</div>
+          <div style={{ fontSize: '0.75rem', color: '#64748B', marginTop: 2 }}>
+            <strong>{row.company}</strong>
+            {row.oppNumber != null ? <> &middot; Opp #{row.oppNumber}</> : null}
+            {row.scopeFix?.scope ? <> &middot; Scope: {row.scopeFix.scope}</> : null}
+          </div>
+        </div>
+
+        <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '1rem', overflowY: 'auto' }}>
+          {choices.map((c, i) => {
+            const term = c.filter.trim().toLowerCase();
+            const shown = term ? services.filter(s => s.toLowerCase().includes(term) || s === c.target) : services;
+            const live = shown.filter(s => !retiredSet.has(s));
+            const dead = shown.filter(s => retiredSet.has(s));
+            const r = resolved[i];
+            return (
+              <div key={c.name} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <div style={{ fontSize: '0.8rem', color: '#1E293B' }}>
+                  <span style={{ color: '#64748B' }}>Not on the list:</span> <strong>{c.name}</strong>
+                </div>
+                <div style={{ display: 'flex' }}>
+                  <button type="button" onClick={() => patch(i, { mode: 'map' })} style={{ ...tabStyle(c.mode === 'map'), borderRadius: '4px 0 0 4px' }}>
+                    Map to an existing service
+                  </button>
+                  <button type="button" onClick={() => patch(i, { mode: 'add' })} style={{ ...tabStyle(c.mode === 'add'), borderRadius: '0 4px 4px 0', borderLeft: 'none' }}>
+                    Add as a new service
+                  </button>
+                </div>
+                {c.mode === 'map' ? (
+                  <div>
+                    <label style={labelStyle}>Service on Dropdowns</label>
+                    <input
+                      type="text"
+                      value={c.filter}
+                      onChange={(e) => patch(i, { filter: e.target.value })}
+                      placeholder="Type to narrow the list"
+                      style={{ ...inputStyle, marginBottom: 4, fontSize: '0.78rem' }}
+                    />
+                    <select
+                      value={c.target}
+                      onChange={(e) => patch(i, { target: e.target.value })}
+                      style={inputStyle}
+                    >
+                      <option value="">(Select a service)</option>
+                      {live.map(s => <option key={s} value={s}>{s}</option>)}
+                      {dead.length > 0 && (
+                        <optgroup label="Retired">
+                          {dead.map(s => <option key={s} value={s}>{s}</option>)}
+                        </optgroup>
+                      )}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label style={labelStyle}>New service name</label>
+                    <input
+                      type="text"
+                      value={c.newName}
+                      onChange={(e) => patch(i, { newName: e.target.value })}
+                      style={inputStyle}
+                    />
+                    <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: 4 }}>
+                      {!r.to
+                        ? 'Enter a name.'
+                        : r.add
+                          ? <>Adds <strong>{r.to}</strong> to Dropdowns › Services. Fill in its details there.</>
+                          : <><strong>{r.to}</strong> is already on the list, so the opp is pointed at it.</>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {others > 0 && (
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: '0.75rem', color: '#334155', cursor: 'pointer' }}>
+              <input type="checkbox" checked={allOpps} onChange={(e) => setAllOpps(e.target.checked)} style={{ marginTop: 2 }} />
+              <span>
+                Also update the {others} other opp{others === 1 ? '' : 's'} whose Scope names{' '}
+                {renames.map((x, k) => <span key={x.from}>{k > 0 ? ', ' : ''}<strong>{x.from}</strong></span>)}
+              </span>
+            </label>
+          )}
+          {error && (
+            <div style={{ fontSize: '0.72rem', color: '#B91C1C' }}>{error}</div>
+          )}
+        </div>
+
+        <div style={{
+          display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.5rem',
+          padding: '0.6rem 1rem', borderTop: '1px solid #E2E8F0', background: '#F8FAFC',
+        }}>
+          {!complete && !saving && (
+            <span style={{ marginRight: 'auto', fontSize: '0.7rem', color: '#64748B' }}>
+              Pick a service or enter a new name for each one to enable Save.
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ ...btnStyle, border: '1px solid #CBD5E1', background: '#fff', color: '#475569' }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!canSave}
+            onClick={() => onSave({ resolved, allOpps })}
+            style={{
+              ...btnStyle, border: '1px solid #0A66C2',
+              background: canSave ? '#0A66C2' : '#93C5FD',
+              color: '#fff',
+              cursor: canSave ? 'pointer' : 'default',
+            }}
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // Duration picker for the Snooze button: how long the issue should stay
 // off the sidebar count. Anchored under the button it was opened from and
 // rendered in a portal, so the table's own scrolling can't clip it. An
@@ -293,7 +492,7 @@ function SnoozeMenu({ anchor, snoozed, until, onPick, onUnsnooze, onClose }) {
 export function IssuesView({ prospects = [], cdmName, settings, updateSettings, onSelectProspect }) {
   // useIssues handles loading the source data + listening for cross-tab
   // refreshes, and tags each row with a `snoozed` flag.
-  const { issues, openCount } = useIssues({ prospects, cdmName, marketingLeads: settings?.marketingLeads, serviceOverrides: settings?.serviceOverrides, settings });
+  const { issues, openCount, knownServices } = useIssues({ prospects, cdmName, marketingLeads: settings?.marketingLeads, serviceOverrides: settings?.serviceOverrides, settings });
 
   // Client Manager is owned by the Clients tab; mirror it here (read-only)
   // and re-read when it changes there so the column stays in sync.
@@ -356,6 +555,76 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
         await setOppField(user?.uid, fix.oppId, 'Reason Not Sold', reason);
       }
       setEditingRow(null);
+    } catch (err) {
+      setFixError(`Could not save: ${err?.message || err}`);
+    } finally {
+      setSavingFix(false);
+    }
+  }
+
+  // ---- Fixing "Service not in Dropdowns" rows ----
+  // The Solutions list the Fix popup picks from (stored names, which is
+  // what Scope holds), and which of them are retired.
+  const [fixingRow, setFixingRow] = useState(null);
+  const solutionsList = useMemo(() => dropdownLists.find(l => l.key === 'solutions') || null, [dropdownLists]);
+  const serviceOptions = useMemo(
+    () => (solutionsList?.options || []).map(s => String(s ?? '').trim()).filter(Boolean),
+    [solutionsList],
+  );
+  // How many "Service not in Dropdowns" rows name each unmatched service,
+  // snoozed ones included, so the popup can say how many other opps a
+  // mapping would also fix.
+  const offNameCounts = useMemo(() => {
+    const m = {};
+    for (const r of issues) {
+      for (const name of r.scopeFix?.off || []) {
+        const k = name.toLowerCase();
+        m[k] = (m[k] || 0) + 1;
+      }
+    }
+    return m;
+  }, [issues]);
+  const fixingOtherCounts = useMemo(() => {
+    const m = {};
+    for (const name of fixingRow?.scopeFix?.off || []) {
+      const k = name.toLowerCase();
+      m[k] = Math.max(0, (offNameCounts[k] || 0) - 1);
+    }
+    return m;
+  }, [fixingRow, offNameCounts]);
+
+  // New names go onto the Solutions list first (the same edit Dropdowns ›
+  // Services makes for "+ Add service"), then every Scope that should now
+  // name something else is rewritten in one save. The row drops off once
+  // useIssues re-runs on the new list / refreshed Opps cache.
+  async function saveServiceFix({ resolved, allOpps }) {
+    const fix = fixingRow?.scopeFix;
+    if (!fix) return;
+    setSavingFix(true);
+    setFixError('');
+    try {
+      const adds = [];
+      for (const r of resolved) {
+        if (r.add && !adds.some(a => a.toLowerCase() === r.to.toLowerCase())) adds.push(r.to);
+      }
+      if (adds.length > 0) {
+        const hidden = Array.isArray(settings?.hiddenServices) ? settings.hiddenServices : [];
+        const updates = {
+          dropdownLists: { ...(settings?.dropdownLists || {}), solutions: [...serviceOptions, ...adds] },
+        };
+        if (hidden.some(h => adds.includes(h))) updates.hiddenServices = hidden.filter(h => !adds.includes(h));
+        updateSettings?.(updates);
+      }
+      const remaps = resolved.filter(r => r.to && r.to !== r.from);
+      if (remaps.length > 0) {
+        if (!allOpps && fix.oppId == null) throw new Error('This issue has no linked Opps row to update.');
+        const data = await loadOpps2Newest(user?.uid);
+        if (!data || !Array.isArray(data.records)) throw new Error('Opps data has not loaded yet.');
+        const known = [...(knownServices || serviceOptions), ...adds];
+        const patches = scopeRemapPatches(data.records, remaps, known, allOpps ? null : [fix.oppId]);
+        await bulkSetOppFields(user?.uid, patches);
+      }
+      setFixingRow(null);
     } catch (err) {
       setFixError(`Could not save: ${err?.message || err}`);
     } finally {
@@ -451,6 +720,30 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
           {row.expirationDate ? fmtDate(row.expirationDate) : '-'}
         </span>
       ),
+    },
+    {
+      // Only "Service not in Dropdowns" rows have something to fix here;
+      // every other issue type shows a dash.
+      key: 'fix', label: 'Fix', defaultWidth: 80,
+      getFilterValue: (row) => (row.scopeFix ? 'Fix' : ''),
+      render: (row) => {
+        if (!row.scopeFix) return <span style={{ color: '#94A3B8' }}>-</span>;
+        return (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setFixError(''); setFixingRow(row); }}
+            title="Map this service to one on Dropdowns, or add it as a new service"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '2px 10px', borderRadius: 4, cursor: 'pointer',
+              fontFamily: 'inherit', fontSize: '0.7rem', fontWeight: 600,
+              border: '1px solid #93C5FD', background: '#EFF6FF', color: '#0A66C2',
+            }}
+          >
+            Fix <span aria-hidden="true">✎</span>
+          </button>
+        );
+      },
     },
     {
       key: 'detail', label: 'Details', defaultWidth: 420,
@@ -568,6 +861,20 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
           onPick={(days) => { snoozeIssue(snoozeMenu.id, days); setSnoozeMenu(null); }}
           onUnsnooze={() => { unsnoozeIssue(snoozeMenu.id); setSnoozeMenu(null); }}
           onClose={() => setSnoozeMenu(null)}
+        />
+      )}
+
+      {fixingRow && (
+        <ServiceFixModal
+          key={fixingRow.id}
+          row={fixingRow}
+          services={serviceOptions}
+          retired={solutionsList?.muted || []}
+          otherCounts={fixingOtherCounts}
+          saving={savingFix}
+          error={fixError}
+          onSave={saveServiceFix}
+          onClose={() => { if (!savingFix) { setFixingRow(null); setFixError(''); } }}
         />
       )}
 
