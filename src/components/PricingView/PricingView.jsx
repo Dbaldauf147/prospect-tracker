@@ -35,7 +35,7 @@ import { SiaHistoryTab } from './SiaHistoryTab';
 import { buildSiaHistoryEntry, siaKeyFacts } from '../../utils/siaHistoryEntry';
 import { saveSiaHistoryEntry } from '../../utils/siaLoadHistory';
 import { buildServiceRows } from '../../utils/serviceRows';
-import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, moveLineItemService, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices } from '../../utils/pricingServices';
+import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, moveCostLineService, servicesForCostLine, isCostLineServiceKey, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices } from '../../utils/pricingServices';
 import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
 import { isSetupFeeType } from '../../utils/setupFeeFloor';
 import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
@@ -813,7 +813,9 @@ function lineItemMappingRows(workbookItems, lineItemServices) {
   }
   const savedExtras = [];
   for (const key of Object.keys(lineItemServices || {})) {
-    if (!key || seen.has(key)) continue;
+    // A single cost line's own pick (Move to on the Services subtab), not
+    // a line item of its own.
+    if (!key || seen.has(key) || isCostLineServiceKey(key)) continue;
     const services = lineItemServices[key];
     if (!Array.isArray(services) || services.length === 0) continue;
     seen.add(key);
@@ -953,8 +955,8 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
     setDraftItem('');
   }
 
-  const mappedCount = Object.values(lineItemServices || {})
-    .filter(arr => Array.isArray(arr) && arr.length > 0).length;
+  const mappedCount = Object.entries(lineItemServices || {})
+    .filter(([k, arr]) => !isCostLineServiceKey(k) && Array.isArray(arr) && arr.length > 0).length;
   const hasSolutions = Array.isArray(solutionsOptions) && solutionsOptions.length > 0;
 
   return (
@@ -2792,8 +2794,7 @@ export function PricingView({ settings } = {}) {
       const onOption = servicesOnOption(o);
       for (const sec of (o.sections || [])) {
         for (const item of (sec.items || [])) {
-          const key = String(item.description || '').trim().toLowerCase();
-          const mapped = key && onOption ? onOption[key] : null;
+          const mapped = onOption ? servicesForCostLine(onOption, item) : null;
           if (!Array.isArray(mapped)) continue;
           for (const s of mapped) {
             const k = String(s || '').toLowerCase();
@@ -4973,7 +4974,7 @@ export function PricingView({ settings } = {}) {
         automatedName: String(resolvedLinkedTo(item) || '').trim(),
         unit: linkedToUnitDefaults?.[linkedToDefaultKey(item.description, t)] || '',
         passThrough: isPassThrough(item),
-        otherServices: (onOption?.[norm(item.description)] || []).filter(x => norm(x) && norm(x) !== want),
+        otherServices: (servicesForCostLine(onOption, item) || []).filter(x => norm(x) && norm(x) !== want),
       };
     });
 
@@ -4987,7 +4988,7 @@ export function PricingView({ settings } = {}) {
       }
     }
     const byFee = servicesByFeeName({
-      items: allItems.map(item => ({ description: item.description, linkedTo: resolvedLinkedTo(item) })),
+      items: allItems.map(item => ({ description: item.description, type: item.type, linkedTo: resolvedLinkedTo(item) })),
       lineItemServices: onOption,
     });
     const numYears = Math.max(1, Math.ceil(termMonths / 12));
@@ -6057,7 +6058,7 @@ export function PricingView({ settings } = {}) {
           unlinked={unmappedForBanner}
           tagOptions={solutionsOptions}
           onTagLineItem={(key, service) => setLineItemServices(prev => addServiceToLineItem(prev, key, service))}
-          onMoveLineItem={(key, from, to) => setLineItemServices(prev => moveLineItemService(prev, key, from, to))}
+          onMoveLineItem={(line, from, to) => setLineItemServices(prev => moveCostLineService(prev, line, from, to))}
           onIgnoreLineItem={(key) => setLineItemIgnored(prev => ({ ...(prev || {}), [key]: true }))}
         />
       )}
@@ -7395,6 +7396,7 @@ export function PricingView({ settings } = {}) {
               const feeServices = servicesByFeeName({
                 items: (opt?.sections || []).flatMap(sec => (sec.items || []).map(item => ({
                   description: item.description,
+                  type: item.type,
                   linkedTo: resolvedLinkedTo(item),
                 }))),
                 lineItemServices: servicesOnOption(opt),

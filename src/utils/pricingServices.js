@@ -10,6 +10,32 @@
 
 const norm = (s) => String(s ?? '').trim().toLowerCase();
 
+// One cost line's own pick, set by Move to on the Services subtab.
+//
+// The map is keyed by the lowercased line item, so every cost line
+// carrying that description shares one list of services. Moving a single
+// cost line (the Setup half of a line item, say, while its Recurring half
+// stays put) writes a list of its own under the line item plus the type
+// the SIA gives it, which wins over the line item's list for that line
+// alone. The SIA's type rather than a converted one, so converting the
+// line later doesn't lose the pick. A key with "::" in it is always one of
+// these; the Linked To subtab lists only the plain line item keys.
+export const LINE_KEY_SEP = '::';
+export function costLineServiceKey(description, siaType) {
+  const d = norm(description);
+  return d ? `${d}${LINE_KEY_SEP}${norm(siaType)}` : '';
+}
+export function isCostLineServiceKey(key) {
+  return String(key ?? '').includes(LINE_KEY_SEP);
+}
+// The services one cost line (a workbook item: { description, type })
+// is tied to: its own pick when it has one, else its line item's.
+export function servicesForCostLine(lineItemServices, item) {
+  const own = lineItemServices?.[costLineServiceKey(item?.description, item?.type)];
+  if (Array.isArray(own)) return own;
+  return lineItemServices?.[norm(item?.description)];
+}
+
 // Status labels, in the order the list sorts them within a group.
 export const SERVICE_STATUS = {
   ACTIVE: 'Active',
@@ -45,7 +71,8 @@ export function effectiveLineItemServices(items, lineItemServices, lineItemPrior
   for (const item of items || []) {
     const k = norm(item?.description);
     if (!k || prio[k]) continue;
-    for (const s of Array.isArray(map[k]) ? map[k] : []) if (norm(s)) anchored.add(norm(s));
+    const mapped = servicesForCostLine(map, item);
+    for (const s of Array.isArray(mapped) ? mapped : []) if (norm(s)) anchored.add(norm(s));
   }
   const out = { ...map };
   for (const k of Object.keys(prio)) {
@@ -62,7 +89,7 @@ export function servicesForItems(items, lineItemServices) {
   const seen = new Set();
   const out = [];
   for (const item of items || []) {
-    const mapped = lineItemServices?.[norm(item?.description)];
+    const mapped = servicesForCostLine(lineItemServices, item);
     if (!Array.isArray(mapped)) continue;
     for (const s of mapped) {
       const k = norm(s);
@@ -119,7 +146,7 @@ export function costItemsForService(items, lineItemServices, service) {
   const want = norm(service);
   if (!want) return [];
   return (items || []).filter(item => {
-    const mapped = lineItemServices?.[norm(item?.description)];
+    const mapped = servicesForCostLine(lineItemServices, item);
     return Array.isArray(mapped) && mapped.some(s => norm(s) === want);
   });
 }
@@ -568,6 +595,39 @@ export function moveLineItemService(lineItemServices, lineItemKey, fromService, 
     ? current.filter(s => norm(s) !== from)
     : current.map(s => (norm(s) === from ? name : s));
   return { ...map, [key]: next };
+}
+
+// Moving ONE cost line from one service to another on the Services subtab.
+//
+// Only the line picked moves: its services (its own pick, else its line
+// item's) with the one swapped for the other, the same way as above, are
+// written as the line's own pick (see costLineServiceKey). Every other cost
+// line carrying the same description keeps the line item's list. A move
+// that lands the line back on exactly the line item's list drops its own
+// pick again rather than keeping a copy. A line that isn't tied to the
+// service it is moving from is left as it was.
+//
+//   item   the cost line: { description, type } with type as the SIA has it
+export function moveCostLineService(lineItemServices, item, fromService, toService) {
+  const map = lineItemServices || {};
+  const key = costLineServiceKey(item?.description, item?.type);
+  const from = norm(fromService);
+  const name = String(toService ?? '').trim();
+  if (!key || !from || !name || from === norm(name)) return map;
+  const current = servicesForCostLine(map, item);
+  const list = Array.isArray(current) ? current : [];
+  if (!list.some(s => norm(s) === from)) return map;
+  const has = list.some(s => norm(s) === norm(name));
+  const next = has
+    ? list.filter(s => norm(s) !== from)
+    : list.map(s => (norm(s) === from ? name : s));
+  const shared = map[norm(item?.description)];
+  const same = Array.isArray(shared) && shared.length === next.length
+    && shared.every((s, i) => norm(s) === norm(next[i]));
+  const out = { ...map };
+  if (same) delete out[key];
+  else out[key] = next;
+  return out;
 }
 
 // Cost figures for the unlinked rows the warning lists: how many cost lines

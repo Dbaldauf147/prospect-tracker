@@ -36,6 +36,7 @@
 
 import { rowYearRevenue } from './pricingOptionCalc.js';
 import { scopeYear1Lines } from './servicePricing.js';
+import { servicesForCostLine } from './pricingServices.js';
 
 const key = (s) => String(s ?? '').trim().toLowerCase();
 
@@ -63,7 +64,7 @@ function normServices(raw) {
  * Linked To tag names the fee-schedule row that bills it. So a fee row
  * covers every service named by the cost rows linked to it.
  *
- * `items` is [{ description, linkedTo }] — the caller resolves Linked To,
+ * `items` is [{ description, type, linkedTo }] — the caller resolves Linked To,
  * because only it knows about per-row overrides. Returns a Map keyed by the
  * lowercased fee name, which is how the fee rows are matched back.
  */
@@ -72,7 +73,7 @@ export function servicesByFeeName({ items, lineItemServices }) {
   for (const item of items || []) {
     const tag = String(item?.linkedTo ?? '').trim();
     if (!tag) continue;
-    const mapped = lineItemServices?.[key(item?.description)];
+    const mapped = servicesForCostLine(lineItemServices, item);
     if (!Array.isArray(mapped) || !mapped.length) continue;
     const k = tag.toLowerCase();
     if (!out.has(k)) out.set(k, []);
