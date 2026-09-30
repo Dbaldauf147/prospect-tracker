@@ -19,7 +19,7 @@ import {
   addServiceToLineItem, moveLineItemService, moveCostLineService, servicesForCostLine, costTotalsByLineItem, addLaterCostFees,
   costTypeConversion, moveCostAllocation, buildScheduleFromStructures, standardFeeContext, groupFeeRows, effectiveLineItemServices,
   passThroughFeeRows, addPassThroughFees, sharedLineItemsToSplit, setCostLineService, sharedSignature,
-  lineItemServicesOnOption, setOptionCostLineService,
+  lineItemServicesOnOption, setOptionCostLineService, setOptionItemService, clearOptionItemPicks,
 } from '../src/utils/pricingServices.js';
 
 let failed = 0;
@@ -627,6 +627,39 @@ test('a split on one option stays on that option and off the Linked To mapping',
   const picks = setOptionCostLineService({}, older, items[0], '');
   assert.deepEqual(servicesForCostLine(lineItemServicesOnOption({ costLineServices: picks }, older), items[0]), ['Sustainability Reports', 'Marketing Collateral']);
   assert.deepEqual(servicesForCostLine(older, items[0]), ['Sustainability Reports']);
+});
+
+test('Pick services: rows sharing a description and type go to different services on the option', () => {
+  const items = [
+    { id: 'r1', description: 'Communication Support', type: 'One Time', cts: 10 },
+    { id: 'r2', description: 'Communication Support', type: 'One Time', cts: 20 },
+    { id: 'r3', description: 'Communication Support', type: 'One Time', cts: 30 },
+  ];
+  const mapping = { 'communication support': ['A', 'B', 'C'] };
+  let own = {};
+  own = setOptionItemService(own, mapping, items[0], 'A');
+  own = setOptionItemService(own, mapping, items[1], 'B');
+  let on = lineItemServicesOnOption({ costLineServices: own }, mapping);
+  assert.deepEqual(items.map(i => servicesForCostLine(on, i)), [['A'], ['B'], ['A', 'B', 'C']]);
+  let rows = sharedLineItemsToSplit(items, on);
+  assert.equal(rows.length, 1, 'still asks while one row is shared');
+  assert.equal(rows[0].lines[0].mixed, true);
+  assert.equal(rows[0].lines[0].pick, null);
+  assert.deepEqual(rows[0].lines[0].items.map(r => r.pick), ['A', 'B', null]);
+  own = setOptionItemService(own, mapping, items[2], 'C');
+  on = lineItemServicesOnOption({ costLineServices: own }, mapping);
+  assert.equal(sharedLineItemsToSplit(items, on).length, 0, 'settled once every row is picked');
+  assert.deepEqual(costItemsForService(items, on, 'B').map(i => i.id), ['r2']);
+  assert.deepEqual(mapping, { 'communication support': ['A', 'B', 'C'] }, 'Linked To untouched');
+  // A type pick, then a row set back to shared, reads shared for that row only.
+  let typed = setOptionCostLineService({}, mapping, items[0], 'A');
+  typed = setOptionItemService(typed, mapping, items[1], '');
+  on = lineItemServicesOnOption({ costLineServices: typed }, mapping);
+  assert.deepEqual(items.map(i => servicesForCostLine(on, i)), [['A'], ['A', 'B', 'C'], ['A']]);
+  // The line menu clears row picks so its pick covers every row again.
+  const cleared = setOptionCostLineService(clearOptionItemPicks(typed, items), mapping, items[0], 'C');
+  on = lineItemServicesOnOption({ costLineServices: cleared }, mapping);
+  assert.deepEqual(items.map(i => servicesForCostLine(on, i)), [['C'], ['C'], ['C']]);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

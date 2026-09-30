@@ -35,7 +35,7 @@ import { SiaHistoryTab } from './SiaHistoryTab';
 import { buildSiaHistoryEntry, siaKeyFacts } from '../../utils/siaHistoryEntry';
 import { saveSiaHistoryEntry } from '../../utils/siaLoadHistory';
 import { buildServiceRows } from '../../utils/serviceRows';
-import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, moveCostLineService, servicesForCostLine, isCostLineServiceKey, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices, sharedLineItemsToSplit, sharedSignature, lineItemServicesOnOption, setOptionCostLineService } from '../../utils/pricingServices';
+import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, moveCostLineService, servicesForCostLine, isCostLineServiceKey, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices, sharedLineItemsToSplit, sharedSignature, lineItemServicesOnOption, setOptionCostLineService, setOptionItemService, clearOptionItemPicks } from '../../utils/pricingServices';
 import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
 import { isSetupFeeType } from '../../utils/setupFeeFloor';
 import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
@@ -6102,7 +6102,13 @@ export function PricingView({ settings } = {}) {
           onMoveLineItem={(line, from, to) => setLineItemServices(prev => moveCostLineService(prev, line, from, to))}
           onIgnoreLineItem={(key) => setLineItemIgnored(prev => ({ ...(prev || {}), [key]: true }))}
           sharedToSplit={sharedToSplit}
-          onSplitCostLine={(line, service) => updateActiveOption(o => ({ ...o, costLineServices: setOptionCostLineService(o.costLineServices, lineItemServices, line, service) }))}
+          // The line menu sets every row of that type, so row picks made in
+          // the Pick services popup give way to it.
+          onSplitCostLine={(line, service) => updateActiveOption(o => ({ ...o, costLineServices: setOptionCostLineService(clearOptionItemPicks(o.costLineServices, line.items), lineItemServices, line, service) }))}
+          onPickItemServices={(picks) => updateActiveOption(o => ({
+            ...o,
+            costLineServices: picks.reduce((own, { item, service }) => setOptionItemService(own, lineItemServices, item, service), o.costLineServices),
+          }))}
           onKeepShared={(row) => updateActiveOption(o => ({ ...o, sharedOk: { ...(o.sharedOk || {}), [row.key]: sharedSignature(row.services) } }))}
         />
       )}
