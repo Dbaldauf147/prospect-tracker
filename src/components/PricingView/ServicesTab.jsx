@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import styles from './ServicesTab.module.css';
 import {
   SERVICE_STATUS, FEE_STRUCTURE_TYPES, FEE_STRUCTURE_UNITS, serviceKey,
@@ -54,6 +55,9 @@ const STATUS_CLASS = {
 //                   ('' puts it back on the list)
 //   onKeepShared    (sharedToSplit row) => keeps the line item shared on
 //                   the active option
+//   onPickItemServices ([{ item, service }]) => the Pick services popup's
+//                   answer: each SIA row pointed at one service on the
+//                   active option ('' puts it back to shared)
 //   onSetItemType   (itemId, type) => overrides a cost line's Type ('' clears it)
 //   onSetPassThrough (description, type, on) => the Linked To pass-through
 //                   setting for that Line Item + Type pair
@@ -67,7 +71,7 @@ const STATUS_CLASS = {
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
   onSetCount, onIgnoreForCheck, onSetFeeComponent, feeStructures = {}, setFeeStructures, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough,
-  unlinked = null, tagOptions = [], onTagLineItem, onMoveLineItem, onIgnoreLineItem, sharedToSplit = [], onSplitCostLine, onKeepShared, onSetCompleted, completedServices = [], globalGmPct = null,
+  unlinked = null, tagOptions = [], onTagLineItem, onMoveLineItem, onIgnoreLineItem, sharedToSplit = [], onSplitCostLine, onKeepShared, onPickItemServices, onSetCompleted, completedServices = [], globalGmPct = null,
 }) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(null);
@@ -189,6 +193,8 @@ export function ServicesTab({
           optionName={opt?.sheetName}
           onSplit={onSplitCostLine}
           onKeepShared={onKeepShared}
+          onPickItems={onPickItemServices}
+          option={opt}
           onOpenLinkedTo={onOpenLinkedTo}
         />
       )}
@@ -313,8 +319,12 @@ function splitChoices(row, line) {
 // priority order, so each service counts the whole cost. Each cost line
 // (line item + SIA type) gets a menu of those services to say which one it
 // really belongs to; Keep shared settles it as it is.
-function SharedSplitPrompt({ rows, optionName, onSplit, onKeepShared, onOpenLinkedTo }) {
+function SharedSplitPrompt({ rows, optionName, onSplit, onKeepShared, onPickItems, option, onOpenLinkedTo }) {
   const [open, setOpen] = useState(true);
+  // The row whose Pick services popup is open, by key, so it follows the
+  // row as the picks it saves re-derive the list.
+  const [pickingKey, setPickingKey] = useState(null);
+  const picking = rows.find(r => r.key === pickingKey) || null;
   const n = rows.length;
   return (
     <div className={styles.unlinked} role="alert">
@@ -336,16 +346,28 @@ function SharedSplitPrompt({ rows, optionName, onSplit, onKeepShared, onOpenLink
                   {row.name}
                   <span className={styles.subNote}>Shared by {row.services.join(', ')}</span>
                 </span>
-                {onKeepShared && (
-                  <button
-                    type="button"
-                    className={styles.ignoreBtn}
-                    onClick={() => onKeepShared(row)}
-                    title="Every service listed keeps counting this cost on this option. Asks again if the list of services changes."
-                  >
-                    Keep shared
-                  </button>
-                )}
+                <span className={styles.splitActions}>
+                  {onPickItems && (
+                    <button
+                      type="button"
+                      className={styles.tagBtn}
+                      onClick={() => setPickingKey(row.key)}
+                      title="Match each cost line of this line item to the service it belongs to, on this option"
+                    >
+                      Pick services
+                    </button>
+                  )}
+                  {onKeepShared && (
+                    <button
+                      type="button"
+                      className={styles.ignoreBtn}
+                      onClick={() => onKeepShared(row)}
+                      title="Every service listed keeps counting this cost on this option. Asks again if the list of services changes."
+                    >
+                      Keep shared
+                    </button>
+                  )}
+                </span>
               </div>
               {row.lines.map(line => (
                 <div key={line.type || '(none)'} className={styles.splitLine}>
@@ -357,10 +379,11 @@ function SharedSplitPrompt({ rows, optionName, onSplit, onKeepShared, onOpenLink
                   </span>
                   <select
                     className={`${styles.tagSelect} ${line.pick ? '' : styles.splitPending}`}
-                    value={line.pick || ''}
-                    onChange={(e) => onSplit({ description: line.description, type: line.type }, e.target.value)}
+                    value={line.mixed ? MIXED : (line.pick || '')}
+                    onChange={(e) => { if (e.target.value !== MIXED) onSplit({ description: line.description, type: line.type, items: line.items.map(r => r.item) }, e.target.value); }}
                     aria-label={`Service for ${row.name}, ${line.type || 'no type'}`}
                   >
+                    {line.mixed && <option value={MIXED} disabled>Picked per cost line</option>}
                     <option value="">Shared by all ({row.services.length})</option>
                     {splitChoices(row, line).map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
@@ -370,6 +393,16 @@ function SharedSplitPrompt({ rows, optionName, onSplit, onKeepShared, onOpenLink
           ))}
         </ul>
       )}
+      {picking && (
+        <PickServicesModal
+          key={picking.key}
+          row={picking}
+          option={option}
+          optionName={optionName}
+          onSave={(picks) => { onPickItems(picks); setPickingKey(null); }}
+          onClose={() => setPickingKey(null)}
+        />
+      )}
       {open && onOpenLinkedTo && (
         <div className={styles.unlinkedFoot}>
           To make the list a priority order instead, tick First in scope only on the{' '}
@@ -377,6 +410,133 @@ function SharedSplitPrompt({ rows, optionName, onSplit, onKeepShared, onOpenLink
         </div>
       )}
     </div>
+  );
+}
+
+// The line menu's value while its cost lines are picked one by one.
+const MIXED = '__mixed__';
+// "Shared by all" in the popup's set-every-line menu, whose blank value is
+// its placeholder.
+const SHARED = '__shared__';
+
+// Pick services popup: every SIA row of one shared line item on the
+// active option (all its types), each with its own service menu, so three
+// One Time rows of Communication Support can go to three services. A menu
+// at the top sets every row at once. Save hands back only the rows that
+// changed; nothing is written until then.
+function PickServicesModal({ row, option, optionName, onSave, onClose }) {
+  // Which section of the option each row sits in, for telling apart rows
+  // that share a description and a type.
+  const sectionOf = useMemo(() => {
+    const m = new Map();
+    for (const sec of option?.sections || []) for (const it of sec.items || []) m.set(it.id, sec.title);
+    return m;
+  }, [option]);
+  const entries = useMemo(() => row.lines.flatMap(line => line.items.map(r => ({ ...r, line }))), [row]);
+  const [picks, setPicks] = useState(() => Object.fromEntries(entries.map(r => [r.item.id, r.pick || ''])));
+  const choices = splitChoices(row, { choices: [] });
+  const changed = entries.filter(r => (picks[r.item.id] || '') !== (r.pick || ''));
+
+  // Running CTS per service as picked, shared rows counted under "Shared".
+  const totals = useMemo(() => {
+    const m = new Map();
+    for (const r of entries) {
+      const k = picks[r.item.id] || 'Shared by all';
+      m.set(k, (m.get(k) || 0) + (typeof r.item.cts === 'number' ? r.item.cts : 0));
+    }
+    return [...m.entries()];
+  }, [entries, picks]);
+
+  const backdropDown = useRef(false);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      className={styles.pickBackdrop}
+      onMouseDown={(e) => { backdropDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && backdropDown.current) onClose(); }}
+    >
+      <div className={styles.pickModal} role="dialog" aria-label={`Pick services for ${row.name}`}>
+        <div className={styles.pickHead}>
+          <div className={styles.pickTitle}>Pick services: {row.name}</div>
+          <div className={styles.pickSub}>
+            Match each cost line to the service it belongs to{optionName ? ` on ${optionName}` : ''}.
+            Other options and the Linked To subtab are not changed.
+          </div>
+        </div>
+        <div className={styles.pickBody}>
+          <label className={styles.pickAll}>
+            Set every cost line to
+            <select
+              className={styles.tagSelect}
+              value=""
+              onChange={(e) => {
+                const v = e.target.value === SHARED ? '' : e.target.value;
+                setPicks(Object.fromEntries(entries.map(r => [r.item.id, v])));
+              }}
+            >
+              <option value="" disabled>(Choose)</option>
+              <option value={SHARED}>Shared by all ({row.services.length})</option>
+              {choices.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </label>
+          <table className={styles.pickTable}>
+            <thead>
+              <tr>
+                <th>Section</th>
+                <th>Type</th>
+                <th>Start</th>
+                <th>Comments</th>
+                <th className={styles.pickNum}>CTS</th>
+                <th>Service</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map(r => (
+                <tr key={r.item.id}>
+                  <td>{sectionOf.get(r.item.id) || '-'}</td>
+                  <td>{r.item.type || 'No type'}</td>
+                  <td>{r.item.startMonth || '-'}</td>
+                  <td>{r.item.comments || '-'}</td>
+                  <td className={styles.pickNum}>{fmtMoney(r.item.cts) || '-'}</td>
+                  <td>
+                    <select
+                      className={`${styles.tagSelect} ${picks[r.item.id] ? '' : styles.splitPending}`}
+                      value={picks[r.item.id] || ''}
+                      onChange={(e) => setPicks(p => ({ ...p, [r.item.id]: e.target.value }))}
+                      aria-label={`Service for ${row.name}, ${r.item.type || 'no type'}, ${fmtMoney(r.item.cts) || 'no CTS'}`}
+                    >
+                      <option value="">Shared by all ({row.services.length})</option>
+                      {choices.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className={styles.pickTotals}>
+            {totals.map(([k, v]) => <span key={k}><strong>{k}</strong>: {fmtMoney(v)}</span>)}
+          </div>
+        </div>
+        <div className={styles.pickFoot}>
+          <button type="button" className={styles.ignoreBtn} onClick={onClose}>Cancel</button>
+          <button
+            type="button"
+            className={styles.pickSave}
+            disabled={changed.length === 0}
+            style={changed.length === 0 ? { opacity: 0.5, cursor: 'default' } : undefined}
+            onClick={() => onSave(changed.map(r => ({ item: r.item, service: picks[r.item.id] || '' })))}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

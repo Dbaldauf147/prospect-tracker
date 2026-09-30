@@ -28,9 +28,23 @@ export function costLineServiceKey(description, siaType) {
 export function isCostLineServiceKey(key) {
   return String(key ?? '').includes(LINE_KEY_SEP);
 }
-// The services one cost line (a workbook item: { description, type })
-// is tied to: its own pick when it has one, else its line item's.
+// One single row of the SIA, picked in the Services subtab's Pick services
+// popup. Several rows can share a description AND a type (three One Time
+// rows of Communication Support), so the only thing telling them apart is
+// the row itself: keyed by the workbook item's id. These only ever live in
+// an option's own picks (option.costLineServices), since an item id belongs
+// to one option of one SIA.
+export const ITEM_PICK_PREFIX = '#item:';
+export function costLineItemKey(itemId) {
+  return itemId == null || itemId === '' ? '' : `${ITEM_PICK_PREFIX}${itemId}`;
+}
+
+// The services one cost line (a workbook item: { id, description, type })
+// is tied to: that row's own pick, else its line item + type pick, else its
+// line item's.
 export function servicesForCostLine(lineItemServices, item) {
+  const row = item?.id != null ? lineItemServices?.[costLineItemKey(item.id)] : undefined;
+  if (Array.isArray(row)) return row;
   const own = lineItemServices?.[costLineServiceKey(item?.description, item?.type)];
   if (Array.isArray(own)) return own;
   return lineItemServices?.[norm(item?.description)];
@@ -71,6 +85,35 @@ export function setOptionCostLineService(optionPicks, lineItemServices, item, se
     const shared = Array.isArray(map[norm(item?.description)]) ? map[norm(item.description)] : [];
     own[key] = [...shared];
   }
+  return own;
+}
+
+// One row's pick on the option (the Pick services popup). A service points
+// that row alone at it. A blank one puts the row back to shared: its own
+// pick is dropped, and if the row would still read as something other
+// than the line item's shared list (a pick for its whole type, made in the
+// prompt's menu), the shared list is written for the row instead.
+export function setOptionItemService(optionPicks, lineItemServices, item, service) {
+  const key = costLineItemKey(item?.id);
+  const own = { ...(optionPicks && typeof optionPicks === 'object' ? optionPicks : {}) };
+  if (!key) return own;
+  const name = String(service ?? '').trim();
+  if (name) {
+    own[key] = [name];
+    return own;
+  }
+  delete own[key];
+  const shared = Array.isArray(lineItemServices?.[norm(item?.description)]) ? lineItemServices[norm(item.description)] : [];
+  const now = servicesForCostLine({ ...(lineItemServices || {}), ...own }, item) || [];
+  if (sharedSignature(now) !== sharedSignature(shared)) own[key] = [...shared];
+  return own;
+}
+
+// Dropping every row pick of the given items, so a pick for their whole
+// type (the prompt's menu) applies to all of them again.
+export function clearOptionItemPicks(optionPicks, items) {
+  const own = { ...(optionPicks && typeof optionPicks === 'object' ? optionPicks : {}) };
+  for (const item of items || []) delete own[costLineItemKey(item?.id)];
   return own;
 }
 
@@ -721,18 +764,27 @@ export function sharedLineItemsToSplit(items, lineItemServices, { priority = {},
     const typeKey = norm(item.type);
     let line = g.byType.get(typeKey);
     if (!line) {
-      const current = servicesForCostLine(map, item);
-      const choices = (Array.isArray(current) ? current : []).filter(s => norm(s));
-      line = { description: item.description, type: item.type || '', count: 0, cts: 0, choices, pick: choices.length === 1 ? choices[0] : null };
+      line = { description: item.description, type: item.type || '', count: 0, cts: 0, choices: [], pick: null, mixed: false, items: [] };
       g.byType.set(typeKey, line);
       g.lines.push(line);
     }
+    const current = servicesForCostLine(map, item);
+    const choices = (Array.isArray(current) ? current : []).filter(s => norm(s));
+    line.items.push({ item, choices, pick: choices.length === 1 ? choices[0] : null });
     line.count += 1;
     if (typeof item.cts === 'number' && Number.isFinite(item.cts)) line.cts += item.cts;
   }
   const out = [];
   for (const g of groups.values()) {
-    if (!g.lines.some(l => l.choices.length > 1)) continue;
+    // A type's rows read as one line while they agree; picked one by one
+    // (Pick services) to different services, the line is mixed.
+    for (const line of g.lines) {
+      const sigs = new Set(line.items.map(r => sharedSignature(r.choices)));
+      line.mixed = sigs.size > 1;
+      line.choices = line.mixed ? [...new Set(line.items.flatMap(r => r.choices))] : line.items[0].choices;
+      line.pick = !line.mixed && line.choices.length === 1 ? line.choices[0] : null;
+    }
+    if (!g.lines.some(l => l.items.some(r => r.choices.length > 1))) continue;
     out.push({ key: g.key, name: g.name, services: g.services, lines: g.lines });
   }
   return out;
