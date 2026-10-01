@@ -443,7 +443,7 @@ export function FeeBuilderTab({
   const rows = plan?.services || [];
   const listed = rows.filter(r => r.inScope || showAll);
   const hiddenCount = rows.length - listed.length;
-  const noStructures = listed.filter(r => r.structures.length === 0).length;
+  const noStructures = listed.filter(r => r.inScope && r.structures.length === 0).length;
   // Picks are kept per option, so each option's fee structures stay put
   // while another is being worked on.
   const optionNumber = plan?.optionNumber ?? opt?.optionNumber;
@@ -624,7 +624,11 @@ export function FeeBuilderTab({
                     {showCol('cts') && <td className={styles.num}>{r.costCts ? fmtMoney(r.costCts) : ''}</td>}
                     {showCol('current') && <td className={own.muted}>{r.currentFees.length ? r.currentFees.join(', ') : 'Nothing'}</td>}
                     {showCol('structure') && <td>
-                      {r.structures.length === 0 ? (
+                      {!r.inScope ? (
+                        <span className={own.muted} title="Only services with cost lines on this option build fees">
+                          No cost lines on this option, so no fees
+                        </span>
+                      ) : r.structures.length === 0 ? (
                         <button type="button" className={styles.linkBtn} onClick={onOpenServices}>
                           No saved structures, set one up
                         </button>

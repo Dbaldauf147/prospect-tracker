@@ -30,7 +30,7 @@ import { SERVICE_RENAMED_EVENT } from '../../utils/serviceRenameRunner';
 import { renameLineItemServices, renameFeeStructures, renameWorkbookServices } from '../../utils/serviceRenamePlans';
 import { renameInLowerList, renameInLowerKeyMap } from '../../utils/serviceNameMerges';
 import { FeeBuilderTab } from './FeeBuilderTab';
-import { updateForOption, copyPicksBetweenOptions } from '../../utils/feeBuilderChecklist';
+import { updateForOption, copyPicksBetweenOptions, pickedStructureFor } from '../../utils/feeBuilderChecklist';
 import { dealFor, snapshotFeeBuilder, restoreFeeBuilder, savedFor, putSaved, removeSaved, listSaved } from '../../utils/feeBuilderSaved';
 import { SiaHistoryTab } from './SiaHistoryTab';
 import { buildSiaHistoryEntry, siaKeyFacts } from '../../utils/siaHistoryEntry';
@@ -5492,17 +5492,18 @@ export function PricingView({ settings } = {}) {
   }
 
   // Fee Builder subtab: which saved fee structure each service would use.
-  // A service with no pick uses its standard (★) structure when it is in
-  // SIA scope; '' leaves its fees on the schedule as they are.
+  // A service with no pick uses its standard (★) structure; '' leaves its
+  // fees on the schedule as they are. One outside SIA scope builds nothing
+  // (see pickedStructureFor).
   function feeBuilderPickFor(svc, optionNumber) {
     const k = serviceKey(svc.name);
     const saved = serviceFeeStructures[k];
-    const structures = saved?.structures || [];
-    const picked = feeBuilderPicks[optionNumber]?.[k];
-    if (picked === '') return null;
-    if (picked) return structures.find(x => x.id === picked) || null;
-    if (!svc.inScope) return null;
-    return structures.find(x => x.id === saved?.standardId) || structures[0] || null;
+    return pickedStructureFor({
+      inScope: svc.inScope,
+      structures: saved?.structures,
+      standardId: saved?.standardId,
+      picked: feeBuilderPicks[optionNumber]?.[k],
+    });
   }
 
   // Fee Builder subtab: the target option picks the same fee structure for

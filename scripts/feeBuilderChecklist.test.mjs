@@ -1,7 +1,7 @@
 // Assertion tests for the Fee Builder checklist and column picker.
 // Plain Node - no test framework. Run:
 //   node scripts/feeBuilderChecklist.test.mjs
-import { isServiceDone, setServiceDone, toggleHiddenColumn, updateForOption, copyPicksBetweenOptions } from '../src/utils/feeBuilderChecklist.js';
+import { isServiceDone, setServiceDone, toggleHiddenColumn, updateForOption, copyPicksBetweenOptions, pickedStructureFor } from '../src/utils/feeBuilderChecklist.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -58,6 +58,17 @@ const copied = copyPicksBetweenOptions({
 check('copied picks', copied, { bbs: 'site', budgets: '', 'only on target': '', 'only on source': 'std-s' });
 check('nothing picked, same scope: nothing written',
   copyPicksBetweenOptions({ services: svcs, fromPicks: undefined, fromScope: new Set(['bbs']), toScope: new Set(['bbs']) }), {});
+
+// The structure a service builds from.
+const sts = [{ id: 'std' }, { id: 'site' }];
+check('in scope, no pick: standard', pickedStructureFor({ inScope: true, structures: sts, standardId: 'std' })?.id, 'std');
+check('in scope, no standard: first', pickedStructureFor({ inScope: true, structures: sts, standardId: null })?.id, 'std');
+check('in scope, picked', pickedStructureFor({ inScope: true, structures: sts, standardId: 'std', picked: 'site' })?.id, 'site');
+check('in scope, no fees', pickedStructureFor({ inScope: true, structures: sts, standardId: 'std', picked: '' }), null);
+check('in scope, picked structure gone', pickedStructureFor({ inScope: true, structures: sts, standardId: 'std', picked: 'gone' }), null);
+check('out of scope, no pick: nothing', pickedStructureFor({ inScope: false, structures: sts, standardId: 'std' }), null);
+check('out of scope, picked (copied or restored): nothing', pickedStructureFor({ inScope: false, structures: sts, standardId: 'std', picked: 'site' }), null);
+check('no structures', pickedStructureFor({ inScope: true, structures: undefined, standardId: 'std' }), null);
 
 console.log(`${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

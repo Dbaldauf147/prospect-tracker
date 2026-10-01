@@ -73,3 +73,17 @@ export function copyPicksBetweenOptions({ services, fromPicks, fromScope, toScop
   }
   return out;
 }
+
+// The structure a service builds from on one option, or null for no fees.
+// A service outside the option's SIA scope has no cost lines there, so
+// nothing from the SIA for a fee to price: it builds nothing, whatever pick
+// it carries (one copied from another option, or restored from a save made
+// on an SIA where it was in scope). Otherwise '' is "no fees", a structure
+// id is that structure, and no pick is the service's standard.
+export function pickedStructureFor({ inScope, structures, standardId, picked }) {
+  if (!inScope) return null;
+  const list = Array.isArray(structures) ? structures : [];
+  if (picked === '') return null;
+  if (picked) return list.find(x => x.id === picked) || null;
+  return list.find(x => x.id === standardId) || list[0] || null;
+}
