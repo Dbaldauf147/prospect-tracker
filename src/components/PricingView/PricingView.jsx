@@ -30,6 +30,7 @@ import { ServicesTab } from './ServicesTab';
 import { SERVICE_RENAMED_EVENT } from '../../utils/serviceRenameRunner';
 import { renameLineItemServices, renameFeeStructures, renameWorkbookServices } from '../../utils/serviceRenamePlans';
 import { renameInLowerList, renameInLowerKeyMap } from '../../utils/serviceNameMerges';
+import { mergeCompletedServices } from '../../utils/servicesCompleted';
 import { FeeBuilderTab } from './FeeBuilderTab';
 import { updateForOption, copyPicksBetweenOptions, pickedStructureFor } from '../../utils/feeBuilderChecklist';
 import { dealFor, snapshotFeeBuilder, restoreFeeBuilder, savedFor, putSaved, removeSaved, listSaved, scenariosFor, newScenario, scenarioName } from '../../utils/feeBuilderSaved';
@@ -2591,6 +2592,16 @@ export function PricingView({ settings } = {}) {
         }
         const savedCompleted = await dbGet(STORE, SERVICES_COMPLETED_KEY);
         if (!cancelled && Array.isArray(savedCompleted)) setServicesCompleted(savedCompleted);
+        // Marks made before they had their own key live on the cached
+        // workbook's options, and would go with it on the next SIA, a Clear
+        // or a parser bump. Fold them into the key now, saved straight away
+        // since the save effect doesn't run until hydration finishes.
+        const adoptLegacyCompleted = async (cachedWorkbook) => {
+          const merged = mergeCompletedServices(savedCompleted, cachedWorkbook);
+          if (cancelled || !merged) return;
+          setServicesCompleted(prev => mergeCompletedServices(prev, cachedWorkbook) || prev);
+          await dbPut(STORE, merged, SERVICES_COMPLETED_KEY).catch(err => console.warn('Failed to save completed services:', err));
+        };
         const savedExcluded = await dbGet(STORE, PRICE_CHECK_EXCLUDED_KEY);
         if (!cancelled && savedExcluded && typeof savedExcluded === 'object') setPriceCheckExcluded(savedExcluded);
         const savedComponentPicks = await dbGet(STORE, PRICE_CHECK_COMPONENTS_KEY);
@@ -2612,6 +2623,7 @@ export function PricingView({ settings } = {}) {
         // Drop caches written by an older parser - their workbook
         // shape may not match what the UI now expects. Linked-To
         // defaults are preserved via the separate key above.
+        await adoptLegacyCompleted(saved.workbook);
         if (saved.parserVersion !== PARSER_VERSION) {
           await dbDelete(STORE, KEY).catch(() => {});
           if (!savedDefaults && saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
