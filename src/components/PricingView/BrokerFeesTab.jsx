@@ -83,6 +83,12 @@ function heatmapBg(value, min, max, direction) {
   return `hsl(${hue} 70% 82%)`;
 }
 
+// The heat-shaded columns, and the row field naming the ones a row leaves
+// out of the shading: an outlier ticked off there stays uncoloured and
+// stops stretching the scale for everyone else. Totals still count it.
+const HEAT_KEYS = ['loadEp', 'feeEp', 'loadNg', 'feeNg'];
+const isColorIgnored = (row, key) => Array.isArray(row?.colorIgnore) && row.colorIgnore.includes(key);
+
 // SE PE pricing reference rows ("High end SS - SE PE pricing", etc.)
 // aren't real deals; they're floor/ceiling benchmarks. Bold them so
 // they read as reference lines.
@@ -209,6 +215,20 @@ export function BrokerFeesTab({ rows, setRows }) {
     setRows(next);
   };
   const addRow = () => setRows([...safeRows, EMPTY_ROW()]);
+  const toggleColorIgnore = (idx, key) => {
+    const row = safeRows[idx];
+    const list = Array.isArray(row.colorIgnore) ? row.colorIgnore : [];
+    const nextList = list.includes(key) ? list.filter(k => k !== key) : [...list, key];
+    const next = safeRows.slice();
+    const { colorIgnore: _drop, ...rest } = row;
+    next[idx] = nextList.length ? { ...rest, colorIgnore: nextList } : rest;
+    setRows(next);
+  };
+  const showAllColors = () => setRows(safeRows.map(r => {
+    if (!('colorIgnore' in r)) return r;
+    const { colorIgnore: _drop, ...rest } = r;
+    return rest;
+  }));
   const removeRow = (idx) => {
     const next = safeRows.slice();
     next.splice(idx, 1);
@@ -273,10 +293,13 @@ export function BrokerFeesTab({ rows, setRows }) {
     if (!nums.length) return { min: null, max: null };
     return { min: Math.min(...nums), max: Math.max(...nums) };
   }
-  const loadEpRange = rangeOf(safeRows.map(r => r.loadEp));
-  const feeEpRange  = rangeOf(safeRows.map(r => r.feeEp));
-  const loadNgRange = rangeOf(safeRows.map(r => r.loadNg));
-  const feeNgRange  = rangeOf(safeRows.map(r => r.feeNg));
+  // Values left out of the colours don't set the range either.
+  const shaded = (key) => safeRows.filter(r => !isColorIgnored(r, key)).map(r => r[key]);
+  const loadEpRange = rangeOf(shaded('loadEp'));
+  const feeEpRange  = rangeOf(shaded('feeEp'));
+  const loadNgRange = rangeOf(shaded('loadNg'));
+  const feeNgRange  = rangeOf(shaded('feeNg'));
+  const ignoredCount = safeRows.reduce((n, r) => n + HEAT_KEYS.filter(k => isColorIgnored(r, k)).length, 0);
 
   // Sortable column accessor. Returns the value the sorter should
   // compare on — numeric for load / fee / RFP / total columns,
@@ -483,6 +506,16 @@ export function BrokerFeesTab({ rows, setRows }) {
         </div>
       )}
 
+      <div className={styles.colorHint}>
+        Hover a load or fee cell and click ⊘ to leave an outlier out of the colours. It keeps its value and still counts in the totals.
+        {ignoredCount > 0 && (
+          <>
+            {' '}{ignoredCount} left out.{' '}
+            <button type="button" className={styles.linkBtn} onClick={showAllColors}>Colour all again</button>
+          </>
+        )}
+      </div>
+
       <div className={styles.gridWrap}>
         <table className={styles.grid}>
           <thead>
@@ -535,17 +568,33 @@ export function BrokerFeesTab({ rows, setRows }) {
               const feeNgNum  = toNum(row.feeNg);
               // Heatmap shading: larger loads green, smaller red;
               // lower fees green, higher red.
-              const loadEpBg = heatmapBg(loadEpNum, loadEpRange.min, loadEpRange.max, 'highGood');
-              const feeEpBg  = heatmapBg(feeEpNum,  feeEpRange.min,  feeEpRange.max,  'lowGood');
-              const loadNgBg = heatmapBg(loadNgNum, loadNgRange.min, loadNgRange.max, 'highGood');
-              const feeNgBg  = heatmapBg(feeNgNum,  feeNgRange.min,  feeNgRange.max,  'lowGood');
+              const off = (key) => isColorIgnored(row, key);
+              const loadEpBg = off('loadEp') ? null : heatmapBg(loadEpNum, loadEpRange.min, loadEpRange.max, 'highGood');
+              const feeEpBg  = off('feeEp') ? null : heatmapBg(feeEpNum,  feeEpRange.min,  feeEpRange.max,  'lowGood');
+              const loadNgBg = off('loadNg') ? null : heatmapBg(loadNgNum, loadNgRange.min, loadNgRange.max, 'highGood');
+              const feeNgBg  = off('feeNg') ? null : heatmapBg(feeNgNum,  feeNgRange.min,  feeNgRange.max,  'lowGood');
+              // The ⊘ toggle in a shaded cell: shown on hover, and always
+              // on a cell already left out so it can be put back.
+              const heatCls = (key) => `${styles.tan} ${styles.numCell} ${styles.heatCell} ${off(key) ? styles.colorOff : ''}`;
+              const ignoreBtn = (key) => (
+                <button
+                  type="button"
+                  className={styles.ignoreBtn}
+                  aria-pressed={off(key)}
+                  onClick={() => toggleColorIgnore(idx, key)}
+                  title={off(key)
+                    ? 'Left out of the colours. Click to colour it again.'
+                    : 'Leave this value out of the colours, so an outlier does not stretch the scale. It still counts in the totals.'}
+                >⊘</button>
+              );
               const benchmark = isBenchmarkRow(row.company);
               return (
                 <tr key={idx} className={benchmark ? styles.benchmarkRow : ''}>
                   <td className={styles.tan}>
                     <CellInput key={`co-${k}`} value={row.company} onCommit={(v) => updateRow(idx, 'company', v)} />
                   </td>
-                  <td className={`${styles.tan} ${styles.numCell}`} style={loadEpBg ? { background: loadEpBg } : undefined}>
+                  <td className={heatCls('loadEp')} style={loadEpBg ? { background: loadEpBg } : undefined}>
+                    {ignoreBtn('loadEp')}
                     <CellInput
                       key={`le-${k}`}
                       value={loadEpNum != null ? loadEpNum.toLocaleString('en-US') : (row.loadEp ?? '')}
@@ -553,7 +602,8 @@ export function BrokerFeesTab({ rows, setRows }) {
                       onCommit={(v) => updateRow(idx, 'loadEp', v)}
                     />
                   </td>
-                  <td className={`${styles.tan} ${styles.numCell}`} style={feeEpBg ? { background: feeEpBg } : undefined}>
+                  <td className={heatCls('feeEp')} style={feeEpBg ? { background: feeEpBg } : undefined}>
+                    {ignoreBtn('feeEp')}
                     <CellInput
                       key={`fe-${k}`}
                       value={feeEpDisplay}
@@ -567,7 +617,8 @@ export function BrokerFeesTab({ rows, setRows }) {
                   <td className={`${styles.calc} ${styles.numCell}`}>
                     {tEp != null ? fmtMoney(tEp) : ''}
                   </td>
-                  <td className={`${styles.tan} ${styles.numCell}`} style={loadNgBg ? { background: loadNgBg } : undefined}>
+                  <td className={heatCls('loadNg')} style={loadNgBg ? { background: loadNgBg } : undefined}>
+                    {ignoreBtn('loadNg')}
                     <CellInput
                       key={`ln-${k}`}
                       value={loadNgNum != null ? loadNgNum.toLocaleString('en-US') : (row.loadNg ?? '')}
@@ -575,7 +626,8 @@ export function BrokerFeesTab({ rows, setRows }) {
                       onCommit={(v) => updateRow(idx, 'loadNg', v)}
                     />
                   </td>
-                  <td className={`${styles.tan} ${styles.numCell}`} style={feeNgBg ? { background: feeNgBg } : undefined}>
+                  <td className={heatCls('feeNg')} style={feeNgBg ? { background: feeNgBg } : undefined}>
+                    {ignoreBtn('feeNg')}
                     <CellInput
                       key={`fn-${k}`}
                       value={feeNgDisplay}

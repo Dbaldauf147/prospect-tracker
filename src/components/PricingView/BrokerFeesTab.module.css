@@ -304,3 +304,62 @@
 .muted {
   color: var(--color-text-muted);
 }
+
+/* Leaving an outlier out of the heat colours. */
+.colorHint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin: 0 0 0.4rem;
+}
+
+.linkBtn {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: #4f46e5;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.heatCell {
+  position: relative;
+}
+
+.ignoreBtn {
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.heatCell:hover .ignoreBtn,
+.ignoreBtn:focus-visible,
+.colorOff .ignoreBtn {
+  opacity: 1;
+}
+
+.ignoreBtn:hover {
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.colorOff {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.colorOff input {
+  color: #94a3b8;
+  font-style: italic;
+}
