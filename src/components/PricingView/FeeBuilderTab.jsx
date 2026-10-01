@@ -6,6 +6,7 @@ import { serviceKey, groupFeeRows, costsByKind } from '../../utils/pricingServic
 import { addFeeSummarySheet, addFeeComparisonSheet } from '../../utils/feeSummarySheets';
 import { FEE_BUILDER_COLUMNS, isServiceDone, setServiceDone, toggleHiddenColumn } from '../../utils/feeBuilderChecklist';
 import { savedSummary } from '../../utils/feeBuilderSaved';
+import { fmtFeePerUnit, isUsageUnit } from '../../utils/siaUsageCounts';
 
 // The Columns menu over the service table: a checkbox per column that can be
 // hidden. Closes on a click anywhere outside it.
@@ -71,16 +72,17 @@ function fromLabel(g, covered) {
 
 // A Fee / Unit that can be typed over. Holds what is typed until it is left
 // (or Enter), then hands the number up; a cleared box puts the built fee back.
-function FeeCell({ value, overridden, builtFee, onCommit, label }) {
+function FeeCell({ value, overridden, builtFee, onCommit, label, unit }) {
   const [draft, setDraft] = useState(null);
-  const shown = draft ?? (typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : '');
+  const shown = draft ?? fmtFeePerUnit(value, unit, { currency: false }).replace(/,/g, '');
   const commit = () => {
     if (draft == null) return;
     const t = draft.replace(/[$,\s]/g, '');
     setDraft(null);
     if (t === '') { onCommit(null); return; }
     const n = Number(t);
-    if (Number.isFinite(n) && n >= 0) onCommit(Math.round(n * 10000) / 10000);
+    // A fee per kWh / Dth keeps its fraction of a cent.
+    if (Number.isFinite(n) && n >= 0) onCommit(Math.round(n * 1e6) / 1e6);
   };
   return (
     <div className={own.feeCell}>
@@ -90,7 +92,7 @@ function FeeCell({ value, overridden, builtFee, onCommit, label }) {
         value={shown}
         aria-label={`Fee per unit for ${label}`}
         title={overridden
-          ? `Typed over${typeof builtFee === 'number' ? `, built at ${fmtMoney(builtFee)}` : ''}. Clear it to put the built fee back.`
+          ? `Typed over${typeof builtFee === 'number' ? `, built at ${fmtFeePerUnit(builtFee, unit)}` : ''}. Clear it to put the built fee back.`
           : 'Type a fee per unit to override the built one. The years, margin and totals follow it.'}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
@@ -100,7 +102,7 @@ function FeeCell({ value, overridden, builtFee, onCommit, label }) {
         }}
       />
       {overridden && (
-        <button type="button" className={own.resetBtn} onClick={() => onCommit(null)} title={`Put the built fee back${typeof builtFee === 'number' ? ` (${fmtMoney(builtFee)})` : ''}`}>
+        <button type="button" className={own.resetBtn} onClick={() => onCommit(null)} title={`Put the built fee back${typeof builtFee === 'number' ? ` (${fmtFeePerUnit(builtFee, unit)})` : ''}`}>
           ↺
         </button>
       )}
@@ -182,8 +184,9 @@ async function exportPlan(plan) {
 
   const head = ws.addRow(headers);
   head.eachCell(c => { c.font = { bold: true }; c.fill = fill('FFF1F5F9'); c.border = { bottom: thin }; });
+  // A fee per kWh / Dth is a fraction of a cent: five places, not two.
   const formats = (row) => {
-    for (const c of moneyCols) row.getCell(c).numFmt = MONEY;
+    for (const c of moneyCols) row.getCell(c).numFmt = c === 4 && isUsageUnit(row.getCell(5).value) ? '$#,##0.00000' : MONEY;
     row.getCell(marginCol).numFmt = PCT;
   };
   const line = (r, name, from) => ws.addRow([
@@ -768,7 +771,7 @@ export function FeeBuilderTab({
                   const subsEditable = isGroup && g.subRows.every(editable) && typeof g.row.feePerUnit === 'number';
                   const cells = (r, fee, count) => (
                     <>
-                      <td className={styles.num}>{fee || fmtMoney(r.feePerUnit)}</td>
+                      <td className={styles.num}>{fee || fmtFeePerUnit(r.feePerUnit, r.unit)}</td>
                       <td>{r.unit}</td>
                       <td className={styles.num}>{count || (r.unitCount ?? '')}</td>
                       <td className={styles.num}>{r.startMonth ?? ''}</td>
@@ -785,7 +788,7 @@ export function FeeBuilderTab({
                         <td className={r.service ? undefined : own.muted}>{fromLabel(g, covered)}</td>
                         <td>{r.type}</td>
                         {cells(r, editable(r) && (
-                          <FeeCell value={r.feePerUnit} overridden={r.overridden} builtFee={r.builtFee} label={r.name}
+                          <FeeCell unit={r.unit} value={r.feePerUnit} overridden={r.overridden} builtFee={r.builtFee} label={r.name}
                             onCommit={(v) => setFee([[r.key, v]])} />
                         ), editable(r) && (
                           <UnitCountCell value={r.unitCount} overridden={r.unitsOverridden} builtCount={r.builtUnitCount} label={r.name}
@@ -812,6 +815,7 @@ export function FeeBuilderTab({
                         <td>{g.row.type}</td>
                         {cells(g.row, subsEditable && (
                           <FeeCell
+                            unit={g.row.unit}
                             value={g.row.feePerUnit}
                             overridden={g.subRows.some(r => r.overridden)}
                             builtFee={g.subRows.every(r => typeof (r.overridden ? r.builtFee : r.feePerUnit) === 'number')
@@ -836,7 +840,7 @@ export function FeeBuilderTab({
                           <td className={r.service ? undefined : own.muted}>{r.service || 'On the schedule'}</td>
                           <td>{r.type}</td>
                           {cells(r, editable(r) && (
-                            <FeeCell value={r.feePerUnit} overridden={r.overridden} builtFee={r.builtFee} label={`${r.name}, ${r.service || 'on the schedule'}`}
+                            <FeeCell unit={r.unit} value={r.feePerUnit} overridden={r.overridden} builtFee={r.builtFee} label={`${r.name}, ${r.service || 'on the schedule'}`}
                               onCommit={(v) => setFee([[r.key, v]])} />
                           ), editable(r) && (
                             <UnitCountCell value={r.unitCount} overridden={r.unitsOverridden} builtCount={r.builtUnitCount} label={`${r.name}, ${r.service || 'on the schedule'}`}

@@ -8,6 +8,16 @@
 // be looked up from its side: which cost lines it covers, and so which fees
 // price it.
 
+import { altFeeUnitCount } from './altFeeAutoBuild.js';
+import { isUsageUnit } from './siaUsageCounts.js';
+
+// A fee per unit rounded to the cent the Fee column shows, or to five
+// decimal places for a fee Per kWh / Per Dth, which is a fraction of a cent.
+export function roundFee(v, unit) {
+  const f = isUsageUnit(unit) ? 1e5 : 100;
+  return Math.round(v * f) / f;
+}
+
 const norm = (s) => String(s ?? '').trim().toLowerCase();
 
 // One cost line's own pick, set by Move to on the Services subtab.
@@ -252,7 +262,7 @@ export function costItemsForService(items, lineItemServices, service) {
 // markupPct / feeGmPct still hold them; both are ignored.)
 
 export const FEE_STRUCTURE_TYPES = ['Setup', 'One Time', 'Recurring (monthly)'];
-export const FEE_STRUCTURE_UNITS = ['Fixed', 'Per Site', 'Per Account', 'Per Meter'];
+export const FEE_STRUCTURE_UNITS = ['Fixed', 'Per Site', 'Per Account', 'Per Meter', 'Per kWh', 'Per Dth'];
 
 export function serviceKey(name) {
   return norm(name);
@@ -291,14 +301,10 @@ export function feeStructureRowsFromFees(fees) {
 }
 
 // A structure row as an Alternative Fee schedule row for the given option.
-export function feeStructureRowToAltRow(row, { siteCount, accountCount } = {}) {
+export function feeStructureRowToAltRow(row, counts = {}) {
   const unit = row?.unit || '';
   let unitCount = numOrNull(row?.unitCount);
-  if (unitCount == null) {
-    if (unit === 'Per Site' && typeof siteCount === 'number' && siteCount > 0) unitCount = siteCount;
-    else if (unit === 'Per Account' && typeof accountCount === 'number' && accountCount > 0) unitCount = accountCount;
-    else unitCount = 1;
-  }
+  if (unitCount == null) unitCount = altFeeUnitCount(unit, counts);
   return {
     altItem: String(row?.feeName || '').trim(),
     type: row?.type || '',
@@ -320,10 +326,10 @@ export function feeStructureRowToAltRow(row, { siteCount, accountCount } = {}) {
 // structure's own fee names comes out, and the structure's rows go in where
 // the first of them was, or at the end when none was there. Rows for other
 // fees are untouched. Blank structure rows are skipped.
-export function applyFeeStructureToSchedule(schedule, structureRows, { replaceNames = [], siteCount, accountCount } = {}) {
+export function applyFeeStructureToSchedule(schedule, structureRows, { replaceNames = [], ...counts } = {}) {
   const incoming = (structureRows || [])
     .filter(r => String(r?.feeName || '').trim())
-    .map(r => feeStructureRowToAltRow(r, { siteCount, accountCount }));
+    .map(r => feeStructureRowToAltRow(r, counts));
   const drop = new Set([...replaceNames.map(norm), ...incoming.map(r => norm(r.altItem))].filter(Boolean));
   const out = [];
   let insertAt = -1;
@@ -474,9 +480,9 @@ export function feeBucket(type) {
   return '';
 }
 
-export function standardFeesForStructure({ rows = [], costs = [], allocations = {}, termMonths = 36, siteCount, accountCount, startMonthFor, feeEscalator = 0, costEscalator = 0 } = {}) {
+export function standardFeesForStructure({ rows = [], costs = [], allocations = {}, termMonths = 36, siteCount, accountCount, kwhCount, dthCount, startMonthFor, feeEscalator = 0, costEscalator = 0 } = {}) {
   const names = rows.map(r => norm(r?.feeName));
-  const alts = rows.map(r => feeStructureRowToAltRow(r, { siteCount, accountCount }));
+  const alts = rows.map(r => feeStructureRowToAltRow(r, { siteCount, accountCount, kwhCount, dthCount }));
   const rowStartOf = (ri) => {
     const own = Number(alts[ri]?.startMonth);
     const auto = own > 0 ? own : Number(startMonthFor?.(alts[ri]));
@@ -600,7 +606,7 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
       if (!upfront && escTerms.size) {
         agg.escTerms = [...escTerms.values()].map(([kind, from, amount]) => [kind, from, amount / units]);
       }
-      agg.standardFee = Math.round(agg.exactFee * 100) / 100;
+      agg.standardFee = roundFee(agg.exactFee, alt.unit);
     }
   });
   return { perRow, costs: costOut };
@@ -897,10 +903,10 @@ export function feeStructureCostInputs(costs) {
 // linked fee from it whenever the Global GM% changes (feeAtGm), so a
 // built fee keeps following the margin instead of freezing at the one it
 // was built at.
-export function standardFeeContext(structure, costs, { termMonths = 36, siteCount, accountCount, startMonthFor, feeEscalator = 0, costEscalator = 0 } = {}) {
+export function standardFeeContext(structure, costs, { termMonths = 36, siteCount, accountCount, kwhCount, dthCount, startMonthFor, feeEscalator = 0, costEscalator = 0 } = {}) {
   const rows = structure?.rows || [];
   const costInputs = feeStructureCostInputs(costs);
-  const opts = { rows, allocations: structure?.allocations || {}, termMonths, siteCount, accountCount, startMonthFor, feeEscalator, costEscalator };
+  const opts = { rows, allocations: structure?.allocations || {}, termMonths, siteCount, accountCount, kwhCount, dthCount, startMonthFor, feeEscalator, costEscalator };
   const std = standardFeesForStructure({ ...opts, costs: costInputs });
   const standardFee = (idx) => std.perRow[idx]?.standardFee ?? null;
   const linkable = (costs || []).some(c => typeof c?.priceAtCost === 'number');
@@ -935,13 +941,13 @@ export function standardFeeContext(structure, costs, { termMonths = 36, siteCoun
 
 // A linked fee's per-unit price at a Global GM%: the at-cost part marked
 // up to it, plus the part priced some other way, rounded to the cent the
-// Fee column shows.
+// Fee column shows (see roundFee).
 //
 // With `esc` ({ feeEscalator, costEscalator, termMonths, startMonth }) a
 // monthly fee that kept its make-up (gmLink.esc) is also re-priced for
 // the escalators, the term and its start month (the row's own, else the
 // one it was built from), the same way standardFeesForStructure prices it.
-export function feeAtGm(gmLink, gm, esc = null) {
+export function feeAtGm(gmLink, gm, esc = null, unit = '') {
   if (!gmLink || typeof gm !== 'number' || !(gm < 1)) return null;
   let atCost = Number(gmLink.atCost) || 0;
   let fixed = Number(gmLink.fixed) || 0;
@@ -957,7 +963,7 @@ export function feeAtGm(gmLink, gm, esc = null) {
     fixed = partOf(gmLink.esc.fixed);
   }
   const v = atCost / (1 - gm) + fixed;
-  return Number.isFinite(v) ? Math.round(v * 100) / 100 : null;
+  return Number.isFinite(v) ? roundFee(v, unit) : null;
 }
 
 // Months from `from` to the end of a `term`-month deal, each weighted by
@@ -980,7 +986,7 @@ export function repriceLinkedFees(altFees, gm, esc = null) {
     let rowsChanged = false;
     const out = (rows || []).map(r => {
       if (!r?.gmLink) return r;
-      const fee = feeAtGm(r.gmLink, gm, esc ? { ...esc, startMonth: r.startMonth } : null);
+      const fee = feeAtGm(r.gmLink, gm, esc ? { ...esc, startMonth: r.startMonth } : null, r.unit);
       if (fee == null || fee === r.fee) return r;
       rowsChanged = true;
       return { ...r, fee };
@@ -1014,7 +1020,7 @@ export function repriceLinkedFees(altFees, gm, esc = null) {
 // sibling has a fee the blank row is dropped, and when none has one only
 // the first is kept. The services that lost their row that way are listed
 // under unpriced.
-export function buildScheduleFromStructures(schedule, picks, { siteCount, accountCount, structuresOnly = false } = {}) {
+export function buildScheduleFromStructures(schedule, picks, { siteCount, accountCount, kwhCount, dthCount, structuresOnly = false } = {}) {
   let rows = [...(schedule || [])];
   const builtBy = new Map(); // fee name -> services that wrote it in this build
   const addedRows = new Set();
@@ -1026,7 +1032,7 @@ export function buildScheduleFromStructures(schedule, picks, { siteCount, accoun
     const replaceNames = (pick.replaceNames || []).filter(n => !builtBy.has(norm(n)));
     // A pick can carry its service's own counts (one typed on the Services
     // subtab), which win over the option's.
-    const counts = { siteCount: pick.siteCount ?? siteCount, accountCount: pick.accountCount ?? accountCount };
+    const counts = { siteCount: pick.siteCount ?? siteCount, accountCount: pick.accountCount ?? accountCount, kwhCount: pick.kwhCount ?? kwhCount, dthCount: pick.dthCount ?? dthCount };
     const plan = applyFeeStructureToSchedule(rows, own, { replaceNames, ...counts });
     rows = plan.rows;
     const added = [...plan.added];
@@ -1127,7 +1133,7 @@ export function groupFeeRows(rows) {
     const years = Array.from({ length: n }, (_, i) => list.reduce((s, x) => s + (Number(x.years?.[i]) || 0), 0));
     const fees = list.map(x => x.feePerUnit);
     const sumFee = same(list, 'unit') && same(list, 'unitCount') && fees.every(f => typeof f === 'number')
-      ? Math.round(fees.reduce((a, b) => a + b, 0) * 100) / 100
+      ? roundFee(fees.reduce((a, b) => a + b, 0), list[0].unit)
       : null;
     const starts = list.map(x => Number(x.startMonth)).filter(Number.isFinite);
     const services = [...new Set(list.map(x => x.service).filter(Boolean))];
@@ -1188,4 +1194,20 @@ export function costsByKind(costLines, numYears, counted = () => true) {
     .filter(k => k !== 'Other' || out.Other.some(v => Math.abs(v) > 0.005))
     .map(kind => ({ kind, byYear: out[kind] }));
   return { rows, total };
+}
+
+// A service's costs spread over the SIA's monthly kWh or Dth as a single
+// rate: what one Recurring (monthly) fee Per kWh (or Per Dth) would have to
+// be to recover every cost line at its marked-up price, setup and one-time
+// costs rolled over the term. The same sum the ★ standard fee does for a
+// structure with that one row (every cost falls back onto it). null where
+// the SIA has no volume or there is nothing to recover.
+export function usageRatesFor(costs, { kwhCount, dthCount, ...opts } = {}) {
+  const rateOn = (unit, count) => {
+    if (!(typeof count === 'number' && count > 0) || !(costs || []).length) return null;
+    const structure = { rows: [{ feeName: '\u0001usage', type: 'Recurring (monthly)', unit, unitCount: count }] };
+    const fee = standardFeeContext(structure, costs, opts).standardFee(0);
+    return typeof fee === 'number' && fee > 0 ? fee : null;
+  };
+  return { perKwh: rateOn('Per kWh', kwhCount), perDth: rateOn('Per Dth', dthCount) };
 }

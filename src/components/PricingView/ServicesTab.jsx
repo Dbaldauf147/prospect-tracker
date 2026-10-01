@@ -6,8 +6,9 @@ import {
   newFeeStructureId, blankFeeStructureRow, feeStructureRowsFromFees, costTotalsByLineItem,
   costKey, costKeysFor, allocationFor, addLaterCostFees, FIRST_YEAR_MONTHS, feeStructureCostInputs,
   costTypeConversion, moveCostAllocation, feeBucket, standardFeeContext,
-  passThroughFeeRows, addPassThroughFees,
+  passThroughFeeRows, addPassThroughFees, usageRatesFor,
 } from '../../utils/pricingServices';
+import { isUsageUnit, fmtFeePerUnit } from '../../utils/siaUsageCounts';
 import { RATE_CHECK, checkPartOf, PASS_THROUGH_MODELS, passThroughModelOf, feeUnitCountsFor } from '../../utils/serviceRateCheck';
 import { unitLabelFor } from '../../utils/servicePricing';
 
@@ -288,6 +289,8 @@ export function ServicesTab({
               termMonths={termMonths}
               siteCount={feeUnitCountsFor(detail).siteCount ?? opt?.siteCount}
               accountCount={feeUnitCountsFor(detail).accountCount ?? opt?.accountCount}
+              kwhCount={feeUnitCountsFor(detail).kwhCount ?? opt?.kwhCount}
+              dthCount={feeUnitCountsFor(detail).dthCount ?? opt?.dthCount}
               onOpenLinkedTo={onOpenLinkedTo}
               onSetCount={onSetCount ? (key, value) => onSetCount(current.name, key, value) : null}
               onIgnoreForCheck={onIgnoreForCheck ? (itemId, on) => onIgnoreForCheck(current.name, itemId, on) : null}
@@ -609,7 +612,7 @@ function UnlinkedWarning({ unlinked, costTotals, optionName, tagOptions, quickTa
   );
 }
 
-function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted, detail: standardDetail, detailForStructure = null, hasWorkbook, optionName, optionCtsTotal = 0, numYears, termMonths, siteCount, accountCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, onSetFeeComponent, saved, setSaved, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough, moveTargets = [], onMoveItem = null, onOpenService }) {
+function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted, detail: standardDetail, detailForStructure = null, hasWorkbook, optionName, optionCtsTotal = 0, numYears, termMonths, siteCount, accountCount, kwhCount, dthCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, onSetFeeComponent, saved, setSaved, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough, moveTargets = [], onMoveItem = null, onOpenService }) {
   const structures = saved?.structures || [];
   const standardId = saved?.standardId || null;
   // Which saved fee structure is open. Opens on the standard one, and falls
@@ -679,7 +682,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
   // fall to the fee carrying its fee name, else the first fee that can
   // bill it; a pick points it at one fee, or at none ("Not covered").
   const openStd = openStructure && hasWorkbook
-    ? standardFeeContext(openStructure, items, { termMonths, siteCount, accountCount, startMonthFor: autoStartMonthFor, ...escalators })
+    ? standardFeeContext(openStructure, items, { termMonths, siteCount, accountCount, kwhCount, dthCount, startMonthFor: autoStartMonthFor, ...escalators })
     : null;
   const openFees = openStructure
     ? [...new Map((openStructure.rows || []).map(r => String(r.feeName || '').trim()).filter(Boolean).map(n => [n.toLowerCase(), n])).values()]
@@ -743,7 +746,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
   // Dropdowns service type. A mismatch offers the type that fits.
   const standard = structures.find(x => x.id === standardId) || null;
   const stdCosts = standard && hasWorkbook
-    ? standardFeeContext(standard, items, { termMonths, siteCount, accountCount, startMonthFor: autoStartMonthFor, ...escalators }).std.costs
+    ? standardFeeContext(standard, items, { termMonths, siteCount, accountCount, kwhCount, dthCount, startMonthFor: autoStartMonthFor, ...escalators }).std.costs
     : [];
   const stdBuckets = standard ? [...new Set((standard.rows || []).map(r => feeBucket(r.type)).filter(Boolean))] : [];
   const stdOneType = stdBuckets.length === 1 ? (standard.rows.find(r => feeBucket(r.type))?.type || '') : '';
@@ -1107,6 +1110,14 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
           </section>
       )}
 
+      {hasWorkbook && (/sourcing/i.test(service?.name || '') || structures.some(st => (st.rows || []).some(r => isUsageUnit(r.unit)))) && (
+        <EnergyVolume
+          kwhCount={kwhCount}
+          dthCount={dthCount}
+          rates={usageRatesFor(items, { termMonths, kwhCount, dthCount, startMonthFor: autoStartMonthFor, ...escalators })}
+        />
+      )}
+
       {hasWorkbook && detail?.rateCheck && (
         <RateCheck
           check={detail.rateCheck}
@@ -1137,6 +1148,8 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                 termMonths={termMonths}
                 siteCount={siteCount}
                 accountCount={accountCount}
+                kwhCount={kwhCount}
+                dthCount={dthCount}
                 costs={items}
                 feeNameSuggestions={[...new Set([...fees.map(f => f.name), ...items.map(i => i.feeName)].filter(Boolean))]}
                 previewFeeRow={previewFeeRow}
@@ -1599,6 +1612,51 @@ function FeeComponents({ parts = [] }) {
 
 const fmtRateRange = (lo, hi) => (fmtRate(lo) === fmtRate(hi) ? fmtRate(lo) : `${fmtRate(Math.min(lo, hi))} – ${fmtRate(Math.max(lo, hi))}`);
 
+// The SIA's monthly electric and gas volumes, for a service priced on the
+// energy it buys (Strategic Sourcing): each with the rate per kWh or per
+// Dth per month that spreads all of the service's costs over it. A Per kWh
+// or Per Dth fee in the fee structure below bills on the same volume, so
+// its ★ standard fee is the rate for the cost lines pointed at it.
+function EnergyVolume({ kwhCount, dthCount, rates }) {
+  const rows = [
+    { label: 'Electric', count: kwhCount, unit: 'kWh', rate: rates?.perKwh, feeUnit: 'Per kWh' },
+    { label: 'Gas', count: dthCount, unit: 'Dth', rate: rates?.perDth, feeUnit: 'Per Dth' },
+  ];
+  return (
+    <section className={styles.section}>
+      <h4 className={styles.sectionTitle}>Energy volume from the SIA, per month</h4>
+      <table className={styles.table}>
+        <thead>
+          <tr>
+            <th />
+            <th className={styles.num}>Volume / month</th>
+            <th className={styles.num}>Rate / month for all of this service&apos;s costs</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.unit}>
+              <td>{r.label}</td>
+              <td className={styles.num}>
+                {typeof r.count === 'number' ? `${r.count.toLocaleString('en-US')} ${r.unit}` : <span className={styles.muted}>Not on the SIA</span>}
+              </td>
+              <td className={styles.num}>
+                {typeof r.rate === 'number' ? `${fmtFeePerUnit(r.rate, r.feeUnit)} per ${r.unit} per month` : ''}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className={styles.note}>
+        The SIA&apos;s kWh and Dth are read as monthly amounts. Each rate spreads every cost line of this service over
+        that volume alone, at the Global GM%, with setup and one-time costs rolled over the term. To split the costs
+        between electric and gas, give the fee structure a Recurring (monthly) fee Per kWh and one Per Dth and point
+        each cost line at one: the ★ standard fee on each is its rate per month.
+      </p>
+    </section>
+  );
+}
+
 // Boxes for the counts the rate card needs and the SIA doesn't carry, plus
 // any already typed so they can be changed or cleared. Saved on the option.
 // Only the counts this service's own fee components price on are offered:
@@ -1809,7 +1867,7 @@ const fmtPlain = (n) => (typeof n === 'number' && Number.isFinite(n)
 // GM% cells derive, and the placeholder shows what they derive to on the
 // loaded SIA, the same way the Alternative Fee schedule reads.
 function FeeStructureEditor({
-  structure, globalGmPct, isStandard, hasWorkbook, optionName, numYears, termMonths = 36, siteCount, accountCount, costs = [],
+  structure, globalGmPct, isStandard, hasWorkbook, optionName, numYears, termMonths = 36, siteCount, accountCount, kwhCount, dthCount, costs = [],
   feeNameSuggestions, previewFeeRow, autoStartMonthFor, escalators = {}, onChange, onMakeStandard, onDuplicate, onDelete, onApply,
 }) {
   const listId = `fs-names-${structure.id}`;
@@ -1841,7 +1899,7 @@ function FeeStructureEditor({
   // The standard fee behind each row: what recovers the service's costs
   // pointed at it (see standardFeesForStructure). A blank Fee cell bills
   // it, and Apply writes it into the schedule.
-  const { std, standardFee, billed } = standardFeeContext(structure, costs, { termMonths, siteCount, accountCount, startMonthFor: autoStartMonthFor, ...escalators });
+  const { std, standardFee, billed } = standardFeeContext(structure, costs, { termMonths, siteCount, accountCount, kwhCount, dthCount, startMonthFor: autoStartMonthFor, ...escalators });
   // A fee starting after a monthly cost it covers catches up the months it
   // missed, so the term still recovers the cost.
   const catchUpNote = (idx) => {
@@ -1850,7 +1908,7 @@ function FeeStructureEditor({
     const start = std.perRow[idx].startMonth;
     return ` It starts in month ${start}, after ${missed === 1 ? 'a cost it covers' : 'costs it covers'}, so it is raised to catch up the ${missed === 1 ? 'month' : `${missed} months`} before then over the ${std.perRow[idx].rollMonths} months it bills.`;
   };
-  const previews = rows.map((r, idx) => (previewFeeRow && hasWorkbook ? previewFeeRow(billed(r, idx), { siteCount, accountCount }) : null));
+  const previews = rows.map((r, idx) => (previewFeeRow && hasWorkbook ? previewFeeRow(billed(r, idx), { siteCount, accountCount, kwhCount, dthCount }) : null));
   // Pass-through lines with no fee row of their own yet, billed per account
   // or as a fixed fee as picked in the price check.
   const passOpts = { unitOf: (it) => (passThroughModelOf(it) === 'pass:per_account' ? 'Per Account' : 'Fixed') };
@@ -1947,8 +2005,8 @@ function FeeStructureEditor({
                 </td>
                 <td className={styles.num}>
                   <DraftInput
-                    value={typeof r.fee === 'number' ? fmtPlain(r.fee) : ''}
-                    placeholder={standardFee(idx) != null ? fmtPlain(standardFee(idx)) : (p?.autoFee != null ? fmtPlain(p.autoFee) : 'auto')}
+                    value={typeof r.fee === 'number' ? fmtFeePerUnit(r.fee, r.unit, { currency: false }) : ''}
+                    placeholder={standardFee(idx) != null ? fmtFeePerUnit(standardFee(idx), r.unit, { currency: false }) : (p?.autoFee != null ? fmtFeePerUnit(p.autoFee, r.unit, { currency: false }) : 'auto')}
                     align="right"
                     width={80}
                     onCommit={(v) => {
@@ -1962,7 +2020,7 @@ function FeeStructureEditor({
                       className={typeof r.fee === 'number' && Math.abs(r.fee - standardFee(idx)) > 0.005 ? styles.stdFeeOff : styles.stdFee}
                       title={`Standard fee: recovers the ${std.perRow[idx].costIdx.length} cost line${std.perRow[idx].costIdx.length === 1 ? '' : 's'} this fee covers at their marked-up price (the Global GM% at the top of the page).${catchUpNote(idx)}${typeof r.fee === 'number' ? '' : ' The blank cell bills it.'}`}
                     >
-                      ★ {fmtMoney(standardFee(idx))}
+                      ★ {fmtFeePerUnit(standardFee(idx), r.unit)}
                     </div>
                   )}
                 </td>
@@ -1977,7 +2035,7 @@ function FeeStructureEditor({
                     value={r.unitCount ?? ''}
                     placeholder={p?.alt ? String(p.alt.unitCount) : 'auto'}
                     align="right"
-                    width={56}
+                    width={isUsageUnit(r.unit) ? 84 : 56}
                     onCommit={(v) => { const n = parseCount(v); if (n !== undefined) setRow(idx, { unitCount: n }); }}
                   />
                 </td>
@@ -2032,7 +2090,7 @@ function FeeStructureEditor({
             <button
               type="button"
               className={styles.barBtn}
-              onClick={() => onChange(st => addLaterCostFees(st, feeStructureCostInputs(costs), { termMonths, siteCount, accountCount, startMonthFor: autoStartMonthFor, ...escalators }))}
+              onClick={() => onChange(st => addLaterCostFees(st, feeStructureCostInputs(costs), { termMonths, siteCount, accountCount, kwhCount, dthCount, startMonthFor: autoStartMonthFor, ...escalators }))}
               title="Add a fee row per start month for these costs, starting the month they do, and point them at it. Its standard fee recovers exactly them."
             >
               + Add standard fee for costs after month {FIRST_YEAR_MONTHS}

@@ -213,9 +213,21 @@ test('an option without its own sites takes another option sheet\'s', () => {
   const o1 = { sheetName: 'Option 1', siteCount: null };
   const o5 = { sheetName: 'Option 5', siteCount: 29, accountCount: 1 };
   const wb = { options: [o1, o5] };
-  assert.deepEqual(siaCountsFor(wb, o1), { sites: 29, accounts: 1, sitesFrom: 'Option 5', accountsFrom: 'Option 5' });
-  assert.deepEqual(siaCountsFor(wb, o5), { sites: 29, accounts: 1, sitesFrom: null, accountsFrom: null });
-  assert.deepEqual(siaCountsFor({ options: [o1] }, o1), { sites: null, accounts: null, sitesFrom: null, accountsFrom: null });
+  assert.deepEqual(siaCountsFor(wb, o1), { sites: 29, accounts: 1, sitesFrom: 'Option 5', accountsFrom: 'Option 5', kwh: null, dth: null });
+  assert.deepEqual(siaCountsFor(wb, o5), { sites: 29, accounts: 1, sitesFrom: null, accountsFrom: null, kwh: null, dth: null });
+  assert.deepEqual(siaCountsFor({ options: [o1] }, o1), { sites: null, accounts: null, sitesFrom: null, accountsFrom: null, kwh: null, dth: null });
+});
+
+test('the SIA header kWh and Dth come through, own option first', () => {
+  const head = (kwh, dth) => [{ label: 'Annual kWh', value: kwh }, { label: 'Annual Dth', value: dth }];
+  const o1 = { sheetName: 'Option 1', headerDetails: [] };
+  const o2 = { sheetName: 'Option 2', headerDetails: head('1,200,000', '4500') };
+  const o3 = { sheetName: 'Option 3', headerDetails: head('900', '') };
+  const wb = { options: [o1, o2, o3] };
+  const pick = (o) => { const c = siaCountsFor(wb, o); return [c.kwh, c.dth]; };
+  assert.deepEqual(pick(o1), [1200000, 4500]);
+  assert.deepEqual(pick(o3), [900, 4500]);
+  assert.deepEqual(feeUnitCountsFor({ sia: siaCountsFor(wb, o2) }).kwhCount, 1200000);
 });
 
 test('the SIA sites price a per-site-w/-mandate card, and a typed count wins', () => {
@@ -528,14 +540,14 @@ test('fee rows bill on the count typed in the cost section', () => {
   const sia = { sites: 29, accounts: 40 };
   const typed = { counts: priceCheckCounts(sia, { sites_mandate: 22 }).counts, sia };
   // BBS prices on sites w/ mandate: its Per Site fee follows the 22 typed.
-  assert.deepEqual(feeUnitCountsFor({ ...typed, rateCheck: { unitsUsed: ['sites_mandate'] } }), { siteCount: 22, accountCount: 40 });
+  assert.deepEqual(feeUnitCountsFor({ ...typed, rateCheck: { unitsUsed: ['sites_mandate'] } }), { siteCount: 22, accountCount: 40, kwhCount: undefined, dthCount: undefined });
   // A service that doesn't price on it keeps the SIA's sites.
-  assert.deepEqual(feeUnitCountsFor({ ...typed, rateCheck: { unitsUsed: ['sites'] } }), { siteCount: 29, accountCount: 40 });
+  assert.deepEqual(feeUnitCountsFor({ ...typed, rateCheck: { unitsUsed: ['sites'] } }), { siteCount: 29, accountCount: 40, kwhCount: undefined, dthCount: undefined });
   // A typed override of the SIA's sites and accounts carries down too.
   const over = { counts: priceCheckCounts(sia, { sites: 31, accounts: 12 }).counts, sia, rateCheck: { unitsUsed: ['sites'] } };
-  assert.deepEqual(feeUnitCountsFor(over), { siteCount: 31, accountCount: 12 });
+  assert.deepEqual(feeUnitCountsFor(over), { siteCount: 31, accountCount: 12, kwhCount: undefined, dthCount: undefined });
   // Nothing typed: the SIA's.
-  assert.deepEqual(feeUnitCountsFor({ counts: priceCheckCounts(sia, {}).counts, sia, rateCheck: { unitsUsed: ['sites_mandate'] } }), { siteCount: 29, accountCount: 40 });
+  assert.deepEqual(feeUnitCountsFor({ counts: priceCheckCounts(sia, {}).counts, sia, rateCheck: { unitsUsed: ['sites_mandate'] } }), { siteCount: 29, accountCount: 40, kwhCount: undefined, dthCount: undefined });
 });
 
 test('a line takes its fee component from the unit of the structure fee it goes on', () => {

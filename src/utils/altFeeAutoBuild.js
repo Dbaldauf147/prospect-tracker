@@ -66,12 +66,26 @@ export function altFeeBucketForScheduleType(type) {
 }
 
 // Unit Count to pair with a unit — the same fill the schedule's own Unit
-// dropdown does when you pick Per Site / Per Account. Anything else (Fixed,
-// Per Meter, blank) counts as one until the user says otherwise.
-export function altFeeUnitCount(unit, { siteCount, accountCount } = {}) {
-  if (unit === 'Per Site' && typeof siteCount === 'number' && siteCount > 0) return siteCount;
-  if (unit === 'Per Account' && typeof accountCount === 'number' && accountCount > 0) return accountCount;
-  return 1;
+// dropdown does when you pick Per Site / Per Account / Per kWh / Per Dth
+// (the last two the SIA's monthly kWh and Dth, see siaUsageCounts.js).
+// Anything else (Fixed, Per Meter, blank) counts as one until the user says
+// otherwise.
+export function siaUnitCount(unit, { siteCount, accountCount, kwhCount, dthCount } = {}) {
+  const ok = (n) => typeof n === 'number' && Number.isFinite(n) && n > 0;
+  if (unit === 'Per Site' && ok(siteCount)) return siteCount;
+  if (unit === 'Per Account' && ok(accountCount)) return accountCount;
+  if (unit === 'Per kWh' && ok(kwhCount)) return kwhCount;
+  if (unit === 'Per Dth' && ok(dthCount)) return dthCount;
+  return null;
+}
+
+export function altFeeUnitCount(unit, counts = {}) {
+  return siaUnitCount(unit, counts) ?? 1;
+}
+
+// The counts an option's fee rows bill on, off the option itself.
+export function optionUnitCounts(opt) {
+  return { siteCount: opt?.siteCount, accountCount: opt?.accountCount, kwhCount: opt?.kwhCount, dthCount: opt?.dthCount };
 }
 
 // Key a per-fee default by its Automated Fee Name. Matching is
@@ -112,6 +126,8 @@ export function buildAltFeeRowsFromAutomatedNames({
   feeDefaults = {},
   siteCount,
   accountCount,
+  kwhCount,
+  dthCount,
 } = {}) {
   const defaultsFor = (name) => feeDefaults?.[feeDefaultKey(name)] || null;
   const defaultTypeFor = (name) => String(defaultsFor(name)?.type || '').trim();
@@ -185,7 +201,7 @@ export function buildAltFeeRowsFromAutomatedNames({
         type,
         fee: null,
         unit,
-        unitCount: altFeeUnitCount(unit, { siteCount, accountCount }),
+        unitCount: altFeeUnitCount(unit, { siteCount, accountCount, kwhCount, dthCount }),
         startMonth: null,
         // Every cost behind this fee bills at face value, so the fee does
         // too — otherwise it would show a margin the deal doesn't earn.
@@ -214,7 +230,7 @@ export function buildAltFeeRowsFromAutomatedNames({
 //
 // Returns the same array when nothing changed, so callers can skip the state
 // write.
-export function applyFeeDefaultToRows(rows = [], { key, field, value, siteCount, accountCount } = {}) {
+export function applyFeeDefaultToRows(rows = [], { key, field, value, siteCount, accountCount, kwhCount, dthCount } = {}) {
   if (field !== 'type' && field !== 'unit') return rows;
   const v = String(value || '').trim();
   if (!key || !v) return rows;
@@ -228,7 +244,7 @@ export function applyFeeDefaultToRows(rows = [], { key, field, value, siteCount,
       updated.type = v;
     } else {
       updated.unit = v;
-      updated.unitCount = altFeeUnitCount(v, { siteCount, accountCount });
+      updated.unitCount = altFeeUnitCount(v, { siteCount, accountCount, kwhCount, dthCount });
     }
     const hasManualFee = updated.fee != null && updated.fee !== '';
     const bucketKey = `${key}|${String(updated.type || '').trim().toLowerCase()}`;
@@ -264,7 +280,7 @@ export function reconcileScheduleWithFeeDefaults(altFeesByOption = {}, feeDefaul
     let next = before;
     for (const key of keys) {
       const def = feeDefaults[key];
-      const opts = { key, siteCount: opt?.siteCount, accountCount: opt?.accountCount };
+      const opts = { key, ...optionUnitCounts(opt) };
       if (def?.type) next = applyFeeDefaultToRows(next, { ...opts, field: 'type', value: def.type });
       if (def?.unit) next = applyFeeDefaultToRows(next, { ...opts, field: 'unit', value: def.unit });
     }
