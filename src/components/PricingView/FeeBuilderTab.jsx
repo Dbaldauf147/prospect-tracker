@@ -264,9 +264,12 @@ async function exportPlan(plan) {
 //   onCopyPicks   (fromOption, toOption) gives toOption the same picks as
 //                 fromOption, replacing its own
 //   onApply       (plan) => writes it, true when it did
+//   oppLink       the Opps row the active option is saved to, the same link
+//                 as the Pricing subtab's "Save to Opp…":
+//                 { optionName, label (null when unlinked), onSave, onUnlink }
 export function FeeBuilderTab({
   workbook, activeOption, setActiveOption, setPicks, planFor, onCopyPicks, onApply, onOpenServices, setFeeOverrides,
-  hiddenColumns, setHiddenColumns, doneState, setDoneState,
+  hiddenColumns, setHiddenColumns, doneState, setDoneState, oppLink = null,
 }) {
   const [showAll, setShowAll] = useState(false);
   const [collapsed, setCollapsed] = useState({});
@@ -337,18 +340,45 @@ export function FeeBuilderTab({
         Services subtab. Fee structures are set up per service on the <strong>Services</strong> subtab.
       </p>
 
-      {workbook.options.length > 1 && (
-        <div className={styles.optionStrip}>
-          {workbook.options.map(o => (
-            <button
-              key={o.sheetName}
-              type="button"
-              className={o.optionNumber === opt?.optionNumber ? styles.optionActive : styles.option}
-              onClick={() => setActiveOption(o.optionNumber)}
-            >
-              {o.sheetName}
-            </button>
-          ))}
+      {(workbook.options.length > 1 || oppLink) && (
+        <div className={own.optionRow}>
+          {workbook.options.length > 1 && (
+            <div className={styles.optionStrip}>
+              {workbook.options.map(o => (
+                <button
+                  key={o.sheetName}
+                  type="button"
+                  className={o.optionNumber === opt?.optionNumber ? styles.optionActive : styles.option}
+                  onClick={() => setActiveOption(o.optionNumber)}
+                >
+                  {o.sheetName}
+                </button>
+              ))}
+            </div>
+          )}
+          {oppLink && (
+            oppLink.label ? (
+              <span className={own.oppChip} title={`${oppLink.optionName} is saved to the Opps row ${oppLink.label}`}>
+                {oppLink.optionName} saved to: {oppLink.label}
+                <button
+                  type="button"
+                  className={own.oppChipClear}
+                  onClick={oppLink.onUnlink}
+                  title="Unlink from this Opp"
+                  aria-label="Unlink from this Opp"
+                >×</button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                className={own.smallBtn}
+                onClick={oppLink.onSave}
+                title={`Save "${oppLink.optionName}" to an Opps row: links it and saves its fees, margin and the SIA file onto the opp.`}
+              >
+                Save {oppLink.optionName} to Opp…
+              </button>
+            )
+          )}
         </div>
       )}
 

@@ -209,3 +209,35 @@
   color: var(--color-text);
   cursor: pointer;
 }
+
+/* Option buttons with the active option's Save to Opp link beside them */
+.optionRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.oppChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: var(--font-size-xs);
+  color: #1e3a8a;
+  background: #dbeafe;
+  border: 1px solid #93c5fd;
+  padding: 0.2rem 0.45rem 0.2rem 0.65rem;
+  border-radius: 999px;
+  margin-left: auto;
+}
+
+.oppChipClear {
+  border: none;
+  background: transparent;
+  color: #1e3a8a;
+  cursor: pointer;
+  font-size: 1em;
+  line-height: 1;
+  padding: 0 2px;
+}
