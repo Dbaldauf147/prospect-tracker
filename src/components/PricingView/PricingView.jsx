@@ -1533,6 +1533,7 @@ function LinkedToPanel({
 }) {
   const opt = workbook?.options.find(o => o.optionNumber === activeOption) || workbook?.options[0];
   const flatItems = opt ? opt.sections.flatMap(s => s.items) : [];
+  const [defaultsOpen, setDefaultsOpen] = useState(false);
 
   // Per-row overrides on the active option, including ones that are
   // explicit empty strings (which mute an inherited default).
@@ -1711,8 +1712,8 @@ function LinkedToPanel({
             whose resolved Linked To matches that tag contribute to the chart.
           </li>
           <li>
-            <strong>Pass-through</strong> is mapped on the same (Line Item, Type) pair, in the section below.
-            A mapped pair bills its CTS at face cost on every option - no markup, and excluded from Deal
+            <strong>Pass-through</strong> is mapped on the same (Line Item, Type) pair, from the Services
+            subtab's Pass-through column or the folded Saved defaults list below. A mapped pair bills its CTS at face cost on every option - no markup, and excluded from Deal
             margin. There is no per-row toggle on the pricing table.
           </li>
           <li>
@@ -1721,195 +1722,214 @@ function LinkedToPanel({
         </ul>
       </section>
 
-      <section className={styles.linkedSection}>
-        <h3 className={styles.linkedSubheading}>Saved defaults ({defaultEntries.length})</h3>
-        <p className={styles.linkedHint}>
-          Defaults apply to any row matching the same Line Item + Type, on any option, unless that row has its own override. They persist across uploaded files, the Clear button, and parser updates.
-        </p>
-        {defaultEntries.length === 0 ? (
-          <div className={styles.linkedEmptyInline}>No saved defaults yet. Click the ☆ next to any Linked To input to save one.</div>
-        ) : (
-          <table className={styles.linkedTable}>
-            <thead>
-              <tr>
-                <th>Line Item</th>
-                <th>Type</th>
-                <th>Unit</th>
-                <th>Default Linked To</th>
-                <th>Fee Start Month</th>
-                <th style={{ width: 32 }} />
-              </tr>
-            </thead>
-            <tbody>
-              {defaultEntries.map(d => {
-                const unitCount = unitCountForOption(d.effectiveUnit);
-                return (
-                  <tr key={d.key}>
-                    <td>
-                      {d.lineItem || <span className={styles.linkedMuted}>-</span>}
-                      {workbook && !d.reachable && <span className={styles.linkedMuted}> · not on this option</span>}
-                    </td>
-                    <td>{d.type || <span className={styles.linkedMuted}>-</span>}</td>
-                    <td>
-                      <select
-                        value={d.overrideUnit}
-                        onChange={(e) => setLinkedToUnitDefault && setLinkedToUnitDefault(d.key, e.target.value)}
-                        title={d.overrideUnit
-                          ? 'Override saved for this Line Item + Type. Clear to fall back to the matching alt-fee row.'
-                          : d.autoUnit
-                            ? `Auto-filled from the "${d.value}" alt-fee row. Pick a value to override.`
-                            : 'Pick a unit. Per Site / Per Account inherit the SIA count automatically.'}
-                        style={{
-                          padding: '1px 4px',
-                          border: '1px solid var(--color-border)', borderRadius: 3,
-                          fontSize: '0.78rem', fontFamily: 'inherit',
-                          background: '#fff', color: 'var(--color-text)',
-                        }}
-                      >
-                        <option value="">{d.autoUnit ? `Auto: ${d.autoUnit}` : '-'}</option>
-                        <option value="Fixed">Fixed</option>
-                        <option value="Per Site">Per Site</option>
-                        <option value="Per Account">Per Account</option>
-                        <option value="Per Meter">Per Meter</option>
-                      </select>
-                      {unitCount != null && (
-                        <span className={styles.linkedMuted} style={{ marginLeft: 6 }}>({unitCount})</span>
-                      )}
-                    </td>
-                    <td><code>{d.value}</code></td>
-                    <td title={d.overrideStartMonth != null
-                      ? `Override saved for this Line Item + Type. Auto would be ${d.autoStartMonth ?? '-'}. Clear to fall back to the CTS row's start month.`
-                      : (d.autoStartMonth != null
-                        ? `Auto-derived from the CTS rows matching this Line Item + Type on the active option (month ${d.autoStartMonth}). Type a value to override; the override flows into the matching alt-fee row's Fee Start Month.`
-                        : 'Type a value to set the Fee Start Month for any alt-fee row linked to this default.')}>
-                      <LinkedStartMonthInput
-                        key={`${d.key}-${d.overrideStartMonth ?? ''}-${d.autoStartMonth ?? ''}`}
-                        initial={d.overrideStartMonth ?? ''}
-                        placeholder={d.autoStartMonth != null ? String(d.autoStartMonth) : ''}
-                        onCommit={(v) => setLinkedToStartMonthDefault && setLinkedToStartMonthDefault(d.key, v)}
-                      />
-                    </td>
-                    <td>
-                      {removeLinkedToDefault && (
-                        <button
-                          type="button"
-                          className={styles.rowDelBtn}
-                          title="Remove this saved default"
-                          onClick={() => removeLinkedToDefault(d.key)}
-                        >×</button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </section>
+      {/* Saved defaults, Pass-through and Fee defaults are folded away by
+          default: the Services and Fee Builder subtabs are where these get
+          set day to day now, but the stores still drive the Alternative Fee
+          schedule, so the lists stay reachable for reviewing and clearing. */}
+      <div className={styles.passBrowse}>
+        <button
+          type="button"
+          className={styles.passBrowseToggle}
+          aria-expanded={defaultsOpen}
+          onClick={() => setDefaultsOpen(o => !o)}
+          title="Saved Linked To defaults, pass-through line items and fee defaults"
+        >
+          {defaultsOpen ? '▾' : '▸'} Saved defaults, pass-through and fee defaults ({defaultEntries.length + Object.values(linkedToPassThroughDefaults || {}).filter(v => v === true).length + feeNameEntries.length})
+        </button>
+      </div>
+      {defaultsOpen && (
+        <>
+        <section className={styles.linkedSection}>
+          <h3 className={styles.linkedSubheading}>Saved defaults ({defaultEntries.length})</h3>
+          <p className={styles.linkedHint}>
+            Defaults apply to any row matching the same Line Item + Type, on any option, unless that row has its own override. They persist across uploaded files, the Clear button, and parser updates.
+          </p>
+          {defaultEntries.length === 0 ? (
+            <div className={styles.linkedEmptyInline}>No saved defaults yet. Click the ☆ next to any Linked To input to save one.</div>
+          ) : (
+            <table className={styles.linkedTable}>
+              <thead>
+                <tr>
+                  <th>Line Item</th>
+                  <th>Type</th>
+                  <th>Unit</th>
+                  <th>Default Linked To</th>
+                  <th>Fee Start Month</th>
+                  <th style={{ width: 32 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {defaultEntries.map(d => {
+                  const unitCount = unitCountForOption(d.effectiveUnit);
+                  return (
+                    <tr key={d.key}>
+                      <td>
+                        {d.lineItem || <span className={styles.linkedMuted}>-</span>}
+                        {workbook && !d.reachable && <span className={styles.linkedMuted}> · not on this option</span>}
+                      </td>
+                      <td>{d.type || <span className={styles.linkedMuted}>-</span>}</td>
+                      <td>
+                        <select
+                          value={d.overrideUnit}
+                          onChange={(e) => setLinkedToUnitDefault && setLinkedToUnitDefault(d.key, e.target.value)}
+                          title={d.overrideUnit
+                            ? 'Override saved for this Line Item + Type. Clear to fall back to the matching alt-fee row.'
+                            : d.autoUnit
+                              ? `Auto-filled from the "${d.value}" alt-fee row. Pick a value to override.`
+                              : 'Pick a unit. Per Site / Per Account inherit the SIA count automatically.'}
+                          style={{
+                            padding: '1px 4px',
+                            border: '1px solid var(--color-border)', borderRadius: 3,
+                            fontSize: '0.78rem', fontFamily: 'inherit',
+                            background: '#fff', color: 'var(--color-text)',
+                          }}
+                        >
+                          <option value="">{d.autoUnit ? `Auto: ${d.autoUnit}` : '-'}</option>
+                          <option value="Fixed">Fixed</option>
+                          <option value="Per Site">Per Site</option>
+                          <option value="Per Account">Per Account</option>
+                          <option value="Per Meter">Per Meter</option>
+                        </select>
+                        {unitCount != null && (
+                          <span className={styles.linkedMuted} style={{ marginLeft: 6 }}>({unitCount})</span>
+                        )}
+                      </td>
+                      <td><code>{d.value}</code></td>
+                      <td title={d.overrideStartMonth != null
+                        ? `Override saved for this Line Item + Type. Auto would be ${d.autoStartMonth ?? '-'}. Clear to fall back to the CTS row's start month.`
+                        : (d.autoStartMonth != null
+                          ? `Auto-derived from the CTS rows matching this Line Item + Type on the active option (month ${d.autoStartMonth}). Type a value to override; the override flows into the matching alt-fee row's Fee Start Month.`
+                          : 'Type a value to set the Fee Start Month for any alt-fee row linked to this default.')}>
+                        <LinkedStartMonthInput
+                          key={`${d.key}-${d.overrideStartMonth ?? ''}-${d.autoStartMonth ?? ''}`}
+                          initial={d.overrideStartMonth ?? ''}
+                          placeholder={d.autoStartMonth != null ? String(d.autoStartMonth) : ''}
+                          onCommit={(v) => setLinkedToStartMonthDefault && setLinkedToStartMonthDefault(d.key, v)}
+                        />
+                      </td>
+                      <td>
+                        {removeLinkedToDefault && (
+                          <button
+                            type="button"
+                            className={styles.rowDelBtn}
+                            title="Remove this saved default"
+                            onClick={() => removeLinkedToDefault(d.key)}
+                          >×</button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </section>
 
-      <PassThroughSection
-        workbook={workbook}
-        activeOpt={opt}
-        linkedToPassThroughDefaults={linkedToPassThroughDefaults}
-        setLinkedToPassThroughDefault={setLinkedToPassThroughDefault}
-        effectiveType={effectiveType}
-      />
+        <PassThroughSection
+          workbook={workbook}
+          activeOpt={opt}
+          linkedToPassThroughDefaults={linkedToPassThroughDefaults}
+          setLinkedToPassThroughDefault={setLinkedToPassThroughDefault}
+          effectiveType={effectiveType}
+        />
 
-      <section className={styles.linkedSection}>
-        <h3 className={styles.linkedSubheading}>Fee defaults ({feeNameEntries.length})</h3>
-        <p className={styles.linkedHint}>
-          Defaults for the fees themselves - the values in the <strong>Default Linked To</strong> column above.
-          Setting a Fee Type or Unit here retypes every Alternative Fee schedule row carrying that name, on every
-          option, and pre-fills the rows built for it later (Build from Automated Fee Names, the per-row
-          <strong>+ Fee</strong> button, and the schedule an uploaded SIA brings with it). A Fee Type also keeps
-          the name to a single row, whatever its costs are typed as. Fee Start Month applies live to every row
-          carrying the name unless that row has a typed-in value of its own. Clearing a default leaves the rows
-          it already set alone.
-        </p>
-        {feeNameEntries.length === 0 ? (
-          <div className={styles.linkedEmptyInline}>
-            No fee names yet. Tag a row&apos;s Automated Fee Name - or save a default above - and it shows up here.
-          </div>
-        ) : (
-          <table className={styles.linkedTable}>
-            <thead>
-              <tr>
-                <th>Fee Name</th>
-                <th>Fee Type</th>
-                <th>Fee Start Month</th>
-                <th>Unit</th>
-                <th style={{ width: 32 }} />
-              </tr>
-            </thead>
-            <tbody>
-              {feeNameEntries.map(f => {
-                const unitCount = unitCountForOption(f.unit);
-                return (
-                  <tr key={f.key}>
-                    <td><code>{f.name}</code></td>
-                    <td title="Type for every schedule row built for this fee. With one set, the fee gets a single row instead of one per cost bucket.">
-                      <select
-                        value={f.type}
-                        onChange={(e) => setFeeDefaultField && setFeeDefaultField(f.name, 'type', e.target.value)}
-                        style={{
-                          padding: '1px 4px',
-                          border: '1px solid var(--color-border)', borderRadius: 3,
-                          fontSize: '0.78rem', fontFamily: 'inherit',
-                          background: '#fff', color: 'var(--color-text)',
-                        }}
-                      >
-                        <option value="">-</option>
-                        <option value="Setup">Setup</option>
-                        <option value="One Time">One Time</option>
-                        <option value="Recurring (monthly)">Recurring (monthly)</option>
-                      </select>
-                    </td>
-                    <td title="Fee Start Month for every schedule row carrying this name. Outranks the month derived from the linked CTS rows; a value typed on the row itself still wins.">
-                      <LinkedStartMonthInput
-                        key={`fee-${f.key}-${f.startMonth ?? ''}`}
-                        initial={f.startMonth ?? ''}
-                        placeholder=""
-                        onCommit={(v) => setFeeDefaultField && setFeeDefaultField(f.name, 'startMonth', v)}
-                      />
-                    </td>
-                    <td title="Unit for every schedule row built for this fee. Per Site / Per Account inherit the SIA count automatically.">
-                      <select
-                        value={f.unit}
-                        onChange={(e) => setFeeDefaultField && setFeeDefaultField(f.name, 'unit', e.target.value)}
-                        style={{
-                          padding: '1px 4px',
-                          border: '1px solid var(--color-border)', borderRadius: 3,
-                          fontSize: '0.78rem', fontFamily: 'inherit',
-                          background: '#fff', color: 'var(--color-text)',
-                        }}
-                      >
-                        <option value="">-</option>
-                        <option value="Fixed">Fixed</option>
-                        <option value="Per Site">Per Site</option>
-                        <option value="Per Account">Per Account</option>
-                        <option value="Per Meter">Per Meter</option>
-                      </select>
-                      {unitCount != null && (
-                        <span className={styles.linkedMuted} style={{ marginLeft: 6 }}>({unitCount})</span>
-                      )}
-                    </td>
-                    <td>
-                      {f.hasDefault && removeFeeDefault && (
-                        <button
-                          type="button"
-                          className={styles.rowDelBtn}
-                          title="Clear every default saved for this fee"
-                          onClick={() => removeFeeDefault(f.name)}
-                        >×</button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </section>
+        <section className={styles.linkedSection}>
+          <h3 className={styles.linkedSubheading}>Fee defaults ({feeNameEntries.length})</h3>
+          <p className={styles.linkedHint}>
+            Defaults for the fees themselves - the values in the <strong>Default Linked To</strong> column above.
+            Setting a Fee Type or Unit here retypes every Alternative Fee schedule row carrying that name, on every
+            option, and pre-fills the rows built for it later (Build from Automated Fee Names, the per-row
+            <strong>+ Fee</strong> button, and the schedule an uploaded SIA brings with it). A Fee Type also keeps
+            the name to a single row, whatever its costs are typed as. Fee Start Month applies live to every row
+            carrying the name unless that row has a typed-in value of its own. Clearing a default leaves the rows
+            it already set alone.
+          </p>
+          {feeNameEntries.length === 0 ? (
+            <div className={styles.linkedEmptyInline}>
+              No fee names yet. Tag a row&apos;s Automated Fee Name - or save a default above - and it shows up here.
+            </div>
+          ) : (
+            <table className={styles.linkedTable}>
+              <thead>
+                <tr>
+                  <th>Fee Name</th>
+                  <th>Fee Type</th>
+                  <th>Fee Start Month</th>
+                  <th>Unit</th>
+                  <th style={{ width: 32 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {feeNameEntries.map(f => {
+                  const unitCount = unitCountForOption(f.unit);
+                  return (
+                    <tr key={f.key}>
+                      <td><code>{f.name}</code></td>
+                      <td title="Type for every schedule row built for this fee. With one set, the fee gets a single row instead of one per cost bucket.">
+                        <select
+                          value={f.type}
+                          onChange={(e) => setFeeDefaultField && setFeeDefaultField(f.name, 'type', e.target.value)}
+                          style={{
+                            padding: '1px 4px',
+                            border: '1px solid var(--color-border)', borderRadius: 3,
+                            fontSize: '0.78rem', fontFamily: 'inherit',
+                            background: '#fff', color: 'var(--color-text)',
+                          }}
+                        >
+                          <option value="">-</option>
+                          <option value="Setup">Setup</option>
+                          <option value="One Time">One Time</option>
+                          <option value="Recurring (monthly)">Recurring (monthly)</option>
+                        </select>
+                      </td>
+                      <td title="Fee Start Month for every schedule row carrying this name. Outranks the month derived from the linked CTS rows; a value typed on the row itself still wins.">
+                        <LinkedStartMonthInput
+                          key={`fee-${f.key}-${f.startMonth ?? ''}`}
+                          initial={f.startMonth ?? ''}
+                          placeholder=""
+                          onCommit={(v) => setFeeDefaultField && setFeeDefaultField(f.name, 'startMonth', v)}
+                        />
+                      </td>
+                      <td title="Unit for every schedule row built for this fee. Per Site / Per Account inherit the SIA count automatically.">
+                        <select
+                          value={f.unit}
+                          onChange={(e) => setFeeDefaultField && setFeeDefaultField(f.name, 'unit', e.target.value)}
+                          style={{
+                            padding: '1px 4px',
+                            border: '1px solid var(--color-border)', borderRadius: 3,
+                            fontSize: '0.78rem', fontFamily: 'inherit',
+                            background: '#fff', color: 'var(--color-text)',
+                          }}
+                        >
+                          <option value="">-</option>
+                          <option value="Fixed">Fixed</option>
+                          <option value="Per Site">Per Site</option>
+                          <option value="Per Account">Per Account</option>
+                          <option value="Per Meter">Per Meter</option>
+                        </select>
+                        {unitCount != null && (
+                          <span className={styles.linkedMuted} style={{ marginLeft: 6 }}>({unitCount})</span>
+                        )}
+                      </td>
+                      <td>
+                        {f.hasDefault && removeFeeDefault && (
+                          <button
+                            type="button"
+                            className={styles.rowDelBtn}
+                            title="Clear every default saved for this fee"
+                            onClick={() => removeFeeDefault(f.name)}
+                          >×</button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </section>
+        </>
+      )}
 
       <LineItemServicesSection
         workbookItems={flatItems}
