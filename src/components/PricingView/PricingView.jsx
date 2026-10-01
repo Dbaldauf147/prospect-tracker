@@ -31,6 +31,7 @@ import { renameLineItemServices, renameFeeStructures, renameWorkbookServices } f
 import { renameInLowerList, renameInLowerKeyMap } from '../../utils/serviceNameMerges';
 import { FeeBuilderTab } from './FeeBuilderTab';
 import { updateForOption, copyPicksBetweenOptions } from '../../utils/feeBuilderChecklist';
+import { dealFor, snapshotFeeBuilder, restoreFeeBuilder, savedFor, putSaved, removeSaved, listSaved } from '../../utils/feeBuilderSaved';
 import { SiaHistoryTab } from './SiaHistoryTab';
 import { buildSiaHistoryEntry, siaKeyFacts } from '../../utils/siaHistoryEntry';
 import { saveSiaHistoryEntry } from '../../utils/siaLoadHistory';
@@ -2322,6 +2323,11 @@ const SERVICE_FEE_STRUCTURES_KEY = 'serviceFeeStructures';
 // like the fee structures, so a new SIA, a Clear or a parser bump that
 // drops the cached workbook doesn't take the marks with it.
 const SERVICES_COMPLETED_KEY = 'servicesCompleted';
+// Fee Builder settings saved per deal (the Save settings button), so the
+// same SIA uploaded again comes back with the same picks: see
+// feeBuilderSaved.js. Own key so it outlives Clear, a new SIA and parser
+// bumps.
+const FEE_BUILDER_SAVED_KEY = 'feeBuilderSaved';
 // Cost lines left out of a service's price check (the In price check
 // tickbox): { [serviceKey]: [lineItemKey] }, by the line's description so
 // the pick holds on every option and carries to the next SIA.
@@ -2431,6 +2437,8 @@ export function PricingView({ settings } = {}) {
   const [feeBuilderOverrides, setFeeBuilderOverrides] = useState({}); // Fee Builder subtab: { [optionNumber]: { [rowKey]: fee per unit } } - a Fee / Unit typed over the built one
   const [feeBuilderHiddenCols, setFeeBuilderHiddenCols] = useState([]); // Fee Builder subtab: keys of the service-table columns hidden from its Columns menu
   const [feeBuilderDone, setFeeBuilderDone] = useState(null); // Fee Builder subtab: services ticked off as done, { workbookId, done } - see feeBuilderChecklist.js
+  const [feeBuilderSaved, setFeeBuilderSaved] = useState({}); // Fee Builder subtab: settings saved per deal - see FEE_BUILDER_SAVED_KEY
+  const [feeBuilderRestored, setFeeBuilderRestored] = useState(null); // Fee Builder subtab: { workbookId, label, savedAt, missing } when an upload brought saved settings back
   const [lineItemPriority, setLineItemPriority] = useState({}); // { [lineItemKey]: true } - services in priority order, first in scope takes the cost
   const [lineItemSharedOk, setLineItemSharedOk] = useState({}); // { [lineItemKey]: sharedSignature } - shared line items kept shared on the Services subtab
   const [lineItemIgnored, setLineItemIgnored] = useState({}); // { [lineItemKey]: true } - line items the user opted to ignore (greyed out, excluded from the unmapped warning)
@@ -2485,6 +2493,9 @@ export function PricingView({ settings } = {}) {
   // reload doesn't lose it as long as the parsed workbook is still
   // hydrated.
   const workbookSourceRef = useRef(null);
+  // The saved Fee Builder settings as last written, for handleFile to read
+  // without waiting on a render.
+  const feeBuilderSavedRef = useRef({});
 
   // Hydrate from IndexedDB on first mount.
   useEffect(() => {
@@ -2541,6 +2552,11 @@ export function PricingView({ settings } = {}) {
         const savedFeeStructures = await dbGet(STORE, SERVICE_FEE_STRUCTURES_KEY);
         if (!cancelled && savedFeeStructures && typeof savedFeeStructures === 'object') {
           setServiceFeeStructures(savedFeeStructures);
+        }
+        const savedFeeBuilder = await dbGet(STORE, FEE_BUILDER_SAVED_KEY);
+        if (!cancelled && savedFeeBuilder && typeof savedFeeBuilder === 'object') {
+          setFeeBuilderSaved(savedFeeBuilder);
+          feeBuilderSavedRef.current = savedFeeBuilder;
         }
         const savedCompleted = await dbGet(STORE, SERVICES_COMPLETED_KEY);
         if (!cancelled && Array.isArray(savedCompleted)) setServicesCompleted(savedCompleted);
@@ -2825,6 +2841,15 @@ export function PricingView({ settings } = {}) {
   const servicesOnOption = (o) => effectiveLineItemServices(
     (o?.sections || []).flatMap(sec => sec.items || []), lineItemServicesOnOption(o, lineItemServices), lineItemPriority,
   );
+
+  // Written straight from the handlers that change it (see
+  // writeFeeBuilderSaved) rather than from an effect, so a save is on disk
+  // before the next upload reads it back.
+  function writeFeeBuilderSaved(next) {
+    feeBuilderSavedRef.current = next;
+    setFeeBuilderSaved(next);
+    dbPut(STORE, next, FEE_BUILDER_SAVED_KEY).catch(err => console.warn('Failed to save Fee Builder settings:', err));
+  }
 
   useEffect(() => {
     if (!hydratedRef.current) return;
@@ -3461,9 +3486,20 @@ export function PricingView({ settings } = {}) {
       };
       setWorkbook(loaded);
       // A new SIA starts the Fee Builder over: picks and typed fees were
-      // made for the outgoing file's options.
-      setFeeBuilderPicks({});
-      setFeeBuilderOverrides({});
+      // made for the outgoing file's options. Unless settings were saved
+      // for this deal, in which case they come back.
+      const savedFb = savedFor(feeBuilderSavedRef.current, loaded);
+      if (savedFb) {
+        const r = restoreFeeBuilder(savedFb, loaded);
+        setFeeBuilderPicks(r.picks);
+        setFeeBuilderOverrides(r.overrides);
+        setFeeBuilderDone(r.doneState);
+        setFeeBuilderRestored({ workbookId: loaded.id, label: savedFb.label, savedAt: savedFb.savedAt, missing: r.missing });
+      } else {
+        setFeeBuilderPicks({});
+        setFeeBuilderOverrides({});
+        setFeeBuilderRestored(null);
+      }
       // Every load goes into the SIA History subtab: header details and
       // cost lines, so the file can be looked back on after the next one
       // replaces it. Best-effort - a failed save must not fail the upload.
@@ -3630,6 +3666,7 @@ export function PricingView({ settings } = {}) {
     setFeeBuilderPicks({});
     setFeeBuilderOverrides({});
     setFeeBuilderDone(null);
+    setFeeBuilderRestored(null);
     setError('');
     // Linked-To defaults live under their own key (LINKED_TO_DEFAULTS_KEY)
     // and are intentionally preserved across Clear / file changes.
@@ -5499,6 +5536,44 @@ export function PricingView({ settings } = {}) {
     setFeeBuilderPicks(prev => updateForOption(prev, toOption, () => next));
   }
 
+  // Fee Builder subtab: saving its picks, typed fees and done ticks for
+  // the deal this SIA is for, and loading them back (an upload of the same
+  // deal's SIA loads them on its own, see handleFile).
+  function feeBuilderSavedSettings() {
+    const deal = dealFor(workbook);
+    if (!deal) return null;
+    const saved = feeBuilderSaved[deal.key] || null;
+    const restored = feeBuilderRestored && feeBuilderRestored.workbookId === workbook.id ? feeBuilderRestored : null;
+    const load = (entry) => {
+      const r = restoreFeeBuilder(entry, workbook);
+      setFeeBuilderPicks(r.picks);
+      setFeeBuilderOverrides(r.overrides);
+      setFeeBuilderDone(r.doneState);
+      setFeeBuilderRestored({ workbookId: workbook.id, label: entry.label, savedAt: entry.savedAt, missing: r.missing });
+      return r;
+    };
+    return {
+      dealLabel: deal.label,
+      saved,
+      restored,
+      others: listSaved(feeBuilderSaved).filter(e => e.key !== deal.key),
+      onSave: () => {
+        const entry = snapshotFeeBuilder({ workbook, picks: feeBuilderPicks, overrides: feeBuilderOverrides, doneState: feeBuilderDone });
+        if (!entry) return false;
+        writeFeeBuilderSaved(putSaved(feeBuilderSavedRef.current, entry));
+        return true;
+      },
+      onLoad: (key) => {
+        const entry = feeBuilderSavedRef.current?.[key];
+        return entry ? load(entry) : null;
+      },
+      onDelete: (key) => {
+        writeFeeBuilderSaved(removeSaved(feeBuilderSavedRef.current, key));
+        if (key === deal.key) setFeeBuilderRestored(null);
+      },
+    };
+  }
+
   // The active option's Alternative Fee schedule rebuilt from the picked
   // structure of every service, as the Services subtab's Apply would write
   // each one (blank fees filled with the standard fee, the service's
@@ -6153,6 +6228,7 @@ export function PricingView({ settings } = {}) {
           setHiddenColumns={setFeeBuilderHiddenCols}
           doneState={feeBuilderDone}
           setDoneState={setFeeBuilderDone}
+          savedSettings={feeBuilderSavedSettings()}
           oppLink={(() => {
             const opt = workbook?.options.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
             if (!opt) return null;
