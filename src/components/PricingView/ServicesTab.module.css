@@ -362,6 +362,15 @@
   white-space: nowrap;
 }
 
+/* The SIA's Comments cell on a cost line: kept narrow, wrapping. */
+.notesCell {
+  max-width: 16rem;
+  min-width: 8rem;
+  white-space: pre-wrap;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
 .subNote {
   font-size: 0.68rem;
   color: var(--color-text-muted);
