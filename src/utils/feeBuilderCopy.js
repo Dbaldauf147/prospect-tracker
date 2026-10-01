@@ -4,7 +4,8 @@
 // Two flavours go on the clipboard (see clipboardCopy.js): tab-separated
 // text, which is what Excel reads for a plain paste, and an HTML table so a
 // paste into Word or Outlook lands as a real table too. Both carry the same
-// header row and the same cells.
+// cells, and no header row: the rows are pasted under headers the sheet
+// already has. FEE_COPY_HEADERS still names the columns, in order.
 //
 // The Fee goes out as "$1,234.56", which Excel reads as a number; Units and
 // Start Month go out as bare numbers.
@@ -29,9 +30,9 @@ export function feeCopyCells(r) {
   ];
 }
 
-/** Tab-separated text: the header row, then one line per row. */
+/** Tab-separated text: one line per row, no header row. */
 export function feeCopyTsv(rows) {
-  return [FEE_COPY_HEADERS, ...(rows || []).map(feeCopyCells)].map(cells => cells.join('\t')).join('\n');
+  return (rows || []).map(feeCopyCells).map(cells => cells.join('\t')).join('\n');
 }
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -39,5 +40,5 @@ const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 /** The same table as HTML, for destinations that take a rich paste. */
 export function feeCopyHtml(rows) {
   const tr = (cells, tag) => `<tr>${cells.map(c => `<${tag}>${esc(c)}</${tag}>`).join('')}</tr>`;
-  return `<table><thead>${tr(FEE_COPY_HEADERS, 'th')}</thead><tbody>${(rows || []).map(r => tr(feeCopyCells(r), 'td')).join('')}</tbody></table>`;
+  return `<table><tbody>${(rows || []).map(r => tr(feeCopyCells(r), 'td')).join('')}</tbody></table>`;
 }

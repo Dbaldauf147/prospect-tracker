@@ -562,7 +562,7 @@ export function FeeBuilderTab({
     const list = pickedRows.map(t => t.row);
     const ok = await writeRichCopy(feeCopyTsv(list), feeCopyHtml(list));
     setRowCopyFlash(ok
-      ? `Copied ${list.length} fee row${list.length === 1 ? '' : 's'} with headers. Paste into Excel.`
+      ? `Copied ${list.length} fee row${list.length === 1 ? '' : 's'}, no headers. Paste into Excel.`
       : 'Copy failed: the browser blocked the clipboard.');
     window.setTimeout(() => setRowCopyFlash(''), 3000);
   };
@@ -778,7 +778,7 @@ export function FeeBuilderTab({
               className={own.smallBtn}
               disabled={pickedRows.length === 0}
               onClick={copyPicked}
-              title="Copy the selected rows (Fee line item, Type, Fee, Unit, Units, Start Month) to paste into Excel. Tick rows with the boxes on the left."
+              title="Copy the selected rows to paste into Excel, without a header row. Columns: Fee line item, Type, Fee, Unit, Units, Start Month. Tick rows with the boxes on the left."
             >
               Copy selected{pickedRows.length ? ` (${pickedRows.length})` : ''}
             </button>

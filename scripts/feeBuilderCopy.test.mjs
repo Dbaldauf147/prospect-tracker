@@ -24,17 +24,16 @@ check('blanks stay blank, zero count kept', feeCopyCells({ name: 'Setup', type: 
 
 check('tabs and line breaks inside a cell are flattened', feeCopyCells({ name: 'A\tB\nC', type: 'One Time' })[0], 'A B C');
 
-check('tsv has a header row then one line per row',
+check('tsv is one line per row, no header row',
   feeCopyTsv([full, { name: 'Setup', type: 'One Time', feePerUnit: 500 }]).split('\n'),
   [
-    'Fee line item\tType\tFee\tUnit\tUnits\tStart Month',
     'Utility Bill Management\tRecurring (monthly)\t$1,234.50\tPer Site\t12\t3',
     'Setup\tOne Time\t$500.00\t\t\t',
   ]);
 
 const html = feeCopyHtml([{ name: 'R&D <x>', type: 'One Time', feePerUnit: 1 }]);
 check('html escapes cell text', html.includes('<td>R&amp;D &lt;x&gt;</td>'), true);
-check('html has the header row', html.includes('<th>Fee line item</th><th>Type</th>'), true);
+check('html has no header row', html.includes('<th>'), false);
 
 console.log(`${failed ? 'FAIL' : 'PASS'} feeBuilderCopy: ${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
