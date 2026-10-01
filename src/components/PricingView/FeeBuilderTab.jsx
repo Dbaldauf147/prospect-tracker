@@ -6,6 +6,8 @@ import { serviceKey, groupFeeRows, costsByKind } from '../../utils/pricingServic
 import { addFeeSummarySheet, addFeeComparisonSheet } from '../../utils/feeSummarySheets';
 import { FEE_BUILDER_COLUMNS, isServiceDone, setServiceDone, toggleHiddenColumn } from '../../utils/feeBuilderChecklist';
 import { savedSummary } from '../../utils/feeBuilderSaved';
+import { feeCopyTsv, feeCopyHtml } from '../../utils/feeBuilderCopy';
+import { writeRichCopy } from '../../utils/clipboardCopy';
 
 // The Columns menu over the service table: a checkbox per column that can be
 // hidden. Closes on a click anywhere outside it.
@@ -426,6 +428,10 @@ export function FeeBuilderTab({
   const [collapsed, setCollapsed] = useState({});
   const [flash, setFlash] = useState('');
   const [copyFlash, setCopyFlash] = useState('');
+  // Fee rows ticked in the as-built table for Copy selected, by row id.
+  // Kept per option so switching options starts with nothing ticked.
+  const [picked, setPicked] = useState({ option: null, ids: {}, last: null });
+  const [rowCopyFlash, setRowCopyFlash] = useState('');
   const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0] || null;
 
   if (!workbook) {
@@ -481,6 +487,54 @@ export function FeeBuilderTab({
     const was = sum(subRows.map(r => r.feePerUnit));
     setFee(subRows.map(r => [r.key, was > 0 ? (Number(r.feePerUnit) || 0) * (total / was) : total / subRows.length]));
   };
+
+  // The as-built rows that can be ticked for Copy selected, in table order:
+  // each fee line, then the rows grouped under it while they are shown.
+  const feeGroups = plan ? groupFeeRows(plan.rows) : [];
+  const tickable = [];
+  feeGroups.forEach((g, gi) => {
+    const key = String(g.row.name || '').trim().toLowerCase();
+    tickable.push({ id: `${key}-${gi}`, row: g.row });
+    if (g.subRows.length && !collapsed[key]) g.subRows.forEach((r, si) => tickable.push({ id: `${key}-${gi}-${si}`, row: r }));
+  });
+  const pickedIds = picked.option === optionNumber ? picked.ids : {};
+  const pickedRows = tickable.filter(t => pickedIds[t.id]);
+  const allPicked = tickable.length > 0 && pickedRows.length === tickable.length;
+  // A shift-click ticks (or unticks) every row between it and the last one clicked.
+  const togglePick = (id, shift) => setPicked(prev => {
+    const ids = { ...(prev.option === optionNumber ? prev.ids : {}) };
+    const on = !ids[id];
+    const at = tickable.findIndex(t => t.id === id);
+    const from = shift && prev.option === optionNumber ? tickable.findIndex(t => t.id === prev.last) : -1;
+    const span = from >= 0 ? tickable.slice(Math.min(from, at), Math.max(from, at) + 1) : [{ id }];
+    for (const t of span) { if (on) ids[t.id] = true; else delete ids[t.id]; }
+    return { option: optionNumber, ids, last: id };
+  });
+  const pickAll = (on) => setPicked({
+    option: optionNumber,
+    ids: on ? Object.fromEntries(tickable.map(t => [t.id, true])) : {},
+    last: null,
+  });
+  const copyPicked = async () => {
+    const list = pickedRows.map(t => t.row);
+    const ok = await writeRichCopy(feeCopyTsv(list), feeCopyHtml(list));
+    setRowCopyFlash(ok
+      ? `Copied ${list.length} fee row${list.length === 1 ? '' : 's'} with headers. Paste into Excel.`
+      : 'Copy failed: the browser blocked the clipboard.');
+    window.setTimeout(() => setRowCopyFlash(''), 3000);
+  };
+  const pickCell = (id, label) => (
+    <td className={own.pickCol}>
+      <input
+        type="checkbox"
+        checked={!!pickedIds[id]}
+        onChange={() => {}}
+        onClick={(e) => togglePick(id, e.shiftKey)}
+        aria-label={`Select ${label} to copy`}
+        title="Select this row to copy. Shift-click selects every row between."
+      />
+    </td>
+  );
 
   return (
     <div className={styles.wrapper}>
@@ -679,6 +733,15 @@ export function FeeBuilderTab({
             <button
               type="button"
               className={own.smallBtn}
+              disabled={pickedRows.length === 0}
+              onClick={copyPicked}
+              title="Copy the selected rows (Fee line item, Type, Fee, Unit, Units, Start Month) to paste into Excel. Tick rows with the boxes on the left."
+            >
+              Copy selected{pickedRows.length ? ` (${pickedRows.length})` : ''}
+            </button>
+            <button
+              type="button"
+              className={own.smallBtn}
               disabled={plan.rows.length === 0}
               onClick={() => { exportPlan(plan).catch(err => window.alert(`Export failed: ${err?.message || err}`)); }}
               title="Download this schedule as an Excel file. A fee shared by several services is grouped with a sub-row for each."
@@ -700,6 +763,7 @@ export function FeeBuilderTab({
             </button>
           </div>
           {flash && <div className={styles.flash}>{flash}</div>}
+          {rowCopyFlash && <div className={styles.flash}>{rowCopyFlash}</div>}
           <p className={styles.note}>
             A preview. Nothing changes on the Pricing subtab until you build it. Every row comes from a service&apos;s
             picked structure on the Services subtab. Type over a Fee / Unit or a Unit Count to override it; the
@@ -747,6 +811,16 @@ export function FeeBuilderTab({
             <table className={styles.table}>
               <thead>
                 <tr>
+                  <th className={own.pickCol}>
+                    <input
+                      type="checkbox"
+                      checked={allPicked}
+                      ref={(el) => { if (el) el.indeterminate = pickedRows.length > 0 && !allPicked; }}
+                      onChange={() => pickAll(!allPicked)}
+                      aria-label="Select every row to copy"
+                      title="Select every row to copy"
+                    />
+                  </th>
                   <th>Fee</th>
                   <th>From</th>
                   <th>Type</th>
@@ -760,7 +834,7 @@ export function FeeBuilderTab({
                 </tr>
               </thead>
               <tbody>
-                {groupFeeRows(plan.rows).map((g, gi) => {
+                {feeGroups.map((g, gi) => {
                   const key = String(g.row.name || '').trim().toLowerCase();
                   const isGroup = g.subRows.length > 0;
                   const open = isGroup && !collapsed[key];
@@ -781,6 +855,7 @@ export function FeeBuilderTab({
                     const r = g.row;
                     return (
                       <tr key={`${key}-${gi}`} className={r.service ? own.newRow : undefined}>
+                        {pickCell(`${key}-${gi}`, r.name)}
                         <td>{r.name}{r.passThrough && <span className={styles.subNote}> pass-through</span>}</td>
                         <td className={r.service ? undefined : own.muted}>{fromLabel(g, covered)}</td>
                         <td>{r.type}</td>
@@ -797,6 +872,7 @@ export function FeeBuilderTab({
                   return (
                     <Fragment key={`${key}-${gi}`}>
                       <tr className={own.groupRow}>
+                        {pickCell(`${key}-${gi}`, g.row.name)}
                         <td>
                           <button
                             type="button"
@@ -832,6 +908,7 @@ export function FeeBuilderTab({
                       </tr>
                       {open && g.subRows.map((r, si) => (
                         <tr key={si} className={`${own.subRow} ${r.service ? own.newRow : ''}`}>
+                          {pickCell(`${key}-${gi}-${si}`, `${r.name}, ${r.service || 'on the schedule'}`)}
                           <td>{r.name}{r.passThrough && <span className={styles.subNote}> pass-through</span>}</td>
                           <td className={r.service ? undefined : own.muted}>{r.service || 'On the schedule'}</td>
                           <td>{r.type}</td>
@@ -848,7 +925,7 @@ export function FeeBuilderTab({
                   );
                 })}
                 <tr className={own.totalRow}>
-                  <td colSpan={7}>Total</td>
+                  <td colSpan={8}>Total</td>
                   {yearIdx.map(yi => <td key={yi} className={styles.num}>{fmtMoney(plan.after.feeByYear[yi])}</td>)}
                   <td className={styles.num}>{fmtMoney(sum(plan.after.feeByYear))}</td>
                   <td
