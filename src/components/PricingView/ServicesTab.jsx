@@ -612,6 +612,12 @@ function UnlinkedWarning({ unlinked, costTotals, optionName, tagOptions, quickTa
   );
 }
 
+// What one unit of a fee is, for "per ..." wording.
+function feeUnitNoun(unit) {
+  const u = String(unit || '').replace(/^per\s+/i, '').trim();
+  return u && u.toLowerCase() !== 'fixed' ? u.toLowerCase() : 'unit';
+}
+
 function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted, detail: standardDetail, detailForStructure = null, hasWorkbook, optionName, optionCtsTotal = 0, numYears, termMonths, siteCount, accountCount, kwhCount, dthCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, onSetFeeComponent, saved, setSaved, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough, moveTargets = [], onMoveItem = null, onOpenService }) {
   const structures = saved?.structures || [];
   const standardId = saved?.standardId || null;
@@ -2027,6 +2033,18 @@ function FeeStructureEditor({
                       ★ {fmtFeePerUnit(standardFee(idx), r.unit)}
                     </div>
                   )}
+                  {(() => {
+                    // A monthly fee per unit over a year, at the rate billed
+                    // now: the typed fee, else what the blank cell bills.
+                    if (r.type !== 'Recurring (monthly)') return null;
+                    const monthly = typeof r.fee === 'number' ? r.fee : (standardFee(idx) ?? p?.autoFee);
+                    if (typeof monthly !== 'number' || !Number.isFinite(monthly)) return null;
+                    return (
+                      <div className={styles.annualFee} title={`${fmtFeePerUnit(monthly, r.unit)} a month x 12, per ${feeUnitNoun(r.unit)}, before the Escalator.`}>
+                        {fmtFeePerUnit(monthly * 12, r.unit)} / yr
+                      </div>
+                    );
+                  })()}
                 </td>
                 <td>
                   <select className={styles.cellSelect} style={{ width: 96 }} value={r.unit || ''} onChange={(e) => setRow(idx, { unit: e.target.value })}>

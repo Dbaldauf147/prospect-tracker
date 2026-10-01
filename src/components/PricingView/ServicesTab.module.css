@@ -557,6 +557,13 @@
   font-weight: 500;
 }
 
+.annualFee {
+  font-size: 0.68rem;
+  color: #64748b;
+  white-space: nowrap;
+  margin-top: 0.1rem;
+}
+
 .warnText {
   font-size: 0.7rem;
   color: #b45309;
