@@ -1,5 +1,5 @@
 import { Component } from 'react';
-import { isChunkLoadError, reloadPastCache, chunkUrlFrom, diagnoseChunk } from '../utils/lazyView';
+import { isChunkLoadError, reloadPastCache, chunkUrlFrom, diagnoseChunk, claimScreenReload } from '../utils/lazyView';
 
 // The last boundary before the page. Individual pages have their own (see
 // KeyContactsView, PipelineView) so a bad row there doesn't take the app
@@ -12,7 +12,7 @@ import { isChunkLoadError, reloadPastCache, chunkUrlFrom, diagnoseChunk } from '
 export class RootErrorBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { error: null, info: null, diagnosis: null };
+    this.state = { error: null, info: null, diagnosis: null, reloading: false };
   }
 
   static getDerivedStateFromError(error) { return { error }; }
@@ -25,7 +25,17 @@ export class RootErrorBoundary extends Component {
     // say so here rather than leaving it to be guessed at from the message.
     if (isChunkLoadError(error)) {
       diagnoseChunk(chunkUrlFrom(error))
-        .then(diagnosis => this.setState({ diagnosis }))
+        .then((diagnosis) => {
+          // Every file loads now (or a bad saved copy was just replaced),
+          // so a fresh page is the whole fix. Take it, once, rather than
+          // leave the user reading a screen that says so.
+          if ((diagnosis.verdict === 'transient' || diagnosis.verdict === 'repaired') && claimScreenReload()) {
+            this.setState({ diagnosis, reloading: true });
+            window.location.reload();
+            return;
+          }
+          this.setState({ diagnosis });
+        })
         .catch(() => {});
     }
   }
@@ -43,7 +53,7 @@ export class RootErrorBoundary extends Component {
   }
 
   render() {
-    const { error, diagnosis } = this.state;
+    const { error, diagnosis, reloading } = this.state;
     if (!error) return this.props.children;
 
     const box = { maxWidth: 720, margin: '3rem auto', padding: '1.5rem', fontFamily: 'Inter, system-ui, sans-serif', color: '#0F172A' };
@@ -61,7 +71,8 @@ export class RootErrorBoundary extends Component {
     // Once the diagnosis is in, the heading can say which of the two this
     // is, instead of leading with staleness for a file the server never
     // had or one an extension is eating.
-    const heading = !stale ? 'Something in the page crashed'
+    const heading = reloading ? 'Reloading the page'
+      : !stale ? 'Something in the page crashed'
       : ({
         missing: 'A file this page needs is not on the server',
         'missing-dep': 'A file this page needs is not on the server',

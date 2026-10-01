@@ -33,7 +33,14 @@ globalThis.document = {
 const noDocument = () => { const d = globalThis.document; delete globalThis.document; return () => { globalThis.document = d; }; };
 
 let reloads = 0;
-globalThis.window = { location: { href: `${ORIGIN}/`, origin: ORIGIN, reload() { reloads += 1; } } };
+const winListeners = {};
+globalThis.window = {
+  location: { href: `${ORIGIN}/`, origin: ORIGIN, reload() { reloads += 1; } },
+  addEventListener(type, fn) { (winListeners[type] ||= []).push(fn); },
+  removeEventListener(type, fn) { winListeners[type] = (winListeners[type] || []).filter(f => f !== fn); },
+};
+let online = true;
+Object.defineProperty(globalThis, 'navigator', { value: { get onLine() { return online; } }, configurable: true });
 
 let fetches = [];
 let fetchFails = false;
@@ -59,11 +66,17 @@ function reset() {
   fetches = [];
   fetchFails = false;
   routes.clear();
+  online = true;
 }
 
 const {
   isChunkLoadError, chunkUrlFrom, recoverFromChunkError, reloadPastCache, diagnoseChunk,
+  chunkTiming, claimScreenReload, recentReloads,
 } = await import('../src/utils/lazyView.js');
+// Keep the waits short here; what matters is that they happen.
+chunkTiming.offlineWaitMs = 200;
+chunkTiming.serverRetryDelaysMs = [5, 5, 5];
+const repairFetches = () => fetches.filter(f => f.options?.cache !== 'no-store');
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -98,21 +111,51 @@ check('somebody else\'s origin is not ours to fetch',
 // --- the recovery ----------------------------------------------------
 reset();
 check('recovery reports itself underway', await recoverFromChunkError(chrome), true);
-check('it re-fetched the chunk', fetches.map(f => f.url), [CHUNK]);
-check('past the cache', fetches[0]?.options?.cache, 'reload');
-check('as us', fetches[0]?.options?.credentials, 'same-origin');
+check('it checked the server answers first', fetches[0]?.options?.cache, 'no-store');
+check('it re-fetched the chunk', repairFetches().map(f => f.url), [CHUNK]);
+check('past the cache', repairFetches()[0]?.options?.cache, 'reload');
+check('as us', repairFetches()[0]?.options?.credentials, 'same-origin');
 check('then reloaded', reloads, 1);
+check('the reload is counted', recentReloads(), 1);
+
+// One reload taken while the connection is still coming back hits the
+// same wall, so there is a second.
+check('a second failure still gets a reload', await recoverFromChunkError(chrome), true);
+check('two reloads', reloads, 2);
 
 // A chunk that is genuinely gone would otherwise reload forever.
-check('a second failure in the same minute gives up', await recoverFromChunkError(chrome), false);
-check('so it stays at one fetch', fetches.length, 1);
-check('and one reload', reloads, 1);
+const before = fetches.length;
+check('a third inside two minutes gives up', await recoverFromChunkError(chrome), false);
+check('without fetching', fetches.length, before);
+check('still two reloads', reloads, 2);
 
-// The cooldown is what holds it back, not the fetch or the error.
+// The window is what holds it back, not the fetch or the error.
 reset();
-store.set('chunk-reload-at', String(Date.now() - 61000));
-check('a minute later it may try again', await recoverFromChunkError(chrome), true);
+store.set('chunk-reload-log', JSON.stringify([Date.now() - 121000, Date.now() - 125000]));
+check('two minutes later it may try again', await recoverFromChunkError(chrome), true);
 check('reloaded again', reloads, 1);
+
+reset();
+store.set('chunk-reload-log', 'not json');
+check('a garbled log does not block recovery', await recoverFromChunkError(chrome), true);
+
+// Offline: hold the reload until the browser is back, rather than
+// swapping the page for the browser's own no-internet page.
+reset();
+online = false;
+const pending = recoverFromChunkError(chrome);
+await new Promise(r => setTimeout(r, 20));
+check('offline, it waits instead of reloading', reloads, 0);
+check('and fetches nothing yet', fetches.length, 0);
+online = true;
+for (const fn of [...(winListeners.online || [])]) fn();
+check('back online, it goes ahead', await pending, true);
+check('and reloads', reloads, 1);
+
+reset();
+online = false;
+check('never back online still ends in a reload', await recoverFromChunkError(chrome), true);
+check('reloaded', reloads, 1);
 
 // Storage denied (private mode) means no memory of a previous attempt,
 // so the loop guard can't hold: show the error instead of reloading.
@@ -126,8 +169,23 @@ check('and nothing reloaded', reloads, 0);
 reset();
 fetchFails = true;
 check('a failed re-fetch still reloads', await recoverFromChunkError(chrome), true);
-check('it did try', fetches.length, 1);
+check('it asked the server four times first, a moment apart',
+  fetches.filter(f => f.options?.cache === 'no-store').length, 4);
 check('and reloaded anyway', reloads, 1);
+
+// The server coming back part way through the waiting is the case the
+// waiting is for: the reload then lands on a working connection.
+reset();
+let answers = 0;
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (url, options) => {
+  if (options?.cache === 'no-store' && ++answers < 3) { fetches.push({ url, options }); throw new TypeError('Failed to fetch'); }
+  return realFetch(url, options);
+};
+check('server back on the third ask', await recoverFromChunkError(chrome), true);
+check('stopped asking once it answered', fetches.filter(f => f.options?.cache === 'no-store').length, 3);
+check('and reloaded', reloads, 1);
+globalThis.fetch = realFetch;
 
 // Safari's message carries no URL, so there is nothing to repair — but
 // the tab may still simply be out of date, which the reload does fix.
@@ -140,7 +198,7 @@ check('reloaded', reloads, 1);
 // automatic attempt was skipped or didn't take, so a plain reload is the
 // move already known not to work. Repair first, every time, no cooldown.
 reset();
-store.set('chunk-reload-at', String(Date.now()));
+store.set('chunk-reload-log', JSON.stringify([Date.now(), Date.now()]));
 await reloadPastCache(chrome);
 check('the button repairs even inside the cooldown', fetches.map(f => f.url), [CHUNK]);
 check('and reloads', reloads, 1);
@@ -212,7 +270,20 @@ check('and says it is a filter, not the app', blockedScript.summary.includes('Th
 reset();
 scriptProbe = 'load';
 routes.set(CHUNK, withDeps);
-check('loads as code too, so it was momentary', (await diagnoseChunk(CHUNK)).verdict, 'transient');
+const momentary = await diagnoseChunk(CHUNK);
+check('loads as code too, so it was momentary', momentary.verdict, 'transient');
+check('the report says how many reloads were spent', momentary.detail.includes('Automatic reloads in the last 2 minutes: 0 of 2.'), true);
+
+// The crash screen reloads by itself when everything loads now, but only
+// once per five minutes.
+reset();
+check('the screen may reload once', claimScreenReload(), true);
+check('not twice running', claimScreenReload(), false);
+store.set('chunk-screen-reload-at', String(Date.now() - 301000));
+check('five minutes later it may again', claimScreenReload(), true);
+reset();
+denyStorage = true;
+check('no storage, no screen reload', claimScreenReload(), false);
 
 reset();
 routes.set(CHUNK, withDeps);
