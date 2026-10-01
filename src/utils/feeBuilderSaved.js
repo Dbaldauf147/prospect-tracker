@@ -8,8 +8,12 @@
 // differently, so everything is saved against the option's sheet name and
 // mapped back onto the option numbers of the SIA it is loaded into.
 //
-// Saved map: { [dealKey]: {
-//   key, label, fileName, savedAt,
+// A deal can hold several pricing scenarios. The first one saved for a
+// deal is keyed by the deal key itself (which is all entries saved before
+// scenarios existed), later ones by `${dealKey}#${id}`.
+//
+// Saved map: { [entryKey]: {
+//   key, dealKey, name, label, fileName, savedAt,
 //   options: { [sheetName]: { picks, overrides, done: [doneKey] } },
 // } }
 
@@ -42,8 +46,54 @@ function doneFor(doneState, workbookId, optionNumber) {
     .map(k => k.slice(prefix.length));
 }
 
-// The Fee Builder as it stands on `workbook`, ready to save.
-export function snapshotFeeBuilder({ workbook, picks, overrides, doneState, now = Date.now() }) {
+// The deal an entry belongs to. Entries saved before scenarios carry no
+// dealKey; their key is the deal key.
+export function dealKeyOf(entry) {
+  if (!entry) return '';
+  if (entry.dealKey) return entry.dealKey;
+  const k = String(entry.key || '');
+  const at = k.indexOf('#');
+  return at === -1 ? k : k.slice(0, at);
+}
+
+// The name a scenario shows under: its own, or Scenario 1 for an entry
+// saved before scenarios had names.
+export function scenarioName(entry) {
+  const n = String(entry?.name || '').trim();
+  return n || 'Scenario 1';
+}
+
+// Every scenario saved for the deal `workbook` is for, newest first.
+export function scenariosFor(savedMap, workbook) {
+  const deal = dealFor(workbook);
+  if (!deal || !isObj(savedMap)) return [];
+  return listSaved(savedMap).filter(e => dealKeyOf(e) === deal.key);
+}
+
+// The key and default name for one more scenario on `deal`: the deal key
+// when it has none yet, else a fresh suffixed key, named one past the
+// highest "Scenario N" taken.
+export function newScenario(savedMap, deal, now = Date.now()) {
+  const existing = Object.values(isObj(savedMap) ? savedMap : {}).filter(e => e?.key && dealKeyOf(e) === deal.key);
+  const taken = new Set(Object.keys(isObj(savedMap) ? savedMap : {}));
+  let key = deal.key;
+  if (taken.has(key)) {
+    let n = now;
+    while (taken.has(`${deal.key}#${n}`)) n += 1;
+    key = `${deal.key}#${n}`;
+  }
+  let top = 0;
+  for (const e of existing) {
+    const m = /^scenario (\d+)$/i.exec(scenarioName(e));
+    if (m) top = Math.max(top, Number(m[1]));
+  }
+  return { key, name: `Scenario ${Math.max(top, existing.length) + 1}` };
+}
+
+// The Fee Builder as it stands on `workbook`, ready to save. `scenario`
+// ({ key, name }) says which saved scenario it goes into; without it, the
+// deal's first.
+export function snapshotFeeBuilder({ workbook, picks, overrides, doneState, scenario = null, now = Date.now() }) {
   const deal = dealFor(workbook);
   if (!deal) return null;
   const options = {};
@@ -56,7 +106,10 @@ export function snapshotFeeBuilder({ workbook, picks, overrides, doneState, now 
     if (!Object.keys(p).length && !Object.keys(t).length && !done.length) continue;
     options[name] = { picks: { ...p }, overrides: { ...t }, done };
   }
-  return { key: deal.key, label: deal.label, fileName: workbook.fileName || '', savedAt: now, options };
+  const entry = { key: scenario?.key || deal.key, dealKey: deal.key, label: deal.label, fileName: workbook.fileName || '', savedAt: now, options };
+  const name = String(scenario?.name || '').trim();
+  if (name) entry.name = name;
+  return entry;
 }
 
 // A saved entry laid onto `workbook`: the picks, typed fees and done ticks
@@ -86,11 +139,10 @@ export function restoreFeeBuilder(saved, workbook) {
   };
 }
 
-// The saved entry for the deal `workbook` is for, if there is one.
+// The saved entry for the deal `workbook` is for, if there is one: its
+// most recently saved scenario.
 export function savedFor(savedMap, workbook) {
-  const deal = dealFor(workbook);
-  if (!deal || !isObj(savedMap)) return null;
-  return savedMap[deal.key] || null;
+  return scenariosFor(savedMap, workbook)[0] || null;
 }
 
 export function putSaved(savedMap, entry) {

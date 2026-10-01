@@ -254,6 +254,17 @@
   background: #f8fafc;
 }
 
+/* The scenario picker in the Saved settings bar. */
+.scenarioSelect {
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  padding: 0.2rem 0.4rem;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: #fff;
+  color: var(--color-text);
+}
+
 /* Load saved... popup: every deal with saved Fee Builder settings. */
 .modalOverlay {
   position: fixed;
