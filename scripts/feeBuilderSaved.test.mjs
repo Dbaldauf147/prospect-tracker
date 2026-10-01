@@ -1,7 +1,7 @@
 // Assertion tests for the Fee Builder settings saved per deal.
 // Plain Node - no test framework. Run:
 //   node scripts/feeBuilderSaved.test.mjs
-import { dealFor, snapshotFeeBuilder, restoreFeeBuilder, savedFor, putSaved, removeSaved, listSaved } from '../src/utils/feeBuilderSaved.js';
+import { dealFor, snapshotFeeBuilder, restoreFeeBuilder, savedFor, putSaved, removeSaved, listSaved, savedSummary } from '../src/utils/feeBuilderSaved.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -81,6 +81,9 @@ check('removed', Object.keys(map), ['company:other']);
 check('remove does not mutate', Object.keys(before).length, 2);
 check('remove unknown is a no-op', removeSaved(map, 'nope'), map);
 check('restore of nothing', restoreFeeBuilder(null, wb1).picks, {});
+
+check('summary', savedSummary(entry), { sheets: ['Option 1', 'Option 2'], picks: 3, typed: 1, done: 2 });
+check('summary of nothing', savedSummary(null), { sheets: [], picks: 0, typed: 0, done: 0 });
 
 console.log(`${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

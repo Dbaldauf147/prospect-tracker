@@ -5553,10 +5553,11 @@ export function PricingView({ settings } = {}) {
       return r;
     };
     return {
+      dealKey: deal.key,
       dealLabel: deal.label,
       saved,
       restored,
-      others: listSaved(feeBuilderSaved).filter(e => e.key !== deal.key),
+      all: listSaved(feeBuilderSaved),
       onSave: () => {
         const entry = snapshotFeeBuilder({ workbook, picks: feeBuilderPicks, overrides: feeBuilderOverrides, doneState: feeBuilderDone });
         if (!entry) return false;

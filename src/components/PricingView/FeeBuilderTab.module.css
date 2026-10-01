@@ -253,3 +253,95 @@
   border-radius: 8px;
   background: #f8fafc;
 }
+
+/* Load saved... popup: every deal with saved Fee Builder settings. */
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  width: min(600px, calc(100vw - 32px));
+  max-height: 80vh;
+  padding: 1rem 1.1rem;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25);
+}
+
+.modalHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modalTitle {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.modalClose {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+.modalSearch {
+  font-family: inherit;
+  font-size: var(--font-size-sm, 0.85rem);
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+
+.modalList {
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+
+.modalEmpty {
+  padding: 0.75rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.modalItem {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  font-size: var(--font-size-xs);
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.modalItem:last-child {
+  border-bottom: none;
+}
+
+.modalItemText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.thisDeal {
+  margin-left: 0.4rem;
+  font-size: 0.7rem;
+  color: #047857;
+  background: #d1fae5;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+}

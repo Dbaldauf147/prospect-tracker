@@ -5,6 +5,7 @@ import own from './FeeBuilderTab.module.css';
 import { serviceKey, groupFeeRows, costsByKind } from '../../utils/pricingServices';
 import { addFeeSummarySheet, addFeeComparisonSheet } from '../../utils/feeSummarySheets';
 import { FEE_BUILDER_COLUMNS, isServiceDone, setServiceDone, toggleHiddenColumn } from '../../utils/feeBuilderChecklist';
+import { savedSummary } from '../../utils/feeBuilderSaved';
 
 // The Columns menu over the service table: a checkbox per column that can be
 // hidden. Closes on a click anywhere outside it.
@@ -257,9 +258,11 @@ function fmtSavedAt(ms) {
 
 // The Saved settings bar: saves the picks, typed fees and done ticks for the
 // deal this SIA is for, and loads them back. Uploading the same deal's SIA
-// again loads them on its own; the note says so.
+// again loads them on its own; the note says so. Load saved... opens the
+// list of every deal saved.
 function SavedSettingsBar({ saved: s }) {
   const [flash, setFlash] = useState('');
+  const [listOpen, setListOpen] = useState(false);
   const say = (msg) => { setFlash(msg); window.setTimeout(() => setFlash(''), 4000); };
   const missingNote = (missing) => (missing?.length
     ? ` ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not on this SIA, so ${missing.length === 1 ? 'its' : 'their'} settings were left off.`
@@ -283,54 +286,15 @@ function SavedSettingsBar({ saved: s }) {
         >
           {s.saved ? 'Update saved settings' : 'Save settings'}
         </button>
-        {s.saved && (
-          <button
-            type="button"
-            className={own.smallBtn}
-            title="Put the picks, typed fees and done ticks back the way they were saved"
-            onClick={() => {
-              if (!window.confirm(`Load the settings saved for ${s.dealLabel}? The picks and typed fees on screen are replaced.`)) return;
-              const r = s.onLoad(s.saved.key);
-              if (r) say(`Loaded the settings saved for ${s.dealLabel}.${missingNote(r.missing)}`);
-            }}
-          >
-            Load saved
-          </button>
-        )}
-        {s.others.length > 0 && (
-          <select
-            className={own.copySelect}
-            value=""
-            aria-label="Load the settings saved for another deal"
-            title="Load the settings saved for another deal onto this SIA, matched by option sheet name"
-            onChange={(e) => {
-              const entry = s.others.find(o => o.key === e.target.value);
-              if (!entry) return;
-              if (!window.confirm(`Load the settings saved for ${entry.label} onto this SIA? The picks and typed fees on screen are replaced.`)) return;
-              const r = s.onLoad(entry.key);
-              if (r) say(`Loaded the settings saved for ${entry.label}.${missingNote(r.missing)}`);
-            }}
-          >
-            <option value="">Load from another deal...</option>
-            {s.others.map(o => (
-              <option key={o.key} value={o.key}>{o.label} ({fmtSavedAt(o.savedAt)})</option>
-            ))}
-          </select>
-        )}
-        {s.saved && (
-          <button
-            type="button"
-            className={styles.linkBtn}
-            title={`Delete the settings saved for ${s.dealLabel}. What is on screen stays.`}
-            onClick={() => {
-              if (!window.confirm(`Delete the settings saved for ${s.dealLabel}?`)) return;
-              s.onDelete(s.saved.key);
-              say(`Deleted the settings saved for ${s.dealLabel}.`);
-            }}
-          >
-            Delete saved
-          </button>
-        )}
+        <button
+          type="button"
+          className={own.smallBtn}
+          disabled={s.all.length === 0}
+          title={s.all.length ? 'Pick from every deal with saved settings' : 'Nothing saved yet'}
+          onClick={() => setListOpen(true)}
+        >
+          Load saved...
+        </button>
       </div>
       {s.restored && !flash && (
         <div className={own.muted}>
@@ -338,6 +302,97 @@ function SavedSettingsBar({ saved: s }) {
         </div>
       )}
       {flash && <div className={styles.flash}>{flash}</div>}
+      {listOpen && (
+        <SavedListModal
+          entries={s.all}
+          currentKey={s.saved?.key || s.dealKey}
+          onClose={() => setListOpen(false)}
+          onLoad={(entry) => {
+            if (!window.confirm(`Load the settings saved for ${entry.label} onto this SIA? The picks and typed fees on screen are replaced.`)) return;
+            const r = s.onLoad(entry.key);
+            setListOpen(false);
+            if (r) say(`Loaded the settings saved for ${entry.label}.${missingNote(r.missing)}`);
+          }}
+          onDelete={(entry) => {
+            if (!window.confirm(`Delete the settings saved for ${entry.label}?`)) return;
+            s.onDelete(entry.key);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// The popup behind Load saved...: every deal with saved Fee Builder
+// settings, this SIA's deal first, with a search over the deal and file.
+function SavedListModal({ entries, currentKey, onClose, onLoad, onDelete }) {
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const q = query.trim().toLowerCase();
+  const list = entries
+    .filter(e => !q || `${e.label} ${e.fileName || ''}`.toLowerCase().includes(q))
+    .sort((a, b) => (b.key === currentKey) - (a.key === currentKey));
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  return (
+    <div className={own.modalOverlay} onMouseDown={onClose}>
+      <div
+        className={own.modal}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Saved Fee Builder settings"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className={own.modalHead}>
+          <h3 className={own.modalTitle}>Saved Fee Builder settings</h3>
+          <button type="button" className={own.modalClose} onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <input
+          autoFocus
+          type="text"
+          className={own.modalSearch}
+          placeholder="Search by deal or file name"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <div className={own.modalList}>
+          {list.length === 0 ? (
+            <div className={own.modalEmpty}>{entries.length ? 'No matches.' : 'Nothing saved yet.'}</div>
+          ) : list.map(e => {
+            const sum = savedSummary(e);
+            return (
+              <div key={e.key} className={own.modalItem}>
+                <div className={own.modalItemText}>
+                  <div>
+                    <strong>{e.label}</strong>
+                    {e.key === currentKey && <span className={own.thisDeal}>This SIA</span>}
+                  </div>
+                  <div className={own.muted}>
+                    Saved {fmtSavedAt(e.savedAt)}{e.fileName ? `, from ${e.fileName}` : ''}
+                  </div>
+                  <div className={own.muted}>
+                    {sum.sheets.length
+                      ? `${sum.sheets.join(', ')}: ${plural(sum.picks, 'pick')}, ${plural(sum.typed, 'typed fee')}, ${sum.done} done`
+                      : 'Every service on its standard structure'}
+                  </div>
+                </div>
+                <button type="button" className={own.smallBtn} onClick={() => onLoad(e)}>Load</button>
+                <button
+                  type="button"
+                  className={styles.linkBtn}
+                  onClick={() => onDelete(e)}
+                  title={`Delete the settings saved for ${e.label}. What is on screen stays.`}
+                >
+                  Delete
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -360,8 +415,9 @@ function SavedSettingsBar({ saved: s }) {
 //                 as the Pricing subtab's "Save to Opp…":
 //                 { optionName, label (null when unlinked), onSave, onUnlink }
 //   savedSettings the settings saved for this SIA's deal (see
-//                 feeBuilderSaved.js): { dealLabel, saved, restored, others,
-//                 onSave, onLoad(key), onDelete(key) }, null with no deal
+//                 feeBuilderSaved.js): { dealKey, dealLabel, saved,
+//                 restored, all (every deal saved), onSave, onLoad(key),
+//                 onDelete(key) }, null with no deal
 export function FeeBuilderTab({
   workbook, activeOption, setActiveOption, setPicks, planFor, onCopyPicks, onApply, onOpenServices, setFeeOverrides,
   hiddenColumns, setHiddenColumns, doneState, setDoneState, oppLink = null, savedSettings = null,
