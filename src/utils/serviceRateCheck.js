@@ -30,6 +30,7 @@
 // Pure, so scripts/serviceRateCheck.test.mjs can hold it still.
 
 import { estimateServiceRange, PRICING_BASES } from './servicePricing.js';
+import { usageCountsFor } from './siaUsageCounts.js';
 
 export const DEFAULT_MARGIN = 0.5;
 export const DEFAULT_TERM_MONTHS = 36;
@@ -555,7 +556,13 @@ export function siaCountsFor(workbook, opt) {
   };
   const s = pick('siteCount');
   const a = pick('accountCount');
-  return { sites: s.value, accounts: a.value, sitesFrom: s.from, accountsFrom: a.from };
+  // Monthly kWh and Dth off the header block, for Per kWh / Per Dth fees
+  // (see siaUsageCounts.js). Read straight from the header so an option
+  // that does not carry them yet still gets them.
+  const usage = usageCountsFor(opt, workbook?.options || []);
+  const k = typeof opt?.kwhCount === 'number' && opt.kwhCount > 0 ? opt.kwhCount : usage.kwhCount;
+  const d = typeof opt?.dthCount === 'number' && opt.dthCount > 0 ? opt.dthCount : usage.dthCount;
+  return { sites: s.value, accounts: a.value, sitesFrom: s.from, accountsFrom: a.from, kwh: k, dth: d };
 }
 
 // The counts the price check prices on: the SIA's, with any typed on the
@@ -592,5 +599,7 @@ export function feeUnitCountsFor(detail) {
   return {
     siteCount: num(counts[siteKey]) ?? num(detail?.sia?.sites),
     accountCount: num(counts.accounts) ?? num(detail?.sia?.accounts),
+    kwhCount: num(detail?.sia?.kwh),
+    dthCount: num(detail?.sia?.dth),
   };
 }

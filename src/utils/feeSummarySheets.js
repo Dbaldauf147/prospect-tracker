@@ -17,9 +17,13 @@
 //   { name, type, feePerUnit, unit, unitCount, startMonth, years: [..], term, cost }
 // and a side's totals like { feeByYear: [..], costByYear: [..], margin }.
 
+import { isUsageUnit } from './siaUsageCounts.js';
+
 const norm = (s) => String(s ?? '').trim().toLowerCase();
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const round2 = (v) => Math.round(v * 100) / 100;
+// A fee per kWh / Dth is a fraction of a cent, so it keeps five places.
+const feeFmt = (unit) => (isUsageUnit(unit) ? '$#,##0.00000' : MONEY2);
 const sum = (arr) => (arr || []).reduce((a, b) => a + (Number(b) || 0), 0);
 
 // One side's rows folded by fee name: a fee billed on two rows is one line.
@@ -142,7 +146,7 @@ export function condenseFeeRows(rows) {
       out.set(k, { ...row, name, unitCount: units, startMonth: start, feePerUnit: fee });
       continue;
     }
-    if (fee != null) prev.feePerUnit = round2((prev.feePerUnit ?? 0) + fee);
+    if (fee != null) prev.feePerUnit = isUsageUnit(row.unit) ? (prev.feePerUnit ?? 0) + fee : round2((prev.feePerUnit ?? 0) + fee);
     for (const f of ['term', 'cost']) {
       if (typeof row[f] === 'number' || typeof prev[f] === 'number') prev[f] = (Number(prev[f]) || 0) + (Number(row[f]) || 0);
     }
@@ -171,7 +175,7 @@ export function addFeeSummarySheet(wb, { rows: given = [], subtitle = '', title 
     writeRow(ws, r++, [
       [String(row.name).trim()],
       [row.type || '', null, 'left'],
-      [num(row.feePerUnit), MONEY2],
+      [num(row.feePerUnit), feeFmt(row.unit)],
       [row.unit || '', null, 'right'],
       [num(Number(row.unitCount)), INT],
       [num(Number(row.startMonth)) ?? 1, INT],
@@ -319,7 +323,7 @@ export function addFeeDeltaSheet(wb, { pricing, builder, numYears = 1, subtitle 
   writeRow(ws, box.r++, [['Fee line item'], ...[...side, ...side, 'Fee', 'Term fees', 'Status']
     .map(h => [h, null, h === 'Type' || h === 'Status' ? 'left' : 'right'])], { header: true });
   const cellsOf = (x) => (x
-    ? [[x.type || '', null, 'left'], [typeof x.feePerUnit === 'number' ? x.feePerUnit : (x.feePerUnit ?? null), MONEY2, 'right'], [x.unit || '', null, 'right'], [num(x.unitCount), INT], [x.startMonth ?? null, INT, 'right'], [x.term, MONEY]]
+    ? [[x.type || '', null, 'left'], [typeof x.feePerUnit === 'number' ? x.feePerUnit : (x.feePerUnit ?? null), feeFmt(x.unit), 'right'], [x.unit || '', null, 'right'], [num(x.unitCount), INT], [x.startMonth ?? null, INT, 'right'], [x.term, MONEY]]
     : Array.from({ length: 6 }, () => ['']));
   for (const c of cmp) {
     writeRow(ws, box.r++, [

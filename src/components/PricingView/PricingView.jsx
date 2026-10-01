@@ -7,7 +7,8 @@ import { downloadPricingMarginWorkbook } from '../../utils/pricingMarginWorkbook
 import { useAuth } from '../../contexts/AuthContext';
 import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingParse';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
-import { buildAltFeeRowsFromAutomatedNames, altFeeUnitCount, feeDefaultKey, applyFeeDefaultToRows, reconcileScheduleWithFeeDefaults } from '../../utils/altFeeAutoBuild';
+import { withUsageCounts, fmtFeePerUnit } from '../../utils/siaUsageCounts';
+import { buildAltFeeRowsFromAutomatedNames, altFeeUnitCount, siaUnitCount, optionUnitCounts, feeDefaultKey, applyFeeDefaultToRows, reconcileScheduleWithFeeDefaults } from '../../utils/altFeeAutoBuild';
 import { recurringFeePerUnit, billedMonthFactor } from '../../utils/altFeePricing';
 import { year1ValueFor } from '../../utils/year1Value';
 import {
@@ -36,7 +37,7 @@ import { SiaHistoryTab } from './SiaHistoryTab';
 import { buildSiaHistoryEntry, siaKeyFacts } from '../../utils/siaHistoryEntry';
 import { saveSiaHistoryEntry } from '../../utils/siaLoadHistory';
 import { buildServiceRows } from '../../utils/serviceRows';
-import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, moveCostLineService, servicesForCostLine, isCostLineServiceKey, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices, sharedLineItemsToSplit, sharedSignature, lineItemServicesOnOption, setOptionCostLineService, setOptionItemService, clearOptionItemPicks } from '../../utils/pricingServices';
+import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, moveCostLineService, servicesForCostLine, isCostLineServiceKey, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices, sharedLineItemsToSplit, sharedSignature, lineItemServicesOnOption, setOptionCostLineService, setOptionItemService, clearOptionItemPicks, roundFee } from '../../utils/pricingServices';
 import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
 import { isSetupFeeType } from '../../utils/setupFeeFloor';
 import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
@@ -217,7 +218,7 @@ function parseAltFeePaste(text) {
   return out;
 }
 
-function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onReplaceRows, onAppendRows, onClearRows, onBuildRows, buildRows = [], automatedNameCount = 0, globalGmPct, marginFor, yearRevenue, autoFeeFor, autoStartMonthFor, siteCount, accountCount, altItemSuggestions = [], costByYear, passThroughByYear, passThroughRevenueByYear, passFeeCostByYear, numYears = 1 }) {
+function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onReplaceRows, onAppendRows, onClearRows, onBuildRows, buildRows = [], automatedNameCount = 0, globalGmPct, marginFor, yearRevenue, autoFeeFor, autoStartMonthFor, siteCount, accountCount, kwhCount, dthCount, altItemSuggestions = [], costByYear, passThroughByYear, passThroughRevenueByYear, passFeeCostByYear, numYears = 1 }) {
   const altItemListId = useId();
   const [dragFrom, setDragFrom] = useState(null); // row currently being dragged
   const [dragOverIdx, setDragOverIdx] = useState(null); // insertion point (0..rows.length)
@@ -248,21 +249,18 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
     setDragFrom(null);
     setDragOverIdx(null);
   }
-  // When the user picks Per Site / Per Account, fill Unit Count from
-  // the SIA metadata if the cell is still the default placeholder
-  // (blank or the seed value of 1).
+  // When the user picks Per Site / Per Account / Per kWh / Per Dth, fill
+  // Unit Count from the SIA metadata if the cell is still the default
+  // placeholder (blank or the seed value of 1).
   function handleUnitChange(idx, row, unit) {
     onChange(idx, 'unit', unit);
     const uc = row.unitCount;
     const isDefault = uc === '' || uc === null || uc === undefined || uc === 1 || uc === '1';
     if (!isDefault) return;
-    if (unit === 'Per Site' && typeof siteCount === 'number' && siteCount > 0) {
-      onChange(idx, 'unitCount', siteCount);
-    } else if (unit === 'Per Account' && typeof accountCount === 'number' && accountCount > 0) {
-      onChange(idx, 'unitCount', accountCount);
-    }
+    const n = siaUnitCount(unit, { siteCount, accountCount, kwhCount, dthCount });
+    if (n != null) onChange(idx, 'unitCount', n);
   }
-  const fmtFeeInput = (n) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const fmtFeeInput = (n, unit) => fmtFeePerUnit(n, unit);
   const fmtMoneyCell = (n) => {
     if (typeof n !== 'number' || !Number.isFinite(n)) return '';
     return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -292,7 +290,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
       const hasManual = r.fee != null && r.fee !== '' && Number.isFinite(manualFee) && manualFee >= 0;
       const auto = !hasManual && autoFeeFor ? autoFeeFor(r) : null;
       const fee = hasManual ? manualFee : (typeof auto === 'number' ? auto : '');
-      const feeCell = typeof fee === 'number' ? fmtMoneyCell(fee) : '';
+      const feeCell = typeof fee === 'number' ? fmtFeePerUnit(fee, r.unit) : '';
       const manualSm = Number(r.startMonth);
       const hasManualSm = r.startMonth != null && r.startMonth !== '' && Number.isFinite(manualSm) && manualSm > 0;
       const autoSm = !hasManualSm && autoStartMonthFor ? autoStartMonthFor(r) : null;
@@ -483,15 +481,15 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
               {(() => {
                 const auto = autoFeeFor ? autoFeeFor(row) : null;
                 const hasManualFee = typeof row.fee === 'number' && Number.isFinite(row.fee) && row.fee >= 0;
-                const initial = hasManualFee ? fmtFeeInput(row.fee) : '';
-                const placeholder = typeof auto === 'number' ? fmtFeeInput(auto) : '';
+                const initial = hasManualFee ? fmtFeeInput(row.fee, row.unit) : '';
+                const placeholder = typeof auto === 'number' ? fmtFeeInput(auto, row.unit) : '';
                 const title = typeof auto === 'number'
-                  ? `Auto-calculated from marked-up linked CTS (${fmtFeeInput(auto)} per unit). Type a value to override.`
+                  ? `Auto-calculated from marked-up linked CTS (${fmtFeeInput(auto, row.unit)} per unit). Type a value to override.`
                   : 'Tie this row to CTS rows via the Linked To column, then pick Type / Unit Count to auto-calculate the fee.';
                 return (
                   <td className={styles.numCell} title={title}>
                     <CellTextInput
-                      key={`alt-${idx}-fee-${row.fee ?? ''}-${typeof auto === 'number' ? auto.toFixed(2) : 'n'}`}
+                      key={`alt-${idx}-fee-${row.fee ?? ''}-${row.unit || ''}-${typeof auto === 'number' ? auto.toFixed(6) : 'n'}`}
                       initial={initial}
                       placeholder={placeholder}
                       align="right"
@@ -520,6 +518,8 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
                   <option value="Per Site">Per Site</option>
                   <option value="Per Account">Per Account</option>
                   <option value="Per Meter">Per Meter</option>
+                  <option value="Per kWh">Per kWh</option>
+                  <option value="Per Dth">Per Dth</option>
                 </select>
               </td>
               <td className={`${styles.numCell} ${String(row.altItem || '').trim() && (row.unitCount == null || row.unitCount === '') ? styles.altMissingCell : ''}`}>
@@ -1562,11 +1562,7 @@ function LinkedToPanel({
     if (!t) continue;
     if (!unitByAltItemLower.has(t)) unitByAltItemLower.set(t, r.unit || '');
   }
-  const unitCountForOption = (unit) => {
-    if (unit === 'Per Site' && typeof opt?.siteCount === 'number' && opt.siteCount > 0) return opt.siteCount;
-    if (unit === 'Per Account' && typeof opt?.accountCount === 'number' && opt.accountCount > 0) return opt.accountCount;
-    return null;
-  };
+  const unitCountForOption = (unit) => siaUnitCount(unit, optionUnitCounts(opt));
 
   const defaultEntries = (() => {
     const labelByKey = new Map();
@@ -1789,6 +1785,8 @@ function LinkedToPanel({
                           <option value="Per Site">Per Site</option>
                           <option value="Per Account">Per Account</option>
                           <option value="Per Meter">Per Meter</option>
+                          <option value="Per kWh">Per kWh</option>
+                          <option value="Per Dth">Per Dth</option>
                         </select>
                         {unitCount != null && (
                           <span className={styles.linkedMuted} style={{ marginLeft: 6 }}>({unitCount})</span>
@@ -1906,6 +1904,8 @@ function LinkedToPanel({
                           <option value="Per Site">Per Site</option>
                           <option value="Per Account">Per Account</option>
                           <option value="Per Meter">Per Meter</option>
+                          <option value="Per kWh">Per kWh</option>
+                          <option value="Per Dth">Per Dth</option>
                         </select>
                         {unitCount != null && (
                           <span className={styles.linkedMuted} style={{ marginLeft: 6 }}>({unitCount})</span>
@@ -2412,7 +2412,17 @@ export function PricingView({ settings } = {}) {
     const solutions = lists.find(l => l.key === 'solutions');
     return Array.isArray(solutions?.options) ? solutions.options : [];
   }, [settings]);
-  const [workbook, setWorkbook] = useState(null); // { fileName, options, sheetNames, loadedAt }
+  const [workbook, setWorkbookState] = useState(null); // { fileName, options, sheetNames, loadedAt }
+  // Every workbook set carries each option's monthly kWh / Dth off its
+  // header block (kwhCount / dthCount, see siaUsageCounts.js), so a Per kWh
+  // or Per Dth fee fills its Unit Count the way Per Site does. Workbooks
+  // cached before these existed pick them up on load.
+  const setWorkbook = (next) => setWorkbookState(prev => {
+    const wb = typeof next === 'function' ? next(prev) : next;
+    if (!wb || !Array.isArray(wb.options)) return wb;
+    const options = withUsageCounts(wb.options);
+    return options === wb.options ? wb : { ...wb, options };
+  });
   const [globalGmPct, setGlobalGmPct] = useState(0.5);
   const [overrides, setOverrides] = useState({}); // { [itemId]: { gmPct } }
   const [activeOption, setActiveOption] = useState(null); // optionNumber or null
@@ -3139,10 +3149,11 @@ export function PricingView({ settings } = {}) {
         }
       }
     }
-    // Round to two decimals so the value the user sees in the Fee
-    // column is exactly the same number used by every downstream
-    // calculation (year revenue, margin, totals). Without rounding,
-    // a displayed $1.93 can multiply out from an underlying $1.9263.
+    // Round to two decimals (five for a fee Per kWh / Per Dth, see
+    // roundFee) so the value the user sees in the Fee column is exactly
+    // the same number used by every downstream calculation (year revenue,
+    // margin, totals). Without rounding, a displayed $1.93 can multiply
+    // out from an underlying $1.9263.
     if (isRecurringRow) {
       const perUnit = recurringFeePerUnit({
         recurringCosts,
@@ -3154,10 +3165,10 @@ export function PricingView({ settings } = {}) {
         unitCount: uc,
       });
       if (perUnit == null) return null;
-      return Math.round(perUnit * 100) / 100;
+      return roundFee(perUnit, row.unit);
     }
     if (upfrontPrice <= 0) return null;
-    return Math.round((upfrontPrice / uc) * 100) / 100;
+    return roundFee(upfrontPrice / uc, row.unit);
   }
 
   // Fee Start Month for an alt-fee row: the fee's own saved default when it
@@ -3579,11 +3590,7 @@ export function PricingView({ settings } = {}) {
             const feeDef = feeDefaults[feeDefaultKey(wb.altItem)] || null;
             const unit = feeDef?.unit || wb.unit || '';
             let unitCount = wb.unitCount == null ? 1 : wb.unitCount;
-            if (feeDef?.unit) {
-              unitCount = 1;
-              if (unit === 'Per Site' && typeof opt.siteCount === 'number' && opt.siteCount > 0) unitCount = opt.siteCount;
-              else if (unit === 'Per Account' && typeof opt.accountCount === 'number' && opt.accountCount > 0) unitCount = opt.accountCount;
-            }
+            if (feeDef?.unit) unitCount = altFeeUnitCount(unit, optionUnitCounts(opt));
             return {
               altItem: wb.altItem,
               type: feeDef?.type || normAltType(wb.type),
@@ -3606,12 +3613,7 @@ export function PricingView({ settings } = {}) {
             // saved for the cost row's (Line Item, Type) pair.
             const feeDef = feeDefaults[feeDefaultKey(tag)] || null;
             const unit = feeDef?.unit || linkedToUnitDefaults[unitKey] || '';
-            let unitCount = 1;
-            if (unit === 'Per Site' && typeof opt.siteCount === 'number' && opt.siteCount > 0) {
-              unitCount = opt.siteCount;
-            } else if (unit === 'Per Account' && typeof opt.accountCount === 'number' && opt.accountCount > 0) {
-              unitCount = opt.accountCount;
-            }
+            const unitCount = altFeeUnitCount(unit, optionUnitCounts(opt));
             // Map the cost item's type into one of the alt-fee dropdown
             // values so the seeded row renders as selected. Rolled
             // variants normalize to their base (Setup Rolled → Setup,
@@ -3905,7 +3907,7 @@ export function PricingView({ settings } = {}) {
   // Unit Count to pair with a unit on this option - the same fill the
   // schedule's own Unit dropdown does when you pick Per Site / Per Account.
   function unitCountForUnit(unit, opt) {
-    return altFeeUnitCount(unit, { siteCount: opt?.siteCount, accountCount: opt?.accountCount });
+    return altFeeUnitCount(unit, optionUnitCounts(opt));
   }
 
   // The whole Alternative Fee schedule this option's Automated Fee Names
@@ -3937,8 +3939,7 @@ export function PricingView({ settings } = {}) {
       costs,
       existingRows: altFees[opt.optionNumber] || [],
       feeDefaults,
-      siteCount: opt.siteCount,
-      accountCount: opt.accountCount,
+      ...optionUnitCounts(opt),
     });
   }
 
@@ -4282,8 +4283,7 @@ export function PricingView({ settings } = {}) {
         const opt = workbook?.options?.find(o => String(o.optionNumber) === String(optNum));
         const applied = applyFeeDefaultToRows(rows || [], {
           key, field, value,
-          siteCount: opt?.siteCount,
-          accountCount: opt?.accountCount,
+          ...optionUnitCounts(opt),
         });
         if (applied !== (rows || [])) changed = true;
         next[optNum] = applied;
@@ -4383,7 +4383,7 @@ export function PricingView({ settings } = {}) {
       if (!altRow || !Number.isFinite(uc) || uc <= 0) {
         return ctsItemYearCost(it, yearIndex);
       }
-      const rounded = Math.round((it.cts / uc) * 100) / 100;
+      const rounded = roundFee(it.cts / uc, altRow.unit);
       const shim = { ...it, cts: rounded * uc };
       return ctsItemYearCost(shim, yearIndex);
     }
@@ -5208,6 +5208,8 @@ export function PricingView({ settings } = {}) {
         termMonths,
         siteCount: sia.sites ?? opt.siteCount,
         accountCount: sia.accounts ?? opt.accountCount,
+        kwhCount: sia.kwh ?? undefined,
+        dthCount: sia.dth ?? undefined,
         startMonthFor: autoStartMonthFor,
         feeEscalator: annualEscalator,
         costEscalator,
@@ -5365,12 +5367,12 @@ export function PricingView({ settings } = {}) {
   // One saved fee-structure row as the active option would bill it: the
   // schedule row it becomes, with the fee, start month, yearly revenue and
   // margin the page derives for blanks.
-  // `counts` ({ siteCount, accountCount }) are the service's own
+  // `counts` ({ siteCount, accountCount, kwhCount, dthCount }) are the service's own
   // (feeUnitCountsFor); without them, the SIA's.
   function previewFeeStructureRow(row, counts) {
     const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
     const sia = siaCountsFor(workbook, opt);
-    const alt = feeStructureRowToAltRow(row, counts || { siteCount: sia.sites ?? undefined, accountCount: sia.accounts ?? undefined });
+    const alt = feeStructureRowToAltRow(row, counts || { siteCount: sia.sites ?? undefined, accountCount: sia.accounts ?? undefined, kwhCount: sia.kwh ?? undefined, dthCount: sia.dth ?? undefined });
     const numYears = Math.max(1, Math.ceil(termMonths / 12));
     if (!opt || !alt.altItem) return { alt, autoFee: null, startMonth: null, years: Array(numYears).fill(0), gmPct: null };
     const autoFee = autoFeePerUnitFor(alt);
@@ -5631,6 +5633,8 @@ export function PricingView({ settings } = {}) {
         termMonths,
         siteCount: svcCounts.siteCount ?? opt.siteCount,
         accountCount: svcCounts.accountCount ?? opt.accountCount,
+        kwhCount: svcCounts.kwhCount,
+        dthCount: svcCounts.dthCount,
         startMonthFor: autoStartMonthFor,
         feeEscalator: annualEscalator,
         costEscalator,
@@ -5653,7 +5657,7 @@ export function PricingView({ settings } = {}) {
     // Only fees written by a structure from the Services subtab: a row on
     // the schedule no structure wrote comes off (built.dropped).
     const built = buildScheduleFromStructures(schedule, picks, {
-      siteCount: sia.sites ?? undefined, accountCount: sia.accounts ?? undefined, structuresOnly: true,
+      siteCount: sia.sites ?? undefined, accountCount: sia.accounts ?? undefined, kwhCount: sia.kwh ?? undefined, dthCount: sia.dth ?? undefined, structuresOnly: true,
     });
     const fromService = new Map();
     for (const ps of built.perService) for (const r of ps.added) fromService.set(r, ps.service);
@@ -7316,6 +7320,8 @@ export function PricingView({ settings } = {}) {
                             autoStartMonthFor={autoStartMonthFor}
                             siteCount={opt.siteCount}
                             accountCount={opt.accountCount}
+                            kwhCount={opt.kwhCount}
+                            dthCount={opt.dthCount}
                             altItemSuggestions={altItemSuggestions}
                             costByYear={costByYear}
                             passThroughByYear={passThroughByYear}

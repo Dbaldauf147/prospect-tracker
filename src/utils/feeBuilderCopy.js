@@ -9,11 +9,10 @@
 // The Fee goes out as "$1,234.56", which Excel reads as a number; Units and
 // Start Month go out as bare numbers.
 
+import { fmtFeePerUnit } from './siaUsageCounts.js';
+
 export const FEE_COPY_HEADERS = ['Fee line item', 'Type', 'Fee', 'Unit', 'Units', 'Start Month'];
 
-const fmtMoney = (n) => (typeof n === 'number' && Number.isFinite(n)
-  ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  : '');
 // A tab or line break inside a cell would split it across columns or rows.
 const clean = (v) => String(v ?? '').replace(/[\t\r\n]+/g, ' ').trim();
 
@@ -22,7 +21,8 @@ export function feeCopyCells(r) {
   return [
     clean(r?.name),
     clean(r?.type),
-    fmtMoney(r?.feePerUnit),
+    // A fee per kWh / Dth keeps its fraction of a cent.
+    fmtFeePerUnit(r?.feePerUnit, r?.unit),
     clean(r?.unit),
     r?.unitCount == null || r.unitCount === '' ? '' : clean(r.unitCount),
     r?.startMonth == null || r.startMonth === '' ? '' : clean(r.startMonth),
