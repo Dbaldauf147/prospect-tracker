@@ -8,6 +8,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingParse';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { withUsageCounts, fmtFeePerUnit } from '../../utils/siaUsageCounts';
+import { resolveSignature } from '../../utils/draftEmail';
 import { buildAltFeeRowsFromAutomatedNames, altFeeUnitCount, siaUnitCount, optionUnitCounts, feeDefaultKey, applyFeeDefaultToRows, reconcileScheduleWithFeeDefaults } from '../../utils/altFeeAutoBuild';
 import { recurringFeePerUnit, billedMonthFactor } from '../../utils/altFeePricing';
 import { year1ValueFor } from '../../utils/year1Value';
@@ -2407,7 +2408,7 @@ function parsePctInput(s) {
 }
 
 export function PricingView({ settings } = {}) {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const solutionsOptions = useMemo(() => {
     const lists = getEffectiveDropdownLists(settings);
     const solutions = lists.find(l => l.key === 'solutions');
@@ -6285,6 +6286,7 @@ export function PricingView({ settings } = {}) {
           doneState={feeBuilderDone}
           setDoneState={setFeeBuilderDone}
           savedSettings={feeBuilderSavedSettings()}
+          emailDraft={{ dealLabel: dealFor(workbook)?.label || '', termMonths, signature: resolveSignature(settings, isAdmin) }}
           oppLink={(() => {
             const opt = workbook?.options.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
             if (!opt) return null;
