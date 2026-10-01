@@ -2794,6 +2794,31 @@ export function PricingView({ settings } = {}) {
     });
   }
 
+  // Which Opps row an option is saved to ("Save to Opp…" on the Pricing
+  // and Fee Builder subtabs). The sheet name doubles as the link label so
+  // the chip matches what Opps 2 displays under "Pricing Option". Only
+  // links saved from *this* workbook count - a link left over from a file
+  // that also had an "Option 1" must not chip itself onto the one loaded
+  // now.
+  function optionOppLink(opt) {
+    const optionLabel = (opt?.sheetName || '').trim();
+    const linkedOppId = optionLabel && workbook
+      ? findLinkedOppId(optionLinks, {
+        name: optionLabel,
+        source: 'pricing',
+        workbookId: workbook.id,
+        allowLegacy: !!workbook.legacyLinks,
+      })
+      : null;
+    const linkedOpp = linkedOppId
+      ? opps2Records.find(r => String(r._id) === String(linkedOppId)) || null
+      : null;
+    const linkedLabel = linkedOpp
+      ? `${linkedOpp.Account || '(no Account)'}${linkedOpp.Scope ? ` · ${linkedOpp.Scope}` : ''}`
+      : (linkedOppId ? `(opp ${linkedOppId})` : null);
+    return { optionLabel, linkedOppId, linkedLabel };
+  }
+
   // The mapping as it reads on one option: the option's own cost-line
   // picks laid over it, and a priority line item narrowed to the one
   // service that takes its cost there.
@@ -6128,6 +6153,18 @@ export function PricingView({ settings } = {}) {
           setHiddenColumns={setFeeBuilderHiddenCols}
           doneState={feeBuilderDone}
           setDoneState={setFeeBuilderDone}
+          oppLink={(() => {
+            const opt = workbook?.options.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
+            if (!opt) return null;
+            const { optionLabel, linkedOppId, linkedLabel } = optionOppLink(opt);
+            if (!optionLabel) return null;
+            return {
+              optionName: optionLabel,
+              label: linkedLabel,
+              onSave: () => setPricingPickerOpen(true),
+              onUnlink: () => { if (linkedOppId) setOppOptionLink(linkedOppId, '').catch(() => {}); },
+            };
+          })()}
         />
       )}
 
@@ -6231,26 +6268,7 @@ export function PricingView({ settings } = {}) {
         {workbook && workbook.options.length > 0 && (() => {
           const opt = workbook.options.find(o => o.optionNumber === activeOption) || workbook.options[0];
           const t = totals?.[opt.optionNumber];
-          // Sheet name doubles as the link label so the Pricing-subtab
-          // chip matches what Opps 2 displays under "Pricing Option".
-          const optionLabel = (opt.sheetName || '').trim();
-          // Only links saved from *this* workbook count - a link left
-          // over from a file that also had an "Option 1" must not chip
-          // itself onto the one loaded now.
-          const linkedOppId = optionLabel
-            ? findLinkedOppId(optionLinks, {
-              name: optionLabel,
-              source: 'pricing',
-              workbookId: workbook.id,
-              allowLegacy: !!workbook.legacyLinks,
-            })
-            : null;
-          const linkedOpp = linkedOppId
-            ? opps2Records.find(r => String(r._id) === String(linkedOppId)) || null
-            : null;
-          const linkedLabel = linkedOpp
-            ? `${linkedOpp.Account || '(no Account)'}${linkedOpp.Scope ? ` · ${linkedOpp.Scope}` : ''}`
-            : (linkedOppId ? `(opp ${linkedOppId})` : null);
+          const { optionLabel, linkedOppId, linkedLabel } = optionOppLink(opt);
           return (
             <>
               <div className={styles.tabStrip}>
