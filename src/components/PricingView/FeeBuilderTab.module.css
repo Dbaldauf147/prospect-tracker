@@ -241,3 +241,15 @@
   line-height: 1;
   padding: 0 2px;
 }
+
+/* Saved settings bar: save and load the Fee Builder per deal. */
+.savedBar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: var(--font-size-xs);
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #f8fafc;
+}

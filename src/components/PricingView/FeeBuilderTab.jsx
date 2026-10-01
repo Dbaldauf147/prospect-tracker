@@ -250,6 +250,98 @@ async function exportPlan(plan) {
   URL.revokeObjectURL(url);
 }
 
+function fmtSavedAt(ms) {
+  if (!ms) return '';
+  return new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+// The Saved settings bar: saves the picks, typed fees and done ticks for the
+// deal this SIA is for, and loads them back. Uploading the same deal's SIA
+// again loads them on its own; the note says so.
+function SavedSettingsBar({ saved: s }) {
+  const [flash, setFlash] = useState('');
+  const say = (msg) => { setFlash(msg); window.setTimeout(() => setFlash(''), 4000); };
+  const missingNote = (missing) => (missing?.length
+    ? ` ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not on this SIA, so ${missing.length === 1 ? 'its' : 'their'} settings were left off.`
+    : '');
+  return (
+    <div className={own.savedBar}>
+      <div className={own.bar}>
+        <strong>Saved settings for {s.dealLabel}</strong>
+        <span className={own.muted}>
+          {s.saved ? `Saved ${fmtSavedAt(s.saved.savedAt)}` : 'Not saved yet'}
+        </span>
+        <span className={styles.barSpacer} />
+        <button
+          type="button"
+          className={own.smallBtn}
+          title={`Save the fee structure picks, typed fees and done ticks for ${s.dealLabel}. Uploading this deal's SIA again brings them back.`}
+          onClick={() => {
+            if (s.saved && !window.confirm(`Replace the settings saved for ${s.dealLabel} on ${fmtSavedAt(s.saved.savedAt)}?`)) return;
+            if (s.onSave()) say(`Saved the Fee Builder settings for ${s.dealLabel}.`);
+          }}
+        >
+          {s.saved ? 'Update saved settings' : 'Save settings'}
+        </button>
+        {s.saved && (
+          <button
+            type="button"
+            className={own.smallBtn}
+            title="Put the picks, typed fees and done ticks back the way they were saved"
+            onClick={() => {
+              if (!window.confirm(`Load the settings saved for ${s.dealLabel}? The picks and typed fees on screen are replaced.`)) return;
+              const r = s.onLoad(s.saved.key);
+              if (r) say(`Loaded the settings saved for ${s.dealLabel}.${missingNote(r.missing)}`);
+            }}
+          >
+            Load saved
+          </button>
+        )}
+        {s.others.length > 0 && (
+          <select
+            className={own.copySelect}
+            value=""
+            aria-label="Load the settings saved for another deal"
+            title="Load the settings saved for another deal onto this SIA, matched by option sheet name"
+            onChange={(e) => {
+              const entry = s.others.find(o => o.key === e.target.value);
+              if (!entry) return;
+              if (!window.confirm(`Load the settings saved for ${entry.label} onto this SIA? The picks and typed fees on screen are replaced.`)) return;
+              const r = s.onLoad(entry.key);
+              if (r) say(`Loaded the settings saved for ${entry.label}.${missingNote(r.missing)}`);
+            }}
+          >
+            <option value="">Load from another deal...</option>
+            {s.others.map(o => (
+              <option key={o.key} value={o.key}>{o.label} ({fmtSavedAt(o.savedAt)})</option>
+            ))}
+          </select>
+        )}
+        {s.saved && (
+          <button
+            type="button"
+            className={styles.linkBtn}
+            title={`Delete the settings saved for ${s.dealLabel}. What is on screen stays.`}
+            onClick={() => {
+              if (!window.confirm(`Delete the settings saved for ${s.dealLabel}?`)) return;
+              s.onDelete(s.saved.key);
+              say(`Deleted the settings saved for ${s.dealLabel}.`);
+            }}
+          >
+            Delete saved
+          </button>
+        )}
+      </div>
+      {s.restored && !flash && (
+        <div className={own.muted}>
+          Loaded the settings saved for {s.restored.label} on {fmtSavedAt(s.restored.savedAt)} with this SIA.{missingNote(s.restored.missing)}
+        </div>
+      )}
+      {flash && <div className={styles.flash}>{flash}</div>}
+    </div>
+  );
+}
+
 // Fee Builder subtab: one row per service in SIA scope (and any other
 // service that has saved fee structures), each with a pick of the fee
 // structures saved for it on the Services subtab. The picks together
@@ -267,9 +359,12 @@ async function exportPlan(plan) {
 //   oppLink       the Opps row the active option is saved to, the same link
 //                 as the Pricing subtab's "Save to Opp…":
 //                 { optionName, label (null when unlinked), onSave, onUnlink }
+//   savedSettings the settings saved for this SIA's deal (see
+//                 feeBuilderSaved.js): { dealLabel, saved, restored, others,
+//                 onSave, onLoad(key), onDelete(key) }, null with no deal
 export function FeeBuilderTab({
   workbook, activeOption, setActiveOption, setPicks, planFor, onCopyPicks, onApply, onOpenServices, setFeeOverrides,
-  hiddenColumns, setHiddenColumns, doneState, setDoneState, oppLink = null,
+  hiddenColumns, setHiddenColumns, doneState, setDoneState, oppLink = null, savedSettings = null,
 }) {
   const [showAll, setShowAll] = useState(false);
   const [collapsed, setCollapsed] = useState({});
@@ -381,6 +476,8 @@ export function FeeBuilderTab({
           )}
         </div>
       )}
+
+      {savedSettings && <SavedSettingsBar key={workbook.id} saved={savedSettings} />}
 
       <section className={styles.section}>
         <div className={own.bar}>
