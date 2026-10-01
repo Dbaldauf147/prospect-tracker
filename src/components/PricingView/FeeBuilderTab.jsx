@@ -9,6 +9,8 @@ import { savedSummary, scenarioName, dealKeyOf } from '../../utils/feeBuilderSav
 import { fmtFeePerUnit, isUsageUnit } from '../../utils/siaUsageCounts';
 import { feeCopyTsv, feeCopyHtml } from '../../utils/feeBuilderCopy';
 import { writeRichCopy } from '../../utils/clipboardCopy';
+import { feeBuilderEmailEml } from '../../utils/feeBuilderEmail';
+import { downloadDrafts, safeFileName } from '../../utils/draftEmail';
 
 // The Columns menu over the service table: a checkbox per column that can be
 // hidden. Closes on a click anywhere outside it.
@@ -457,6 +459,8 @@ function SavedListModal({ entries, dealKey, currentKey, onClose, onLoad, onDelet
 //   oppLink       the Opps row the active option is saved to, the same link
 //                 as the Pricing subtab's "Save to Opp…":
 //                 { optionName, label (null when unlinked), onSave, onUnlink }
+//   emailDraft    { dealLabel, termMonths, signature } for the Draft email
+//                 button (see feeBuilderEmail.js), null to leave it off
 //   savedSettings the settings saved for this SIA's deal (see
 //                 feeBuilderSaved.js): { dealKey, dealLabel, saved (the
 //                 scenario on screen), scenarios (this deal's), restored,
@@ -465,7 +469,7 @@ function SavedListModal({ entries, dealKey, currentKey, onClose, onLoad, onDelet
 //                 no deal
 export function FeeBuilderTab({
   workbook, activeOption, setActiveOption, setPicks, planFor, onCopyPicks, onApply, onOpenServices, setFeeOverrides,
-  hiddenColumns, setHiddenColumns, doneState, setDoneState, oppLink = null, savedSettings = null,
+  hiddenColumns, setHiddenColumns, doneState, setDoneState, oppLink = null, savedSettings = null, emailDraft = null,
 }) {
   const [showAll, setShowAll] = useState(false);
   const [collapsed, setCollapsed] = useState({});
@@ -804,6 +808,20 @@ export function FeeBuilderTab({
             >
               Export to Excel
             </button>
+            {emailDraft && (
+              <button
+                type="button"
+                className={own.smallBtn}
+                disabled={plan.rows.length === 0}
+                onClick={() => {
+                  const eml = feeBuilderEmailEml(plan, emailDraft);
+                  downloadDrafts([{ fileName: `${safeFileName(`Pricing ${emailDraft.dealLabel || ''} ${plan.optionName || ''}`.trim())}.eml`, eml }]);
+                }}
+                title="Download an Outlook draft with this option's services, fee schedule, term and margin. Open the file to edit and send it from Outlook."
+              >
+                Draft email
+              </button>
+            )}
             <button
               type="button"
               className={styles.applyBtn}
