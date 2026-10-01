@@ -5063,6 +5063,8 @@ export function PricingView({ settings } = {}) {
         // The type the SIA itself gives the line, so a converted one can
         // say what it was and be put back.
         siaType: item.type || '',
+        // The SIA's Comments cell for the line, shown as its notes.
+        comments: item.comments || '',
         // The type was set by hand (a conversion, or an Undo that pins the
         // SIA's own type), so nothing converts it automatically.
         typeSet: !!overrides[item.id]?.typeOverride,

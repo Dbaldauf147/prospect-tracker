@@ -737,6 +737,8 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
   // Pass-through lines get the column too: each picks how it is shown in
   // its own row below the price check (a fixed fee, or per account).
   const hasPassThrough = hasWorkbook && items.some(it => it.passThrough && !it.ignored);
+  // The SIA notes column shows only when a line on the service has one.
+  const hasNotes = items.some(it => it.comments && !(it.ignored && !showIgnored));
   const showComponents = !!onSetFeeComponent && (Object.keys(componentChoices).length > 0 || hasPassThrough);
   const meta = service.meta || {};
 
@@ -869,6 +871,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                   <tr>
                     <th>Line Item</th>
                     <th>Type</th>
+                    {hasNotes && <th title="The Comments cell the SIA gives each cost line.">SIA notes</th>}
                     <th className={styles.num}>CTS</th>
                     <th className={styles.num}>Start Month</th>
                     <th>Unit</th>
@@ -964,6 +967,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                           </div>
                         )}
                       </td>
+                      {hasNotes && <td className={styles.notesCell}>{it.comments}</td>}
                       <td className={styles.num}>{fmtMoney(it.cts)}</td>
                       <td className={styles.num}>{it.startMonth || ''}</td>
                       <td>
@@ -1076,7 +1080,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={2}>Total CTS</td>
+                    <td colSpan={hasNotes ? 3 : 2}>Total CTS</td>
                     <td className={styles.num}>
                       {fmtMoney(costTotal - ignoredTotal)}
                       {optionCtsTotal > 0 && (
