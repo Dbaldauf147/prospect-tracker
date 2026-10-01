@@ -299,7 +299,9 @@ function originalAttempt(url) {
  */
 export async function diagnoseChunk(url) {
   const verdict = await judgeChunk(url);
-  return { ...verdict, detail: verdict.detail + originalAttempt(url) };
+  const reloads = recentReloads();
+  const reloadLine = reloads == null ? '' : `\nAutomatic reloads in the last 2 minutes: ${reloads} of ${MAX_RELOADS}.`;
+  return { ...verdict, detail: verdict.detail + originalAttempt(url) + reloadLine };
 }
 
 async function judgeChunk(url) {
@@ -391,10 +393,9 @@ async function judgeChunk(url) {
     return {
       verdict: 'transient',
       summary: `This file and the ${count(checked)} it pulls in all load now, as code as well as `
-        + 'data, so whatever stopped it had passed by the time this screen went looking. The app '
-        + 'already asked twice more and reloaded before showing you this, so if you are reading it '
-        + 'the failure lasted longer than those attempts. The details below say what the request '
-        + 'that failed actually did.',
+        + 'data, so whatever stopped it had passed by the time this screen went looking. Most often '
+        + 'that is the connection dropping for a moment, after which this browser keeps treating '
+        + 'the file as failed until the page is loaded fresh. Reload and it should open.',
       detail: `Diagnosis: ${served} and load as scripts.`,
     };
   }
@@ -408,24 +409,85 @@ async function judgeChunk(url) {
   };
 }
 
-// One reload per window, tracked across the reload itself. Without this a
-// chunk that is genuinely missing — a broken deploy, an asset that never
-// uploaded — would reload forever instead of showing the error.
-const RELOAD_KEY = 'chunk-reload-at';
-const RELOAD_COOLDOWN_MS = 60000;
+// A budget of reloads per window, tracked across the reloads themselves.
+// Without one, a chunk that is genuinely missing (a broken deploy, an
+// asset that never uploaded) would reload forever instead of showing the
+// error.
+//
+// Two rather than one. The failure that gets this far is usually a file
+// the module loader gave up on while the connection was down (a laptop
+// waking up, a VPN reconnecting). The browser then remembers that file as
+// failed for the life of the page, so only a fresh page clears it. A
+// single reload taken while the network is still coming back hits the
+// same wall and has nothing left to spend.
+const RELOAD_LOG_KEY = 'chunk-reload-log';
+const RELOAD_WINDOW_MS = 120000;
+const MAX_RELOADS = 2;
+
+function readReloadLog() {
+  const raw = sessionStorage.getItem(RELOAD_LOG_KEY);
+  let list = [];
+  try { list = JSON.parse(raw || '[]'); } catch { list = []; }
+  const now = Date.now();
+  return (Array.isArray(list) ? list : [])
+    .map(Number)
+    .filter(t => Number.isFinite(t) && now - t < RELOAD_WINDOW_MS);
+}
 
 function claimReload() {
-  let last = 0;
+  let log;
   try {
-    last = Number(sessionStorage.getItem(RELOAD_KEY) || 0);
+    log = readReloadLog();
   } catch {
     // Private mode with storage denied: no memory of a previous attempt,
     // so don't risk a loop. Fall through to the crash screen.
     return false;
   }
-  if (Number.isFinite(last) && Date.now() - last < RELOAD_COOLDOWN_MS) return false;
-  try { sessionStorage.setItem(RELOAD_KEY, String(Date.now())); } catch { return false; }
+  if (log.length >= MAX_RELOADS) return false;
+  try { sessionStorage.setItem(RELOAD_LOG_KEY, JSON.stringify([...log, Date.now()])); } catch { return false; }
   return true;
+}
+
+/** How many automatic reloads this window has taken in the last two
+ * minutes, for the report the crash screen copies. Null when unknown. */
+export function recentReloads() {
+  try { return readReloadLog().length; } catch { return null; }
+}
+
+// Waiting for the network before spending a reload on it.
+//
+// Reloading while offline swaps a page that was mostly working for the
+// browser's own "no internet" page, and uses up the budget above on an
+// attempt that could not succeed. So hold on until the browser says it is
+// online, then until the server answers at all, with a ceiling so a page
+// that never gets its connection back still ends somewhere.
+export const chunkTiming = {
+  offlineWaitMs: 30000,
+  serverRetryDelaysMs: [1000, 2000, 4000],
+};
+
+function waitUntilOnline() {
+  if (typeof navigator === 'undefined' || navigator.onLine !== false) return Promise.resolve();
+  if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => { clearTimeout(timer); window.removeEventListener('online', done); resolve(); };
+    const timer = setTimeout(done, chunkTiming.offlineWaitMs);
+    window.addEventListener('online', done);
+  });
+}
+
+async function serverAnswers(url) {
+  try { await request(url, { cache: 'no-store' }); return true; } catch { return false; }
+}
+
+async function waitForServer(url) {
+  await waitUntilOnline();
+  if (!url) return;
+  if (await serverAnswers(url)) return;
+  for (const delay of chunkTiming.serverRetryDelaysMs) {
+    await new Promise(resolve => setTimeout(resolve, delay));
+    if (await serverAnswers(url)) return;
+  }
 }
 
 /**
@@ -435,8 +497,27 @@ function claimReload() {
  */
 export async function recoverFromChunkError(error) {
   if (!claimReload()) return false;
+  await waitForServer(chunkUrlFrom(error));
   await reloadPastCache(error);
   return true;
+}
+
+// The crash screen's own reload, for when its checks find that every file
+// loads now. A fresh page is then all it takes, and that is a better
+// ending than a screen telling the user so. Once per five minutes, so a
+// failure that only looks transient can't put the page in a loop.
+const SCREEN_RELOAD_KEY = 'chunk-screen-reload-at';
+const SCREEN_RELOAD_COOLDOWN_MS = 300000;
+
+export function claimScreenReload() {
+  try {
+    const last = Number(sessionStorage.getItem(SCREEN_RELOAD_KEY) || 0);
+    if (Number.isFinite(last) && Date.now() - last < SCREEN_RELOAD_COOLDOWN_MS) return false;
+    sessionStorage.setItem(SCREEN_RELOAD_KEY, String(Date.now()));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Asking for the same file again, at a URL the document has no history
@@ -450,6 +531,11 @@ export async function recoverFromChunkError(error) {
 // are relative they still resolve to the canonical URLs, so everything
 // shared stays shared. Only the view module itself ends up loaded twice,
 // which costs nothing but the parse.
+//
+// What this cannot fix is a file the view imports failing, rather than
+// the view's own file: that one's entry in the map is still the failure,
+// and every attempt here resolves to it within milliseconds. Only a fresh
+// page clears it, which is what the reload after this is for.
 //
 // Two attempts, a moment apart, because the failures that survive to here
 // are the ones that clear on their own: a request lost in the burst when
