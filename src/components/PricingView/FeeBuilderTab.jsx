@@ -471,6 +471,10 @@ export function FeeBuilderTab({
   const [collapsed, setCollapsed] = useState({});
   const [flash, setFlash] = useState('');
   const [copyFlash, setCopyFlash] = useState('');
+  // The notes over the as-built table (how the preview works, shared fee
+  // names, rows the Build takes off, cost lines it moves) stay folded away
+  // until asked for. The Build's confirm lists the same changes.
+  const [showNotes, setShowNotes] = useState(false);
   // Fee rows ticked in the as-built table for Copy selected, by row id.
   // Kept per option so switching options starts with nothing ticked.
   const [picked, setPicked] = useState({ option: null, ids: {}, last: null });
@@ -776,6 +780,15 @@ export function FeeBuilderTab({
             <button
               type="button"
               className={own.smallBtn}
+              onClick={() => setShowNotes(v => !v)}
+              aria-expanded={showNotes}
+              title="How the preview works, fee names shared by several services, and what building changes on the schedule"
+            >
+              {showNotes ? 'Hide notes' : 'Show notes'}
+            </button>
+            <button
+              type="button"
+              className={own.smallBtn}
               disabled={pickedRows.length === 0}
               onClick={copyPicked}
               title="Copy the selected rows to paste into Excel, without a header row. Columns: Fee line item, Type, Fee, Unit, Units, Start Month. Tick rows with the boxes on the left."
@@ -807,6 +820,7 @@ export function FeeBuilderTab({
           </div>
           {flash && <div className={styles.flash}>{flash}</div>}
           {rowCopyFlash && <div className={styles.flash}>{rowCopyFlash}</div>}
+          {showNotes && (<>
           <p className={styles.note}>
             A preview. Nothing changes on the Pricing subtab until you build it. Every row comes from a service&apos;s
             picked structure on the Services subtab. Type over a Fee / Unit or a Unit Count to override it; the
@@ -848,6 +862,7 @@ export function FeeBuilderTab({
               {plan.moves.map(m => `${m.lineItem} (${m.from || 'no fee'} to ${m.to})`).join('; ')}.
             </div>
           )}
+          </>)}
           {plan.rows.length === 0 ? (
             <p className={styles.note}>No fee rows.</p>
           ) : (
