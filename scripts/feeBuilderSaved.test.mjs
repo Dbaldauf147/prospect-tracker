@@ -1,7 +1,7 @@
 // Assertion tests for the Fee Builder settings saved per deal.
 // Plain Node - no test framework. Run:
 //   node scripts/feeBuilderSaved.test.mjs
-import { dealFor, snapshotFeeBuilder, restoreFeeBuilder, savedFor, putSaved, removeSaved, listSaved, savedSummary } from '../src/utils/feeBuilderSaved.js';
+import { dealFor, snapshotFeeBuilder, restoreFeeBuilder, savedFor, putSaved, removeSaved, listSaved, savedSummary, dealKeyOf, scenarioName, scenariosFor, newScenario } from '../src/utils/feeBuilderSaved.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -35,6 +35,7 @@ const doneState = { workbookId: 'w1', done: { '1|bbs reporting': true, '2|espm l
 const entry = snapshotFeeBuilder({ workbook: wb1, picks, overrides, doneState, now: 1000 });
 check('snapshot', entry, {
   key: 'company:acme corp',
+  dealKey: 'company:acme corp',
   label: 'Acme Corp',
   fileName: 'Acme SIA v1.xlsx',
   savedAt: 1000,
@@ -84,6 +85,29 @@ check('restore of nothing', restoreFeeBuilder(null, wb1).picks, {});
 
 check('summary', savedSummary(entry), { sheets: ['Option 1', 'Option 2'], picks: 3, typed: 1, done: 2 });
 check('summary of nothing', savedSummary(null), { sheets: [], picks: 0, typed: 0, done: 0 });
+
+// Scenarios: several saves on one deal.
+{
+  const deal = dealFor(wb1);
+  let m = {};
+  check('first scenario takes the deal key', newScenario(m, deal, 5), { key: 'company:acme corp', name: 'Scenario 1' });
+  m = putSaved(m, snapshotFeeBuilder({ workbook: wb1, picks, overrides, doneState, now: 10 }));
+  const s2 = newScenario(m, deal, 20);
+  check('second scenario gets its own key', s2, { key: 'company:acme corp#20', name: 'Scenario 2' });
+  m = putSaved(m, snapshotFeeBuilder({ workbook: wb1, picks: {}, overrides: {}, doneState: null, scenario: { ...s2, name: 'Low fee' }, now: 20 }));
+  check('both kept', Object.keys(m).length, 2);
+  check('named scenario', scenarioName(m['company:acme corp#20']), 'Low fee');
+  check('legacy entry name', scenarioName({ key: 'company:acme corp' }), 'Scenario 1');
+  check('deal of a suffixed key without dealKey', dealKeyOf({ key: 'company:acme corp#7' }), 'company:acme corp');
+  check('scenarios newest first', scenariosFor(m, wb2).map(e => e.key), ['company:acme corp#20', 'company:acme corp']);
+  check('upload restores the newest', savedFor(m, wb2).key, 'company:acme corp#20');
+  check('third is numbered past the count', newScenario(m, deal, 20).name, 'Scenario 3');
+  check('third key skips a taken one', newScenario(m, deal, 20).key, 'company:acme corp#21');
+  check('other deals see none', scenariosFor(m, { options: [{ sheetName: 'Option 1', headerDetails: [{ label: 'Client', value: 'Other' }] }] }), []);
+  const m2 = removeSaved(m, 'company:acme corp');
+  check('first can go, a later one stays', savedFor(m2, wb1).key, 'company:acme corp#20');
+  check('a new one after that reuses the deal key', newScenario(m2, deal, 30), { key: 'company:acme corp', name: 'Scenario 2' });
+}
 
 console.log(`${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

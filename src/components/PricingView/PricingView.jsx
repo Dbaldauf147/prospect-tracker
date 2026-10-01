@@ -32,7 +32,7 @@ import { renameLineItemServices, renameFeeStructures, renameWorkbookServices } f
 import { renameInLowerList, renameInLowerKeyMap } from '../../utils/serviceNameMerges';
 import { FeeBuilderTab } from './FeeBuilderTab';
 import { updateForOption, copyPicksBetweenOptions, pickedStructureFor } from '../../utils/feeBuilderChecklist';
-import { dealFor, snapshotFeeBuilder, restoreFeeBuilder, savedFor, putSaved, removeSaved, listSaved } from '../../utils/feeBuilderSaved';
+import { dealFor, snapshotFeeBuilder, restoreFeeBuilder, savedFor, putSaved, removeSaved, listSaved, scenariosFor, newScenario, scenarioName } from '../../utils/feeBuilderSaved';
 import { SiaHistoryTab } from './SiaHistoryTab';
 import { buildSiaHistoryEntry, siaKeyFacts } from '../../utils/siaHistoryEntry';
 import { saveSiaHistoryEntry } from '../../utils/siaLoadHistory';
@@ -2468,7 +2468,8 @@ export function PricingView({ settings } = {}) {
   const [feeBuilderHiddenCols, setFeeBuilderHiddenCols] = useState([]); // Fee Builder subtab: keys of the service-table columns hidden from its Columns menu
   const [feeBuilderDone, setFeeBuilderDone] = useState(null); // Fee Builder subtab: services ticked off as done, { workbookId, done } - see feeBuilderChecklist.js
   const [feeBuilderSaved, setFeeBuilderSaved] = useState({}); // Fee Builder subtab: settings saved per deal - see FEE_BUILDER_SAVED_KEY
-  const [feeBuilderRestored, setFeeBuilderRestored] = useState(null); // Fee Builder subtab: { workbookId, label, savedAt, missing } when an upload brought saved settings back
+  const [feeBuilderRestored, setFeeBuilderRestored] = useState(null); // Fee Builder subtab: { workbookId, key, label, name, savedAt, missing } when an upload brought saved settings back
+  const [feeBuilderScenario, setFeeBuilderScenario] = useState(null); // Fee Builder subtab: { workbookId, key } of the saved scenario on screen, which Update saved settings writes to
   const [lineItemPriority, setLineItemPriority] = useState({}); // { [lineItemKey]: true } - services in priority order, first in scope takes the cost
   const [lineItemSharedOk, setLineItemSharedOk] = useState({}); // { [lineItemKey]: sharedSignature } - shared line items kept shared on the Services subtab
   const [lineItemIgnored, setLineItemIgnored] = useState({}); // { [lineItemKey]: true } - line items the user opted to ignore (greyed out, excluded from the unmapped warning)
@@ -3525,7 +3526,7 @@ export function PricingView({ settings } = {}) {
         setFeeBuilderPicks(r.picks);
         setFeeBuilderOverrides(r.overrides);
         setFeeBuilderDone(r.doneState);
-        setFeeBuilderRestored({ workbookId: loaded.id, label: savedFb.label, savedAt: savedFb.savedAt, missing: r.missing });
+        setFeeBuilderRestored({ workbookId: loaded.id, key: savedFb.key, label: savedFb.label, name: scenarioName(savedFb), savedAt: savedFb.savedAt, missing: r.missing });
       } else {
         setFeeBuilderPicks({});
         setFeeBuilderOverrides({});
@@ -5565,35 +5566,50 @@ export function PricingView({ settings } = {}) {
   function feeBuilderSavedSettings() {
     const deal = dealFor(workbook);
     if (!deal) return null;
-    const saved = feeBuilderSaved[deal.key] || null;
+    const scenarios = scenariosFor(feeBuilderSaved, workbook);
     const restored = feeBuilderRestored && feeBuilderRestored.workbookId === workbook.id ? feeBuilderRestored : null;
+    // The scenario on screen: the one last saved or loaded on this SIA,
+    // else the one the upload brought back, else the deal's newest.
+    const pickedKey = feeBuilderScenario && feeBuilderScenario.workbookId === workbook.id
+      ? feeBuilderScenario.key
+      : restored?.key;
+    const saved = (pickedKey && feeBuilderSaved[pickedKey]) || scenarios[0] || null;
+    const save = (scenario) => {
+      const entry = snapshotFeeBuilder({ workbook, picks: feeBuilderPicks, overrides: feeBuilderOverrides, doneState: feeBuilderDone, scenario });
+      if (!entry) return null;
+      writeFeeBuilderSaved(putSaved(feeBuilderSavedRef.current, entry));
+      setFeeBuilderScenario({ workbookId: workbook.id, key: entry.key });
+      return entry;
+    };
     const load = (entry) => {
       const r = restoreFeeBuilder(entry, workbook);
       setFeeBuilderPicks(r.picks);
       setFeeBuilderOverrides(r.overrides);
       setFeeBuilderDone(r.doneState);
-      setFeeBuilderRestored({ workbookId: workbook.id, label: entry.label, savedAt: entry.savedAt, missing: r.missing });
+      setFeeBuilderRestored({ workbookId: workbook.id, key: entry.key, label: entry.label, name: scenarioName(entry), savedAt: entry.savedAt, missing: r.missing });
+      setFeeBuilderScenario({ workbookId: workbook.id, key: entry.key });
       return r;
     };
     return {
       dealKey: deal.key,
       dealLabel: deal.label,
       saved,
+      scenarios,
       restored,
       all: listSaved(feeBuilderSaved),
-      onSave: () => {
-        const entry = snapshotFeeBuilder({ workbook, picks: feeBuilderPicks, overrides: feeBuilderOverrides, doneState: feeBuilderDone });
-        if (!entry) return false;
-        writeFeeBuilderSaved(putSaved(feeBuilderSavedRef.current, entry));
-        return true;
-      },
+      // Writes over the scenario on screen (the deal's first when none is).
+      onSave: () => !!save(saved ? { key: saved.key, name: saved.name } : null),
+      newScenarioName: () => newScenario(feeBuilderSavedRef.current, deal).name,
+      // Saves what is on screen as one more scenario for the deal.
+      onSaveAs: (name) => save({ ...newScenario(feeBuilderSavedRef.current, deal), ...(name ? { name } : {}) }),
       onLoad: (key) => {
         const entry = feeBuilderSavedRef.current?.[key];
         return entry ? load(entry) : null;
       },
       onDelete: (key) => {
         writeFeeBuilderSaved(removeSaved(feeBuilderSavedRef.current, key));
-        if (key === deal.key) setFeeBuilderRestored(null);
+        if (restored?.key === key) setFeeBuilderRestored(null);
+        if (feeBuilderScenario?.key === key) setFeeBuilderScenario(null);
       },
     };
   }

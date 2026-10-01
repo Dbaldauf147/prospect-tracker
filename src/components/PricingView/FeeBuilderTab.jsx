@@ -5,7 +5,7 @@ import own from './FeeBuilderTab.module.css';
 import { serviceKey, groupFeeRows, costsByKind } from '../../utils/pricingServices';
 import { addFeeSummarySheet, addFeeComparisonSheet } from '../../utils/feeSummarySheets';
 import { FEE_BUILDER_COLUMNS, isServiceDone, setServiceDone, toggleHiddenColumn } from '../../utils/feeBuilderChecklist';
-import { savedSummary } from '../../utils/feeBuilderSaved';
+import { savedSummary, scenarioName, dealKeyOf } from '../../utils/feeBuilderSaved';
 import { fmtFeePerUnit, isUsageUnit } from '../../utils/siaUsageCounts';
 import { feeCopyTsv, feeCopyHtml } from '../../utils/feeBuilderCopy';
 import { writeRichCopy } from '../../utils/clipboardCopy';
@@ -263,8 +263,10 @@ function fmtSavedAt(ms) {
 
 // The Saved settings bar: saves the picks, typed fees and done ticks for the
 // deal this SIA is for, and loads them back. Uploading the same deal's SIA
-// again loads them on its own; the note says so. Load saved... opens the
-// list of every deal saved.
+// again loads them on its own (its newest scenario); the note says so. A
+// deal can hold several pricing scenarios: Update saved settings writes over
+// the one on screen, Save as new scenario... adds another, and the picker
+// switches between them. Load saved... opens the list of every deal saved.
 function SavedSettingsBar({ saved: s }) {
   const [flash, setFlash] = useState('');
   const [listOpen, setListOpen] = useState(false);
@@ -276,6 +278,22 @@ function SavedSettingsBar({ saved: s }) {
     <div className={own.savedBar}>
       <div className={own.bar}>
         <strong>Saved settings for {s.dealLabel}</strong>
+        {s.scenarios.length > 1 ? (
+          <select
+            className={own.scenarioSelect}
+            value={s.saved?.key || ''}
+            title="The pricing scenarios saved for this deal. Picking one loads it."
+            onChange={(e) => {
+              const entry = s.scenarios.find(x => x.key === e.target.value);
+              if (!entry) return;
+              if (!window.confirm(`Load ${scenarioName(entry)}? The picks and typed fees on screen are replaced.`)) return;
+              const r = s.onLoad(entry.key);
+              if (r) say(`Loaded ${scenarioName(entry)}.${missingNote(r.missing)}`);
+            }}
+          >
+            {s.scenarios.map(x => <option key={x.key} value={x.key}>{scenarioName(x)}</option>)}
+          </select>
+        ) : s.saved && <span>{scenarioName(s.saved)}</span>}
         <span className={own.muted}>
           {s.saved ? `Saved ${fmtSavedAt(s.saved.savedAt)}` : 'Not saved yet'}
         </span>
@@ -283,14 +301,31 @@ function SavedSettingsBar({ saved: s }) {
         <button
           type="button"
           className={own.smallBtn}
-          title={`Save the fee structure picks, typed fees and done ticks for ${s.dealLabel}. Uploading this deal's SIA again brings them back.`}
+          title={s.saved
+            ? `Write the picks, typed fees and done ticks on screen over ${scenarioName(s.saved)}.`
+            : `Save the fee structure picks, typed fees and done ticks for ${s.dealLabel}. Uploading this deal's SIA again brings them back.`}
           onClick={() => {
-            if (s.saved && !window.confirm(`Replace the settings saved for ${s.dealLabel} on ${fmtSavedAt(s.saved.savedAt)}?`)) return;
-            if (s.onSave()) say(`Saved the Fee Builder settings for ${s.dealLabel}.`);
+            if (s.saved && !window.confirm(`Replace ${scenarioName(s.saved)}, saved for ${s.dealLabel} on ${fmtSavedAt(s.saved.savedAt)}?`)) return;
+            if (s.onSave()) say(s.saved ? `Updated ${scenarioName(s.saved)} for ${s.dealLabel}.` : `Saved the Fee Builder settings for ${s.dealLabel}.`);
           }}
         >
           {s.saved ? 'Update saved settings' : 'Save settings'}
         </button>
+        {s.saved && (
+          <button
+            type="button"
+            className={own.smallBtn}
+            title={`Save what is on screen as another pricing scenario for ${s.dealLabel}, keeping ${scenarioName(s.saved)} as it is.`}
+            onClick={() => {
+              const name = window.prompt('Name this pricing scenario', s.newScenarioName());
+              if (name == null) return;
+              const entry = s.onSaveAs(name.trim());
+              if (entry) say(`Saved ${scenarioName(entry)} for ${s.dealLabel}.`);
+            }}
+          >
+            Save as new scenario...
+          </button>
+        )}
         <button
           type="button"
           className={own.smallBtn}
@@ -303,23 +338,24 @@ function SavedSettingsBar({ saved: s }) {
       </div>
       {s.restored && !flash && (
         <div className={own.muted}>
-          Loaded the settings saved for {s.restored.label} on {fmtSavedAt(s.restored.savedAt)} with this SIA.{missingNote(s.restored.missing)}
+          Loaded {s.restored.name ? `${s.restored.name}, ` : ''}saved for {s.restored.label} on {fmtSavedAt(s.restored.savedAt)}, with this SIA.{missingNote(s.restored.missing)}
         </div>
       )}
       {flash && <div className={styles.flash}>{flash}</div>}
       {listOpen && (
         <SavedListModal
           entries={s.all}
-          currentKey={s.saved?.key || s.dealKey}
+          dealKey={s.dealKey}
+          currentKey={s.saved?.key || ''}
           onClose={() => setListOpen(false)}
           onLoad={(entry) => {
-            if (!window.confirm(`Load the settings saved for ${entry.label} onto this SIA? The picks and typed fees on screen are replaced.`)) return;
+            if (!window.confirm(`Load ${scenarioName(entry)}, saved for ${entry.label}, onto this SIA? The picks and typed fees on screen are replaced.`)) return;
             const r = s.onLoad(entry.key);
             setListOpen(false);
-            if (r) say(`Loaded the settings saved for ${entry.label}.${missingNote(r.missing)}`);
+            if (r) say(`Loaded ${scenarioName(entry)}, saved for ${entry.label}.${missingNote(r.missing)}`);
           }}
           onDelete={(entry) => {
-            if (!window.confirm(`Delete the settings saved for ${entry.label}?`)) return;
+            if (!window.confirm(`Delete ${scenarioName(entry)}, saved for ${entry.label}?`)) return;
             s.onDelete(entry.key);
           }}
         />
@@ -329,8 +365,9 @@ function SavedSettingsBar({ saved: s }) {
 }
 
 // The popup behind Load saved...: every deal with saved Fee Builder
-// settings, this SIA's deal first, with a search over the deal and file.
-function SavedListModal({ entries, currentKey, onClose, onLoad, onDelete }) {
+// settings, one row per scenario, this SIA's deal first, with a search over
+// the deal, scenario and file.
+function SavedListModal({ entries, dealKey, currentKey, onClose, onLoad, onDelete }) {
   const [query, setQuery] = useState('');
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -339,8 +376,8 @@ function SavedListModal({ entries, currentKey, onClose, onLoad, onDelete }) {
   }, [onClose]);
   const q = query.trim().toLowerCase();
   const list = entries
-    .filter(e => !q || `${e.label} ${e.fileName || ''}`.toLowerCase().includes(q))
-    .sort((a, b) => (b.key === currentKey) - (a.key === currentKey));
+    .filter(e => !q || `${e.label} ${scenarioName(e)} ${e.fileName || ''}`.toLowerCase().includes(q))
+    .sort((a, b) => (dealKeyOf(b) === dealKey) - (dealKeyOf(a) === dealKey));
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   return (
     <div className={own.modalOverlay} onMouseDown={onClose}>
@@ -359,7 +396,7 @@ function SavedListModal({ entries, currentKey, onClose, onLoad, onDelete }) {
           autoFocus
           type="text"
           className={own.modalSearch}
-          placeholder="Search by deal or file name"
+          placeholder="Search by deal, scenario or file name"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -372,8 +409,9 @@ function SavedListModal({ entries, currentKey, onClose, onLoad, onDelete }) {
               <div key={e.key} className={own.modalItem}>
                 <div className={own.modalItemText}>
                   <div>
-                    <strong>{e.label}</strong>
-                    {e.key === currentKey && <span className={own.thisDeal}>This SIA</span>}
+                    <strong>{e.label}</strong>, {scenarioName(e)}
+                    {dealKeyOf(e) === dealKey && <span className={own.thisDeal}>This SIA</span>}
+                    {e.key === currentKey && <span className={own.thisDeal}>On screen</span>}
                   </div>
                   <div className={own.muted}>
                     Saved {fmtSavedAt(e.savedAt)}{e.fileName ? `, from ${e.fileName}` : ''}
@@ -389,7 +427,7 @@ function SavedListModal({ entries, currentKey, onClose, onLoad, onDelete }) {
                   type="button"
                   className={styles.linkBtn}
                   onClick={() => onDelete(e)}
-                  title={`Delete the settings saved for ${e.label}. What is on screen stays.`}
+                  title={`Delete ${scenarioName(e)}, saved for ${e.label}. What is on screen stays.`}
                 >
                   Delete
                 </button>
@@ -420,9 +458,11 @@ function SavedListModal({ entries, currentKey, onClose, onLoad, onDelete }) {
 //                 as the Pricing subtab's "Save to Opp…":
 //                 { optionName, label (null when unlinked), onSave, onUnlink }
 //   savedSettings the settings saved for this SIA's deal (see
-//                 feeBuilderSaved.js): { dealKey, dealLabel, saved,
-//                 restored, all (every deal saved), onSave, onLoad(key),
-//                 onDelete(key) }, null with no deal
+//                 feeBuilderSaved.js): { dealKey, dealLabel, saved (the
+//                 scenario on screen), scenarios (this deal's), restored,
+//                 all (every scenario saved), onSave, newScenarioName(),
+//                 onSaveAs(name), onLoad(key), onDelete(key) }, null with
+//                 no deal
 export function FeeBuilderTab({
   workbook, activeOption, setActiveOption, setPicks, planFor, onCopyPicks, onApply, onOpenServices, setFeeOverrides,
   hiddenColumns, setHiddenColumns, doneState, setDoneState, oppLink = null, savedSettings = null,
