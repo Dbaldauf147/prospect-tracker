@@ -111,3 +111,18 @@ export function listSaved(savedMap) {
     .filter(e => e?.key)
     .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
 }
+
+// What one saved entry holds, for the Load saved list: its option sheets
+// and how many picks, typed fees and done ticks they carry between them.
+export function savedSummary(entry) {
+  const opts = isObj(entry?.options) ? entry.options : {};
+  let picks = 0, typed = 0, done = 0;
+  for (const o of Object.values(opts)) {
+    picks += Object.keys(isObj(o?.picks) ? o.picks : {}).length;
+    // A typed Unit Count is its own key (ending |units), so it counts
+    // apart from a fee typed on the same row.
+    typed += Object.keys(isObj(o?.overrides) ? o.overrides : {}).length;
+    done += Array.isArray(o?.done) ? o.done.length : 0;
+  }
+  return { sheets: Object.keys(opts), picks, typed, done };
+}
