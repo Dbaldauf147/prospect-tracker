@@ -176,7 +176,7 @@ import { companiesMatch } from '../../utils/listFlags';
 // by a sale).
 import { scopeServiceStatuses, scopeStatusTitle } from '../../utils/scopeServiceStatus';
 import { SERVICE_STATUS_COLORS } from '../../utils/serviceStatusColors';
-import { effectiveLineItemServices, servicesForCostLine, lineItemServicesOnOption } from '../../utils/pricingServices';
+import { effectiveLineItemServices, servicesForCostLine, lineItemServicesOnOption, sharedLineItemServices } from '../../utils/pricingServices';
 // The Columns menu every other table on the site carries, and the layout it
 // saves, so the estimate table's columns are picked the same way.
 import { ColumnToggle } from '../common/ColumnToggle';
@@ -13866,7 +13866,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       .then(val => { if (!cancelled && val && val.workbook) setPricingWorkbook(val.workbook); })
       .catch(() => {});
     const loadMapping = () => dbGet('pricing-cache', 'lineItemServices')
-      .then(val => { if (!cancelled && val && typeof val === 'object') setLineItemServices(val); })
+      .then(val => { if (!cancelled && val && typeof val === 'object') setLineItemServices(sharedLineItemServices(val)); })
       .catch(() => {});
     const loadPriority = () => dbGet('pricing-cache', 'lineItemPriority')
       .then(val => { if (!cancelled && val && typeof val === 'object') setLineItemPriority(val); })

@@ -69,9 +69,28 @@ export function servicesForCostLine(lineItemServices, item) {
 // reads. Reading an option lays its own picks over the mapping; the Linked
 // To subtab and every other option never see them.
 export function lineItemServicesOnOption(option, lineItemServices) {
+  const shared = sharedLineItemServices(lineItemServices);
   const own = option?.costLineServices;
-  if (!own || typeof own !== 'object' || Object.keys(own).length === 0) return lineItemServices || {};
-  return { ...(lineItemServices || {}), ...own };
+  if (!own || typeof own !== 'object' || Object.keys(own).length === 0) return shared;
+  return { ...shared, ...own };
+}
+
+// The Linked To mapping with only its line item keys.
+//
+// Move to (and the shared-line prompt, before it went per option) used to
+// write a cost line's own pick into the mapping itself, so a one-off move
+// on one option of one SIA quietly followed that line item into every
+// other option and every later SIA. Those picks now live on the option
+// (option.costLineServices). Any still sitting in the mapping are dropped
+// here, on load and on every read, so they stop steering anything; the
+// Linked To subtab never listed them.
+export function sharedLineItemServices(lineItemServices) {
+  const map = lineItemServices && typeof lineItemServices === 'object' ? lineItemServices : {};
+  const keys = Object.keys(map);
+  if (!keys.some(k => isCostLineServiceKey(k) || k.startsWith(ITEM_PICK_PREFIX))) return map;
+  const out = {};
+  for (const k of keys) if (!isCostLineServiceKey(k) && !k.startsWith(ITEM_PICK_PREFIX)) out[k] = map[k];
+  return out;
 }
 
 // The option's own pick for one cost line. A service points the line at
@@ -735,6 +754,44 @@ export function moveCostLineService(lineItemServices, item, fromService, toServi
   const same = Array.isArray(shared) && shared.length === next.length
     && shared.every((s, i) => norm(s) === norm(next[i]));
   const out = { ...map };
+  if (same) delete out[key];
+  else out[key] = next;
+  return out;
+}
+
+// Move to on the Services subtab, for ONE option.
+//
+// Moving a cost line answers "which service is this line on this deal",
+// so it is saved on the option (option.costLineServices, keyed by line
+// item + SIA type like the shared-line prompt's picks) and never reaches
+// the Linked To mapping, other options or later SIAs. The line's services
+// as the option reads them now (its row's own pick, else its line + type
+// pick, else the line item's) have the one swapped for the other, the same
+// way as moveCostLineService. Row picks on the identical lines (`rows`)
+// give way, since they all move together. A move that lands the line back
+// on the line item's own list drops the pick rather than keeping a copy.
+// A line not tied to the service it is moving from is left as it was.
+//
+//   item   the cost line: { id, description, type } with type as the SIA has it
+//   rows   the option's workbook items alike in description and SIA type
+export function moveOptionCostLineService(optionPicks, lineItemServices, item, fromService, toService, rows = []) {
+  const map = sharedLineItemServices(lineItemServices);
+  const own = optionPicks && typeof optionPicks === 'object' ? optionPicks : {};
+  const key = costLineServiceKey(item?.description, item?.type);
+  const from = norm(fromService);
+  const name = String(toService ?? '').trim();
+  if (!key || !from || !name || from === norm(name)) return own;
+  const current = servicesForCostLine({ ...map, ...own }, item);
+  const list = Array.isArray(current) ? current : [];
+  if (!list.some(s => norm(s) === from)) return own;
+  const has = list.some(s => norm(s) === norm(name));
+  const next = has
+    ? list.filter(s => norm(s) !== from)
+    : list.map(s => (norm(s) === from ? name : s));
+  const out = clearOptionItemPicks(own, [item, ...(rows || [])]);
+  const shared = map[norm(item?.description)];
+  const same = Array.isArray(shared) && shared.length === next.length
+    && shared.every((s, i) => norm(s) === norm(next[i]));
   if (same) delete out[key];
   else out[key] = next;
   return out;
