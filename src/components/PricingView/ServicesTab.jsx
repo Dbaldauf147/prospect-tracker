@@ -62,6 +62,8 @@ const STATUS_CLASS = {
 //   onSetItemType   (itemId, type) => overrides a cost line's Type ('' clears it)
 //   onSetPassThrough (description, type, on) => the Linked To pass-through
 //                   setting for that Line Item + Type pair
+//   onSetUnit       (description, type, unit) => the Linked To unit for that
+//                   Line Item + Type pair ('' clears it)
 //   onSetCompleted  (serviceName, on) => marks the service done on every
 //                   option (its list row turns green)
 //   onSetItemAnnual (itemId, on) => turns a one-time cost into an annual one
@@ -71,7 +73,7 @@ const STATUS_CLASS = {
 //                   price check ('' puts it back on Auto)
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
-  onSetCount, onIgnoreForCheck, onSetFeeComponent, feeStructures = {}, setFeeStructures, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough,
+  onSetCount, onIgnoreForCheck, onSetFeeComponent, feeStructures = {}, setFeeStructures, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough, onSetUnit,
   unlinked = null, tagOptions = [], onTagLineItem, onMoveLineItem, onIgnoreLineItem, sharedToSplit = [], onSplitCostLine, onKeepShared, onPickItemServices, onSetCompleted, completedServices = [], globalGmPct = null,
 }) {
   const [query, setQuery] = useState('');
@@ -276,6 +278,7 @@ export function ServicesTab({
               onSetItemType={onSetItemType}
               onSetItemAnnual={onSetItemAnnual}
               onSetPassThrough={onSetPassThrough}
+              onSetUnit={onSetUnit}
               moveTargets={services.filter(s => s.inScope && s.name !== current.name).map(s => s.name)}
               onMoveItem={workbook && onMoveLineItem ? (line, to) => onMoveLineItem(line, current.name, to) : null}
               onOpenService={setSelected}
@@ -612,13 +615,17 @@ function UnlinkedWarning({ unlinked, costTotals, optionName, tagOptions, quickTa
   );
 }
 
+// The units a cost line can carry, the same list as the Unit column on
+// the Linked To subtab.
+const LINE_UNIT_OPTIONS = ['Fixed', 'Per Site', 'Per Account', 'Per Meter', 'Per kWh', 'Per Dth'];
+
 // What one unit of a fee is, for "per ..." wording.
 function feeUnitNoun(unit) {
   const u = String(unit || '').replace(/^per\s+/i, '').trim();
   return u && u.toLowerCase() !== 'fixed' ? u.toLowerCase() : 'unit';
 }
 
-function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted, detail: standardDetail, detailForStructure = null, hasWorkbook, optionName, optionCtsTotal = 0, numYears, termMonths, siteCount, accountCount, kwhCount, dthCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, onSetFeeComponent, saved, setSaved, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough, moveTargets = [], onMoveItem = null, onOpenService }) {
+function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted, detail: standardDetail, detailForStructure = null, hasWorkbook, optionName, optionCtsTotal = 0, numYears, termMonths, siteCount, accountCount, kwhCount, dthCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, onSetFeeComponent, saved, setSaved, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough, onSetUnit, moveTargets = [], onMoveItem = null, onOpenService }) {
   const structures = saved?.structures || [];
   const standardId = saved?.standardId || null;
   // Which saved fee structure is open. Opens on the standard one, and falls
@@ -977,7 +984,20 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                       <td className={styles.num}>{fmtMoney(it.cts)}</td>
                       <td className={styles.num}>{it.startMonth || ''}</td>
                       <td>
-                        {it.unit}
+                        {onSetUnit ? (
+                          <select
+                            className={styles.cellSelect}
+                            style={{ width: 104 }}
+                            value={it.unit || ''}
+                            onChange={(e) => onSetUnit(it.description, it.type, e.target.value)}
+                            aria-label={`Unit for ${it.description}`}
+                            title={`Same setting as the Unit column on the Linked To subtab: applies to every "${it.description}" line typed ${it.type || 'blank'}, on every option.`}
+                          >
+                            <option value="">-</option>
+                            {LINE_UNIT_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
+                            {it.unit && !LINE_UNIT_OPTIONS.includes(it.unit) && <option value={it.unit}>{it.unit}</option>}
+                          </select>
+                        ) : it.unit}
                         {/* The counts the price check prices on (the SIA's, or
                             typed), shown against the lines they price. They are
                             this service's own, so every line shows the same boxes. */}
