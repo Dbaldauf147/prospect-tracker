@@ -115,6 +115,10 @@ function parseRowsFromText(text) {
     if (!line.trim()) continue;
     const cols = line.includes('\t') ? line.split('\t') : line.split(/\s*,\s*/);
     const cell = (i) => (cols[i] ?? '').trim();
+    // Skip the header and totals lines that Copy for Excel writes, so
+    // a copied table pastes straight back in.
+    const first = cell(0).toLowerCase();
+    if (first === 'fee schedule' || first === 'year totals') continue;
     out.push({
       feeSchedule: cell(0),
       type: cell(1),
@@ -227,6 +231,52 @@ function OptionPanel({ opt, onChange, savedToLabel, onClickSave, onClearSave }) 
   });
   const year1MonthlyTotal = year1Monthly.reduce((s, v) => s + v, 0);
 
+  // TSV snapshot of the fee grid as it reads on screen: header row,
+  // every non-blank fee row with its Year 1..5 revenue, then the Year
+  // totals line. Money goes out as "$1,234" which Excel reads as a
+  // number. Pasting it back into the grid skips the header and totals.
+  function buildTsv() {
+    const clean = (v) => String(v ?? '').replace(/[\t\r\n]+/g, ' ').trim();
+    const yearHeads = Array.from({ length: MAX_YEARS }, (_, i) => `Year ${i + 1}`);
+    const lines = [[
+      'Fee Schedule', 'Type', 'Fee', 'Unit', 'Est. Unit Count', 'Fee Start Month', ...yearHeads,
+    ].join('\t')];
+    for (const r of opt.rows) {
+      const blank = ['feeSchedule', 'type', 'fee', 'unit', 'unitCount', 'startMonth']
+        .every(k => r[k] == null || String(r[k]).trim() === '');
+      if (blank) continue;
+      const fee = toNum(r.fee);
+      const feeCell = fee == null
+        ? clean(r.fee)
+        : `$${fee.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      lines.push([
+        clean(r.feeSchedule), clean(r.type), feeCell, clean(r.unit),
+        clean(r.unitCount), clean(r.startMonth),
+        ...Array.from({ length: MAX_YEARS }, (_, i) =>
+          fmtMoneyWhole(rowYearRevenue(r, i + 1, termYears, esc))),
+      ].join('\t'));
+    }
+    lines.push(['Year totals', '', '', '', '', '', ...yearTotals.map(fmtMoneyWhole)].join('\t'));
+    return lines.join('\n');
+  }
+
+  async function handleCopy() {
+    const tsv = buildTsv();
+    // Header and totals lines aren't fee rows.
+    const n = tsv.split('\n').length - 2;
+    try {
+      await navigator.clipboard.writeText(tsv);
+      setFlash(`Copied ${n} row${n === 1 ? '' : 's'} with headers. Paste into Excel.`);
+    } catch {
+      // Clipboard API blocked (insecure context, permissions). Open the
+      // paste box prefilled so the text can be copied by hand.
+      setPasteText(tsv);
+      setPasteOpen(true);
+      setFlash('Clipboard blocked: copy the text below manually.');
+    }
+    window.setTimeout(() => setFlash(''), 2500);
+  }
+
   return (
     <div className={styles.optionPanel} onPaste={handleTablePaste}>
       <div className={styles.optHeader}>
@@ -257,6 +307,14 @@ function OptionPanel({ opt, onChange, savedToLabel, onClickSave, onClearSave }) 
         </label>
         <button type="button" className={styles.btn} onClick={() => setPasteOpen(o => !o)}>
           {pasteOpen ? 'Close paste' : 'Paste from Excel'}
+        </button>
+        <button
+          type="button"
+          className={styles.btn}
+          onClick={handleCopy}
+          title="Copy the fee table (with Year 1-5 and totals) as tab-separated text for Excel"
+        >
+          Copy for Excel
         </button>
         <button type="button" className={styles.btn} onClick={addRow}>+ Row</button>
         <button type="button" className={styles.btnDanger} onClick={clearOption}>Clear</button>
