@@ -15,6 +15,13 @@ export function isServiceDone(state, workbookId, optionNumber, name) {
   return !!state.done?.[doneKey(optionNumber, name)];
 }
 
+// Every service named is ticked on the option, and there is at least one:
+// the option's tab on the Fee Builder turns green.
+export function isOptionDone(state, workbookId, optionNumber, names) {
+  const list = (names || []).filter(n => String(n || '').trim());
+  return list.length > 0 && list.every(n => isServiceDone(state, workbookId, optionNumber, n));
+}
+
 export function setServiceDone(state, workbookId, optionNumber, name, on) {
   const same = state && state.workbookId === workbookId;
   const done = { ...(same ? state.done : {}) };

@@ -1,7 +1,7 @@
 // Assertion tests for the Fee Builder checklist and column picker.
 // Plain Node - no test framework. Run:
 //   node scripts/feeBuilderChecklist.test.mjs
-import { isServiceDone, setServiceDone, toggleHiddenColumn, updateForOption, copyPicksBetweenOptions, pickedStructureFor } from '../src/utils/feeBuilderChecklist.js';
+import { isServiceDone, isOptionDone, setServiceDone, toggleHiddenColumn, updateForOption, copyPicksBetweenOptions, pickedStructureFor } from '../src/utils/feeBuilderChecklist.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -69,6 +69,16 @@ check('in scope, picked structure gone', pickedStructureFor({ inScope: true, str
 check('out of scope, no pick: nothing', pickedStructureFor({ inScope: false, structures: sts, standardId: 'std' }), null);
 check('out of scope, picked (copied or restored): nothing', pickedStructureFor({ inScope: false, structures: sts, standardId: 'std', picked: 'site' }), null);
 check('no structures', pickedStructureFor({ inScope: true, structures: undefined, standardId: 'std' }), null);
+
+// An option is done when every service on it is ticked.
+let ticks = setServiceDone(null, 'wb1', 1, 'BBS reporting', true);
+ticks = setServiceDone(ticks, 'wb1', 1, 'Bill payment', true);
+check('option done: all ticked', isOptionDone(ticks, 'wb1', 1, ['BBS reporting', 'Bill payment']), true);
+check('option done: one left', isOptionDone(ticks, 'wb1', 1, ['BBS reporting', 'Bill payment', 'GHG']), false);
+check('option done: ticks are per option', isOptionDone(ticks, 'wb1', 2, ['BBS reporting', 'Bill payment']), false);
+check('option done: another SIA', isOptionDone(ticks, 'wb2', 1, ['BBS reporting', 'Bill payment']), false);
+check('option done: no services is not done', isOptionDone(ticks, 'wb1', 1, []), false);
+check('option done: blank names ignored', isOptionDone(ticks, 'wb1', 1, ['BBS reporting', '', 'Bill payment']), true);
 
 console.log(`${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

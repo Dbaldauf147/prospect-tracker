@@ -5909,6 +5909,17 @@ export function PricingView({ settings } = {}) {
     return serviceBucketOf(getServiceCategories(settings), name);
   }
 
+  // The services in an option's SIA scope, named as the Fee Builder lists
+  // them (see pricingServiceList), for its option tabs' Done colour.
+  function feeBuilderScopeFor(opt) {
+    if (!opt) return [];
+    return buildPricingServiceList({
+      serviceRows: buildServiceRows(settings),
+      hiddenServices: settings?.hiddenServices || [],
+      scopeServices: pricingOptionServices[opt.sheetName] || [],
+    }).filter(r => r.inScope).map(r => r.name);
+  }
+
   function applyFeeBuilderPlan(plan) {
     const typedRows = (plan?.rows || []).filter(r => r.overridden || r.unitsOverridden);
     if (!plan || (plan.perService.length === 0 && typedRows.length === 0 && !plan.dropped?.length)) return false;
@@ -6328,6 +6339,7 @@ export function PricingView({ settings } = {}) {
           setActiveOption={setActiveOption}
           setPicks={(optionNumber, updater) => setFeeBuilderPicks(prev => updateForOption(prev, optionNumber, updater))}
           planFor={feeBuilderPlan}
+          scopeFor={feeBuilderScopeFor}
           onCopyPicks={copyFeeBuilderPicks}
           onApply={applyFeeBuilderPlan}
           setFeeOverrides={(optionNumber, updater) => setFeeBuilderOverrides(prev => updateForOption(prev, optionNumber, updater))}

@@ -68,6 +68,14 @@
   border-radius: 999px;
 }
 
+/* An option tab whose fee structures are all checked off. Follows the
+   .option / .optionActive rules it is added to. */
+button.optionDone {
+  background: #d1fae5;
+  border-color: #10b981;
+  color: #047857;
+}
+
 /* Columns menu over the service table. */
 .colMenuWrap {
   position: relative;

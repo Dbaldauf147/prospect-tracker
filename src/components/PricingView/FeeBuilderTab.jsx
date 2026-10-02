@@ -4,7 +4,7 @@ import styles from './ServicesTab.module.css';
 import own from './FeeBuilderTab.module.css';
 import { serviceKey, groupFeeRows, costsByKind } from '../../utils/pricingServices';
 import { addFeeSummarySheet, addFeeComparisonSheet } from '../../utils/feeSummarySheets';
-import { FEE_BUILDER_COLUMNS, isServiceDone, setServiceDone, toggleHiddenColumn } from '../../utils/feeBuilderChecklist';
+import { FEE_BUILDER_COLUMNS, isServiceDone, isOptionDone, setServiceDone, toggleHiddenColumn } from '../../utils/feeBuilderChecklist';
 import { savedSummary, scenarioName, dealKeyOf } from '../../utils/feeBuilderSaved';
 import { fmtFeePerUnit, isUsageUnit } from '../../utils/siaUsageCounts';
 import { feeCopyTsv, feeCopyHtml } from '../../utils/feeBuilderCopy';
@@ -459,6 +459,8 @@ function SavedListModal({ entries, dealKey, currentKey, onClose, onLoad, onDelet
 //   oppLink       the Opps row the active option is saved to, the same link
 //                 as the Pricing subtab's "Save to Opp…":
 //                 { optionName, label (null when unlinked), onSave, onUnlink }
+//   scopeFor      (option) => the in-scope service names on that option,
+//                 so its tab can turn green once they are all ticked Done
 //   emailDraft    { dealLabel, termMonths, annualEscalator, otherOptionsFor,
 //                 bucketOf, signature } for the Draft email
 //                 button (see feeBuilderEmail.js), null to leave it off
@@ -470,7 +472,7 @@ function SavedListModal({ entries, dealKey, currentKey, onClose, onLoad, onDelet
 //                 no deal
 export function FeeBuilderTab({
   workbook, activeOption, setActiveOption, setPicks, planFor, onCopyPicks, onApply, onOpenServices, setFeeOverrides,
-  hiddenColumns, setHiddenColumns, doneState, setDoneState, oppLink = null, savedSettings = null, emailDraft = null,
+  hiddenColumns, setHiddenColumns, doneState, setDoneState, oppLink = null, savedSettings = null, emailDraft = null, scopeFor = null,
 }) {
   const [showAll, setShowAll] = useState(false);
   const [collapsed, setCollapsed] = useState({});
@@ -601,16 +603,25 @@ export function FeeBuilderTab({
         <div className={own.optionRow}>
           {workbook.options.length > 1 && (
             <div className={styles.optionStrip}>
-              {workbook.options.map(o => (
-                <button
-                  key={o.sheetName}
-                  type="button"
-                  className={o.optionNumber === opt?.optionNumber ? styles.optionActive : styles.option}
-                  onClick={() => setActiveOption(o.optionNumber)}
-                >
-                  {o.sheetName}
-                </button>
-              ))}
+              {workbook.options.map(o => {
+                const active = o.optionNumber === opt?.optionNumber;
+                // Green once every service on the option is ticked Done:
+                // the list on screen for this one, the option's SIA scope
+                // for the others.
+                const names = active ? listed.map(r => r.name) : (scopeFor ? scopeFor(o) : []);
+                const done = isOptionDone(doneState, workbook.id, o.optionNumber, names);
+                return (
+                  <button
+                    key={o.sheetName}
+                    type="button"
+                    className={`${active ? styles.optionActive : styles.option}${done ? ` ${own.optionDone}` : ''}`}
+                    onClick={() => setActiveOption(o.optionNumber)}
+                    title={done ? `Every fee structure on ${o.sheetName} is checked off` : undefined}
+                  >
+                    {o.sheetName}
+                  </button>
+                );
+              })}
             </div>
           )}
           {oppLink && (
