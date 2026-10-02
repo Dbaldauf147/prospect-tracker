@@ -6286,7 +6286,7 @@ export function PricingView({ settings } = {}) {
           doneState={feeBuilderDone}
           setDoneState={setFeeBuilderDone}
           savedSettings={feeBuilderSavedSettings()}
-          emailDraft={{ dealLabel: dealFor(workbook)?.label || '', termMonths, signature: resolveSignature(settings, isAdmin) }}
+          emailDraft={{ dealLabel: dealFor(workbook)?.label || '', termMonths, annualEscalator, signature: resolveSignature(settings, isAdmin) }}
           oppLink={(() => {
             const opt = workbook?.options.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
             if (!opt) return null;

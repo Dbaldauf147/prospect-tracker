@@ -10,77 +10,17 @@
 // signature is NOT baked in — the download path appends the user's saved
 // signature the same way every other draft on this page does.
 
-// Shared cell styling for the Margin Request table. Word emits this as a
-// fixed-width 966px table; the widths are kept so the columns line up the way
-// they do in the original template.
-const MR_FONT = 'font-family:Calibri,sans-serif;font-size:11pt;';
-const MR_CELL = `border:1px solid #BFBFBF;padding:2px 6px;vertical-align:top;${MR_FONT}`;
-const MR_BANNER = `border:1px solid #BFBFBF;padding:2px 6px;background:#00B050;color:#FFFFFF;font-weight:bold;${MR_FONT}`;
-const MR_OPTION = `border:1px solid #BFBFBF;padding:2px 6px;background:#E7E6E6;${MR_FONT}`;
-const MR_HINT = `border:1px solid #BFBFBF;padding:2px 6px;text-align:center;color:#A5A5A5;font-style:italic;${MR_FONT}`;
+import { KEITH, GABE, HUBSPOT_BCC, marginRequestTableHtml, marginApprovalBodyHtml } from '../utils/marginRequestEmail.js';
 
-// One "Option N" block: the grey banner row plus the Services/Fee Structure/
-// Margin row and the Term/Escalator row. Labels sit in the same columns for
-// every option so the table reads as a grid (the source .oft drifts between
-// options; this is the shape it is drifting towards).
-function marginOption(n, { services = '', fee = '', margin = '', term = '', escalator = '' } = {}) {
-  return `
-    <tr>
-      <td width="58" style="${MR_OPTION}text-align:center;font-weight:bold;">Option ${n}</td>
-      <td width="200" style="${MR_OPTION}">&nbsp;</td>
-      <td width="84" style="${MR_OPTION}">&nbsp;</td>
-      <td width="486" style="${MR_OPTION}">&nbsp;</td>
-      <td width="84" style="${MR_OPTION}">&nbsp;</td>
-      <td width="54" style="${MR_OPTION}">&nbsp;</td>
-    </tr>
-    <tr>
-      <td width="58" style="${MR_CELL}font-weight:bold;">Services</td>
-      <td width="200" style="${MR_CELL}">${services || '&nbsp;'}</td>
-      <td width="84" style="${MR_CELL}font-weight:bold;">Fee Structure</td>
-      <td width="486" style="${MR_CELL}">${fee || '&nbsp;'}</td>
-      <td width="84" style="${MR_CELL}font-weight:bold;">Margin</td>
-      <td width="54" style="${MR_CELL}">${margin || '&nbsp;'}</td>
-    </tr>
-    <tr>
-      <td width="58" style="${MR_CELL}font-weight:bold;">Term</td>
-      <td width="200" style="${MR_CELL}">${term || '&nbsp;'}</td>
-      <td width="84" style="${MR_CELL}">&nbsp;</td>
-      <td width="486" style="${MR_CELL}">&nbsp;</td>
-      <td width="84" style="${MR_CELL}font-weight:bold;">Escalator</td>
-      <td width="54" style="${MR_CELL}">${escalator || '&nbsp;'}</td>
-    </tr>`;
-}
-
-const MARGIN_REQUEST_TABLE = `
-<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;max-width:966px;${MR_FONT}">
-  <tr><td colspan="6" style="${MR_BANNER}">Margin Request Template</td></tr>
-  <tr>
-    <td colspan="2" style="${MR_CELL}font-weight:bold;">Customer Name</td>
-    <td colspan="4" style="${MR_CELL}">&nbsp;</td>
-  </tr>
-  <tr>
-    <td colspan="2" style="${MR_CELL}font-weight:bold;">Sales Investment Analyzer (SIA) Link</td>
-    <td colspan="4" style="${MR_CELL}">&nbsp;</td>
-  </tr>
-  <tr>
-    <td colspan="2" style="${MR_CELL}font-weight:bold;">Is this an RFP?</td>
-    <td width="84" style="${MR_HINT}">Yes/No</td>
-    <td width="486" style="${MR_CELL}">No</td>
-    <td width="84" style="${MR_HINT}">Due Date</td>
-    <td width="54" style="${MR_CELL}">N/A</td>
-  </tr>
-  <tr><td colspan="6" style="${MR_BANNER}">SIA Options Seeking Approval</td></tr>
-  ${marginOption(1, {
-    services: 'BECS/BECS Screening<br>CDP biodiversity<br>SBT AV App',
-    margin: '62%',
-    term: 'Recurring 3 year term',
-    escalator: 'N/A',
-  })}
-  ${marginOption(2, { services: 'BECS/BECS Screening', term: 'Recurring 3 year term' })}
-  ${marginOption(3, { services: 'BECS/BECS Screening', term: 'Recurring 3 year term' })}
-  ${marginOption(4)}
-  ${marginOption(5)}
-</table>`;
+// The Margin Request table, with the sample values the .oft carries.
+const MARGIN_REQUEST_TABLE = marginRequestTableHtml({
+  rfp: 'No',
+  options: [
+    { services: 'BECS/BECS Screening<br>CDP biodiversity<br>SBT AV App', margin: '62%', term: 'Recurring 3 year term', escalator: 'N/A' },
+    { services: 'BECS/BECS Screening', term: 'Recurring 3 year term' },
+    { services: 'BECS/BECS Screening', term: 'Recurring 3 year term' },
+  ],
+});
 
 // The new-opportunity table Keith reviews. One example row is kept in place so
 // the columns are self-documenting — overwrite it with the real deal.
@@ -112,9 +52,6 @@ const NEW_OPPS_TABLE = `
   </tr>
 </table>`;
 
-const KEITH = { name: 'Keith McHugh', email: 'keith.mchugh@se.com' };
-// The HubSpot BCC drop-box address that logs the sent mail against the deal.
-const HUBSPOT_BCC = { name: 'HubSpot logging', email: '244957983@bcc.na2.hubspot.com' };
 
 export const DANS_DRAFTS = [
   {
@@ -154,18 +91,12 @@ ${NEW_OPPS_TABLE}
     id: 'dan-margin-approval',
     type: 'email',
     name: 'MARGIN APPROVAL: Client Name Scope',
-    blurb: 'Margin Request Template table for Keith, CC Gabe. Fill in the SIA options.',
+    blurb: 'Margin Request Template table for Keith, CC Gabe. Fill in the SIA options. BCCs HubSpot.',
     subject: 'MARGIN APPROVAL: Client Name Scope',
     to: [KEITH],
-    cc: [{ name: 'Gabe Smith', email: 'gabe.smith@se.com' }],
-    bcc: [],
-    bodyHtml: `<p>Hi Keith,</p>
-<p>&nbsp;</p>
-<p>Please let me know if you need any additional information on this opportunity.</p>
-<p>&nbsp;</p>
-${MARGIN_REQUEST_TABLE}
-<p>&nbsp;</p>
-<p>Thanks,</p>`,
+    cc: [GABE],
+    bcc: [HUBSPOT_BCC],
+    bodyHtml: marginApprovalBodyHtml(MARGIN_REQUEST_TABLE),
   },
   {
     id: 'dan-commission-request',
