@@ -405,6 +405,23 @@ test('two components the SIA has costs for stay a check on the total', () => {
   assert.deepEqual(c.leftOut, []);
 });
 
+test('cardUnits words the units the card prices on the way a fee Unit reads', () => {
+  const cert = rateCardCheck({
+    items: [{ cts: 7889.92, type: 'One Time' }],
+    entry: { basis: 'per_project', rate: 1500, rateHigh: 2000 },
+    meta: project,
+    counts: { projects: 1 },
+  });
+  assert.deepEqual(cert.cardUnits, ['Per Project']);
+  const two = rateCardCheck({
+    items: [{ cts: 200, type: 'Recurring (monthly)' }],
+    entry: { basis: 'recurring_annual', rate: 42000, rateHigh: 84000, lines: [{ basis: 'per_account', rate: 32, rateHigh: 46 }] },
+    meta: recurring,
+    counts: { accounts: 519 },
+  });
+  assert.deepEqual(two.cardUnits, ['Fixed', 'Per Account']);
+});
+
 // Ongoing on two components: $42,000 to $84,000 a year, plus $32 to $46 per
 // account a year, over 519 accounts.
 const twoComponents = { basis: 'recurring_annual', rate: 42000, rateHigh: 84000, lines: [{ basis: 'per_account', rate: 32, rateHigh: 46 }] };

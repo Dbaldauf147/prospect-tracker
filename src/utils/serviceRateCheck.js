@@ -525,8 +525,23 @@ export function rateCardCheck({ items = [], entry = null, meta = null, counts = 
     if (list.length > 1) componentChoices[k] = list.map(b => ({ id: b.id, label: b.basisLabel }));
   }
 
+  // The units the card prices on, worded the way a fee's Unit is ('Per
+  // Project', 'Fixed'), so the Services subtab can offer them for a cost
+  // line. A percentage of the deal has no unit and is left out.
+  const cardUnits = [];
+  for (const b of lines) {
+    let u = null;
+    if (b.kind === 'flat') u = 'Fixed';
+    else if (b.kind === 'unit' && b.basisLabel) {
+      const rest = String(b.basisLabel).trim().replace(/^per\s+/i, '');
+      u = rest ? `Per ${rest.charAt(0).toUpperCase()}${rest.slice(1)}` : null;
+    }
+    if (u && !cardUnits.some(x => x.toLowerCase() === u.toLowerCase())) cardUnits.push(u);
+  }
+
   return {
     componentChoices,
+    cardUnits,
     passThroughLines: passThroughLinesOf(items, counts, termMonths),
     // The card is priced and charges no setup or one-time fee: a Setup cost
     // has nothing upfront to recover it, so it belongs rolled into the

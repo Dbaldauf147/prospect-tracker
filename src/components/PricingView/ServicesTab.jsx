@@ -754,6 +754,15 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
   // The SIA notes column shows only when a line on the service has one.
   const hasNotes = items.some(it => it.comments && !(it.ignored && !showIgnored));
   const showComponents = !!onSetFeeComponent && (Object.keys(componentChoices).length > 0 || hasPassThrough);
+  // The Unit picker offers the units this service's rate card prices on
+  // first (Per Project for a certification), then the usual list.
+  const lineUnitOptions = (() => {
+    const out = [...(detail?.rateCheck?.cardUnits || [])];
+    for (const u of LINE_UNIT_OPTIONS) {
+      if (!out.some(x => x.toLowerCase() === u.toLowerCase())) out.push(u);
+    }
+    return out;
+  })();
   const meta = service.meta || {};
 
   // Each cost line's type against the fee that prices it in the pricing
@@ -995,8 +1004,8 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                             title={`Same setting as the Unit column on the Linked To subtab: applies to every "${it.description}" line typed ${it.type || 'blank'}, on every option.`}
                           >
                             <option value="">-</option>
-                            {LINE_UNIT_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
-                            {it.unit && !LINE_UNIT_OPTIONS.includes(it.unit) && <option value={it.unit}>{it.unit}</option>}
+                            {lineUnitOptions.map(u => <option key={u} value={u}>{u}</option>)}
+                            {it.unit && !lineUnitOptions.includes(it.unit) && <option value={it.unit}>{it.unit}</option>}
                           </select>
                         ) : it.unit}
                         {/* The counts the price check prices on (the SIA's, or
