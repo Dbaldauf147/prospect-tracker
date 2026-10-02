@@ -1,7 +1,7 @@
 // Assertion tests for the Fee Builder's Outlook draft email.
 // Plain Node - no test framework. Run:
 //   node scripts/feeBuilderEmail.test.mjs
-import { feeEmailFigures, feeEmailOption, marginOptionFigures, buildFeeEmail, feeBuilderEmailEml } from '../src/utils/feeBuilderEmail.js';
+import { feeEmailFigures, feeEmailOption, marginOptionFigures, summarizeServices, buildFeeEmail, feeBuilderEmailEml } from '../src/utils/feeBuilderEmail.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -108,8 +108,20 @@ has('table spans three quarters of the body', all, '<table width="75%"');
 // Services summarized as their buckets; an unfiled one keeps its name.
 const BUCKETS = { 'strategic sourcing': 'Traditional Energy Management', 'bill payment': 'DATA', 'invoice recalculation': 'DATA' };
 const bucketOf = (n) => BUCKETS[String(n).toLowerCase()] || '';
-check('services by bucket', marginOptionFigures({ services: ['Bill payment', 'Strategic sourcing', 'Invoice recalculation', 'Odd one'], bucketOf }).services, ['DATA', 'Traditional Energy Management', 'Odd one']);
-has('bucket summary in the email', buildFeeEmail(plan, { bucketOf }).html, '>Traditional Energy Management, DATA<');
+check('services by bucket', marginOptionFigures({ services: ['Bill payment', 'Strategic sourcing', 'Invoice recalculation', 'Odd one'], bucketOf }).services, ['Bill payment', 'Traditional Energy Management', 'Odd one']);
+has('bucket summary in the email', buildFeeEmail(plan, { bucketOf }).html, '>Traditional Energy Management, Bill Payment<');
+
+// DATA reads as its primary service: bill payment, then AP upload, then
+// invoice collection, then client sends invoices.
+const DATA = ['Bill payment', 'AP upload (indirect payment)', 'Invoice collection', 'Invoice collection - light', 'Client sends invoices', 'Invoice recalculation', 'Utility feeds'];
+const dataOf = (n) => (DATA.includes(n) ? 'DATA' : (n === 'GHG' ? 'GHG Reporting' : ''));
+check('bill payment wins', summarizeServices(['Invoice recalculation', 'Client sends invoices', 'Bill payment', 'GHG'], dataOf), ['Bill payment', 'GHG Reporting']);
+check('AP upload next', summarizeServices(['Invoice collection', 'AP upload (indirect payment)'], dataOf), ['AP upload (indirect payment)']);
+check('invoice collection light counts', summarizeServices(['Utility feeds', 'Invoice collection - light', 'Client sends invoices'], dataOf), ['Invoice collection - light']);
+check('client sends invoices last', summarizeServices(['Client sends invoices', 'Invoice recalculation'], dataOf), ['Client sends invoices']);
+check('no primary service keeps DATA', summarizeServices(['Invoice recalculation', 'GHG'], dataOf), ['DATA', 'GHG Reporting']);
+check('primary service without buckets', summarizeServices(['Bill payment', 'Odd one']), ['Bill payment', 'Odd one']);
+check('primary service filed elsewhere still stands for DATA', summarizeServices(['Invoice recalculation', 'Bill payment'], (n) => (n === 'Bill payment' ? 'Payments' : 'DATA')), ['Bill payment']);
 
 const eml = feeBuilderEmailEml(plan, { dealLabel: 'Acme', termMonths: 24, signature: '<b>Sig</b>' });
 has('unsent draft', eml, 'X-Unsent: 1');
