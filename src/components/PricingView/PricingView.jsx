@@ -3118,11 +3118,13 @@ export function PricingView({ settings } = {}) {
   // under target every year after. See recurringFeePerUnit.
   // Returns null if there is no linked + type-matched markup yet, or
   // the row has no usable unit count.
-  function autoFeePerUnitFor(row) {
+  // `forOpt`: price the row off another option's cost lines than the
+  // active one (the Fee Builder's Draft email fills every option).
+  function autoFeePerUnitFor(row, forOpt = null) {
     if (!workbook) return null;
     const target = (row.altItem || '').trim().toLowerCase();
     if (!target) return null;
-    const opt = workbook.options.find(o => o.optionNumber === activeOption);
+    const opt = forOpt || workbook.options.find(o => o.optionNumber === activeOption);
     if (!opt) return null;
     const uc = Number(row.unitCount);
     if (!Number.isFinite(uc) || uc <= 0) return null;
@@ -5866,6 +5868,38 @@ export function PricingView({ settings } = {}) {
     };
   }
 
+  // The options the Fee Builder's Draft email fills besides the one being
+  // built, read off their Alternative Fee schedules as saved: services,
+  // fee rows and Deal margin, with the slot each takes among the
+  // workbook's options (see buildFeeEmail).
+  function marginEmailOtherOptions(skipOptionNumber) {
+    return (workbook?.options || []).map((opt, idx) => {
+      if (opt.optionNumber === skipOptionNumber) return null;
+      const rows = (altFees[opt.optionNumber] || [])
+        .filter(r => String(r?.altItem || '').trim())
+        .map(r => {
+          const manual = Number(r.fee);
+          const feeIsManual = r.fee != null && r.fee !== '' && Number.isFinite(manual) && manual >= 0;
+          const auto = feeIsManual ? null : autoFeePerUnitFor(r, opt);
+          return {
+            name: r.altItem,
+            type: r.type || '',
+            feePerUnit: feeIsManual ? manual : (typeof auto === 'number' ? auto : null),
+            unit: r.unit || '',
+            unitCount: r.unitCount,
+            startMonth: altFeeRowStartMonth(r),
+            passThrough: r.passThrough === true,
+          };
+        });
+      return {
+        slot: idx + 1,
+        services: pricingOptionServices?.[opt.sheetName] || [],
+        rows,
+        margin: rows.length ? dealMarginForOption(opt).finalMargin : null,
+      };
+    }).filter(Boolean);
+  }
+
   function applyFeeBuilderPlan(plan) {
     const typedRows = (plan?.rows || []).filter(r => r.overridden || r.unitsOverridden);
     if (!plan || (plan.perService.length === 0 && typedRows.length === 0 && !plan.dropped?.length)) return false;
@@ -6286,7 +6320,7 @@ export function PricingView({ settings } = {}) {
           doneState={feeBuilderDone}
           setDoneState={setFeeBuilderDone}
           savedSettings={feeBuilderSavedSettings()}
-          emailDraft={{ dealLabel: dealFor(workbook)?.label || '', termMonths, annualEscalator, signature: resolveSignature(settings, isAdmin) }}
+          emailDraft={{ dealLabel: dealFor(workbook)?.label || '', termMonths, annualEscalator, otherOptionsFor: marginEmailOtherOptions, signature: resolveSignature(settings, isAdmin) }}
           oppLink={(() => {
             const opt = workbook?.options.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
             if (!opt) return null;

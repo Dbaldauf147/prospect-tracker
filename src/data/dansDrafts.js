@@ -16,7 +16,7 @@ import { KEITH, GABE, HUBSPOT_BCC, marginRequestTableHtml, marginApprovalBodyHtm
 const MARGIN_REQUEST_TABLE = marginRequestTableHtml({
   rfp: 'No',
   options: [
-    { services: 'BECS/BECS Screening<br>CDP biodiversity<br>SBT AV App', margin: '62%', term: 'Recurring 3 year term', escalator: 'N/A' },
+    { services: 'BECS/BECS Screening, CDP biodiversity, SBT AV App', margin: '62%', term: 'Recurring 3 year term', escalator: 'N/A' },
     { services: 'BECS/BECS Screening', term: 'Recurring 3 year term' },
     { services: 'BECS/BECS Screening', term: 'Recurring 3 year term' },
   ],

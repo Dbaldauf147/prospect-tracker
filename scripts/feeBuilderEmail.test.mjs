@@ -1,7 +1,7 @@
 // Assertion tests for the Fee Builder's Outlook draft email.
 // Plain Node - no test framework. Run:
 //   node scripts/feeBuilderEmail.test.mjs
-import { feeEmailFigures, feeEmailOption, buildFeeEmail, feeBuilderEmailEml } from '../src/utils/feeBuilderEmail.js';
+import { feeEmailFigures, feeEmailOption, marginOptionFigures, buildFeeEmail, feeBuilderEmailEml } from '../src/utils/feeBuilderEmail.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -47,11 +47,11 @@ check('option term', o.term, 'Recurring 2 year term');
 check('option escalator', o.escalator, '3%');
 check('no escalator reads N/A', feeEmailOption(plan, { annualEscalator: 0 }).escalator, 'N/A');
 check('odd term in months', feeEmailOption(plan, { termMonths: 18 }).term, 'Recurring 18 month term');
-check('fee line', o.feeLines[0], 'Electric sourcing: $0.00152 Per kWh (Recurring (monthly))');
-check('pass-through fee line', o.feeLines[2], 'Postage: $10.00 Per Account (Recurring (monthly), pass-through)');
+check('fee line', o.feeLines[0], 'Electric sourcing: $0.00152 Per kWh');
+check('pass-through fee line', o.feeLines[2], 'Postage: $10.00 Per Account (pass-through)');
 
 const { subject, html } = buildFeeEmail(plan, { dealLabel: 'Acme & Co', termMonths: 24, annualEscalator: 0.03, optionSlot: 2 });
-check('subject', subject, 'MARGIN APPROVAL: Acme & Co Strategic Sourcing, Bill Payment');
+check('subject', subject, 'MARGIN APPROVAL: Acme & Co (Scope)');
 has('greeting', html, '<p>Hi Keith,</p>');
 has('opening line', html, 'Please let me know if you need any additional information on this opportunity.');
 has('sign-off', html, '<p>Thanks,</p>');
@@ -62,19 +62,52 @@ has('SIA link row', html, 'Sales Investment Analyzer (SIA) Link');
 has('RFP row', html, 'Is this an RFP?');
 check('five option blocks', (html.match(/Option<br>\d/g) || []).length, 5);
 has('kWh rate keeps its places', html, '$0.00152');
-has('services listed', html, 'Strategic Sourcing<br>Bill Payment');
+has('services comma separated', html, 'Strategic Sourcing, Bill Payment');
 has('margin', html, '>48%<');
 has('term', html, 'Recurring 2 year term');
 has('escalator', html, '>3%<');
-check('filled into Option 2, not Option 1', html.indexOf('Strategic Sourcing<br>') > html.indexOf('Option<br>2') && html.indexOf('Strategic Sourcing<br>') < html.indexOf('Option<br>3'), true);
+check('filled into Option 2, not Option 1', html.indexOf('Strategic Sourcing, ') > html.indexOf('Option<br>2') && html.indexOf('Strategic Sourcing, ') < html.indexOf('Option<br>3'), true);
 check('no em dash', /—/.test(html), false);
 
-check('no deal name', buildFeeEmail(plan).subject, 'MARGIN APPROVAL: Client Name Strategic Sourcing, Bill Payment');
-check('out-of-range slot falls back to Option 1', buildFeeEmail(plan, { optionSlot: 0 }).html.indexOf('Strategic Sourcing<br>') < buildFeeEmail(plan, { optionSlot: 0 }).html.indexOf('Option<br>2'), true);
+check('no deal name', buildFeeEmail(plan).subject, 'MARGIN APPROVAL: Client Name (Scope)');
+check('out-of-range slot falls back to Option 1', buildFeeEmail(plan, { optionSlot: 0 }).html.indexOf('Strategic Sourcing, ') < buildFeeEmail(plan, { optionSlot: 0 }).html.indexOf('Option<br>2'), true);
+
+// Like fee lines fold into the one summary line.
+const like = marginOptionFigures({
+  services: ['Bill payment', 'GHG', 'Bill payment'],
+  rows: [
+    { name: 'Per account monthly', type: 'Recurring (monthly)', feePerUnit: 1.96, unit: 'Per Account', unitCount: 100, startMonth: 1 },
+    { name: 'Per account monthly', type: 'Recurring (monthly)', feePerUnit: 0.35, unit: 'Per Account', unitCount: 100, startMonth: 1 },
+    { name: 'Per account monthly', type: 'Recurring (monthly)', feePerUnit: 0.69, unit: 'Per Account', unitCount: 100, startMonth: 1 },
+    { name: 'Per account setup - Cass', type: 'Setup', feePerUnit: 21.22, unit: 'Per Account', unitCount: 100, startMonth: 1, passThrough: true },
+  ],
+  margin: 0.594,
+  termMonths: 36,
+});
+check('like fees combined', like.feeLines, ['Per account monthly: $3.00 Per Account', 'Per account setup - Cass: $21.22 Per Account (pass-through)']);
+check('services once each, in order', like.services, ['Bill payment', 'GHG']);
+check('margin whole percent', like.margin, '59%');
+
+// The other options fill their own blocks; the plan keeps its slot.
+const all = buildFeeEmail(plan, {
+  dealLabel: 'Acme', termMonths: 24, optionSlot: 1,
+  otherOptions: [
+    { slot: 1, services: ['Ignored'], rows: [], margin: 0.1 },
+    { slot: 2, services: ['GHG', 'ESPM link'], rows: [{ name: 'Program monthly', type: 'Recurring (monthly)', feePerUnit: 2963, unit: 'Fixed', unitCount: 1 }], margin: 0.55 },
+    { slot: 6, services: ['Out of range'], rows: [] },
+  ],
+}).html;
+check('plan wins its own slot', all.includes('Ignored'), false);
+check('six and up dropped', all.includes('Out of range'), false);
+has('option 2 services', all, 'GHG, ESPM link');
+has('option 2 fee summary', all, 'Program monthly: $2,963.00 Fixed');
+has('option 2 margin', all, '>55%<');
+check('option 2 lands after its strip', all.indexOf('GHG, ESPM link') > all.indexOf('Option<br>2') && all.indexOf('GHG, ESPM link') < all.indexOf('Option<br>3'), true);
+has('table spans the body', all, '<table width="100%"');
 
 const eml = feeBuilderEmailEml(plan, { dealLabel: 'Acme', termMonths: 24, signature: '<b>Sig</b>' });
 has('unsent draft', eml, 'X-Unsent: 1');
-has('subject header', eml, 'Subject: MARGIN APPROVAL: Acme Strategic Sourcing, Bill Payment');
+has('subject header', eml, 'Subject: MARGIN APPROVAL: Acme (Scope)');
 has('to Keith', eml, '\r\nTo: Keith McHugh <keith.mchugh@se.com>\r\n');
 has('cc Gabe', eml, '\r\nCc: Gabe Smith <gabe.smith@se.com>\r\n');
 has('bcc HubSpot', eml, '\r\nBcc: HubSpot logging <244957983@bcc.na2.hubspot.com>\r\n');
