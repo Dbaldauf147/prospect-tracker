@@ -460,7 +460,7 @@ function SavedListModal({ entries, dealKey, currentKey, onClose, onLoad, onDelet
 //                 as the Pricing subtab's "Save to Opp…":
 //                 { optionName, label (null when unlinked), onSave, onUnlink }
 //   emailDraft    { dealLabel, termMonths, annualEscalator, otherOptionsFor,
-//                 signature } for the Draft email
+//                 bucketOf, signature } for the Draft email
 //                 button (see feeBuilderEmail.js), null to leave it off
 //   savedSettings the settings saved for this SIA's deal (see
 //                 feeBuilderSaved.js): { dealKey, dealLabel, saved (the

@@ -69,10 +69,15 @@ function feeLine(r) {
 // One Option block's figures from an option's services, fee rows and
 // margin. The fee structure is the Fee Summary (like fee lines combined,
 // see condenseFeeRows), not every row.
-export function marginOptionFigures({ services = [], rows = [], margin = null, termMonths = 12, annualEscalator } = {}) {
+// bucketOf(name) names the service bucket a service is filed under (the
+// Scope picker's boxes), '' for none: services are summarized as their
+// buckets, a service no bucket claims as itself.
+export function marginOptionFigures({ services = [], rows = [], margin = null, termMonths = 12, annualEscalator, bucketOf = null } = {}) {
   const named = (rows || []).filter(r => String(r?.name || '').trim());
+  const summarized = (services || []).map(sv => String(sv || '').trim()).filter(Boolean)
+    .map(sv => String((bucketOf && bucketOf(sv)) || '').trim() || sv);
   return {
-    services: [...new Set((services || []).map(sv => String(sv || '').trim()).filter(Boolean))],
+    services: [...new Set(summarized)],
     feeLines: condenseFeeRows(named).map(feeLine),
     margin: wholePct(margin),
     term: termText(named, termMonths),
@@ -81,9 +86,10 @@ export function marginOptionFigures({ services = [], rows = [], margin = null, t
 }
 
 // The Option block the plan fills, filled in.
-export function feeEmailOption(plan, { termMonths, annualEscalator } = {}) {
+export function feeEmailOption(plan, { termMonths, annualEscalator, bucketOf } = {}) {
   const f = feeEmailFigures(plan, { termMonths });
   return marginOptionFigures({
+    bucketOf,
     services: f.services.map(sv => sv.name),
     rows: f.rows,
     margin: f.dealMargin ?? f.feeMargin,
@@ -98,16 +104,16 @@ const validSlot = (n) => Number.isInteger(n) && n >= 1 && n <= MARGIN_REQUEST_OP
 // (1-based, its place among the workbook's options). otherOptions fills
 // the rest: [{ slot, services, rows, margin }], rows as the plan's
 // ({ name, type, feePerUnit, unit, unitCount, startMonth, passThrough }).
-export function buildFeeEmail(plan, { dealLabel = '', termMonths, annualEscalator, optionSlot = 1, otherOptions = [] } = {}) {
+export function buildFeeEmail(plan, { dealLabel = '', termMonths, annualEscalator, optionSlot = 1, otherOptions = [], bucketOf = null } = {}) {
   const f = feeEmailFigures(plan, { termMonths });
   const deal = String(dealLabel || '').trim();
   const slot = validSlot(optionSlot) ? optionSlot : 1;
   const filled = [];
   for (const other of otherOptions || []) {
     if (!validSlot(other?.slot) || other.slot === slot) continue;
-    filled[other.slot - 1] = marginOptionFigures({ ...other, termMonths: f.termMonths, annualEscalator });
+    filled[other.slot - 1] = marginOptionFigures({ ...other, termMonths: f.termMonths, annualEscalator, bucketOf });
   }
-  filled[slot - 1] = feeEmailOption(plan, { termMonths, annualEscalator });
+  filled[slot - 1] = feeEmailOption(plan, { termMonths, annualEscalator, bucketOf });
   // The scope is left as "(Scope)" to word by hand.
   const subject = `MARGIN APPROVAL: ${deal || 'Client Name'} (Scope)`;
   const options = filled.map(o => (o ? {
@@ -127,8 +133,8 @@ const header = (name, list) => (list.length
 
 // The draft as an .eml Outlook opens unsent: To Keith, Cc Gabe, Bcc the
 // HubSpot logging address, as the template is addressed.
-export function feeBuilderEmailEml(plan, { dealLabel, termMonths, annualEscalator, optionSlot, otherOptions, signature = '' } = {}) {
-  const { subject, html } = buildFeeEmail(plan, { dealLabel, termMonths, annualEscalator, optionSlot, otherOptions });
+export function feeBuilderEmailEml(plan, { dealLabel, termMonths, annualEscalator, optionSlot, otherOptions, bucketOf, signature = '' } = {}) {
+  const { subject, html } = buildFeeEmail(plan, { dealLabel, termMonths, annualEscalator, optionSlot, otherOptions, bucketOf });
   const { to, cc, bcc } = MARGIN_APPROVAL_RECIPIENTS;
   return [
     'MIME-Version: 1.0',
