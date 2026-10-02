@@ -69,15 +69,40 @@ function feeLine(r) {
 // One Option block's figures from an option's services, fee rows and
 // margin. The fee structure is the Fee Summary (like fee lines combined,
 // see condenseFeeRows), not every row.
+// The DATA bucket is named by its primary service instead: how the bills
+// come in. The first of these the option has, in this order.
+const DATA_BUCKET = 'data';
+const PRIMARY_DATA_SERVICES = [
+  /^bill payment$/i,
+  /^ap upload\b/i,
+  /^invoice collection\b/i,
+  /^client sends invoices$/i,
+];
+
 // bucketOf(name) names the service bucket a service is filed under (the
 // Scope picker's boxes), '' for none: services are summarized as their
-// buckets, a service no bucket claims as itself.
+// buckets, a service no bucket claims as itself, and DATA as its primary
+// service (DATA itself when the option has none of them).
+export function summarizeServices(services = [], bucketOf = null) {
+  const names = [...new Set((services || []).map(sv => String(sv || '').trim()).filter(Boolean))];
+  const bucket = (sv) => String((bucketOf && bucketOf(sv)) || '').trim();
+  let primary = null;
+  for (const re of PRIMARY_DATA_SERVICES) {
+    primary = names.find(sv => re.test(sv));
+    if (primary) break;
+  }
+  const out = names.map(sv => {
+    const b = bucket(sv);
+    if (b.toLowerCase() === DATA_BUCKET || (primary && sv === primary)) return primary || b;
+    return b || sv;
+  });
+  return [...new Set(out)];
+}
+
 export function marginOptionFigures({ services = [], rows = [], margin = null, termMonths = 12, annualEscalator, bucketOf = null } = {}) {
   const named = (rows || []).filter(r => String(r?.name || '').trim());
-  const summarized = (services || []).map(sv => String(sv || '').trim()).filter(Boolean)
-    .map(sv => String((bucketOf && bucketOf(sv)) || '').trim() || sv);
   return {
-    services: [...new Set(summarized)],
+    services: summarizeServices(services, bucketOf),
     feeLines: condenseFeeRows(named).map(feeLine),
     margin: wholePct(margin),
     term: termText(named, termMonths),
