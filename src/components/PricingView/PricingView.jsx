@@ -6290,6 +6290,7 @@ export function PricingView({ settings } = {}) {
           onSetItemType={setItemType}
           onSetItemAnnual={setItemAnnual}
           onSetPassThrough={(description, type, on) => setLinkedToPassThroughDefault(linkedToDefaultKey(description, type), on)}
+          onSetUnit={(description, type, unit) => setLinkedToUnitDefault(linkedToDefaultKey(description, type), unit)}
           applyFeeStructure={applyServiceFeeStructure}
           numYears={Math.max(1, Math.ceil(termMonths / 12))}
           termMonths={termMonths}
