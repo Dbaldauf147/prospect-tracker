@@ -1,14 +1,16 @@
 // The Fee Builder's "Draft email": the Margin Approval email Dan sends
 // Keith (MARGIN APPROVAL: Client Name Scope, the Margin Request Template
 // table), as an Outlook draft (an X-Unsent .eml, see draftEmail.js), with
-// the option as built filled into its Option block: services, fee
-// structure, margin, term and escalator.
+// the option as built filled into its Option block (services, fee
+// structure, margin, term and escalator) and the workbook's other options
+// into theirs.
 //
 // Pure: takes the plan FeeBuilderTab already has and returns the subject
 // and body HTML; feeBuilderEmailEml wraps them in the .eml.
 
 import { escapeHtml, buildStyledBodyHtml } from './draftEmail.js';
 import { fmtFeePerUnit } from './siaUsageCounts.js';
+import { condenseFeeRows } from './feeSummarySheets.js';
 import { MARGIN_APPROVAL_RECIPIENTS, MARGIN_REQUEST_OPTION_SLOTS, marginRequestTableHtml, marginApprovalBodyHtml } from './marginRequestEmail.js';
 
 const sum = (arr) => (arr || []).reduce((a, b) => a + (Number(b) || 0), 0);
@@ -55,45 +57,66 @@ function termText(rows, termMonths) {
   return `${recurring ? 'Recurring ' : ''}${span} term`;
 }
 
-// A fee line as "Name: $0.00152 Per kWh (Recurring (monthly))".
+// A summary line: "Per account monthly: $3.00 Per Account", with
+// " (pass-through)" on a fee billed at cost.
 function feeLine(r) {
   const fee = fmtFeePerUnit(r.feePerUnit, r.unit);
   const unit = String(r.unit || '').trim();
   const main = [r.name, fee ? `${fee}${unit ? ` ${unit}` : ''}` : ''].filter(Boolean).join(': ');
-  const tags = [r.type, r.passThrough ? 'pass-through' : ''].filter(Boolean).join(', ');
-  return tags ? `${main} (${tags})` : main;
+  return r.passThrough ? `${main} (pass-through)` : main;
+}
+
+// One Option block's figures from an option's services, fee rows and
+// margin. The fee structure is the Fee Summary (like fee lines combined,
+// see condenseFeeRows), not every row.
+export function marginOptionFigures({ services = [], rows = [], margin = null, termMonths = 12, annualEscalator } = {}) {
+  const named = (rows || []).filter(r => String(r?.name || '').trim());
+  return {
+    services: [...new Set((services || []).map(sv => String(sv || '').trim()).filter(Boolean))],
+    feeLines: condenseFeeRows(named).map(feeLine),
+    margin: wholePct(margin),
+    term: termText(named, termMonths),
+    escalator: typeof annualEscalator === 'number' && annualEscalator > 0 ? wholePct(annualEscalator) : 'N/A',
+  };
 }
 
 // The Option block the plan fills, filled in.
 export function feeEmailOption(plan, { termMonths, annualEscalator } = {}) {
   const f = feeEmailFigures(plan, { termMonths });
-  const esc = typeof annualEscalator === 'number' && annualEscalator > 0 ? wholePct(annualEscalator) : 'N/A';
-  return {
-    services: f.services.map(s => s.name),
-    feeLines: f.rows.map(feeLine),
-    margin: wholePct(f.dealMargin ?? f.feeMargin),
-    term: termText(f.rows, f.termMonths),
-    escalator: esc,
-  };
+  return marginOptionFigures({
+    services: f.services.map(sv => sv.name),
+    rows: f.rows,
+    margin: f.dealMargin ?? f.feeMargin,
+    termMonths: f.termMonths,
+    annualEscalator,
+  });
 }
 
-// optionSlot: which of the template's five Option blocks this option
-// fills (1-based, its place among the workbook's options).
-export function buildFeeEmail(plan, { dealLabel = '', termMonths, annualEscalator, optionSlot = 1 } = {}) {
+const validSlot = (n) => Number.isInteger(n) && n >= 1 && n <= MARGIN_REQUEST_OPTION_SLOTS;
+
+// optionSlot: which of the template's five Option blocks the plan fills
+// (1-based, its place among the workbook's options). otherOptions fills
+// the rest: [{ slot, services, rows, margin }], rows as the plan's
+// ({ name, type, feePerUnit, unit, unitCount, startMonth, passThrough }).
+export function buildFeeEmail(plan, { dealLabel = '', termMonths, annualEscalator, optionSlot = 1, otherOptions = [] } = {}) {
   const f = feeEmailFigures(plan, { termMonths });
-  const o = feeEmailOption(plan, { termMonths, annualEscalator });
   const deal = String(dealLabel || '').trim();
-  const scope = o.services.join(', ');
-  const subject = `MARGIN APPROVAL: ${deal || 'Client Name'} ${scope || 'Scope'}`;
-  const slot = Number.isInteger(optionSlot) && optionSlot >= 1 && optionSlot <= MARGIN_REQUEST_OPTION_SLOTS ? optionSlot : 1;
-  const options = [];
-  options[slot - 1] = {
-    services: o.services.map(escapeHtml).join('<br>'),
+  const slot = validSlot(optionSlot) ? optionSlot : 1;
+  const filled = [];
+  for (const other of otherOptions || []) {
+    if (!validSlot(other?.slot) || other.slot === slot) continue;
+    filled[other.slot - 1] = marginOptionFigures({ ...other, termMonths: f.termMonths, annualEscalator });
+  }
+  filled[slot - 1] = feeEmailOption(plan, { termMonths, annualEscalator });
+  // The scope is left as "(Scope)" to word by hand.
+  const subject = `MARGIN APPROVAL: ${deal || 'Client Name'} (Scope)`;
+  const options = filled.map(o => (o ? {
+    services: escapeHtml(o.services.join(', ')),
     feeStructure: o.feeLines.map(escapeHtml).join('<br>'),
     margin: escapeHtml(o.margin),
     term: escapeHtml(o.term),
     escalator: escapeHtml(o.escalator),
-  };
+  } : undefined));
   const table = marginRequestTableHtml({ customerName: escapeHtml(deal), options });
   return { subject, html: marginApprovalBodyHtml(table), figures: f };
 }
@@ -104,8 +127,8 @@ const header = (name, list) => (list.length
 
 // The draft as an .eml Outlook opens unsent: To Keith, Cc Gabe, Bcc the
 // HubSpot logging address, as the template is addressed.
-export function feeBuilderEmailEml(plan, { dealLabel, termMonths, annualEscalator, optionSlot, signature = '' } = {}) {
-  const { subject, html } = buildFeeEmail(plan, { dealLabel, termMonths, annualEscalator, optionSlot });
+export function feeBuilderEmailEml(plan, { dealLabel, termMonths, annualEscalator, optionSlot, otherOptions, signature = '' } = {}) {
+  const { subject, html } = buildFeeEmail(plan, { dealLabel, termMonths, annualEscalator, optionSlot, otherOptions });
   const { to, cc, bcc } = MARGIN_APPROVAL_RECIPIENTS;
   return [
     'MIME-Version: 1.0',

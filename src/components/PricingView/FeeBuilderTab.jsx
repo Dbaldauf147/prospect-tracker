@@ -459,7 +459,8 @@ function SavedListModal({ entries, dealKey, currentKey, onClose, onLoad, onDelet
 //   oppLink       the Opps row the active option is saved to, the same link
 //                 as the Pricing subtab's "Save to Opp…":
 //                 { optionName, label (null when unlinked), onSave, onUnlink }
-//   emailDraft    { dealLabel, termMonths, annualEscalator, signature } for the Draft email
+//   emailDraft    { dealLabel, termMonths, annualEscalator, otherOptionsFor,
+//                 signature } for the Draft email
 //                 button (see feeBuilderEmail.js), null to leave it off
 //   savedSettings the settings saved for this SIA's deal (see
 //                 feeBuilderSaved.js): { dealKey, dealLabel, saved (the
@@ -815,10 +816,12 @@ export function FeeBuilderTab({
                 disabled={plan.rows.length === 0}
                 onClick={() => {
                   const optionSlot = (workbook?.options || []).findIndex(o => o.optionNumber === optionNumber) + 1;
-                  const eml = feeBuilderEmailEml(plan, { ...emailDraft, optionSlot });
+                  const { otherOptionsFor, ...draftOpts } = emailDraft;
+                  const otherOptions = otherOptionsFor ? otherOptionsFor(optionNumber) : [];
+                  const eml = feeBuilderEmailEml(plan, { ...draftOpts, optionSlot, otherOptions });
                   downloadDrafts([{ fileName: `${safeFileName(`Margin Approval ${emailDraft.dealLabel || ''} ${plan.optionName || ''}`.trim())}.eml`, eml }]);
                 }}
-                title="Download the Margin Approval email for Keith (Cc Gabe, Bcc HubSpot) with this option's services, fee structure, margin, term and escalator filled into the Margin Request Template. Open the file to edit and send it from Outlook."
+                title="Download the Margin Approval email for Keith (Cc Gabe, Bcc HubSpot) with every option's services, fee summary, margin, term and escalator filled into the Margin Request Template (this option as built, the others as saved). Open the file to edit and send it from Outlook."
               >
                 Draft email
               </button>
