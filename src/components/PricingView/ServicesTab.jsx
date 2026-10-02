@@ -44,9 +44,10 @@ const STATUS_CLASS = {
 //                   with no service yet, warned about above the list
 //   tagOptions      the Dropdowns catalog a cost line can be tagged to
 //   onTagLineItem   (lineItemKey, serviceName) => adds the service
-//   onMoveLineItem  ({ description, type }, fromService, toService) => swaps
-//                   one service for another on that one cost line (type as
-//                   the SIA gives it); the line item's other cost lines stay
+//   onMoveLineItem  ({ id, description, type }, fromService, toService) =>
+//                   swaps one service for another on that one cost line (type
+//                   as the SIA gives it), on the active option only; the line
+//                   item's other cost lines and every other option stay
 //   onIgnoreLineItem (lineItemKey) => marks the line item Ignore
 //   sharedToSplit   sharedLineItemsToSplit() for the active option: line
 //                   items tied to several services with no priority order,
@@ -658,7 +659,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
   function moveItem(it, to) {
     if (!onMoveItem || !to) return;
     const count = items.filter(x => sameLine(x, it)).length;
-    onMoveItem({ description: it.description, type: it.siaType }, to);
+    onMoveItem({ id: it.id, description: it.description, type: it.siaType }, to);
     setMoved({ name: it.description, type: it.type, to, count });
   }
 
@@ -920,7 +921,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                                 const n = items.filter(x => sameLine(x, it)).length;
                                 return `Move this one cost line to another service in scope on ${optionName || 'this option'}. `
                                   + `Only this "${it.description}" line moves${it.siaType ? ` (${it.siaType})` : ''}; other lines with the same Line Item stay where they are. `
-                                  + `It holds on every option${n > 1 ? `, and the ${n} identical lines move together` : ''}.`;
+                                  + `It holds on ${optionName || 'this option'} only${n > 1 ? `, and the ${n} identical lines move together` : ''}.`;
                               })()}
                             >
                               <option value="">Move to...</option>

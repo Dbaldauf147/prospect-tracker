@@ -20,6 +20,7 @@ import {
   costTypeConversion, moveCostAllocation, buildScheduleFromStructures, standardFeeContext, groupFeeRows, effectiveLineItemServices,
   passThroughFeeRows, addPassThroughFees, sharedLineItemsToSplit, setCostLineService, sharedSignature,
   lineItemServicesOnOption, setOptionCostLineService, setOptionItemService, clearOptionItemPicks,
+  moveOptionCostLineService, sharedLineItemServices,
   costKeysFor, allocationFor, feeStructureCostInputs,
 } from '../src/utils/pricingServices.js';
 
@@ -308,6 +309,34 @@ test('moving one cost line leaves the other lines of its line item where they we
   const eff = effectiveLineItemServices([setup, { description: 'Pay', type: 'Setup' }],
     { ...a, pay: ['Budgets', 'Utility feeds'] }, { pay: true });
   assert.deepEqual(eff.pay, ['Utility feeds']);
+});
+
+test('Move to saves on the option, never in the shared mapping', () => {
+  const map = { nam: ['Client Management'] };
+  const setup = { id: 's1', description: 'NAM', type: 'Setup' };
+  const monthly = { id: 'm1', description: 'NAM', type: 'Recurring (monthly)' };
+  const own = moveOptionCostLineService({}, map, setup, 'client management', 'GHG', [setup]);
+  assert.deepEqual(own, { 'nam::setup': ['GHG'] });
+  const opt1 = lineItemServicesOnOption({ costLineServices: own }, map);
+  assert.deepEqual(costItemsForService([setup, monthly], opt1, 'GHG'), [setup]);
+  // Another option (or SIA) reading the same mapping never sees it.
+  const opt2 = lineItemServicesOnOption({}, map);
+  assert.deepEqual(costItemsForService([setup, monthly], opt2, 'GHG'), []);
+  // Moving back drops the pick; a row pick on the line gives way.
+  assert.deepEqual(moveOptionCostLineService(own, map, setup, 'GHG', 'Client Management', [setup]), {});
+  const rowPick = { '#item:s1': ['Budgets'] };
+  assert.deepEqual(moveOptionCostLineService(rowPick, map, setup, 'Budgets', 'GHG', [setup]), { 'nam::setup': ['GHG'] });
+  // Not on the service it is moving from: unchanged.
+  assert.equal(moveOptionCostLineService(own, map, monthly, 'GHG', 'Budgets'), own);
+});
+
+test('cost line picks left in the shared mapping are ignored', () => {
+  const legacy = { nam: ['Client Management'], 'nam::setup': ['GHG'], 'nam::recurring (monthly)': ['GHG'], '#item:7': ['GHG'] };
+  assert.deepEqual(sharedLineItemServices(legacy), { nam: ['Client Management'] });
+  const clean = { nam: ['Client Management'] };
+  assert.equal(sharedLineItemServices(clean), clean);
+  const items = [{ id: 7, description: 'NAM', type: 'Setup' }, { description: 'NAM', type: 'Recurring (monthly)' }];
+  assert.deepEqual(costItemsForService(items, lineItemServicesOnOption({}, legacy), 'GHG'), []);
 });
 
 test('cost totals group cost lines by description', () => {

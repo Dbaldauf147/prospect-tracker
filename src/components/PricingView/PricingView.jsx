@@ -40,7 +40,7 @@ import { SiaHistoryTab } from './SiaHistoryTab';
 import { buildSiaHistoryEntry, siaKeyFacts } from '../../utils/siaHistoryEntry';
 import { saveSiaHistoryEntry } from '../../utils/siaLoadHistory';
 import { buildServiceRows } from '../../utils/serviceRows';
-import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, moveCostLineService, servicesForCostLine, isCostLineServiceKey, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices, sharedLineItemsToSplit, sharedSignature, lineItemServicesOnOption, setOptionCostLineService, setOptionItemService, clearOptionItemPicks, roundFee } from '../../utils/pricingServices';
+import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, moveOptionCostLineService, sharedLineItemServices, servicesForCostLine, isCostLineServiceKey, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices, sharedLineItemsToSplit, sharedSignature, lineItemServicesOnOption, setOptionCostLineService, setOptionItemService, clearOptionItemPicks, roundFee } from '../../utils/pricingServices';
 import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
 import { isSetupFeeType } from '../../utils/setupFeeFloor';
 import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
@@ -2581,7 +2581,9 @@ export function PricingView({ settings } = {}) {
         }
         const savedLineItemServices = await dbGet(STORE, LINE_ITEM_SERVICES_KEY);
         if (!cancelled && savedLineItemServices && typeof savedLineItemServices === 'object') {
-          setLineItemServices(savedLineItemServices);
+          // Cost line picks once saved here (see sharedLineItemServices) are
+          // dropped, and go from storage with the mapping's next save.
+          setLineItemServices(sharedLineItemServices(savedLineItemServices));
         }
         const savedFeeStructures = await dbGet(STORE, SERVICE_FEE_STRUCTURES_KEY);
         if (!cancelled && savedFeeStructures && typeof savedFeeStructures === 'object') {
@@ -2683,7 +2685,7 @@ export function PricingView({ settings } = {}) {
             hidden: Array.isArray(saved.linkedToOptionsList.hidden) ? saved.linkedToOptionsList.hidden : [],
           });
         }
-        if (!savedLineItemServices && saved.lineItemServices && typeof saved.lineItemServices === 'object') setLineItemServices(saved.lineItemServices);
+        if (!savedLineItemServices && saved.lineItemServices && typeof saved.lineItemServices === 'object') setLineItemServices(sharedLineItemServices(saved.lineItemServices));
         if (!savedLineItemIgnored && saved.lineItemIgnored && typeof saved.lineItemIgnored === 'object') setLineItemIgnored(saved.lineItemIgnored);
         if (typeof saved.termMonths === 'number') setTermMonths(saved.termMonths);
         if (typeof saved.annualEscalator === 'number') setAnnualEscalator(saved.annualEscalator);
@@ -6298,7 +6300,14 @@ export function PricingView({ settings } = {}) {
           unlinked={unmappedForBanner}
           tagOptions={solutionsOptions}
           onTagLineItem={(key, service) => setLineItemServices(prev => addServiceToLineItem(prev, key, service))}
-          onMoveLineItem={(line, from, to) => setLineItemServices(prev => moveCostLineService(prev, line, from, to))}
+          // A move is this option's answer alone: saved on the option, never
+          // in the Linked To mapping other options and later SIAs read.
+          onMoveLineItem={(line, from, to) => updateActiveOption(o => {
+            const lc = (v) => String(v ?? '').trim().toLowerCase();
+            const rows = (o.sections || []).flatMap(sec => sec.items || [])
+              .filter(x => lc(x.description) === lc(line.description) && lc(x.type) === lc(line.type));
+            return { ...o, costLineServices: moveOptionCostLineService(o.costLineServices, lineItemServices, line, from, to, rows) };
+          })}
           onIgnoreLineItem={(key) => setLineItemIgnored(prev => ({ ...(prev || {}), [key]: true }))}
           sharedToSplit={sharedToSplit}
           // The line menu sets every row of that type, so row picks made in
