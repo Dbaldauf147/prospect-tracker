@@ -60,17 +60,17 @@ has('options banner', html, 'SIA Options Seeking Approval');
 has('customer escaped', html, '>Acme &amp; Co<');
 has('SIA link row', html, 'Sales Investment Analyzer (SIA) Link');
 has('RFP row', html, 'Is this an RFP?');
-check('five option blocks', (html.match(/Option<br>\d/g) || []).length, 5);
+check('five option blocks, label on one line', (html.match(/>Option \d</g) || []).length, 5);
 has('kWh rate keeps its places', html, '$0.00152');
 has('services comma separated', html, 'Strategic Sourcing, Bill Payment');
 has('margin', html, '>48%<');
 has('term', html, 'Recurring 2 year term');
 has('escalator', html, '>3%<');
-check('filled into Option 2, not Option 1', html.indexOf('Strategic Sourcing, ') > html.indexOf('Option<br>2') && html.indexOf('Strategic Sourcing, ') < html.indexOf('Option<br>3'), true);
+check('filled into Option 2, not Option 1', html.indexOf('Strategic Sourcing, ') > html.indexOf('Option 2') && html.indexOf('Strategic Sourcing, ') < html.indexOf('Option 3'), true);
 check('no em dash', /—/.test(html), false);
 
 check('no deal name', buildFeeEmail(plan).subject, 'MARGIN APPROVAL: Client Name (Scope)');
-check('out-of-range slot falls back to Option 1', buildFeeEmail(plan, { optionSlot: 0 }).html.indexOf('Strategic Sourcing, ') < buildFeeEmail(plan, { optionSlot: 0 }).html.indexOf('Option<br>2'), true);
+check('out-of-range slot falls back to Option 1', buildFeeEmail(plan, { optionSlot: 0 }).html.indexOf('Strategic Sourcing, ') < buildFeeEmail(plan, { optionSlot: 0 }).html.indexOf('Option 2'), true);
 
 // Like fee lines fold into the one summary line.
 const like = marginOptionFigures({
@@ -102,8 +102,14 @@ check('six and up dropped', all.includes('Out of range'), false);
 has('option 2 services', all, 'GHG, ESPM link');
 has('option 2 fee summary', all, 'Program monthly: $2,963.00 Fixed');
 has('option 2 margin', all, '>55%<');
-check('option 2 lands after its strip', all.indexOf('GHG, ESPM link') > all.indexOf('Option<br>2') && all.indexOf('GHG, ESPM link') < all.indexOf('Option<br>3'), true);
-has('table spans the body', all, '<table width="100%"');
+check('option 2 lands after its strip', all.indexOf('GHG, ESPM link') > all.indexOf('Option 2') && all.indexOf('GHG, ESPM link') < all.indexOf('Option 3'), true);
+has('table spans three quarters of the body', all, '<table width="75%"');
+
+// Services summarized as their buckets; an unfiled one keeps its name.
+const BUCKETS = { 'strategic sourcing': 'Traditional Energy Management', 'bill payment': 'DATA', 'invoice recalculation': 'DATA' };
+const bucketOf = (n) => BUCKETS[String(n).toLowerCase()] || '';
+check('services by bucket', marginOptionFigures({ services: ['Bill payment', 'Strategic sourcing', 'Invoice recalculation', 'Odd one'], bucketOf }).services, ['DATA', 'Traditional Energy Management', 'Odd one']);
+has('bucket summary in the email', buildFeeEmail(plan, { bucketOf }).html, '>Traditional Energy Management, DATA<');
 
 const eml = feeBuilderEmailEml(plan, { dealLabel: 'Acme', termMonths: 24, signature: '<b>Sig</b>' });
 has('unsent draft', eml, 'X-Unsent: 1');

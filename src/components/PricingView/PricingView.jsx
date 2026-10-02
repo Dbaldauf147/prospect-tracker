@@ -9,6 +9,7 @@ import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingPar
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { withUsageCounts, fmtFeePerUnit } from '../../utils/siaUsageCounts';
 import { resolveSignature } from '../../utils/draftEmail';
+import { getServiceCategories, serviceBucketOf } from '../../utils/serviceCategoriesStore';
 import { buildAltFeeRowsFromAutomatedNames, altFeeUnitCount, siaUnitCount, optionUnitCounts, feeDefaultKey, applyFeeDefaultToRows, reconcileScheduleWithFeeDefaults } from '../../utils/altFeeAutoBuild';
 import { recurringFeePerUnit, billedMonthFactor } from '../../utils/altFeePricing';
 import { year1ValueFor } from '../../utils/year1Value';
@@ -5900,6 +5901,12 @@ export function PricingView({ settings } = {}) {
     }).filter(Boolean);
   }
 
+  // The service bucket a service is filed under, so the Draft email can
+  // summarize an option's services as their buckets.
+  function marginEmailBucketOf(name) {
+    return serviceBucketOf(getServiceCategories(settings), name);
+  }
+
   function applyFeeBuilderPlan(plan) {
     const typedRows = (plan?.rows || []).filter(r => r.overridden || r.unitsOverridden);
     if (!plan || (plan.perService.length === 0 && typedRows.length === 0 && !plan.dropped?.length)) return false;
@@ -6320,7 +6327,7 @@ export function PricingView({ settings } = {}) {
           doneState={feeBuilderDone}
           setDoneState={setFeeBuilderDone}
           savedSettings={feeBuilderSavedSettings()}
-          emailDraft={{ dealLabel: dealFor(workbook)?.label || '', termMonths, annualEscalator, otherOptionsFor: marginEmailOtherOptions, signature: resolveSignature(settings, isAdmin) }}
+          emailDraft={{ dealLabel: dealFor(workbook)?.label || '', termMonths, annualEscalator, otherOptionsFor: marginEmailOtherOptions, bucketOf: marginEmailBucketOf, signature: resolveSignature(settings, isAdmin) }}
           oppLink={(() => {
             const opt = workbook?.options.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
             if (!opt) return null;

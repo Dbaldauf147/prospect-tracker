@@ -25,8 +25,9 @@ const OPTION = `${BORDER}padding:1px 5px;background:#E7E6E6;${FONT}`;
 // The grey italic prompts (Yes/No, Services, Fee Structure, ...).
 const HINT = `${BORDER}padding:1px 5px;text-align:center;vertical-align:middle;color:#A5A5A5;font-style:italic;${FONT}`;
 
-// Column widths as shares of the table, which spans the email body.
-const W = ['6%', '28%', '8%', '46%', '7%', '5%'];
+// Column widths as shares of the table, which spans three quarters of
+// the email body.
+const W = ['8%', '26%', '9%', '44%', '8%', '5%'];
 const v = (s) => (s === undefined || s === null || s === '' ? '&nbsp;' : s);
 
 // One "Option N" block: the grey strip, then Services / Fee Structure /
@@ -34,7 +35,7 @@ const v = (s) => (s === undefined || s === null || s === '' ? '&nbsp;' : s);
 function optionBlock(n, { services, feeStructure, margin, term, escalator } = {}) {
   return `
   <tr>
-    <td width="${W[0]}" style="${OPTION}text-align:center;font-weight:bold;">Option<br>${n}</td>
+    <td width="${W[0]}" style="${OPTION}text-align:center;font-weight:bold;white-space:nowrap;">Option ${n}</td>
     <td colspan="5" style="${OPTION}">&nbsp;</td>
   </tr>
   <tr>
@@ -57,7 +58,7 @@ function optionBlock(n, { services, feeStructure, margin, term, escalator } = {}
 // index 0 is Option 1. Missing entries stay blank.
 export function marginRequestTableHtml({ customerName = '', siaLink = '', rfp = '', dueDate = 'N/A', options = [] } = {}) {
   const blocks = Array.from({ length: MARGIN_REQUEST_OPTION_SLOTS }, (_, i) => optionBlock(i + 1, options[i] || {})).join('');
-  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;${FONT}">
+  return `<table width="75%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:75%;${FONT}">
   <tr><td colspan="6" style="${BANNER}">Margin Request Template</td></tr>
   <tr>
     <td colspan="2" style="${LABEL}">Customer Name</td>
