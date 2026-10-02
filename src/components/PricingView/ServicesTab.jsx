@@ -763,6 +763,11 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
     }
     return out;
   })();
+  // A blank Unit reads as the rate card's unit when the card prices on
+  // just one (Per Project for ENERGY STAR cert). Shown, not saved: picking
+  // a unit saves it, and "-" goes back to this default.
+  const cardUnits = detail?.rateCheck?.cardUnits || [];
+  const defaultLineUnit = cardUnits.length === 1 ? cardUnits[0] : '';
   const meta = service.meta || {};
 
   // Each cost line's type against the fee that prices it in the pricing
@@ -998,10 +1003,10 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                           <select
                             className={styles.cellSelect}
                             style={{ width: 104 }}
-                            value={it.unit || ''}
+                            value={it.unit || defaultLineUnit}
                             onChange={(e) => onSetUnit(it.description, it.type, e.target.value)}
                             aria-label={`Unit for ${it.description}`}
-                            title={`Same setting as the Unit column on the Linked To subtab: applies to every "${it.description}" line typed ${it.type || 'blank'}, on every option.`}
+                            title={`${!it.unit && defaultLineUnit ? `${defaultLineUnit} by default, the unit this service's rate card prices on. ` : ''}Same setting as the Unit column on the Linked To subtab: applies to every "${it.description}" line typed ${it.type || 'blank'}, on every option.`}
                           >
                             <option value="">-</option>
                             {lineUnitOptions.map(u => <option key={u} value={u}>{u}</option>)}
