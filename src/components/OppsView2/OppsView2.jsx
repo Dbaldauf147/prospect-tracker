@@ -5760,6 +5760,7 @@ const DEFAULT_COLUMN_LINKS = {
   Stage:  { listKey: 'status',       mode: 'single' },
   Status: { listKey: 'whoIsWaiting', mode: 'single' },
   'Chance?': { listKey: 'chance',    mode: 'single' },
+  'Entity Outside the US Approval': { listKey: 'entityOutsideUsApproval', mode: 'single' },
 };
 
 // Thin wrapper around the shared resolver so existing call sites in

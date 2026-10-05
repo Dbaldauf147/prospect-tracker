@@ -214,6 +214,14 @@ export const DROPDOWN_LISTS = [
     options: ['Quoted', 'Contracting', 'Agreement Sent', 'Sold', 'Not Sold'],
   },
   {
+    // Whether an opp contracting through an entity outside the US has
+    // been cleared. Picked on the Opp details popup's Quoting group and
+    // in the Agreement Sent prompt; the user grows the list here.
+    key: 'entityOutsideUsApproval',
+    label: 'Entity Outside the US Approval',
+    options: ['Not required', 'Requested', 'Approved', 'Denied'],
+  },
+  {
     key: 'quotedDate',
     label: 'Quoted Date',
     options: [
