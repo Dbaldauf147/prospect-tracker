@@ -606,7 +606,7 @@ const EMPTY = {
   deregulatedSites: null, indicativeAnnualSavings: null, maxYearlyExposure: null,
   rank: '', tier: 'Tier 3',
   hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [], portfolioTransactions: [],
-  peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', strategies: [], revenue: '',
+  peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', contractingEntityAddress: '', strategies: [], revenue: '',
   // Opts this company into the weekly acquisition-news digest
   // (api/company-news-scheduler). Off unless explicitly ticked.
   trackAcquisitionNews: false,
@@ -8091,6 +8091,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   </div>
                 );
               })()}
+            </div>
+
+            {/* The form flows two to a row, so this sits after PE Owner to
+                land in the right column, directly under Contracting Entity. */}
+            <div>
+              <label className={styles.label}>Contracting Entity Address</label>
+              <CommitOnBlurInput className={styles.input} value={fields.contractingEntityAddress ?? ''} onCommit={v => set('contractingEntityAddress', v)} placeholder="Address of the legal entity on the contract" />
             </div>
 
             <div className={styles.tallField}>
