@@ -23,6 +23,43 @@ export const REGULATED_PATTERNS = [
   /\b(p\.?u\.?d\.?)\b/i, // Public Utility District
   /\bmembership corp(oration)?\b/i, // Rural electric membership corps
   /\belectric (membership|cooperative)\b/i,
+  // How EIA's Form 861 names municipals and coops, which the bundled zip
+  // table (eiaZipUtilities.js) carries: "Town of Wallingford", "Blue Ridge
+  // Elec Member Corp", "Dixie Electric Power Assn", "Groton Dept of
+  // Utilities", "Block Island Utility District".
+  /^(town|village|borough|township) of\b/i,
+  /\belec(tric)? member corp\b/i,
+  /\bE ?M ?C\b/,
+  /\brural E ?C ?A\b/i,
+  /\belectric (power )?ass(n|ociation)\b/i,
+  /\bdep(t|artment) of utilities\b/i,
+  /\b(light|electric light|light (&|and) power) dep(t|artment)\b/i,
+  /\butility district\b/i,
+  /\bboard of public util/i,
+  /^city utilities\b/i,
+  /\bel(ec|ectric)?\.? (power|pwr) assn\b/i,
+  /\bR ?E ?M ?C\b/,
+  /\brural (E ?C ?C|el(ec|ectric)?\b)/i,
+  /\b(board|comm|commission)\b/i,
+  /\bwater (&|and) (light|lighting|electric)\b/i,
+  /\((city|town|village) of\)/i,
+  /\bel(ec|ectric)?\.? members? corp/i,
+  /\bel(ec|ectric)?\.? assn\b/i,
+  // Spelled-out initials: E C (C) / E C A coop, E P A power association,
+  // R E C (C) / R E A rural electric, P P D / P U D public power district.
+  /\b(E C( [CA])?|E P A|R E (C( C)?|A)|P P D|P U D|RECC?|REA|EPA|PPD)\b/,
+  /\bpower assn\b/i,
+  /\bp(ub|ublic)\.? p(wr|ower) dist/i,
+  /\bpower dist(rict)?\b/i,
+  /\birr(igation)?\b/i,
+  /\bpeople'?s ut/i,
+  /\bmun\b/i,
+  /\bpublic works\b/i,
+  /\benergy authority\b/i,
+  /\belectric system\b/i,
+  /\bcounty$/i,
+  /\bcity corp/i,
+  /^city (&|and) county of\b/i,
 ];
 export const REGULATED_OVERRIDES = [
   /^austin energy\b/i,
