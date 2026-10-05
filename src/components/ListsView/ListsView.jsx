@@ -37,6 +37,17 @@ const SUBTABS = [
   { key: 'bfoopps', label: 'BFO Opps', storageKey: 'bfo-opps-override' },
 ];
 
+// The GRESB list's service column: where each company stands on the two
+// GRESB services, read off its company card. Module-level so the prop
+// keeps one identity across renders.
+const GRESB_SERVICE_STATUS = {
+  label: 'GRESB Services',
+  services: [
+    { key: 'GRESB quant', label: 'Quant' },
+    { key: 'GRESB fully managed', label: 'Fully managed' },
+  ],
+};
+
 const LIST_CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
 function normalizeListCompany(name) {
   return String(name || '')
@@ -481,6 +492,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             title="GRESB"
             singular="company"
             showDecisionMakers
+            serviceStatusColumn={GRESB_SERVICE_STATUS}
             plural="companies"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
