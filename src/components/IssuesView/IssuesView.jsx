@@ -344,7 +344,7 @@ function ServiceFixModal({ row, services, retired, otherCounts, saving, error, o
   const off = row.scopeFix?.off || [];
   const [choices, setChoices] = useState(() => off.map((name) => {
     const target = suggestServiceMatch(name, services);
-    return { name, mode: target ? 'map' : 'add', targets: target ? [target] : [], newName: name };
+    return { name, suggested: target, mode: target ? 'map' : 'add', targets: target ? [target] : [], newName: name };
   }));
   const [allOpps, setAllOpps] = useState(true);
 
@@ -423,6 +423,11 @@ function ServiceFixModal({ row, services, retired, otherCounts, saving, error, o
                 <div style={{ fontSize: '0.8rem', color: '#1E293B' }}>
                   <span style={{ color: '#64748B' }}>Not on the list:</span> <strong>{c.name}</strong>
                 </div>
+                {c.suggested && (
+                  <div style={{ fontSize: '0.74rem', color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 4, padding: '0.35rem 0.5rem' }}>
+                    Looks like a misspelling of <strong>{c.suggested}</strong>, which is on the list. Save to correct the spelling.
+                  </div>
+                )}
                 <div style={{ display: 'flex' }}>
                   <button type="button" onClick={() => patch(i, { mode: 'map' })} style={{ ...tabStyle(c.mode === 'map'), borderRadius: '4px 0 0 4px' }}>
                     Map to an existing service

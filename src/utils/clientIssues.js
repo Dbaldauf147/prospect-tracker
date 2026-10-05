@@ -14,7 +14,7 @@ import { computeAppDescriptionOpps, NO_COMPANY } from './appDescriptionOpps';
 import { buildOppNumberMap } from './oppNumbers';
 import { dealSoldDate, daysToFollowUpGoal, followUpGoalDate, postSaleFollowUpRows } from './postSaleFollowUp';
 import { incompleteHandoffDeals } from './dealHandoff';
-import { oppScopeOffList } from './oppScopeOffList';
+import { oppScopeOffList, suggestServiceMatch } from './oppScopeOffList';
 import {
   buildOppStagesByClient,
   buildServiceCatalog,
@@ -462,6 +462,14 @@ function detectOppScopeOffList({ oppsCache = null, knownServices = null, prospec
     const account = String(r.Account || '').trim();
     const stage = String(r.Stage || '').trim();
     const quoted = off.map(s => `"${s}"`).join(', ');
+    // A name one or two letters off a listed service is almost always a
+    // typo ("Risk managment"); say so, since the bare "isn't on the list"
+    // reads as if the service itself were missing.
+    const typos = off
+      .map(s => [s, suggestServiceMatch(s, knownServices)])
+      .filter(([, match]) => match)
+      .map(([s, match]) => ` "${s}" looks like a misspelling of "${match}".`)
+      .join('');
     issues.push({
       // Keyed by the unmatched names too, so fixing one and mistyping
       // another brings a snoozed row back.
@@ -473,7 +481,7 @@ function detectOppScopeOffList({ oppsCache = null, knownServices = null, prospec
       prospectId: prospectIdByNorm.get(normalizeBfoCompany(account)) || null,
       daysUntil: null,
       expirationDate: null,
-      detail: `${off.length === 1 ? 'Service' : 'Services'} ${quoted} in this opp's Scope${stage ? ` (${stage})` : ''} ${off.length === 1 ? "isn't" : "aren't"} on the Dropdowns › Services list: use Fix to map it to an existing service, or add it as a new one.`,
+      detail: `${off.length === 1 ? 'Service' : 'Services'} ${quoted} in this opp's Scope${stage ? ` (${stage})` : ''} ${off.length === 1 ? "isn't" : "aren't"} on the Dropdowns › Services list:${typos ? `${typos} Use Fix to correct the spelling.` : ' use Fix to map it to an existing service, or add it as a new one.'}`,
       // What the row's Fix popup needs: the opp to rewrite and the names
       // to settle.
       scopeFix: { oppId: r._id ?? null, scope: String(r.Scope ?? ''), off },
