@@ -7,6 +7,9 @@ import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
 import { dbGet } from '../../utils/db';
 import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
+import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { isDecisionMakerContact } from '../../utils/decisionMakerCoverage';
+import { applyCompanyOverride, contactDisplayName } from '../../utils/contactRosters';
 import styles from './UploadedListView.module.css';
 
 function loadMapping(key) {
@@ -291,6 +294,7 @@ function buildColumns(data, ctx) {
           onPick, onDismiss,
           selectedKeys, onToggleSelect, shortDateColumns,
           prospectFieldFill, onFillProspectField,
+          decisionMakersFor,
           accountLabel = 'My Accounts', accountSource = 'myAccounts' } = ctx;
   const keys = new Set();
   for (const row of data) for (const k of Object.keys(row)) if (k !== 'id' && k !== '__matchKey__') keys.add(k);
@@ -544,8 +548,34 @@ function buildColumns(data, ctx) {
         ),
       }]
     : [];
+  // HubSpot contacts tagged Decision Maker at the row's company. Only on
+  // the lists that ask for it (decisionMakersFor is null otherwise).
+  const decisionMakerCol = decisionMakersFor
+    ? [{
+        key: '__decisionMakers__',
+        label: 'Decision Maker',
+        defaultWidth: 200,
+        getFilterValue: (row) => decisionMakersFor(row).map(contactDisplayName).join(', '),
+        render: (row) => {
+          const dms = decisionMakersFor(row);
+          if (!dms.length) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>-</span>;
+          const tip = dms.map(c => {
+            const name = contactDisplayName(c);
+            const role = String(c.jobtitle || '').trim();
+            return role ? `${name}, ${role}` : name;
+          }).join('\n');
+          const shown = dms.slice(0, 2).map(contactDisplayName).join(', ');
+          return (
+            <span title={tip} style={{ fontSize: '0.72rem', color: '#166534', fontWeight: 600 }}>
+              {shown}
+              {dms.length > 2 && <span style={{ color: 'var(--color-text-muted)', fontWeight: 500 }}> +{dms.length - 2}</span>}
+            </span>
+          );
+        },
+      }]
+    : [];
   const accountCdmCols = accountSource === 'targetAccounts' ? [accountCdmCol] : [];
-  return [selectCol, ...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, ...accountCdmCols, portfolioCol, portfolioInfoCol, matchPctCol, ...prospectFillCol];
+  return [selectCol, ...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, ...accountCdmCols, ...decisionMakerCol, portfolioCol, portfolioInfoCol, matchPctCol, ...prospectFillCol];
 }
 
 export function UploadedListView({
@@ -568,6 +598,7 @@ export function UploadedListView({
   shortDateColumns, // array of header names to render as M/D/YYYY
   defaultHideWhere, // { column, values: string[], label } — default-on row exclusion
   prospectFieldFill, // { field, label } — adds a Table View write-back column
+  showDecisionMakers = false, // adds a column of HubSpot Decision Maker contacts at each row's company
   updateProspect, // (id, patch) => Promise — required for prospectFieldFill
   settings,
   updateSettings,
@@ -1100,6 +1131,96 @@ export function UploadedListView({
     });
   }, [data]);
 
+  // HubSpot contacts tagged Decision Maker, for the Decision Maker column.
+  // Same gate as the Key Prospects / Prospecting pages (tag, minus Hide /
+  // Left / Schneider), with the user's hand-corrected company applied.
+  const [hubspotContacts, setHubspotContacts] = useState([]);
+  useEffect(() => {
+    if (!showDecisionMakers) return undefined;
+    let cancelled = false;
+    function refresh() {
+      getHubspotCache().then(c => { if (!cancelled) setHubspotContacts(c?.contacts || []); }).catch(() => {});
+    }
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, [showDecisionMakers]);
+  const contactLocalFields = settings?.contactLocalFields || null;
+  // Map<normalized company, contacts[]>, plus the keys as a list for the
+  // fuzzy pass.
+  const { dmByNorm, dmNorms } = useMemo(() => {
+    const byNorm = new Map();
+    if (showDecisionMakers) {
+      for (const raw of hubspotContacts) {
+        const c = applyCompanyOverride(raw, contactLocalFields);
+        if (!isDecisionMakerContact(c)) continue;
+        const norm = normalizeCompany(c.company);
+        if (!norm) continue;
+        if (!byNorm.has(norm)) byNorm.set(norm, []);
+        byNorm.get(norm).push(c);
+      }
+    }
+    return { dmByNorm: byNorm, dmNorms: [...byNorm.keys()] };
+  }, [showDecisionMakers, hubspotContacts, contactLocalFields]);
+  // Resolved once per row: the names tried are the row's own company,
+  // the My Accounts company it's mapped (or suggested) to, the Table View
+  // prospect it's mapped to, and that account's former names. An exact
+  // normalized hit wins; failing that, a containment match where the
+  // shorter name is at least 60% of the longer (the rosterCompaniesMatch
+  // rule), so "Acme" doesn't pick up "Acme Mining Services Group".
+  const decisionMakersByKey = useMemo(() => {
+    const out = new Map();
+    if (!showDecisionMakers || dmByNorm.size === 0) return out;
+    const fuzzyCache = new Map();
+    const fuzzy = (norm) => {
+      if (fuzzyCache.has(norm)) return fuzzyCache.get(norm);
+      const hits = [];
+      for (const dn of dmNorms) {
+        const shorter = Math.min(norm.length, dn.length);
+        const longer = Math.max(norm.length, dn.length);
+        if (shorter < 4 || shorter < longer * 0.6) continue;
+        if (norm.includes(dn) || dn.includes(norm)) hits.push(dn);
+      }
+      fuzzyCache.set(norm, hits);
+      return hits;
+    };
+    for (const row of rows) {
+      const mk = row.__matchKey__;
+      if (out.has(mk)) continue;
+      const names = [row.__rawName__];
+      const confirmedAcct = myAccountMapping[mk];
+      let acct = confirmedAcct ? myAccountsByNorm.get(normalizeCompany(confirmedAcct)) : null;
+      if (confirmedAcct) names.push(confirmedAcct);
+      else if (!myAccountDismissed[mk] && row.__rawName__) acct = myAccountSuggestionFor(row.__rawName__)?.prospect || null;
+      const tv = mapping[mk] ? prospectsByNorm.get(normalizeCompany(mapping[mk])) : null;
+      for (const p of [acct, tv]) {
+        if (!p) continue;
+        names.push(p.company);
+        for (const a of String(p.aliases || '').split('\n')) names.push(a);
+      }
+      const norms = [...new Set(names.map(normalizeCompany).filter(Boolean))];
+      const matched = new Set(norms.filter(n => dmByNorm.has(n)));
+      if (matched.size === 0) for (const n of norms) for (const dn of fuzzy(n)) matched.add(dn);
+      const seen = new Set();
+      const list = [];
+      for (const dn of matched) {
+        for (const c of dmByNorm.get(dn)) {
+          const id = String(c.id || c.vid || c.email || contactDisplayName(c));
+          if (seen.has(id)) continue;
+          seen.add(id);
+          list.push(c);
+        }
+      }
+      list.sort((a, b) => contactDisplayName(a).localeCompare(contactDisplayName(b)));
+      out.set(mk, list);
+    }
+    return out;
+  }, [showDecisionMakers, dmByNorm, dmNorms, rows, mapping, prospectsByNorm, myAccountMapping, myAccountDismissed, myAccountsByNorm, myAccountSuggestionFor]);
+  const decisionMakersFor = useMemo(
+    () => (showDecisionMakers ? (row) => decisionMakersByKey.get(row.__matchKey__) || [] : null),
+    [showDecisionMakers, decisionMakersByKey]
+  );
+
   function openPicker(row, anchorEl, scope = 'tableView') {
     const rect = anchorEl?.getBoundingClientRect?.();
     const width = 320;
@@ -1346,10 +1467,11 @@ export function UploadedListView({
       onPick: openPicker, onDismiss: dismissSuggestion,
       selectedKeys, onToggleSelect: toggleSelectKey, shortDateColumns,
       prospectFieldFill, onFillProspectField: fillProspectField,
+      decisionMakersFor,
       accountLabel, accountSource,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, prospectsByNorm, myAccountsByNorm, portfolioByNorm, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, textColumn, textValues, selectedKeys, shortDateColumns, prospectFieldFill, accountLabel, accountSource]
+    [rows, prospectsByNorm, myAccountsByNorm, portfolioByNorm, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, textColumn, textValues, selectedKeys, shortDateColumns, prospectFieldFill, decisionMakersFor, accountLabel, accountSource]
   );
   // Per uploaded list, but no longer per column lineup — see the note on
   // DealsView's tableId.
