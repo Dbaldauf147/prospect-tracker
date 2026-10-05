@@ -17019,9 +17019,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                     </button>
                   </div>
                 )}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', maxHeight: '60vh' }}>
+                {/* Each column scrolls on its own. The cap lives on the columns, not
+                    the grid: a grid's max-height does not shrink its rows, so the
+                    columns used to spill out over the Import / Cancel buttons. */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                   {/* LEFT — Utility Lookup page columns */}
-                  <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'auto' }}>
+                  <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'auto', maxHeight: '60vh' }}>
                     <div style={colHeader}>Utility Lookup page columns</div>
                     {TARGET_FIELDS.map(t => {
                       const header = active.mapping[t.key];
@@ -17054,7 +17057,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
                     ))}
                   </div>
                   {/* RIGHT — file columns */}
-                  <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'auto' }}>
+                  <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'auto', maxHeight: '60vh' }}>
                     <div style={colHeader}>Columns on this tab ({active.headers.length})</div>
                     {active.headers.map(h => {
                       const target = targetForHeader[h] || '';
