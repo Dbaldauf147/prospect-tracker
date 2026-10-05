@@ -10,6 +10,9 @@ import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { isDecisionMakerContact } from '../../utils/decisionMakerCoverage';
 import { applyCompanyOverride, contactDisplayName } from '../../utils/contactRosters';
+import { loadOppsFromCache } from '../../utils/oppsCache';
+import { buildOppStagesByClient, effectiveServiceStatus } from '../../utils/serviceCoverage';
+import { serviceStatusColor } from '../../utils/serviceStatusColors';
 import styles from './UploadedListView.module.css';
 
 function loadMapping(key) {
@@ -294,7 +297,7 @@ function buildColumns(data, ctx) {
           onPick, onDismiss,
           selectedKeys, onToggleSelect, shortDateColumns,
           prospectFieldFill, onFillProspectField,
-          decisionMakersFor,
+          decisionMakersFor, serviceStatusColumn, serviceStatusesFor,
           accountLabel = 'My Accounts', accountSource = 'myAccounts' } = ctx;
   const keys = new Set();
   for (const row of data) for (const k of Object.keys(row)) if (k !== 'id' && k !== '__matchKey__') keys.add(k);
@@ -574,8 +577,46 @@ function buildColumns(data, ctx) {
         },
       }]
     : [];
+  // The company card's status for a fixed set of services, one chip per
+  // service, all in a single column. serviceStatusesFor returns null when
+  // the row isn't tied to a Table View company, so there's no card to read.
+  const serviceStatusCol = serviceStatusColumn && serviceStatusesFor
+    ? [{
+        key: '__serviceStatus__',
+        label: serviceStatusColumn.label,
+        defaultWidth: 230,
+        getFilterValue: (row) => {
+          const statuses = serviceStatusesFor(row);
+          if (!statuses) return '';
+          return statuses.map(x => `${x.label} ${x.status || 'Not explored'}`).join(' ');
+        },
+        render: (row) => {
+          const statuses = serviceStatusesFor(row);
+          if (!statuses) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>-</span>;
+          return (
+            <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+              {statuses.map(x => {
+                const c = serviceStatusColor(x.status);
+                return (
+                  <span
+                    key={x.key}
+                    title={`${x.prospect.company} · ${x.key}: ${x.status || 'not explored'}`}
+                    style={{
+                      background: x.status ? (c.bg || '#F1F5F9') : '#FFFFFF',
+                      color: x.status ? (c.color || '#334155') : '#94A3B8',
+                      border: `1px solid ${x.status ? 'transparent' : '#E2E8F0'}`,
+                      borderRadius: 999, padding: '1px 8px', fontSize: '0.65rem', fontWeight: 600, whiteSpace: 'nowrap',
+                    }}
+                  >{x.label}: {x.status || 'Not explored'}</span>
+                );
+              })}
+            </span>
+          );
+        },
+      }]
+    : [];
   const accountCdmCols = accountSource === 'targetAccounts' ? [accountCdmCol] : [];
-  return [selectCol, ...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, ...accountCdmCols, ...decisionMakerCol, portfolioCol, portfolioInfoCol, matchPctCol, ...prospectFillCol];
+  return [selectCol, ...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, ...accountCdmCols, ...decisionMakerCol, ...serviceStatusCol, portfolioCol, portfolioInfoCol, matchPctCol, ...prospectFillCol];
 }
 
 export function UploadedListView({
@@ -599,6 +640,7 @@ export function UploadedListView({
   defaultHideWhere, // { column, values: string[], label } — default-on row exclusion
   prospectFieldFill, // { field, label } — adds a Table View write-back column
   showDecisionMakers = false, // adds a column of HubSpot Decision Maker contacts at each row's company
+  serviceStatusColumn, // { label, services: [{ key, label }] } — company-card status for those services, one column
   updateProspect, // (id, patch) => Promise — required for prospectFieldFill
   settings,
   updateSettings,
@@ -1221,6 +1263,58 @@ export function UploadedListView({
     [showDecisionMakers, decisionMakersByKey]
   );
 
+  // Service status column. The row is tied to a Table View company the
+  // way the other columns tie it: its Table View mapping, else its My
+  // Accounts company (confirmed or suggested), else the Table View
+  // suggestion. The status is what that company's card shows, a hand-set
+  // Services Explored value first, otherwise the stage of an opp whose
+  // Scope names the service.
+  const [oppsRecords, setOppsRecords] = useState([]);
+  useEffect(() => {
+    if (!serviceStatusColumn) return undefined;
+    let cancelled = false;
+    const refresh = () => {
+      loadOppsFromCache()
+        .then(o => { if (!cancelled) setOppsRecords(o?.records || []); })
+        .catch(() => {});
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => { cancelled = true; window.removeEventListener('focus', refresh); };
+  }, [serviceStatusColumn]);
+  const serviceStatusByKey = useMemo(() => {
+    const out = new Map();
+    if (!serviceStatusColumn) return out;
+    const prospectOf = (row) => {
+      const mk = row.__matchKey__;
+      const byName = (name) => (name ? prospectsByNorm.get(normalizeCompany(name)) || null : null);
+      if (mapping[mk]) return byName(mapping[mk]);
+      const acct = myAccountMapping[mk]
+        || (!myAccountDismissed[mk] && row.__rawName__ ? myAccountSuggestionFor(row.__rawName__)?.prospect?.company : null);
+      const fromAcct = byName(acct);
+      if (fromAcct) return fromAcct;
+      if (dismissed[mk] || !row.__rawName__) return null;
+      return prospectSuggestionFor(row.__rawName__)?.prospect || null;
+    };
+    const prospectByKey = new Map();
+    for (const row of rows) {
+      if (!prospectByKey.has(row.__matchKey__)) prospectByKey.set(row.__matchKey__, prospectOf(row));
+    }
+    const matched = [...new Set([...prospectByKey.values()].filter(Boolean))];
+    const services = serviceStatusColumn.services || [];
+    const oppStages = buildOppStagesByClient(matched, oppsRecords, services.map(x => x.key));
+    for (const [mk, prospect] of prospectByKey) {
+      out.set(mk, prospect
+        ? services.map(x => ({ ...x, prospect, status: effectiveServiceStatus(prospect, x.key, oppStages) }))
+        : null);
+    }
+    return out;
+  }, [serviceStatusColumn, rows, oppsRecords, prospectsByNorm, mapping, dismissed, myAccountMapping, myAccountDismissed, myAccountSuggestionFor, prospectSuggestionFor]);
+  const serviceStatusesFor = useMemo(
+    () => (serviceStatusColumn ? (row) => serviceStatusByKey.get(row.__matchKey__) || null : null),
+    [serviceStatusColumn, serviceStatusByKey]
+  );
+
   function openPicker(row, anchorEl, scope = 'tableView') {
     const rect = anchorEl?.getBoundingClientRect?.();
     const width = 320;
@@ -1467,11 +1561,11 @@ export function UploadedListView({
       onPick: openPicker, onDismiss: dismissSuggestion,
       selectedKeys, onToggleSelect: toggleSelectKey, shortDateColumns,
       prospectFieldFill, onFillProspectField: fillProspectField,
-      decisionMakersFor,
+      decisionMakersFor, serviceStatusColumn, serviceStatusesFor,
       accountLabel, accountSource,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, prospectsByNorm, myAccountsByNorm, portfolioByNorm, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, textColumn, textValues, selectedKeys, shortDateColumns, prospectFieldFill, decisionMakersFor, accountLabel, accountSource]
+    [rows, prospectsByNorm, myAccountsByNorm, portfolioByNorm, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, textColumn, textValues, selectedKeys, shortDateColumns, prospectFieldFill, decisionMakersFor, serviceStatusColumn, serviceStatusesFor, accountLabel, accountSource]
   );
   // Per uploaded list, but no longer per column lineup — see the note on
   // DealsView's tableId.
