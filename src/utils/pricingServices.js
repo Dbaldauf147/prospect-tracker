@@ -8,7 +8,7 @@
 // be looked up from its side: which cost lines it covers, and so which fees
 // price it.
 
-import { altFeeUnitCount } from './altFeeAutoBuild.js';
+import { altFeeUnitCount, siaUnitCount } from './altFeeAutoBuild.js';
 import { isUsageUnit } from './siaUsageCounts.js';
 
 // A fee per unit rounded to the cent the Fee column shows, or to five
@@ -559,7 +559,11 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
     // the fee; a cost from month 1 with a default of 4 still costs months
     // 1 to 3, and the fee has to catch them up.
     const billStart = Math.max(1, Math.round(Number(c.billStartMonth ?? c.startMonth) || 1));
-    return { key: c.key, rowIdx, defaulted, fellBack, bucket, feeBucket: fb, canRoll, rolled, issue, price: c.price, startMonth: costStart, billStartMonth: billStart, later, billedEarly, catchUpMonths: 0 };
+    // The line's own count for the fee's unit (accounts for a Per Account
+    // fee), when one was typed on the line. Not for a row with a Unit
+    // Count typed on the structure itself: that one is the count it bills.
+    const ownUnits = row && numOrNull(row.unitCount) == null ? siaUnitCount(alts[rowIdx].unit, c.unitCounts || {}) : null;
+    return { key: c.key, rowIdx, ownUnits, defaulted, fellBack, bucket, feeBucket: fb, canRoll, rolled, issue, price: c.price, startMonth: costStart, billStartMonth: billStart, later, billedEarly, catchUpMonths: 0 };
   });
 
   const term = Math.max(1, Math.round(termMonths));
@@ -569,6 +573,11 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
   rows.forEach((row, ri) => {
     const alt = alts[ri];
     const units = alt.unitCount > 0 ? alt.unitCount : 1;
+    // Each cost line is priced on its own count: its cost over its own
+    // units, the shares added up to the fee per unit. A line with no count
+    // of its own is on the row's. The fee bills on the largest of them
+    // (unitCount), and mixedUnits lists them when they differ.
+    const lineUnits = new Set();
     const fb = feeBucket(row?.type);
     const start = rowStartOf(ri);
     const rollMonths = Math.max(1, term - start + 1);
@@ -593,8 +602,11 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
     costOut.forEach((co, ci) => {
       if (co.rowIdx !== ri) return;
       agg.costIdx.push(ci);
-      const price = co.price;
-      if (typeof price !== 'number' || !Number.isFinite(price) || co.issue) return;
+      if (typeof co.price !== 'number' || !Number.isFinite(co.price) || co.issue) return;
+      const per = co.ownUnits > 0 ? co.ownUnits : units;
+      lineUnits.add(per);
+      // Per unit of the fee: a share over the line's own units.
+      const price = co.price / per;
       const effBucket = fb || co.feeBucket;
       if (effBucket === COST_BUCKET_RECURRING) {
         if (co.bucket === COST_BUCKET_RECURRING) {
@@ -618,12 +630,14 @@ export function standardFeesForStructure({ rows = [], costs = [], allocations = 
     });
     agg.rollMonths = rollMonths;
     agg.escalated = fe !== ce;
+    agg.unitCount = lineUnits.size ? Math.max(...lineUnits) : units;
+    agg.mixedUnits = lineUnits.size > 1 ? [...lineUnits].sort((a, b) => a - b) : null;
     if (any) {
       const upfront = (fb || costOut[agg.costIdx[0]]?.feeBucket) === COST_BUCKET_UPFRONT;
-      const total = upfront ? agg.upfrontTotal : agg.monthlyTotal;
-      agg.exactFee = total / units;
+      // The totals are per unit already (each line over its own units).
+      agg.exactFee = upfront ? agg.upfrontTotal : agg.monthlyTotal;
       if (!upfront && escTerms.size) {
-        agg.escTerms = [...escTerms.values()].map(([kind, from, amount]) => [kind, from, amount / units]);
+        agg.escTerms = [...escTerms.values()];
       }
       agg.standardFee = roundFee(agg.exactFee, alt.unit);
     }
@@ -948,6 +962,7 @@ export function feeStructureCostInputs(costs) {
     startMonth: c.startMonth,
     billStartMonth: c.billStartMonth ?? c.startMonth,
     feeNames: [c.feeName, c.automatedName].filter(Boolean),
+    ...(c.unitCounts ? { unitCounts: c.unitCounts } : {}),
   }));
 }
 
@@ -976,7 +991,15 @@ export function standardFeeContext(structure, costs, { termMonths = 36, siteCoun
   }).perRow;
   const atCost = linkable ? split('priceAtCost') : null;
   const fixed = linkable ? split('priceFixed') : null;
-  const billed = (r, idx) => {
+  // A blank Unit Count takes the one the fee's lines priced it on (the
+  // largest of their own counts), so the fee bills on it.
+  const counted = (r, idx) => {
+    const n = std.perRow[idx]?.unitCount;
+    if (numOrNull(r?.unitCount) != null || !(n > 0) || !std.perRow[idx]?.costIdx?.some(ci => std.costs[ci]?.ownUnits > 0)) return r;
+    return { ...r, unitCount: n };
+  };
+  const billed = (r0, idx) => {
+    const r = counted(r0, idx);
     if (r.fee != null || standardFee(idx) == null) return r;
     const out = { ...r, fee: standardFee(idx) };
     if (linkable) {

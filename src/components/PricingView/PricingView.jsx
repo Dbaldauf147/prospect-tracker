@@ -47,7 +47,7 @@ import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/p
 import { setOppPricingSnapshot } from '../../utils/oppsPricingSnapshot';
 import { servicesByFeeName } from '../../utils/siaScopeCompare';
 import { getServicePricing, pricingFor, resolvePricingBases } from '../../utils/servicePricing';
-import { rateCardCheck, siaCountsFor, priceCheckCounts, feeUnitCountsFor, componentForFeeUnit } from '../../utils/serviceRateCheck';
+import { rateCardCheck, siaCountsFor, priceCheckCounts, feeUnitCountsFor, componentForFeeUnit, lineFeeCounts, priceCheckCountsWithLines } from '../../utils/serviceRateCheck';
 import { saveOppSourceFile, sourceFileMeta } from '../../utils/oppPricingSourceFile';
 import {
   loadOptionLinks,
@@ -5119,6 +5119,13 @@ export function PricingView({ settings } = {}) {
         unit: linkedToUnitDefaults?.[linkedToDefaultKey(item.description, t)] || '',
         passThrough: isPassThrough(item),
         otherServices: (servicesForCostLine(onOption, item) || []).filter(x => norm(x) && norm(x) !== want),
+        // Counts typed on this line alone (see setLineUnitCount): the
+        // price-check keys, and the same as the counts its fee bills on.
+        ...(() => {
+          const lineCounts = lineUnitCountsOf(opt, item.id);
+          const unitCounts = lineFeeCounts(lineCounts);
+          return { lineCounts, ...(unitCounts ? { unitCounts } : {}) };
+        })(),
       };
     });
 
@@ -5202,11 +5209,14 @@ export function PricingView({ settings } = {}) {
     const picks = opt.priceCheckComponents?.[want] || {};
     const linePicks = priceCheckComponentPicks[want] || {};
     items.forEach(it => { it.feeComponent = linePicks[norm(it.description)] || picks[it.id] || null; });
+    // A line on a count of its own (11 waste accounts of the SIA's 519)
+    // is priced on it; the card's range takes the largest a line is on.
+    const checkCounts = priceCheckCountsWithLines(counts, items.filter(it => !it.ignored));
     const checkWith = () => rateCardCheck({
       items: items.filter(it => !it.ignored),
       entry: pricingFor(pricing, cardName, bases),
       meta: svc?.meta || null,
-      counts,
+      counts: checkCounts,
       bases,
       // Marked up at the Global GM%, the margin the fee structures price
       // blank fees at, so the check and the fees built from it agree.
@@ -5258,6 +5268,31 @@ export function PricingView({ settings } = {}) {
       if (typeof v === 'number' && Number.isFinite(v)) out[key] = v;
     }
     return out;
+  }
+
+  // The counts typed on one cost line of an option, by price-check key
+  // ({ accounts: 95 }). Each line keeps its own: typing one never moves
+  // another line's.
+  function lineUnitCountsOf(opt, itemId) {
+    const own = opt?.lineUnitCounts?.[itemId];
+    const out = {};
+    if (own && typeof own === 'object') {
+      for (const [key, v] of Object.entries(own)) if (typeof v === 'number' && Number.isFinite(v)) out[key] = v;
+    }
+    return out;
+  }
+
+  // Type (or clear, with null) one count on one cost line of the active
+  // option. A cleared line goes back to the service's count.
+  function setLineUnitCount(itemId, key, value) {
+    if (itemId == null || !key) return;
+    updateActiveOption(o => {
+      const all = { ...(o.lineUnitCounts || {}) };
+      const next = { ...(all[itemId] || {}) };
+      if (value == null) delete next[key]; else next[key] = value;
+      if (Object.keys(next).length) all[itemId] = next; else delete all[itemId];
+      return { ...o, lineUnitCounts: all };
+    });
   }
 
   // Type (or clear, with null) one of those counts for one service on the
@@ -6289,6 +6324,7 @@ export function PricingView({ settings } = {}) {
           services={pricingServiceList}
           detailFor={serviceDetailFor}
           onSetCount={setPriceCheckCount}
+          onSetLineCount={setLineUnitCount}
           onIgnoreForCheck={setPriceCheckIgnored}
           onSetFeeComponent={setPriceCheckComponent}
           globalGmPct={globalGmPct}

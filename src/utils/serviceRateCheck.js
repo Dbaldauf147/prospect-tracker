@@ -600,6 +600,35 @@ export function priceCheckCounts(sia = {}, entered = {}) {
   return { counts, fromSia };
 }
 
+// One cost line's own counts (typed in the Unit column of that line on the
+// Services subtab, kept on the option by line: option.lineUnitCounts), as
+// the counts a fee bills on. Only what the line itself carries; a line
+// with none is priced on the service's counts (feeUnitCountsFor).
+export function lineFeeCounts(lineCounts = {}) {
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined);
+  const out = {};
+  const site = num(lineCounts?.sites_mandate) ?? num(lineCounts?.sites);
+  if (site != null) out.siteCount = site;
+  if (num(lineCounts?.accounts) != null) out.accountCount = lineCounts.accounts;
+  return Object.keys(out).length ? out : null;
+}
+
+// The counts the rate card range is priced on once lines carry counts of
+// their own: per count, the largest any checked line is on (its own, else
+// the service's). The same object back when no line has one.
+export function priceCheckCountsWithLines(counts = {}, lines = []) {
+  const keys = new Set();
+  for (const it of lines || []) for (const [k, v] of Object.entries(it?.lineCounts || {})) if (typeof v === 'number' && Number.isFinite(v)) keys.add(k);
+  if (keys.size === 0) return counts;
+  const out = { ...counts };
+  for (const k of keys) {
+    const vals = lines.map(it => (typeof it?.lineCounts?.[k] === 'number' ? it.lineCounts[k] : counts[k]))
+      .filter(v => typeof v === 'number' && Number.isFinite(v));
+    if (vals.length) out[k] = Math.max(...vals);
+  }
+  return out;
+}
+
 // The site and account counts a service's fee rows bill on: the counts its
 // price check uses, so a count typed in the Unit column of the cost lines
 // (sites w/ mandate for BBS, or an override of the SIA's sites) carries
