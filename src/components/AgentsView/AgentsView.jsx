@@ -116,7 +116,7 @@ const DEFAULT_AI_PROMPT_STAGE_CHANGE = `1.  Reference the BFO links below, and t
 
 const DEFAULT_AI_PROMPT_APP_DESCRIPTION = `1.  Reference the BFO links below. Each one is a Stage 5 or Stage 6 opportunity that is in Contracting or Agreement Sent.
 2.  Open the BFO link and check the Application Description field.
-3.  If Application Description is blank, click the pencil icon next to it and enter the Description listed below for that opportunity. If the Description below is blank, leave the field alone and note it in the summary.
+3.  If Application Description is blank, click the pencil icon next to it and enter the Contracting Entity and the Contracting Entity Address listed below for that opportunity, in the form "Contracting Entity, Contracting Entity Address".
 4.  If Application Description already has a value, do not change it.
 5.  Click Save before moving on to the next opportunity. When you get to this step, dont ask me for permission to Save.
 6.  Repeat this process for all Opportunities listed below. At the end, generate a summary table of each BFO Opportunity and whether the Application Description was filled in, already had a value, or was skipped.`;
@@ -3159,7 +3159,10 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   // added to it, so `hasAppDescCol` says whether the blank check really
   // ran: without the column every matching opp is listed and the prompt
   // tells the assistant to leave the ones that already have a value.
-  // Description to enter comes from the Opps row's Scope.
+  // What goes in the field is the company's Contracting Entity and its
+  // address, off the Table View record the opp's Account (or its BFO
+  // Company Name) matches. Rows missing either are kept so the section
+  // can warn about them, flagged `missing`, and left out of the copy.
   const appDescriptionResult = useMemo(() => {
     const empty = { rows: [], hasAppDescCol: false };
     if (!bfoActivity?.headers?.length || !bfoActivity?.rows?.length) return empty;
@@ -3171,6 +3174,20 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     for (const r of (oppsCache?.records || [])) {
       const k = String(r['BFO Link'] || '').trim().toLowerCase();
       if (k && k !== '-' && k !== '#n/a' && !oppsByName.has(k)) oppsByName.set(k, r);
+    }
+    // Company lookup by canonical name and by BFO Company Name. A record
+    // that carries contracting info wins over a duplicate that doesn't.
+    const prospectByCanon = new Map();
+    const addProspect = (key, p) => {
+      if (!key) return;
+      const prev = prospectByCanon.get(key);
+      if (!prev || (!String(prev.contractingEntity || '').trim() && String(p.contractingEntity || '').trim())) {
+        prospectByCanon.set(key, p);
+      }
+    };
+    for (const p of (prospects || [])) {
+      addProspect(canonCompany(p?.company || ''), p);
+      addProspect(canonCompany(p?.bfoCompanyName || ''), p);
     }
     const rows = [];
     const seen = new Set();
@@ -3190,21 +3207,37 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       const bfoUrl = detectBfoUrl(oppsRow);
       if (!bfoUrl) continue;
       seen.add(k);
-      const scope = String(oppsRow.Scope || '').trim();
+      const account = String(oppsRow.Account || '').trim();
+      const company = prospectByCanon.get(canonCompany(account))
+        || prospectByCanon.get(canonCompany(oppsRow['BFO Company Name'] || ''))
+        || null;
+      const entity = String(company?.contractingEntity || '').trim();
+      const address = String(company?.contractingEntityAddress || '').trim();
+      const missing = [];
+      if (!company) missing.push('company not found in Table View');
+      else {
+        if (!entity) missing.push('Contracting Entity');
+        if (!address) missing.push('Contracting Entity Address');
+      }
       rows.push({
         id: `${k}|${bfoUrl}`,
         name,
-        account: String(oppsRow.Account || '').trim(),
+        account,
         bfoStage: String(r[stageCol] || '').trim(),
         oppsStage,
-        description: scope === '-' ? '' : scope,
+        entity,
+        address,
+        missing,
         bfoUrl,
       });
     }
     rows.sort((a, b) => a.account.localeCompare(b.account));
     return { rows, hasAppDescCol: !!descCol };
-  }, [bfoActivity, oppsCache]);
+  }, [bfoActivity, oppsCache, prospects]);
   const appDescriptionOpps = appDescriptionResult.rows;
+  // Only opps whose company has both values go to the assistant.
+  const appDescriptionReady = useMemo(() => appDescriptionOpps.filter(o => o.missing.length === 0), [appDescriptionOpps]);
+  const appDescriptionMissing = useMemo(() => appDescriptionOpps.filter(o => o.missing.length > 0), [appDescriptionOpps]);
 
   // Not-Sold opps that still have a corresponding BFO row open. Each
   // pulls its Reason Not Sold + Competition from Opps 2 and maps the
@@ -3407,8 +3440,8 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     for (const o of stageChangeOpps) stageLines.push(`${o.bfoUrl}\t${o.expectedBfoStage}`);
     const stageBlock = stageLines.join('\n');
 
-    const appDescLines = ['BFO Link\tDescription'];
-    for (const o of appDescriptionOpps) appDescLines.push(`${o.bfoUrl}\t${o.description}`);
+    const appDescLines = ['BFO Link\tContracting Entity\tContracting Entity Address'];
+    for (const o of appDescriptionReady) appDescLines.push(`${o.bfoUrl}\t${o.entity}\t${o.address}`);
     const appDescBlock = appDescLines.join('\n');
 
     const closeNotSoldLines = ['BFO Link\tStatus\tReason\tCompetition'];
@@ -3438,7 +3471,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       { title: 'Close Dates', prompt: closeDatesPrompt, block: closeDatesBlock, hasData: closeDateOpps.length > 0 },
       { title: 'Amount Updates', prompt: amountUpdatesPrompt, block: amountBlock, hasData: amountUpdateOpps.length > 0 },
       { title: 'Stage Change', prompt: stageChangePrompt, block: stageBlock, hasData: stageChangeOpps.length > 0 },
-      { title: 'Application Description', prompt: appDescriptionPrompt, block: appDescBlock, hasData: appDescriptionOpps.length > 0 },
+      { title: 'Application Description', prompt: appDescriptionPrompt, block: appDescBlock, hasData: appDescriptionReady.length > 0 },
       { title: 'Close Not Solds', prompt: closeNotSoldsPrompt, block: closeNotSoldBlock, hasData: closeNotSoldLines.length > 1 },
       // Import Marketing Leads leads the three lead sections: it is the only
       // one that pulls new leads in from Salesforce, and the ones below can
@@ -3472,7 +3505,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     aiPrompt, newBfoOppPrompt, closeDatesPrompt, amountUpdatesPrompt,
     stageChangePrompt, appDescriptionPrompt, closeNotSoldsPrompt, updateBfoActivityPrompt,
     bfoPrepPrompt, todaysOutbound, calledOpps, allTodaysMeetings, markedMeetingOpps, newBfoOpps, closeDateOpps,
-    amountUpdateOpps, stageChangeOpps, appDescriptionOpps, closeNotSoldOpps, bfoPrepOpps,
+    amountUpdateOpps, stageChangeOpps, appDescriptionReady, closeNotSoldOpps, bfoPrepOpps,
     importMarketingLeadsPrompt, marketingLeadsPrompt, marketingLeadsMissing,
     marketingLeadStatusUpdatePrompt, marketingLeadStatusRows,
     duplicateLeadsPrompt, duplicateLeadRows,
@@ -4788,9 +4821,10 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       {(() => {
         // Application Description prompt: Stage 5 / 6 BFO opps in
         // Contracting or Agreement Sent with a blank Application
-        // Description, each with the Opps Scope to enter.
-        const lines = ['BFO Link\tDescription'];
-        for (const o of appDescriptionOpps) lines.push(`${o.bfoUrl}\t${o.description}`);
+        // Description, each with its company's Contracting Entity and
+        // address. Opps missing either are warned about, not copied.
+        const lines = ['BFO Link\tContracting Entity\tContracting Entity Address'];
+        for (const o of appDescriptionReady) lines.push(`${o.bfoUrl}\t${o.entity}\t${o.address}`);
         const block = lines.join('\n');
         const fullPrompt = `${appDescriptionPrompt}\n\n${block}`;
         const onCopy = async () => {
@@ -4806,10 +4840,10 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
           <section className={styles.section}>
             <h2 className={styles.sectionHeader}>
               AI Prompt (Application Description)
-              <span className={styles.sectionCount}>{appDescriptionOpps.length}</span>
+              <span className={styles.sectionCount}>{appDescriptionReady.length}</span>
             </h2>
             <p className={styles.subnote}>
-              BFO Stage 5 and 6 opps that are in Contracting or Agreement Sent on the Opps tab and have a blank Application Description. The Description to enter is the opp&rsquo;s Scope. Join key is BFO Opportunity Name.
+              BFO Stage 5 and 6 opps that are in Contracting or Agreement Sent on the Opps tab and have a blank Application Description. What gets entered is the company&rsquo;s Contracting Entity and Contracting Entity Address from its company popup. Join key is BFO Opportunity Name.
               {appDescriptionResult.hasAppDescCol
                 ? ' Application Description comes from the BFO Activity tab: paste fresh rows there if the list looks stale.'
                 : ' The BFO Activity paste has no Application Description column, so every matching opp is listed and the assistant checks the field itself. Add that column to the BFO list view to narrow this to the blank ones.'}
@@ -4833,6 +4867,27 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
               )}
               {appDescriptionCopyFlash && <span className={styles.copyFlash}>{appDescriptionCopyFlash}</span>}
             </div>
+            {appDescriptionMissing.length > 0 && (
+              <div className={styles.warning} style={{ marginTop: '0.5rem' }}>
+                <strong>
+                  {appDescriptionMissing.length} opp{appDescriptionMissing.length === 1 ? '' : 's'} can&rsquo;t be filled in: the company is missing its contracting information.
+                </strong>
+                <div className={styles.warningHint}>
+                  Add the Contracting Entity and Contracting Entity Address on the company popup (Company tab). These opps are left out of the copied prompt until both are filled in.
+                </div>
+                <ul className={styles.warnList}>
+                  {appDescriptionMissing.map(o => (
+                    <li key={o.id} className={styles.warnItem}>
+                      <span className={styles.warnNameText}>{o.account || o.name}</span>
+                      {o.missing.includes('company not found in Table View')
+                        ? ': no matching company in the Table View, so there is nowhere to read the contracting information from'
+                        : `: missing ${o.missing.join(' and ')}`}
+                      <div className={styles.warningHint}>{o.name}</div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
               <table className={styles.table}>
                 <thead>
@@ -4841,27 +4896,33 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                     <th>Account</th>
                     <th>Opps Stage</th>
                     <th>BFO Stage</th>
-                    <th>Description to enter</th>
+                    <th>Contracting Entity</th>
+                    <th>Contracting Entity Address</th>
                     <th style={{ width: 70 }}>BFO Link</th>
                   </tr>
                 </thead>
                 <tbody>
                   {appDescriptionOpps.length === 0 ? (
                     <tr className={styles.emptyRow}>
-                      <td colSpan={6}>No Stage 5 or 6 opps in Contracting or Agreement Sent are missing an Application Description.</td>
+                      <td colSpan={7}>No Stage 5 or 6 opps in Contracting or Agreement Sent are missing an Application Description.</td>
                     </tr>
-                  ) : appDescriptionOpps.map(o => (
-                    <tr key={o.id}>
-                      <td>{o.name}</td>
-                      <td className={o.account ? '' : styles.muted}>{o.account || '-'}</td>
-                      <td>{o.oppsStage}</td>
-                      <td>{o.bfoStage}</td>
-                      <td className={o.description ? '' : styles.muted}>{o.description || 'No Scope on the Opps row'}</td>
-                      <td>
-                        <a href={o.bfoUrl} target="_blank" rel="noreferrer" className={styles.bfoLink}>Open</a>
-                      </td>
-                    </tr>
-                  ))}
+                  ) : appDescriptionOpps.map(o => {
+                    const warnCell = { color: '#b45309', fontWeight: 600 };
+                    const noCompany = o.missing.includes('company not found in Table View');
+                    return (
+                      <tr key={o.id}>
+                        <td>{o.name}</td>
+                        <td className={o.account ? '' : styles.muted}>{o.account || '-'}</td>
+                        <td>{o.oppsStage}</td>
+                        <td>{o.bfoStage}</td>
+                        <td style={o.entity ? undefined : warnCell}>{o.entity || (noCompany ? 'Company not found' : 'Missing')}</td>
+                        <td style={o.address ? undefined : warnCell}>{o.address || (noCompany ? 'Company not found' : 'Missing')}</td>
+                        <td>
+                          <a href={o.bfoUrl} target="_blank" rel="noreferrer" className={styles.bfoLink}>Open</a>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
