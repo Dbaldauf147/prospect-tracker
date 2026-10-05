@@ -106,6 +106,13 @@ const gutter = (w = 12) => `<td class="gut" width="${w}" style="width:${w}px;fon
 // is stated in an attribute as well as in CSS, which is what Word reads.
 // A browser still compresses the whole track when the card is narrower
 // than it, so the fill keeps its share of the bar on a phone.
+// What goes inside a cell that only paints a colour. Outlook desktop
+// (Word) collapses a cell with nothing in it, so it is handed a space;
+// every other client gets an empty cell sized by its height alone.
+// Outlook web ignores font-size:0 on a space and paints the space's text
+// line as a pale band across the bar, so the space must not reach it.
+const FILL_CELL = '<!--[if mso]>&nbsp;<![endif]-->';
+
 function barHtml({ fillPx, trackPx, color, height = 14, radius = '0 3px 3px 0', trackBg = '' }) {
   const fill = Math.max(0, Math.min(trackPx, Math.round(fillPx) || 0));
   const rest = trackPx - fill;
@@ -121,10 +128,10 @@ function barHtml({ fillPx, trackPx, color, height = 14, radius = '0 3px 3px 0', 
   const restFill = trackBg ? `background-color:${trackBg};` : '';
   const cells = [
     fill > 0
-      ? `<td width="${fill}" height="${height}" bgcolor="${color}" style="width:${fill}px;height:${height}px;border-radius:${radius};${blank}">&nbsp;</td>`
+      ? `<td width="${fill}" height="${height}" bgcolor="${color}" style="width:${fill}px;height:${height}px;border-radius:${radius};${blank}">${FILL_CELL}</td>`
       : '',
     rest > 0
-      ? `<td width="${rest}" height="${height}"${restBg} style="width:${rest}px;height:${height}px;${restFill}${blank}">&nbsp;</td>`
+      ? `<td width="${rest}" height="${height}"${restBg} style="width:${rest}px;height:${height}px;${restFill}${blank}">${FILL_CELL}</td>`
       : '',
   ].join('');
   return table(`width="${trackPx}" style="border-collapse:collapse;width:${trackPx}px"`, `<tr>${cells}</tr>`);
@@ -219,7 +226,7 @@ function trendColumnHtml(point, max, accent, isLast) {
   const fill = isLast ? accent.strong : accent.soft;
   const column = h > 0
     ? table(`width="${TREND_COL}" style="border-collapse:collapse;width:${TREND_COL}px"`, `<tr>
-          <td width="${TREND_COL}" height="${h}" bgcolor="${fill}" style="width:${TREND_COL}px;height:${h}px;border-radius:2px 2px 0 0;${blankCell}">&nbsp;</td>
+          <td width="${TREND_COL}" height="${h}" bgcolor="${fill}" style="width:${TREND_COL}px;height:${h}px;border-radius:2px 2px 0 0;${blankCell}">${FILL_CELL}</td>
         </tr>`)
     : '';
   const figure = `<div style="padding-bottom:3px;font-family:${FONT};font-size:11px;font-weight:700;color:${known ? INK : MUTED};white-space:nowrap;text-align:center">${known ? esc(point.value) : '-'}</div>`;
@@ -390,7 +397,7 @@ const COVERAGE_SLACK = '<td width="99%" style="width:99%"></td>';
 // leaves with the bars on a phone, which is right: a colour is a key only
 // while something is painted in it.
 const coverageHeadCell = (color, name) => `<td class="cbar" width="${COVERAGE_TRACK}" valign="bottom" style="width:${COVERAGE_TRACK}px;padding:0 0 5px 4px">${table(`align="right" style="border-collapse:collapse"`, `<tr>
-        <td width="8" height="8" bgcolor="${color}" style="width:8px;height:8px;border-radius:2px;font-size:0;line-height:0;mso-line-height-rule:exactly">&nbsp;</td>
+        <td width="8" height="8" bgcolor="${color}" style="width:8px;height:8px;border-radius:2px;font-size:0;line-height:0;mso-line-height-rule:exactly">${FILL_CELL}</td>
       </tr>`)}</td>
       <td width="${COVERAGE_FIGURE}" valign="bottom" style="width:${COVERAGE_FIGURE}px;padding:0 0 5px 5px;font-family:${FONT};font-size:11px;font-weight:600;color:${MUTED};white-space:nowrap;text-align:right">${esc(name)}</td>`;
 
@@ -448,7 +455,7 @@ function coverageStandingHtml(points, isT1) {
   const last = [...points].reverse().find(p => p[key] != null);
   const colour = isT1 ? COVERAGE_T1 : COVERAGE_T2;
   return `<td valign="middle" style="padding:0 14px 0 0">${table(`style="border-collapse:collapse"`, `<tr>
-        <td width="8" height="8" bgcolor="${colour}" style="width:8px;height:8px;border-radius:2px;font-size:0;line-height:0;mso-line-height-rule:exactly">&nbsp;</td>
+        <td width="8" height="8" bgcolor="${colour}" style="width:8px;height:8px;border-radius:2px;font-size:0;line-height:0;mso-line-height-rule:exactly">${FILL_CELL}</td>
         <td style="padding-left:5px;font-family:${FONT};font-size:11px;color:${MUTED};white-space:nowrap">${isT1 ? 'Tier 1' : 'Tier 2'}</td>
         <td style="padding-left:5px;font-family:${FONT};font-size:13px;font-weight:700;color:${INK};white-space:nowrap">${last ? `${last[key]}%` : '-'}</td>
       </tr>`)}</td>`;
@@ -586,7 +593,7 @@ export function closeRateTrendHtml(trend) {
     // The swatch is a cell, not a bullet on the label: Word drops the
     // padding and margins that would keep an inline block off the text.
     const label = table(`style="border-collapse:collapse"`, `<tr>
-        <td width="8" bgcolor="${trendSwatch(row.stage)}" style="width:8px;font-size:0;line-height:0;mso-line-height-rule:exactly">&nbsp;</td>
+        <td width="8" bgcolor="${trendSwatch(row.stage)}" style="width:8px;font-size:0;line-height:0;mso-line-height-rule:exactly">${FILL_CELL}</td>
         <td style="padding-left:6px;font-family:${FONT};font-size:12px;font-weight:600;color:${INK};white-space:nowrap">${esc(row.label)}</td>
       </tr>`);
     return `<tr>
