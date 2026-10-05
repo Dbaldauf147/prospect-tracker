@@ -107,6 +107,44 @@ export function countCallInDue(records) {
   return n;
 }
 
+// How far along an opp is, for ordering the past-due block of the Call In
+// sort: higher is later. Follows the numbered BFO stages (Not Started, then
+// Lead = Stage 3, Qualifying/Quoting = 4, Quoted/Contracting = 5, Agreement
+// Sent = 6) with Sold above them as the closed-won end. Anything else (Not
+// Sold, Duplicate Opp, a blank or unknown stage) ranks below Not Started.
+const CALL_IN_STAGE_RANK = new Map([
+  ['not started', 1],
+  ['lead', 2],
+  ['qualifying', 3],
+  ['quoting', 4],
+  ['quoted', 5],
+  ['contracting', 6],
+  ['agreement sent', 7],
+  ['sold', 8],
+]);
+export function callInStageRank(stage) {
+  return CALL_IN_STAGE_RANK.get(String(stage ?? '').trim().toLowerCase()) ?? 0;
+}
+
+// The number the Opps page sorts its Call In column on. Ascending gives:
+//   1. Past-due rows (Call In 0 or less), latest stage first - the Stage 6
+//      deals on top, the Not Started ones at the bottom of the block - and
+//      most overdue first within a stage.
+//   2. Every row still in the future, soonest first (+1, +2, ...).
+//   3. Rows with no Call In, which stay null so the table sinks them.
+// Stage only reorders the past-due block: an opp that isn't due yet waits
+// its turn by date whatever stage it's in.
+const PAST_DUE_BASE = -1e9;
+const STAGE_STRIDE = 1e6;
+export function callInSortKey(callIn, stage) {
+  if (typeof callIn !== 'number' || !Number.isFinite(callIn)) return null;
+  if (callIn > 0) return callIn;
+  const topRank = CALL_IN_STAGE_RANK.size;
+  // Clamp so an absurdly old date can't spill into the next stage's band.
+  const days = Math.max(callIn, -(STAGE_STRIDE / 2) + 1);
+  return PAST_DUE_BASE + (topRank - callInStageRank(stage)) * STAGE_STRIDE + days;
+}
+
 // Order rows by Call In ascending so the most urgent (most overdue) land
 // first, matching the Opps 2 page's initial-load sort. Rows without a
 // resolvable Call In sink to the bottom; original index breaks ties so
@@ -114,8 +152,8 @@ export function countCallInDue(records) {
 export function sortByCallInAsc(records) {
   if (!Array.isArray(records)) return records;
   const tagged = records.map((r, i) => {
-    const n = resolveCallIn(r);
-    const key = typeof n === 'number' && Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+    const n = callInSortKey(resolveCallIn(r), r?.['Stage']);
+    const key = n == null ? Number.POSITIVE_INFINITY : n;
     return { r, i, key };
   });
   tagged.sort((a, b) => (a.key - b.key) || (a.i - b.i));
@@ -144,7 +182,7 @@ export function remoteChangesCallInOrder(localRecords, remoteRecords) {
     // A row that arrived from elsewhere has no place in this browser's
     // order yet, so it needs one.
     if (!local) return true;
-    if (resolveCallIn(local) !== resolveCallIn(r)) return true;
+    if (callInSortKey(resolveCallIn(local), local['Stage']) !== callInSortKey(resolveCallIn(r), r['Stage'])) return true;
   }
   return false;
 }

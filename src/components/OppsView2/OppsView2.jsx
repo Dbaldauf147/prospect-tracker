@@ -63,7 +63,7 @@ import {
 import { OPPS2_EXTERNAL_UPDATE_EVENT } from '../../utils/serviceRenameRunner';
 import { pushOpps2Backup } from '../../utils/opps2Backup';
 import { isClientWedged, subscribeToClientWedged } from '../../utils/firestoreClientHealth';
-import { remoteChangesCallInOrder } from '../../utils/oppsCallIn';
+import { remoteChangesCallInOrder, callInSortKey } from '../../utils/oppsCallIn';
 import { loadOptionLinks, setOppOptionLink, optionLinkName, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
 import { suggestedFinalMargin } from '../../utils/closeOutMargin';
 import { PULL_THROUGH_COLUMN, isPullThroughOpp, pullThroughSource } from '../../utils/pullThrough';
@@ -1632,8 +1632,9 @@ function oppMissingVerbal(row) {
   return bfoFieldMissing(row?.['Verbal']);
 }
 
-// One-shot Call-In ascending sort used during initial hydration. Rows
-// without a resolvable Call In sink to the bottom. A stable tiebreaker
+// One-shot Call-In ascending sort used during initial hydration, on the
+// same key as the column (past-due rows latest stage first; see
+// callInSortKey). Rows without a resolvable Call In sink to the bottom. A stable tiebreaker
 // (original index) keeps the order deterministic when many rows share
 // the same Call In value. Continuous re-sorting during editing would
 // yank rows out from under the cursor — that's why this runs only on
@@ -1641,8 +1642,8 @@ function oppMissingVerbal(row) {
 function sortRecordsByCallInAsc(records) {
   if (!Array.isArray(records)) return records;
   const tagged = records.map((r, i) => {
-    const n = resolveCallIn(r);
-    const key = typeof n === 'number' && Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+    const n = callInSortKey(resolveCallIn(r), r?.['Stage']);
+    const key = n == null ? Number.POSITIVE_INFINITY : n;
     return { r, i, key };
   });
   tagged.sort((a, b) => (a.key - b.key) || (a.i - b.i));
@@ -15063,7 +15064,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     // Undoing a Follow Up / Call In edit puts the row's callback date
     // back, so its place in Call In order goes back with it.
     const pending = undoStackRef.current[undoStackRef.current.length - 1];
-    if (pending?.fields?.some(f => f.field === 'Follow Up' || f.field === 'Call In')) {
+    if (pending?.fields?.some(f => f.field === 'Follow Up' || f.field === 'Call In' || f.field === 'Stage')) {
       requestCallInSort();
     }
     setUndoStack(prev => {
@@ -15534,7 +15535,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     // Not on the prompt route above — that popup's close does the re-rank
     // instead, once the user has finished picking the new Status, so the
     // row doesn't move while they're still answering for it.
-    if ((followUpChanged && opts?.skipFollowUpPrompt) || callInChanged) {
+    // A Stage change moves it too while it's past due, since that block
+    // is ordered latest stage first.
+    if ((followUpChanged && opts?.skipFollowUpPrompt) || callInChanged || stageChanged) {
       requestCallInSort();
     }
   }, [pushUndoEntry, openStagePrompt, requestCallInSort]);
@@ -15728,7 +15731,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     });
     // A bulk re-date moves every row it touched, same as the single-row
     // path — and there's no per-row popup on this route to do it after.
-    if (field === 'Follow Up' || field === 'Call In') requestCallInSort();
+    if (field === 'Follow Up' || field === 'Call In' || field === 'Stage') requestCallInSort();
   }, [requestCallInSort]);
 
   const deleteManyOpps = useCallback((ids) => {
@@ -16003,9 +16006,10 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         // Sort by the same displayed value — without this, DataTable
         // falls back to the stored (empty / stale) cell and the order
         // doesn't match what you see (e.g. negative "overdue" days
-        // wouldn't lead an ascending sort).
+        // wouldn't lead an ascending sort). Call In also floats later-stage
+        // deals to the top of the past-due block (callInSortKey).
         getSortValue: (h === 'Call In' || h === 'Last Spoke')
-          ? (row) => (h === 'Call In' ? resolveCallIn(row) : resolveLastSpoke(row))
+          ? (row) => (h === 'Call In' ? callInSortKey(resolveCallIn(row), row?.['Stage']) : resolveLastSpoke(row))
           : undefined,
         // Call In is derived from Follow Up. If the table re-sorted on
         // every edit, typing a new Follow Up date would yank the row out
