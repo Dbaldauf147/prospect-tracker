@@ -191,7 +191,7 @@ check('the rest of the track is painted so a bar has an end to be read against',
 // The two nulls and the real zero: a week the Progress tab never recorded is
 // a dash against an empty track, a week that genuinely sat at 0% is a zero.
 check('an unrecorded week is a dash, not a bar on the floor',
-  /<td width="84" height="9" bgcolor="#EDF1F6"[^>]*>&nbsp;<\/td>/.test(html) && html.includes('>-</td>'), true);
+  /<td width="84" height="9" bgcolor="#EDF1F6"[^>]*><!--\[if mso\]>&nbsp;<!\[endif\]--><\/td>/.test(html) && html.includes('>-</td>'), true);
 check('a real 0% is still printed as a figure', html.includes('>0%</td>'), true);
 // Each tier heads its own column: colour is the only thing telling the two
 // apart otherwise, and a client that strips backgrounds strips it. The
@@ -199,8 +199,8 @@ check('a real 0% is still printed as a figure', html.includes('>0%</td>'), true)
 // them - a colspan here takes the row's slack for itself and carries
 // "Tier 2" off to the right of the figures it labels.
 check('each tier heads the column its figures are in',
-  /bgcolor="#DC2626"[^>]*>&nbsp;<\/td>\s*<\/tr><\/table><\/td>\s*<td width="40"[^>]*>Tier 1<\/td>/.test(html)
-  && /bgcolor="#3B82F6"[^>]*>&nbsp;<\/td>\s*<\/tr><\/table><\/td>\s*<td width="40"[^>]*>Tier 2<\/td>/.test(html), true);
+  /bgcolor="#DC2626"[^>]*><!--\[if mso\]>&nbsp;<!\[endif\]--><\/td>\s*<\/tr><\/table><\/td>\s*<td width="40"[^>]*>Tier 1<\/td>/.test(html)
+  && /bgcolor="#3B82F6"[^>]*><!--\[if mso\]>&nbsp;<!\[endif\]--><\/td>\s*<\/tr><\/table><\/td>\s*<td width="40"[^>]*>Tier 2<\/td>/.test(html), true);
 check('and no heading spans two columns',
   /<td colspan[^>]*>(\s|<[^>]*>)*Tier [12]/.test(html), false);
 // The swatch keys the bars, so on a phone it leaves with them and the
@@ -257,7 +257,7 @@ check('the card’s one-line summary rides under the bars',
   check('the drawn card drops the weekly bars',
     /<td width="\d+" height="9" bgcolor="#3B82F6"/.test(html2), false);
   check('and states where each tier stands, keyed by its swatch',
-    /bgcolor="#DC2626"[^>]*>&nbsp;<\/td>\s*<td[^>]*>Tier 1<\/td>\s*<td[^>]*>100%<\/td>/.test(html2), true);
+    /bgcolor="#DC2626"[^>]*><!--\[if mso\]>&nbsp;<!\[endif\]--><\/td>\s*<td[^>]*>Tier 1<\/td>\s*<td[^>]*>100%<\/td>/.test(html2), true);
   check('the latest recorded week is the figure, not the last week in the series',
     html2.includes('>79%</td>'), true);
   // The heading counts what is on the page. Drawn, that is the whole
@@ -422,6 +422,10 @@ check('card columns carry a width attribute', /<td class="col" width="50%"/.test
 check('a stacking rule exists for narrow clients',
   /@media only screen and \(max-width:620px\)/.test(html), true);
 check('gutter cells are addressable by that rule', html.includes('class="gut"'), true);
+check('no painted cell holds a bare space (Outlook web draws it as a pale band)',
+  /bgcolor="[^"]*"[^>]*>&nbsp;</.test(html), false);
+check('painted cells keep a space for Outlook desktop only',
+  /bgcolor="[^"]*"[^>]*><!--\[if mso\]>&nbsp;<!\[endif\]--><\/td>/.test(html), true);
 
 console.log(failures === 0 ? '\nAll checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
