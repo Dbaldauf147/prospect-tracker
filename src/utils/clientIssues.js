@@ -10,6 +10,7 @@ import { asDate, fmtDate, isInactiveAgreement } from './dealsFormat';
 import { matchesCdm } from './cdmMatch';
 import { computeNewBfoOpps, computeNewBfoMissingData, normalizeBfoCompany } from './newBfoOpps';
 import { computeCloseNotSoldOpps, computeCloseNotSoldMissingData } from './closeNotSoldOpps';
+import { computeAppDescriptionOpps, NO_COMPANY } from './appDescriptionOpps';
 import { buildOppNumberMap } from './oppNumbers';
 import { dealSoldDate, daysToFollowUpGoal, followUpGoalDate, postSaleFollowUpRows } from './postSaleFollowUp';
 import { incompleteHandoffDeals } from './dealHandoff';
@@ -562,6 +563,34 @@ function detectCloseNotSoldMissingData({ oppsCache = null, bfoActivity = null, p
   }));
 }
 
+// ---- Application Description prompt missing contracting info ----
+// The Agents page's "AI Prompt (Application Description)" fills BFO's
+// Application Description on Stage 5 / 6 opps in Contracting or Agreement
+// Sent with the company's Contracting Entity and Contracting Entity Address.
+// An opp whose company is missing either (or has no Table View record to
+// read them from) is left out of that prompt and reported here instead,
+// one row per opp so each can be snoozed on its own.
+function detectAppDescriptionMissingContracting({ bfoActivity = null, oppsCache = null, prospects = [], oppNumbers = new Map() }) {
+  if (!oppsCache?.records?.length) return [];
+  const { rows } = computeAppDescriptionOpps({ bfoActivity, oppsCache, prospects });
+  return rows.filter(r => r.missing.length > 0).map((r) => {
+    const noCompany = r.missing.includes(NO_COMPANY);
+    return {
+      id: `app-description-contracting:${r.id}`,
+      source: 'Agents',
+      type: 'Missing contracting entity info',
+      company: r.account || r.name || '-',
+      oppNumber: oppNumbers.get(r.oppId) ?? null,
+      prospectId: r.prospectId,
+      daysUntil: null,
+      expirationDate: null,
+      detail: noCompany
+        ? `"${r.name}" needs its Application Description filled in BFO, but no company in the Table View matches "${r.account}", so there is no Contracting Entity or address to enter.`
+        : `"${r.name}" needs its Application Description filled in BFO, but the company is missing ${r.missing.join(' and ')}. Add ${r.missing.length > 1 ? 'them' : 'it'} on the company popup (Company tab).`,
+    };
+  });
+}
+
 // ---- Service Exploration Coverage below 100% ----
 // Mirrors the Pipeline page's "Service Exploration Coverage" table: each
 // tracked service is a row showing what share of your active clients have
@@ -763,6 +792,7 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectOppScopeOffList({ oppsCache, knownServices, prospects, oppNumbers }));
   issues.push(...detectNewBfoMissingData({ prospects, oppsCache, serviceOverrides, oppNumbers }));
   issues.push(...detectCloseNotSoldMissingData({ oppsCache, bfoActivity, prospects, oppNumbers }));
+  issues.push(...detectAppDescriptionMissingContracting({ bfoActivity, oppsCache, prospects, oppNumbers }));
   issues.push(...detectPostSaleFollowUpOverdue({ dealsList, prospects }));
   issues.push(...detectIncompleteHandoff({ dealsList, prospects }));
   return issues;
