@@ -174,8 +174,16 @@ import {
   normalizeCountryRateName,
 } from '../../data/countryRates';
 import styles from './SitesView.module.css';
+import { mergeSavedSitesMapping } from './sitesMapping.js';
 
 const SITES_STORAGE_KEY = 'sites-list-override';
+// The column mapping the site list was imported (or last re-mapped) with,
+// kept beside the rows as a one-element list so it is stored and backed up
+// the same way. Without it the mapping was re-guessed from header names on
+// every load, and a column mapped by hand ("Elec Spend" -> Electric Cost)
+// came back unmapped after a refresh: the data still in the rows, every
+// cost, usage and savings figure blank.
+const SITES_MAPPING_STORAGE_KEY = 'sites-list-mapping';
 
 // Sentinel for the Division scope's "sites with no division" choice. A
 // real division can't collide with it — a blank division is exactly the
@@ -1515,6 +1523,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   const [mainTab, setMainTab] = useState('lookup'); // 'lookup' | 'mapping' | 'compliance' | 'roadmap' | 'corporate' | 'marketsavings'
   const [sitesData, setSitesData] = useState([]);
   const [sitesLoaded, setSitesLoaded] = useState(false);
+  // Set once the mount-time load has restored the column mapping; the
+  // effect that saves the mapping waits on it.
+  const sitesMappingRestoredRef = useRef(false);
   const [utility, setUtility] = useState(null); // { zipMap, meta }
   const [utilityLoaded, setUtilityLoaded] = useState(false);
   // User-uploaded city + state → zip fallback table: { list, meta }.
@@ -1788,10 +1799,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [sites, util, zipFb] = await Promise.all([
+      const [sites, util, zipFb, savedMappingList] = await Promise.all([
         loadListFromIDB(SITES_STORAGE_KEY),
         loadUtilityRates(),
         loadZipFallback(),
+        loadListFromIDB(SITES_MAPPING_STORAGE_KEY).catch(() => null),
       ]);
       if (cancelled) return;
       const sitesArr = Array.isArray(sites) ? sites : [];
@@ -1804,7 +1816,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // the per-row supplier / cost / date logic flows again.
       if (sitesArr.length) {
         const persistedHeaders = Object.keys(sitesArr[0]);
-        const m = detectSitesMapping(persistedHeaders);
+        // The saved mapping wins field by field; header detection only
+        // fills a field the saved one never mentions (a list imported
+        // before the mapping was saved, or a field added since).
+        const m = mergeSavedSitesMapping(
+          detectSitesMapping(persistedHeaders),
+          Array.isArray(savedMappingList) ? savedMappingList[0] : null,
+          persistedHeaders,
+        );
         setSiteNameOverride(m.siteName || null);
         setCompanyNameOverride(m.companyName || null);
         setZipColOverride(m.zip || null);
@@ -1841,6 +1860,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       setUtility(util);
       setUtilityLoaded(true);
       setZipFallback(zipFb);
+      sitesMappingRestoredRef.current = true;
     })();
     return () => { cancelled = true; };
   }, []);
@@ -2015,6 +2035,20 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       gasProductType:        safe(noneToEmpty(gasProductTypeOverride)),
     };
   }
+
+  // Save the mapping whenever it changes, so a reload restores exactly what
+  // the user picked (see SITES_MAPPING_STORAGE_KEY). Held off until the
+  // mount-time restore has run: before it, every override is still its
+  // initial blank, and saving that would overwrite the mapping we are
+  // about to restore.
+  const sitesHeaderKey = sitesData.length ? Object.keys(sitesData[0]).join('\u0001') : '';
+  const sitesMappingSnapshot = sitesHeaderKey
+    ? JSON.stringify(currentSitesMapping(sitesHeaderKey.split('\u0001')))
+    : '';
+  useEffect(() => {
+    if (!sitesMappingRestoredRef.current || !sitesMappingSnapshot) return;
+    saveListToIDB(SITES_MAPPING_STORAGE_KEY, [JSON.parse(sitesMappingSnapshot)]).catch(() => {});
+  }, [sitesMappingSnapshot]);
 
   // Re-open the column mapping modal against the data the user has
   // already imported. Lets the user re-target which column drives
@@ -2266,6 +2300,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       : 'Remove the uploaded sites list?';
     if (!window.confirm(prompt)) return;
     await clearListFromIDB(SITES_STORAGE_KEY);
+    await clearListFromIDB(SITES_MAPPING_STORAGE_KEY);
     setSitesData([]);
     if (mapped) setPortfolioCompanyName('');
     setLookupResetSignal(n => n + 1);
