@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { doc, setDoc } from 'firebase/firestore';
+import { onSnapshot } from '../utils/safeOnSnapshot';
 import { db } from '../firebase';
 import { addProspectsIfNew, usesSharedProspects } from '../utils/firestoreSync';
 import { autoSyncSchedule, readSheetSync, LEGACY_STAMP_KEY } from '../utils/sheetSyncSettings';

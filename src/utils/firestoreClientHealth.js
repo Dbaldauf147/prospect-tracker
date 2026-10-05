@@ -156,6 +156,43 @@ export async function viaSdkOrRest(sdk, rest) {
   }
 }
 
+// Open a listener without letting a crashed SDK take the page down.
+//
+// Once the async queue has failed, onSnapshot() and the unsubscribe it
+// returns both throw b815 synchronously: each is a thin enqueueAndForget()
+// onto the dead queue. A listener lives in a useEffect, so the unsubscribe
+// runs in React's commit phase, and a throw there is treated like a render
+// crash. The root error boundary then replaces the whole app with
+// "Something in the page crashed" - for a listener that was only being
+// torn down. That is what this report was:
+//
+//   FIRESTORE (12.18.0) INTERNAL ASSERTION FAILED: Unexpected state (ID: b815)
+//     ... dx.Jc / dx.enqueue / dx.enqueueAndForget / <unsubscribe> / React commit
+//
+// A dead client has no listener worth opening or closing, so both halves
+// swallow the assertion (after recording it, so the reload notice shows)
+// and hand back a no-op. Any other error still throws.
+export function guardListener(subscribe) {
+  if (wedged) return () => {};
+  let unsub;
+  try {
+    unsub = subscribe();
+  } catch (err) {
+    if (!isClientWedgedError(err)) throw err;
+    noteClientWedged(err);
+    return () => {};
+  }
+  return () => {
+    if (typeof unsub !== 'function') return;
+    try {
+      unsub();
+    } catch (err) {
+      if (!isClientWedgedError(err)) throw err;
+      noteClientWedged(err);
+    }
+  };
+}
+
 // Catch the crash where it actually happens, not just where it surfaces.
 // The assertion is thrown inside the SDK's own async queue, so it reaches
 // the page as an unhandled rejection (or a window error) with no call of

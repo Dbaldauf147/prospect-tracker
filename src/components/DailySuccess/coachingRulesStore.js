@@ -3,7 +3,8 @@
 // `userSettings/{uid}.coachingRules` so the rules sync across
 // devices and survive a Clear Site Data.
 
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc } from 'firebase/firestore';
+import { onSnapshot } from '../../utils/safeOnSnapshot';
 import { db } from '../../firebase';
 import { saveUserSettings } from '../../utils/userSettingsSync';
 

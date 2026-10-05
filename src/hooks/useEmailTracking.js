@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, query, where } from 'firebase/firestore';
+import { onSnapshot } from '../utils/safeOnSnapshot';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { apiFetch } from '../utils/apiFetch';

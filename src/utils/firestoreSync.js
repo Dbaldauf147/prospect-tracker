@@ -1,6 +1,7 @@
 // `getDoc` is aliased: this module already has a local getDoc(id) helper
 // that builds a prospect doc ref, and the two names would collide.
-import { collection, doc, getDoc as fsGetDoc, setDoc, updateDoc, deleteDoc, getDocs, writeBatch, onSnapshot, serverTimestamp, enableNetwork } from 'firebase/firestore';
+import { collection, doc, getDoc as fsGetDoc, setDoc, updateDoc, deleteDoc, getDocs, writeBatch, serverTimestamp, enableNetwork } from 'firebase/firestore';
+import { onSnapshot } from './safeOnSnapshot';
 import { db } from '../firebase';
 // A ceiling on a Firestore call that might never settle — see the note on
 // the analysis timeouts below for why a save needs one.

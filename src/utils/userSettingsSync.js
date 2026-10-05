@@ -1,4 +1,5 @@
-import { doc, getDoc, setDoc, updateDoc, deleteField, onSnapshot, FieldPath } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, deleteField, FieldPath } from 'firebase/firestore';
+import { onSnapshot } from './safeOnSnapshot';
 import { db } from '../firebase';
 import { restGetDoc, restUpdateFields, dottedFieldEntries, keyFieldEntries } from './firestoreRest.js';
 import { isClientWedgedError, isClientWedged, noteClientWedged } from './firestoreClientHealth.js';

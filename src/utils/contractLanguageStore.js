@@ -21,7 +21,8 @@
 // rules predate this collection — and a library that silently failed to
 // save would read exactly like one that saved fine.
 
-import { collection, doc, deleteDoc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
+import { collection, doc, deleteDoc, getDoc, setDoc } from 'firebase/firestore';
+import { onSnapshot } from './safeOnSnapshot';
 import { db } from '../firebase';
 
 const COL = 'userSettings';

@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { doc, collection, getDocs, onSnapshot } from 'firebase/firestore';
+import { doc, collection, getDocs } from 'firebase/firestore';
+import { onSnapshot } from '../../utils/safeOnSnapshot';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
