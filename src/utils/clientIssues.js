@@ -69,6 +69,18 @@ export function groupDealsByClient(dealsList, clientMap) {
   return map;
 }
 
+// What a Resolution popup needs to write back to one uploaded deal: its
+// position in the roster plus the two values updateDealFields checks, so a
+// re-upload in between can't land the write on another deal.
+function dealRef(deal, dealIndexOf) {
+  const index = dealIndexOf?.get(deal);
+  if (index == null) return null;
+  return {
+    index,
+    guard: { 'Client Name': deal['Client Name'] ?? '', 'Agreement Name': deal['Agreement Name'] ?? '' },
+  };
+}
+
 function isClientStatus(p) {
   return String(p?.status || '').trim().toLowerCase() === 'client';
 }
@@ -77,7 +89,7 @@ function isClientStatus(p) {
 // passed (negative Days Until) on the Clients tab. Untracked clients are
 // skipped — the user has explicitly opted them out of expiration tracking,
 // which is exactly why the Clients tab blanks their Days Until.
-function detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap, clientStatusMap }) {
+function detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap, clientStatusMap, dealIndexOf }) {
   const issues = [];
   for (const p of prospects) {
     if (!matchesCdm(p.cdm, cdmName)) continue;
@@ -100,6 +112,15 @@ function detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedM
       // one with a Status set is already being handled, so it isn't renewal
       // work the Prospecting ladder should still be counting.
       noStatus: hasNoClientStatus(clientStatusMap, ck),
+      // Resolution popup: a renewed End Date on the expired deal clears it,
+      // as does Don't Track; the Renewal Status is there to record progress.
+      resolve: {
+        kind: 'contractExpired',
+        deal: dealRef(next.deal, dealIndexOf),
+        agreement: String(next.deal?.['Agreement Name'] ?? '').trim(),
+        endDate: next.deal?.['End Date'] ?? '',
+        status: String(clientStatusMap?.[ck] || '').trim(),
+      },
       detail: next.date
         ? `Soonest contract End Date (${fmtDate(next.date)}) passed ${ago} day${ago === 1 ? '' : 's'} ago`
         : `Soonest contract End Date passed ${ago} day${ago === 1 ? '' : 's'} ago`,
@@ -144,6 +165,7 @@ function detectRenewalNoStatus({ prospects, cdmName, dealsByClient, untrackedMap
       prospectId: p.id,
       daysUntil: next.days,
       expirationDate: next.date,
+      resolve: { kind: 'renewalStatus', status: String(clientStatusMap?.[ck] || '').trim() },
       detail: next.date
         ? `Renews in ${next.days} day${next.days === 1 ? '' : 's'} (${fmtDate(next.date)}) with no Status set`
         : `Renews in ${next.days} day${next.days === 1 ? '' : 's'} with no Status set`,
@@ -174,6 +196,7 @@ function detectMissingExpiration({ prospects, cdmName, dealsByClient, untrackedM
       prospectId: p.id,
       daysUntil: null,
       expirationDate: null,
+      resolve: { kind: 'dontTrack' },
       detail: 'No contract End Date on file: add a contract (or check Don\'t Track on the Clients tab) so its renewal can be tracked',
     });
   }
@@ -224,6 +247,10 @@ function detectMyAccountsFlags({ myAccountsFlags = [], prospects = [] }) {
         && suggested && live.status && suggested !== live.status
         && live.dismissedSuggestedStatus !== suggested;
       if (!stillMismatched) continue;
+    } else if (live && f.kind === 'tier') {
+      // Cleared once the account's tier matches the Targets tier, or the
+      // mismatch is ignored (both settable from the Resolution popup).
+      if (live.ignoreTierMismatch || (f.targetTier && live.tier === f.targetTier)) continue;
     } else if (live && f.kind === 'hqRegion') {
       // Cleared once an HQ Region is set or the account goes inactive.
       if (live.hqRegion || ACCOUNT_INACTIVE_STATUSES.has(live.status)) continue;
@@ -241,6 +268,7 @@ function detectMyAccountsFlags({ myAccountsFlags = [], prospects = [] }) {
         prospectId: f.id,
         daysUntil: null,
         expirationDate: null,
+        resolve: { kind: 'tier', myTier: f.myTier || '', targetTier: f.targetTier || '' },
         detail: `Your tier "${f.myTier || '-'}" doesn't match Target Accounts tier "${f.targetTier || '-'}"`,
       });
     } else if (f.kind === 'status') {
@@ -252,6 +280,7 @@ function detectMyAccountsFlags({ myAccountsFlags = [], prospects = [] }) {
         prospectId: f.id,
         daysUntil: null,
         expirationDate: null,
+        resolve: { kind: 'accountStatus', status: live ? (live.status || '') : (f.status || ''), suggestedStatus: f.suggestedStatus || '' },
         detail: `Status "${liveStatus}" doesn't match Opps-suggested status "${f.suggestedStatus || '-'}"`,
       });
     } else if (f.kind === 'hqRegion') {
@@ -263,6 +292,7 @@ function detectMyAccountsFlags({ myAccountsFlags = [], prospects = [] }) {
         prospectId: f.id,
         daysUntil: null,
         expirationDate: null,
+        resolve: { kind: 'hqRegion' },
         detail: 'No HQ Region set',
       });
     }
@@ -302,6 +332,7 @@ function detectMarketingLeadStatuses({ marketingLeads = [] }) {
       prospectId: null,
       daysUntil: null,
       expirationDate: null,
+      resolve: { kind: 'leadStatus', leadId: lead?.id ?? null, name, company: lead.company || '', status },
       detail: `${name}: status "${status}" (not Closed-Converted or Closed-Recycle)`,
     });
   }
@@ -367,6 +398,7 @@ function detectUntaggedBfoOppNames({ bfoActivity, oppsCache }) {
       prospectId: null,
       daysUntil: null,
       expirationDate: null,
+      resolve: { kind: 'tagBfoName', bfoName: raw, account },
       detail: `BFO Opportunity Name "${raw}" is not tagged to an opp on Opps${account ? `: from ${account}` : ''}`,
     });
   }
@@ -396,9 +428,19 @@ function detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects = [],
   const cols = bfoActivityColumns(bfoActivity);
   if (!cols) return [];
   const activityNames = new Set();
+  // Activity names by normalized account, offered as the likely right name
+  // in the row's Resolution popup.
+  const activityByAccount = new Map();
   for (const row of (bfoActivity.rows || [])) {
-    const k = normBfoOppName(row[cols.oppCol]);
-    if (k) activityNames.add(k);
+    const raw = String(row[cols.oppCol] || '').trim();
+    const k = normBfoOppName(raw);
+    if (!k) continue;
+    activityNames.add(k);
+    const acct = cols.acctCol ? normalizeBfoCompany(row[cols.acctCol]) : '';
+    if (!acct) continue;
+    if (!activityByAccount.has(acct)) activityByAccount.set(acct, []);
+    const list = activityByAccount.get(acct);
+    if (!list.includes(raw)) list.push(raw);
   }
   if (activityNames.size === 0) return [];
 
@@ -430,6 +472,7 @@ function detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects = [],
       prospectId: prospectIdByNorm.get(normalizeBfoCompany(account)) || null,
       daysUntil: null,
       expirationDate: null,
+      resolve: { kind: 'oppBfoLink', oppId: r._id ?? null, bfoLink: name, suggestions: activityByAccount.get(normalizeBfoCompany(account)) || [] },
       detail: `Active opp${context ? ` (${context})` : ''} is tagged to BFO Opportunity Name "${name}", which isn't on the BFO Activity tab: re-paste the latest BFO Activity export, or fix the name on Opps.`,
     });
   }
@@ -524,6 +567,7 @@ function detectNewBfoMissingData({ prospects = [], oppsCache = null, serviceOver
     prospectId: prospectIdByNorm.get(normalizeBfoCompany(m.company)) || null,
     daysUntil: null,
     expirationDate: null,
+    resolve: { kind: 'newBfo', missing: m.missing, scope: m.scope === '-' ? '' : m.scope },
     detail: `New BFO Opp prompt is missing ${m.missing.join(', ')}: BFO Company Name comes from the company's Table View record; Product Line / Type / Region / Local Project Name come from Dropdowns › Services for the opp's Scope.`,
   }));
 }
@@ -568,6 +612,7 @@ function detectCloseNotSoldMissingData({ oppsCache = null, bfoActivity = null, p
       account: m.account,
       reasonNotSold: m.reasonNotSold,
       competition: m.competition,
+      bfoUrl: m.bfoUrl || '',
     },
     detail: `Close Not Solds prompt is missing ${m.missing.join(', ')} for "${m.name}": Reason Not Sold / Competition / BFO Address come from the opp's row on Opps${m.unmapped ? '; an unmapped pair either needs those fields corrected or the Reason Not Sold + Competition → BFO mapping extended' : ''}.`,
   }));
@@ -594,6 +639,7 @@ function detectAppDescriptionMissingContracting({ bfoActivity = null, oppsCache 
       prospectId: r.prospectId,
       daysUntil: null,
       expirationDate: null,
+      resolve: noCompany ? null : { kind: 'contracting', entity: r.entity, address: r.address },
       detail: noCompany
         ? `"${r.name}" needs its Application Description filled in BFO, but no company in the Table View matches "${r.account}", so there is no Contracting Entity or address to enter.`
         : `"${r.name}" needs its Application Description filled in BFO, but the company is missing ${r.missing.join(' and ')}. Add ${r.missing.length > 1 ? 'them' : 'it'} on the company popup (Company tab).`,
@@ -658,7 +704,7 @@ export function computeServiceCoverageGaps({ prospects = [], cdmName, coverageSe
 // Not CDM-scoped: the tables this mirrors run off the uploaded deals list
 // rather than the prospect list, so filtering here would hide rows that the
 // Pipeline and Clients tabs both still show as overdue.
-function detectPostSaleFollowUpOverdue({ dealsList = [], prospects = [] }) {
+function detectPostSaleFollowUpOverdue({ dealsList = [], prospects = [], dealIndexOf }) {
   // Company → prospect id, so an overdue row can open its account like the
   // other client issues do. Deals whose client isn't a tracked prospect still
   // raise the issue; they just aren't clickable.
@@ -685,6 +731,7 @@ function detectPostSaleFollowUpOverdue({ dealsList = [], prospects = [] }) {
       prospectId: idByCompany.get(normClientName(company)) || null,
       daysUntil: left,
       expirationDate: followUpGoalDate(d['Original Contract Start']),
+      resolve: { kind: 'followUp', deal: dealRef(d, dealIndexOf), agreement },
       detail: `Sold ${sold ? fmtDate(sold) : '-'}, no Follow Up On Sale ${over} day${over === 1 ? '' : 's'} past the 60-day goal${agreement ? `: ${agreement}` : ''}`,
     });
   }
@@ -705,7 +752,7 @@ function detectPostSaleFollowUpOverdue({ dealsList = [], prospects = [] }) {
 // isn't: it runs off the uploaded deals list rather than the prospect
 // list, so filtering would hide rows the Deals subtab still shows as
 // incomplete.
-function detectIncompleteHandoff({ dealsList = [], prospects = [] }) {
+function detectIncompleteHandoff({ dealsList = [], prospects = [], dealIndexOf }) {
   // Company → prospect id, so a flagged deal can open its account like the
   // other client issues do. Deals whose client isn't a tracked prospect
   // still raise the issue; they just aren't clickable.
@@ -737,6 +784,7 @@ function detectIncompleteHandoff({ dealsList = [], prospects = [] }) {
       prospectId: idByCompany.get(normClientName(company)) || null,
       daysUntil: null,
       expirationDate: null,
+      resolve: { kind: 'handoff', deal: dealRef(deal, dealIndexOf), agreement, missing: missing.map(f => f.key), values: Object.fromEntries(missing.map(f => [f.key, deal[f.key] ?? ''])) },
       detail: `Handoff ${done}/${total}${agreement ? ` on ${agreement}` : ''} - still outstanding: ${missing.map(f => f.label).join(', ')}`,
     });
   }
@@ -791,8 +839,11 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   // handed to the opp-derived detectors so every issue row names its opp by
   // the same number the user reads off Opps.
   const oppNumbers = buildOppNumberMap(oppsCache?.records);
+  // Deal → its index in the uploaded roster, so a deal-derived row's
+  // Resolution popup can write back to that exact deal.
+  const dealIndexOf = new Map((dealsList || []).map((d, i) => [d, i]));
   const issues = [];
-  issues.push(...detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap, clientStatusMap }));
+  issues.push(...detectNegativeDaysUntil({ prospects, cdmName, dealsByClient, untrackedMap, clientStatusMap, dealIndexOf }));
   issues.push(...detectRenewalNoStatus({ prospects, cdmName, dealsByClient, untrackedMap, clientStatusMap }));
   issues.push(...detectMissingExpiration({ prospects, cdmName, dealsByClient, untrackedMap }));
   issues.push(...detectMyAccountsFlags({ myAccountsFlags, prospects }));
@@ -803,7 +854,7 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectNewBfoMissingData({ prospects, oppsCache, serviceOverrides, oppNumbers }));
   issues.push(...detectCloseNotSoldMissingData({ oppsCache, bfoActivity, prospects, oppNumbers }));
   issues.push(...detectAppDescriptionMissingContracting({ bfoActivity, oppsCache, prospects, oppNumbers }));
-  issues.push(...detectPostSaleFollowUpOverdue({ dealsList, prospects }));
-  issues.push(...detectIncompleteHandoff({ dealsList, prospects }));
+  issues.push(...detectPostSaleFollowUpOverdue({ dealsList, prospects, dealIndexOf }));
+  issues.push(...detectIncompleteHandoff({ dealsList, prospects, dealIndexOf }));
   return issues;
 }

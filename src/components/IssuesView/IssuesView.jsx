@@ -12,6 +12,9 @@ import { lookupCloseNotSold, reasonOptionsForCompetition, hasCloseNotSoldRules }
 import { BfoCloseOutPreview } from '../BfoCloseOutPreview';
 import { setOppField, loadOpps2Newest, bulkSetOppFields } from '../../utils/opps2Store';
 import { scopeRemapPatches, suggestServiceMatch, rankServiceMatches, addIgnoredScopeServices, removeIgnoredScopeService } from '../../utils/oppScopeOffList';
+import { buildOppNumberMap } from '../../utils/oppNumbers';
+import { buildResolution, resolutionKind } from './issueResolutionSpecs';
+import { IssueResolutionModal } from './IssueResolution';
 
 // Issues tab — a running list of outstanding items that need to be
 // addressed across the app. Each row is one problem surfaced by a
@@ -64,11 +67,22 @@ function CloseNotSoldReasonModal({ row, reasonOptions, competitionOptions, savin
     if (reason && !lookupCloseNotSold(next, reason)) setReason('');
   }
 
+  // The opp's BFO Address link, the other thing the close-out prompt
+  // needs. Only asked for when the opp has none.
+  const needsAddress = !fix.bfoUrl;
+  const [address, setAddress] = useState('');
+  const addressTyped = address.trim();
+  const addressValid = !addressTyped || /^https?:\/\//i.test(addressTyped);
+
   const mapped = lookupCloseNotSold(competition, reason);
   // The stored reason the seeding above deliberately didn't pre-select.
   const droppedReason = (storedReason && !lookupCloseNotSold(storedCompetition, storedReason)) ? storedReason : '';
-  const unchanged = competition === storedCompetition && reason === storedReason;
-  const canSave = !saving && !unchanged && !!competition && !!reason;
+  const pairUnchanged = competition === storedCompetition && reason === storedReason;
+  const unchanged = pairUnchanged && !addressTyped;
+  // The pair is saved as-is when untouched, so a row missing only its BFO
+  // Address can be fixed without re-picking a pair that already maps.
+  const pairOk = pairUnchanged || (!!competition && !!reason);
+  const canSave = !saving && !unchanged && pairOk && addressValid;
 
   const labelStyle = { fontSize: '0.72rem', fontWeight: 600, color: '#1E293B', display: 'block', marginBottom: 4 };
   const inputStyle = {
@@ -161,6 +175,23 @@ function CloseNotSoldReasonModal({ row, reasonOptions, competitionOptions, savin
                 ? <>Each reason listed maps to a pair and clears this issue.</>
                 : <>The opp stays on this list until the pair maps - choose a different Competition, or extend the mapping table.</>}
           />
+          {needsAddress && (
+            <div>
+              <label style={labelStyle}>BFO Address (link)</label>
+              <input
+                type="text"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                placeholder="https://..."
+                style={inputStyle}
+              />
+              <div style={{ fontSize: '0.7rem', color: addressValid ? '#64748B' : '#B91C1C', marginTop: 4 }}>
+                {addressValid
+                  ? 'The opp has no BFO link yet. Paste the opportunity\'s URL from BFO.'
+                  : 'Paste the full link, starting with https://'}
+              </div>
+            </div>
+          )}
           {error && (
             <div style={{ fontSize: '0.72rem', color: '#B91C1C' }}>{error}</div>
           )}
@@ -174,9 +205,11 @@ function CloseNotSoldReasonModal({ row, reasonOptions, competitionOptions, savin
               just reads as broken. */}
           {!canSave && !saving && (
             <span style={{ marginRight: 'auto', fontSize: '0.7rem', color: '#64748B' }}>
-              {!competition || !reason
-                ? 'Pick a Competition and a Reason Not Sold to enable Save.'
-                : 'Nothing changed yet - pick a different Competition or Reason.'}
+              {!addressValid
+                ? 'Fix the BFO Address to enable Save.'
+                : !pairOk
+                  ? 'Pick a Competition and a Reason Not Sold to enable Save.'
+                  : 'Nothing changed yet - pick a different Competition or Reason.'}
             </span>
           )}
           <button
@@ -191,10 +224,10 @@ function CloseNotSoldReasonModal({ row, reasonOptions, competitionOptions, savin
             disabled={!canSave}
             title={canSave
               ? 'Save these values to the opp on Opps'
-              : (!competition || !reason
+              : (!pairOk
                 ? 'Pick a Competition and a Reason Not Sold first'
                 : 'Nothing changed yet')}
-            onClick={() => onSave({ competition: competition.trim(), reason })}
+            onClick={() => onSave({ competition: competition.trim(), reason, address: addressTyped })}
             style={{
               ...btnStyle, border: '1px solid #0A66C2',
               background: canSave ? '#0A66C2' : '#93C5FD',
@@ -616,10 +649,10 @@ function SnoozeMenu({ anchor, snoozed, until, onPick, onUnsnooze, onClose }) {
   );
 }
 
-export function IssuesView({ prospects = [], cdmName, settings, updateSettings, onSelectProspect }) {
+export function IssuesView({ prospects = [], cdmName, settings, updateSettings, updateProspect, onSelectProspect }) {
   // useIssues handles loading the source data + listening for cross-tab
   // refreshes, and tags each row with a `snoozed` flag.
-  const { issues, openCount, knownServices, ignoredScopeServices } = useIssues({ prospects, cdmName, marketingLeads: settings?.marketingLeads, serviceOverrides: settings?.serviceOverrides, settings });
+  const { issues, openCount, knownServices, ignoredScopeServices, oppsRecords } = useIssues({ prospects, cdmName, marketingLeads: settings?.marketingLeads, serviceOverrides: settings?.serviceOverrides, settings });
 
   // Client Manager is owned by the Clients tab; mirror it here (read-only)
   // and re-read when it changes there so the column stays in sync.
@@ -669,7 +702,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
   // keeps the first), and saving refreshes the Opps cache — which fires
   // opps2-cache-updated, so useIssues re-runs and the row drops off this
   // list on its own once the combination maps.
-  async function saveCloseNotSoldFix({ competition, reason }) {
+  async function saveCloseNotSoldFix({ competition, reason, address }) {
     const fix = editingRow?.closeNotSold;
     if (!fix?.oppId) { setFixError('This issue has no linked Opps row to update.'); return; }
     setSavingFix(true);
@@ -681,6 +714,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
       if (reason !== String(fix.reasonNotSold || '')) {
         await setOppField(user?.uid, fix.oppId, 'Reason Not Sold', reason);
       }
+      if (address) await setOppField(user?.uid, fix.oppId, 'BFO Address', address);
       setEditingRow(null);
     } catch (err) {
       setFixError(`Could not save: ${err?.message || err}`);
@@ -752,6 +786,49 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
         await bulkSetOppFields(user?.uid, patches);
       }
       setFixingRow(null);
+    } catch (err) {
+      setFixError(`Could not save: ${err?.message || err}`);
+    } finally {
+      setSavingFix(false);
+    }
+  }
+
+  // ---- Resolution popups for every other issue type ----
+  // See IssueResolution.jsx: each row's `resolve` payload becomes a small
+  // form over the data that clears it, saved to the store that owns it.
+  const [resolvingRow, setResolvingRow] = useState(null);
+  const oppNumbers = useMemo(() => buildOppNumberMap(oppsRecords), [oppsRecords]);
+  const resolutionCtx = {
+    settings, updateSettings, updateProspect, dropdownLists, oppNumbers,
+    oppsRecords: oppsRecords || [],
+    uid: user?.uid,
+  };
+  const canResolve = (row) => {
+    const kind = resolutionKind(row);
+    if (kind === 'service' || kind === 'closeNotSold') return true;
+    if (!kind) return false;
+    return !!buildResolution(row, { ...resolutionCtx, prospect: prospectById.get(row.prospectId) });
+  };
+  const resolvingSpec = useMemo(
+    () => (resolvingRow ? buildResolution(resolvingRow, { ...resolutionCtx, prospect: prospectById.get(resolvingRow.prospectId) }) : null),
+    // Built once per opened row: the popup holds its own edits from there.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [resolvingRow],
+  );
+  function openResolution(row) {
+    setFixError('');
+    const kind = resolutionKind(row);
+    if (kind === 'service') setFixingRow(row);
+    else if (kind === 'closeNotSold') setEditingRow(row);
+    else setResolvingRow(row);
+  }
+  async function saveResolution(values, changed) {
+    if (!resolvingSpec) return;
+    setSavingFix(true);
+    setFixError('');
+    try {
+      await resolvingSpec.save(values, changed);
+      setResolvingRow(null);
     } catch (err) {
       setFixError(`Could not save: ${err?.message || err}`);
     } finally {
@@ -864,17 +941,18 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
       ),
     },
     {
-      // Only "Service not in Dropdowns" rows have something to fix here;
-      // every other issue type shows a dash.
-      key: 'fix', label: 'Fix', defaultWidth: 80,
-      getFilterValue: (row) => (row.scopeFix ? 'Fix' : ''),
+      // Opens a popup over the data that would clear this issue (see
+      // IssueResolution.jsx); rows with nothing editable from here show a
+      // dash. Filters on "Resolve" so the fixable rows can be pulled out.
+      key: 'resolution', label: 'Resolution', defaultWidth: 110,
+      getFilterValue: (row) => (canResolve(row) ? 'Resolve' : ''),
       render: (row) => {
-        if (!row.scopeFix) return <span style={{ color: '#94A3B8' }}>-</span>;
+        if (!canResolve(row)) return <span style={{ color: '#94A3B8' }}>-</span>;
         return (
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); setFixError(''); setFixingRow(row); }}
-            title="Map this service to one on Dropdowns, or add it as a new service"
+            onClick={(e) => { e.stopPropagation(); openResolution(row); }}
+            title="Update the data behind this issue"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
               padding: '2px 10px', borderRadius: 4, cursor: 'pointer',
@@ -882,7 +960,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
               border: '1px solid #93C5FD', background: '#EFF6FF', color: '#0A66C2',
             }}
           >
-            Fix <span aria-hidden="true">✎</span>
+            Resolve <span aria-hidden="true">✎</span>
           </button>
         );
       },
@@ -958,7 +1036,9 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
         </button>
       ),
     },
-  ], [onSelectProspect, prospectById, managerMap]);
+    // canResolve / openResolution read settings, opps and prospects.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [onSelectProspect, prospectById, managerMap, settings, oppsRecords, updateProspect]);
 
 
   return (
@@ -1049,6 +1129,17 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
           onSave={saveServiceFix}
           onIgnore={ignoreServices}
           onClose={() => { if (!savingFix) { setFixingRow(null); setFixError(''); } }}
+        />
+      )}
+
+      {resolvingRow && resolvingSpec && (
+        <IssueResolutionModal
+          key={resolvingRow.id}
+          spec={resolvingSpec}
+          saving={savingFix}
+          error={fixError}
+          onSave={saveResolution}
+          onClose={() => { if (!savingFix) { setResolvingRow(null); setFixError(''); } }}
         />
       )}
 

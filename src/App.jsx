@@ -652,7 +652,7 @@ function App() {
               cdmName={cdmName}
             />
           ) : view === 'issues' ? (
-            <IssuesView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
+            <IssuesView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateProspect={updateProspect} />
           ) : view === 'opps' ? (
             <OppsView settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps2' ? (
