@@ -128,3 +128,27 @@ export function applyDealTerms(index, guard, terms) {
   saveDealsOverride(next);
   return { ok: true, error: '', written };
 }
+
+/**
+ * Write arbitrary fields onto one deal row, the way applyDealTerms writes
+ * the commercial terms: addressed by index, re-read from storage, and
+ * refused when the row at that index no longer carries the Client Name and
+ * Agreement Name the caller saw. Unlike applyDealTerms an empty value IS
+ * written, so a field can be cleared.
+ *
+ * Returns { ok, error }.
+ */
+export function updateDealFields(index, guard, patch) {
+  const { data } = loadDealsList();
+  const row = data[index];
+  if (!row) return { ok: false, error: 'That deal is no longer in the roster - reload the Deals subtab.' };
+  const same = (k) => String(row[k] ?? '').trim() === String(guard?.[k] ?? '').trim();
+  if (!same('Client Name') || !same('Agreement Name')) {
+    return { ok: false, error: 'The Deals roster changed since this list was built - reopen the popup and try again.' };
+  }
+  if (!patch || Object.keys(patch).length === 0) return { ok: true, error: '' };
+  const next = data.slice();
+  next[index] = { ...row, ...patch };
+  saveDealsOverride(next);
+  return { ok: true, error: '' };
+}

@@ -204,7 +204,7 @@ export function computeCloseNotSoldOpps({ oppsCache, bfoActivity }) {
  * Reason Not Sold + Competition pair isn't in the mapping table).
  * Returns one entry per affected row, carrying the opp id + its current
  * Reason Not Sold / Competition so a consumer can offer an inline fix:
- * { id, oppId, name, account, reasonNotSold, competition, missing, unmapped }.
+ * { id, oppId, name, account, reasonNotSold, competition, missing, unmapped, bfoUrl }.
  */
 export function computeCloseNotSoldMissingData(closeNotSoldOpps) {
   const out = [];
@@ -227,6 +227,7 @@ export function computeCloseNotSoldMissingData(closeNotSoldOpps) {
         competition: o.competition,
         missing,
         unmapped: !!o.unmapped,
+        bfoUrl: o.bfoUrl || '',
       });
     }
   }
