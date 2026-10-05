@@ -1,4 +1,4 @@
-import { useMemo, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { useOpps2Data } from './useOpps2Data';
 import { countCallInDue } from '../utils/oppsCallIn';
 import { campaignsAllSent, unfinishedCampaigns } from '../utils/campaignOutreach';
@@ -18,6 +18,13 @@ import {
   statesByKey,
   subscribeCaughtUp,
 } from '../utils/prospectingStatus';
+import { ladderProgress, recordProspectingDay } from '../utils/prospectingHistory';
+import { MIRRORS_HYDRATED_EVENT, mirrorsHydratedFor } from '../utils/localMirrorSync';
+
+function subscribeHydrated(onChange) {
+  window.addEventListener(MIRRORS_HYDRATED_EVENT, onChange);
+  return () => window.removeEventListener(MIRRORS_HYDRATED_EVENT, onChange);
+}
 
 // The Prospecting ladder's status, worked out once for everyone who shows
 // it: the page's Status column and the sidebar's Prospecting dot.
@@ -121,6 +128,23 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
       : `${item.count} outstanding: ${step?.title || item.key}`;
     return { count: countLadderWork(states), title };
   }, [states, steps]);
+
+  // The day's line in the Prospecting history (the page's History subtab):
+  // how far down the ladder the user got, and step 1's overdue count. This
+  // hook lives in App and re-runs whenever a count lands or a step is
+  // marked, so every change of the day is seen; recordProspectingDay keeps
+  // the best progress and only writes when the row actually moved.
+  //
+  // Not before this signin's mirror hydration has finished - see
+  // mirrorsHydratedFor for why an automatic write must not race it.
+  const hydrated = useSyncExternalStore(subscribeHydrated, () => mirrorsHydratedFor(userId));
+  useEffect(() => {
+    if (!userId || !hydrated) return;
+    const progress = ladderProgress(states, steps);
+    const overdue = counts.opps;
+    if (!progress && typeof overdue !== 'number') return;
+    recordProspectingDay(today, { progress, overdue });
+  }, [userId, hydrated, states, steps, counts.opps, today]);
 
   return useMemo(() => ({
     steps,

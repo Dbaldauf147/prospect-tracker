@@ -367,6 +367,7 @@ async function loadMirroredStores() {
     import('./timelineTypeOptions.js'),
     import('./coaItemOptions.js'),
     import('./prospectingStatus.js'),
+    import('./prospectingHistory.js'),
     import('./soldWarningIgnore.js'),
     import('./fillerIgnoreStore.js'),
     import('./pricingOptionLinks.js'),
@@ -416,4 +417,17 @@ export async function hydrateLocalMirrors(userId) {
       console.warn(`localMirror: hydrate failed for "${entries[i][0]}"`, r.reason);
     }
   });
+  _hydratedFor = userId;
+  try { window.dispatchEvent(new CustomEvent(MIRRORS_HYDRATED_EVENT)); } catch { /* no window under Node */ }
+}
+
+// Whether this signin's hydration pass has finished. A store that WRITES on
+// its own, without the user doing anything (the Prospecting history, which
+// App records into all day), has to wait for it: whole-key last-write-wins
+// means a fresh local write on a new machine would carry a newer stamp than
+// the cloud copy and replace the whole history with today's one row.
+export const MIRRORS_HYDRATED_EVENT = 'local-mirrors-hydrated';
+let _hydratedFor = null;
+export function mirrorsHydratedFor(userId) {
+  return !!userId && _hydratedFor === userId;
 }
