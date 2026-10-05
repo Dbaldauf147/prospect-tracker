@@ -11268,13 +11268,18 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const baseResult = Math.round((elecTot?.base || 0) + (gasTot?.base || 0));
       headlineAnnualSavings = baseResult;
 
-      // Label (cols 1–9) · value (col 10) · note (cols 11–SPAN).
+      // Label (cols 1–9) · value (cols 10–11) · note (cols 12–SPAN). The
+      // value spans two columns because col 10 alone (a narrow % column)
+      // is too thin for a seven-figure total at this font size, and Excel
+      // shows #### / clips it. The leased and data-quality lines below use
+      // the same layout so the band stays aligned.
       ws.mergeCells(summaryBandValueRow, 1, summaryBandValueRow, 9);
       const sLabel = ws.getCell(summaryBandValueRow, 1);
       sLabel.value = 'Total Indicative Annual Savings (Electric + Natural Gas)';
       sLabel.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_TEXT_DARK } };
       sLabel.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
 
+      ws.mergeCells(summaryBandValueRow, 10, summaryBandValueRow, 11);
       const sValue = ws.getCell(summaryBandValueRow, 10);
       if (refs.length) {
         sValue.value = { formula: refs.join('+'), result: baseResult };
@@ -11286,8 +11291,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       sValue.font = { name: 'Nunito Sans', bold: true, size: 14, color: { argb: SE_GREEN_DARK } };
       sValue.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
 
-      ws.mergeCells(summaryBandValueRow, 11, summaryBandValueRow, SPAN);
-      const sNote = ws.getCell(summaryBandValueRow, 11);
+      ws.mergeCells(summaryBandValueRow, 12, summaryBandValueRow, SPAN);
+      const sNote = ws.getCell(summaryBandValueRow, 12);
       sNote.value = 'Follows the Savings Scenario toggle above (Base = average of the Low / High range).';
       sNote.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
@@ -11302,6 +11307,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       cLabel.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_TEXT_DARK } };
       cLabel.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
 
+      ws.mergeCells(summaryBandCumulativeRow, 10, summaryBandCumulativeRow, 11);
       const cValue = ws.getCell(summaryBandCumulativeRow, 10);
       if (refs.length) {
         cValue.value = {
@@ -11316,8 +11322,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       cValue.font = { name: 'Nunito Sans', bold: true, size: 14, color: { argb: SE_GREEN_DARK } };
       cValue.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
 
-      ws.mergeCells(summaryBandCumulativeRow, 11, summaryBandCumulativeRow, SPAN);
-      const cNote = ws.getCell(summaryBandCumulativeRow, 11);
+      ws.mergeCells(summaryBandCumulativeRow, 12, summaryBandCumulativeRow, SPAN);
+      const cNote = ws.getCell(summaryBandCumulativeRow, 12);
       cNote.value = 'Annual savings × the # of Years selected above: adjusts automatically when the term changes.';
       cNote.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       cNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
@@ -11332,14 +11338,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         lLabel.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_TEXT_DARK } };
         lLabel.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
 
+        ws.mergeCells(summaryBandLeasedRow, 10, summaryBandLeasedRow, 11);
         const lValue = ws.getCell(summaryBandLeasedRow, 10);
         lValue.value = leasedScope.leased;
         lValue.numFmt = '#,##0';
         lValue.font = { name: 'Nunito Sans', bold: true, size: 14, color: { argb: excludeLeasedSavings ? SE_EST : SE_GREEN_DARK } };
         lValue.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
 
-        ws.mergeCells(summaryBandLeasedRow, 11, summaryBandLeasedRow, SPAN);
-        const lNote = ws.getCell(summaryBandLeasedRow, 11);
+        ws.mergeCells(summaryBandLeasedRow, 12, summaryBandLeasedRow, SPAN);
+        const lNote = ws.getCell(summaryBandLeasedRow, 12);
         lNote.value = excludeLeasedSavings
           ? `${leasedScope.leased} of ${leasedScope.total} sites are marked Leased: their supply contracts aren't taken to be the portfolio's to re-source, so the savings above are taken off the remaining ${leasedScope.scoped.toLocaleString()}.`
           : `${leasedScope.leased} of ${leasedScope.total} sites are marked Leased and are counted in the savings above: this analysis was run on the basis that the portfolio holds their supply contracts.`;
@@ -12275,14 +12282,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         qLabel.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_TEXT_DARK } };
         qLabel.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
 
+        ws.mergeCells(rowNum, 10, rowNum, 11);
         const qValue = ws.getCell(rowNum, 10);
         qValue.value = c.tot > 0 ? c.est / c.tot : 0;
         qValue.numFmt = '0%';
         qValue.font = { name: 'Nunito Sans', bold: true, size: 14, color: { argb: SE_EST } };
         qValue.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
 
-        ws.mergeCells(rowNum, 11, rowNum, SPAN);
-        const qNote = ws.getCell(rowNum, 11);
+        ws.mergeCells(rowNum, 12, rowNum, SPAN);
+        const qNote = ws.getCell(rowNum, 12);
         qNote.value = c.tot > 0
           ? `Electric: ${c.elecEst} of ${c.elecTot} sites · Gas: ${c.gasEst} of ${c.gasTot} sites: ${noteTail}`
           : 'No data points available.';
