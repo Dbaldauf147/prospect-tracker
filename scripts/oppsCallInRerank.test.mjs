@@ -195,5 +195,51 @@ check(
   [1, 2, 3],
 );
 
+// Past-due rows (Call In 0 or less) lead with the latest stage, so the
+// Agreement Sent deals sit on top and the Not Started ones at the bottom of
+// that block. Rows not yet due stay soonest-first whatever their stage.
+const staged = (id, offset, stage) => row(id, isoOffset(offset), { Stage: stage });
+check(
+  'past due: later stage above more overdue earlier stage',
+  ids([
+    staged(1, -7, 'Not Started'),
+    staged(2, -1, 'Agreement Sent'),
+    staged(3, -7, 'Quoted'),
+    staged(4, 0, 'Qualifying'),
+    staged(5, -3, 'Lead'),
+  ]),
+  [2, 3, 4, 5, 1],
+);
+check(
+  'past due: same stage stays most overdue first',
+  ids([staged(1, -2, 'Quoted'), staged(2, -9, 'Quoted'), staged(3, 0, 'Quoted')]),
+  [2, 1, 3],
+);
+check(
+  'not yet due: by date, stage ignored, after every past-due row',
+  ids([
+    staged(1, 2, 'Agreement Sent'),
+    staged(2, 1, 'Not Started'),
+    staged(3, 0, 'Not Started'),
+    staged(4, 3, 'Agreement Sent'),
+  ]),
+  [3, 2, 1, 4],
+);
+check(
+  'past due: an unknown stage ranks below Not Started',
+  ids([staged(1, -1, 'Duplicate Opp'), staged(2, -1, 'Not Started')]),
+  [2, 1],
+);
+check(
+  'a remote Stage change on a past-due row moves it',
+  remoteChangesCallInOrder([staged(1, -2, 'Lead')], [staged(1, -2, 'Quoted')]),
+  true,
+);
+check(
+  'a remote Stage change on a row not yet due does not',
+  remoteChangesCallInOrder([staged(1, 4, 'Lead')], [staged(1, 4, 'Quoted')]),
+  false,
+);
+
 console.log(failures === 0 ? '\nAll passed.' : `\n${failures} failure(s).`);
 process.exit(failures === 0 ? 0 : 1);
