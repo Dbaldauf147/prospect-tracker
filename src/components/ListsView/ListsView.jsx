@@ -448,6 +448,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             tableIdPrefix="csrd-list"
             title="CSRD"
             singular="company"
+            showDecisionMakers
             plural="companies"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
@@ -463,6 +464,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             tableIdPrefix="cdp-list"
             title="CDP"
             singular="company"
+            showDecisionMakers
             plural="companies"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
@@ -478,6 +480,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             tableIdPrefix="gresb-list"
             title="GRESB"
             singular="company"
+            showDecisionMakers
             plural="companies"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
@@ -493,6 +496,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             tableIdPrefix="sbt-list"
             title="SBT"
             singular="company"
+            showDecisionMakers
             plural="companies"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
@@ -508,6 +512,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             tableIdPrefix="casb-list"
             title="CA SB"
             singular="company"
+            showDecisionMakers
             plural="companies"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
@@ -523,6 +528,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             tableIdPrefix="better-buildings"
             title="Better Buildings"
             singular="company"
+            showDecisionMakers
             plural="companies"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
