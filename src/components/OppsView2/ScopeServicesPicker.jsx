@@ -31,6 +31,9 @@ import { buildAutoStatuses, scopeStatusTitle } from '../../utils/scopeServiceSta
 import { scopeCopyText } from '../../utils/scopeCopyText';
 import { scopeCopyHtml } from '../../utils/scopeCopyRich';
 import { writeRichCopy } from '../../utils/clipboardCopy';
+import { prwEmailEml } from '../../utils/prwRequestEmail';
+import { downloadDrafts, resolveSignature, safeFileName } from '../../utils/draftEmail';
+import { useAuth } from '../../contexts/AuthContext';
 import { isCoverageTracked } from '../../utils/pipelineDashboardStore';
 import { useCoverageServices } from '../../hooks/useCoverageServices';
 import { CoverageMark } from '../common/CoverageMark';
@@ -516,6 +519,15 @@ export function ScopeServicesModal({
     return () => clearTimeout(t);
   }, [copied, copyFailed]);
 
+  // The PRW (Pricing Request Workbook) email to the Price and Tendering
+  // desk, as an Outlook draft addressed and laid out like the template,
+  // with this account as the customer.
+  const { isAdmin } = useAuth() || {};
+  function draftPrwEmail() {
+    const eml = prwEmailEml({ customerName: account, signature: resolveSignature(settings, isAdmin) });
+    downloadDrafts([{ fileName: `${safeFileName(`PRW ${account || ''}`.trim())}.eml`, eml }]);
+  }
+
   async function copyScope() {
     if (!copyText) return;
     const ok = await writeRichCopy(copyText, copyHtml);
@@ -615,6 +627,18 @@ export function ScopeServicesModal({
               whiteSpace: 'nowrap',
             }}
           >{copied ? 'Copied' : copyFailed ? 'Copy blocked' : 'Copy'}</button>
+          <button
+            type="button"
+            onClick={draftPrwEmail}
+            title="Download the Pricing Request Workbook email to SB Price and Tendering Support as an Outlook draft, with this account as the customer."
+            style={{
+              padding: '0.25rem 0.6rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 3,
+              fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text-muted)', cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >Draft PRW email</button>
           <button
             type="button"
             onClick={() => { setAutoAdded([]); onChange(''); }}
