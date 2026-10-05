@@ -151,3 +151,48 @@ export function removeIgnoredScopeService(list, name) {
   const k = String(name ?? '').trim().toLowerCase();
   return (Array.isArray(list) ? list : []).filter(n => String(n ?? '').trim().toLowerCase() !== k);
 }
+
+// The note line a company's service gets when the Fix popup maps an
+// unmatched Scope name onto it, so the name the deal used is not lost.
+export function serviceAliasNoteLine(oldName) {
+  return `Previously listed as "${String(oldName ?? '').trim()}"`;
+}
+
+// serviceNotes updates for the companies whose opps a Fix just rewrote:
+// for each patched opp, every remap whose `from` its Scope named adds
+// serviceAliasNoteLine(from) to that company's note for each target
+// service. A line the note already has is not added again.
+//   records            the Opps records, before the rewrite
+//   remaps             [{ from, to: [names] }]
+//   patches            scopeRemapPatches' result (which opps changed)
+//   prospectIdFor      account name -> prospect id (or null)
+//   prospectsById      Map of prospect id -> prospect
+// Returns [{ id, serviceNotes }] with each prospect's whole new map.
+export function serviceAliasNotePatches(records, remaps, patches, knownServices, prospectIdFor, prospectsById) {
+  const notesById = new Map();
+  for (const r of records || []) {
+    if (r?._id == null || !patches?.[r._id]) continue;
+    const id = prospectIdFor(String(r.Account || '').trim());
+    const p = id != null ? prospectsById.get(id) : null;
+    if (!p) continue;
+    const names = splitServiceNames(r.Scope, knownServices).map(n => n.trim().toLowerCase());
+    for (const { from, to } of remaps || []) {
+      if (!names.includes(String(from ?? '').trim().toLowerCase())) continue;
+      if (!notesById.has(id)) notesById.set(id, { ...(p.serviceNotes || {}) });
+      const notes = notesById.get(id);
+      const line = serviceAliasNoteLine(from);
+      for (const target of Array.isArray(to) ? to : [to]) {
+        if (String(target).trim().toLowerCase() === String(from).trim().toLowerCase()) continue;
+        const cur = String(notes[target] || '');
+        if (cur.toLowerCase().split('\n').some(l => l.trim() === line.toLowerCase())) continue;
+        notes[target] = cur.trim() ? `${cur.replace(/\s+$/, '')}\n${line}` : line;
+      }
+    }
+  }
+  const out = [];
+  for (const [id, serviceNotes] of notesById) {
+    const before = prospectsById.get(id)?.serviceNotes || {};
+    if (JSON.stringify(before) !== JSON.stringify(serviceNotes)) out.push({ id, serviceNotes });
+  }
+  return out;
+}
