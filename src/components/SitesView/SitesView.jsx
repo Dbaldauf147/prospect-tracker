@@ -89,6 +89,7 @@ import { withTimeout, isTimeoutError } from '../../utils/withTimeout.js';
 import { isClientWedged } from '../../utils/firestoreClientHealth';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
+import { eiaElectricUtilityForZip } from '../../utils/eiaZipUtility.js';
 import { classifyUtility } from '../../utils/utilityClassify';
 import { buildCityStateZipIndex, buildCityStateZipFallback, estimateZipFromCityState } from '../../utils/zipEstimate';
 import {
@@ -2979,6 +2980,18 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // suggestions the user has decided on.
       const supplierSuggestions = [...electricTokens, ...gasTokens]
         .filter(t => t.kind === 'supplier' && t.isFuzzy);
+      // Electric utility, first answer wins: the uploaded utility file, then
+      // a utility named in the site list, then the main utility EIA lists
+      // for the zip. The last is US-only (gated on a resolved state; a
+      // Canadian postal code never matches a 5-digit key anyway), so a
+      // colliding Mexican or European postal code can't borrow a US name.
+      const fileElectric = lookupAllowed ? (match?.electric || null) : null;
+      const vendorElectric = electricUtilityTokens[0]?.canonical || null;
+      const eiaElectric = (!fileElectric && !vendorElectric && state)
+        ? eiaElectricUtilityForZip(zip)
+        : null;
+      const electricUtility = fileElectric || vendorElectric || eiaElectric || null;
+      const electricSource = fileElectric ? 'file' : vendorElectric ? 'vendor' : eiaElectric ? 'eia' : null;
       return {
         ...r,
         id: i,
@@ -2994,7 +3007,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         __zipEstimateCount__: zipEstimate?.candidateCount || 0,
         __zipEstimateSource__: zipEstimate?.source || null,
         __supplierSuggestions__: supplierSuggestions,
-        __electric__: (lookupAllowed ? match?.electric : null) || electricUtilityTokens[0]?.canonical || null,
+        __electric__: electricUtility,
+        // Where __electric__ came from, for the Utility cell's tooltip:
+        // 'file' (the uploaded utility file), 'vendor' (a utility named in
+        // the site list), or 'eia' (the bundled EIA zip table).
+        __electricSource__: electricSource,
         __gas__: (lookupAllowed ? match?.gas : null) || gasUtilityTokens[0]?.canonical || null,
         __electricVendorRaw__: rawElectric || null,
         __electricVendorMatchScore__: electricUtilityVendorScore,
@@ -3083,7 +3100,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         __gasPriceUom__: gasPriceUom,
         __gasContractName__: gasContractNameOverride ? String(r[gasContractNameOverride] || '').trim() || null : null,
         __gasProductType__: gasProductTypeOverride ? String(r[gasProductTypeOverride] || '').trim() || null : null,
-        __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
+        __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0 || !!eiaElectric,
       };
     });
   }, [cleanSitesData, zipColumn, utility, cityStateZipIndex, zipFallbackIndex, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, companyNameOverride, portfolioCompanyName, addressOverride, cityColumn, stateColumnOverride, propertyTypeOverride, propertyTypeMap, segmentOverride, ownershipOverride, siteStatusColumn, siteStatusOptions, siteDescriptionOverride, divisionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, contractPriceUomColumns, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
@@ -3911,7 +3928,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       label,
       defaultWidth: 160,
       render: (row) => {
-        if (!utility?.zipMap) {
+        // The EIA table answers electric without a file, so "no utility
+        // loaded" only reads where nothing at all named a utility.
+        if (!utility?.zipMap && !row[`__${key}__`]) {
           return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>no utility loaded</span>;
         }
         if (!row.__matched__) {
@@ -3926,9 +3945,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         const vendorScore = key === 'electric' ? row.__electricVendorMatchScore__ : key === 'gas' ? row.__gasVendorMatchScore__ : null;
         const matchedFromVendor = vendorRaw && vendorScore && String(vendorRaw).toLowerCase() !== String(text).toLowerCase();
         const baseTitle = `${label} · ${text}${row.__city__ ? ` · ${row.__city__}` : ''}${row.__country__ ? ` · ${row.__country__}` : ''}`;
+        const fromEia = key === 'electric' && row.__electricSource__ === 'eia';
         const tip = matchedFromVendor
           ? `${baseTitle} · matched from vendor "${vendorRaw}" (fuzzy score ${vendorScore}/100)`
-          : baseTitle;
+          : fromEia
+            ? `${baseTitle} · from the EIA zip table: the main electric utility for zip ${row.__zipNorm__}. Other utilities can serve parts of a zip; an uploaded utility file overrides this.`
+            : baseTitle;
         return (
           <span
             title={tip}
@@ -4959,7 +4981,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   }
 
   const matchStats = useMemo(() => {
-    if (!utility?.zipMap || !rows.length) return null;
+    if (!rows.length) return null;
     let matched = 0;
     let electricCost = 0;
     let gasCost = 0;
@@ -4992,7 +5014,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       suggestedDecided,
       suggestedPct: suggestedSeen.size ? Math.round((suggestedDecided / suggestedSeen.size) * 100) : 0,
     };
-  }, [rows, utility]);
+  }, [rows]);
 
   // Lightweight projection of each site's matched electric/gas utility,
   // handed to the nested Utility Mapping view so it can roll the
@@ -5302,7 +5324,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   }
 
   const overviewByCommodity = useMemo(() => {
-    if (!utility?.zipMap || !rows.length || !siteCompanyColumn) {
+    if (!rows.length || !siteCompanyColumn) {
       return { electric: [], gas: [] };
     }
     const groupOf = (r) => String(r[siteCompanyColumn] ?? '').trim();
@@ -5416,7 +5438,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // dropped: they carry spend like any other, and a savings figure that
   // quietly excluded them wouldn't add up to the Summary tab's.
   const divisionSavings = useMemo(() => {
-    if (!utility?.zipMap || !rows.length) return {};
+    if (!rows.length) return {};
     const groupOf = (r) => divisionLabel(r.__division__);
     const rolled = rollupMarketOverview(
       buildMarketOverview('electric', groupOf, 'Division'),
