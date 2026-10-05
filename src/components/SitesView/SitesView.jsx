@@ -2881,12 +2881,23 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const propertyTypeEstimate = canonicalPropertyType
         ? estimateConsumptionForTenure(canonicalOwnership, canonicalPropertyType, inputPropertySize)
         : null;
-      const elecValueFinal = elec.value ?? propertyTypeEstimate?.electricKwh ?? null;
+      // Uploaded data is never padded out with estimates. When the file has
+      // a column for a figure, a site left blank in it stays blank: the
+      // property-type usage estimate and the usage x rate cost estimate only
+      // stand in for a figure the upload carries no column for at all. A
+      // modelled number beside real ones read as real (Pursuit Aerospace's
+      // Larson site showed a $15M gas cost, an estimate off mis-unit usage,
+      // in a column every other site filled from the bill).
+      const electricUsageUploaded = consumption.electric.length > 0;
+      const gasUsageUploaded = consumption.gas.length > 0;
+      const electricCostUploaded = !!electricCostOverride;
+      const gasCostUploaded = !!gasCostOverride;
+      const elecValueFinal = elec.value ?? (electricUsageUploaded ? null : propertyTypeEstimate?.electricKwh ?? null);
       const elecValueFromEstimate = elec.value == null && elecValueFinal != null;
       // gasDth → therms is ×10 (1 Dth = 10 therms). The on-screen
       // gas-usage cell is denominated in therms, matching what
       // toTherms normalizes to for actual data.
-      const gasValueFinal = gas.value ?? (propertyTypeEstimate ? propertyTypeEstimate.gasDth * 10 : null);
+      const gasValueFinal = gas.value ?? ((propertyTypeEstimate && !gasUsageUploaded) ? propertyTypeEstimate.gasDth * 10 : null);
       const gasValueFromEstimate = gas.value == null && gasValueFinal != null;
       const parseRate = (v) => {
         if (v == null || v === '') return null;
@@ -2910,8 +2921,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         cellValue: contractPriceUomColumns.gas ? r[contractPriceUomColumns.gas] : '',
         header: gasContractPriceOverride,
       });
-      const estElectricCost = electricRate != null && elecValueFinal != null ? electricRate * elecValueFinal : null;
-      const estGasCost = gasRate != null && gasValueFinal != null ? gasRate * gasValueFinal : null;
+      const estElectricCost = !electricCostUploaded && electricRate != null && elecValueFinal != null ? electricRate * elecValueFinal : null;
+      const estGasCost = !gasCostUploaded && gasRate != null && gasValueFinal != null ? gasRate * gasValueFinal : null;
       // Actual cost columns from the file when the user mapped them.
       // Strings like "$1,234.56" parse cleanly; null when blank or
       // unparseable so the per-row total can fall back to the rate
@@ -4352,11 +4363,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         const fromActual = (key === 'electricCost' && row.__electricCostActual__ != null)
           || (key === 'gasCost' && row.__gasCostActual__ != null);
         if (fromActual) {
-          title = `Actual cost from your file. Estimate would be ${
-            key === 'electricCost'
-              ? formatMoney(row.__electricCostEstimated__ || 0)
-              : formatMoney(row.__gasCostEstimated__ || 0)
-          }.`;
+          // The estimate isn't carried on a row whose file has a cost column
+          // (see estElectricCost), so the comparison is worked out here.
+          const usage = key === 'electricCost' ? row.__kwh__ : row.__therms__;
+          const rate = key === 'electricCost' ? row.__electricRate__ : row.__gasRate__;
+          title = (usage != null && rate != null)
+            ? `Actual cost from your file. Estimate would be ${formatMoney(usage * rate)}.`
+            : 'Actual cost from your file.';
         } else if (key === 'electricCost' && row.__kwh__ != null) {
           title = `Estimated: ${row.__kwh__.toLocaleString()} kWh × ${formatRate(row.__electricRate__, 'electric')}${row.__kwhSource__ ? ` · from "${row.__kwhSource__}"` : ''}`;
         } else if (key === 'gasCost' && row.__therms__ != null) {
