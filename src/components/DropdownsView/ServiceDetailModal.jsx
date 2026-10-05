@@ -1215,6 +1215,9 @@ export function ServiceDetailModal({
   onSaveField,
   onSaveUrl,
   onToggleHide,
+  // Takes the service off the Solutions list (and its box on the board).
+  // The modal asks for confirmation first; omitted, there is no button.
+  onDelete,
   onSaveTemplates,
   onOpenTimelines,
   // Lifts the overlay above a modal that opened it. Omitted on the Services
@@ -1417,6 +1420,20 @@ export function ServiceDetailModal({
               ? 'Show it again here, on the company card\'s services board, and in the Opps Scope picker'
               : 'Take it out of this list, the company card\'s services board, and the Opps Scope picker'}
           >{hidden ? 'Show service' : 'Hide service'}</button>
+          {onDelete && (
+            <button
+              type="button"
+              className={styles.detailFooterDanger}
+              onClick={() => {
+                const msg = `Delete "${name}" from the services list?\n\n`
+                  + 'It comes off Dropdowns › Services, the services board and the Opps Scope picker. '
+                  + `Opps whose Scope already names ${name} keep it, and show on Issues as "Service not in Dropdowns". `
+                  + 'Its details here are kept, so adding the same name back restores them.';
+                if (window.confirm(msg)) onDelete(name);
+              }}
+              title="Remove it from the services list for good. Hide keeps it on the list but out of sight."
+            >Delete service</button>
+          )}
           <span className={styles.detailFooterNote}>Changes save as you type - no Save button.</span>
           <button type="button" className={styles.detailFooterPrimary} onClick={onClose}>Close</button>
         </div>

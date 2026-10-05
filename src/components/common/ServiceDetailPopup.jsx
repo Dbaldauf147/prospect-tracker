@@ -14,6 +14,7 @@ import { useMemo } from 'react';
 import { ServiceDetailModal } from '../DropdownsView/ServiceDetailModal';
 import { buildServiceDetail } from '../../utils/serviceDetailProps';
 import { getServiceCategories, moveServiceToBucket } from '../../utils/serviceCategoriesStore';
+import { deleteServiceUpdates } from '../../utils/serviceDelete';
 
 export function ServiceDetailPopup({
   // The service to show, by name. By name rather than by row object because
@@ -75,6 +76,14 @@ export function ServiceDetailPopup({
     updateSettings?.({ hiddenServices: next });
   }
 
+  // Closes the popup too: an unlisted name still opens (with empty fields),
+  // so left open it would read as if the delete hadn't happened.
+  function onDelete(service) {
+    const updates = deleteServiceUpdates(settings, service);
+    if (updates) updateSettings?.(updates);
+    onClose?.();
+  }
+
   function onSaveTemplates(next) {
     updateSettings?.({ timelineTemplates: next });
   }
@@ -97,6 +106,9 @@ export function ServiceDetailPopup({
       onSaveField={onSaveField}
       onSaveUrl={onSaveUrl}
       onToggleHide={onToggleHide}
+      // Only offered for a name that is on the list: an unlisted one (typed
+      // straight into a Scope cell) has nothing to delete.
+      onDelete={deleteServiceUpdates(settings, detail.service.name) ? onDelete : undefined}
       onSaveTemplates={onSaveTemplates}
       zIndex={zIndex}
       onClose={onClose}

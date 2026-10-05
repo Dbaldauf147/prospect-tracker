@@ -1650,6 +1650,18 @@
   color: var(--color-accent);
 }
 
+.detailFooterDanger {
+  composes: detailFooterBtn;
+  border-color: #FCA5A5;
+  color: #B91C1C;
+}
+
+.detailFooterDanger:hover {
+  border-color: #B91C1C;
+  color: #B91C1C;
+  background: #FEF2F2;
+}
+
 .detailFooterPrimary {
   composes: detailFooterBtn;
   background: var(--color-accent);

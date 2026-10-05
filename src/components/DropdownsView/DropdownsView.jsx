@@ -36,6 +36,7 @@ import { autoNaedByMap } from '../../utils/serviceAutoNa';
 import { splitServiceNames } from '../../utils/serviceNameList';
 import { splitPastedCells, newOptionsFromPaste } from '../../utils/pasteOptions';
 import { notesPlainText } from '../../utils/richNotes';
+import { deleteServiceUpdates } from '../../utils/serviceDelete';
 import styles from './DropdownsView.module.css';
 
 // Key the Services table's column prefs (widths, visibility, order) are
@@ -2022,6 +2023,11 @@ export function DropdownsView({ settings, updateSettings }) {
               onSaveField={saveServiceField}
               onSaveUrl={saveServiceLink}
               onToggleHide={toggleHideService}
+              onDelete={(name) => {
+                const updates = deleteServiceUpdates(settings, name);
+                if (updates) updateSettings?.(updates);
+                setDetailName(null);
+              }}
               onSaveTemplates={saveTimelineTemplates}
               // The popup edits the four things a step needs; dates, format
               // and marker artwork live on the full stage table. Hand the
