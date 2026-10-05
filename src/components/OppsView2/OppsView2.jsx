@@ -5162,6 +5162,7 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
       seen.add(k);
       out.push({
         name,
+        id: String(raw.id || raw.vid || '').trim(),
         email: String(raw.email || '').trim(),
         jobtitle: String(raw.jobtitle || '').trim(),
         source,
@@ -5351,12 +5352,28 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
   // Resolve each tag's email: the live roster wins (freshest data), the
   // opp-stored map is the fallback that survives a lost HubSpot cache, and
   // a tag that is itself an email address renders as one.
+  // The "Goes By" nickname lives in settings.contactNicknames keyed by
+  // HubSpot contact id. A tag that isn't on the roster (custom tag) can
+  // still resolve to a HubSpot contact through its email.
+  const contactNicknames = settings?.contactNicknames;
+  const hubspotIdByEmail = useMemo(() => {
+    const map = new Map();
+    for (const c of (hubspotContacts || [])) {
+      const e = String(c?.email || '').trim().toLowerCase();
+      const id = String(c?.id || c?.vid || '').trim();
+      if (e && id && !map.has(e)) map.set(e, id);
+    }
+    return map;
+  }, [hubspotContacts]);
+
   const taggedDetails = useMemo(() => selected.map(name => {
     const key = name.toLowerCase();
     const found = contactByName.get(key);
     const email = found?.email || storedEmails[key] || (name.includes('@') ? name : '');
-    return { name, email };
-  }), [selected, contactByName, storedEmails]);
+    const id = found?.id || hubspotIdByEmail.get(email.toLowerCase()) || '';
+    const goesBy = id && contactNicknames ? String(contactNicknames[id] || '').trim() : '';
+    return { name, email, goesBy };
+  }), [selected, contactByName, storedEmails, hubspotIdByEmail, contactNicknames]);
 
   const displayString = useMemo(() => taggedDetails
     .map(t => t.email || t.name)
@@ -5535,6 +5552,12 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
                             fontWeight: 600, color: '#1E293B',
                             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                           }}>{t.name}</div>
+                        )}
+                        {t.goesBy && (
+                          <div style={{
+                            fontSize: '0.75rem', color: 'var(--color-text)',
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                          }}>Goes by {t.goesBy}</div>
                         )}
                         <div style={{
                           fontSize: '0.75rem',
