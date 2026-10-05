@@ -1894,11 +1894,16 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
             title="Show or hide individual columns."
             style={btn({ border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)' })}
           >Columns ({visibleColumnList.length}/{COLUMNS.length})</button>
+          {/* Anchored on the button's left edge: the button sits near the
+              left of the toolbar, so a right-anchored popup grew leftward
+              under the sidebar and lost its labels. Capped to the viewport
+              height and scrolls, so the last columns stay reachable. */}
           {colsPickerOpen && (
             <div style={{
-              position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 20,
+              position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 20,
               background: '#fff', border: '1px solid var(--color-border)', borderRadius: 6,
               boxShadow: '0 8px 20px rgba(15, 23, 42, 0.12)', minWidth: 260, padding: '0.4rem 0', fontSize: '0.78rem',
+              maxHeight: '70vh', overflowY: 'auto',
             }}>
               <div style={{ padding: '0.15rem 0.7rem 0.4rem', fontSize: '0.68rem', color: '#94A3B8' }}>
                 Check to show, ▲▼ to reorder. Drag a column header to reorder there too.
