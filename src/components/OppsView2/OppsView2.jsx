@@ -13209,6 +13209,10 @@ function TimelinesEditor({ list, onChangeList, serviceOverrides, scopeServices =
   // stays short, while the rows themselves remain one click from coming back.
   const [showHidden, setShowHidden] = useState(false);
   const hiddenCount = rows.filter(r => r?.hidden === true).length;
+  const unhiddenCount = rows.length - hiddenCount;
+  // One click to fold every timeline away, the same per-row `hidden` flag
+  // the row's own Hide button sets, so each one still comes back on its own.
+  const hideAll = () => onChangeList(rows.map(r => (r?.hidden === true ? r : { ...r, hidden: true })));
   // Carry each row's real index so the edit/hide/delete handlers keep working
   // against the full list while the table renders a filtered view.
   const visibleRows = rows
@@ -13312,7 +13316,16 @@ function TimelinesEditor({ list, onChangeList, serviceOverrides, scopeServices =
             <th style={th}>Details</th>
             <th style={{ ...th, whiteSpace: 'nowrap' }}>Kickoff Deadline</th>
             <th style={{ ...th, whiteSpace: 'nowrap' }}>Delivery Lead Time</th>
-            <th style={{ ...th, width: 1 }} aria-hidden="true" />
+            <th style={{ ...th, width: 1, textAlign: 'right' }}>
+              {unhiddenCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={hideAll}
+                  title="Hide every timeline: they stay on the opp, out of the list"
+                  style={{ ...rowActionButton, border: '1px solid #CBD5E1', borderRadius: 4, padding: '2px 6px', background: '#fff', whiteSpace: 'nowrap' }}
+                >Hide all</button>
+              ) : null}
+            </th>
           </tr>
         </thead>
         <tbody>
