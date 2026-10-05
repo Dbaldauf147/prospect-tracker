@@ -48,6 +48,7 @@ import { collectPeFirmTopPcs, peFirmTopPcKey } from '../../utils/peFirmTopPcs';
 import { TOP_PC_EXCLUDED_STATUSES } from '../../utils/topPortfolioCompany';
 import { COLD_OUTREACH_EXCLUDED_STATUSES } from '../../utils/decisionMakerCoverage';
 import { auditablePeople, setQueuedAuditContacts } from '../../utils/tagAuditQueue';
+import { ProspectingHistory } from './ProspectingHistory';
 
 // The contact popup, loaded when one is actually opened. It lives in
 // ProspectModal, which is the largest module in the app — a static import
@@ -99,6 +100,20 @@ const ACTION_COL = 144;
 // 770px and the rows fit. Still a cap rather than the full window, so the
 // page doesn't stretch to whatever the monitor happens to be.
 const PAGE_MAX = 1180;
+
+// The page's two subtabs: the ladder itself, and its day-by-day History.
+// The last one open is remembered, like the Contacts page's subtabs.
+const SUBTAB_KEY = 'prospecting-view:active-subtab';
+const SUBTABS = [
+  { key: 'ladder', label: 'Ladder' },
+  { key: 'history', label: 'History' },
+];
+function readSavedSubtab() {
+  try {
+    const v = localStorage.getItem(SUBTAB_KEY);
+    return SUBTABS.some(t => t.key === v) ? v : 'ladder';
+  } catch { return 'ladder'; }
+}
 
 const STATUS_STYLES = {
   'caught-up': { background: '#DCFCE7', border: '#BBF7D0', color: '#166534' },
@@ -1198,6 +1213,11 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
   // count beside them are one list.
   const peFirmsToWork = ladder?.peFirmsToWork || null;
   const [showAllPeFirms, setShowAllPeFirms] = useState(false);
+  const [subtab, setSubtabState] = useState(readSavedSubtab);
+  const setSubtab = (key) => {
+    setSubtabState(key);
+    try { localStorage.setItem(SUBTAB_KEY, key); } catch { /* private mode: just not remembered */ }
+  };
   // Each of those firms' Top PC - the same pick the PE Portfolio table
   // shows in its own Top PC column, so the company named here is the
   // company named there. Computed on this page rather than in the ladder,
@@ -1395,7 +1415,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
       <div style={{ padding: '1rem 1.25rem 0.5rem', flexShrink: 0, maxWidth: PAGE_MAX }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Prospecting</h2>
-          {canEdit && (
+          {canEdit && subtab === 'ladder' && (
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
               {editing && isCustomized(settings) && (
                 <button type="button" onClick={resetSteps} style={{ ...EDIT_BTN, color: '#B91C1C', border: '1px solid #FECACA' }}>
@@ -1414,6 +1434,24 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
             </div>
           )}
         </div>
+        <div role="tablist" style={{ display: 'flex', gap: 0, borderBottom: '2px solid #E2E8F0', margin: '0.5rem 0 0.5rem' }}>
+          {SUBTABS.map(t => (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={subtab === t.key}
+              onClick={() => { if (t.key !== 'ladder') setEditing(false); setSubtab(t.key); }}
+              style={{
+                padding: '0.45rem 1rem', border: 'none', background: 'none', fontFamily: 'inherit',
+                fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', marginBottom: -2,
+                color: subtab === t.key ? '#0A66C2' : '#64748B',
+                borderBottom: `2px solid ${subtab === t.key ? '#0A66C2' : 'transparent'}`,
+              }}
+            >{t.label}</button>
+          ))}
+        </div>
+        {subtab === 'ladder' && (<>
         {/* The page is wide so the step lists have room. This paragraph is
             prose rather than a list, and prose runs badly at that measure,
             so it keeps the narrower one. */}
@@ -1426,8 +1464,12 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                and the first one you haven't shows as outstanding once everything above it
                is clear.`}
         </div>
+        </>)}
       </div>
 
+      {subtab === 'history' ? (
+        <ProspectingHistory today={today} maxWidth={PAGE_MAX} />
+      ) : (
       <div style={{ padding: '0.25rem 1.25rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: PAGE_MAX }}>
         <div
           style={{
@@ -1659,6 +1701,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
 
         {editing && <AddStepForm onAdd={addStep} />}
       </div>
+      )}
 
       {/* No fallback: the popup is a modal, and a "Loading…" panel flashing
           where it's about to appear is worse than the click taking a beat. */}
