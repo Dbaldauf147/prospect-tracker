@@ -90,6 +90,10 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
     return JSON.stringify([...(list.options || []), ...renames].map(s => String(s ?? '').trim()).filter(Boolean));
   }, [settings]);
   const knownServices = useMemo(() => (knownServicesKey ? JSON.parse(knownServicesKey) : null), [knownServicesKey]);
+  // Scope names the user chose to ignore (Fix popup's Ignore), keyed the
+  // same way so an unrelated settings edit doesn't re-run computeIssues.
+  const ignoredKey = JSON.stringify(Array.isArray(settings?.ignoredScopeServices) ? settings.ignoredScopeServices : []);
+  const ignoredScopeServices = useMemo(() => JSON.parse(ignoredKey), [ignoredKey]);
 
   // Re-read once the per-user localStorage scope is established (and on any
   // later account switch), since the initial reads above may have run
@@ -172,12 +176,12 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   }, []);
 
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices });
     return rows.map((r) => {
       const { snoozed, until } = issueSnoozeState(snoozedMap, r.id);
       return { ...r, snoozed, snoozeUntil: until };
     });
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices]);
 
   // Services the client base hasn't explored yet. Not issues — outreach —
   // so they're returned alongside rather than mixed in, and the snooze map
@@ -191,5 +195,5 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
 
   const openCount = useMemo(() => issues.reduce((n, r) => n + (r.snoozed ? 0 : 1), 0), [issues]);
 
-  return { issues, openCount, serviceGaps, knownServices, oppsRecords: oppsCache?.records || null };
+  return { issues, openCount, serviceGaps, knownServices, ignoredScopeServices, oppsRecords: oppsCache?.records || null };
 }

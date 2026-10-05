@@ -11,7 +11,7 @@ import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { lookupCloseNotSold, reasonOptionsForCompetition, hasCloseNotSoldRules } from '../../data/closeNotSoldRules';
 import { BfoCloseOutPreview } from '../BfoCloseOutPreview';
 import { setOppField, loadOpps2Newest, bulkSetOppFields } from '../../utils/opps2Store';
-import { scopeRemapPatches, suggestServiceMatch, rankServiceMatches } from '../../utils/oppScopeOffList';
+import { scopeRemapPatches, suggestServiceMatch, rankServiceMatches, addIgnoredScopeServices, removeIgnoredScopeService } from '../../utils/oppScopeOffList';
 import { buildOppNumberMap } from '../../utils/oppNumbers';
 import { buildResolution, resolutionKind } from './issueResolutionSpecs';
 import { IssueResolutionModal } from './IssueResolution';
@@ -373,7 +373,8 @@ function Highlight({ text, term }) {
 // a corrected spelling. When the opp ends up naming something other than
 // what it names now, the other opps naming the same thing are rewritten
 // too unless that box is unticked, so one fix clears every row it caused.
-function ServiceFixModal({ row, services, retired, otherCounts, saving, error, onSave, onClose }) {
+// Ignore leaves the opps alone and stops flagging the name(s) on any opp.
+function ServiceFixModal({ row, services, retired, otherCounts, saving, error, onSave, onIgnore, onClose }) {
   const off = row.scopeFix?.off || [];
   const [choices, setChoices] = useState(() => off.map((name) => {
     const target = suggestServiceMatch(name, services);
@@ -525,15 +526,26 @@ function ServiceFixModal({ row, services, retired, otherCounts, saving, error, o
           display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.5rem',
           padding: '0.6rem 1rem', borderTop: '1px solid #E2E8F0', background: '#F8FAFC',
         }}>
+          {onIgnore && (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => onIgnore(off)}
+              title={`Stop flagging ${off.length === 1 ? 'this name' : 'these names'} on any opp. The opps' Scope is left as it is. Undo from "Ignored services" at the top of Issues.`}
+              style={{ ...btnStyle, border: '1px solid #CBD5E1', background: '#fff', color: '#475569' }}
+            >
+              Ignore
+            </button>
+          )}
           {!complete && !saving && (
-            <span style={{ marginRight: 'auto', fontSize: '0.7rem', color: '#64748B' }}>
+            <span style={{ fontSize: '0.7rem', color: '#64748B' }}>
               Pick a service or enter a new name for each one to enable Save.
             </span>
           )}
           <button
             type="button"
             onClick={onClose}
-            style={{ ...btnStyle, border: '1px solid #CBD5E1', background: '#fff', color: '#475569' }}
+            style={{ ...btnStyle, marginLeft: 'auto', border: '1px solid #CBD5E1', background: '#fff', color: '#475569' }}
           >
             Cancel
           </button>
@@ -640,7 +652,7 @@ function SnoozeMenu({ anchor, snoozed, until, onPick, onUnsnooze, onClose }) {
 export function IssuesView({ prospects = [], cdmName, settings, updateSettings, updateProspect, onSelectProspect }) {
   // useIssues handles loading the source data + listening for cross-tab
   // refreshes, and tags each row with a `snoozed` flag.
-  const { issues, openCount, knownServices, oppsRecords } = useIssues({ prospects, cdmName, marketingLeads: settings?.marketingLeads, serviceOverrides: settings?.serviceOverrides, settings });
+  const { issues, openCount, knownServices, ignoredScopeServices, oppsRecords } = useIssues({ prospects, cdmName, marketingLeads: settings?.marketingLeads, serviceOverrides: settings?.serviceOverrides, settings });
 
   // Client Manager is owned by the Clients tab; mirror it here (read-only)
   // and re-read when it changes there so the column stays in sync.
@@ -822,6 +834,21 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
     } finally {
       setSavingFix(false);
     }
+  }
+
+  // Ignore from the Fix popup: the names go on the Settings list the
+  // detector skips, so every row they caused drops off (on every opp, not
+  // just this one). Un-ignored from the list under the page heading.
+  const [showIgnored, setShowIgnored] = useState(false);
+  function ignoreServices(names) {
+    updateSettings?.({ ignoredScopeServices: addIgnoredScopeServices(settings?.ignoredScopeServices, names) });
+    setFixingRow(null);
+    setFixError('');
+  }
+  function unignoreService(name) {
+    const next = removeIgnoredScopeService(settings?.ignoredScopeServices, name);
+    updateSettings?.({ ignoredScopeServices: next });
+    if (next.length === 0) setShowIgnored(false);
   }
 
   const columns = useMemo(() => [
@@ -1022,7 +1049,38 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
           Outstanding items that need to be addressed
           {cdmName ? ` for ${cdmName}` : ''}. {openCount} open issue{openCount === 1 ? '' : 's'}
           {issues.length - openCount > 0 ? `, ${issues.length - openCount} snoozed` : ''}.
+          {ignoredScopeServices.length > 0 && (
+            <>
+              {' '}
+              <button
+                type="button"
+                onClick={() => setShowIgnored(v => !v)}
+                style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', color: '#0A66C2', fontWeight: 600 }}
+              >
+                Ignored services ({ignoredScopeServices.length}) {showIgnored ? '▴' : '▾'}
+              </button>
+            </>
+          )}
         </div>
+        {showIgnored && ignoredScopeServices.length > 0 && (
+          <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, fontSize: '0.72rem', color: '#64748B' }}>
+            <span>Not flagged as &quot;Service not in Dropdowns&quot; on any opp:</span>
+            {ignoredScopeServices.map(name => (
+              <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 4px 1px 8px', borderRadius: 999, background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#334155', fontWeight: 600 }}>
+                {name}
+                <button
+                  type="button"
+                  onClick={() => unignoreService(name)}
+                  title={`Stop ignoring ${name}: opps naming it are flagged again`}
+                  aria-label={`Stop ignoring ${name}`}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 4px', color: '#64748B', fontSize: '0.8rem', lineHeight: 1 }}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', padding: '0 0.25rem' }}>
@@ -1069,6 +1127,7 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
           saving={savingFix}
           error={fixError}
           onSave={saveServiceFix}
+          onIgnore={ignoreServices}
           onClose={() => { if (!savingFix) { setFixingRow(null); setFixError(''); } }}
         />
       )}
