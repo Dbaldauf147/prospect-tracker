@@ -2,7 +2,7 @@
 // opp whose Scope names a service the Dropdowns tab's services list doesn't
 // have. Plain Node, no test framework (the project has none). Run:
 //   node scripts/oppScopeOffListIssues.test.mjs
-import { oppScopeOffList, remapScopeService, scopeRemapPatches, suggestServiceMatch, rankServiceMatches } from '../src/utils/oppScopeOffList.js';
+import { oppScopeOffList, remapScopeService, scopeRemapPatches, suggestServiceMatch, rankServiceMatches, addIgnoredScopeServices, removeIgnoredScopeService } from '../src/utils/oppScopeOffList.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -54,6 +54,14 @@ eq(rankServiceMatches('', ['A', 'B', 'C'], { exclude: ['b'] }), ['A', 'C'], 'typ
 eq(suggestServiceMatch('Risk managment', ['Risk Management', 'Recap']), 'Risk Management', 'suggests the close spelling');
 eq(suggestServiceMatch('becs', ['BECS', 'GHG']), 'BECS', 'suggests a case-only match');
 eq(suggestServiceMatch('Cleantech', ['Risk Management', 'GHG']), '', 'no guess for an unrelated name');
+
+// ---- Ignore ----
+eq(oppScopeOffList(records, knownServices, ['carbon thing'])[0].off, ['Typo Svc'], 'an ignored name is not flagged, matched case-insensitively');
+eq(oppScopeOffList(records, knownServices, ['Carbon Thing', 'Typo Svc']).length, 0, 'ignoring every unmatched name clears the opp');
+eq(oppScopeOffList(records, null, ['Carbon Thing']).length, 0, 'an ignore list alone does not start flagging without a services list');
+eq(addIgnoredScopeServices(['Foo'], ['foo', 'Bar', ' ']), ['Foo', 'Bar'], 'adding dedupes case-insensitively and skips blanks');
+eq(addIgnoredScopeServices(undefined, ['Foo']), ['Foo'], 'adding to no list starts one');
+eq(removeIgnoredScopeService(['Foo', 'Bar'], 'foo'), ['Bar'], 'removing matches case-insensitively');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

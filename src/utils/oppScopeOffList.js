@@ -9,11 +9,16 @@ const SCOPE_PLACEHOLDERS = new Set(['-', '#n/a', 'n/a']);
 // records        the Opps records ({ Scope, ... })
 // knownServices  every service name the Dropdowns tab has; with none (not
 //                loaded yet, or the list hidden) nothing is returned
+// ignored        names the user chose to stop flagging (Fix popup's
+//                Ignore), on any opp; matched case-insensitively
 // Returns [{ record, off }] for each opp with at least one unmatched name,
 // `off` the unmatched names as written, deduped case-insensitively.
-export function oppScopeOffList(records, knownServices) {
+export function oppScopeOffList(records, knownServices, ignored = null) {
   if (!Array.isArray(knownServices) || knownServices.length === 0) return [];
-  const known = new Set(knownServices.map(s => String(s ?? '').trim().toLowerCase()).filter(Boolean));
+  const known = new Set(
+    [...knownServices, ...(Array.isArray(ignored) ? ignored : [])]
+      .map(s => String(s ?? '').trim().toLowerCase()).filter(Boolean),
+  );
   const out = [];
   for (const record of records || []) {
     const off = [];
@@ -126,4 +131,23 @@ export function rankServiceMatches(query, services, { exclude = [], limit = 12 }
   });
   scored.sort((a, b) => a.rank - b.rank || a.i - b.i);
   return scored.slice(0, limit).map(x => x.name);
+}
+
+// ---- Ignoring a name ----
+// The Fix popup's Ignore puts unmatched names on a list kept in Settings
+// (`ignoredScopeServices`) so they stop being flagged on any opp; the
+// Issues header lists them so one can be un-ignored. Both helpers return
+// the new list, deduped case-insensitively, keeping the first spelling.
+export function addIgnoredScopeServices(list, names) {
+  const out = [];
+  for (const n of [...(Array.isArray(list) ? list : []), ...(names || [])]) {
+    const t = String(n ?? '').trim();
+    if (t && !out.some(x => x.toLowerCase() === t.toLowerCase())) out.push(t);
+  }
+  return out;
+}
+
+export function removeIgnoredScopeService(list, name) {
+  const k = String(name ?? '').trim().toLowerCase();
+  return (Array.isArray(list) ? list : []).filter(n => String(n ?? '').trim().toLowerCase() !== k);
 }

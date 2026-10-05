@@ -448,9 +448,11 @@ function detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects = [],
 // naming one is fine), plus any display names from serviceRenames. With
 // no list to check against (not loaded yet, or the list hidden) nothing is
 // flagged, rather than every service on every opp. One row per opp, naming
-// every unmatched service on it, so each opp is snoozed on its own.
-function detectOppScopeOffList({ oppsCache = null, knownServices = null, prospects = [], oppNumbers = new Map() }) {
-  const hits = oppScopeOffList(oppsCache?.records, knownServices);
+// every unmatched service on it, so each opp is snoozed on its own. Names
+// on `ignoredScopeServices` (Settings, set by the Fix popup's Ignore) are
+// never flagged.
+function detectOppScopeOffList({ oppsCache = null, knownServices = null, ignoredScopeServices = null, prospects = [], oppNumbers = new Map() }) {
+  const hits = oppScopeOffList(oppsCache?.records, knownServices, ignoredScopeServices);
   if (hits.length === 0) return [];
   const prospectIdByNorm = new Map();
   for (const p of prospects) {
@@ -481,7 +483,7 @@ function detectOppScopeOffList({ oppsCache = null, knownServices = null, prospec
       prospectId: prospectIdByNorm.get(normalizeBfoCompany(account)) || null,
       daysUntil: null,
       expirationDate: null,
-      detail: `${off.length === 1 ? 'Service' : 'Services'} ${quoted} in this opp's Scope${stage ? ` (${stage})` : ''} ${off.length === 1 ? "isn't" : "aren't"} on the Dropdowns › Services list:${typos ? `${typos} Use Fix to correct the spelling.` : ' use Fix to map it to an existing service, or add it as a new one.'}`,
+      detail: `${off.length === 1 ? 'Service' : 'Services'} ${quoted} in this opp's Scope${stage ? ` (${stage})` : ''} ${off.length === 1 ? "isn't" : "aren't"} on the Dropdowns › Services list:${typos ? `${typos} Use Fix to correct the spelling.` : ' use Fix to map it to an existing service, add it as a new one, or ignore it.'}`,
       // What the row's Fix popup needs: the opp to rewrite and the names
       // to settle.
       scopeFix: { oppId: r._id ?? null, scope: String(r.Scope ?? ''), off },
@@ -783,7 +785,7 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
 //
 // Service Exploration Coverage is deliberately not among them — see
 // computeServiceCoverageGaps above; it feeds the Prospecting ladder.
-export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, knownServices = null }) {
+export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, knownServices = null, ignoredScopeServices = null }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   // Opp `_id` → the visible "Opp #" the Opps tab shows. Built once here and
   // handed to the opp-derived detectors so every issue row names its opp by
@@ -797,7 +799,7 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectMarketingLeadStatuses({ marketingLeads }));
   issues.push(...detectUntaggedBfoOppNames({ bfoActivity, oppsCache }));
   issues.push(...detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects, oppNumbers }));
-  issues.push(...detectOppScopeOffList({ oppsCache, knownServices, prospects, oppNumbers }));
+  issues.push(...detectOppScopeOffList({ oppsCache, knownServices, ignoredScopeServices, prospects, oppNumbers }));
   issues.push(...detectNewBfoMissingData({ prospects, oppsCache, serviceOverrides, oppNumbers }));
   issues.push(...detectCloseNotSoldMissingData({ oppsCache, bfoActivity, prospects, oppNumbers }));
   issues.push(...detectAppDescriptionMissingContracting({ bfoActivity, oppsCache, prospects, oppNumbers }));
