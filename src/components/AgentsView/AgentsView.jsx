@@ -54,6 +54,7 @@ const NEW_BFO_OPP_PROMPT_STORAGE_KEY = 'agents-ai-prompt-new-bfo-opp';
 const CLOSE_DATES_PROMPT_STORAGE_KEY = 'agents-ai-prompt-close-dates';
 const AMOUNT_UPDATES_PROMPT_STORAGE_KEY = 'agents-ai-prompt-amount-updates';
 const STAGE_CHANGE_PROMPT_STORAGE_KEY = 'agents-ai-prompt-stage-change';
+const APP_DESCRIPTION_PROMPT_STORAGE_KEY = 'agents-ai-prompt-app-description';
 const CLOSE_NOT_SOLDS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-close-not-solds';
 const UPDATE_BFO_ACTIVITY_PROMPT_STORAGE_KEY = 'agents-ai-prompt-update-bfo-activity';
 const BFO_PREP_PROMPT_STORAGE_KEY = 'agents-ai-prompt-bfo-prep';
@@ -112,6 +113,13 @@ const DEFAULT_AI_PROMPT_STAGE_CHANGE = `1.  Reference the BFO links below, and t
 2.  After selecting the new stage, click save to ensure the new stage is selected.
 3.  Make sure to save the new stage status before proceeding with the next item.
 4.  Repeat this process for all Opportunities listed below.`;
+
+const DEFAULT_AI_PROMPT_APP_DESCRIPTION = `1.  Reference the BFO links below. Each one is a Stage 5 or Stage 6 opportunity that is in Contracting or Agreement Sent.
+2.  Open the BFO link and check the Application Description field.
+3.  If Application Description is blank, click the pencil icon next to it and enter the Description listed below for that opportunity. If the Description below is blank, leave the field alone and note it in the summary.
+4.  If Application Description already has a value, do not change it.
+5.  Click Save before moving on to the next opportunity. When you get to this step, dont ask me for permission to Save.
+6.  Repeat this process for all Opportunities listed below. At the end, generate a summary table of each BFO Opportunity and whether the Application Description was filled in, already had a value, or was skipped.`;
 
 // Appended to the end of every prompt copy (and the Copy-all bundle) so
 // the assistant finishes by re-pulling the BFO list into the BFO
@@ -852,6 +860,19 @@ function readStageChangePrompt() {
 
 function writeStageChangePrompt(next) {
   try { writeWorkKey(STAGE_CHANGE_PROMPT_STORAGE_KEY, next); } catch {}
+}
+
+function readAppDescriptionPrompt() {
+  try {
+    const raw = userLsGet(APP_DESCRIPTION_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT_APP_DESCRIPTION : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT_APP_DESCRIPTION;
+  }
+}
+
+function writeAppDescriptionPrompt(next) {
+  try { writeWorkKey(APP_DESCRIPTION_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 function readCloseNotSoldsPrompt() {
@@ -1744,6 +1765,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   const [closeDatesPrompt, setCloseDatesPrompt] = useState(readCloseDatesPrompt);
   const [amountUpdatesPrompt, setAmountUpdatesPrompt] = useState(readAmountUpdatesPrompt);
   const [stageChangePrompt, setStageChangePrompt] = useState(readStageChangePrompt);
+  const [appDescriptionPrompt, setAppDescriptionPrompt] = useState(readAppDescriptionPrompt);
   const [closeNotSoldsPrompt, setCloseNotSoldsPrompt] = useState(readCloseNotSoldsPrompt);
   const [updateBfoActivityPrompt, setUpdateBfoActivityPrompt] = useState(readUpdateBfoActivityPrompt);
   const [bfoPrepPrompt, setBfoPrepPrompt] = useState(readBfoPrepPrompt);
@@ -1763,6 +1785,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       setCloseDatesPrompt(readCloseDatesPrompt());
       setAmountUpdatesPrompt(readAmountUpdatesPrompt());
       setStageChangePrompt(readStageChangePrompt());
+      setAppDescriptionPrompt(readAppDescriptionPrompt());
       setCloseNotSoldsPrompt(readCloseNotSoldsPrompt());
       setUpdateBfoActivityPrompt(readUpdateBfoActivityPrompt());
       setBfoPrepPrompt(readBfoPrepPrompt());
@@ -1789,6 +1812,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   const [closeDatesCopyFlash, setCloseDatesCopyFlash] = useState('');
   const [amountUpdatesCopyFlash, setAmountUpdatesCopyFlash] = useState('');
   const [stageChangeCopyFlash, setStageChangeCopyFlash] = useState('');
+  const [appDescriptionCopyFlash, setAppDescriptionCopyFlash] = useState('');
   const [closeNotSoldsCopyFlash, setCloseNotSoldsCopyFlash] = useState('');
   const [updateBfoActivityCopyFlash, setUpdateBfoActivityCopyFlash] = useState('');
   // HubSpot Activity refresh — kicked off by the header button. Mirrors
@@ -1885,6 +1909,12 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     writeStageChangePrompt(next);
   };
   const resetStageChangePrompt = () => updateStageChangePrompt(DEFAULT_AI_PROMPT_STAGE_CHANGE);
+
+  const updateAppDescriptionPrompt = (next) => {
+    setAppDescriptionPrompt(next);
+    writeAppDescriptionPrompt(next);
+  };
+  const resetAppDescriptionPrompt = () => updateAppDescriptionPrompt(DEFAULT_AI_PROMPT_APP_DESCRIPTION);
 
   const updateCloseNotSoldsPrompt = (next) => {
     setCloseNotSoldsPrompt(next);
@@ -3122,6 +3152,60 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     return rows;
   }, [bfoActivity, oppsCache]);
 
+  // Stage 5 / 6 BFO opps sitting in Contracting or Agreement Sent on the
+  // Opps tab whose Application Description is blank in BFO. Same join as
+  // Stage Change (BFO Opportunity Name == Opps "BFO Link"). The BFO list
+  // view only carries Application Description when that column has been
+  // added to it, so `hasAppDescCol` says whether the blank check really
+  // ran: without the column every matching opp is listed and the prompt
+  // tells the assistant to leave the ones that already have a value.
+  // Description to enter comes from the Opps row's Scope.
+  const appDescriptionResult = useMemo(() => {
+    const empty = { rows: [], hasAppDescCol: false };
+    if (!bfoActivity?.headers?.length || !bfoActivity?.rows?.length) return empty;
+    const stageCol = bfoActivity.headers.find(h => /sales\s*stage|^stage$/i.test(h));
+    const oppCol = bfoActivity.headers.find(h => /opportunity\s*name/i.test(h));
+    const descCol = bfoActivity.headers.find(h => /application\s*description/i.test(h));
+    if (!stageCol || !oppCol) return empty;
+    const oppsByName = new Map();
+    for (const r of (oppsCache?.records || [])) {
+      const k = String(r['BFO Link'] || '').trim().toLowerCase();
+      if (k && k !== '-' && k !== '#n/a' && !oppsByName.has(k)) oppsByName.set(k, r);
+    }
+    const rows = [];
+    const seen = new Set();
+    for (const r of bfoActivity.rows) {
+      const stage = bfoStageNumber(r[stageCol]);
+      if (stage !== 5 && stage !== 6) continue;
+      if (descCol && !BFO_BLANK_SENTINELS.has(String(r[descCol] ?? '').trim().toLowerCase())) continue;
+      const name = String(r[oppCol] || '').trim();
+      if (!name) continue;
+      const k = name.toLowerCase();
+      if (seen.has(k)) continue;
+      const oppsRow = oppsByName.get(k);
+      if (!oppsRow) continue;
+      const oppsStage = String(oppsRow.Stage || '').trim();
+      const os = oppsStage.toLowerCase();
+      if (os !== 'contracting' && os !== 'agreement sent') continue;
+      const bfoUrl = detectBfoUrl(oppsRow);
+      if (!bfoUrl) continue;
+      seen.add(k);
+      const scope = String(oppsRow.Scope || '').trim();
+      rows.push({
+        id: `${k}|${bfoUrl}`,
+        name,
+        account: String(oppsRow.Account || '').trim(),
+        bfoStage: String(r[stageCol] || '').trim(),
+        oppsStage,
+        description: scope === '-' ? '' : scope,
+        bfoUrl,
+      });
+    }
+    rows.sort((a, b) => a.account.localeCompare(b.account));
+    return { rows, hasAppDescCol: !!descCol };
+  }, [bfoActivity, oppsCache]);
+  const appDescriptionOpps = appDescriptionResult.rows;
+
   // Not-Sold opps that still have a corresponding BFO row open. Each
   // pulls its Reason Not Sold + Competition from Opps 2 and maps the
   // pair to the Status + Reason values BFO expects when closing the
@@ -3323,6 +3407,10 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     for (const o of stageChangeOpps) stageLines.push(`${o.bfoUrl}\t${o.expectedBfoStage}`);
     const stageBlock = stageLines.join('\n');
 
+    const appDescLines = ['BFO Link\tDescription'];
+    for (const o of appDescriptionOpps) appDescLines.push(`${o.bfoUrl}\t${o.description}`);
+    const appDescBlock = appDescLines.join('\n');
+
     const closeNotSoldLines = ['BFO Link\tStatus\tReason\tCompetition'];
     for (const o of closeNotSoldOpps) {
       if (o.unmapped) continue;
@@ -3350,6 +3438,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       { title: 'Close Dates', prompt: closeDatesPrompt, block: closeDatesBlock, hasData: closeDateOpps.length > 0 },
       { title: 'Amount Updates', prompt: amountUpdatesPrompt, block: amountBlock, hasData: amountUpdateOpps.length > 0 },
       { title: 'Stage Change', prompt: stageChangePrompt, block: stageBlock, hasData: stageChangeOpps.length > 0 },
+      { title: 'Application Description', prompt: appDescriptionPrompt, block: appDescBlock, hasData: appDescriptionOpps.length > 0 },
       { title: 'Close Not Solds', prompt: closeNotSoldsPrompt, block: closeNotSoldBlock, hasData: closeNotSoldLines.length > 1 },
       // Import Marketing Leads leads the three lead sections: it is the only
       // one that pulls new leads in from Salesforce, and the ones below can
@@ -3381,9 +3470,9 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     return base ? `${base}\n\n${suffixSection}` : suffixSection;
   }, [
     aiPrompt, newBfoOppPrompt, closeDatesPrompt, amountUpdatesPrompt,
-    stageChangePrompt, closeNotSoldsPrompt, updateBfoActivityPrompt,
+    stageChangePrompt, appDescriptionPrompt, closeNotSoldsPrompt, updateBfoActivityPrompt,
     bfoPrepPrompt, todaysOutbound, calledOpps, allTodaysMeetings, markedMeetingOpps, newBfoOpps, closeDateOpps,
-    amountUpdateOpps, stageChangeOpps, closeNotSoldOpps, bfoPrepOpps,
+    amountUpdateOpps, stageChangeOpps, appDescriptionOpps, closeNotSoldOpps, bfoPrepOpps,
     importMarketingLeadsPrompt, marketingLeadsPrompt, marketingLeadsMissing,
     marketingLeadStatusUpdatePrompt, marketingLeadStatusRows,
     duplicateLeadsPrompt, duplicateLeadRows,
@@ -4683,6 +4772,91 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
                       <td>{o.oppsStage}</td>
                       <td>{o.bfoStage}</td>
                       <td>{o.expectedBfoStage}</td>
+                      <td>
+                        <a href={o.bfoUrl} target="_blank" rel="noreferrer" className={styles.bfoLink}>Open</a>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+          </section>
+        );
+      })()}
+
+      {(() => {
+        // Application Description prompt: Stage 5 / 6 BFO opps in
+        // Contracting or Agreement Sent with a blank Application
+        // Description, each with the Opps Scope to enter.
+        const lines = ['BFO Link\tDescription'];
+        for (const o of appDescriptionOpps) lines.push(`${o.bfoUrl}\t${o.description}`);
+        const block = lines.join('\n');
+        const fullPrompt = `${appDescriptionPrompt}\n\n${block}`;
+        const onCopy = async () => {
+          try {
+            await navigator.clipboard.writeText(withBfoActivitySuffix(fullPrompt));
+            setAppDescriptionCopyFlash('Copied!');
+          } catch {
+            setAppDescriptionCopyFlash('Copy failed');
+          }
+          window.setTimeout(() => setAppDescriptionCopyFlash(''), 1500);
+        };
+        return (
+          <section className={styles.section}>
+            <h2 className={styles.sectionHeader}>
+              AI Prompt (Application Description)
+              <span className={styles.sectionCount}>{appDescriptionOpps.length}</span>
+            </h2>
+            <p className={styles.subnote}>
+              BFO Stage 5 and 6 opps that are in Contracting or Agreement Sent on the Opps tab and have a blank Application Description. The Description to enter is the opp&rsquo;s Scope. Join key is BFO Opportunity Name.
+              {appDescriptionResult.hasAppDescCol
+                ? ' Application Description comes from the BFO Activity tab: paste fresh rows there if the list looks stale.'
+                : ' The BFO Activity paste has no Application Description column, so every matching opp is listed and the assistant checks the field itself. Add that column to the BFO list view to narrow this to the blank ones.'}
+            </p>
+            {revealedPrompts.appDescription && (
+              <textarea
+                className={styles.aiPromptInput}
+                value={appDescriptionPrompt}
+                onChange={(e) => updateAppDescriptionPrompt(e.target.value)}
+                rows={8}
+                spellCheck={false}
+              />
+            )}
+            <div className={styles.aiPromptControls}>
+              <button type="button" className={styles.aiPromptBtn} onClick={onCopy}>Copy full prompt</button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('appDescription')}>
+                {revealedPrompts.appDescription ? 'Hide prompt' : 'Edit prompt'}
+              </button>
+              {revealedPrompts.appDescription && (
+                <button type="button" className={styles.aiPromptBtnGhost} onClick={resetAppDescriptionPrompt}>Reset to default</button>
+              )}
+              {appDescriptionCopyFlash && <span className={styles.copyFlash}>{appDescriptionCopyFlash}</span>}
+            </div>
+            <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Opportunity Name</th>
+                    <th>Account</th>
+                    <th>Opps Stage</th>
+                    <th>BFO Stage</th>
+                    <th>Description to enter</th>
+                    <th style={{ width: 70 }}>BFO Link</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {appDescriptionOpps.length === 0 ? (
+                    <tr className={styles.emptyRow}>
+                      <td colSpan={6}>No Stage 5 or 6 opps in Contracting or Agreement Sent are missing an Application Description.</td>
+                    </tr>
+                  ) : appDescriptionOpps.map(o => (
+                    <tr key={o.id}>
+                      <td>{o.name}</td>
+                      <td className={o.account ? '' : styles.muted}>{o.account || '-'}</td>
+                      <td>{o.oppsStage}</td>
+                      <td>{o.bfoStage}</td>
+                      <td className={o.description ? '' : styles.muted}>{o.description || 'No Scope on the Opps row'}</td>
                       <td>
                         <a href={o.bfoUrl} target="_blank" rel="noreferrer" className={styles.bfoLink}>Open</a>
                       </td>

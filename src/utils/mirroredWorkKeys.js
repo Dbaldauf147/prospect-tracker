@@ -29,7 +29,7 @@ export const CONTRACT_SERVICES_EVENT = 'contract-services-changed';
 
 const GROUPS = [
   {
-    // The Agents tab. The eleven AI prompts are the ones worth having here —
+    // The Agents tab. The twelve AI prompts are the ones worth having here —
     // a rewritten prompt on one machine and the stock wording on the other
     // means the same button does two different things. The four decision
     // lists below them are the same class of thing: which recipients,
@@ -42,6 +42,7 @@ const GROUPS = [
       'agents-ai-prompt-close-dates',
       'agents-ai-prompt-amount-updates',
       'agents-ai-prompt-stage-change',
+      'agents-ai-prompt-app-description',
       'agents-ai-prompt-close-not-solds',
       'agents-ai-prompt-update-bfo-activity',
       'agents-ai-prompt-bfo-prep',
