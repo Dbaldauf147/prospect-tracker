@@ -19,8 +19,9 @@
 // `companySiteLists.<slug>` path) are routed here.
 
 import {
-  collection, doc, deleteDoc, deleteField, getDoc, getDocs, onSnapshot, runTransaction, setDoc, updateDoc,
+  collection, doc, deleteDoc, deleteField, getDoc, getDocs, runTransaction, setDoc, updateDoc,
 } from 'firebase/firestore';
+import { onSnapshot } from './safeOnSnapshot';
 import { db } from '../firebase';
 import {
   dottedFieldEntries, restDeleteDoc, restGetDoc, restListDocs, restSetDoc, restUpdateFields,

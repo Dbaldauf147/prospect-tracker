@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc } from 'firebase/firestore';
+import { onSnapshot } from '../../utils/safeOnSnapshot';
 import { db } from '../../firebase';
 import { DataTable } from '../common/DataTable';
 import { logAction } from '../../utils/auditLog';

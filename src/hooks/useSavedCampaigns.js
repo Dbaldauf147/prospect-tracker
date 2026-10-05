@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc } from 'firebase/firestore';
+import { onSnapshot } from '../utils/safeOnSnapshot';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { matchedSubject, primarySubject } from '../utils/campaignSubjects';
