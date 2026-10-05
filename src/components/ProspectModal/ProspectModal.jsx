@@ -37,6 +37,8 @@ import { CoverageMark } from '../common/CoverageMark';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { CITY_OPTIONS, matchCities, getStateForCity, lookupStateForCity } from '../../data/cities';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
+import { prwEmailEml } from '../../utils/prwRequestEmail';
+import { downloadDrafts, resolveSignature, safeFileName } from '../../utils/draftEmail';
 import { useAuth } from '../../contexts/AuthContext';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { nameFromEmail } from '../../utils/nameFromEmail';
@@ -9669,6 +9671,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   onClick={(e) => { e.stopPropagation(); setServicesEditMode(m => !m); }}
                   style={{ marginLeft: '0.4rem', padding: '0.15rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', background: servicesEditMode ? '#FEF3C7' : 'var(--color-surface)', fontSize: '0.62rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: servicesEditMode ? '#92400E' : 'var(--color-text-muted)' }}
                 >{servicesEditMode ? 'Done Editing' : 'Edit Services'}</button>
+                {/* The PRW (Pricing Request Workbook) email, the same draft the
+                    Scope board's button downloads, with this company as the
+                    customer. */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const company = String(fields.company || '').trim();
+                    const eml = prwEmailEml({ customerName: company, signature: resolveSignature(settings, isAdmin) });
+                    downloadDrafts([{ fileName: `${safeFileName(`PRW ${company}`.trim())}.eml`, eml }]);
+                  }}
+                  title="Download the Pricing Request Workbook email to SB Price and Tendering Support as an Outlook draft, with this company as the customer."
+                  style={{ marginLeft: '0.4rem', padding: '0.15rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', background: 'var(--color-surface)', fontSize: '0.62rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text-muted)' }}
+                >Draft PRW email</button>
                 {servicesOpen && (
                   <div
                     onClick={e => e.stopPropagation()}
