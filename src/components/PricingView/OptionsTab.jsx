@@ -222,6 +222,24 @@ function OptionPanel({ opt, onChange, savedToLabel, onClickSave, onClearSave }) 
     .filter(r => (r.type || '').toLowerCase() === 'setup')
     .reduce((s, r) => s + (toNum(r.fee) || 0) * unitCountOrOne(r.unitCount), 0);
 
+  // Recurring run-rate per contract year: the monthly bill of every
+  // Recurring row that has started by the end of that year, escalated
+  // to that year, plus the same figure annualised (x12). Setup and One
+  // Time rows are left out so this reads as the ongoing subscription.
+  const recurringByYear = Array.from({ length: termYears }, (_, i) => {
+    const year = i + 1;
+    const yEnd = year * 12;
+    const yearEsc = Math.pow(1 + esc / 100, year - 1);
+    const monthly = opt.rows.reduce((s, r) => {
+      if (!(r.type || '').toLowerCase().startsWith('recurring')) return s;
+      const fee = toNum(r.fee);
+      const startMonth = toNum(r.startMonth);
+      if (fee == null || startMonth == null || startMonth < 1 || startMonth > yEnd) return s;
+      return s + fee * unitCountOrOne(r.unitCount) * yearEsc;
+    }, 0);
+    return { monthly, annual: monthly * 12 };
+  });
+
   // Year 1 monthly fee breakdown (12 numbers + a year-end total). Each
   // entry is the sum across every row in this option for that contract
   // month. Drives the per-month strip below the grid.
@@ -407,6 +425,27 @@ function OptionPanel({ opt, onChange, savedToLabel, onClickSave, onClearSave }) 
                 <tr key={`yb-${i}`}>
                   <td>Year {i + 1}</td>
                   <td className={styles.numCell}>{fmtMoneyWhole(yearTotals[i] || 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className={styles.summaryBlock}>
+          <div className={styles.summaryHeader}>Recurring Breakdown</div>
+          <table className={styles.summaryTable}>
+            <thead>
+              <tr>
+                <th />
+                <th className={styles.numCell}>Monthly</th>
+                <th className={styles.numCell}>Annual</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recurringByYear.map((r, i) => (
+                <tr key={`rb-${i}`}>
+                  <td>Year {i + 1}</td>
+                  <td className={styles.numCell}>{fmtMoneyWhole(r.monthly)}</td>
+                  <td className={styles.numCell}>{fmtMoneyWhole(r.annual)}</td>
                 </tr>
               ))}
             </tbody>
