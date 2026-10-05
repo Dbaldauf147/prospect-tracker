@@ -5100,6 +5100,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   //     which would otherwise surface a regulated state as an opportunity.
   //   * International — the country reference decides, since the
   //     utility-name heuristics are keyed off US naming patterns.
+  //     A site in a competitive state with no utility and no supplier on
+  //     file counts as Deregulated on the state alone.
   //   * Neither a US/CA state nor a recognized country — null (Unknown).
   //     These are exactly the rows the by-state export skips.
   //
@@ -5126,25 +5128,25 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const supplier = commodity === 'electric' ? row.__electricSupplier__ : row.__gasSupplier__;
     if (supplier || classifyUtility(provider) === 'Deregulated') return 'Deregulated';
     // Competitive state, but nothing on file to say which side of it this
-    // site sits on: no utility and no supplier. Unknown rather than
-    // Regulated — the state says there's an opportunity here, we just
-    // can't confirm it per site until a utility file is loaded.
-    if (!provider) return null;
+    // site sits on: no utility and no supplier. The state decides: it
+    // allows supplier choice, so the site counts as Deregulated and carries
+    // savings like any other. It used to read Unknown here, which held
+    // every site of an upload without a utility column out of the savings
+    // basis and left the Master Analysis at $0 on a portfolio that was
+    // mostly in competitive states. Only a utility on file that the
+    // classifier places on a regulated tariff (a municipal, a coop) takes
+    // the site back out.
+    if (!provider) return 'Deregulated';
     return 'Regulated';
   }
 
   // classifyMarket as a label that is never blank, for the Market column
-  // and the Site Detail export. A competitive state with no utility or
-  // supplier on file says so, rather than a bare Unknown: the state is
-  // known to allow supplier choice, only the site's utility is missing.
-  // Unknown is left for a site with no state and no recognized country.
+  // and the Site Detail export. Unknown is left for a site with no state
+  // and no recognized country; a competitive state with no utility on file
+  // reads Deregulated, and the Market cell's tooltip says it was the state
+  // that decided (see marketBasis).
   function marketLabel(row, commodity) {
-    const classification = classifyMarket(row, commodity);
-    if (classification) return classification;
-    const state = effectiveStateCode(row);
-    const map = commodity === 'electric' ? ELECTRIC_DEREGULATION : GAS_DEREGULATION;
-    if (state && map[state]) return 'Deregulated State (Missing Utility)';
-    return 'Unknown';
+    return classifyMarket(row, commodity) || 'Unknown';
   }
 
   // Plain-English account of which clause above decided the row, for the
@@ -5163,7 +5165,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const supplier = commodity === 'electric' ? row.__electricSupplier__ : row.__gasSupplier__;
     if (supplier) return `${state} is a competitive market · supplier on file: ${supplier}`;
     if (provider) return `${state} is a competitive market · utility: ${provider}`;
-    return `${state} is a competitive market, but this site has no utility or supplier on file to confirm it.`;
+    return `${state} is a competitive market. No utility or supplier on file, so the site is counted as deregulated on the state.`;
   }
 
   // Detect a company column on the uploaded sites sheet so we can
@@ -6696,7 +6698,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // Strip characters that browsers / OSes reject in download file names
   // and collapse the leftover whitespace.
   function sanitizeFileNamePart(s) {
-    return String(s).replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
+    // \x22 is the double quote, spelled out so the no-em-dash scan (which
+    // does not parse regex literals) doesn't read it as a string opening.
+    return String(s).replace(/[\\/:*?\x22<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
   }
 
   // Tag an export's file name with the active division. The exports that
@@ -7355,13 +7359,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             countryRegRateOpportunity,
             totalSites: 0,
             deregulatedSites: 0,
-            // Sites the classifier couldn't place: in this bucket's
-            // competitive market, but with no utility and no supplier on
-            // file to say which side of it they sit on. They count in
-            // Total Sites and never in Deregulated Sites, so without a
-            // column of their own the two don't reconcile and the gap
-            // reads as "no opportunity here" rather than "we can't see it
-            // yet". See the Market card's Unknown rows for the same split.
+            // Sites the classifier couldn't place. They count in Total
+            // Sites and never in Deregulated Sites, so without a column of
+            // their own the two don't reconcile. A competitive state with
+            // no utility on file no longer lands here (classifyMarket
+            // counts it Deregulated on the state), so this stays 0 for
+            // every bucket today and the column only shows if that changes.
             unknownSites: 0,
             // Sites in this bucket the upload marked Leased. They are
             // listed and counted like any other site; what they never do
@@ -12010,9 +12013,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // the name didn't match a municipal / coop pattern.
         const isUSSite = /^(united states|usa|us)$/i.test(rawCountry);
         const isCASite = /^(canada|ca)$/i.test(rawCountry);
-        // Never blank: a competitive state with no utility or supplier on
-        // file reads Deregulated State (Missing Utility), and a site with
-        // no state or country Unknown. See marketLabel.
+        // Never blank: a site with no state or country reads Unknown. See
+        // marketLabel.
         const electricMarket = marketLabel(r, 'electric');
         const gasMarket = marketLabel(r, 'gas');
         // ISO / RTO market for the site, resolved the same fine way as the
