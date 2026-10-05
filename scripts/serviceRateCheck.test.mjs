@@ -4,7 +4,7 @@
 //   node scripts/serviceRateCheck.test.mjs
 
 import assert from 'node:assert/strict';
-import { rateCardCheck, year1CostOf, RATE_CHECK, siaCountsFor, priceCheckCounts, checkPartOf, feeUnitCountsFor, componentForFeeUnit } from '../src/utils/serviceRateCheck.js';
+import { rateCardCheck, year1CostOf, RATE_CHECK, siaCountsFor, priceCheckCounts, checkPartOf, feeUnitCountsFor, componentForFeeUnit, lineFeeCounts, priceCheckCountsWithLines } from '../src/utils/serviceRateCheck.js';
 
 let failed = 0;
 function test(name, fn) {
@@ -581,6 +581,17 @@ test('a line takes its fee component from the unit of the structure fee it goes 
   // Pass-through lines take the fee's model.
   assert.equal(componentForFeeUnit({ ...monthly, passThrough: true }, 'Per Account', choices), 'pass:per_account');
   assert.equal(componentForFeeUnit({ ...monthly, passThrough: true }, 'Fixed', choices), 'pass:fixed');
+});
+
+
+test('line counts: fee counts and the counts the range prices on', () => {
+  assert.equal(lineFeeCounts({}), null);
+  assert.deepEqual(lineFeeCounts({ accounts: 95, sites_mandate: 4, sites: 9 }), { accountCount: 95, siteCount: 4 });
+  const counts = { accounts: 519, sites: 30 };
+  assert.equal(priceCheckCountsWithLines(counts, [{ lineCounts: {} }]), counts);
+  assert.deepEqual(priceCheckCountsWithLines(counts, [{ lineCounts: { accounts: 95 } }, { lineCounts: {} }]), { accounts: 519, sites: 30 });
+  assert.deepEqual(priceCheckCountsWithLines(counts, [{ lineCounts: { accounts: 95 } }, { lineCounts: { accounts: 11 } }]), { accounts: 95, sites: 30 });
+  assert.deepEqual(priceCheckCountsWithLines({}, [{ lineCounts: { meters: 40 } }]), { meters: 40 });
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

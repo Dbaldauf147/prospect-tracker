@@ -74,7 +74,7 @@ const STATUS_CLASS = {
 //                   price check ('' puts it back on Auto)
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
-  onSetCount, onIgnoreForCheck, onSetFeeComponent, feeStructures = {}, setFeeStructures, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough, onSetUnit,
+  onSetCount, onSetLineCount, onIgnoreForCheck, onSetFeeComponent, feeStructures = {}, setFeeStructures, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough, onSetUnit,
   unlinked = null, tagOptions = [], onTagLineItem, onMoveLineItem, onIgnoreLineItem, sharedToSplit = [], onSplitCostLine, onKeepShared, onPickItemServices, onSetCompleted, completedServices = [], globalGmPct = null,
 }) {
   const [query, setQuery] = useState('');
@@ -297,6 +297,7 @@ export function ServicesTab({
               dthCount={feeUnitCountsFor(detail).dthCount ?? opt?.dthCount}
               onOpenLinkedTo={onOpenLinkedTo}
               onSetCount={onSetCount ? (key, value) => onSetCount(current.name, key, value) : null}
+              onSetLineCount={onSetLineCount || null}
               onIgnoreForCheck={onIgnoreForCheck ? (itemId, on) => onIgnoreForCheck(current.name, itemId, on) : null}
               onSetFeeComponent={onSetFeeComponent ? (itemId, id) => onSetFeeComponent(current.name, itemId, id) : null}
               globalGmPct={globalGmPct}
@@ -626,7 +627,7 @@ function feeUnitNoun(unit) {
   return u && u.toLowerCase() !== 'fixed' ? u.toLowerCase() : 'unit';
 }
 
-function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted, detail: standardDetail, detailForStructure = null, hasWorkbook, optionName, optionCtsTotal = 0, numYears, termMonths, siteCount, accountCount, kwhCount, dthCount, onOpenLinkedTo, onSetCount, onIgnoreForCheck, onSetFeeComponent, saved, setSaved, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough, onSetUnit, moveTargets = [], onMoveItem = null, onOpenService }) {
+function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted, detail: standardDetail, detailForStructure = null, hasWorkbook, optionName, optionCtsTotal = 0, numYears, termMonths, siteCount, accountCount, kwhCount, dthCount, onOpenLinkedTo, onSetCount, onSetLineCount = null, onIgnoreForCheck, onSetFeeComponent, saved, setSaved, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough, onSetUnit, moveTargets = [], onMoveItem = null, onOpenService }) {
   const structures = saved?.structures || [];
   const standardId = saved?.standardId || null;
   // Which saved fee structure is open. Opens on the standard one, and falls
@@ -656,6 +657,18 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
   // Two lines alike in both (rare) can't be told apart, so they go together.
   const lc = (v) => String(v ?? '').trim().toLowerCase();
   const sameLine = (a, b) => lc(a.description) === lc(b.description) && lc(a.siaType) === lc(b.siaType);
+  // A line's counts are its own, except a deal size: that one is the
+  // deal's, so it stays the service's (typed on any line, shown on all).
+  const lineEntered = (it) => {
+    const own = { ...(it.lineCounts || {}) };
+    delete own.dealSize;
+    const deal = detail?.enteredCounts?.dealSize;
+    return typeof deal === 'number' ? { ...own, dealSize: deal } : own;
+  };
+  const setLineCount = (it, key, value) => {
+    if (key === 'dealSize') onSetCount?.(key, value);
+    else onSetLineCount?.(it.id, key, value);
+  };
   function moveItem(it, to) {
     if (!onMoveItem || !to) return;
     const count = items.filter(x => sameLine(x, it)).length;
@@ -1013,16 +1026,18 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                             {it.unit && !lineUnitOptions.includes(it.unit) && <option value={it.unit}>{it.unit}</option>}
                           </select>
                         ) : it.unit}
-                        {/* The counts the price check prices on (the SIA's, or
-                            typed), shown against the lines they price. They are
-                            this service's own, so every line shows the same boxes. */}
-                        {hasWorkbook && onSetCount && detail?.rateCheck && !it.ignored && (
+                        {/* The counts this line is priced on: its own when
+                            one is typed, else the service's (the SIA's, or one
+                            typed before lines kept their own). Typing one
+                            changes this line alone. */}
+                        {hasWorkbook && (onSetLineCount || onSetCount) && detail?.rateCheck && !it.ignored && (
                           <CheckCounts
                             missing={detail.rateCheck.missing}
                             used={detail.rateCheck.unitsUsed}
-                            entered={detail.enteredCounts}
+                            entered={onSetLineCount ? lineEntered(it) : detail.enteredCounts}
+                            fallback={onSetLineCount ? (detail.counts || {}) : null}
                             fromSia={detail.fromSia}
-                            onSetCount={onSetCount}
+                            onSetCount={onSetLineCount ? (key, value) => setLineCount(it, key, value) : onSetCount}
                           />
                         )}
                       </td>
@@ -1712,12 +1727,16 @@ function EnergyVolume({ kwhCount, dthCount, rates }) {
 // sites w/ mandate) shows as the box's grey placeholder: blank means the
 // SIA's, and a typed number overrides it until "Use SIA" clears it.
 // Shown in the Unit column of the cost line table, one count per line.
-function CheckCounts({ missing = [], used = [], entered = {}, fromSia = {}, onSetCount }) {
+//
+// With `fallback` (the service's counts) the boxes are one line's own: the
+// placeholder is the count the line is on until one is typed, and the
+// reset puts the line back on it.
+function CheckCounts({ missing = [], used = [], entered = {}, fallback = null, fromSia = {}, onSetCount }) {
   const fields = [...missing];
   const add = (key) => {
     if (!fields.some(f => f.key === key)) fields.push({ key, label: key === 'dealSize' ? 'Deal size' : unitLabelFor(key) });
   };
-  for (const key of used) if (fromSia[key] != null) add(key);
+  for (const key of used) if (fromSia[key] != null || (fallback && typeof fallback[key] === 'number')) add(key);
   for (const key of Object.keys(entered)) if (used.includes(key)) add(key);
   if (fields.length === 0) return null;
   return (
@@ -1726,6 +1745,34 @@ function CheckCounts({ missing = [], used = [], entered = {}, fromSia = {}, onSe
         const isMoney = f.key === 'dealSize';
         const v = entered[f.key];
         const siaV = fromSia[f.key];
+        const baseV = fallback && typeof fallback[f.key] === 'number' ? fallback[f.key] : siaV;
+        const baseFromSia = baseV === siaV;
+        if (fallback && f.key !== 'dealSize') {
+          return (
+            <label key={f.key} className={styles.countField}>
+              {f.label}
+              <DraftInput
+                value={typeof v === 'number' ? (isMoney ? fmtPlain(v) : String(v)) : ''}
+                placeholder={isMoney ? (baseV != null ? fmtPlain(baseV) : '$') : (baseV != null ? String(baseV) : 'Enter')}
+                align="right"
+                width={isMoney ? 110 : 72}
+                className={`${styles.cellInput} ${v == null && baseV == null ? styles.countNeeded : ''}`}
+                title="This line's own count. Each line keeps its own, and its cost is priced per unit on it."
+                onCommit={(raw) => {
+                  const n = isMoney ? parseMoney(raw) : parseCount(raw);
+                  if (n !== undefined) onSetCount(f.key, n);
+                }}
+              />
+              {typeof v === 'number' && v !== baseV
+                ? (
+                  <button type="button" className={styles.linkBtn} onClick={() => onSetCount(f.key, null)} title={baseV != null ? `Clear this line's count and use ${baseV.toLocaleString('en-US')}${baseFromSia ? ', the SIA\'s' : ''}.` : "Clear this line's count."}>
+                    {baseV != null ? `${baseFromSia ? 'Use SIA' : 'Reset'} (${baseV.toLocaleString('en-US')})` : 'Clear'}
+                  </button>
+                )
+                : (typeof v === 'number' ? null : <span className={styles.subNote}>{baseV == null ? '' : (baseFromSia ? 'from SIA' : 'service count')}</span>)}
+            </label>
+          );
+        }
         return (
           <label key={f.key} className={styles.countField}>
             {f.label}
@@ -1875,7 +1922,7 @@ function FeeStructureTabs({ structures, standardId, view, setView, onAdd }) {
 
 // Text / number cell that commits on blur or Enter, so a half-typed value
 // isn't parsed on every keystroke.
-function DraftInput({ value, onCommit, placeholder, align, className, list, width }) {
+function DraftInput({ value, onCommit, placeholder, align, className, list, width, title }) {
   const [draft, setDraft] = useState(null);
   const shown = draft ?? (value ?? '');
   return (
@@ -1884,6 +1931,7 @@ function DraftInput({ value, onCommit, placeholder, align, className, list, widt
       style={{ textAlign: align || 'left', width }}
       value={shown}
       placeholder={placeholder}
+      title={title}
       list={list}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => { if (draft !== null) { onCommit(draft); setDraft(null); } }}
@@ -2093,8 +2141,14 @@ function FeeStructureEditor({
                     placeholder={p?.alt ? String(p.alt.unitCount) : 'auto'}
                     align="right"
                     width={isUsageUnit(r.unit) ? 84 : 56}
+                    title={std.perRow[idx]?.mixedUnits && r.unitCount == null
+                      ? `The lines on this fee are on different counts (${std.perRow[idx].mixedUnits.map(n => n.toLocaleString('en-US')).join(', ')}). Each line's cost is priced per unit on its own count, those add up to the fee, and it bills on the largest.`
+                      : undefined}
                     onCommit={(v) => { const n = parseCount(v); if (n !== undefined) setRow(idx, { unitCount: n }); }}
                   />
+                  {std.perRow[idx]?.mixedUnits && r.unitCount == null && (
+                    <div className={styles.subNote}>Lines on {std.perRow[idx].mixedUnits.map(n => n.toLocaleString('en-US')).join(' / ')}</div>
+                  )}
                 </td>
                 <td className={styles.num}>
                   <DraftInput

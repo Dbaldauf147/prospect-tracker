@@ -339,6 +339,36 @@ test('cost line picks left in the shared mapping are ignored', () => {
   assert.deepEqual(costItemsForService(items, lineItemServicesOnOption({}, legacy), 'GHG'), []);
 });
 
+test('each cost line is priced on its own unit count', () => {
+  const rows = [{ feeName: 'Per account monthly', type: 'Recurring (monthly)', unit: 'Per Account' }];
+  const lines = [
+    { description: 'Invoice Collection', type: 'Recurring (monthly)', price: 950, startMonth: 1, feeName: 'Per account monthly', unitCounts: { accountCount: 95 } },
+    { description: 'RA Utility Data', type: 'Recurring (monthly)', price: 519, startMonth: 1, feeName: 'Per account monthly' },
+  ];
+  const ctx = standardFeeContext({ rows }, lines, { termMonths: 12, accountCount: 519 });
+  // 950 / 95 + 519 / 519 = 10 + 1 per account
+  assert.equal(ctx.standardFee(0), 11);
+  assert.equal(ctx.std.perRow[0].unitCount, 519);
+  assert.deepEqual(ctx.std.perRow[0].mixedUnits, [95, 519]);
+  assert.equal(ctx.filled.rows[0].unitCount, 519);
+  // All lines on 95: the fee bills on 95, not the SIA's 519.
+  const both = lines.map(l => ({ ...l, unitCounts: { accountCount: 95 } }));
+  const c2 = standardFeeContext({ rows }, both, { termMonths: 12, accountCount: 519 });
+  assert.equal(c2.filled.rows[0].unitCount, 95);
+  assert.equal(c2.std.perRow[0].mixedUnits, null);
+  // No line counts: unchanged, (950 + 519) / 519, Unit Count left blank.
+  const c3 = standardFeeContext({ rows }, lines.map(({ unitCounts: _u, ...l }) => l), { termMonths: 12, accountCount: 519 });
+  assert.equal(c3.standardFee(0), Math.round((1469 / 519) * 100) / 100);
+  assert.equal(c3.filled.rows[0].unitCount, undefined);
+  // A Unit Count typed on the structure row wins over the lines'.
+  const c4 = standardFeeContext({ rows: [{ ...rows[0], unitCount: 100 }] }, lines, { termMonths: 12, accountCount: 519 });
+  assert.equal(c4.standardFee(0), 14.69);
+  assert.equal(c4.filled.rows[0].unitCount, 100);
+  // A Fixed fee ignores line counts.
+  const c5 = standardFeeContext({ rows: [{ ...rows[0], unit: 'Fixed' }] }, lines, { termMonths: 12, accountCount: 519 });
+  assert.equal(c5.standardFee(0), 1469);
+});
+
 test('cost totals group cost lines by description', () => {
   const t = costTotalsByLineItem([
     { description: 'Setup', cts: 100 }, { description: 'setup ', cts: 50 }, { description: 'Other', cts: null }, { description: '' },
