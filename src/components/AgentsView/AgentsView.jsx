@@ -172,6 +172,18 @@ function withMarketingLeadsSafety(prompt) {
   return text ? `${text}\n\n${MARKETING_LEADS_SAFETY_RULES}` : MARKETING_LEADS_SAFETY_RULES;
 }
 
+// Appended to the Application Description prompt when it rides in the
+// Copy-all bundle, whatever the user has edited the prompt to say. The
+// data block already leaves out opps whose company has no contracting
+// info, but the assistant should never fill the field from guesswork if
+// one slips through or it finds others on its own.
+const APP_DESCRIPTION_SKIP_RULE = `Skip any opportunity that does not have both a Contracting Entity and a Contracting Entity Address listed below. Do not open or edit it, leave its Application Description as it is, and mark it as skipped (missing contracting information) in the summary table.`;
+
+function withAppDescriptionSkipRule(prompt) {
+  const text = String(prompt || '').trim();
+  return text ? `${text}\n\n${APP_DESCRIPTION_SKIP_RULE}` : APP_DESCRIPTION_SKIP_RULE;
+}
+
 // The one prompt that pulls INTO the tracker. Every other Marketing
 // Leads prompt reads the leads already saved on the Contacts page, so a
 // lead sitting in Salesforce but not in the tracker is invisible to all
@@ -3397,7 +3409,7 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
       { title: 'Close Dates', prompt: closeDatesPrompt, block: closeDatesBlock, hasData: closeDateOpps.length > 0 },
       { title: 'Amount Updates', prompt: amountUpdatesPrompt, block: amountBlock, hasData: amountUpdateOpps.length > 0 },
       { title: 'Stage Change', prompt: stageChangePrompt, block: stageBlock, hasData: stageChangeOpps.length > 0 },
-      { title: 'Application Description', prompt: appDescriptionPrompt, block: appDescBlock, hasData: appDescriptionReady.length > 0 },
+      { title: 'Application Description', prompt: withAppDescriptionSkipRule(appDescriptionPrompt), block: appDescBlock, hasData: appDescriptionReady.length > 0 },
       { title: 'Close Not Solds', prompt: closeNotSoldsPrompt, block: closeNotSoldBlock, hasData: closeNotSoldLines.length > 1 },
       // Import Marketing Leads leads the three lead sections: it is the only
       // one that pulls new leads in from Salesforce, and the ones below can
