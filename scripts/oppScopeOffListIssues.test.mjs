@@ -2,7 +2,7 @@
 // opp whose Scope names a service the Dropdowns tab's services list doesn't
 // have. Plain Node, no test framework (the project has none). Run:
 //   node scripts/oppScopeOffListIssues.test.mjs
-import { oppScopeOffList, remapScopeService, scopeRemapPatches, suggestServiceMatch, rankServiceMatches, addIgnoredScopeServices, removeIgnoredScopeService } from '../src/utils/oppScopeOffList.js';
+import { oppScopeOffList, remapScopeService, scopeRemapPatches, suggestServiceMatch, rankServiceMatches, addIgnoredScopeServices, removeIgnoredScopeService, serviceAliasNotePatches } from '../src/utils/oppScopeOffList.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -62,6 +62,29 @@ eq(oppScopeOffList(records, null, ['Carbon Thing']).length, 0, 'an ignore list a
 eq(addIgnoredScopeServices(['Foo'], ['foo', 'Bar', ' ']), ['Foo', 'Bar'], 'adding dedupes case-insensitively and skips blanks');
 eq(addIgnoredScopeServices(undefined, ['Foo']), ['Foo'], 'adding to no list starts one');
 eq(removeIgnoredScopeService(['Foo', 'Bar'], 'foo'), ['Bar'], 'removing matches case-insensitively');
+
+// ---- Old name noted on the company's service ----
+{
+  const recs = [
+    { _id: 'n1', Account: 'Acme Inc', Scope: 'GHG, Carbon Thing' },
+    { _id: 'n2', Account: 'Beta', Scope: 'Typo Svc' },
+    { _id: 'n3', Account: 'Nobody', Scope: 'Carbon Thing' },
+  ];
+  const remaps = [{ from: 'Carbon Thing', to: ['GHG', 'Budgets'] }, { from: 'Typo Svc', to: ['Budgets'] }];
+  const patches = scopeRemapPatches(recs, remaps, knownServices);
+  const prospectsById = new Map([
+    ['p1', { id: 'p1', company: 'Acme', serviceNotes: { GHG: 'Existing note' } }],
+    ['p2', { id: 'p2', company: 'Beta', serviceNotes: { Budgets: 'Previously listed as "Typo Svc"' } }],
+  ]);
+  const idFor = (a) => ({ 'Acme Inc': 'p1', Beta: 'p2' })[a] ?? null;
+  const out = serviceAliasNotePatches(recs, remaps, patches, knownServices, idFor, prospectsById);
+  eq(out, [{ id: 'p1', serviceNotes: {
+    GHG: 'Existing note\nPreviously listed as "Carbon Thing"',
+    Budgets: 'Previously listed as "Carbon Thing"',
+  } }], 'old name appended to each target service note; an already-noted name and an unknown company are skipped');
+  eq(serviceAliasNotePatches(recs, [{ from: 'carbon thing', to: ['Carbon Thing'] }], { n1: { Scope: 'x' } }, knownServices, idFor, prospectsById), [], 'a case-only fix adds no note');
+  eq(serviceAliasNotePatches(recs, remaps, scopeRemapPatches(recs, remaps, knownServices, ['n2']), knownServices, idFor, prospectsById), [], 'only the rewritten opps\' companies are touched');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

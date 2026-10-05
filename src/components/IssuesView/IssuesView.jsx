@@ -11,7 +11,8 @@ import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { lookupCloseNotSold, reasonOptionsForCompetition, hasCloseNotSoldRules } from '../../data/closeNotSoldRules';
 import { BfoCloseOutPreview } from '../BfoCloseOutPreview';
 import { setOppField, loadOpps2Newest, bulkSetOppFields } from '../../utils/opps2Store';
-import { scopeRemapPatches, suggestServiceMatch, rankServiceMatches, addIgnoredScopeServices, removeIgnoredScopeService } from '../../utils/oppScopeOffList';
+import { normalizeBfoCompany } from '../../utils/newBfoOpps';
+import { scopeRemapPatches, serviceAliasNotePatches, serviceAliasNoteLine, suggestServiceMatch, rankServiceMatches, addIgnoredScopeServices, removeIgnoredScopeService } from '../../utils/oppScopeOffList';
 import { buildOppNumberMap } from '../../utils/oppNumbers';
 import { buildResolution, resolutionKind } from './issueResolutionSpecs';
 import { IssueResolutionModal } from './IssueResolution';
@@ -373,6 +374,8 @@ function Highlight({ text, term }) {
 // a corrected spelling. When the opp ends up naming something other than
 // what it names now, the other opps naming the same thing are rewritten
 // too unless that box is unticked, so one fix clears every row it caused.
+// Mapping also notes the old name on each rewritten opp's company, under
+// the service it now names (serviceAliasNotePatches).
 // Ignore leaves the opps alone and stops flagging the name(s) on any opp.
 function ServiceFixModal({ row, services, retired, otherCounts, saving, error, onSave, onIgnore, onClose }) {
   const off = row.scopeFix?.off || [];
@@ -483,6 +486,11 @@ function ServiceFixModal({ row, services, retired, otherCounts, saving, error, o
                     {c.targets.length > 1 && (
                       <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: 4 }}>
                         The Scope lists all {c.targets.length} in place of <strong>{c.name}</strong>.
+                      </div>
+                    )}
+                    {c.targets.some(t => t.toLowerCase() !== c.name.toLowerCase()) && (
+                      <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: 4 }}>
+                        Adds <em>{serviceAliasNoteLine(c.name)}</em> to the company&apos;s notes for {c.targets.length === 1 ? 'that service' : 'each service'}.
                       </div>
                     )}
                   </div>
@@ -784,6 +792,19 @@ export function IssuesView({ prospects = [], cdmName, settings, updateSettings, 
         const known = [...(knownServices || serviceOptions), ...adds];
         const patches = scopeRemapPatches(data.records, remaps, known, allOpps ? null : [fix.oppId]);
         await bulkSetOppFields(user?.uid, patches);
+        // Keep the old name on each company's note for the service it now
+        // names, so a search for what the deal used to say still finds it.
+        const idByNorm = new Map();
+        for (const p of prospects) {
+          const k = normalizeBfoCompany(p.company);
+          if (k && !idByNorm.has(k)) idByNorm.set(k, p.id);
+        }
+        const notePatches = serviceAliasNotePatches(
+          data.records, remaps, patches, known,
+          (account) => idByNorm.get(normalizeBfoCompany(account)) ?? null,
+          prospectById,
+        );
+        for (const { id, serviceNotes } of notePatches) await updateProspect?.(id, { serviceNotes });
       }
       setFixingRow(null);
     } catch (err) {
