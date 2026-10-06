@@ -10426,7 +10426,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // Sites count next to Deregulated Sites, and the savings-eligible
     // spend next to the full deregulated spend. The Savings Status column
     // is always present, hence the +1 over the old width.
-    const SPAN = 27 + (showUnknownColumn ? 1 : 0) + (showLeasedColumns ? 2 : 0) + (contractCoverage ? 1 : 0);
+    const SPAN = 27 + (showUnknownColumn ? 1 : 0) + (showLeasedColumns ? 2 : 0);
     const widths = [
       22, 14, 11, 13,                     // ST/Prov/Country..Deregulated Sites (4)
       ...(showUnknownColumn ? [15] : []), // Unclassified Sites (1)
@@ -10437,7 +10437,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       13,                                // Low % (1)
       13,                                // High % (1)
       11,                                // Savings % (1)
-      ...(contractCoverage ? [16] : []), // Broker Fee Savings (1)
       16, 14, 14, 14, 14, 14,            // Annual Savings + Year 1-5 (6)
       24, 24, 14, 14,                    // Utility/Supplier/Contract Start/End (4)
       4,                                 // spacer (1)
@@ -10554,7 +10553,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           : '')
       + (contractCoverage
         ? ' Annual and Year 1–5 savings are taken off the spend each market\'s sites have open to re-sourcing on the Contract Coverage tab: edit a site\'s Agreement Ends date there and these columns follow.'
-          + ' They also include Broker Fee Savings: the difference between each site\'s current broker fee and SE\'s, entered on the Contract Coverage tab (negative, in red, where SE\'s fee is higher).'
+          + ' They also include the broker fee difference: each site\'s current broker fee against SE\'s, entered on the Contract Coverage tab, adds to these figures where SE\'s fee is lower and takes away where it is higher.'
         : '');
     toggleHint.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_TEXT_DARK } };
     toggleHint.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
@@ -10760,22 +10759,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               cell.value = midResult;
             }
           }
-          // Broker Fee Savings = this market's sites' broker savings
-          // against SE in Year 1, off the Contract Coverage tab.
-          else if (c.formulaKind === 'brokerSavings') {
-            const brokerSum = coverageBrokerSum(1, r);
-            const kids = childRangeFor.get(row);
-            if (brokerSum && !row.isParent) {
-              cell.value = { formula: brokerSum, result: 0 };
-              cell.ignoredErrors = { formula: true, formulaRange: true };
-            } else if (kids) {
-              const col = colLetterFor(i + 1);
-              cell.value = { formula: `SUM(${col}${kids[0]}:${col}${kids[1]})`, result: 0 };
-              cell.ignoredErrors = { formula: true, formulaRange: true };
-            } else {
-              cell.value = 0;
-            }
-          }
           // Indicative Annual Savings = Spend × Savings %.
           else if (c.formulaKind === 'annualSavings') {
             const spendRef = cellRef('spend', r);
@@ -10783,9 +10766,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             const midResult = (v && typeof v === 'object' && Number.isFinite(v.mid)) ? Math.round(v.mid) : 0;
             const openRef = coverageOpenSum(1, r);
             const kids = childRangeFor.get(row);
-            // The Broker Fee Savings cell to the left, when the workbook
-            // carries one: added on, so a higher SE fee lowers the total.
-            const brokerRef = cellRef('brokerSavings', r);
+            // This market's broker fee savings against SE in Year 1, off the
+            // Contract Coverage tab: added on, so a higher SE fee lowers
+            // the figure rather than sitting in a column of its own.
+            const brokerRef = coverageBrokerSum(1, r);
             const plusBroker = brokerRef ? `+${brokerRef}` : '';
             if (spendRef && pctRef && !row.isParent && !row.isTbd) {
               // With the Contract Coverage tab: the spend at this market's
@@ -11064,12 +11048,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           } else {
             writeBlank(cell, !!c.numFmt);
           }
-        } else if (c.formulaKind === 'brokerSavings') {
-          const r2 = colRange('brokerSavings');
-          if (r2) {
-            cell.value = { formula: `SUM(${r2})`, result: 0 };
-            cell.ignoredErrors = { formula: true };
-          } else writeBlank(cell, !!c.numFmt);
         } else if (c.formulaKind === 'annualSavings') {
           const r2 = colRange('annualSavings');
           if (r2) {
@@ -11161,13 +11139,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       savingsStatus: true,
       get: (g) => savingsStatusFor(g, commodity),
     });
-    // Broker fee savings against SE's fee, per market, in Year 1: present
-    // only alongside the Contract Coverage tab, where the fees are typed
-    // in. Negative (red) where SE's fee is the higher one. The Annual and
-    // Year 1-5 columns to its right add it on.
-    const brokerSavingsCol = contractCoverage
-      ? [{ label: 'Broker Fee Savings (Year 1)', tag: 'brokerSavings', formulaKind: 'brokerSavings', get: () => 0, numFmt: '"$"#,##0;[Red]-"$"#,##0' }]
-      : [];
     // Only one of the two spend columns carries the formula tag.
     const fullSpendTag = showLeasedColumns ? undefined : 'spend';
 
@@ -11193,7 +11164,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       { label: 'Savings %', tag: 'savingsPct', formulaKind: 'savingsPct', get: (g) => g.savingsPct, numFmt: '0.0%' },
       // Annual + Year 1-5 cumulative for the deregulated motion only.
       // Reg-rate savings live in their own block to the right.
-      ...brokerSavingsCol,
       { label: 'Indicative Annual Savings', tag: 'annualSavings', formulaKind: 'annualSavings', get: (g) => g.annualSavings, numFmt: '"$"#,##0', sumKey: 'annualSavings' },
       { label: 'Year 1 Cumulative', formulaKind: 'yearCumulative', yearGate: 1, get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
       { label: 'Year 2 Cumulative', formulaKind: 'yearCumulative', yearGate: 2, get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
@@ -11241,7 +11211,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       { label: 'High %', tag: 'highPct', editable: 'highPct', get: (g) => g.highPct, numFmt: '0.0%' },
       { label: 'Savings %', tag: 'savingsPct', formulaKind: 'savingsPct', get: (g) => g.savingsPct, numFmt: '0.0%' },
       // Annual + Year 1-5 cumulative for the deregulated motion.
-      ...brokerSavingsCol,
       { label: 'Indicative Annual Savings', tag: 'annualSavings', formulaKind: 'annualSavings', get: (g) => g.annualSavings, numFmt: '"$"#,##0', sumKey: 'annualSavings' },
       { label: 'Year 1 Cumulative', formulaKind: 'yearCumulative', yearGate: 1, get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
       { label: 'Year 2 Cumulative', formulaKind: 'yearCumulative', yearGate: 2, get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
