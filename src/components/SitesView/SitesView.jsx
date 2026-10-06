@@ -38,6 +38,7 @@ import {
 } from '../../utils/siteMassEdit';
 import { SummaryFieldEditModal } from './SummaryFieldEditModal.jsx';
 import { mergeIntoSiteList } from '../../utils/siteListMerge';
+import { UTILITY_LOOKUP_HANDOFF_EVENT, hasPendingHandoff, takePendingHandoff } from '../../utils/utilityLookupHandoff';
 import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripState, isIndicativeSavingsExport, readSheetNames } from '../../utils/xlsxParse';
 import { salvageWorkbook, looksLikeZipDamage, describeLostEntries } from '../../utils/salvageWorkbook';
 import { UtilityMappingView, NAME_MAP_LIST_KEY } from './UtilityMappingView';
@@ -2222,6 +2223,46 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       return false;
     }
   }
+
+  // A company popup's "Master Analysis" button (Portfolio tab) parks the
+  // company's saved Site List in utilityLookupHandoff. Load it here, name
+  // the company as the portfolio company, and open the Master Analysis tab
+  // picker so the download is one click on from the popup. Waits for the
+  // mount-time load so that load can't land on top of the handed-off list.
+  // A list whose columns don't resolve to a zip (or an address to find one
+  // from) goes to the column-mapping modal instead of loading blind.
+  const [handoffSignal, setHandoffSignal] = useState(0);
+  useEffect(() => {
+    const onHandoff = () => setHandoffSignal(n => n + 1);
+    window.addEventListener(UTILITY_LOOKUP_HANDOFF_EVENT, onHandoff);
+    return () => window.removeEventListener(UTILITY_LOOKUP_HANDOFF_EVENT, onHandoff);
+  }, []);
+  useEffect(() => {
+    if (!sitesLoaded || !hasPendingHandoff()) return;
+    const h = takePendingHandoff();
+    const label = h.company || 'this company';
+    if (sitesData.length > 0 && !window.confirm(
+      `Replace the ${sitesData.length} site${sitesData.length === 1 ? '' : 's'} currently loaded with ${label}'s site list (${h.rows.length} row${h.rows.length === 1 ? '' : 's'}) to build its Master Analysis?`
+    )) return;
+    (async () => {
+      setMainTab('lookup');
+      if (h.company) setPortfolioCompanyName(h.company);
+      const mapping = detectSitesMapping(h.headers);
+      if (!mapping.zip && !mapping.address) {
+        setUploadError('');
+        setSitesMappingModal({
+          fileName: `${label} site list`,
+          sheets: [{ sheetName: 'Site List', rows: h.rows, headers: h.headers, mapping, isMerged: false }],
+          selectedIdx: 0,
+        });
+        return;
+      }
+      const ok = await commitSitesImport({ rows: h.rows, mapping, isUpdate: false });
+      if (ok) setTabPickerOpen(true);
+    })();
+  // Runs on the load finishing and on each handoff; the rest is read fresh.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sitesLoaded, handoffSignal]);
 
   async function handleSitesUpload(e) {
     const file = e.target.files?.[0];

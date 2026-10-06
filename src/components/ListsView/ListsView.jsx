@@ -3,6 +3,7 @@ import { lazyView } from '../../utils/lazyView';
 import { loadList as loadListFromIDB } from '../../utils/uploadedListStore';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { userLsGet } from '../../utils/userLs';
+import { UTILITY_LOOKUP_HANDOFF_EVENT } from '../../utils/utilityLookupHandoff';
 import styles from './ListsView.module.css';
 
 // Sub-tabs load on first visit rather than all riding in one chunk. Opening
@@ -185,6 +186,13 @@ function DataSourceLink({ storageKey }) {
 
 export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectProspect, cdmName, settings, updateSettings, updateSettingsPath, updateProspect }) {
   const [subtab, setSubtab] = useState('sites');
+  // A company popup handing its site list to Utility Lookup (the 'sites'
+  // subtab) while this page is already open on another subtab.
+  useEffect(() => {
+    const onHandoff = () => setSubtab('sites');
+    window.addEventListener(UTILITY_LOOKUP_HANDOFF_EVENT, onHandoff);
+    return () => window.removeEventListener(UTILITY_LOOKUP_HANDOFF_EVENT, onHandoff);
+  }, []);
   // { [subtabKey]: { mapped, touched, pct } } — green subtab when pct===100.
   const [coverageByKey, setCoverageByKey] = useState({});
   // Bumped on subtab change, custom coverage-changed events, and

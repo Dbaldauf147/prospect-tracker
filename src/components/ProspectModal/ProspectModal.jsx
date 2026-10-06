@@ -79,6 +79,7 @@ import { planSheetCompanyRename, spreadsheetIdFromUrl } from '../../utils/sheetC
 import { computePortfolioFitScore, siteCountNumber, industrySector, sectorScoreFor, tierForScoreValue, industryTier, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { SiteListPasteModal } from './SiteListPasteModal';
 import { SiteListExportMenu } from './SiteListExportMenu';
+import { requestMasterAnalysisHandoff } from '../../utils/utilityLookupHandoff';
 import PortfolioTransactions from './PortfolioTransactions';
 import { siteListFacts as computeSiteListFacts, siteListScreeningRows, formatSqft } from '../../utils/siteListFacts';
 import { annualSavingsFromWorkbook } from '../../utils/analysisWorkbookFigures';
@@ -10444,6 +10445,20 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             than under the table, because on a long list the
                             table's bottom is a scroll away. */}
                         <SiteListExportMenu list={currentSiteList} company={fields.company} />
+                        {/* The Master Analysis is built by the Utility
+                            Lookup page, so this hands the list over there:
+                            the popup closes, the list loads, and the tab
+                            picker opens ready to download. */}
+                        {(currentSiteList.rows || []).length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => requestMasterAnalysisHandoff({ company: fields.company, list: currentSiteList })}
+                            title={`Load ${fields.company || 'this company'}'s site list onto the Utility Lookup page and download its Master Analysis (Indicative Savings, Building Compliance, Corporate Compliance and the rest). Replaces the sites currently loaded there.`}
+                            style={{ fontSize: '0.75rem', padding: '0.35rem 0.7rem', borderRadius: 6, border: '1px solid #005A9E', background: '#005A9E', color: '#fff', cursor: 'pointer', fontWeight: 600 }}
+                          >
+                            ⬇ Master Analysis
+                          </button>
+                        )}
                         <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
                           {currentSiteList.fileName}
                           {currentSiteList.uploadedAt ? ` · ${new Date(currentSiteList.uploadedAt).toLocaleDateString()}` : ''}
