@@ -9,6 +9,11 @@
 // company, and the biggest service still open on it with what that service
 // is. The deal is the company card's own Biggest Deal reading, run per row
 // (utils/prospectingDeals.js), so the two never disagree.
+//
+// And who the decision makers are: the contacts tagged Decision Maker at
+// each company, matched the way the ladder's DM mapping matches them
+// (utils/decisionMakerCoverage.js), so a blank cell here is an account the
+// ladder counts as unmapped.
 import { useEffect, useMemo, useState } from 'react';
 import { STATUS_COLORS } from '../../data/enums.js';
 import { allPcRows, myProspectRows, sumFigures } from '../../utils/prospectingPortfolio.js';
@@ -20,6 +25,8 @@ import { buildOppStagesByClient } from '../../utils/serviceCoverage';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
+import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 
 
 // Where a figure came from, for the tooltip and for whether it reads as
@@ -30,6 +37,9 @@ const SOURCE_NOTE = {
   electric: 'Electric MWh typed on the company popup: electricity only, no gas. Save a Master Analysis to get the electric + gas total.',
   estimate: 'Estimate from the PE firm Portfolio Companies table. Add the company to the tracker and save a Master Analysis for the real figure.',
 };
+
+// A decision maker as the cell names them.
+const dmLabel = (c) => [c?.firstname, c?.lastname].filter(Boolean).join(' ').trim() || String(c?.email || '');
 
 function Figure({ value, from, unit = '' }) {
   if (value == null) return <span style={{ color: '#CBD5E1' }}>-</span>;
@@ -131,6 +141,30 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
     bases: resolvePricingBases(pricingSettings),
     overrides: pricingSettings.serviceOverrides || null,
   }), [serviceRows, pricingSettings]);
+  // The HubSpot contacts, for the decision makers. Read from the shared
+  // cache and re-read when a sync lands, so tagging someone Decision Maker
+  // fills their row without a reload. Keyed on the uid: the cache is
+  // scoped per user, and a read before auth resolves comes back empty.
+  const [contacts, setContacts] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    function refresh() {
+      getHubspotCache()
+        .then(c => { if (!cancelled) setContacts(c?.contacts || []); })
+        .catch(() => { if (!cancelled) setContacts([]); });
+    }
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, [uid]);
+  const localFields = settings?.contactLocalFields || null;
+  const contactLinks = settings?.companyContactLinks || null;
+  const contactExclusions = settings?.companyContactExclusions || null;
+  const dmLookup = useMemo(
+    () => (contacts ? makeDecisionMakerLookup(contacts, { localFields, links: contactLinks, exclusions: contactExclusions }) : null),
+    [contacts, localFields, contactLinks, contactExclusions],
+  );
+
   const dealById = useMemo(() => {
     const m = new Map();
     for (const p of tracked) m.set(p.id, cachedDeal(p, dealCtx, oppRecords));
@@ -141,7 +175,10 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
     ...r,
     analysis: r.prospect?.id ? (savedAnalyses.get(r.prospect.id) || null) : null,
     deal: r.prospect?.id ? (dealById.get(r.prospect.id) || null) : null,
-  })), [baseRows, savedAnalyses, dealById]);
+    // Null while the contacts load, so the cell can say so rather than
+    // claim nobody is there. A PC with no record matches on its name.
+    dms: dmLookup ? dmLookup.forAccount(r.prospect || { company: r.company }) : null,
+  })), [baseRows, savedAnalyses, dealById, dmLookup]);
 
   const [query, setQuery] = useState('');
   // The search box narrows the rows before the table sees them; the
@@ -221,6 +258,24 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
           </span>
         ),
       }] : []),
+      {
+        key: 'dms', label: 'Decision Makers', defaultWidth: 190,
+        headerTitle: 'Contacts at the company tagged Decision Maker in HubSpot (Hide, Left and Schneider contacts left out), matched the way the ladder maps decision makers: by company name, plus anyone the company popup links by email domain or by hand. Blank means the ladder counts the account as unmapped.',
+        getSortValue: r => (r.dms ? r.dms.length : null),
+        getFilterValue: r => (r.dms ? r.dms.map(dmLabel).join(', ') : ''),
+        exportValue: r => (r.dms ? r.dms.map(dmLabel).join(', ') : ''),
+        render: (r) => {
+          if (!r.dms) return <span title="Loading contacts" style={{ color: '#CBD5E1' }}>…</span>;
+          if (r.dms.length === 0) return <span title="Nobody at this company is tagged Decision Maker" style={{ color: '#CBD5E1' }}>-</span>;
+          const tip = r.dms.map(c => [dmLabel(c), c.jobtitle].filter(Boolean).join(' - ')).join('\n');
+          return (
+            <span title={tip} style={{ color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
+              {dmLabel(r.dms[0])}
+              {r.dms.length > 1 && <span style={{ color: '#94A3B8', fontSize: '0.68rem' }}> +{r.dms.length - 1}</span>}
+            </span>
+          );
+        },
+      },
       { key: 'sites', label: 'Sites', defaultWidth: 80, headerTitle: 'Number of sites: from the company record, else counted off its saved site list.', ...num('sites', 'sitesFrom') },
       { key: 'accounts', label: 'Accounts', defaultWidth: 100, headerTitle: 'Number of utility accounts, written onto the company by its Master Analysis save.', ...num('accounts', 'accountsFrom') },
       { key: 'energyMwh', label: 'Total Energy (MWh)', defaultWidth: 160, headerTitle: 'Electric + gas use per year in MWh, written onto the company by its Master Analysis save.', ...num('energyMwh', 'energyFrom') },
@@ -284,7 +339,7 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
     <div style={{ padding: '0.25rem 1.25rem 1.25rem', maxWidth }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.6rem' }}>
         <div style={{ fontSize: '0.72rem', color: '#64748B', flex: '1 1 320px' }}>
-          {intro} Sites, accounts and energy come from each company Master Analysis save, and Biggest Deal is the same figure as on the company card. Grey italic figures are stand-ins until one is saved: hover them for where they came from. Drag a header edge to resize a column, type under a header to filter it, and star your standard columns in the Columns menu.
+          {intro} Sites, accounts and energy come from each company Master Analysis save, Biggest Deal is the same figure as on the company card, and Decision Makers lists who is tagged Decision Maker there (hover for titles). Grey italic figures are stand-ins until one is saved: hover them for where they came from. Drag a header edge to resize a column, type under a header to filter it, and star your standard columns in the Columns menu.
         </div>
         <input
           type="search"

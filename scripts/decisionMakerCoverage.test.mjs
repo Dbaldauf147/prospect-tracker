@@ -27,6 +27,7 @@ import {
   COLD_OUTREACH_EXCLUDED_STATUSES,
   isColdOutreachExcluded,
   makeAccountContactIndex,
+  makeDecisionMakerLookup,
 } from '../src/utils/decisionMakerCoverage.js';
 
 let passed = 0, failed = 0;
@@ -273,6 +274,31 @@ check('and neither are prospects that haven\'t loaded',
     decisionMakerCoverage({ prospects: [usaa], contacts: [{ id: '905', company: '', email: 'a@usaa.com' }], cdmName: CDM }).tiers[1].missing[0].contactCount, 1);
   check('the Key Prospects helper answers the same with the index',
     accountHasDecisionMaker(usaa, decisionMakerCompanies([blankDm]), makeAccountContactIndex([blankDm])), true);
+}
+
+// ---- naming the decision makers (Prospecting Prospects / PCs column) -------
+{
+  const dm = (id, first, company, extra = {}) => ({ id, firstname: first, lastname: 'X', company, dans_tags: 'Decision Maker', ...extra });
+  const contacts = [
+    dm('1', 'Zoe', 'Prologis'),
+    dm('2', 'Amy', 'Prologis, Inc.'),
+    dm('3', 'Hid', 'Prologis', { dans_tags: 'Decision Maker;hide' }),
+    dm('4', 'Gone', 'Prologis', { dans_tags: 'Decision Maker;Left' }),
+    { id: '5', firstname: 'Not', lastname: 'Tagged', company: 'Prologis', dans_tags: '' },
+    dm('6', 'Pinned', 'Old Name'),
+    dm('7', 'Removed', 'Prologis'),
+  ];
+  const lookup = makeDecisionMakerLookup(contacts, {
+    localFields: { 6: { _companyOverride: 'Prologis' } },
+    exclusions: { prologis: ['7'] },
+  });
+  check('names every visible DM at the account, fuzzy-matched, pinned company counted, removed one dropped, in name order',
+    lookup.forAccount({ company: 'Prologis' }).map(c => c.firstname), ['Amy', 'Pinned', 'Zoe']);
+  check('a company nobody is tagged at lists no one', lookup.forAccount({ company: 'Ventas' }), []);
+  check('a row with no company lists no one', lookup.forAccount({ company: '' }), []);
+  check('agrees with accountHasDecisionMaker',
+    lookup.forAccount({ company: 'Prologis' }).length > 0,
+    accountHasDecisionMaker({ company: 'Prologis' }, decisionMakerCompanies(contacts), null));
 }
 
 console.log(`${passed} passed, ${failed} failed`);
