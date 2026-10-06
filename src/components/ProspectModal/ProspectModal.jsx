@@ -135,6 +135,7 @@ import { isInactiveAgreement } from '../../utils/dealsFormat';
 import { isDecisionMakerContact } from '../../utils/decisionMakerCoverage';
 import { ListsMatchPanel } from './ListsMatchPanel';
 import { AnalysisMenu } from './AnalysisMenu';
+import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
 import styles from './ProspectModal.module.css';
 
 // The notes editor is fetched the first time an opportunity's notes open,
@@ -5056,6 +5057,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return m;
   }, [prospects]);
 
+
   const [contactView, setContactView] = useState('table'); // 'table' | 'orgchart'
   // (showHiddenContacts state is declared earlier - above
   // baseContacts - so its useMemo can reference it without a TDZ.)
@@ -5117,6 +5119,23 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // on, so closing the editor doesn't land somebody on a tab they never
   // asked for.
   const [activeTab, setActiveTab] = useState(initialEditContact ? 'contacts' : 'company');
+
+  // The tracker record behind each portfolio company row, for the Site List
+  // and Master Analysis columns: both are saved against a company's own
+  // record, so a row only has an answer once it resolves to one. Only on the
+  // Portfolio tab, because the analysis lookup falls back to a Firestore read
+  // per company that has no save marker, and no other tab needs it.
+  const portfolioLinkedProspects = useMemo(() => {
+    if (activeTab !== 'portfolio') return [];
+    const seen = new Set();
+    const out = [];
+    for (const r of (fields.portfolioCompanies || [])) {
+      const p = findPortfolioProspect(r, prospectByName);
+      if (p?.id && !seen.has(p.id)) { seen.add(p.id); out.push(p); }
+    }
+    return out;
+  }, [activeTab, fields.portfolioCompanies, prospectByName]);
+  const portfolioSavedAnalyses = useSavedAnalyses(portfolioLinkedProspects);
 
   // The Potential tab's working estimate: which services are ticked against
   // this account, the counts they are priced on, and the units typed against
@@ -5250,7 +5269,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
   const [portfolioColWidths, setPortfolioColWidths] = useState({
-    num: 30, company: 180, status: 130, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, strategy: 140, hqCity: 130, hqCountry: 90, energy: 110, estElectricity: 120, estNaturalGas: 120, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160, listFlags: 200,
+    num: 30, company: 180, status: 130, siteListSaved: 110, analysisSaved: 120, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, strategy: 140, hqCity: 130, hqCountry: 90, energy: 110, estElectricity: 120, estNaturalGas: 120, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160, listFlags: 200,
   });
   // Per-column visibility for the Portfolio Companies table. Independent
   // from the export - the export header list is hard-coded so toggling
@@ -5259,6 +5278,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     { key: 'rank',             label: 'Opportunity Score' },
     { key: 'company',          label: 'Company' },
     { key: 'status',           label: 'Status' },
+    { key: 'siteListSaved',    label: 'Site List' },
+    { key: 'analysisSaved',    label: 'Master Analysis' },
     { key: 'hqCity',           label: 'HQ City' },
     { key: 'hqCountry',        label: 'HQ Country' },
     { key: 'energy',           label: 'Energy' },
@@ -5287,7 +5308,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     // Default visibility - every column on except HQ City, which the
     // user keeps hidden by default and reveals via the Columns ▾ menu
     // when they need it.
-    return Object.fromEntries(['rank','company','status','hqCity','hqCountry','energy','estElectricity','estNaturalGas','siteCount','sector','subsector','subsectorScore','strategy','acquisitionYear','pcDescription','notes','raClient','clientManager','targetAccount','tier','salesRep','listFlags'].map(k => [k, k !== 'hqCity']));
+    return Object.fromEntries(['rank','company','status','siteListSaved','analysisSaved','hqCity','hqCountry','energy','estElectricity','estNaturalGas','siteCount','sector','subsector','subsectorScore','strategy','acquisitionYear','pcDescription','notes','raClient','clientManager','targetAccount','tier','salesRep','listFlags'].map(k => [k, k !== 'hqCity']));
   });
   useEffect(() => {
     try { localStorage.setItem('portfolio-cols-visible', JSON.stringify(portfolioColsVisible)); } catch { /* noop */ }
@@ -11164,6 +11185,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             <col style={{ width: portfolioColWidths.rank + 'px',             visibility: colVis('rank') }} />
                             <col style={{ width: portfolioColWidths.company + 'px',          visibility: colVis('company') }} />
                             <col style={{ width: portfolioColWidths.status + 'px',           visibility: colVis('status') }} />
+                            <col style={{ width: portfolioColWidths.siteListSaved + 'px',    visibility: colVis('siteListSaved') }} />
+                            <col style={{ width: portfolioColWidths.analysisSaved + 'px',    visibility: colVis('analysisSaved') }} />
                             <col style={{ width: portfolioColWidths.hqCity + 'px',           visibility: colVis('hqCity') }} />
                             <col style={{ width: portfolioColWidths.hqCountry + 'px',        visibility: colVis('hqCountry') }} />
                             <col style={{ width: portfolioColWidths.energy + 'px',           visibility: colVis('energy') }} />
@@ -11203,6 +11226,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               </th>
                               <th style={thBase}>Company<span style={resizeHandleStyle} onMouseDown={e => startResize('company', e)} /></th>
                               <th style={thBase} title="Where this portfolio company stands. Blank rows inherit the status of the matching company in the tracker: pick one here to set the row's own.">Status<span style={resizeHandleStyle} onMouseDown={e => startResize('status', e)} /></th>
+                              <th style={thBase} title="Whether a site list has been saved on the popup of this portfolio company (Portfolio > Sites & Holdings), and how many sites it holds. Blank when the company is not in the tracker yet.">Site List<span style={resizeHandleStyle} onMouseDown={e => startResize('siteListSaved', e)} /></th>
+                              <th style={thBase} title="Whether a Master Analysis has been saved against this portfolio company from the Utility Lookup page, and when. Blank when the company is not in the tracker yet.">Master Analysis<span style={resizeHandleStyle} onMouseDown={e => startResize('analysisSaved', e)} /></th>
                               <th style={thBase}>HQ City<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCity', e)} /></th>
                               <th style={thBase}>HQ Country<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCountry', e)} /></th>
                               <th style={thBase} title="Est. Energy (GWh/yr)">Energy<span style={resizeHandleStyle} onMouseDown={e => startResize('energy', e)} /></th>
@@ -11377,6 +11402,49 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                         {options.map(s => <option key={s} value={s}>{s}</option>)}
                                       </select>
                                     </td>
+                                  );
+                                })()}
+                                {(() => {
+                                  // Both are saved against the portfolio
+                                  // company's own tracker record - the site
+                                  // list under its name in settings, the
+                                  // analysis on the record - so a row the
+                                  // tracker doesn't know has nothing to show.
+                                  const linked = findPortfolioProspect(r, prospectByName);
+                                  const dash = (tip) => <span title={tip} style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>-</span>;
+                                  const notTracked = `"${r.companyName || 'This company'}" is not in the tracker yet, so nothing can be saved against it.`;
+                                  const listSlug = linked ? String(linked.company || '').toLowerCase().replace(/[^a-z0-9]/g, '-') : '';
+                                  const list = listSlug ? (settings.companySiteLists || {})[listSlug] : null;
+                                  const listCount = (list?.rows || []).length;
+                                  const analysis = linked ? portfolioSavedAnalyses.get(linked.id) : null;
+                                  const savedStyle = { fontSize: '0.68rem', fontWeight: 700, color: '#166534', whiteSpace: 'nowrap' };
+                                  return (
+                                    <>
+                                      <td style={{ padding: '0.15rem 0.3rem' }}>
+                                        {!linked ? dash(notTracked) : (list && listCount > 0 ? (
+                                          <span
+                                            title={[
+                                              `${linked.company} has a site list saved: ${listCount.toLocaleString()} ${listCount === 1 ? 'row' : 'rows'}.`,
+                                              list.fileName || '',
+                                              list.uploadedAt ? `Saved ${new Date(list.uploadedAt).toLocaleString()}` : '',
+                                            ].filter(Boolean).join('\n')}
+                                            style={savedStyle}
+                                          >✓ {listCount.toLocaleString()} {listCount === 1 ? 'site' : 'sites'}</span>
+                                        ) : dash(`No site list saved on the ${linked.company} popup yet`))}
+                                      </td>
+                                      <td style={{ padding: '0.15rem 0.3rem' }}>
+                                        {!linked ? dash(notTracked) : (analysis ? (
+                                          <span
+                                            title={[
+                                              `${linked.company} has a Master Analysis saved${analysis.savedAt ? ` on ${new Date(analysis.savedAt).toLocaleString()}` : ''}.`,
+                                              analysis.fileName || '',
+                                              analysis.sizeBytes ? `${(analysis.sizeBytes / (1024 * 1024)).toFixed(1)} MB` : '',
+                                            ].filter(Boolean).join('\n')}
+                                            style={savedStyle}
+                                          >✓ {formatAnalysisDate(analysis.savedAt)}</span>
+                                        ) : dash(`No Master Analysis saved against ${linked.company} yet`))}
+                                      </td>
+                                    </>
                                   );
                                 })()}
                                 {['hqCity', 'hqCountry'].map(field => (
@@ -11855,10 +11923,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             })}
                             {(totalEnergy > 0 || totalSites > 0) && (
                               <tr style={{ background: '#F8FAFC', fontWeight: 700 }}>
-                                {/* Cell spans track the 24 columns above: Totals covers
+                                {/* Cell spans track the 26 columns above: Totals covers
                                     the pin column and Opportunity Score → HQ Country, then
                                     each total sits under the column it sums. */}
-                                <td colSpan={6} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
+                                <td colSpan={8} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalEnergy > 0 ? totalEnergy.toLocaleString() : ''}</td>
                                 <td colSpan={2}></td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalSites > 0 ? totalSites.toLocaleString() : ''}</td>
