@@ -24,7 +24,7 @@
 // yet, so accounts that already have a history are out (see
 // COLD_OUTREACH_EXCLUDED_STATUSES). Only this step reads that rule.
 
-import { applyCompanyOverride, isSchneiderContact, rosterCompaniesMatch } from './contactRosters.js';
+import { applyCompanyOverride, collectClientDomains, isSchneiderContact, rosterCompaniesMatch } from './contactRosters.js';
 import { matchesCdm } from './cdmMatch.js';
 import { TIERS } from '../data/enums.js';
 
@@ -98,20 +98,107 @@ export function decisionMakerCompanies(contacts, localFields = null) {
     // A decision maker with no company can't be attached to an account.
     if (!company) continue;
     const lc = company.toLowerCase();
-    if (!seen.has(lc)) seen.set(lc, { company, lc });
+    const id = String(c.id || c.vid || '');
+    const at = seen.get(lc);
+    if (at) { if (id) at.ids.push(id); }
+    else seen.set(lc, { company, lc, ids: id ? [id] : [] });
   }
   return [...seen.values()];
 }
 
-/** Does this account have one of those decision makers at it? */
-export function accountHasDecisionMaker(prospect, dmCompanies) {
+// Free-mail domains never tie a contact to an account: half the world is on
+// gmail.com. The same list the company popup skips.
+const FREE_MAIL = new Set(['gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com', 'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com']);
+
+function emailDomainOf(email) {
+  const e = String(email || '');
+  const at = e.lastIndexOf('@');
+  if (at < 0) return '';
+  const d = e.slice(at + 1).toLowerCase().trim();
+  return d && !FREE_MAIL.has(d) ? d : '';
+}
+
+/**
+ * The contacts an account's own Contacts tab adds beyond the name match,
+ * and the ones it takes away.
+ *
+ * The company popup lists a contact under an account three ways: the
+ * contact's Company text matches the account name; or the Company text is
+ * blank and the email sits on one of the account's domains (Email Domain
+ * field or Website); or somebody linked the contact to the account by hand
+ * (settings.companyContactLinks). It also drops anyone removed from the
+ * account by hand (settings.companyContactExclusions). Reading only the
+ * first of those, an account whose decision maker shows on its Contacts
+ * tab with a DM badge could still be listed here as having none, which is
+ * what USAA was. So the coverage reads the same membership the tab shows.
+ *
+ * Both maps are keyed by the account name lower-cased, as the popup writes
+ * them. Returns { extraFor(prospect) -> contacts[], excludedFor(prospect)
+ * -> Set<id> }.
+ */
+export function makeAccountContactIndex(contacts, { localFields = null, links = null, exclusions = null } = {}) {
+  const byId = new Map();
+  const blankCompanyByDomain = new Map();
+  for (const raw of (contacts || [])) {
+    const c = applyCompanyOverride(raw, localFields);
+    const id = String(c?.id || c?.vid || '');
+    if (id) byId.set(id, c);
+    if (String(c?.company || '').trim()) continue;
+    const d = emailDomainOf(c?.email);
+    if (!d) continue;
+    const list = blankCompanyByDomain.get(d);
+    if (list) list.push(c); else blankCompanyByDomain.set(d, [c]);
+  }
+  const keyOf = (p) => String(p?.company || '').trim().toLowerCase();
+  return {
+    extraFor(prospect) {
+      const out = [];
+      const seen = new Set();
+      const add = (c) => {
+        const id = String(c?.id || c?.vid || '');
+        if (id && seen.has(id)) return;
+        if (id) seen.add(id);
+        out.push(c);
+      };
+      const domains = new Set();
+      collectClientDomains(prospect, domains);
+      for (const d of domains) for (const c of (blankCompanyByDomain.get(d) || [])) add(c);
+      for (const id of ((links || {})[keyOf(prospect)] || [])) {
+        const c = byId.get(String(id));
+        if (c) add(c);
+      }
+      return out;
+    },
+    excludedFor(prospect) {
+      return new Set(((exclusions || {})[keyOf(prospect)] || []).map(String));
+    },
+  };
+}
+
+/**
+ * Does this account have one of those decision makers at it?
+ *
+ * `index` (makeAccountContactIndex) widens the answer to the account's
+ * Contacts tab as it stands: a decision maker linked by hand or matched on
+ * the email domain counts, and one removed from the account by hand
+ * doesn't. Without it, the name match alone answers.
+ */
+export function accountHasDecisionMaker(prospect, dmCompanies, index = null) {
   const lc = String(prospect?.company || '').toLowerCase().trim();
   if (!lc) return false;
+  const excluded = index ? index.excludedFor(prospect) : null;
+  const counts = (c) => !excluded || !excluded.size || !c.ids || c.ids.length === 0
+    || c.ids.some(id => !excluded.has(id));
   for (const c of (dmCompanies || [])) {
-    if (c.lc === lc) return true;
     // The contact's HubSpot Company text and the account name drift apart
     // (suffixes, abbreviations), so an exact miss isn't an answer.
-    if (rosterCompaniesMatch(prospect.company, c.company)) return true;
+    if ((c.lc === lc || rosterCompaniesMatch(prospect.company, c.company)) && counts(c)) return true;
+  }
+  if (index) {
+    for (const c of index.extraFor(prospect)) {
+      if (excluded.has(String(c?.id || c?.vid || ''))) continue;
+      if (isDecisionMakerContact(c)) return true;
+    }
   }
   return false;
 }
@@ -199,9 +286,10 @@ function pctMapped(mapped, total) {
  * to be found; some means it only has to be tagged, which is a different
  * morning's work and the reason the column exists.
  */
-export function decisionMakerCoverage({ prospects, contacts, cdmName, localFields = null } = {}) {
+export function decisionMakerCoverage({ prospects, contacts, cdmName, localFields = null, links = null, exclusions = null } = {}) {
   if (!Array.isArray(prospects) || !Array.isArray(contacts)) return null;
   const dmCompanies = decisionMakerCompanies(contacts, localFields);
+  const index = makeAccountContactIndex(contacts, { localFields, links, exclusions });
   // Every contact worth counting against an account, decision maker or
   // not — the "someone is there, nobody is tagged" case. Grouped by
   // company for the same reason the decision makers are: the fuzzy
@@ -221,6 +309,10 @@ export function decisionMakerCoverage({ prospects, contacts, cdmName, localField
   }
   const companyCounts = [...byCompany.values()];
 
+  // The name-matched count plus whoever the account's Contacts tab adds on
+  // top (index above). An account with no decision maker is unaffected by
+  // exclusions here: this is a hint at how much finding is left, not a
+  // roster.
   const countContactsAt = (prospect) => {
     const lc = String(prospect?.company || '').toLowerCase().trim();
     if (!lc) return 0;
@@ -228,6 +320,7 @@ export function decisionMakerCoverage({ prospects, contacts, cdmName, localField
     for (const c of companyCounts) {
       if (c.lc === lc || rosterCompaniesMatch(prospect.company, c.company)) n += c.count;
     }
+    for (const c of index.extraFor(prospect)) if (isMappableContact(c)) n += 1;
     return n;
   };
 
@@ -235,7 +328,7 @@ export function decisionMakerCoverage({ prospects, contacts, cdmName, localField
     const accounts = tierAccounts(prospects, cdmName, tier);
     const missing = [];
     for (const p of accounts) {
-      if (accountHasDecisionMaker(p, dmCompanies)) continue;
+      if (accountHasDecisionMaker(p, dmCompanies, index)) continue;
       missing.push({ ...p, contactCount: countContactsAt(p) });
     }
     missing.sort((a, b) => String(a.company || '').localeCompare(String(b.company || '')));
