@@ -23,6 +23,16 @@ function saveSelection(names) {
   try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(names)); } catch { /* not worth failing a download over */ }
 }
 
+// Small tag next to a tab the export writes as a hidden sheet.
+function HiddenBadge() {
+  return (
+    <span style={{
+      display: 'inline-block', padding: '0 0.3rem', border: '1px dashed #94A3B8', borderRadius: 3,
+      fontSize: '0.6rem', fontWeight: 600, color: '#64748B', fontStyle: 'normal', lineHeight: 1.5, verticalAlign: 'middle',
+    }}>Hidden</span>
+  );
+}
+
 // Pop-up shown by the Utility Lookup page's "Master Analysis" button: a
 // checklist of the workbook's tabs, grouped by the section they come from.
 // `onDownload` receives the ticked tab names and resolves once the file is
@@ -75,14 +85,18 @@ export function MasterAnalysisTabPicker({ onClose, onDownload }) {
         aria-label="Choose Master Analysis tabs"
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: '#fff', borderRadius: 8, width: 'min(520px, 92vw)', maxHeight: '80vh',
+          background: '#fff', borderRadius: 8, width: 'min(960px, 95vw)', maxHeight: '94vh',
           display: 'flex', flexDirection: 'column', boxShadow: '0 12px 40px rgba(15, 23, 42, 0.2)',
         }}
       >
         <div style={{ padding: '0.9rem 1rem 0.6rem', borderBottom: '1px solid #E2E8F0' }}>
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#0F172A' }}>Download Master Analysis</div>
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '0.2rem' }}>
-            Tick the tabs you want in the Excel file. Tabs that don't apply to this portfolio are left out either way.
+            Tick the tabs you want in the Excel file. Unticked tabs are left out entirely, hidden ones included. Tabs that don't apply to this portfolio are left out either way.
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.35rem', fontSize: '0.7rem', color: '#64748B' }}>
+            <HiddenBadge />
+            <span>ships as a hidden sheet: in the file, but the reader right-clicks a tab and picks Unhide to see it.</span>
           </div>
           <div style={{ display: 'flex', gap: '0.8rem', marginTop: '0.5rem', alignItems: 'center' }}>
             <button type="button" style={linkBtn} onClick={() => setSelected(new Set(MASTER_ANALYSIS_TAB_NAMES))}>Select all</button>
@@ -90,12 +104,14 @@ export function MasterAnalysisTabPicker({ onClose, onDownload }) {
             <span style={{ marginLeft: 'auto', fontSize: '0.72rem', color: '#64748B' }}>{count} of {total} tabs</span>
           </div>
         </div>
-        <div style={{ overflowY: 'auto', flex: 1, padding: '0.4rem 1rem 0.6rem' }}>
+        {/* Groups flow into as many ~400px columns as fit, so on a normal
+            screen every tab is visible without scrolling. */}
+        <div style={{ overflowY: 'auto', flex: 1, padding: '0.2rem 1rem 0.6rem', columnWidth: '400px', columnGap: '1.5rem' }}>
           {MASTER_ANALYSIS_TAB_GROUPS.map((group) => {
             const on = group.tabs.filter(t => selected.has(t.name)).length;
             const all = on === group.tabs.length;
             return (
-              <div key={group.label} style={{ marginTop: '0.5rem' }}>
+              <div key={group.label} style={{ paddingTop: '0.5rem', breakInside: 'avoid' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.8rem', fontWeight: 700, color: '#0F172A', cursor: 'pointer' }}>
                   <input
                     type="checkbox"
@@ -109,12 +125,17 @@ export function MasterAnalysisTabPicker({ onClose, onDownload }) {
                   {group.tabs.map((t) => (
                     <label
                       key={t.name}
-                      title={t.hint}
-                      style={{ display: 'flex', alignItems: 'baseline', gap: '0.45rem', padding: '0.15rem 0', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}
+                      title={t.hidden ? `${t.hint}. Ships as a hidden sheet.` : t.hint}
+                      style={{
+                        display: 'flex', alignItems: 'baseline', gap: '0.45rem', padding: '0.15rem 0.3rem', margin: '0.05rem 0',
+                        fontSize: '0.78rem', color: t.hidden ? '#64748B' : '#1E293B', cursor: 'pointer',
+                        ...(t.hidden ? { background: '#F8FAFC', borderLeft: '2px dashed #CBD5E1', borderRadius: 3 } : { borderLeft: '2px solid transparent' }),
+                      }}
                     >
                       <input type="checkbox" checked={selected.has(t.name)} onChange={() => toggle(t.name)} />
                       <span>
-                        {t.name}
+                        <span style={t.hidden ? { fontStyle: 'italic' } : undefined}>{t.name}</span>
+                        {t.hidden && <> <HiddenBadge /></>}
                         <span style={{ color: '#94A3B8', fontSize: '0.7rem' }}> - {t.hint}</span>
                       </span>
                     </label>

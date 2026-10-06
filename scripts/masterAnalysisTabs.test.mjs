@@ -23,6 +23,7 @@ function build() {
   const scen = wb.addWorksheet('Indicative Savings');
   scen.getCell('J5').value = 1234;
   wb.addWorksheet('Site List').getCell('A1').value = 'Site';
+  wb.addWorksheet('Methodology', { state: 'hidden' });
   wb.addWorksheet('Some Future Tab');
   wb.addWorksheet('__rt_state__', { state: 'hidden' }).getCell('A1').value = '{}';
   summary.getCell('F5').value = { formula: "'Indicative Savings'!$J$5", result: 1234 };
@@ -35,9 +36,9 @@ function build() {
 {
   const wb = build();
   const removed = pruneMasterAnalysisTabs(wb, ['Summary']);
-  eq(removed, ['NAM', 'Indicative Savings', 'Site List'], 'unticked catalogued tabs are removed');
+  eq(removed, ['NAM', 'Indicative Savings', 'Site List', 'Methodology'], 'unticked catalogued tabs are removed, hidden ones too');
   eq(wb.worksheets.map(w => w.name), ['Summary', 'Some Future Tab', '__rt_state__'],
-    'uncatalogued and hidden sheets survive');
+    'uncatalogued sheets and the round-trip state survive');
   const s = wb.getWorksheet('Summary');
   eq(s.getCell('F5').value, 1234, 'quoted reference to a removed tab is frozen to its value');
   eq(s.getCell('F6').value, 14, 'bare reference to a removed tab is frozen to its value');
@@ -53,6 +54,7 @@ function build() {
   const wb = build();
   const removed = pruneMasterAnalysisTabs(wb, MASTER_ANALYSIS_TAB_NAMES);
   eq(removed, [], 'everything ticked removes nothing');
+  eq(wb.getWorksheet('Methodology').state, 'hidden', 'a ticked hidden tab ships, still hidden');
   eq(wb.getWorksheet('Summary').getCell('F5').value.formula, "'Indicative Savings'!$J$5", 'formulas kept when their tab stays');
 }
 

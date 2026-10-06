@@ -12,6 +12,10 @@
 // pipeline and the builders it calls (complianceReportXlsx, divisionsSummary).
 // A sheet whose name is NOT in the catalog is never pruned, so a tab added
 // later without updating this list still ships rather than vanishing.
+//
+// `hidden: true` marks a tab the export writes as a hidden sheet (the
+// reader has to right-click > Unhide to see it). The picker styles those
+// differently; ticking still decides whether they ship at all.
 
 export const MASTER_ANALYSIS_TAB_GROUPS = [
   {
@@ -25,13 +29,13 @@ export const MASTER_ANALYSIS_TAB_GROUPS = [
       { name: 'Contract Coverage', hint: 'Every deregulated site and when its supply agreement ends; feeds the Indicative Savings tab' },
       { name: 'Indicative Savings', hint: 'Savings scenario, term and the per-state tables' },
       { name: 'Site Detail', hint: 'One row per site with its consumption, rates and savings' },
-      { name: 'Monthly Savings', hint: 'Savings spread across the months of the year' },
+      { name: 'Monthly Savings', hidden: true, hint: 'Savings spread across the months of the year' },
       { name: 'Contract Overview', hint: 'Current supply contracts and their end dates' },
-      { name: 'Hedging Analysis', hint: 'Index vs fixed price and hedge % over time' },
-      { name: 'Gas Market Timing', hint: 'Forward gas prices and the favorable buy windows' },
-      { name: 'Floating vs Hedging Example', hint: 'Worked example of floating vs hedged pricing' },
-      { name: 'Methodology', hint: 'How the savings figures are derived' },
-      { name: 'Alerts Catalog', hint: 'The market alerts the service sends' },
+      { name: 'Hedging Analysis', hidden: true, hint: 'Index vs fixed price and hedge % over time' },
+      { name: 'Gas Market Timing', hidden: true, hint: 'Forward gas prices and the favorable buy windows' },
+      { name: 'Floating vs Hedging Example', hidden: true, hint: 'Worked example of floating vs hedged pricing' },
+      { name: 'Methodology', hidden: true, hint: 'How the savings figures are derived' },
+      { name: 'Alerts Catalog', hidden: true, hint: 'The market alerts the service sends' },
     ],
   },
   {
@@ -96,13 +100,14 @@ function referencesSheet(formula, name) {
 // tab's savings headline reads the Indicative Savings tab, for one), so any
 // such cell is frozen to the value it was written with. Same for an
 // in-workbook hyperlink: it becomes plain text rather than a link to
-// nowhere. Hidden sheets (the round-trip state) are never touched.
+// nowhere. Hidden catalogued tabs (Methodology, Monthly Savings...) are
+// pruned like any other: unticked means not in the file, hidden or not.
+// The round-trip state sheet isn't catalogued, so it always stays.
 export function pruneMasterAnalysisTabs(wb, keep) {
   const keepSet = new Set(keep || []);
   const catalog = new Set(MASTER_ANALYSIS_TAB_NAMES);
   const removed = [];
   for (const ws of [...wb.worksheets]) {
-    if (ws.state && ws.state !== 'visible') continue;
     if (!catalog.has(ws.name) || keepSet.has(ws.name)) continue;
     removed.push(ws.name);
     wb.removeWorksheet(ws.id);
