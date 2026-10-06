@@ -10541,7 +10541,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // The site's market sits in this column on the Contract Coverage tab;
     // Open Spend Year 1 in the other, Years 2-5 in the four after it.
     const COVERAGE_MARKET_COL = 2;
-    const COVERAGE_OPEN_COL = 11;
+    const COVERAGE_OPEN_COL = 12;
     function writeSection(label, sectionRows, columnDefs, commodity) {
       // Section header band — light green wash with dark green text.
       ws.mergeCells(r, 1, r, SPAN);
@@ -11388,7 +11388,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         views: [{ showGridLines: false, state: 'frozen', xSplit: 1, ySplit: 3 }],
       });
       const CC_COLS = COVERAGE_OPEN_COL + COVERAGE_YEARS - 1;
-      cws.columns = [30, 14, 24, 24, 18, 18, 14, 12, 12, 15, 15, 15, 15, 15, 15].map(w => ({ width: w }));
+      cws.columns = [30, 14, 24, 24, 15, 18, 18, 14, 12, 12, 15, 15, 15, 15, 15, 15].map(w => ({ width: w }));
+      // Where each column sits. Open Spend Year 1-5 run from
+      // COVERAGE_OPEN_COL, which the Indicative Savings formulas read.
+      const CC = {
+        site: 1, market: COVERAGE_MARKET_COL, utility: 3, supplier: 4, brokerFee: 5,
+        consumption: 6, spend: 7, ends: 8, months: 9, underNow: 10, spendUnder: 11,
+      };
       const INPUT_FILL = 'FFFFF9C3';
       const INPUT_BORDER = 'FFCA8A04';
       const styleInput = (cell, numFmt) => {
@@ -11428,6 +11434,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       cws.mergeCells(3, 1, 3, CC_COLS);
       const ccHint = cws.getCell(3, 1);
       ccHint.value = 'Every deregulated site on the Indicative Savings tab, and the supply agreement it is tied up in. '
+        + 'Current Broker Fee (yellow) is the fee the site pays its broker today, per kWh or per Dth: type it in where it is known. '
         + 'Agreement Ends (yellow) is editable: it starts out as the site\'s contract end date, a blank means no agreement (the site is open from day one), and a date moves the site\'s spend out of the projection until that agreement ends. '
         + 'Open Spend is what each site has free to re-source in each year of the projection. The Indicative Savings tab adds it up per market and takes its Annual and Year 1–5 savings off it, so editing a date here updates that tab.';
       ccHint.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_TEXT_DARK } };
@@ -11468,6 +11475,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           'ST / Prov / Country',
           'Utility',
           'Supplier',
+          `Current Broker Fee ($/${unit})`,
           `Deregulated Consumption ${unit}/yr`,
           'Savings-Eligible Spend/yr',
           'Agreement Ends',
@@ -11519,24 +11527,40 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             cell.ignoredErrors = { formula: true, formulaRange: true };
             if (typeof result === 'number') totals[col] += result;
           };
-          set(1, site.siteName || ' ');
-          set(2, site.state);
-          set(3, site.utility || ' ');
-          set(4, site.supplier || ' ');
-          set(5, Math.round(consumption), '#,##0');
-          set(6, Math.round(spend), '"$"#,##0');
-          totals[5] += Math.round(consumption);
-          totals[6] += Math.round(spend);
-          const endCell = dRow.getCell(7);
+          const L = (key) => colL(CC[key]);
+          set(CC.site, site.siteName || ' ');
+          set(CC.market, site.state);
+          set(CC.utility, site.utility || ' ');
+          set(CC.supplier, site.supplier || ' ');
+          // Nothing on the site list carries a broker fee, so it starts
+          // blank for the seller to fill in. Per unit of energy: brokers
+          // quote electric in $/kWh (mils) and gas in $/Dth.
+          const feeCell = dRow.getCell(CC.brokerFee);
+          styleInput(feeCell, commodity === 'gas' ? '"$"0.000' : '"$"0.0000');
+          feeCell.dataValidation = {
+            type: 'decimal',
+            operator: 'greaterThanOrEqual',
+            allowBlank: true,
+            formulae: [0],
+            showErrorMessage: true,
+            errorStyle: 'stop',
+            errorTitle: 'Current broker fee',
+            error: `Enter the broker fee in $ per ${unit}, for example ${commodity === 'gas' ? '0.050' : '0.0020'}.`,
+          };
+          set(CC.consumption, Math.round(consumption), '#,##0');
+          set(CC.spend, Math.round(spend), '"$"#,##0');
+          totals[CC.consumption] += Math.round(consumption);
+          totals[CC.spend] += Math.round(spend);
+          const endCell = dRow.getCell(CC.ends);
           if (ends) endCell.value = ends;
           styleInput(endCell, 'm/d/yyyy');
-          formula(8, monthsLockedFormula(`G${cr}`, START_REF), months, '0');
-          formula(9, `IF(H${cr}>0,"Yes","No")`, months > 0 ? 'Yes' : 'No');
-          formula(10, `IF(H${cr}>0,F${cr},0)`, months > 0 ? Math.round(spend) : 0, '"$"#,##0');
+          formula(CC.months, monthsLockedFormula(`${L('ends')}${cr}`, START_REF), months, '0');
+          formula(CC.underNow, `IF(${L('months')}${cr}>0,"Yes","No")`, months > 0 ? 'Yes' : 'No');
+          formula(CC.spendUnder, `IF(${L('months')}${cr}>0,${L('spend')}${cr},0)`, months > 0 ? Math.round(spend) : 0, '"$"#,##0');
           for (let k = 0; k < COVERAGE_YEARS; k++) {
-            formula(COVERAGE_OPEN_COL + k, siteOpenSpendFormula(`$F${cr}`, `$H${cr}`, k + 1), Math.round(open[k]), '"$"#,##0');
+            formula(COVERAGE_OPEN_COL + k, siteOpenSpendFormula(`$${L('spend')}${cr}`, `$${L('months')}${cr}`, k + 1), Math.round(open[k]), '"$"#,##0');
           }
-          if (months > 0) totals[9] += 1;
+          if (months > 0) totals[CC.underNow] += 1;
           dRow.height = 16;
           cr += 1;
         }
@@ -11547,13 +11571,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           const cell = tRow.getCell(col);
           const L = colL(col);
           if (col === 1) cell.value = `Total (${sites.length.toLocaleString()} sites)`;
-          else if (col >= 2 && col <= 4) cell.value = ' ';
-          else if (col === 7 || col === 8) cell.value = ' ';
+          else if (col < CC.consumption || col === CC.ends || col === CC.months) cell.value = ' ';
           // How many sites are under agreement today.
-          else if (col === 9) cell.value = { formula: `COUNTIF(I${first}:I${last},"Yes")`, result: totals[9] };
+          else if (col === CC.underNow) cell.value = { formula: `COUNTIF(${L}${first}:${L}${last},"Yes")`, result: totals[col] };
           else cell.value = { formula: `SUM(${L}${first}:${L}${last})`, result: totals[col] };
           if (cell.value && typeof cell.value === 'object') cell.ignoredErrors = { formula: true };
-          cell.numFmt = (col === 6 || col >= 10) ? '"$"#,##0' : '#,##0';
+          cell.numFmt = (col === CC.spend || col >= CC.spendUnder) ? '"$"#,##0' : '#,##0';
           cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
           cell.alignment = { vertical: 'bottom', horizontal: 'left', indent: 1 };
