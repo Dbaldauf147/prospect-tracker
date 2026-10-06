@@ -5170,6 +5170,59 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [activeTab, fields.portfolioCompanies, prospectByName, prospectById]);
   const portfolioSavedAnalyses = useSavedAnalyses(portfolioLinkedProspects);
 
+  // "Refresh Indicative Savings" on the Portfolio Companies table. The
+  // column reads indicativeAnnualSavings off each portfolio company's own
+  // record, which the Utility Lookup save stamps - so an analysis saved
+  // before that stamp existed (or before the savings changed) shows a dash
+  // beside a saved analysis. This reads the headline back out of each saved
+  // workbook, the same way the company popup's "Refresh figures" does, and
+  // writes it to the record when it moved. One company at a time: each
+  // workbook is hundreds of kilobytes.
+  const [portfolioSavingsRefresh, setPortfolioSavingsRefresh] = useState(null); // { running, done, total, note }
+  async function refreshPortfolioSavings() {
+    if (portfolioSavingsRefresh?.running) return;
+    const targets = portfolioLinkedProspects.filter(p => portfolioSavedAnalyses.get(p.id));
+    if (!targets.length) {
+      setPortfolioSavingsRefresh({ running: false, note: 'None of these companies has a Master Analysis saved, so there is no savings figure to read. Save one from Utility Lookup first.' });
+      return;
+    }
+    setPortfolioSavingsRefresh({ running: true, done: 0, total: targets.length, note: '' });
+    const XLSX = await import('xlsx');
+    let updated = 0;
+    let unchanged = 0;
+    const noFigure = [];
+    const failed = [];
+    for (let i = 0; i < targets.length; i++) {
+      const t = targets[i];
+      try {
+        const saved = await loadIndicativeAnalysis(t.id);
+        if (!saved?.dataBase64) throw new Error('the saved analysis is empty');
+        const binary = atob(saved.dataBase64);
+        const bytes = new Uint8Array(binary.length);
+        for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
+        const savings = annualSavingsFromWorkbook(XLSX.read(bytes, { type: 'array' }));
+        if (savings == null) {
+          noFigure.push(t.company);
+        } else if (Number(t.indicativeAnnualSavings) === savings) {
+          unchanged++;
+        } else {
+          await onUpdateProspect?.(t.id, { indicativeAnnualSavings: savings });
+          updated++;
+        }
+      } catch (err) {
+        console.error('Portfolio savings refresh failed for', t.company, err);
+        failed.push(t.company);
+      }
+      setPortfolioSavingsRefresh(s => ({ ...s, done: i + 1 }));
+    }
+    const parts = [`${updated} updated`];
+    if (unchanged) parts.push(`${unchanged} already current`);
+    let note = `Indicative Savings refreshed from ${targets.length} saved ${targets.length === 1 ? 'analysis' : 'analyses'}: ${parts.join(', ')}.`;
+    if (noFigure.length) note += ` No savings headline in the analysis for ${noFigure.join(', ')}.`;
+    if (failed.length) note += ` Could not read ${failed.join(', ')}.`;
+    setPortfolioSavingsRefresh({ running: false, note });
+  }
+
   // The Potential tab's working estimate: which services are ticked against
   // this account, the counts they are priced on, and the units typed against
   // a row. Held here rather than inside the tab so switching to Contacts and
@@ -11301,6 +11354,20 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     {rows.length > 0 && (
                       <>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, marginBottom: 4, position: 'relative' }} data-portfolio-cols-menu>
+                        {portfolioSavingsRefresh?.note && !portfolioSavingsRefresh.running && (
+                          <span style={{ fontSize: '0.66rem', color: '#475569', marginRight: 'auto', maxWidth: 640 }}>{portfolioSavingsRefresh.note}</span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={refreshPortfolioSavings}
+                          disabled={!!portfolioSavingsRefresh?.running}
+                          style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 5, background: '#fff', fontSize: '0.7rem', fontWeight: 600, cursor: portfolioSavingsRefresh?.running ? 'default' : 'pointer', fontFamily: 'inherit', color: 'var(--color-text-secondary)' }}
+                          title="Read the Indicative Savings headline out of the saved Master Analysis of each portfolio company and write it to that company, so the Indicative Savings column fills in. Companies with no saved analysis are skipped."
+                        >
+                          {portfolioSavingsRefresh?.running
+                            ? `Refreshing savings ${portfolioSavingsRefresh.done}/${portfolioSavingsRefresh.total}…`
+                            : '↻ Refresh Indicative Savings'}
+                        </button>
                         <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>
                           {(() => {
                             const total = PORTFOLIO_COL_DEFS.length;
