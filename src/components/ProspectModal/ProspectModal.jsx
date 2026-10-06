@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef, useCallback, memo, Suspense } fro
 import { apiFetch } from '../../utils/apiFetch';
 import { hasMetInPersonTag, metInPersonState, normalizeMetState, MET_STATE_OPTIONS, MET_YES, MET_ASKED, MET_HOLD } from '../../utils/metInPerson';
 import { contactDisplayName } from '../../utils/contactRosters';
-import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagVocabulary, saveTagReview, mergeTagEdit, tagListSignature, isStaleTagEcho, TAG_ECHO_WINDOW_MS } from '../../utils/contactTagReview';
+import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagVocabulary, planTagEdit, saveTagReview, mergeTagEdit, tagListSignature, isStaleTagEcho, TAG_ECHO_WINDOW_MS } from '../../utils/contactTagReview';
 import { contactEditPropsEqual, contactTagString } from '../../utils/contactEditProps';
 import { createTagWriter } from '../../utils/tagWriteQueue';
 
@@ -7216,13 +7216,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       const cid = c.id || c.vid;
       if (!cid) continue;
       let nextVal = bulkValue;
-      if (bulkField === 'dans_tags' && bulkMode === 'append') {
-        const existing = (c.dans_tags || c.dan_s_tags || c.dans_tag || '')
-          .split(';').map(s => s.trim()).filter(Boolean);
-        const incoming = (bulkValue || '').split(';').map(s => s.trim()).filter(Boolean);
-        const seen = new Set(existing.map(t => t.toLowerCase()));
-        for (const t of incoming) if (!seen.has(t.toLowerCase())) { existing.push(t); seen.add(t.toLowerCase()); }
-        nextVal = existing.join(';');
+      if (bulkField === 'dans_tags') {
+        // planTagEdit matches on tagKey, so a remove aimed at one spelling
+        // also drops the other, and a contact with nothing to change is
+        // left alone rather than rewritten.
+        const plan = planTagEdit(
+          bulkMode === 'append' ? 'add' : bulkMode,
+          (bulkValue || '').split(';'),
+          c.dans_tags || c.dan_s_tags || c.dans_tag || '',
+        );
+        if (plan.action !== 'write') continue;
+        nextVal = plan.tags;
       }
       const properties = { [bulkField]: nextVal };
       if (c._localOnly) {
@@ -12176,9 +12180,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           const def = FIELD_OPTIONS.find(f => f.key === bulkField) || FIELD_OPTIONS[0];
           const supportsMode = bulkField === 'dans_tags' || bulkField === 'notes';
           const onCancel = () => { if (!bulkApplying) { setBulkEditOpen(false); setBulkValue(''); } };
-          const submitDisabled = bulkApplying || (bulkField !== 'notes' && bulkValue.trim() === '' && bulkMode === 'replace');
+          const submitDisabled = bulkApplying || (bulkField !== 'notes' && bulkValue.trim() === '' && (bulkMode === 'replace' || bulkMode === 'remove'));
           // Tag chip helper for the dans_tags picker
           const tagsList = (bulkValue || '').split(';').map(s => s.trim()).filter(Boolean);
+          // Tags the selected contacts carry today, so one that is not in the
+          // standard list still has a chip to click when removing it.
+          const selectedTags = companyContacts
+            .filter(c => bulkSelected.has(String(c.id || c.vid)))
+            .flatMap(c => String(c.dans_tags || c.dan_s_tags || c.dans_tag || '').split(';'))
+            .map(s => s.trim()).filter(Boolean);
           function setTagsList(arr) { setBulkValue(arr.join(';')); }
           function toggleTag(t) {
             // Matched on tagKey, so clicking a chip clears the tag whichever
@@ -12222,6 +12232,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       >
                         <option value="replace">Replace existing value</option>
                         <option value="append">Append to existing value</option>
+                        {bulkField === 'dans_tags' && <option value="remove">Remove these tags</option>}
                       </select>
                     </label>
                   )}
@@ -12241,7 +12252,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                       <div style={{ fontSize: '0.75rem', color: '#334155', fontWeight: 600 }}>Tags</div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
-                        {tagVocabulary([...BUCKETS.map(b => b.label), ...tagsList]).map(t => {
+                        {tagVocabulary([...BUCKETS.map(b => b.label), ...selectedTags, ...tagsList]).map(t => {
                           const active = tagsList.some(x => tagKey(x) === tagKey(t));
                           return (
                             <button
@@ -12265,7 +12276,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       <div style={{ fontSize: '0.68rem', color: '#64748B' }}>
                         {bulkMode === 'append'
                           ? 'Appends new tags to each contact, keeping existing ones.'
-                          : 'Replaces every existing tag on each contact with the list above.'}
+                          : bulkMode === 'remove'
+                            ? 'Removes the tags above from each contact, keeping the rest. Contacts without them are left alone.'
+                            : 'Replaces every existing tag on each contact with the list above.'}
                       </div>
                     </div>
                   ) : (
