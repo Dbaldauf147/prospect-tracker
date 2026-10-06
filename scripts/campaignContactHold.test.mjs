@@ -99,11 +99,19 @@ const campaign = [
   { email: 'b@x.com', sentDate: '2026-09-01' },
   { email: 'c@x.com', outreach: 'hold', holdUntil: '2026-09-25' },   // never sent
   { email: 'd@x.com', sentDate: '2026-09-01', replied: true, outreach: 'hold', holdUntil: '2026-09-25' },
-  { email: 'e@x.com', outreach: 'hold', holdUntil: '2026-08-01' },   // lifted, unsent
+  { email: 'e@x.com', outreach: 'hold', holdUntil: '2026-08-01' },   // lapsed date, still marked
   { email: 'f@x.com', outreach: 'avoid', sentDate: '2026-09-01' },   // avoid still counts
 ];
 check('the base leaves the held contacts out', rateBase(campaign, now),
-  { counted: 4, sent: 3, replies: 1, onHold: 2, onHoldSent: 1 });
+  { counted: 3, sent: 3, replies: 1, onHold: 3, onHoldSent: 1 });
+// A hold whose date has passed still reads "Hold off" in the row, so it
+// stays out of the percentages until switched back to Contact.
+check('a lapsed hold still leaves the percentages', rateBase(
+  [{ sentDate: '2026-09-01' }, { outreach: 'hold', holdUntil: '2026-08-01' }], now),
+  { counted: 1, sent: 1, replies: 0, onHold: 1, onHoldSent: 0 });
+check('switched back to Contact, it counts again', rateBase(
+  [{ sentDate: '2026-09-01' }, { outreach: '', holdUntil: '' }], now),
+  { counted: 2, sent: 1, replies: 0, onHold: 0, onHoldSent: 0 });
 check('and the rate is measured over it', responseRateOf(campaign, now), 33.3);
 // The same roster with nothing held: every contact counts, which is what
 // every campaign that has never used the column looks like.

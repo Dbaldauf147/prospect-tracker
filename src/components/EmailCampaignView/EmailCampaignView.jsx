@@ -78,7 +78,7 @@ const CONTACT_COLUMNS = [
     label: 'Outreach',
     sortKey: 'outreach',
     width: 120,
-    title: 'Whether this contact is to be emailed. "Hold off" parks them until a date and then lifts on its own; "Avoid" keeps them off every send until you clear it. Either way they stay in the campaign with their history - they are just left out of "Add unsent to Draft". A held contact also comes out of the campaign\u2019s % Sent and Response Rate while the hold lasts, so parking somebody never counts as a send owed or a reply missing.',
+    title: 'Whether this contact is to be emailed. "Hold off" parks them until a date and then lifts on its own; "Avoid" keeps them off every send until you clear it. Either way they stay in the campaign with their history - they are just left out of "Add unsent to Draft". A held contact also comes out of the campaign\u2019s % Sent and Response Rate for as long as it is marked Hold off, so parking somebody never counts as a send owed or a reply missing.',
   },
   {
     key: 'tracking',
@@ -1389,7 +1389,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     const plural = (n) => (n === 1 ? '' : 's');
     const head = `${rateStats.replies} of the ${rateStats.sent} contact${plural(rateStats.sent)} counted here replied.`;
     if (rateStats.onHold === 0) return head;
-    return `${head} ${rateStats.onHold} contact${plural(rateStats.onHold)} on "Hold off" ${rateStats.onHold === 1 ? 'is' : 'are'} left out of the rate: nobody is waiting on a parked contact to reply. They rejoin it on their own when the hold lifts.`;
+    return `${head} ${rateStats.onHold} contact${plural(rateStats.onHold)} on "Hold off" ${rateStats.onHold === 1 ? 'is' : 'are'} left out of the rate: nobody is waiting on a parked contact to reply. They rejoin it when switched back to Contact.`;
   }, [rateStats]);
 
   // How many of the roster arrived on their own rather than being typed in.
@@ -1762,7 +1762,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 : live === 'hold'
                   ? `On hold${c.holdUntil ? ` until ${fmtDate(c.holdUntil)}` : ' until you clear it'} - left out of "Add unsent to Draft". A dated hold lifts on its own.`
                   : lapsed
-                    ? 'This hold has run out - the contact is back on the list. Pick a later date to hold them again.'
+                    ? 'This hold has run out - the contact is back in "Add unsent to Draft", but stays out of % Sent until switched back to Contact. Pick a later date to hold them again.'
                     : `Contact freely. "Hold off" parks them for ${CONTACT_HOLD_DAYS} days by default; "Avoid" keeps them off every send until you clear it.`}
               style={{ width: '100%', padding: '2px 4px', borderRadius: '6px', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', ...TONE[live] }}
             >
@@ -2236,7 +2236,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Not To Email</div>
                 <div
                   style={{ fontSize: '1.4rem', fontWeight: 700, color: '#B45309' }}
-                  title={`${holdStats.blocked} contact${holdStats.blocked === 1 ? '' : 's'} left out of "Add unsent to Draft": ${holdStats.onHold} on hold, ${holdStats.avoided} marked Avoid. A hold lifts on its own on the date it names, and while it lasts that contact is out of the % Sent and Response Rate figures too. Avoid is a decision about a person rather than a wait, so it leaves the percentages alone.`}
+                  title={`${holdStats.blocked} contact${holdStats.blocked === 1 ? '' : 's'} left out of "Add unsent to Draft": ${holdStats.onHold} on hold, ${holdStats.avoided} marked Avoid. A hold lifts on its own on the date it names. A contact marked Hold off is also out of the % Sent and Response Rate figures until switched back to Contact. Avoid is a decision about a person rather than a wait, so it leaves the percentages alone.`}
                 >
                   {holdStats.blocked}{' '}
                   <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>
@@ -2970,7 +2970,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                   <>
                     <td
                       title={rowHeld > 0
-                        ? `${rowSent} of the ${rowBase} contact${rowBase === 1 ? '' : 's'} this campaign is working have been sent to. ${rowHeld} on "Hold off" ${rowHeld === 1 ? 'is' : 'are'} left out until the hold lifts.`
+                        ? `${rowSent} of the ${rowBase} contact${rowBase === 1 ? '' : 's'} this campaign is working have been sent to. ${rowHeld} on "Hold off" ${rowHeld === 1 ? 'is' : 'are'} left out until switched back to Contact.`
                         : `${sent} of the ${total} contact${total === 1 ? '' : 's'} on this campaign have been sent to.`}
                       style={{ padding: '0.5rem 0.6rem', textAlign: 'right', fontWeight: 600, color: 'var(--color-text)', whiteSpace: 'nowrap', verticalAlign: 'top' }}
                     >{pctSent}%</td>

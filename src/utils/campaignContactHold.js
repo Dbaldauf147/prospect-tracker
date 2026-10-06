@@ -156,7 +156,8 @@ export function outreachPatch(c, state, nowMs = Date.now()) {
  * on the Prospecting ladder's list of unfinished work forever. Taking the
  * held contact out of both sides makes it what it is, 100% sent, and the
  * moment the hold lifts they are back in the denominator with nothing to
- * undo - the hold is a date, so this moves on its own.
+ * undo. "Lifts" here means switched back to Contact: see isContactMarkedHold
+ * for why a lapsed date alone doesn't bring them back into the figures.
  *
  * `onHoldSent` is the held contacts who were already emailed, which is the
  * ordinary case of somebody who asked to be left alone after the first mail
@@ -172,10 +173,23 @@ export function outreachPatch(c, state, nowMs = Date.now()) {
  * by any of this: they are what happened, and a held contact who was mailed
  * still was.
  */
-export function rateBase(contacts, nowMs = Date.now()) {
+// Marked "Hold off", whether or not its date has passed.
+//
+// The percentages read the dropdown, not the clock. A hold whose date ran
+// out still shows "Hold off" in the row (greyed, with the lapsed date), and
+// a contact the screen says is held but the % Sent counts as owed is the
+// mismatch this was reported as. So a held contact stays out of the
+// figures until somebody switches them back to Contact. The draft queue
+// still goes by the clock (isContactOnHold): that is about whether to mail
+// them today, which a lapsed date does answer.
+export function isContactMarkedHold(c) {
+  return c?.outreach === 'hold';
+}
+
+export function rateBase(contacts) {
   let counted = 0, sent = 0, replies = 0, onHold = 0, onHoldSent = 0;
   for (const c of (contacts || [])) {
-    if (isContactOnHold(c, nowMs)) {
+    if (isContactMarkedHold(c)) {
       onHold += 1;
       if (c?.sentDate) onHoldSent += 1;
       continue;
@@ -191,7 +205,7 @@ export function rateBase(contacts, nowMs = Date.now()) {
  * A campaign's response rate as the screen prints it: one decimal, measured
  * over the contacts that count (see rateBase).
  */
-export function responseRateOf(contacts, nowMs = Date.now()) {
-  const { sent, replies } = rateBase(contacts, nowMs);
+export function responseRateOf(contacts) {
+  const { sent, replies } = rateBase(contacts);
   return sent > 0 ? parseFloat(((replies / sent) * 100).toFixed(1)) : 0;
 }
