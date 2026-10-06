@@ -211,6 +211,30 @@ export function watchForClientCrash() {
   };
 }
 
+// Reload the tab, at most once per five minutes, because the client died.
+//
+// For the crash screen: by the time the root error boundary is showing,
+// React has already unmounted the page, so there is no half-typed form left
+// to lose, and a dead client is the one crash a fresh page reliably fixes.
+// The cooldown is what stops a page that crashes again on load from turning
+// into a reload loop; the second time inside the window, the screen stays up
+// and says what happened instead. Session-scoped, so another tab's reload
+// doesn't spend this one's.
+const WEDGED_RELOAD_KEY = 'firestore-wedged-reload-at';
+const WEDGED_RELOAD_COOLDOWN_MS = 300000;
+
+export function claimWedgedReload(now = Date.now()) {
+  try {
+    const last = Number(sessionStorage.getItem(WEDGED_RELOAD_KEY) || 0);
+    if (Number.isFinite(last) && now - last < WEDGED_RELOAD_COOLDOWN_MS) return false;
+    sessionStorage.setItem(WEDGED_RELOAD_KEY, String(now));
+    return true;
+  } catch {
+    // No sessionStorage means no way to tell a first crash from a loop.
+    return false;
+  }
+}
+
 // Test seam. Nothing in the app clears this — a crashed client stays
 // crashed until the tab reloads.
 export function __resetClientHealth() {
