@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { SF_INSTANCE_URL, resolveSfUrl } from '../../utils/salesforceLeads';
-import { normalizeMetState, MET_YES } from '../../utils/metInPerson';
+import { metInPersonUpdate } from '../../utils/metInPerson';
 import { getHubspotContacts, updateHubspotCache, notifyCacheUpdated } from '../../utils/hubspotContactsCache';
 import { apiFetch } from '../../utils/apiFetch';
 import { STATUS_COLORS } from '../../data/enums';
@@ -2752,7 +2752,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
           contactMetInPerson={settings?.contactMetInPerson || {}}
           onSaveMetInPerson={(cid, met) => {
             if (cid == null) return;
-            updateSettings({ contactMetInPerson: { ...(settings?.contactMetInPerson || {}), [cid]: normalizeMetState(met) ?? MET_YES } });
+            updateSettings(metInPersonUpdate(cid, met));
           }}
           contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
           onSaveInvitedToLouisville={(cid, invited) => {

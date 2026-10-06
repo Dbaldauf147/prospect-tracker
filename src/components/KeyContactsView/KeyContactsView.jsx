@@ -13,7 +13,7 @@ import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContacts
 import { userLsGet } from '../../utils/userLs';
 import { useOppsRecords } from '../../utils/rosterHooks';
 import { companyPopupTarget } from '../../utils/companyLookup';
-import { resolveMetInPerson as resolveMetInPersonWith, normalizeMetState, MET_YES } from '../../utils/metInPerson';
+import { resolveMetInPerson as resolveMetInPersonWith, metInPersonUpdate } from '../../utils/metInPerson';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { tagReviewScore, tagVocabulary, saveTagReview, recordForVerdict, sameTagRecord, recordKeepsTag, dedupeTags, planTagEdit, groupTagWrites, findTagRecord, tagRecordKeyFor } from '../../utils/contactTagReview';
@@ -4863,10 +4863,7 @@ function KeyContactsViewInner({
               updateSettings({ contactFamilies: next });
             }}
             contactMetInPerson={settings?.contactMetInPerson || {}}
-            onSaveMetInPerson={(contactId, met) => {
-              const current = settings?.contactMetInPerson || {};
-              updateSettings({ contactMetInPerson: { ...current, [contactId]: normalizeMetState(met) ?? MET_YES } });
-            }}
+            onSaveMetInPerson={(contactId, met) => updateSettings(metInPersonUpdate(contactId, met))}
             contactInvitedToLouisville={settings?.contactInvitedToLouisville || {}}
             onSaveInvitedToLouisville={(contactId, invited) => {
               const current = settings?.contactInvitedToLouisville || {};

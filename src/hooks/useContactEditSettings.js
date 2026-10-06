@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { withCompanyOverride } from '../utils/contactCompanyOverride';
+import { metInPersonUpdate } from '../utils/metInPerson';
 
 // The settings-backed half of ContactEditModal's props, in one place.
 //
@@ -79,7 +80,7 @@ export function useContactEditSettings({ settings, updateSettings }) {
       contactMetInPerson: settings?.contactMetInPerson || {},
       onSaveMetInPerson: (cid, met) => {
         if (cid == null) return;
-        updateSettings?.({ contactMetInPerson: { ...(settings?.contactMetInPerson || {}), [cid]: !!met } });
+        updateSettings?.(metInPersonUpdate(cid, met));
       },
       contactInvitedToLouisville: settings?.contactInvitedToLouisville || {},
       onSaveInvitedToLouisville: (cid, invited) => {

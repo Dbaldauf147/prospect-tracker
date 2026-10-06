@@ -169,8 +169,18 @@ export function useUserSettings(user) {
   //
   // opts.clearLeadLinks: ids of Marketing Leads whose Salesforce Link this
   // save removes on purpose. Any other blanked link is put back.
-  const updateSettings = useCallback(async (rawUpdates, opts = {}) => {
+  //
+  // `updatesOrFn` may be a function of the current settings, returning the
+  // keys to write. Use it for one entry of a per-contact map: a caller that
+  // spreads its own render-time copy of the map writes that copy back, and
+  // anything saved since it rendered (the same contact, from a save that
+  // was mid-flight, or any other contact) is overwritten with what it held.
+  const updateSettings = useCallback(async (updatesOrFn, opts = {}) => {
     if (!userIdRef.current) return;
+    const rawUpdates = typeof updatesOrFn === 'function'
+      ? updatesOrFn(settingsRef.current || {})
+      : updatesOrFn;
+    if (!rawUpdates || typeof rawUpdates !== 'object') return;
     const clears = opts?.clearLeadLinks || [];
 
     // Snapshot the pre-save state for recovery.
