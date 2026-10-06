@@ -11452,6 +11452,18 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         properties: { tabColor: { argb: SE_GREEN } },
         views: [{ showGridLines: false, state: 'frozen', xSplit: 1, ySplit: 3 }],
       });
+      // Built after the Indicative Savings sheet (its formulas need to know
+      // which rows these sites landed on), but it is the input that sheet
+      // reads, so it sits in front of it in the workbook: take Indicative
+      // Savings' place in the tab order and move everything from there on
+      // back one. ExcelJS writes the tabs in orderNo order.
+      {
+        const slot = ws.orderNo;
+        for (const sheet of wb.worksheets) {
+          if (sheet !== cws && sheet.orderNo >= slot) sheet.orderNo += 1;
+        }
+        cws.orderNo = slot;
+      }
       const CC_COLS = COVERAGE_BROKER_COL + COVERAGE_YEARS - 1;
       cws.columns = [30, 14, 24, 24, 15, 18, 18, 18, 14, 12, 12, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15].map(w => ({ width: w }));
       // Where each column sits. Open Spend Year 1-5 run from
