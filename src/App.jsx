@@ -33,6 +33,7 @@ import { UpdateBanner } from './components/UpdateBanner';
 import { SyncPanel } from './components/SyncPanel';
 import { DailySuccessManager } from './components/DailySuccess/DailySuccessManager';
 import { DailySuccessLogModal } from './components/DailySuccess/DailySuccessLogModal';
+import { UTILITY_LOOKUP_HANDOFF_EVENT } from './utils/utilityLookupHandoff';
 import './App.css';
 
 // Route views load on first navigation rather than shipping in the entry
@@ -238,6 +239,15 @@ function App() {
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, [user?.uid]);
+
+  // A company popup's "Master Analysis" button parks its site list for the
+  // Utility Lookup page (see utilityLookupHandoff). Close the popup and go
+  // to Lists, whose Utility Lookup subtab picks the list up.
+  useEffect(() => {
+    const onHandoff = () => { setModal(null); setView('lists'); };
+    window.addEventListener(UTILITY_LOOKUP_HANDOFF_EVENT, onHandoff);
+    return () => window.removeEventListener(UTILITY_LOOKUP_HANDOFF_EVENT, onHandoff);
+  }, []);
 
   // Apply per-contact local overrides on top of the cached HubSpot
   // contacts before passing them down. Specifically, _companyOverride
