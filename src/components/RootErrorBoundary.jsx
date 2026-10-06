@@ -1,5 +1,6 @@
 import { Component } from 'react';
 import { isChunkLoadError, reloadPastCache, chunkUrlFrom, diagnoseChunk, claimScreenReload } from '../utils/lazyView';
+import { isClientWedgedError, noteClientWedged, claimWedgedReload } from '../utils/firestoreClientHealth';
 
 // The last boundary before the page. Individual pages have their own (see
 // KeyContactsView, PipelineView) so a bad row there doesn't take the app
@@ -20,6 +21,18 @@ export class RootErrorBoundary extends Component {
   componentDidCatch(error, info) {
     console.error('App render crashed', error, info);
     this.setState({ info });
+    // The Firestore SDK crashed itself (ca9 / b815, see
+    // firestoreClientHealth) and a call into the dead client threw inside
+    // React. Nothing in the page is broken and nothing on this screen can
+    // revive the client; a fresh page is the fix, so take it once.
+    if (isClientWedgedError(error)) {
+      noteClientWedged(error);
+      if (claimWedgedReload()) {
+        this.setState({ reloading: true });
+        window.location.reload();
+      }
+      return;
+    }
     // A file that wouldn't load is the one crash where the screen can find
     // out more than it was told. Ask the network what happened to it, and
     // say so here rather than leaving it to be guessed at from the message.
@@ -67,11 +80,13 @@ export class RootErrorBoundary extends Component {
     // didn't take — worth saying, because "a component threw" would send
     // the reader looking for a bug in the page they were opening.
     const stale = isChunkLoadError(error);
+    const wedged = !stale && isClientWedgedError(error);
 
     // Once the diagnosis is in, the heading can say which of the two this
     // is, instead of leading with staleness for a file the server never
     // had or one an extension is eating.
     const heading = reloading ? 'Reloading the page'
+      : wedged ? 'The database connection in this tab crashed'
       : !stale ? 'Something in the page crashed'
       : ({
         missing: 'A file this page needs is not on the server',
@@ -99,6 +114,13 @@ export class RootErrorBoundary extends Component {
                 : 'Checking whether the file is on the server, or whether something here stopped it '
                   + 'from loading. Reload fetches it again from scratch, ignoring anything saved.'}
               {' '}Copy the details below to pass this on.
+            </>
+          ) : wedged ? (
+            <>
+              The Firebase library this app uses to talk to the database hit an internal
+              bug and stopped working in this tab. Your data is untouched: it lives in the
+              database, not in this tab. Reload to reconnect; if this screen keeps coming
+              back, copy the details below so it can be traced.
             </>
           ) : (
             <>
