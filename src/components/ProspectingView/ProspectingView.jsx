@@ -49,6 +49,7 @@ import { TOP_PC_EXCLUDED_STATUSES } from '../../utils/topPortfolioCompany';
 import { COLD_OUTREACH_EXCLUDED_STATUSES } from '../../utils/decisionMakerCoverage';
 import { auditablePeople, setQueuedAuditContacts } from '../../utils/tagAuditQueue';
 import { ProspectingHistory } from './ProspectingHistory';
+import { ProspectingCompanies } from './ProspectingCompanies';
 
 // The contact popup, loaded when one is actually opened. It lives in
 // ProspectModal, which is the largest module in the app — a static import
@@ -107,6 +108,8 @@ const SUBTAB_KEY = 'prospecting-view:active-subtab';
 const SUBTABS = [
   { key: 'ladder', label: 'Ladder' },
   { key: 'history', label: 'History' },
+  { key: 'prospects', label: 'Prospects' },
+  { key: 'pcs', label: 'PCs' },
 ];
 function readSavedSubtab() {
   try {
@@ -1469,6 +1472,15 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
 
       {subtab === 'history' ? (
         <ProspectingHistory today={today} maxWidth={PAGE_MAX} />
+      ) : subtab === 'prospects' || subtab === 'pcs' ? (
+        <ProspectingCompanies
+          mode={subtab}
+          prospects={prospects}
+          settings={settings}
+          cdmName={cdmName}
+          onSelectProspect={onSelectProspect}
+          maxWidth={PAGE_MAX}
+        />
       ) : (
       <div style={{ padding: '0.25rem 1.25rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: PAGE_MAX }}>
         <div

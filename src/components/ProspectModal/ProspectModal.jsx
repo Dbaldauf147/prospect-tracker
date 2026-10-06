@@ -585,7 +585,7 @@ const PROSPECT_TABS = [
 const NUMERIC_FIELDS = [
   'peAum', 'reAum', 'numberOfSites', 'numberOfAccounts',
   'numberOfMeters', 'equipmentCount', 'annualMwh', 'sitesWithMandate',
-  'deregulatedSites', 'indicativeAnnualSavings', 'maxYearlyExposure',
+  'deregulatedSites', 'indicativeAnnualSavings', 'maxYearlyExposure', 'totalEnergyMwh',
 ];
 
 function recordToSave(fields) {
@@ -603,7 +603,7 @@ function recordToSave(fields) {
 const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', vertical: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, numberOfAccounts: null,
-  numberOfMeters: null, equipmentCount: null, annualMwh: null, sitesWithMandate: null,
+  numberOfMeters: null, equipmentCount: null, annualMwh: null, totalEnergyMwh: null, sitesWithMandate: null,
   // The three headline figures off the Utility Lookup analysis: how much of
   // the estate can be shopped, what shopping it is worth, and what the
   // building mandates cost if nothing is done. Null rather than 0 - none of
