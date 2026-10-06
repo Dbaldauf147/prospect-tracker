@@ -50,8 +50,8 @@ import { scopeSitesByOwnership, isLeasedUtilityRow, savingsOwnershipScope } from
 import { SAVINGS_STATUS, savingsStatusFor, isNoSavingsRow } from './savingsStatus.js';
 import { EUROPE_VOLUME_GWH, largeEuropeanMarkets, largeEuropeanMarketLabel } from './europeVolume.js';
 import {
-  COVERAGE_YEARS, monthsUnderAgreement, openSpendByYear, coverageSeed,
-  monthsLockedFormula, openSpendFormula,
+  COVERAGE_YEARS, utcDay, monthsUnderAgreement, siteOpenSpendByYear,
+  monthsLockedFormula, siteOpenSpendFormula, marketOpenSpendFormula,
 } from './contractCoverage.js';
 import { SavingsScopeToggle } from './OwnershipScopeBar.jsx';
 import { DataQualityTable } from './DataQualityTable.jsx';
@@ -7475,10 +7475,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             // independent of the dereg gate that filters g.consumption.
             anyConsumption: 0,
             maxSiteConsumption: 0,
-            // Each deregulated site's savings-eligible spend and supply
-            // agreement end date, for the Contract Coverage tab's seed
-            // values (see contractCoverage.js).
-            coverageSites: [],
           };
           states.set(bucketKey, g);
         }
@@ -7602,7 +7598,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         // skipped one: it stays on the Monthly Savings sheet with its
         // spend and its contract dates intact, showing $0 every month.
         const savingsSpend = outOfSavingsScope ? 0 : spend;
-        g.coverageSites.push({ spend: savingsSpend, end: de });
         const annualLow = (savingsSpend > 0 && lowPct != null) ? savingsSpend * lowPct : 0;
         const annualHigh = (savingsSpend > 0 && highPct != null) ? savingsSpend * highPct : 0;
         const annualMid = (annualLow + annualHigh) / 2;
@@ -7644,6 +7639,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           // "Open" or a blank rather than the reason a site is missing.
           siteStatus: r.__siteStatus__ || '',
           annualSpend: Math.round(spend),
+          // What the savings range is applied to (0 at a leased location
+          // held out of scope), and the site's deregulated load in the
+          // export's unit (kWh / Dth): both listed on the Contract Coverage
+          // tab.
+          eligibleSpend: savingsSpend,
+          consumption: (typeof consumption === 'number' && Number.isFinite(consumption))
+            ? (commodity === 'gas' ? consumption / 10 : consumption)
+            : 0,
           // A leased location has no savings band applied, so the band
           // reads blank here rather than showing a rate that produced
           // nothing.
@@ -7842,10 +7845,6 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           // as no contract at all).
           earliestStart: earliest ? fmtDate(earliest) : (g.suppliers.length > 0 ? 'TBD' : ''),
           latestEnd: latest ? fmtDate(latest) : (g.suppliers.length > 0 ? 'TBD' : ''),
-          // How much of this market's savings-eligible spend is still under
-          // a supply agreement, and until when. Seeds the Contract Coverage
-          // tab's editable inputs.
-          coverage: coverageSeed(g.coverageSites, horizonStart),
         };
       });
       return { stateRows, siteRows };
@@ -7855,30 +7854,41 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const { stateRows: gasRows, siteRows: gasSiteRows } = buildBucket('gas');
 
     // With the Contract Coverage tab in the workbook, the Indicative Savings
-    // tab's Annual and Year 1-5 cells are formulas over that tab's open
-    // spend, so the figures carried on each row (the cached results, the
-    // Savings Summary headline, the Savings Status column) are re-derived on
-    // the same market-level model. Otherwise Excel would open on one set of
-    // numbers and recalculate to another.
+    // tab's Annual and Year 1-5 cells are formulas over that tab's per-site
+    // open spend, so the figures carried on each row (the cached results,
+    // the Savings Summary headline, the Savings Status column) are re-derived
+    // on the same model. Otherwise Excel would open on one set of numbers
+    // and recalculate to another.
     const projectionStart = new Date(Date.UTC(horizonStart.getFullYear(), horizonStart.getMonth(), 1));
+    // Each site's agreement end date as the tab writes it, and its open
+    // spend by year on that date.
+    const coverageSiteFacts = (site) => {
+      const ends = site.contractEndDate ? utcDay(site.contractEndDate) : null;
+      const months = monthsUnderAgreement(ends, projectionStart);
+      return { ends, months, open: siteOpenSpendByYear(site.eligibleSpend, months) };
+    };
     if (contractCoverage) {
-      for (const g of [...electricRows, ...gasRows]) {
-        if (g.lowPct == null || g.highPct == null) continue;
-        const cov = g.coverage || {};
-        const open = openSpendByYear(
-          g.savingsEligibleSpend,
-          cov.coveredShare,
-          monthsUnderAgreement(cov.expiry, projectionStart),
-        );
-        let cum = 0;
-        const cumulative = open.map((x) => (cum += x));
-        const triple = (spendBasis) => ({
-          low: Math.round(spendBasis * g.lowPct),
-          mid: Math.round(spendBasis * (g.lowPct + g.highPct) / 2),
-          high: Math.round(spendBasis * g.highPct),
-        });
-        g.annualSavings = triple(open[0]);
-        for (let n = 1; n <= COVERAGE_YEARS; n++) g[`year${n}`] = triple(cumulative[n - 1]);
+      for (const [stateRows, siteRows] of [[electricRows, electricSiteRows], [gasRows, gasSiteRows]]) {
+        const openByMarket = new Map();
+        for (const site of siteRows) {
+          const { open } = coverageSiteFacts(site);
+          const acc = openByMarket.get(site.state) || new Array(COVERAGE_YEARS).fill(0);
+          open.forEach((x, k) => { acc[k] += x; });
+          openByMarket.set(site.state, acc);
+        }
+        for (const g of stateRows) {
+          if (g.lowPct == null || g.highPct == null) continue;
+          const open = openByMarket.get(g.state) || new Array(COVERAGE_YEARS).fill(0);
+          let cum = 0;
+          const cumulative = open.map((x) => (cum += x));
+          const triple = (spendBasis) => ({
+            low: Math.round(spendBasis * g.lowPct),
+            mid: Math.round(spendBasis * (g.lowPct + g.highPct) / 2),
+            high: Math.round(spendBasis * g.highPct),
+          });
+          g.annualSavings = triple(open[0]);
+          for (let n = 1; n <= COVERAGE_YEARS; n++) g[`year${n}`] = triple(cumulative[n - 1]);
+        }
       }
     }
 
@@ -10501,7 +10511,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           ? ' Leased locations are included in this projection, at the request of the analysis: they carry the same savings range as every other site.'
           : '')
       + (contractCoverage
-        ? ' Annual and Year 1–5 savings are taken off the spend open to re-sourcing on the Contract Coverage tab: edit the share under agreement and the end date there and these columns follow.'
+        ? ' Annual and Year 1–5 savings are taken off the spend each market\'s sites have open to re-sourcing on the Contract Coverage tab: edit a site\'s Agreement Ends date there and these columns follow.'
         : '');
     toggleHint.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_TEXT_DARK } };
     toggleHint.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
@@ -10520,15 +10530,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // don't belong on the Indicative Savings tab even if they carry
     // a reg-rate (utility tariff) opportunity. Parent aggregate rows
     // (United States, Canada) are always kept and roll up surviving
-    // children. The Contract Coverage tab lists the same markets.
+    // children. The Contract Coverage tab lists the sites in the same
+    // markets.
     const REGULATED_STATUSES = new Set(['no', 'Regulated', 'Unlikely', 'No opportunity']);
     // Filled in just before the sections are written, when the Contract
-    // Coverage tab is part of the workbook: commodity -> market -> the
-    // row on that tab carrying the market's open spend by year.
-    const coverageRowFor = { electric: new Map(), gas: new Map() };
+    // Coverage tab is part of the workbook: commodity -> the first and last
+    // sheet row of that commodity's site list on the tab.
+    const coverageRowsFor = { electric: null, gas: null };
     const COVERAGE_SHEET_NAME = 'Contract Coverage';
-    // Open Spend Year 1 sits in this column on the Contract Coverage tab,
-    // Years 2-5 in the four after it.
+    // The site's market sits in this column on the Contract Coverage tab;
+    // Open Spend Year 1 in the other, Years 2-5 in the four after it.
+    const COVERAGE_MARKET_COL = 2;
     const COVERAGE_OPEN_COL = 11;
     function writeSection(label, sectionRows, columnDefs, commodity) {
       // Section header band — light green wash with dark green text.
@@ -10617,14 +10629,22 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         while (j < visibleRows.length && visibleRows[j]._outlineLevel && !visibleRows[j].isParent) j += 1;
         if (j > i + 1) childRangeFor.set(row, [dataStartRow + i + 1, dataStartRow + j - 1]);
       });
-      // This row's open spend on the Contract Coverage tab, Year 1 through
-      // `n`, as a range reference; null when the tab isn't in the workbook.
-      const coverageOpenRange = (row, n) => {
-        const covRow = coverageRowFor[commodity].get(row.state);
-        if (!covRow) return null;
-        const first = `$${colLetterFor(COVERAGE_OPEN_COL)}$${covRow}`;
-        const last = `$${colLetterFor(COVERAGE_OPEN_COL + n - 1)}$${covRow}`;
-        return `'${COVERAGE_SHEET_NAME}'!${n === 1 ? first : `${first}:${last}`}`;
+      // The open spend of this market's sites on the Contract Coverage tab,
+      // Year 1 through `n`, matched on the market name in column A of
+      // sheet row `rowNum`; null when the tab isn't in the workbook.
+      const coverageOpenSum = (n, rowNum) => {
+        const span = coverageRowsFor[commodity];
+        if (!span) return null;
+        const [first, last] = span;
+        const q = `'${COVERAGE_SHEET_NAME}'!`;
+        const marketCol = colLetterFor(COVERAGE_MARKET_COL);
+        const openFirst = colLetterFor(COVERAGE_OPEN_COL);
+        const openLast = colLetterFor(COVERAGE_OPEN_COL + n - 1);
+        return marketOpenSpendFormula(
+          `${q}$${marketCol}$${first}:$${marketCol}$${last}`,
+          `$A${rowNum}`,
+          `${q}$${openFirst}$${first}:$${openLast}$${last}`,
+        );
       };
 
       // Data rows — every cell left-aligned regardless of type so the
@@ -10694,12 +10714,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             const spendRef = cellRef('spend', r);
             const pctRef = cellRef('savingsPct', r);
             const midResult = (v && typeof v === 'object' && Number.isFinite(v.mid)) ? Math.round(v.mid) : 0;
-            const openRef = coverageOpenRange(row, 1);
+            const openRef = coverageOpenSum(1, r);
             const kids = childRangeFor.get(row);
             if (spendRef && pctRef && !row.isParent && !row.isTbd) {
-              // With the Contract Coverage tab: the spend open to
-              // re-sourcing in Year 1, not the full spend, since the
-              // share under agreement can't be re-priced yet.
+              // With the Contract Coverage tab: the spend at this market's
+              // sites that is open to re-sourcing in Year 1, not the full
+              // spend, since a site under agreement can't be re-priced yet.
               const basis = openRef || spendRef;
               cell.value = { formula: `${basis}*${pctRef}`, result: midResult };
               cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
@@ -10720,16 +10740,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             const annualRef = cellRef('annualSavings', r);
             const N = c.yearGate;
             const midResult = (v && typeof v === 'object' && Number.isFinite(v.mid)) ? Math.round(v.mid * (N || 1)) : 0;
-            const openRange = N ? coverageOpenRange(row, N) : null;
+            const openSum = N ? coverageOpenSum(N, r) : null;
             const pctRef = cellRef('savingsPct', r);
             const kids = childRangeFor.get(row);
-            if (openRange && pctRef && !row.isParent && !row.isTbd) {
+            if (openSum && pctRef && !row.isParent && !row.isTbd) {
               // Savings % on each year's open spend, Year 1 through N: a
-              // market whose spend is locked until year 3 starts adding
-              // to the cumulative in year 3, not on day one.
+              // site locked until year 3 starts adding to the cumulative
+              // in year 3, not on day one.
               const cumResult = (v && typeof v === 'object' && Number.isFinite(v.mid)) ? Math.round(v.mid) : 0;
               cell.value = {
-                formula: `IF(--${YEARS_REF}>=${N},${pctRef}*SUM(${openRange}),0)`,
+                formula: `IF(--${YEARS_REF}>=${N},${pctRef}*${openSum},0)`,
                 result: cumResult,
               };
               cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
@@ -11354,34 +11374,33 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     }
 
     // ---- Contract Coverage tab --------------------------------------
-    // The deregulated markets, their electric and gas consumption and
-    // spend, and how much of that spend is tied up in supply agreements
-    // that haven't ended yet. Two inputs per market (share under agreement,
-    // agreement end date), seeded from the sites and editable; the open
-    // spend by year they produce is what the Indicative Savings tab's
-    // Annual and Year 1-5 columns multiply the savings % against. Written
-    // here, before those sections, so the row each market landed on is
-    // known when their formulas are written. See contractCoverage.js.
+    // Every deregulated site, its electric or gas consumption and spend, and
+    // the supply agreement it is tied up in. One input per site (Agreement
+    // Ends), seeded from the site's contract end date and editable; the open
+    // spend by year it produces is what the Indicative Savings tab's Annual
+    // and Year 1-5 columns add up per market and multiply the savings %
+    // against. Written here, before those sections, so the rows each site
+    // list landed on are known when their formulas are written. See
+    // contractCoverage.js.
     if (contractCoverage) {
       const cws = wb.addWorksheet(COVERAGE_SHEET_NAME, {
         properties: { tabColor: { argb: SE_GREEN } },
         views: [{ showGridLines: false, state: 'frozen', xSplit: 1, ySplit: 3 }],
       });
       const CC_COLS = COVERAGE_OPEN_COL + COVERAGE_YEARS - 1;
-      cws.columns = [24, 13, 13, 18, 18, 18, 14, 14, 11, 18, 15, 15, 15, 15, 15].map(w => ({ width: w }));
+      cws.columns = [30, 14, 24, 24, 18, 18, 14, 12, 12, 15, 15, 15, 15, 15, 15].map(w => ({ width: w }));
       const INPUT_FILL = 'FFFFF9C3';
       const INPUT_BORDER = 'FFCA8A04';
-      const inputBorder = {
-        top:    { style: 'thin', color: { argb: INPUT_BORDER } },
-        bottom: { style: 'thin', color: { argb: INPUT_BORDER } },
-        left:   { style: 'thin', color: { argb: INPUT_BORDER } },
-        right:  { style: 'thin', color: { argb: INPUT_BORDER } },
-      };
       const styleInput = (cell, numFmt) => {
         cell.font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: SE_TEXT_DARK } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: INPUT_FILL } };
         cell.alignment = { vertical: 'bottom', horizontal: 'left', indent: 1 };
-        cell.border = inputBorder;
+        cell.border = {
+          top:    { style: 'thin', color: { argb: INPUT_BORDER } },
+          bottom: { style: 'thin', color: { argb: INPUT_BORDER } },
+          left:   { style: 'thin', color: { argb: INPUT_BORDER } },
+          right:  { style: 'thin', color: { argb: INPUT_BORDER } },
+        };
         if (numFmt) cell.numFmt = numFmt;
       };
 
@@ -11395,32 +11414,47 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
       // Row 2: the date the projection's Year 1 starts on. Every Months
       // Under Agreement figure counts from it.
-      cws.mergeCells(2, 1, 2, 2);
       const startLabel = cws.getCell(2, 1);
       startLabel.value = 'Projection Starts';
       startLabel.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
       startLabel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
       startLabel.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      const startCell = cws.getCell(2, 3);
+      const startCell = cws.getCell(2, 2);
       startCell.value = projectionStart;
       styleInput(startCell, 'm/d/yyyy');
       cws.getRow(2).height = 22;
-      const START_REF = '$C$2';
+      const START_REF = '$B$2';
 
       cws.mergeCells(3, 1, 3, CC_COLS);
       const ccHint = cws.getCell(3, 1);
-      ccHint.value = 'The deregulated markets on the Indicative Savings tab, and how much of each one\'s spend is tied up in supply agreements that have not ended yet. '
-        + 'The yellow cells are editable: % Under Agreement is the share of the market\'s savings-eligible spend that is contracted, and Agreement Ends is when that share comes free. '
-        + 'They start out from the sites\' own contract end dates (the spend-weighted average end date of the sites still under contract). '
-        + 'Open Spend is what is free to re-source in each year of the projection, and it is what the Indicative Savings tab\'s Annual and Year 1–5 savings are taken off, so editing a yellow cell here updates that tab.';
+      ccHint.value = 'Every deregulated site on the Indicative Savings tab, and the supply agreement it is tied up in. '
+        + 'Agreement Ends (yellow) is editable: it starts out as the site\'s contract end date, a blank means no agreement (the site is open from day one), and a date moves the site\'s spend out of the projection until that agreement ends. '
+        + 'Open Spend is what each site has free to re-source in each year of the projection. The Indicative Savings tab adds it up per market and takes its Annual and Year 1–5 savings off it, so editing a date here updates that tab.';
       ccHint.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_TEXT_DARK } };
       ccHint.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
       ccHint.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
       cws.getRow(3).height = 44;
 
+      const colL = (n) => {
+        let out = '';
+        let m = n;
+        while (m > 0) { m--; out = String.fromCharCode(65 + (m % 26)) + out; m = Math.floor(m / 26); }
+        return out;
+      };
       let cr = 5;
-      const writeCoverageSection = (label, sectionRows, commodity, unit) => {
-        const markets = sectionRows.filter(row => !row.isParent && !REGULATED_STATUSES.has(row.status));
+      const writeCoverageSection = (label, stateRows, siteRows, commodity, unit) => {
+        // The markets the Indicative Savings tab lists, in its order (largest
+        // deregulated spend first), and within each the largest sites first.
+        const marketOrder = new Map();
+        stateRows
+          .filter(row => !REGULATED_STATUSES.has(row.status))
+          .forEach((row, i) => marketOrder.set(row.state, i));
+        const sites = siteRows
+          .filter(site => marketOrder.has(site.state))
+          .sort((x, y) => (marketOrder.get(x.state) - marketOrder.get(y.state))
+            || ((Number(y.eligibleSpend) || 0) - (Number(x.eligibleSpend) || 0))
+            || String(x.siteName).localeCompare(String(y.siteName)));
+
         cws.mergeCells(cr, 1, cr, CC_COLS);
         const head = cws.getCell(cr, 1);
         head.value = label;
@@ -11430,16 +11464,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         cws.getRow(cr).height = 22;
         cr += 1;
         const headers = [
+          'Site Name',
           'ST / Prov / Country',
-          'Deregulated Sites',
-          'Sites Under Agreement',
+          'Utility',
+          'Supplier',
           `Deregulated Consumption ${unit}/yr`,
-          `Consumption Under Agreement ${unit}/yr`,
           'Savings-Eligible Spend/yr',
-          '% Under Agreement',
           'Agreement Ends',
           'Months Under Agreement',
-          'Spend Under Agreement/yr',
+          'Under Agreement Now',
+          'Spend Under Agreement Now/yr',
           ...Array.from({ length: COVERAGE_YEARS }, (_, k) => `Open Spend Year ${k + 1}`),
         ];
         const hRow = cws.getRow(cr);
@@ -11453,26 +11487,23 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         });
         hRow.height = 45;
         cr += 1;
-        const first = cr;
-        // Column totals as cached results, so a reader that doesn't
-        // recalculate (a preview pane, a quick look) shows real figures.
-        const totals = new Array(CC_COLS + 1).fill(0);
-        if (!markets.length) {
+        if (!sites.length) {
           cws.mergeCells(cr, 1, cr, CC_COLS);
           const none = cws.getCell(cr, 1);
-          none.value = `No deregulated ${commodity === 'gas' ? 'natural gas' : 'electric'} markets in this portfolio.`;
+          none.value = `No deregulated ${commodity === 'gas' ? 'natural gas' : 'electric'} sites in this portfolio.`;
           none.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
           none.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
           cr += 2;
           return;
         }
-        for (const row of markets) {
-          const cov = row.coverage || {};
-          const share = Number.isFinite(cov.coveredShare) ? cov.coveredShare : 0;
-          const months = monthsUnderAgreement(cov.expiry, projectionStart);
-          const spend = Number(row.savingsEligibleSpend) || 0;
-          const consumption = Number(row.consumption) || 0;
-          const open = openSpendByYear(spend, share, months);
+        const first = cr;
+        // Column totals as cached results, so a reader that doesn't
+        // recalculate (a preview pane, a quick look) shows real figures.
+        const totals = new Array(CC_COLS + 1).fill(0);
+        for (const site of sites) {
+          const { ends, months, open } = coverageSiteFacts(site);
+          const spend = Number(site.eligibleSpend) || 0;
+          const consumption = Number(site.consumption) || 0;
           const dRow = cws.getRow(cr);
           const set = (col, value, numFmt) => {
             const cell = dRow.getCell(col);
@@ -11486,60 +11517,43 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           const formula = (col, f, result, numFmt) => {
             const cell = set(col, { formula: f, result }, numFmt);
             cell.ignoredErrors = { formula: true, formulaRange: true };
-            totals[col] += result;
+            if (typeof result === 'number') totals[col] += result;
           };
-          totals[2] += Number(row.deregulatedSites) || 0;
-          totals[3] += cov.coveredSites || 0;
-          totals[4] += Math.round(consumption);
-          totals[6] += Math.round(spend);
-          set(1, row.state);
-          set(2, Number(row.deregulatedSites) || 0, '#,##0');
-          set(3, cov.coveredSites || 0, '#,##0');
-          set(4, Math.round(consumption), '#,##0');
-          formula(5, `D${cr}*MAX(0,MIN(1,N(G${cr})))`, Math.round(consumption * share), '#,##0');
+          set(1, site.siteName || ' ');
+          set(2, site.state);
+          set(3, site.utility || ' ');
+          set(4, site.supplier || ' ');
+          set(5, Math.round(consumption), '#,##0');
           set(6, Math.round(spend), '"$"#,##0');
-          const shareCell = dRow.getCell(7);
-          shareCell.value = Math.round(share * 1000) / 1000;
-          styleInput(shareCell, '0.0%');
-          shareCell.dataValidation = {
-            type: 'decimal',
-            operator: 'between',
-            allowBlank: true,
-            formulae: [0, 1],
-            showErrorMessage: true,
-            errorStyle: 'stop',
-            errorTitle: 'Share under agreement',
-            error: 'Enter a percentage between 0% and 100%.',
-          };
-          const endCell = dRow.getCell(8);
-          if (cov.expiry) endCell.value = cov.expiry;
+          totals[5] += Math.round(consumption);
+          totals[6] += Math.round(spend);
+          const endCell = dRow.getCell(7);
+          if (ends) endCell.value = ends;
           styleInput(endCell, 'm/d/yyyy');
-          formula(9, monthsLockedFormula(`H${cr}`, START_REF), months, '0');
-          formula(10, `F${cr}*MAX(0,MIN(1,N(G${cr})))`, Math.round(spend * share), '"$"#,##0');
+          formula(8, monthsLockedFormula(`G${cr}`, START_REF), months, '0');
+          formula(9, `IF(H${cr}>0,"Yes","No")`, months > 0 ? 'Yes' : 'No');
+          formula(10, `IF(H${cr}>0,F${cr},0)`, months > 0 ? Math.round(spend) : 0, '"$"#,##0');
           for (let k = 0; k < COVERAGE_YEARS; k++) {
-            formula(COVERAGE_OPEN_COL + k, openSpendFormula(`$F${cr}`, `$G${cr}`, `$I${cr}`, k + 1), Math.round(open[k]), '"$"#,##0');
+            formula(COVERAGE_OPEN_COL + k, siteOpenSpendFormula(`$F${cr}`, `$H${cr}`, k + 1), Math.round(open[k]), '"$"#,##0');
           }
+          if (months > 0) totals[9] += 1;
           dRow.height = 16;
-          coverageRowFor[commodity].set(row.state, cr);
           cr += 1;
         }
         const last = cr - 1;
+        coverageRowsFor[commodity] = [first, last];
         const tRow = cws.getRow(cr);
-        const colL = (n) => {
-          let out = '';
-          let m = n;
-          while (m > 0) { m--; out = String.fromCharCode(65 + (m % 26)) + out; m = Math.floor(m / 26); }
-          return out;
-        };
         for (let col = 1; col <= CC_COLS; col++) {
           const cell = tRow.getCell(col);
           const L = colL(col);
-          if (col === 1) cell.value = 'Total';
-          else if (col === 7) cell.value = { formula: `IFERROR(J${cr}/F${cr},0)`, result: totals[6] ? totals[10] / totals[6] : 0 };
-          else if (col === 8 || col === 9) cell.value = ' ';
+          if (col === 1) cell.value = `Total (${sites.length.toLocaleString()} sites)`;
+          else if (col >= 2 && col <= 4) cell.value = ' ';
+          else if (col === 7 || col === 8) cell.value = ' ';
+          // How many sites are under agreement today.
+          else if (col === 9) cell.value = { formula: `COUNTIF(I${first}:I${last},"Yes")`, result: totals[9] };
           else cell.value = { formula: `SUM(${L}${first}:${L}${last})`, result: totals[col] };
           if (cell.value && typeof cell.value === 'object') cell.ignoredErrors = { formula: true };
-          cell.numFmt = col === 7 ? '0.0%' : (col === 6 || col >= 10) ? '"$"#,##0' : '#,##0';
+          cell.numFmt = (col === 6 || col >= 10) ? '"$"#,##0' : '#,##0';
           cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
           cell.alignment = { vertical: 'bottom', horizontal: 'left', indent: 1 };
@@ -11551,11 +11565,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         tRow.height = 18;
         cr += 2;
       };
-      writeCoverageSection('Electric Power', restructureForGlobal(electricRows), 'electric', 'kWh');
-      writeCoverageSection('Natural Gas', restructureForGlobal(gasRows), 'gas', 'Dth');
-      // The share and end-date inputs are the reason for the tab, and the
-      // workbook may have been saved by a version of Excel that kept the
-      // cached results: recalculate on open so what shows is current.
+      writeCoverageSection('Electric Power', electricRows, electricSiteRows, 'electric', 'kWh');
+      writeCoverageSection('Natural Gas', gasRows, gasSiteRows, 'gas', 'Dth');
+      // The end dates are the reason for the tab, and the workbook may have
+      // been saved by a version of Excel that kept the cached results:
+      // recalculate on open so what shows is current.
       wb.calcProperties = wb.calcProperties || {};
       wb.calcProperties.fullCalcOnLoad = true;
     }

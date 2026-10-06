@@ -1,11 +1,12 @@
 // Assertion tests for the Contract Coverage tab's arithmetic: how much of a
-// market's spend is open to re-sourcing in each year of the projection once
-// part of it is tied up in a supply agreement.
+// site's spend is open to re-sourcing in each year of the projection when it
+// is tied up in a supply agreement, and how the Indicative Savings tab adds
+// those sites up per market.
 // Plain Node — no test framework (the project has none). Run:
 //   node scripts/contractCoverage.test.mjs
 //
-// Two things are pinned. The model itself (months still covered, open spend
-// by year, the seed read off the sites), and that the Excel formulas the tab
+// Two things are pinned. The model itself (months still covered, a site's open
+// spend by year, the per-market sum), and that the Excel formulas the tab
 // writes compute the same numbers as the JS that produces their cached
 // results. The second is the one that goes wrong quietly: the workbook opens
 // on the cached figures and recalculates to the formula's, and a mismatch
@@ -14,10 +15,10 @@ import {
   COVERAGE_YEARS,
   utcDay,
   monthsUnderAgreement,
-  openSpendByYear,
-  coverageSeed,
+  siteOpenSpendByYear,
   monthsLockedFormula,
-  openSpendFormula,
+  siteOpenSpendFormula,
+  marketOpenSpendFormula,
 } from '../src/components/SitesView/contractCoverage.js';
 
 let failures = 0;
@@ -45,52 +46,22 @@ check('ending on the 1st frees that month', monthsUnderAgreement(d(2027, 10, 1),
 check('ending on the 2nd covers that month too', monthsUnderAgreement(d(2027, 10, 2), start), 13);
 check('capped at the 5-year horizon', monthsUnderAgreement(d(2040, 1, 1), start), 60);
 
-// ---- openSpendByYear -----------------------------------------------------
+// ---- siteOpenSpendByYear ------------------------------------------------
 {
-  const open = openSpendByYear(1200, 0, 0);
-  check('nothing under agreement: every year open', open.join(','), '1200,1200,1200,1200,1200');
+  const open = siteOpenSpendByYear(1200, 0);
+  check('no agreement: every year open', open.join(','), '1200,1200,1200,1200,1200');
   check('one figure per projection year', open.length, COVERAGE_YEARS);
 }
 {
-  // Half the spend locked for 18 months: Year 1 has only the free half,
-  // Year 2 picks the locked half up for its last six months.
-  const open = openSpendByYear(1200, 0.5, 18);
-  check('half locked 18 months, Year 1', open[0], 600);
-  check('half locked 18 months, Year 2', open[1], 900);
-  check('half locked 18 months, Year 3', open[2], 1200);
+  // Locked for 18 months: nothing in Year 1, the last six months of Year 2.
+  const open = siteOpenSpendByYear(1200, 18);
+  check('locked 18 months, Year 1', open[0], 0);
+  check('locked 18 months, Year 2', open[1], 600);
+  check('locked 18 months, Year 3', open[2], 1200);
 }
-{
-  const open = openSpendByYear(1000, 1, 60);
-  check('fully locked for the horizon: nothing open in Year 5', open[4], 0);
-}
-check('share above 100% is clamped', openSpendByYear(1000, 1.7, 60)[0], 0);
-check('negative share is clamped', openSpendByYear(1000, -0.4, 60)[0], 1000);
+check('locked for the horizon: nothing open in Year 5', siteOpenSpendByYear(1000, 60)[4], 0);
+check('leased site held out of scope: nothing to open', siteOpenSpendByYear(0, 0)[0], 0);
 
-// ---- coverageSeed --------------------------------------------------------
-{
-  const seed = coverageSeed([
-    { spend: 300, end: d(2027, 4, 10) },
-    { spend: 100, end: d(2027, 12, 10) },
-    { spend: 600, end: d(2025, 1, 1) },   // already ended
-    { spend: 0, end: d(2030, 1, 1) },     // leased: under contract, no eligible spend
-    { spend: 250, end: null },            // no agreement on file
-  ], start);
-  check('seed counts every site', seed.sites, 5);
-  check('seed counts the sites still under agreement', seed.coveredSites, 3);
-  check('seed covered spend', seed.coveredSpend, 400);
-  checkClose('seed share is covered / total eligible spend', seed.coveredShare, 400 / 1250);
-  // Spend-weighted: three quarters of the covered dollars end Apr 10 2027,
-  // one quarter Dec 10 2027, so the average lands two months after the
-  // first: mid-June 2027, which covers Oct 2026 through Jun 2027.
-  check('seed expiry is the spend-weighted average', seed.expiry.toISOString().slice(0, 7), '2027-06');
-  check('seed expiry months under agreement', monthsUnderAgreement(seed.expiry, start), 9);
-}
-{
-  const seed = coverageSeed([{ spend: 500, end: null }], start);
-  check('no agreements: share 0', seed.coveredShare, 0);
-  check('no agreements: no expiry', seed.expiry, null);
-}
-check('no sites: share 0', coverageSeed([], start).coveredShare, 0);
 check('utcDay keeps the calendar day', utcDay(new Date(2027, 2, 9, 23, 30)).toISOString().slice(0, 10), '2027-03-09');
 
 // ---- The formulas agree with the model -----------------------------------
@@ -121,19 +92,20 @@ function evalExcel(formula, cells) {
 
 for (const expiry of [null, d(2026, 10, 1), d(2026, 12, 20), d(2028, 3, 1), d(2028, 3, 2), d(2033, 6, 30)]) {
   const label = expiry ? expiry.toISOString().slice(0, 10) : 'blank';
-  const months = evalExcel(monthsLockedFormula('H8', '$C$2'), { H8: expiry, $C$2: start });
+  const months = evalExcel(monthsLockedFormula('G8', '$B$2'), { G8: expiry, $B$2: start });
   check(`months formula matches the model (${label})`, months, monthsUnderAgreement(expiry, start));
-  for (const share of [0, 0.35, 1]) {
-    const model = openSpendByYear(48000, share, months);
-    for (let n = 1; n <= COVERAGE_YEARS; n++) {
-      const f = openSpendFormula('$F8', '$G8', '$I8', n);
-      const got = evalExcel(f, { $F8: 48000, $G8: share, $I8: months });
-      checkClose(`open spend formula Year ${n}, share ${share}, ends ${label}`, got, model[n - 1]);
-    }
+  const model = siteOpenSpendByYear(48000, months);
+  for (let n = 1; n <= COVERAGE_YEARS; n++) {
+    const got = evalExcel(siteOpenSpendFormula('$F8', '$H8', n), { $F8: 48000, $H8: months });
+    checkClose(`open spend formula Year ${n}, ends ${label}`, got, model[n - 1]);
   }
 }
-// A blank share cell reads as nothing under agreement.
-checkClose('blank share reads as 0', evalExcel(openSpendFormula('$F8', '$G8', '$I8', 1), { $F8: 1000, $G8: null, $I8: 24 }), 1000);
+
+// The per-market sum picks out that market's sites and nothing else.
+{
+  const f = marketOpenSpendFormula("'Contract Coverage'!$B$7:$B$9", '$A16', "'Contract Coverage'!$K$7:$L$9");
+  check('market sum formula shape', f, "SUMPRODUCT(('Contract Coverage'!$B$7:$B$9=$A16)*'Contract Coverage'!$K$7:$L$9)");
+}
 
 if (failures) {
   console.log(`\n${failures} failure(s)`);
