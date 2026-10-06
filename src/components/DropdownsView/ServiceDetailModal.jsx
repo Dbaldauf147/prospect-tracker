@@ -1,6 +1,8 @@
 import { Fragment, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { rolloutWeeks } from '../../data/serviceCatalog';
+import { rolloutWeeks, parseServiceContactTags, formatServiceContactTags } from '../../data/serviceCatalog';
+import { TAG_OPTIONS, tagVocabulary } from '../../utils/contactTagReview';
+import { BUCKETS } from '../ProspectModal/contactTags';
 import { parseAutoAddList, formatAutoAddList } from '../../utils/serviceAutoAdd';
 import { UNGROUPED_SERVICES } from '../../utils/serviceCategoriesStore';
 import {
@@ -166,6 +168,77 @@ function NotesField({ value, onCommit }) {
 // A picker over a fixed vocabulary. A value that isn't in it (a box since
 // renamed, say) is kept as an option so opening the popup can't quietly
 // wipe it.
+// Tags that say something about the contact record itself (housekeeping,
+// not an area of work), so they aren't offered as a service's audience.
+const NON_SERVICE_TAGS = new Set(['hide', 'left', 'test']);
+
+// The contact tags a service is sold to: chips for the ones picked, and a
+// box that offers the rest of the tag vocabulary or takes a tag typed in.
+// Saved as one "ESG; Procurement" string, the way a contact carries them.
+function ContactTagsField({ value, onCommit }) {
+  const picked = parseServiceContactTags(value);
+  const pickedKeys = new Set(picked.map(t => t.toLowerCase()));
+  const [draft, setDraft] = useState('');
+  const offered = tagVocabulary(BUCKETS.map(b => b.label), TAG_OPTIONS)
+    .filter(t => !NON_SERVICE_TAGS.has(t.toLowerCase()) && !pickedKeys.has(t.toLowerCase()));
+
+  function add(raw) {
+    const t = String(raw || '').trim();
+    setDraft('');
+    if (!t || pickedKeys.has(t.toLowerCase())) return;
+    // Match the vocabulary's spelling when the typed tag is one of its own.
+    const known = offered.find(o => o.toLowerCase() === t.toLowerCase());
+    onCommit(formatServiceContactTags([...picked, known || t]));
+  }
+  function remove(tag) {
+    onCommit(formatServiceContactTags(picked.filter(t => t !== tag)));
+  }
+
+  return (
+    <div className={styles.detailField} style={{ gridColumn: 'span 2' }}>
+      <span className={styles.detailLabel} title="The HubSpot contact tags of the people this service is sold to.">Contact Tags</span>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.3rem' }}>
+        {picked.map(tag => (
+          <span key={tag} className={styles.serviceDepChip} style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+            {tag}
+            <button
+              type="button"
+              className={styles.detailChipRemove}
+              onClick={() => remove(tag)}
+              title={`Remove ${tag}`}
+              aria-label={`Remove ${tag}`}
+            >×</button>
+          </span>
+        ))}
+        <input
+          type="text"
+          list="service-contact-tag-options"
+          className={styles.detailInput}
+          style={{ flex: '1 1 140px', width: 'auto' }}
+          value={draft}
+          placeholder={picked.length ? '+ Add tag' : 'Pick or type a tag'}
+          aria-label="Add a contact tag"
+          onChange={(e) => {
+            const v = e.target.value;
+            // Picking from the list lands the whole option at once: add it
+            // straight away rather than waiting for Enter.
+            if (offered.some(o => o === v)) add(v);
+            else setDraft(v);
+          }}
+          onBlur={() => { if (draft.trim()) add(draft); }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); add(draft); }
+            else if (e.key === 'Escape' && draft) { e.preventDefault(); e.stopPropagation(); setDraft(''); }
+          }}
+        />
+        <datalist id="service-contact-tag-options">
+          {offered.map(t => <option key={t} value={t} />)}
+        </datalist>
+      </div>
+    </div>
+  );
+}
+
 function SelectField({ label, value, options, onCommit }) {
   const current = value || '';
   const opts = current && !options.includes(current) ? [current, ...options] : options;
@@ -1308,6 +1381,7 @@ export function ServiceDetailModal({
             <WeeksField label="Rollout Time" value={meta?.rolloutTime} onCommit={save('rolloutTime')} />
             <TextField label="SME" value={meta?.sme} onCommit={save('sme')} />
             <TextField label="KTM" value={meta?.ktm} onCommit={save('ktm')} />
+            <ContactTagsField value={meta?.contactTags} onCommit={save('contactTags')} />
             <NotesField value={meta?.notes} onCommit={save('notes')} />
           </div>
 

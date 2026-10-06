@@ -79,6 +79,9 @@ const SERVICE_TABLE_COLUMNS = [
   { key: 'autoNa',           label: 'Auto-N/A Services', width: 240,    editable: true  },
   { key: 'sme',              label: 'SME',               width: 150,    editable: true  },
   { key: 'ktm',              label: 'KTM',               width: 150,    editable: true  },
+  // The contact tags of the people the service is sold to, "ESG;
+  // Procurement". Picked as chips in the service popup; plain text here.
+  { key: 'contactTags',      label: 'Contact Tags',      width: 180,    editable: true  },
   // Row action rather than data. Pinned always-visible (see the table's
   // alwaysVisible), which also means it needs no reveal migration for users
   // who already have a saved column set.
@@ -104,6 +107,7 @@ const SERVICES_LATE_COLUMNS = [
   { key: 'autoAdd',   flag: 'servicesAutoAddColumnRevealed' },
   { key: 'autoNa',    flag: 'servicesAutoNaColumnRevealed' },
   { key: 'ktm',       flag: 'servicesKtmColumnRevealed' },
+  { key: 'contactTags', flag: 'servicesContactTagsColumnRevealed' },
   { key: 'serviceBucket', flag: 'servicesBucketColumnRevealed' },
   // Not a new column, but the survivor of the BFO Tag / Local Project Name
   // merge: a user who had hidden BFO Tag and kept Local Project Name would
@@ -1418,7 +1422,7 @@ export function DropdownsView({ settings, updateSettings }) {
       if (name.toLowerCase().includes(term)) return true;
       if (bucket.toLowerCase().includes(term)) return true;
       if (!meta) return false;
-      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.timelineDriven, meta.rolloutTime, meta.dependsOn, meta.autoAdd, meta.autoNa, meta.sme, meta.ktm, notesPlainText(meta.notes)]
+      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.timelineDriven, meta.rolloutTime, meta.dependsOn, meta.autoAdd, meta.autoNa, meta.sme, meta.ktm, meta.contactTags, notesPlainText(meta.notes)]
         .some(v => String(v || '').toLowerCase().includes(term));
     });
   }, [serviceRows, serviceSearch, hiddenServices, showHiddenServices]);
@@ -1519,6 +1523,7 @@ export function DropdownsView({ settings, updateSettings }) {
     autoNa: meta?.autoNa || '',
     sme: meta?.sme || '',
     ktm: meta?.ktm || '',
+    contactTags: meta?.contactTags || '',
     _url: serviceLinks[name] || '',
     // Retired: greyed here and pinned under the live services below. Reads
     // the row's own answer (the box it is filed in, or the seed catalog's

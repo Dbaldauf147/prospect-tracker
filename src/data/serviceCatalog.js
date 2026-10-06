@@ -243,7 +243,7 @@ export function getEffectiveServiceMetadata(name, overrides) {
       name, bfoTag: '', region: '', years: '',
       productLine: '', serviceType: '', localProjectName: '',
       timelineDriven: '', rolloutTime: '', dependsOn: '', autoAdd: '', autoNa: '',
-      sme: '', ktm: '', notes: '',
+      sme: '', ktm: '', contactTags: '', notes: '',
     };
   }
   const bfoTag = mergedBfoTag(seed, override);
@@ -279,6 +279,11 @@ export function getEffectiveServiceMetadata(name, overrides) {
     // Free text, same as SME and with no seed value: whatever the user
     // records as this service's KTM on the Services tab.
     ktm:              override?.ktm              ?? seed?.ktm              ?? '',
+    // The contact tags (HubSpot dans_tags values, e.g. "ESG",
+    // "Procurement") of the people this service is sold to, as a
+    // semicolon-separated list the same way a contact carries them. No
+    // seed: whatever the user picks in the Services popup.
+    contactTags:      override?.contactTags      ?? seed?.contactTags      ?? '',
     // Free-form notes about the service, typed in the Services popup. No
     // seed value; may run to several lines.
     notes:            override?.notes            ?? seed?.notes            ?? '',
@@ -311,4 +316,23 @@ export function getLocalProjectNames(overrides) {
     if (p) projects.add(p);
   }
   return [...projects].sort((a, b) => a.localeCompare(b));
+}
+
+// A service's contact tags as a list, from the stored "ESG; Procurement"
+// string. Blank entries and repeats (any casing) dropped, order kept.
+export function parseServiceContactTags(raw) {
+  const out = [];
+  const seen = new Set();
+  for (const part of String(raw || '').split(';')) {
+    const t = part.trim();
+    const k = t.toLowerCase();
+    if (!t || t === '-' || seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+  }
+  return out;
+}
+
+export function formatServiceContactTags(tags) {
+  return parseServiceContactTags((tags || []).join(';')).join('; ');
 }
