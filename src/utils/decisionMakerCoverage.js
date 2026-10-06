@@ -204,6 +204,57 @@ export function accountHasDecisionMaker(prospect, dmCompanies, index = null) {
 }
 
 /**
+ * Who the decision makers at each account ARE, for a column that names them
+ * rather than a yes/no.
+ *
+ * The same membership accountHasDecisionMaker answers from (name match,
+ * plus whoever the account's Contacts tab adds by email domain or by hand,
+ * less anyone removed by hand), so a row that lists nobody is exactly an
+ * account the ladder counts as unmapped. Built once for the book; `forAccount`
+ * then takes anything with a `company` (a prospect record, or a portfolio
+ * company with no record yet, which matches on its name alone) and returns
+ * the contacts, de-duplicated, in name order.
+ */
+export function makeDecisionMakerLookup(contacts, { localFields = null, links = null, exclusions = null } = {}) {
+  const groups = new Map();
+  for (const raw of (contacts || [])) {
+    const c = applyCompanyOverride(raw, localFields);
+    if (!isDecisionMakerContact(c)) continue;
+    const company = String(c.company || '').trim();
+    if (!company) continue;
+    const lc = company.toLowerCase();
+    const at = groups.get(lc);
+    if (at) at.contacts.push(c);
+    else groups.set(lc, { company, lc, contacts: [c] });
+  }
+  const list = [...groups.values()];
+  const index = makeAccountContactIndex(contacts, { localFields, links, exclusions });
+  const idOf = (c) => String(c?.id || c?.vid || '');
+  const nameOf = (c) => [c?.firstname, c?.lastname].filter(Boolean).join(' ').trim() || String(c?.email || '');
+  return {
+    forAccount(account) {
+      const company = String(account?.company || '').trim();
+      if (!company) return [];
+      const lc = company.toLowerCase();
+      const excluded = index.excludedFor(account);
+      const out = [];
+      const seen = new Set();
+      const add = (c) => {
+        const id = idOf(c);
+        if (id && (seen.has(id) || excluded.has(id))) return;
+        if (id) seen.add(id);
+        out.push(c);
+      };
+      for (const g of list) {
+        if (g.lc === lc || rosterCompaniesMatch(company, g.company)) g.contacts.forEach(add);
+      }
+      for (const c of index.extraFor(account)) if (isDecisionMakerContact(c)) add(c);
+      return out.sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+    },
+  };
+}
+
+/**
  * Statuses that take an account out of cold outreach entirely.
  *
  * The step is for names with no relationship yet, so every one of these is
