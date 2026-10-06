@@ -45,3 +45,54 @@ export function withCompanyOverride(localFields, contactId, value) {
   else out[id] = merged;
   return out;
 }
+
+// The pin as an updateSettings() function, so it is computed from the
+// settings as they are WHEN the save runs, not as the caller last
+// rendered them.
+//
+// This is why mapped companies kept un-mapping themselves. Every writer
+// used to hand updateSettings a whole contactLocalFields map built from
+// its render-time copy, and the inline Company cell builds it only after
+// waiting on HubSpot for a few seconds. Map contact A, then contact B
+// before A's save has landed and re-rendered: B's map was copied from
+// before A, so writing it erased A's pin. Nothing looked wrong until
+// the next HubSpot refresh put A's old company name back, which is when
+// the row went amber again. Built here, from the latest settings, each
+// pin only touches its own contact.
+export function companyOverrideUpdate(contactId, value) {
+  return (settings) => {
+    const next = withCompanyOverride(settings?.contactLocalFields, contactId, value);
+    return next ? { contactLocalFields: next } : null;
+  };
+}
+
+// Any other edit to one contact's local fields, the same way. `edit`
+// gets a copy of that contact's entry to change in place; an entry left
+// empty is dropped from the map.
+export function contactLocalFieldsUpdate(contactId, edit) {
+  return (settings) => {
+    const id = String(contactId ?? '').trim();
+    if (!id) return null;
+    const cur = settings?.contactLocalFields;
+    const map = (cur && typeof cur === 'object' && !Array.isArray(cur)) ? cur : {};
+    const entry = { ...(map[id] || {}) };
+    edit(entry);
+    const out = { ...map };
+    if (Object.keys(entry).length === 0) delete out[id];
+    else out[id] = entry;
+    return { contactLocalFields: out };
+  };
+}
+
+// Pin the same Company on several contacts in one save.
+export function companyOverridesUpdate(contactIds, value) {
+  return (settings) => {
+    let map = settings?.contactLocalFields;
+    let changed = false;
+    for (const id of contactIds) {
+      const next = withCompanyOverride(map, id, value);
+      if (next) { map = next; changed = true; }
+    }
+    return changed ? { contactLocalFields: map } : null;
+  };
+}

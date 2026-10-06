@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { withCompanyOverride } from '../utils/contactCompanyOverride';
+import { companyOverrideUpdate } from '../utils/contactCompanyOverride';
 import { metInPersonUpdate } from '../utils/metInPerson';
 
 // The settings-backed half of ContactEditModal's props, in one place.
@@ -43,8 +43,7 @@ export function useContactEditSettings({ settings, updateSettings }) {
       // doesn't rewrite it back from the Company record the contact is
       // associated with. See utils/contactCompanyOverride.js.
       onSaveCompanyOverride: (contactId, value) => {
-        const nextLocal = withCompanyOverride(settings?.contactLocalFields, contactId, value);
-        if (nextLocal) updateSettings?.({ contactLocalFields: nextLocal });
+        updateSettings?.(companyOverrideUpdate(contactId, value));
       },
       contactNicknames: settings?.contactNicknames || {},
       onSaveNickname: (cid, v) => saveMap('contactNicknames', cid, v),

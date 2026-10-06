@@ -11,7 +11,9 @@
 //     back);
 //   - clobbering the other local fields on the same contact, or the pins
 //     on other contacts, while writing this one.
-import { withCompanyOverride } from '../src/utils/contactCompanyOverride.js';
+import {
+  withCompanyOverride, companyOverrideUpdate, contactLocalFieldsUpdate, companyOverridesUpdate,
+} from '../src/utils/contactCompanyOverride.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -73,6 +75,58 @@ eq(withCompanyOverride({ 102: { _companyOverride: 'Blackstone' } }, '101', 'Reva
 // A corrupt payload reads as "no pins" rather than throwing on a save.
 eq(withCompanyOverride(['nope'], '101', 'Revantage'), { 101: { _companyOverride: 'Revantage' } },
   'an array payload is ignored rather than spread into the map');
+
+// ---- updates computed at save time ------------------------------------------
+//
+// The bug these replace: map contact A, then contact B before A's save
+// re-rendered. B's whole-map write was copied from before A and erased
+// A's pin. updateSettings runs a function update against its LATEST
+// settings, so this models it the same way: apply each in turn.
+function run(settings, ...fns) {
+  let s = settings;
+  for (const fn of fns) {
+    const u = fn(s);
+    if (u) s = { ...s, ...u };
+  }
+  return s;
+}
+
+{
+  const renderTime = { contactLocalFields: {} };
+  // Both edits started from the same render; neither sees the other's pin
+  // in its own copy, but the function form reads the latest settings.
+  const out = run(renderTime, companyOverrideUpdate('A', 'Apollo Global Management'), companyOverrideUpdate('B', 'WSP'));
+  eq(out.contactLocalFields, { A: { _companyOverride: 'Apollo Global Management' }, B: { _companyOverride: 'WSP' } },
+    'mapping two contacts back to back keeps both pins');
+}
+
+eq(companyOverrideUpdate('A', 'Apollo')({ contactLocalFields: { A: { _companyOverride: 'Apollo' } } }), null,
+  'an unchanged pin skips the write');
+
+{
+  const out = run({ contactLocalFields: { A: { _companyOverride: 'Apollo' } } },
+    contactLocalFieldsUpdate('A', (e) => { e._reachedOut = true; }));
+  eq(out.contactLocalFields, { A: { _companyOverride: 'Apollo', _reachedOut: true } },
+    'another local-field edit on the same contact keeps its pin');
+}
+
+{
+  const out = run({ contactLocalFields: { A: { _newCompany: 'X' } } },
+    contactLocalFieldsUpdate('A', (e) => { delete e._newCompany; }));
+  eq(out.contactLocalFields, {}, 'an entry left empty drops out of the map');
+}
+
+eq(contactLocalFieldsUpdate('', () => {})({}), null, 'no contact id, no write');
+
+{
+  const out = run({ contactLocalFields: { Z: { _companyOverride: 'Keep' } } },
+    companyOverridesUpdate(['A', 'B'], 'Pursuit Aerospace'));
+  eq(out.contactLocalFields, {
+    Z: { _companyOverride: 'Keep' },
+    A: { _companyOverride: 'Pursuit Aerospace' },
+    B: { _companyOverride: 'Pursuit Aerospace' },
+  }, 'pinning several contacts at once leaves the others alone');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

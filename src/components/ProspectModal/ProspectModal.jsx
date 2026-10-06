@@ -68,7 +68,7 @@ import {
   scheduledServicesForCompany,
 } from '../../utils/scheduledOpps';
 import { loadOpps2Newest, bulkSetOppField } from '../../utils/opps2Store';
-import { withCompanyOverride } from '../../utils/contactCompanyOverride';
+import { companyOverrideUpdate, companyOverridesUpdate } from '../../utils/contactCompanyOverride';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites } from '../../utils/companyRenameCascade';
 import { countClientsSubtabRename, clientsSubtabRenameTotal, summarizeClientsSubtabRename, applyClientsSubtabRename } from '../../utils/clientsRename';
@@ -7801,16 +7801,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       // Durable local override so the new name sticks across HubSpot refreshes
       // even when the server-side Company reassignment lags or resolves to a
       // different canonical name.
-      if (contactCount > 0) {
-        const localFields = { ...(settings.contactLocalFields || {}) };
-        for (const c of contactTargets) {
-          const id = String(c.id || c.vid || '');
-          if (!id) continue;
-          localFields[id] = { ...(localFields[id] || {}), _companyOverride: cleanNew };
-        }
-        settingsPatch.contactLocalFields = localFields;
+      // The pins are computed from the settings at save time, not this
+      // render's copy, so they can't erase a pin saved since (see
+      // companyOverrideUpdate).
+      const pinIds = contactCount > 0
+        ? contactTargets.map(c => String(c.id || c.vid || '')).filter(Boolean)
+        : [];
+      if (Object.keys(settingsPatch).length || pinIds.length) {
+        updateSettings((s) => {
+          const patch = {
+            ...settingsPatch,
+            ...(pinIds.length ? companyOverridesUpdate(pinIds, cleanNew)(s) : null),
+          };
+          return Object.keys(patch).length ? patch : null;
+        });
       }
-      if (Object.keys(settingsPatch).length) updateSettings(settingsPatch);
 
       if (contactCount > 0) {
         // Rewrite the cached company text immediately so every view shows the
@@ -12879,8 +12884,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             // settings.contactLocalFields, the same map App.jsx reads to
             // make _companyOverride win over the HubSpot-synced company text
             // everywhere the contact is shown.
-            const next = withCompanyOverride(settingsRef.current.contactLocalFields, contactId, value);
-            if (next) updateSettings({ contactLocalFields: next });
+            updateSettings(companyOverrideUpdate(contactId, value));
           }}
           contactNicknames={settings.contactNicknames || {}}
           onSaveNickname={handleSaveContactNickname}

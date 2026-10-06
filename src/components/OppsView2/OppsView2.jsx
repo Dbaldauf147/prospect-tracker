@@ -158,7 +158,7 @@ import { LinkedCalls } from './LinkedCalls';
 import { UntaggedCalls } from './UntaggedCalls';
 import { CallNextStepsLog } from './CallNextStepsLog';
 import { readOppLinks, countOppLinks, linkHref } from '../../utils/oppLinks';
-import { withCompanyOverride } from '../../utils/contactCompanyOverride';
+import { companyOverrideUpdate } from '../../utils/contactCompanyOverride';
 import { DealTimelineModal } from './DealTimelineModal';
 // Aliased: this module already has a parseMoney of its own (oppsMetrics),
 // and the rate card's numbers have to be read the way the Services Pricing
@@ -14508,8 +14508,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // next HubSpot refresh doesn't rewrite it back from the Company record
   // the contact is associated with. See utils/contactCompanyOverride.js.
   const saveCompanyOverride = (contactId, value) => {
-    const nextLocal = withCompanyOverride(settings?.contactLocalFields, contactId, value);
-    if (nextLocal) updateSettings({ contactLocalFields: nextLocal });
+    updateSettings(companyOverrideUpdate(contactId, value));
   };
   const saveContactNickname = useCallback((cid, val) => {
     const cur = settings?.contactNicknames || {};
