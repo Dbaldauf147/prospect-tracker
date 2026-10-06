@@ -63,6 +63,12 @@ export async function collectUserBackup(db, uid, email) {
       const s = await db.collection(col).doc(uid).get();
       backup.collections[col] = s.exists ? s.data() : null;
       if (s.exists) summary.captured.push(col);
+      // Counted so the day-over-day check flags a wiped Weekly Progress
+      // history the same way it flags a shrunken Opps 2.
+      if (col === 'progressHistory') {
+        const weeks = s.exists ? s.data()?.weeks : null;
+        summary.counts.progressWeeks = Array.isArray(weeks) ? weeks.length : 0;
+      }
     } catch (e) { summary.errors.push(`${col}: ${msg(e)}`); }
   }
 
