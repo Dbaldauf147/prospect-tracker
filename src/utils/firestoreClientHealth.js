@@ -14,7 +14,8 @@
 // it shows up on rapid listen/unlisten cycles and on multi-tab persistence,
 // both of which this app has (a settings doc listener, a per-company site
 // list listener, an analysis listener that re-targets as the mapped company
-// changes, and persistentMultipleTabManager in src/firebase.js).
+// changes, and, until it was replaced, persistentMultipleTabManager in
+// src/firebase.js).
 //
 // It was fixed upstream in @firebase/firestore 4.14.1 — "Assertion ID: ca9
 // (pendingResponses less than 0) caused by target creation race condition"
@@ -37,7 +38,8 @@
 // The inner assertion is not always ca9. The Opps auto-save hit the same
 // wall with `(ID: b7de) CONTEXT: {"batchId":5526}` inside it — a mutation
 // batch the local store could not find while acknowledging it — and the
-// aftermath was identical: b815 on everything afterwards. Which assertion
+// aftermath was identical: b815 on everything afterwards. b7de came from
+// tabs sharing the cache; src/firebase.js now gives it to one tab only. Which assertion
 // tripped first says nothing useful to a caller, which is why the check
 // below matches the family rather than an id.
 //

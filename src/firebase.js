@@ -2,7 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import {
   initializeFirestore, getFirestore,
-  persistentLocalCache, persistentMultipleTabManager,
+  persistentLocalCache, persistentSingleTabManager,
 } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -44,9 +44,25 @@ export const auth = getAuth(app);
 // resume token is no longer usable and the SDK re-reads the full set —
 // but it turns "every reload" into "once in a while".
 //
-// The multi-tab manager is what makes that safe with the app open in more
-// than one tab: they share the one cache instead of the first tab owning
-// it and the rest falling back.
+// ONE tab owns the cache (persistentSingleTabManager). This used to be the
+// multi-tab manager, so every open tab shared it, and that sharing is what
+// kept killing the SDK: the tabs pass the "primary" role between them
+// (whichever is in the foreground wants it) and coordinate one mutation
+// queue through IndexedDB, and a write acknowledged across that handover
+// could find its batch already gone. That trips
+//   INTERNAL ASSERTION FAILED: Unexpected state (ID: b7de) {batchId}
+// (removeMutationBatch expected exactly one row), the async queue fails,
+// and every call after it is b815 until a reload. It took down the Opps
+// auto-save and the prospect merge. With a single owner there is no
+// handover and no queue shared between tabs, so that whole class of crash
+// cannot happen.
+//
+// The cost: a second tab opened while the first is still up can't get the
+// IndexedDB lease, and the SDK falls back to an in-memory cache for it
+// (canFallbackFromIndexedDbError treats the failed-precondition as
+// recoverable). That tab pays full reads on load, as every tab did before
+// the cache. The first tab keeps the savings, and a reload when it's the
+// only tab gets them back.
 //
 // 100 MB rather than the 40 MB default: the roster alone is a few thousand
 // documents, and the Opps 2 chunk blobs are large enough to evict it at the
@@ -58,7 +74,7 @@ function openFirestore() {
     return initializeFirestore(app, {
       localCache: persistentLocalCache({
         cacheSizeBytes: CACHE_BYTES,
-        tabManager: persistentMultipleTabManager(),
+        tabManager: persistentSingleTabManager(),
       }),
     });
   } catch (err) {
