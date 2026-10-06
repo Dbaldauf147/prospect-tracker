@@ -5276,7 +5276,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
   const [portfolioColWidths, setPortfolioColWidths] = useState({
-    num: 30, company: 180, status: 130, siteListSaved: 110, analysisSaved: 120, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, strategy: 140, hqCity: 130, hqCountry: 90, energy: 110, estElectricity: 120, estNaturalGas: 120, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160, listFlags: 200,
+    num: 30, company: 180, status: 130, siteListSaved: 110, analysisSaved: 120, analysisSavings: 110, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, strategy: 140, hqCity: 130, hqCountry: 90, energy: 110, estElectricity: 120, estNaturalGas: 120, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160, listFlags: 200,
   });
   // Per-column visibility for the Portfolio Companies table. Independent
   // from the export - the export header list is hard-coded so toggling
@@ -5287,6 +5287,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     { key: 'status',           label: 'Status' },
     { key: 'siteListSaved',    label: 'Site List' },
     { key: 'analysisSaved',    label: 'Master Analysis' },
+    { key: 'analysisSavings',  label: 'Indicative Savings' },
     { key: 'hqCity',           label: 'HQ City' },
     { key: 'hqCountry',        label: 'HQ Country' },
     { key: 'energy',           label: 'Energy' },
@@ -5315,7 +5316,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     // Default visibility - every column on except HQ City, which the
     // user keeps hidden by default and reveals via the Columns ▾ menu
     // when they need it.
-    return Object.fromEntries(['rank','company','status','siteListSaved','analysisSaved','hqCity','hqCountry','energy','estElectricity','estNaturalGas','siteCount','sector','subsector','subsectorScore','strategy','acquisitionYear','pcDescription','notes','raClient','clientManager','targetAccount','tier','salesRep','listFlags'].map(k => [k, k !== 'hqCity']));
+    return Object.fromEntries(['rank','company','status','siteListSaved','analysisSaved','analysisSavings','hqCity','hqCountry','energy','estElectricity','estNaturalGas','siteCount','sector','subsector','subsectorScore','strategy','acquisitionYear','pcDescription','notes','raClient','clientManager','targetAccount','tier','salesRep','listFlags'].map(k => [k, k !== 'hqCity']));
   });
   useEffect(() => {
     try { localStorage.setItem('portfolio-cols-visible', JSON.stringify(portfolioColsVisible)); } catch { /* noop */ }
@@ -10795,6 +10796,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 // to the total on screen and set the ranking maximum just
                 // like a confirmed number does.
                 const totalSites = rows.reduce((sum, r) => sum + siteCountNumber(r.siteCount), 0);
+                // Indicative savings live on each portfolio company's own
+                // tracker record; counted once per record so two rows that
+                // resolve to the same company don't double it.
+                const savingsSeen = new Set();
+                const totalSavings = rows.reduce((sum, r) => {
+                  const p = findPortfolioProspect(r, prospectByName);
+                  if (!p?.id || savingsSeen.has(p.id)) return sum;
+                  savingsSeen.add(p.id);
+                  const v = Number(p.indicativeAnnualSavings);
+                  return sum + (Number.isFinite(v) && v > 0 ? v : 0);
+                }, 0);
                 const maxEnergyForRank = rows.reduce((m, r) => Math.max(m, Number(r.energyGwh) || 0), 0);
                 const maxSitesForRank = rows.reduce((m, r) => Math.max(m, siteCountNumber(r.siteCount)), 0);
                 const yearRangeForRank = (() => {
@@ -11218,6 +11230,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             <col style={{ width: portfolioColWidths.status + 'px',           visibility: colVis('status') }} />
                             <col style={{ width: portfolioColWidths.siteListSaved + 'px',    visibility: colVis('siteListSaved') }} />
                             <col style={{ width: portfolioColWidths.analysisSaved + 'px',    visibility: colVis('analysisSaved') }} />
+                            <col style={{ width: portfolioColWidths.analysisSavings + 'px',  visibility: colVis('analysisSavings') }} />
                             <col style={{ width: portfolioColWidths.hqCity + 'px',           visibility: colVis('hqCity') }} />
                             <col style={{ width: portfolioColWidths.hqCountry + 'px',        visibility: colVis('hqCountry') }} />
                             <col style={{ width: portfolioColWidths.energy + 'px',           visibility: colVis('energy') }} />
@@ -11259,6 +11272,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               <th style={thBase} title="Where this portfolio company stands. Blank rows inherit the status of the matching company in the tracker: pick one here to set the row's own.">Status<span style={resizeHandleStyle} onMouseDown={e => startResize('status', e)} /></th>
                               <th style={thBase} title="Whether a site list has been saved on the popup of this portfolio company (Portfolio > Sites & Holdings), and how many sites it holds. Blank when the company is not in the tracker yet.">Site List<span style={resizeHandleStyle} onMouseDown={e => startResize('siteListSaved', e)} /></th>
                               <th style={thBase} title="Whether a Master Analysis has been saved against this portfolio company from the Utility Lookup page, and when. Blank when the company is not in the tracker yet.">Master Analysis<span style={resizeHandleStyle} onMouseDown={e => startResize('analysisSaved', e)} /></th>
+                              <th style={{ ...thBase, textAlign: 'right' }} title="Indicative annual savings from the Master Analysis saved against this portfolio company (the headline the Utility Lookup page writes on save, or the figure typed on its popup). Blank when the company is not in the tracker yet or no figure has been recorded.">Indicative Savings<span style={resizeHandleStyle} onMouseDown={e => startResize('analysisSavings', e)} /></th>
                               <th style={thBase}>HQ City<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCity', e)} /></th>
                               <th style={thBase}>HQ Country<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCountry', e)} /></th>
                               <th style={thBase} title="Est. Energy (GWh/yr)">Energy<span style={resizeHandleStyle} onMouseDown={e => startResize('energy', e)} /></th>
@@ -11449,6 +11463,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   const listCount = (list?.rows || []).length;
                                   const analysis = linked ? portfolioSavedAnalyses.get(linked.id) : null;
                                   const savedStyle = { fontSize: '0.68rem', fontWeight: 700, color: '#166534', whiteSpace: 'nowrap' };
+                                  // The analysis headline is stamped on the
+                                  // company record at save time (and can be
+                                  // typed on its popup), so it reads straight
+                                  // off the linked prospect - no workbook load.
+                                  const savingsRaw = linked?.indicativeAnnualSavings;
+                                  const savings = savingsRaw === '' || savingsRaw == null ? null : Number(savingsRaw);
+                                  const hasSavings = savings != null && Number.isFinite(savings) && savings > 0;
+                                  const fullUsd = hasSavings ? savings.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }) : '';
+                                  const shortUsd = !hasSavings ? '' : savings >= 1e6
+                                    ? `$${(savings / 1e6).toFixed(savings >= 1e7 ? 0 : 1)}M`
+                                    : savings >= 1e3 ? `$${Math.round(savings / 1e3)}K` : fullUsd;
                                   return (
                                     <>
                                       <td style={{ padding: '0.15rem 0.3rem' }}>
@@ -11474,6 +11499,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                             style={savedStyle}
                                           >✓ {formatAnalysisDate(analysis.savedAt)}</span>
                                         ) : dash(`No Master Analysis saved against ${linked.company} yet`))}
+                                      </td>
+                                      <td style={{ padding: '0.15rem 0.3rem', textAlign: 'right' }}>
+                                        {!linked ? dash(notTracked) : (hasSavings ? (
+                                          <span
+                                            title={analysis
+                                              ? `${fullUsd} indicative annual savings for ${linked.company}, from the Master Analysis${analysis.savedAt ? ` saved ${new Date(analysis.savedAt).toLocaleString()}` : ''}.`
+                                              : `${fullUsd} indicative annual savings for ${linked.company}, as recorded on its popup (no Master Analysis saved).`}
+                                            style={{ ...savedStyle, fontVariantNumeric: 'tabular-nums' }}
+                                          >{shortUsd}</span>
+                                        ) : dash(analysis
+                                          ? `The Master Analysis saved against ${linked.company} did not record an annual savings figure. Re-save it from the Utility Lookup page to fill this in.`
+                                          : `No Master Analysis saved against ${linked.company} yet`))}
                                       </td>
                                     </>
                                   );
@@ -11952,12 +11989,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               </tr>
                               );
                             })}
-                            {(totalEnergy > 0 || totalSites > 0) && (
+                            {(totalEnergy > 0 || totalSites > 0 || totalSavings > 0) && (
                               <tr style={{ background: '#F8FAFC', fontWeight: 700 }}>
-                                {/* Cell spans track the 26 columns above: Totals covers
-                                    the pin column and Opportunity Score → HQ Country, then
-                                    each total sits under the column it sums. */}
-                                <td colSpan={8} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
+                                {/* Cell spans track the 27 columns above: Totals covers
+                                    the pin column and Opportunity Score → Master Analysis,
+                                    then each total sits under the column it sums. */}
+                                <td colSpan={6} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
+                                <td style={{ padding: '0.3rem 0.3rem', textAlign: 'right', whiteSpace: 'nowrap' }} title={totalSavings > 0 ? 'Sum of the indicative annual savings across these portfolio companies' : undefined}>{totalSavings > 0 ? totalSavings.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }) : ''}</td>
+                                <td colSpan={2}></td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalEnergy > 0 ? totalEnergy.toLocaleString() : ''}</td>
                                 <td colSpan={2}></td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalSites > 0 ? totalSites.toLocaleString() : ''}</td>
