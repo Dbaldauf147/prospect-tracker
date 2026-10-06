@@ -5059,6 +5059,49 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return current && !opts.includes(current) ? [...opts, current] : opts;
   }, [settings, fields.vertical]);
 
+  // "Suggest" beside Vertical: Claude picks one from the Dropdowns ›
+  // Vertical list (never a value outside it) using what this card knows
+  // about the company. It only suggests - the answer sits under the field
+  // until the user takes it - so a wrong guess costs a click, not a field.
+  // Tagged with the company it was asked about, so renaming the company
+  // (or the card moving to another one) drops a stale answer.
+  const [verticalSuggestion, setVerticalSuggestion] = useState(null);
+  const suggestVertical = useCallback(async () => {
+    const companyName = String(fields.company || '').trim();
+    const verticals = getEffectiveDropdownLists(settings).find(l => l.key === 'vertical')?.options || [];
+    if (!companyName || verticals.length === 0) return;
+    setVerticalSuggestion({ company: companyName, loading: true });
+    try {
+      const r = await apiFetch('/api/suggest-vertical', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company: {
+            company: companyName,
+            website: fields.website || '',
+            bfoCompanyName: fields.bfoCompanyName || '',
+            aliases: fields.aliases || '',
+            peOwner: fields.peOwner || '',
+            type: fields.type || '',
+          },
+          verticals,
+        }),
+      });
+      const txt = await r.text();
+      let data = null;
+      try { data = JSON.parse(txt); } catch { data = null; }
+      if (!r.ok) {
+        setVerticalSuggestion({ company: companyName, error: data?.error || txt.slice(0, 200) || `HTTP ${r.status}` });
+        return;
+      }
+      setVerticalSuggestion({ company: companyName, ...data });
+    } catch (err) {
+      setVerticalSuggestion({ company: companyName, error: err?.message || 'Could not reach the server' });
+    }
+  }, [fields.company, fields.website, fields.bfoCompanyName, fields.aliases, fields.peOwner, fields.type, settings]);
+  const liveVerticalSuggestion = verticalSuggestion
+    && verticalSuggestion.company === String(fields.company || '').trim() ? verticalSuggestion : null;
+
   // Company name (lowercased) → the tracker record's status, so the
   // Portfolio Companies Status column can show where a mapped company
   // already stands without the user re-entering it. First record wins on
@@ -8741,7 +8784,22 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
 
             <div>
-              <label className={styles.label}>Vertical</label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                <label className={styles.label}>Vertical</label>
+                <button
+                  type="button"
+                  onClick={suggestVertical}
+                  disabled={!String(fields.company || '').trim() || liveVerticalSuggestion?.loading}
+                  title="Ask Claude which vertical from your Dropdowns › Vertical list fits this company. Nothing changes until you click Use."
+                  style={{
+                    padding: '0.1rem 0.45rem', border: '1px solid #CBD5E1', borderRadius: 4,
+                    background: '#F8FAFC', color: '#475569', fontSize: '0.66rem', fontWeight: 600,
+                    fontFamily: 'inherit', cursor: liveVerticalSuggestion?.loading ? 'wait' : 'pointer',
+                  }}
+                >
+                  {liveVerticalSuggestion?.loading ? 'Suggesting...' : 'Suggest'}
+                </button>
+              </div>
               {/* Type-to-filter over the Dropdowns › Vertical list. Custom
                   values stay off so the list remains the single source. */}
               <div title="Options come from Dropdowns › Vertical">
@@ -8752,6 +8810,39 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   placeholder="-"
                   allowCustom={false}
                 />
+                {liveVerticalSuggestion && !liveVerticalSuggestion.loading && (
+                  <div
+                    role="status"
+                    style={{
+                      marginTop: '0.3rem', display: 'flex', alignItems: 'flex-start', gap: '0.4rem',
+                      fontSize: '0.68rem', lineHeight: 1.35,
+                      color: liveVerticalSuggestion.error ? '#B91C1C' : 'var(--color-text-secondary)',
+                    }}
+                  >
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      {liveVerticalSuggestion.error
+                        ? `Couldn't suggest a vertical: ${liveVerticalSuggestion.error}`
+                        : liveVerticalSuggestion.vertical
+                          ? <>Suggested: <strong>{liveVerticalSuggestion.vertical}</strong>
+                              {liveVerticalSuggestion.confidence && liveVerticalSuggestion.confidence !== 'high' ? ` (${liveVerticalSuggestion.confidence} confidence)` : ''}
+                              {liveVerticalSuggestion.reason ? `. ${liveVerticalSuggestion.reason}` : ''}</>
+                          : `No vertical on the list fits${liveVerticalSuggestion.reason ? `: ${liveVerticalSuggestion.reason}` : '.'}`}
+                    </span>
+                    {liveVerticalSuggestion.vertical && liveVerticalSuggestion.vertical !== fields.vertical && (
+                      <button
+                        type="button"
+                        onClick={() => { set('vertical', liveVerticalSuggestion.vertical); setVerticalSuggestion(null); }}
+                        style={{ padding: '0 0.4rem', border: '1px solid #86EFAC', borderRadius: 4, background: '#F0FDF4', color: '#166534', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+                      >Use</button>
+                    )}
+                    <button
+                      type="button"
+                      aria-label="Dismiss suggestion"
+                      onClick={() => setVerticalSuggestion(null)}
+                      style={{ padding: 0, border: 0, background: 'none', color: '#94A3B8', fontSize: '0.8rem', lineHeight: 1, cursor: 'pointer' }}
+                    >×</button>
+                  </div>
+                )}
               </div>
             </div>
 
