@@ -5445,6 +5445,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // it and the row takes its real rank.
   const [portfolioNewStamps, setPortfolioNewStamps] = useState([]);
   const [portfolioFocusStamp, setPortfolioFocusStamp] = useState(null);
+  // Portfolio Companies row whose (linked) name is being edited. A linked
+  // name shows as a link to that company's popup; the pencil beside it
+  // swaps in the text box for this one row.
+  const [portfolioNameEditIdx, setPortfolioNameEditIdx] = useState(null);
   // The Portfolio Companies row whose "link to Table View" picker is open
   // (its index), and that picker's create in flight / last failure.
   const [portfolioLinkIdx, setPortfolioLinkIdx] = useState(null);
@@ -11582,16 +11586,38 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   );
                                 })()}
                                 {(() => {
-                                  // The name stays editable, so the link to the
-                                  // company's own popup is a button beside it
-                                  // rather than the text itself — it only shows
-                                  // when the row actually matches a Table View
-                                  // record, which is also the signal that there
-                                  // is something to open.
+                                  // A row that matches a Table View record shows
+                                  // its name as a link to that company's popup;
+                                  // the pencil beside it brings back the text
+                                  // box. Unmatched rows (and brand-new ones)
+                                  // stay a plain editable box.
                                   const linked = onSelectProspect ? findPortfolioProspect(r, prospectByName, prospectById) : null;
+                                  const showLink = linked && r.companyName && portfolioNameEditIdx !== i;
                                   return (
                                     <td style={{ padding: '0.15rem 0.25rem' }}>
                                       <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                        {showLink ? (
+                                          <>
+                                            <button
+                                              type="button"
+                                              onClick={() => openProspect(linked)}
+                                              title={`Open "${linked.company}"`}
+                                              style={{
+                                                flex: 1, minWidth: 0, padding: '0.15rem 0.3rem', border: '1px solid transparent',
+                                                background: 'transparent', color: 'var(--color-accent)', fontSize: '0.7rem',
+                                                fontFamily: 'inherit', textAlign: 'left', cursor: 'pointer', textDecoration: 'underline',
+                                                textUnderlineOffset: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                              }}
+                                            >{r.companyName}</button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setPortfolioNameEditIdx(i)}
+                                              title="Edit name"
+                                              aria-label={`Edit name of ${r.companyName}`}
+                                              style={{ flex: '0 0 auto', padding: '0 2px', border: 'none', background: 'transparent', color: '#94A3B8', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1.2 }}
+                                            >✎</button>
+                                          </>
+                                        ) : (
                                         <input
                                           value={r.companyName || ''}
                                           onChange={e => updateRow(i, { companyName: e.target.value })}
@@ -11608,22 +11634,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                             setPortfolioFocusStamp(null);
                                           }}
                                           style={{ flex: 1, minWidth: 0, padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
+                                          autoFocus={portfolioNameEditIdx === i}
                                           onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
-                                          onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
+                                          onBlur={e => {
+                                            e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent';
+                                            setPortfolioNameEditIdx(cur => (cur === i ? null : cur));
+                                          }}
+                                          onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') e.target.blur(); }}
                                         />
-                                        {linked ? (
-                                          <button
-                                            type="button"
-                                            onClick={() => openProspect(linked)}
-                                            title={`Open "${linked.company}" - this company is on Table View`}
-                                            aria-label={`Open ${linked.company}`}
-                                            style={{
-                                              flex: '0 0 auto', padding: '0 3px', border: 'none', background: 'transparent',
-                                              color: 'var(--color-accent)', fontSize: '0.72rem', fontWeight: 700,
-                                              fontFamily: 'inherit', cursor: 'pointer', lineHeight: 1.2,
-                                            }}
-                                          >↗</button>
-                                        ) : null}
+                                        )}
                                         {linked && r.linkedProspectId === linked.id ? (
                                           <button
                                             type="button"

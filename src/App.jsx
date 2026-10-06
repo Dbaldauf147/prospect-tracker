@@ -712,6 +712,11 @@ function App() {
       {modal && (
         <Suspense fallback={null}>
         <ProspectModal
+          // The popup reads its fields from `prospect` once, on mount, so
+          // switching to another company from inside it (a portfolio row's
+          // name, a contact's company) has to remount it - otherwise the
+          // old company's card stays on screen.
+          key={modal.prospect?.id || modal.prospect?.company || 'new'}
           prospect={modal.prospect}
           prospects={prospects}
           onSelectProspect={handleSelect}
