@@ -14,7 +14,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { KeyContactsView, useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
-import { accountHasDecisionMaker, decisionMakerCompanies } from '../../utils/decisionMakerCoverage';
+import { accountHasDecisionMaker, decisionMakerCompanies, makeAccountContactIndex } from '../../utils/decisionMakerCoverage';
 
 const SCHNEIDER_COMPANY_RE = /\bschneider\s*electric\b/i;
 const SCHNEIDER_DOMAIN_RE = /(^|\.)(se\.com|schneider-electric\.com|schneider\.com)$/i;
@@ -152,9 +152,15 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
     () => decisionMakerCompanies(hubspotContacts, localFields),
     [hubspotContacts, localFields],
   );
+  const contactLinks = settings?.companyContactLinks || null;
+  const contactExclusions = settings?.companyContactExclusions || null;
+  const accountContactIndex = useMemo(
+    () => makeAccountContactIndex(hubspotContacts, { localFields, links: contactLinks, exclusions: contactExclusions }),
+    [hubspotContacts, localFields, contactLinks, contactExclusions],
+  );
 
   function accountHasDm(p) {
-    return accountHasDecisionMaker(p, passingDmContacts);
+    return accountHasDecisionMaker(p, passingDmContacts, accountContactIndex);
   }
 
   // Tier 1 / Tier 2 accounts (CDM = me) with no decision-maker contact
