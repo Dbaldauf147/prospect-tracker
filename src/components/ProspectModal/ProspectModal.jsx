@@ -2965,7 +2965,14 @@ function SearchableSelect({ options, value, onChange, placeholder = 'Select…',
   }, [open, filter]);
 
   const q = filter.trim().toLowerCase();
-  const filtered = q ? options.filter(o => String(o).toLowerCase().includes(q)) : options;
+  // Options that START with the typed text lead, then ones that merely
+  // contain it, so Enter picks the most likely completion.
+  const filtered = q
+    ? [
+        ...options.filter(o => String(o).toLowerCase().startsWith(q)),
+        ...options.filter(o => { const s = String(o).toLowerCase(); return s.includes(q) && !s.startsWith(q); }),
+      ]
+    : options;
   const exactMatch = filtered.some(o => String(o).toLowerCase() === q);
 
   function pick(v) {
@@ -8535,15 +8542,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div>
               <label className={styles.label}>Vertical</label>
-              <select
-                className={styles.select}
-                value={fields.vertical || ''}
-                onChange={e => set('vertical', e.target.value)}
-                title="Options come from Dropdowns › Vertical"
-              >
-                <option value="">-</option>
-                {verticalOptions.map(v => <option key={v} value={v}>{v}</option>)}
-              </select>
+              {/* Type-to-filter over the Dropdowns › Vertical list. Custom
+                  values stay off so the list remains the single source. */}
+              <div title="Options come from Dropdowns › Vertical">
+                <SearchableSelect
+                  options={verticalOptions}
+                  value={fields.vertical || ''}
+                  onChange={v => set('vertical', v)}
+                  placeholder="-"
+                  allowCustom={false}
+                />
+              </div>
             </div>
 
             {fields.type === 'Private Equity' && (
