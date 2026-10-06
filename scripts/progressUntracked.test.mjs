@@ -150,5 +150,38 @@ const gone = excludeUntrackedFromWeeks([april], { 'quiet co': true });
 check('a name absent from the latest week is not named', gone.names.length, 0);
 check('and no week is adjusted', gone.weeksAdjusted, 0);
 
+// --------------------------------------------------------------- Tier 3
+// Weeks saved since the Tier 3 lines were added carry Tier 3 by name, so a
+// ticked Tier 3 account comes out of its total, its numerators and its
+// percentages like a Tier 1 or 2 account does.
+{
+  const t3Week = week({
+    t3Total: 4,
+    t3WithContacts: 2, t3WithDM: 1, t3Connected: 1, t3Inactive: 1,
+    t3ContactPct: 50, t3DMPct: 25, t3ConnectedPct: 25, t3InactivePct: 25,
+    details: {
+      ...week().details,
+      t3WithContacts: ['Gable', 'Tier3 Quiet'],
+      t3NoContacts: ['Harbor', 'Ives'],
+      t3WithDM: ['Tier3 Quiet'],
+      t3NoDM: ['Gable', 'Harbor', 'Ives'],
+      t3Connected: ['Gable'],
+      t3NotConnected: ['Tier3 Quiet', 'Harbor', 'Ives'],
+      t3Inactive: [{ company: 'Tier3 Quiet', status: 'Hold Off' }],
+    },
+  });
+  const t3Ticked = untrackedNameSet({ 'tier3 quiet': true });
+  const out = excludeUntrackedFromWeek(t3Week, t3Ticked);
+  check('Tier 3: the total loses the ticked account', out.t3Total, 3);
+  check('Tier 3: a numerator holding it loses it', out.t3WithContacts, 1);
+  check('Tier 3: its percentage is re-answered on both halves', out.t3ContactPct, 33);
+  check('Tier 3: a metric it was not in keeps its count', out.t3Connected, 1);
+  check('Tier 3: ...and its percentage moves with the smaller total', out.t3ConnectedPct, 33);
+  check('Tier 3: Inactive loses it', out.t3InactivePct, 0);
+  check('Tier 3: Tier 1 is untouched', out.t1Total, 4);
+  check('Tier 3: the list no longer names it',
+    out.details.t3WithContacts.includes('Tier3 Quiet'), false);
+}
+
 console.log(failures === 0 ? '\nAll passed' : `\n${failures} failed`);
 process.exit(failures === 0 ? 0 : 1);
