@@ -7,7 +7,10 @@ import { db } from '../firebase';
 // the analysis timeouts below for why a save needs one.
 import { withTimeout, isTimeoutError } from './withTimeout.js';
 // Reads and writes over plain HTTPS, for when the SDK cannot get a byte out.
-import { restSetDoc } from './firestoreRest.js';
+import { restSetDoc, restUpdateFields, restDeleteDoc, keyFieldEntries } from './firestoreRest.js';
+// Prospect edits and deletes fall back to that HTTPS path once the SDK has
+// crashed itself (see utils/firestoreClientHealth).
+import { viaSdkOrRest } from './firestoreClientHealth.js';
 
 // Subcollection path for analyses saved against a prospect. Kept
 // separate from the prospect doc so the bulk subscribeToProspects
@@ -126,15 +129,33 @@ function sanitizeFirestoreData(value) {
   return value;
 }
 
+// Path of one prospect document, for the REST fallback. Mirrors getDoc.
+function prospectDocPath(id) {
+  if (_useShared) return `${SHARED_COL}/${id}`;
+  if (_userId) return `users/${_userId}/prospects/${id}`;
+  return `${SHARED_COL}/${id}`;
+}
+
+// Both go around a crashed SDK. The prospect merge is where that showed:
+// "Merge failed: FIRESTORE INTERNAL ASSERTION FAILED (ID: b815) ...
+// (ID: b7de) {batchId}" -- the async queue had died, so the update and the
+// delete that make up a merge could never land through it. The REST twin of
+// updateDoc is a field-masked PATCH of the same top-level keys, so fields
+// the caller didn't send are left alone; serverTimestamp() has no REST
+// spelling, so the fallback stamps the client clock instead.
 export async function updateProspect(id, updates) {
-  await updateDoc(getDoc(id), {
-    ...sanitizeFirestoreData(updates || {}),
-    updatedAt: serverTimestamp(),
-  });
+  const data = sanitizeFirestoreData(updates || {});
+  await viaSdkOrRest(
+    () => updateDoc(getDoc(id), { ...data, updatedAt: serverTimestamp() }),
+    () => restUpdateFields(prospectDocPath(id), keyFieldEntries({ ...data, updatedAt: new Date() })),
+  );
 }
 
 export async function deleteProspect(id) {
-  await deleteDoc(getDoc(id));
+  await viaSdkOrRest(
+    () => deleteDoc(getDoc(id)),
+    () => restDeleteDoc(prospectDocPath(id)),
+  );
 }
 
 // The ONE place an import may create prospect documents.

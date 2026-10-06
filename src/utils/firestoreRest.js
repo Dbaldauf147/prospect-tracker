@@ -38,6 +38,10 @@ export function toRestValue(v) {
     return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
   }
   if (v instanceof Date) return { timestampValue: v.toISOString() };
+  // A Firestore Timestamp read back from a snapshot (createdAt on a record
+  // being re-saved). Without this it would be written as a {seconds,
+  // nanoseconds} map and stop being a timestamp.
+  if (typeof v.toDate === 'function') return { timestampValue: v.toDate().toISOString() };
   if (Array.isArray(v)) return { arrayValue: { values: v.map(toRestValue) } };
   if (typeof v === 'object') {
     return { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, toRestValue(x)])) } };
