@@ -10905,7 +10905,29 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   }
                   return m;
                 })();
-                function cmForRaClient(name) { return raNameToCm.get((name || '').toLowerCase()) || ''; }
+                // Client Manager for a matched RA client. The Clients page
+                // assignment wins, the same source the popup header and the
+                // PE Portfolio table read, so a manager set there shows here
+                // too (internal clients picked from Table View have no row on
+                // the RA list at all, so this is their only source). Then the
+                // RA list's CM column: exact name first, then the fuzzy
+                // companiesMatch the ZoomInfo view uses, so a saved match whose
+                // spelling has drifted from the list ("Triumph Group" vs
+                // "Triumph Group, Inc.") still finds its row.
+                const clientManagerMap = loadClientManagerMap();
+                function cmForRaClient(name) {
+                  const n = (name || '').trim();
+                  if (!n) return '';
+                  const fromClientsPage = clientManagerMap[n.toLowerCase()]
+                    || Object.entries(clientManagerMap).find(([k, v]) => v && companiesMatch(k, n))?.[1];
+                  if (fromClientsPage) return fromClientsPage;
+                  const exact = raNameToCm.get(n.toLowerCase());
+                  if (exact) return exact;
+                  for (const [k, cm] of raNameToCm) {
+                    if (companiesMatch(k, n)) return cm;
+                  }
+                  return '';
+                }
                 // Map lowercase internal client/old-client company names -> status label.
                 // Lets us show Client / Old Client suggestions in the RA Client dropdown
                 // (and tag them in the UI) alongside the formal RA clients list.
