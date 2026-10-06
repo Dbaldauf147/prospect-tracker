@@ -1,26 +1,23 @@
-// The Contract Coverage tab on the Master Analysis: how much of each
-// deregulated market's spend is tied up in supply agreements that haven't
-// expired yet, and therefore how much of it the Indicative Savings tab can
-// actually take a percentage of in each year of the projection.
+// The Contract Coverage tab on the Master Analysis: every deregulated site,
+// its consumption and spend, and the supply agreement it is tied up in, so
+// the projection can say which sites' spend is free to re-source in each year
+// and which is locked until its agreement ends.
 //
-// The tab carries two inputs per market and commodity, both editable in the
-// workbook: the share of spend under agreement, and the date that agreement
-// ends. Everything after them is a formula, and the Indicative Savings tab's
-// Annual and Year 1-5 columns read the per-year open spend those formulas
-// produce. So a seller can sit with the customer, type "60 % of Texas is
-// locked until March 2028", and watch the savings move.
+// The tab carries one input per site, editable in the workbook: the date its
+// agreement ends (blank = no agreement, open from day one). Everything after
+// it is a formula, and the Indicative Savings tab's Annual and Year 1-5
+// columns add up those per-site formulas for each market. So a seller can sit
+// with the customer, type "the Dallas store is locked until March 2028", and
+// watch the Texas savings move.
 //
-// The model, per market:
+// The model, per site:
 //   S  savings-eligible spend/yr
-//   C  share of S under agreement (0-1)
 //   M  months of the projection the agreement still covers
-//   open spend in year N = S*(1-C) + S*C * clamp(12N - M, 0, 12) / 12
+//   open spend in year N = S * clamp(12N - M, 0, 12) / 12
 //
-// That is a market-level approximation of the per-site, per-month contract
-// gating the page does: one share and one end date stand in for every
-// site's. The seed values are read off the sites so an untouched workbook
-// lands close to that site-level answer, and the point of the tab is that
-// the seller can then overrule them.
+// M is counted the same way the page's own month-by-month contract gating
+// counts it (a month is covered when the agreement ends after its first
+// day), so an untouched workbook reproduces the page's site-level figures.
 //
 // Pure and dependency-free, so the arithmetic the workbook's formulas encode
 // can be pinned in scripts/contractCoverage.test.mjs. The Excel formula
@@ -59,56 +56,17 @@ export function monthsUnderAgreement(expiry, projectionStart) {
 }
 
 /**
- * Spend open to re-sourcing in each year of the projection, annualised:
- * index 0 is Year 1. Mirrors openSpendFormula.
+ * One site's spend open to re-sourcing in each year of the projection,
+ * annualised: index 0 is Year 1. Mirrors siteOpenSpendFormula.
  */
-export function openSpendByYear(spend, coveredShare, monthsLocked) {
+export function siteOpenSpendByYear(spend, monthsLocked) {
   const s = num(spend);
-  const c = Math.max(0, Math.min(1, num(coveredShare)));
   const m = num(monthsLocked);
   const out = [];
   for (let n = 1; n <= COVERAGE_YEARS; n++) {
-    const freeMonths = Math.max(0, Math.min(12, 12 * n - m));
-    out.push(s * (1 - c) + s * c * freeMonths / 12);
+    out.push(s * Math.max(0, Math.min(12, 12 * n - m)) / 12);
   }
   return out;
-}
-
-/**
- * The seed values for one market, read off its sites.
- *
- * @param sites            [{ spend, end }] — savings-eligible spend and the
- *                         supply agreement's end date (Date or null)
- * @param projectionStart  first day of the projection (Date)
- * @returns {{ sites, coveredSites, coveredSpend, coveredShare, expiry }}
- *          `expiry` is the spend-weighted average end date of the sites still
- *          under agreement (a UTC-midnight Date), or null when none are.
- *
- * Spend-weighted rather than the latest end date: one site locked to 2031
- * shouldn't hold a market's other forty sites, which come free next spring,
- * out of the projection for five years.
- */
-export function coverageSeed(sites, projectionStart) {
-  const startMs = projectionStart instanceof Date ? projectionStart.getTime() : NaN;
-  let total = 0;
-  let coveredSites = 0;
-  let coveredSpend = 0;
-  let weightedEnd = 0;
-  let count = 0;
-  for (const site of sites || []) {
-    const spend = Math.max(0, num(site?.spend));
-    count += 1;
-    total += spend;
-    const end = site?.end;
-    if (!(end instanceof Date) || !Number.isFinite(end.getTime())) continue;
-    if (!(end.getTime() > startMs)) continue;
-    coveredSites += 1;
-    coveredSpend += spend;
-    weightedEnd += spend * end.getTime();
-  }
-  const coveredShare = total > 0 ? coveredSpend / total : 0;
-  const expiry = coveredSpend > 0 ? utcDay(new Date(weightedEnd / coveredSpend)) : null;
-  return { sites: count, coveredSites, coveredSpend, coveredShare, expiry };
 }
 
 // ---- Excel formula builders -------------------------------------------
@@ -122,8 +80,14 @@ export function monthsLockedFormula(expiryRef, startRef) {
     + `+IF(DAY(${expiryRef})>1,1,0))),0)`;
 }
 
-// Open spend in year `n` (1-based).
-export function openSpendFormula(spendRef, shareRef, monthsRef, n) {
-  const share = `MAX(0,MIN(1,N(${shareRef})))`;
-  return `${spendRef}*(1-${share})+${spendRef}*${share}*MAX(0,MIN(12,${12 * n}-${monthsRef}))/12`;
+// One site's open spend in year `n` (1-based).
+export function siteOpenSpendFormula(spendRef, monthsRef, n) {
+  return `${spendRef}*MAX(0,MIN(12,${12 * n}-${monthsRef}))/12`;
+}
+
+// A market's open spend on the Indicative Savings tab: the sites on the
+// Contract Coverage tab whose market column matches this row's, summed over
+// one or more of their Open Spend year columns (Year 1 through N).
+export function marketOpenSpendFormula(marketRangeRef, marketCellRef, openRangeRef) {
+  return `SUMPRODUCT((${marketRangeRef}=${marketCellRef})*${openRangeRef})`;
 }

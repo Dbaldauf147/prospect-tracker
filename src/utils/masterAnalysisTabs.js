@@ -23,6 +23,7 @@ export const MASTER_ANALYSIS_TAB_GROUPS = [
       { name: 'ISO', hint: 'Sites and spend by ISO / RTO' },
       { name: 'Europe', hint: 'Map of European sites' },
       { name: 'Indicative Savings', hint: 'Savings scenario, term and the per-state tables' },
+      { name: 'Contract Coverage', hint: 'Every deregulated site and when its supply agreement ends; feeds the Indicative Savings tab' },
       { name: 'Site Detail', hint: 'One row per site with its consumption, rates and savings' },
       { name: 'Monthly Savings', hint: 'Savings spread across the months of the year' },
       { name: 'Contract Overview', hint: 'Current supply contracts and their end dates' },
