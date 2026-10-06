@@ -392,6 +392,12 @@ export function DataTable({
   // its header. Rows are filtered (substring, case-insensitive) by
   // the raw cell value for each column that has a non-empty filter.
   enableColumnFilters = false,
+  // When true, the columns are scaled to fill the table's width exactly:
+  // stretched when there is room to spare, squeezed when there isn't, so
+  // the table never scrolls sideways. Widths keep their proportions, and a
+  // dragged column keeps its share. Off by default, since most tables here
+  // are wider than any screen on purpose.
+  fitWidth = false,
   // Fires with the rows currently passing the in-table column filters,
   // so a parent can sync its own "select all visible" / "rows on
   // screen" UI against the same set the user sees.
@@ -900,6 +906,27 @@ export function DataTable({
 
   const headerRef = useRef(null);
   const bodyRef = useRef(null);
+
+  // The width fitWidth scales to: the header strip's width less however
+  // wide the body's vertical scrollbar is, re-read whenever the table is
+  // resized.
+  const [fitSpace, setFitSpace] = useState(0);
+  useEffect(() => {
+    if (!fitWidth) return undefined;
+    const el = headerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const measure = () => {
+      const body = bodyRef.current;
+      const scrollbar = body ? Math.max(0, body.offsetWidth - body.clientWidth) : 0;
+      const next = Math.max(0, el.clientWidth - scrollbar);
+      setFitSpace(prev => (Math.abs(prev - next) > 1 ? next : prev));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    if (bodyRef.current) ro.observe(bodyRef.current);
+    return () => ro.disconnect();
+  }, [fitWidth, rows.length]);
   const firstRowRef = useRef(null);
 
   // Virtualization. Only render rows in (or near) the viewport when the
@@ -965,7 +992,7 @@ export function DataTable({
     }
   });
 
-  const getWidth = (col) => colWidths[col.key] || col.defaultWidth || 120;
+  const rawWidth = (col) => colWidths[col.key] || col.defaultWidth || 120;
   // Filter to user-visible columns. Safety net: when the persisted
   // visibility set was saved against a different column lineup (e.g.
   // an older Firestore-synced list whose keys don't match the current
@@ -976,6 +1003,15 @@ export function DataTable({
   // interaction; this just refuses to render an unusable empty state.
   let visibleColumns = orderedColumns.filter(c => visibleCols.has(c.key));
   if (visibleColumns.length === 0 && orderedColumns.length > 0) visibleColumns = orderedColumns;
+
+  // fitWidth: one factor for every column, so the sum lands on the space
+  // the table has (less the body's vertical scrollbar). Floored, so the
+  // rounding can only leave a pixel or two spare, never force a scroll.
+  const rawTotal = visibleColumns.reduce((sum, c) => sum + rawWidth(c), 0);
+  const fitScale = fitWidth && fitSpace > 0 && rawTotal > 0 ? fitSpace / rawTotal : 1;
+  const getWidth = fitScale === 1
+    ? rawWidth
+    : (col) => Math.max(40, Math.floor(rawWidth(col) * fitScale));
 
   // Where each pinned column parks while the table scrolls sideways: the
   // summed width of the pinned columns to its left. Any column can carry

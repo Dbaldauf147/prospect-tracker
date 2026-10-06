@@ -1480,7 +1480,6 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           updateSettings={updateSettings}
           cdmName={cdmName}
           onSelectProspect={onSelectProspect}
-          maxWidth={PAGE_MAX}
         />
       ) : (
       <div style={{ padding: '0.25rem 1.25rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: PAGE_MAX }}>

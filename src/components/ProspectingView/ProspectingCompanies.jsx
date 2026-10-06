@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { STATUS_COLORS } from '../../data/enums.js';
 import { allPcRows, myProspectRows, sumFigures } from '../../utils/prospectingPortfolio.js';
-import { biggestDealFor, dealMid } from '../../utils/prospectingDeals.js';
+import { biggestDealFor } from '../../utils/prospectingDeals.js';
 import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
 import { pricedServiceRows } from '../../utils/serviceRows';
 import { formatMoneyRange, getServicePricing, resolvePricingBases } from '../../utils/servicePricing';
@@ -184,7 +184,7 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
     });
     return [
       {
-        key: 'company', label: 'Company', defaultWidth: 280,
+        key: 'company', label: 'Company', defaultWidth: 230,
         getSortValue: r => r.company.toLowerCase(),
         getFilterValue: r => r.company,
         exportValue: r => r.company,
@@ -200,7 +200,7 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
         )),
       },
       {
-        key: 'status', label: 'Status', defaultWidth: 140,
+        key: 'status', label: 'Status', defaultWidth: 110,
         getSortValue: r => (r.status ? r.status.toLowerCase() : null),
         getFilterValue: r => r.status || '',
         exportValue: r => r.status || '',
@@ -211,7 +211,7 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
         },
       },
       ...(isPcs ? [{
-        key: 'peFirms', label: 'PE Firm', defaultWidth: 200,
+        key: 'peFirms', label: 'PE Firm', defaultWidth: 170,
         getSortValue: r => (r.peFirms[0] ? r.peFirms[0].toLowerCase() : null),
         getFilterValue: r => r.peFirms.join(', '),
         exportValue: r => r.peFirms.join(', '),
@@ -221,11 +221,11 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
           </span>
         ),
       }] : []),
-      { key: 'sites', label: 'Sites', defaultWidth: 90, headerTitle: 'Number of sites: from the company record, else counted off its saved site list.', ...num('sites', 'sitesFrom') },
+      { key: 'sites', label: 'Sites', defaultWidth: 80, headerTitle: 'Number of sites: from the company record, else counted off its saved site list.', ...num('sites', 'sitesFrom') },
       { key: 'accounts', label: 'Accounts', defaultWidth: 100, headerTitle: 'Number of utility accounts, written onto the company by its Master Analysis save.', ...num('accounts', 'accountsFrom') },
-      { key: 'energyMwh', label: 'Total Energy (MWh)', defaultWidth: 175, headerTitle: 'Electric + gas use per year in MWh, written onto the company by its Master Analysis save.', ...num('energyMwh', 'energyFrom') },
+      { key: 'energyMwh', label: 'Total Energy (MWh)', defaultWidth: 160, headerTitle: 'Electric + gas use per year in MWh, written onto the company by its Master Analysis save.', ...num('energyMwh', 'energyFrom') },
       {
-        key: 'analysis', label: 'Master Analysis', defaultWidth: 150,
+        key: 'analysis', label: 'Master Analysis', defaultWidth: 140,
         headerTitle: 'Whether a Master Analysis is saved against the company from the Utility Lookup page, and when.',
         getSortValue: r => (r.analysis ? (Date.parse(r.analysis.savedAt) || 1) : null),
         getFilterValue: r => (r.analysis ? formatAnalysisDate(r.analysis.savedAt) : ''),
@@ -243,9 +243,11 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
         )),
       },
       {
-        key: 'deal', label: 'Biggest Deal', defaultWidth: 150,
+        key: 'deal', label: 'Biggest Deal', defaultWidth: 190,
         headerTitle: 'The biggest service still open on the company, first-year fee, priced off its Sites, Accounts and other Scale figures through the Services Pricing rate card. The same figure as Biggest Deal on the company card.',
-        getSortValue: r => (r.deal ? dealMid(r.deal) : null),
+        // Ranked by the top of the range: the most this company could be
+        // worth, which is what the list is opened to find.
+        getSortValue: r => (r.deal ? r.deal.feeHigh : null),
         getFilterValue: r => (r.deal ? formatMoneyRange(r.deal.fee, r.deal.feeHigh) : ''),
         exportValue: r => (r.deal ? formatMoneyRange(r.deal.fee, r.deal.feeHigh) : ''),
         render: r => (
@@ -257,7 +259,7 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
         ),
       },
       {
-        key: 'dealService', label: 'Biggest Deal Service', defaultWidth: 220,
+        key: 'dealService', label: 'Biggest Deal Service', defaultWidth: 200,
         headerTitle: 'The service that biggest deal is for, plus any services its Auto-add cell sells with it.',
         getSortValue: r => (r.deal?.name ? r.deal.name.toLowerCase() : null),
         getFilterValue: r => r.deal?.name || '',
@@ -308,7 +310,8 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
             exportFileName={isPcs ? 'Prospecting PCs' : 'Prospecting Prospects'}
             columns={columns}
             rows={tableRows}
-            defaultSort={{ key: 'energyMwh', direction: 'desc' }}
+            defaultSort={{ key: 'deal', direction: 'desc' }}
+            fitWidth
             alwaysVisible={['company']}
             enableColumnFilters
             onFilteredRowsChange={setOnScreen}
