@@ -5303,7 +5303,30 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [portfolioColsMenuOpen]);
-  const colVis = (key) => (portfolioColsVisible[key] === false ? 'collapse' : 'visible');
+  // The columns this user has starred: the standard set every company
+  // popup opens with. The checkboxes above live in this browser's
+  // localStorage, so they answer "what is showing here right now"; a star
+  // lives in the user's synced settings (settings.portfolioStarredCols, a
+  // { key: true } map so starring and unstarring are single-path writes
+  // that can't be undone by a list-union merge from another laptop) and so
+  // follows them to every company and every device. A starred column is
+  // always on, its checkbox is locked, and Hide all leaves it alone - the
+  // same contract as the stars on the PE Portfolio table. `company` is
+  // always on regardless, so it never takes a star.
+  const portfolioStarredCols = useMemo(() => new Set(
+    Object.entries(settings.portfolioStarredCols || {})
+      .filter(([k, v]) => v && k !== 'company')
+      .map(([k]) => k),
+  ), [settings.portfolioStarredCols]);
+  const togglePortfolioStar = useCallback((key) => {
+    const starring = !portfolioStarredCols.has(key);
+    updateSettingsPath({ [`portfolioStarredCols.${key}`]: starring ? true : null });
+    // Unstarring leaves the column showing: losing the star shouldn't also
+    // yank it off the table under the user's cursor.
+    if (!starring) setPortfolioColsVisible(prev => ({ ...prev, [key]: true }));
+  }, [portfolioStarredCols, updateSettingsPath]);
+  const isPortfolioColShown = (key) => key === 'company' || portfolioStarredCols.has(key) || portfolioColsVisible[key] !== false;
+  const colVis = (key) => (isPortfolioColShown(key) ? 'visible' : 'collapse');
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(true);
   // Rows added by hand in this sitting, keyed by their `addedManuallyAt`
   // stamp. They pin to the top of the table so "+ Add Row" lands somewhere
@@ -11071,7 +11094,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>
                           {(() => {
                             const total = PORTFOLIO_COL_DEFS.length;
-                            const shown = PORTFOLIO_COL_DEFS.filter(c => portfolioColsVisible[c.key] !== false).length;
+                            const shown = PORTFOLIO_COL_DEFS.filter(c => isPortfolioColShown(c.key)).length;
                             return shown === total ? '' : `${shown}/${total} columns shown · export keeps all`;
                           })()}
                         </span>
@@ -11095,21 +11118,40 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                 type="button"
                                 onClick={() => setPortfolioColsVisible(prev => ({ ...prev, ...Object.fromEntries(PORTFOLIO_COL_DEFS.filter(c => c.key !== 'company').map(c => [c.key, false])) }))}
                                 style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', fontSize: '0.65rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}
-                                title="Hide every column except Company"
+                                title={portfolioStarredCols.size > 0 ? 'Hide every column except Company and the ones you starred' : 'Hide every column except Company'}
                               >Hide all</button>
                             </div>
+                            <div style={{ padding: '0 0.25rem 0.3rem', fontSize: '0.62rem', color: 'var(--color-text-muted)', lineHeight: 1.35, whiteSpace: 'normal', maxWidth: 220 }}>
+                              Star a column to make it standard: starred columns show on every company popup, and Hide all leaves them alone.
+                            </div>
                             {PORTFOLIO_COL_DEFS.map(({ key, label }) => {
-                              const checked = portfolioColsVisible[key] !== false;
+                              const starred = portfolioStarredCols.has(key);
+                              const isCompany = key === 'company';
+                              const locked = isCompany || starred;
                               return (
-                                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 4px', fontSize: '0.7rem', color: 'var(--color-text)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={e => setPortfolioColsVisible(prev => ({ ...prev, [key]: e.target.checked }))}
-                                    style={{ accentColor: 'var(--color-accent)' }}
-                                  />
-                                  {label}
-                                </label>
+                                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 4px' }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => togglePortfolioStar(key)}
+                                    disabled={isCompany}
+                                    title={isCompany
+                                      ? 'The Company column is always on the table'
+                                      : starred
+                                        ? `Stop showing ${label} on every company popup. It stays showing here until you hide it.`
+                                        : `Show ${label} on every company popup`}
+                                    style={{ border: 'none', background: 'none', padding: 0, lineHeight: 1, fontSize: '0.85rem', fontFamily: 'inherit', cursor: isCompany ? 'default' : 'pointer', color: starred || isCompany ? '#D97706' : '#CBD5E1' }}
+                                  >{starred || isCompany ? '★' : '☆'}</button>
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, fontSize: '0.7rem', color: isCompany ? 'var(--color-text-muted)' : 'var(--color-text)', cursor: locked ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={isPortfolioColShown(key)}
+                                      disabled={locked}
+                                      onChange={e => setPortfolioColsVisible(prev => ({ ...prev, [key]: e.target.checked }))}
+                                      style={{ accentColor: 'var(--color-accent)' }}
+                                    />
+                                    {label}
+                                  </label>
+                                </div>
                               );
                             })}
                           </div>
