@@ -12,6 +12,7 @@
 //   - nobody is listed twice, however many sends they appear in.
 import {
   mergeCampaignContacts, adoptedRow, adoptedCount, rowAddresses, normEmail,
+  isInternalAddress, isInternalRow, withoutInternalRows,
 } from '../src/utils/campaignRoster.js';
 
 let passed = 0, failed = 0;
@@ -240,6 +241,22 @@ check('normEmail handles rubbish', normEmail(null), '');
   check('firstSentDate falls back to the send', bare.firstSentDate, '2026-09-10T09:00:00Z');
   check('no undefined anywhere', Object.values(bare).some(v => v === undefined), false);
   check('adoptedCount on nothing', adoptedCount(null), 0);
+}
+
+// @se.com addresses are colleagues, never campaign contacts.
+{
+  check('se.com is internal', isInternalAddress(' Kristi.McNary@SE.com '), true);
+  check('a lookalike domain is not', isInternalAddress('a@notse.com'), false);
+  check('a row of only colleagues is internal', isInternalRow({ email: 'a@se.com; b@se.com' }), true);
+  check('a group send that reached a prospect is not', isInternalRow({ email: 'a@se.com; lori@barings.com' }), false);
+  check('a row with no address is not', isInternalRow({ email: '' }), false);
+  check('withoutInternalRows drops colleagues', withoutInternalRows([{ email: 'k@se.com' }, { email: 'lori@barings.com' }]).map(c => c.email), ['lori@barings.com']);
+  const merged = mergeCampaignContacts(
+    [{ email: 'kristi.mcnary@se.com', replied: true }, { email: 'lori@barings.com' }],
+    [send('kristi.mcnary@se.com'), send('pat@se.com'), send('bob@bain.com')],
+    [],
+  );
+  check('colleagues are neither kept nor adopted', merged.map(c => c.email), ['lori@barings.com', 'bob@bain.com']);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
