@@ -52,7 +52,7 @@ import { SAVINGS_STATUS, savingsStatusFor, isNoSavingsRow } from './savingsStatu
 import { EUROPE_VOLUME_GWH, largeEuropeanMarkets, largeEuropeanMarketLabel } from './europeVolume.js';
 import {
   COVERAGE_YEARS, utcDay, monthsUnderAgreement, siteOpenSpendByYear,
-  monthsLockedFormula, siteOpenSpendFormula, marketOpenSpendFormula,
+  monthsLockedFormula, siteOpenSpendFormula, marketOpenSpendFormula, siteBrokerSavingsFormula,
 } from './contractCoverage.js';
 import { SavingsScopeToggle } from './OwnershipScopeBar.jsx';
 import { DataQualityTable } from './DataQualityTable.jsx';
@@ -10426,7 +10426,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // Sites count next to Deregulated Sites, and the savings-eligible
     // spend next to the full deregulated spend. The Savings Status column
     // is always present, hence the +1 over the old width.
-    const SPAN = 27 + (showUnknownColumn ? 1 : 0) + (showLeasedColumns ? 2 : 0);
+    const SPAN = 27 + (showUnknownColumn ? 1 : 0) + (showLeasedColumns ? 2 : 0) + (contractCoverage ? 1 : 0);
     const widths = [
       22, 14, 11, 13,                     // ST/Prov/Country..Deregulated Sites (4)
       ...(showUnknownColumn ? [15] : []), // Unclassified Sites (1)
@@ -10437,6 +10437,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       13,                                // Low % (1)
       13,                                // High % (1)
       11,                                // Savings % (1)
+      ...(contractCoverage ? [16] : []), // Broker Fee Savings (1)
       16, 14, 14, 14, 14, 14,            // Annual Savings + Year 1-5 (6)
       24, 24, 14, 14,                    // Utility/Supplier/Contract Start/End (4)
       4,                                 // spacer (1)
@@ -10553,6 +10554,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           : '')
       + (contractCoverage
         ? ' Annual and Year 1–5 savings are taken off the spend each market\'s sites have open to re-sourcing on the Contract Coverage tab: edit a site\'s Agreement Ends date there and these columns follow.'
+          + ' They also include Broker Fee Savings: the difference between each site\'s current broker fee and SE\'s, entered on the Contract Coverage tab (negative, in red, where SE\'s fee is higher).'
         : '');
     toggleHint.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_TEXT_DARK } };
     toggleHint.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
@@ -10583,6 +10585,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // Open Spend Year 1 in the other, Years 2-5 in the four after it.
     const COVERAGE_MARKET_COL = 2;
     const COVERAGE_OPEN_COL = 13;
+    // Broker Savings Year 1 sits here, Years 2-5 after it: each site's
+    // broker fee saving (or added cost) against SE's, phased in as its
+    // agreement ends.
+    const COVERAGE_BROKER_COL = COVERAGE_OPEN_COL + COVERAGE_YEARS;
     function writeSection(label, sectionRows, columnDefs, commodity) {
       // Section header band — light green wash with dark green text.
       ws.mergeCells(r, 1, r, SPAN);
@@ -10673,20 +10679,24 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // The open spend of this market's sites on the Contract Coverage tab,
       // Year 1 through `n`, matched on the market name in column A of
       // sheet row `rowNum`; null when the tab isn't in the workbook.
-      const coverageOpenSum = (n, rowNum) => {
+      const coverageSum = (startCol, n, rowNum) => {
         const span = coverageRowsFor[commodity];
         if (!span) return null;
         const [first, last] = span;
         const q = `'${COVERAGE_SHEET_NAME}'!`;
         const marketCol = colLetterFor(COVERAGE_MARKET_COL);
-        const openFirst = colLetterFor(COVERAGE_OPEN_COL);
-        const openLast = colLetterFor(COVERAGE_OPEN_COL + n - 1);
+        const colFirst = colLetterFor(startCol);
+        const colLast = colLetterFor(startCol + n - 1);
         return marketOpenSpendFormula(
           `${q}$${marketCol}$${first}:$${marketCol}$${last}`,
           `$A${rowNum}`,
-          `${q}$${openFirst}$${first}:$${openLast}$${last}`,
+          `${q}$${colFirst}$${first}:$${colLast}$${last}`,
         );
       };
+      const coverageOpenSum = (n, rowNum) => coverageSum(COVERAGE_OPEN_COL, n, rowNum);
+      // The same for the sites' broker fee savings against SE, Year 1
+      // through `n`: negative where SE's fee is the higher one.
+      const coverageBrokerSum = (n, rowNum) => coverageSum(COVERAGE_BROKER_COL, n, rowNum);
 
       // Data rows — every cell left-aligned regardless of type so the
       // sheet reads as a flat report rather than a finance ledger.
@@ -10750,6 +10760,22 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               cell.value = midResult;
             }
           }
+          // Broker Fee Savings = this market's sites' broker savings
+          // against SE in Year 1, off the Contract Coverage tab.
+          else if (c.formulaKind === 'brokerSavings') {
+            const brokerSum = coverageBrokerSum(1, r);
+            const kids = childRangeFor.get(row);
+            if (brokerSum && !row.isParent) {
+              cell.value = { formula: brokerSum, result: 0 };
+              cell.ignoredErrors = { formula: true, formulaRange: true };
+            } else if (kids) {
+              const col = colLetterFor(i + 1);
+              cell.value = { formula: `SUM(${col}${kids[0]}:${col}${kids[1]})`, result: 0 };
+              cell.ignoredErrors = { formula: true, formulaRange: true };
+            } else {
+              cell.value = 0;
+            }
+          }
           // Indicative Annual Savings = Spend × Savings %.
           else if (c.formulaKind === 'annualSavings') {
             const spendRef = cellRef('spend', r);
@@ -10757,13 +10783,22 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             const midResult = (v && typeof v === 'object' && Number.isFinite(v.mid)) ? Math.round(v.mid) : 0;
             const openRef = coverageOpenSum(1, r);
             const kids = childRangeFor.get(row);
+            // The Broker Fee Savings cell to the left, when the workbook
+            // carries one: added on, so a higher SE fee lowers the total.
+            const brokerRef = cellRef('brokerSavings', r);
+            const plusBroker = brokerRef ? `+${brokerRef}` : '';
             if (spendRef && pctRef && !row.isParent && !row.isTbd) {
               // With the Contract Coverage tab: the spend at this market's
               // sites that is open to re-sourcing in Year 1, not the full
               // spend, since a site under agreement can't be re-priced yet.
               const basis = openRef || spendRef;
-              cell.value = { formula: `${basis}*${pctRef}`, result: midResult };
+              cell.value = { formula: `${basis}*${pctRef}${plusBroker}`, result: midResult };
               cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
+            } else if (brokerRef && row.isTbd && !row.isParent) {
+              // No committed commodity band here, but a broker fee
+              // difference is still real money.
+              cell.value = { formula: brokerRef, result: midResult };
+              cell.ignoredErrors = { formula: true, formulaRange: true };
             } else if (kids) {
               const col = colLetterFor(i + 1);
               cell.value = { formula: `SUM(${col}${kids[0]}:${col}${kids[1]})`, result: midResult };
@@ -10784,16 +10819,21 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             const openSum = N ? coverageOpenSum(N, r) : null;
             const pctRef = cellRef('savingsPct', r);
             const kids = childRangeFor.get(row);
+            const brokerSum = N ? coverageBrokerSum(N, r) : null;
             if (openSum && pctRef && !row.isParent && !row.isTbd) {
               // Savings % on each year's open spend, Year 1 through N: a
               // site locked until year 3 starts adding to the cumulative
-              // in year 3, not on day one.
+              // in year 3, not on day one. The broker fee difference
+              // joins on the same schedule.
               const cumResult = (v && typeof v === 'object' && Number.isFinite(v.mid)) ? Math.round(v.mid) : 0;
               cell.value = {
-                formula: `IF(--${YEARS_REF}>=${N},${pctRef}*${openSum},0)`,
+                formula: `IF(--${YEARS_REF}>=${N},${pctRef}*${openSum}${brokerSum ? `+${brokerSum}` : ''},0)`,
                 result: cumResult,
               };
               cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
+            } else if (brokerSum && row.isTbd && !row.isParent) {
+              cell.value = { formula: `IF(--${YEARS_REF}>=${N},${brokerSum},0)`, result: 0 };
+              cell.ignoredErrors = { formula: true, formulaRange: true };
             } else if (annualRef && N && !row.isParent && !row.isTbd) {
               cell.value = {
                 formula: `IF(--${YEARS_REF}>=${N},${annualRef}*${N},0)`,
@@ -11024,6 +11064,12 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           } else {
             writeBlank(cell, !!c.numFmt);
           }
+        } else if (c.formulaKind === 'brokerSavings') {
+          const r2 = colRange('brokerSavings');
+          if (r2) {
+            cell.value = { formula: `SUM(${r2})`, result: 0 };
+            cell.ignoredErrors = { formula: true };
+          } else writeBlank(cell, !!c.numFmt);
         } else if (c.formulaKind === 'annualSavings') {
           const r2 = colRange('annualSavings');
           if (r2) {
@@ -11115,6 +11161,13 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       savingsStatus: true,
       get: (g) => savingsStatusFor(g, commodity),
     });
+    // Broker fee savings against SE's fee, per market, in Year 1: present
+    // only alongside the Contract Coverage tab, where the fees are typed
+    // in. Negative (red) where SE's fee is the higher one. The Annual and
+    // Year 1-5 columns to its right add it on.
+    const brokerSavingsCol = contractCoverage
+      ? [{ label: 'Broker Fee Savings (Year 1)', tag: 'brokerSavings', formulaKind: 'brokerSavings', get: () => 0, numFmt: '"$"#,##0;[Red]-"$"#,##0' }]
+      : [];
     // Only one of the two spend columns carries the formula tag.
     const fullSpendTag = showLeasedColumns ? undefined : 'spend';
 
@@ -11140,6 +11193,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       { label: 'Savings %', tag: 'savingsPct', formulaKind: 'savingsPct', get: (g) => g.savingsPct, numFmt: '0.0%' },
       // Annual + Year 1-5 cumulative for the deregulated motion only.
       // Reg-rate savings live in their own block to the right.
+      ...brokerSavingsCol,
       { label: 'Indicative Annual Savings', tag: 'annualSavings', formulaKind: 'annualSavings', get: (g) => g.annualSavings, numFmt: '"$"#,##0', sumKey: 'annualSavings' },
       { label: 'Year 1 Cumulative', formulaKind: 'yearCumulative', yearGate: 1, get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
       { label: 'Year 2 Cumulative', formulaKind: 'yearCumulative', yearGate: 2, get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
@@ -11187,6 +11241,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       { label: 'High %', tag: 'highPct', editable: 'highPct', get: (g) => g.highPct, numFmt: '0.0%' },
       { label: 'Savings %', tag: 'savingsPct', formulaKind: 'savingsPct', get: (g) => g.savingsPct, numFmt: '0.0%' },
       // Annual + Year 1-5 cumulative for the deregulated motion.
+      ...brokerSavingsCol,
       { label: 'Indicative Annual Savings', tag: 'annualSavings', formulaKind: 'annualSavings', get: (g) => g.annualSavings, numFmt: '"$"#,##0', sumKey: 'annualSavings' },
       { label: 'Year 1 Cumulative', formulaKind: 'yearCumulative', yearGate: 1, get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
       { label: 'Year 2 Cumulative', formulaKind: 'yearCumulative', yearGate: 2, get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
@@ -11428,8 +11483,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         properties: { tabColor: { argb: SE_GREEN } },
         views: [{ showGridLines: false, state: 'frozen', xSplit: 1, ySplit: 3 }],
       });
-      const CC_COLS = COVERAGE_OPEN_COL + COVERAGE_YEARS - 1;
-      cws.columns = [30, 14, 24, 24, 15, 18, 18, 18, 14, 12, 12, 15, 15, 15, 15, 15, 15].map(w => ({ width: w }));
+      const CC_COLS = COVERAGE_BROKER_COL + COVERAGE_YEARS - 1;
+      cws.columns = [30, 14, 24, 24, 15, 18, 18, 18, 14, 12, 12, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15].map(w => ({ width: w }));
       // Where each column sits. Open Spend Year 1-5 run from
       // COVERAGE_OPEN_COL, which the Indicative Savings formulas read.
       const CC = {
@@ -11515,6 +11570,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       ccHint.value = 'Every deregulated site on the Indicative Savings tab, and the supply agreement it is tied up in. '
         + 'Current Broker Fee (yellow) is the fee the site pays its broker today, per kWh or per Dth: type it in where it is known. '
         + 'With SE\'s own broker fees entered in row 2, Broker Savings vs SE shows what the switch is worth per site each year: positive is a saving to the customer, negative (red) is an added cost. '
+        + 'Broker Savings Year 1–5 phase that in as each site\'s agreement ends, and the Indicative Savings tab adds them to its savings. '
         + 'Agreement Ends (yellow) is editable: it starts out as the site\'s contract end date, a blank means no agreement (the site is open from day one), and a date moves the site\'s spend out of the projection until that agreement ends. '
         + 'Open Spend is what each site has free to re-source in each year of the projection. The Indicative Savings tab adds it up per market and takes its Annual and Year 1–5 savings off it, so editing a date here updates that tab.';
       ccHint.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_TEXT_DARK } };
@@ -11558,6 +11614,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           'Under Agreement Now',
           'Spend Under Agreement Now/yr',
           ...Array.from({ length: COVERAGE_YEARS }, (_, k) => `Open Spend Year ${k + 1}`),
+          ...Array.from({ length: COVERAGE_YEARS }, (_, k) => `Broker Savings Year ${k + 1}`),
         ];
         const hRow = cws.getRow(cr);
         headers.forEach((h, k) => {
@@ -11645,6 +11702,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           for (let k = 0; k < COVERAGE_YEARS; k++) {
             formula(COVERAGE_OPEN_COL + k, siteOpenSpendFormula(`$${L('spend')}${cr}`, `$${L('months')}${cr}`, k + 1), Math.round(open[k]), '"$"#,##0');
           }
+          // The broker saving above, phased in as the agreement ends. The
+          // Indicative Savings tab adds these up per market. 0 until the
+          // fees are typed in.
+          for (let k = 0; k < COVERAGE_YEARS; k++) {
+            formula(
+              COVERAGE_BROKER_COL + k,
+              siteBrokerSavingsFormula(`$${L('brokerSavings')}${cr}`, `$${L('spend')}${cr}`, `$${L('months')}${cr}`, k + 1),
+              0,
+              BROKER_SAVINGS_FMT,
+            );
+          }
           if (months > 0) totals[CC.underNow] += 1;
           dRow.height = 16;
           cr += 1;
@@ -11661,7 +11729,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           else if (col === CC.underNow) cell.value = { formula: `COUNTIF(${L}${first}:${L}${last},"Yes")`, result: totals[col] };
           else cell.value = { formula: `SUM(${L}${first}:${L}${last})`, result: totals[col] };
           if (cell.value && typeof cell.value === 'object') cell.ignoredErrors = { formula: true };
-          cell.numFmt = col === CC.brokerSavings
+          cell.numFmt = (col === CC.brokerSavings || col >= COVERAGE_BROKER_COL)
             ? BROKER_SAVINGS_FMT
             : (col === CC.spend || col >= CC.spendUnder) ? '"$"#,##0' : '#,##0';
           cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };

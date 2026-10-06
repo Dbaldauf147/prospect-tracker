@@ -91,3 +91,25 @@ export function siteOpenSpendFormula(spendRef, monthsRef, n) {
 export function marketOpenSpendFormula(marketRangeRef, marketCellRef, openRangeRef) {
   return `SUMPRODUCT((${marketRangeRef}=${marketCellRef})*${openRangeRef})`;
 }
+
+// One site's broker fee saving against SE's fee in year `n` (1-based):
+// the annual saving (negative for an added cost) phased in on the same
+// schedule as its open spend, since SE only becomes the broker once the
+// current agreement ends. Nothing for a site with no saving worked out
+// (a fee missing) or no savings-eligible spend (a leased site held out of
+// the projection). Mirrors siteBrokerSavingsByYear.
+export function siteBrokerSavingsFormula(brokerRef, spendRef, monthsRef, n) {
+  return `IF(AND(ISNUMBER(${brokerRef}),${spendRef}>0),`
+    + `${brokerRef}*MAX(0,MIN(12,${12 * n}-${monthsRef}))/12,0)`;
+}
+
+export function siteBrokerSavingsByYear(annualSaving, spend, monthsLocked) {
+  const a = Number(annualSaving);
+  if (!Number.isFinite(a) || !(num(spend) > 0)) return new Array(COVERAGE_YEARS).fill(0);
+  const m = num(monthsLocked);
+  const out = [];
+  for (let n = 1; n <= COVERAGE_YEARS; n++) {
+    out.push(a * Math.max(0, Math.min(12, 12 * n - m)) / 12);
+  }
+  return out;
+}

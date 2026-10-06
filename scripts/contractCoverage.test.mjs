@@ -19,6 +19,8 @@ import {
   monthsLockedFormula,
   siteOpenSpendFormula,
   marketOpenSpendFormula,
+  siteBrokerSavingsFormula,
+  siteBrokerSavingsByYear,
 } from '../src/components/SitesView/contractCoverage.js';
 
 let failures = 0;
@@ -76,6 +78,7 @@ function evalExcel(formula, cells) {
   }
   const fns = {
     IF: (c, a, b) => (c ? a : b),
+    AND: (...xs) => xs.every(Boolean),
     MAX: Math.max,
     MIN: Math.min,
     N: (v) => (typeof v === 'number' ? v : 0),
@@ -105,6 +108,26 @@ for (const expiry of [null, d(2026, 10, 1), d(2026, 12, 20), d(2028, 3, 1), d(20
 {
   const f = marketOpenSpendFormula("'Contract Coverage'!$B$7:$B$9", '$A16', "'Contract Coverage'!$K$7:$L$9");
   check('market sum formula shape', f, "SUMPRODUCT(('Contract Coverage'!$B$7:$B$9=$A16)*'Contract Coverage'!$K$7:$L$9)");
+}
+
+// ---- Broker fee savings ---------------------------------------------------
+// Phased in on the same schedule as the site's open spend: SE only becomes
+// the broker once the current agreement ends.
+{
+  const yrs = siteBrokerSavingsByYear(4000, 400000, 18);
+  check('broker saving locked 18 months, Year 1', yrs[0], 0);
+  check('broker saving locked 18 months, Year 2', yrs[1], 2000);
+  check('broker saving locked 18 months, Year 3', yrs[2], 4000);
+  check('an added cost stays negative', siteBrokerSavingsByYear(-2000, 400000, 0)[0], -2000);
+  check('no eligible spend (leased, out of scope): nothing', siteBrokerSavingsByYear(4000, 0, 0)[0], 0);
+  check('no saving worked out (a fee missing): nothing', siteBrokerSavingsByYear('', 400000, 0)[0], 0);
+}
+for (const [broker, spend, months] of [[4000, 400000, 18], [-2000, 400000, 0], [4000, 0, 0], ['', 400000, 0], [1500, 1000, 61]]) {
+  const model = siteBrokerSavingsByYear(broker, spend, months);
+  for (let n = 1; n <= COVERAGE_YEARS; n++) {
+    const got = evalExcel(siteBrokerSavingsFormula('$F8', '$H8', '$J8', n), { $F8: broker === '' ? '""' : broker, $H8: spend, $J8: months });
+    checkClose(`broker formula Year ${n} (saving ${JSON.stringify(broker)}, spend ${spend}, locked ${months})`, got, model[n - 1]);
+  }
 }
 
 if (failures) {
