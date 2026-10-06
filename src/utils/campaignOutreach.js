@@ -94,15 +94,16 @@ export function campaignStatus(c, nowMs = Date.now()) {
  * off" come out of both sides of it, because a parked contact is not a send
  * owed (see rateBase in campaignContactHold.js). So `countedTotal` and
  * `countedSent` are what `pct` and `remaining` are built from, and on a
- * campaign with nobody held they are just `total` and `sent`. Holds lift on
- * their own, hence the clock.
+ * campaign with nobody held they are just `total` and `sent`. A contact
+ * counts as held while the row is marked "Hold off", lapsed date or not
+ * (isContactMarkedHold).
  *
  * `pct` carries one decimal, like the table's % Sent column.
  */
-export function campaignSendStats(c, nowMs = Date.now()) {
+export function campaignSendStats(c) {
   const sent = Number(c?.uniqueRecipients) || 0;
   const total = Number(c?.totalContacts ?? c?.contacts?.length ?? c?.uniqueRecipients) || 0;
-  const { onHold, onHoldSent } = rateBase(c?.contacts, nowMs);
+  const { onHold, onHoldSent } = rateBase(c?.contacts);
   // Clamped, because the stored roll-ups and the roster can disagree: a
   // campaign saved before a refresh can report fewer recipients than the
   // contacts now say were held and sent.

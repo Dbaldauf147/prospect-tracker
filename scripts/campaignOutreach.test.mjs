@@ -58,10 +58,13 @@ check('a held contact is not a send owed',
 check('and the campaign counts as finished',
   isCampaignFullySent({ uniqueRecipients: 13, totalContacts: 14, contacts: [...thirteenSent, held('2026-09-30')] }, NOW),
   true);
-// A hold that has run out is over: the contact is back in the denominator
-// with nothing rewritten, and the campaign owes that send again.
-check('an expired hold is back in the figures',
+// A hold whose date has run out still reads "Hold off" in the row, so the
+// percentage keeps it out until somebody switches it back to Contact.
+check('a lapsed hold still marked Hold off stays out of the figures',
   campaignSendStats({ uniqueRecipients: 13, totalContacts: 14, contacts: [...thirteenSent, held('2026-09-01')] }, NOW),
+  { sent: 13, total: 14, remaining: 0, pct: 100, onHold: 1, countedSent: 13, countedTotal: 13 });
+check('switched back to Contact, the send is owed again',
+  campaignSendStats({ uniqueRecipients: 13, totalContacts: 14, contacts: [...thirteenSent, { outreach: '', holdUntil: '' }] }, NOW),
   { sent: 13, total: 14, remaining: 1, pct: 92.9, onHold: 0, countedSent: 13, countedTotal: 14 });
 // Held AFTER the mail went out: they leave both sides, so a campaign that
 // has sent to everyone still reads 100%.
