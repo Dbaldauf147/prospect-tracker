@@ -138,6 +138,7 @@ import { isDecisionMakerContact } from '../../utils/decisionMakerCoverage';
 import { ListsMatchPanel } from './ListsMatchPanel';
 import { AnalysisMenu } from './AnalysisMenu';
 import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
+import { isClientWedged, isClientWedgedError, wedgedClientMessage } from '../../utils/firestoreClientHealth';
 import styles from './ProspectModal.module.css';
 
 // The notes editor is fetched the first time an opportunity's notes open,
@@ -8121,8 +8122,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       await onUpdateProspect(prospect.id, merged);
       await onDeleteProspect(sourceProspect.id);
       setMergeOpen(false);
+      // Both writes landed, but over HTTPS because the SDK had crashed: the
+      // roster listener is dead, so the merge won't show until a reload.
+      if (isClientWedged()) alert(wedgedClientMessage(true));
     } catch (err) {
-      alert(`Merge failed: ${err?.message || err}`);
+      alert(isClientWedgedError(err)
+        ? 'Merge failed: the live database connection in this tab has crashed (a Firebase SDK bug, not your data). Reload the page and run the merge again.'
+        : `Merge failed: ${err?.message || err}`);
     }
   }
 
