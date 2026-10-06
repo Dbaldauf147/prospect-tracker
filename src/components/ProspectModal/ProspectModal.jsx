@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef, useCallback, memo, Suspense } fro
 import { apiFetch } from '../../utils/apiFetch';
 import { hasMetInPersonTag, metInPersonState, normalizeMetState, MET_STATE_OPTIONS, MET_YES, MET_ASKED, MET_HOLD } from '../../utils/metInPerson';
 import { contactDisplayName } from '../../utils/contactRosters';
-import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagVocabulary, planTagEdit, saveTagReview, mergeTagEdit, tagListSignature, isStaleTagEcho, TAG_ECHO_WINDOW_MS } from '../../utils/contactTagReview';
+import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagRecordKeyFor, recordForVerdict, sameTagRecord, planTagEdit, tagVocabulary, saveTagReview, mergeTagEdit, tagListSignature, isStaleTagEcho, TAG_ECHO_WINDOW_MS } from '../../utils/contactTagReview';
 import { contactEditPropsEqual, contactTagString } from '../../utils/contactEditProps';
 import { createTagWriter } from '../../utils/tagWriteQueue';
 
@@ -4533,6 +4533,14 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
   );
 }
 
+// The contact popup's tag answers, offered as Bulk Edit modes on the Tags
+// field so a group of contacts can be answered for a tag in one go.
+const BULK_TAG_ANSWERS = [
+  { mode: 'yes', label: 'Yes', help: 'Records Yes for each tag above on every selected contact and puts the tag on in HubSpot.' },
+  { mode: 'no', label: 'No', help: 'Records No for each tag above on every selected contact and takes the tag off in HubSpot.' },
+  { mode: 'unsure', label: 'Not sure', help: 'Records Not sure for each tag above on every selected contact and takes the tag off in HubSpot.' },
+];
+
 export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null, cdmName = '', initialEditContact = null, onSelectProspect = null }) {
   const { isAdmin, user } = useAuth();
   // The settings as they are NOW, for the handlers that rewrite a whole
@@ -5088,7 +5096,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [bulkApplying, setBulkApplying] = useState(false);
   const [bulkField, setBulkField] = useState('jobtitle');
   const [bulkValue, setBulkValue] = useState('');
-  const [bulkMode, setBulkMode] = useState('replace'); // 'replace' | 'append'
+  const [bulkMode, setBulkMode] = useState('replace'); // 'replace' | 'append' | a tag answer: 'yes' | 'no' | 'unsure'
   // Which page of the card is showing. The card holds six things - the
   // company's own fields, its contacts and divisions, the services board,
   // its opps, what is still open on it, and the portfolio side (the site
@@ -7211,12 +7219,69 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       return;
     }
 
+    // Tag answers - the contact popup's Yes / No / Not sure, set for every
+    // selected contact at once. The answer goes to contactTagReview (one
+    // settings write for the whole batch, so a burst can't drop answers),
+    // and the HubSpot tag follows the record the answer leaves behind: Yes
+    // puts it on, No and Not sure take it off, and a Yes over a Not sold
+    // records the Yes but keeps the tag off, exactly as the popup would.
+    const verdict = bulkField === 'dans_tags' && BULK_TAG_ANSWERS.find(a => a.mode === bulkMode);
+    const wanted = new Map();
+    if (verdict) {
+      const tags = (bulkValue || '').split(';').map(s => s.trim()).filter(Boolean);
+      if (tags.length === 0) { setBulkApplying(false); return; }
+      if (verdict.mode !== 'yes') {
+        const n = targets.length;
+        const ok = window.confirm(`Mark ${verdict.label} for ${tags.join(', ')} on ${n} contact${n === 1 ? '' : 's'}?`
+          + `\n\nThat records the answer AND takes ${tags.length === 1 ? 'that tag' : 'those tags'} off `
+          + `${n === 1 ? 'the contact' : `all ${n}`} in HubSpot.`);
+        if (!ok) { setBulkApplying(false); return; }
+      }
+      const review = settingsRef.current?.contactTagReview || {};
+      const paths = {};
+      for (const c of targets) {
+        const cid = c.id || c.vid;
+        if (!cid) continue;
+        const map = { ...(review[String(cid)] || {}) };
+        let changed = false;
+        const on = [], off = [];
+        for (const tag of tags) {
+          const stored = findTagRecord(map, tag);
+          const record = recordForVerdict(stored, verdict.mode);
+          (recordKeepsTag(record) ? on : off).push(tag);
+          if (sameTagRecord(stored, record)) continue;
+          map[tagRecordKeyFor(map, tag)] = record;
+          changed = true;
+        }
+        wanted.set(String(cid), { on, off });
+        if (changed) paths[String(cid)] = map;
+      }
+      if (Object.keys(paths).length > 0) {
+        if (updateSettingsPath) {
+          updateSettingsPath(Object.fromEntries(Object.entries(paths).map(([cid, map]) => [`contactTagReview.${cid}`, map])));
+        } else {
+          updateSettings({ contactTagReview: { ...review, ...paths } });
+        }
+      }
+    }
+
     const errors = [];
     for (const c of targets) {
       const cid = c.id || c.vid;
       if (!cid) continue;
       let nextVal = bulkValue;
-      if (bulkField === 'dans_tags') {
+      if (verdict) {
+        const want = wanted.get(String(cid)) || { on: [], off: [] };
+        let cur = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
+        let dirty = false;
+        for (const [mode, list] of [['add', want.on], ['remove', want.off]]) {
+          if (list.length === 0) continue;
+          const plan = planTagEdit(mode, list, cur);
+          if (plan.action === 'write') { cur = plan.tags; dirty = true; }
+        }
+        if (!dirty) continue;
+        nextVal = cur;
+      } else if (bulkField === 'dans_tags') {
         // planTagEdit matches on tagKey, so a remove aimed at one spelling
         // also drops the other, and a contact with nothing to change is
         // left alone rather than rewritten.
@@ -12180,7 +12245,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           const def = FIELD_OPTIONS.find(f => f.key === bulkField) || FIELD_OPTIONS[0];
           const supportsMode = bulkField === 'dans_tags' || bulkField === 'notes';
           const onCancel = () => { if (!bulkApplying) { setBulkEditOpen(false); setBulkValue(''); } };
-          const submitDisabled = bulkApplying || (bulkField !== 'notes' && bulkValue.trim() === '' && (bulkMode === 'replace' || bulkMode === 'remove'));
+          const bulkVerdict = bulkField === 'dans_tags' ? BULK_TAG_ANSWERS.find(a => a.mode === bulkMode) : null;
+          const submitDisabled = bulkApplying
+            || (bulkField !== 'notes' && bulkValue.trim() === '' && (bulkMode === 'replace' || bulkMode === 'remove' || !!bulkVerdict));
           // Tag chip helper for the dans_tags picker
           const tagsList = (bulkValue || '').split(';').map(s => s.trim()).filter(Boolean);
           // Tags the selected contacts carry today, so one that is not in the
@@ -12233,6 +12300,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         <option value="replace">Replace existing value</option>
                         <option value="append">Append to existing value</option>
                         {bulkField === 'dans_tags' && <option value="remove">Remove these tags</option>}
+                        {bulkField === 'dans_tags' && BULK_TAG_ANSWERS.map(a => (
+                          <option key={a.mode} value={a.mode}>Mark {a.label}</option>
+                        ))}
                       </select>
                     </label>
                   )}
@@ -12274,11 +12344,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         style={{ padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.8rem', fontFamily: 'inherit' }}
                       />
                       <div style={{ fontSize: '0.68rem', color: '#64748B' }}>
-                        {bulkMode === 'append'
-                          ? 'Appends new tags to each contact, keeping existing ones.'
-                          : bulkMode === 'remove'
-                            ? 'Removes the tags above from each contact, keeping the rest. Contacts without them are left alone.'
-                            : 'Replaces every existing tag on each contact with the list above.'}
+                        {bulkVerdict
+                          ? bulkVerdict.help
+                          : bulkMode === 'append'
+                            ? 'Appends new tags to each contact, keeping existing ones.'
+                            : bulkMode === 'remove'
+                              ? 'Removes the tags above from each contact, keeping the rest. Contacts without them are left alone.'
+                              : 'Replaces every existing tag on each contact with the list above.'}
                       </div>
                     </div>
                   ) : (
