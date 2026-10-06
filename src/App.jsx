@@ -721,6 +721,7 @@ function App() {
           onClose={handleModalClose}
           onDeleteProspect={deleteProspect}
           onUpdateProspect={updateProspect}
+          onAddProspect={addProspect}
           hubspotContacts={effectiveHubspotContacts}
           onDeleteContact={handleDeleteContactPropagate}
           orgCharts={settings.orgCharts || EMPTY_OBJ}

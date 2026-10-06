@@ -45,7 +45,7 @@ import { nameFromEmail } from '../../utils/nameFromEmail';
 import { splitFullName } from '../../utils/splitFullName';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../utils/reportingFrameworks';
-import { splitPeOwners } from '../../utils/peOwners';
+import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { serviceStatusColor, serviceStatusBucket, serviceBucket } from '../../utils/serviceStatusColors';
 import { pricedServiceRows } from '../../utils/serviceRows';
@@ -81,6 +81,7 @@ import { SiteListPasteModal } from './SiteListPasteModal';
 import { SiteListExportMenu } from './SiteListExportMenu';
 import { requestMasterAnalysisHandoff } from '../../utils/utilityLookupHandoff';
 import PortfolioTransactions from './PortfolioTransactions';
+import { PortfolioCompanyLinkPicker } from './PortfolioCompanyLinkPicker';
 import { siteListFacts as computeSiteListFacts, siteListScreeningRows, formatSqft } from '../../utils/siteListFacts';
 import { annualSavingsFromWorkbook } from '../../utils/analysisWorkbookFigures';
 import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
@@ -818,13 +819,22 @@ function outsideNaStatus(row) {
 // record an inherited status came from; `outsideNa` marks the geography
 // default, so the cell can render both as "not typed here" but explain each
 // for what it is.
-function resolvePortfolioStatus(row, byName) {
+//
+// `byId` resolves a row mapped by hand to a Table View company (see
+// findPortfolioProspect): that record's status is the one inherited, whatever
+// the name match would have picked.
+function resolvePortfolioStatus(row, byName, byId) {
   const own = String(row?.status || '').trim();
   if (own) return { status: own, from: '', outsideNa: false };
   const fallback = () => {
     const status = outsideNaStatus(row);
     return { status, from: '', outsideNa: !!status };
   };
+  const mapped = row?.linkedProspectId && byId ? byId.get(row.linkedProspectId) : null;
+  if (mapped) {
+    const st = String(mapped.status || '').trim();
+    return st ? { status: st, from: mapped.company, outsideNa: false } : fallback();
+  }
   const name = String(row?.companyName || '').trim();
   if (!name || !byName || byName.size === 0) return fallback();
   const exact = byName.get(name.toLowerCase());
@@ -844,7 +854,15 @@ function resolvePortfolioStatus(row, byName) {
 // "is this company in the tracker" and "does it have a status" are different
 // questions, and the answer to the first is what decides whether there's
 // anything to open.
-function findPortfolioProspect(row, byName) {
+//
+// A row mapped by hand from the Portfolio Companies table carries the
+// record's id in `linkedProspectId`, which wins over the name match: the
+// mapping is for exactly the rows whose names don't line up ("Triumph" vs
+// "Triumph Group"), and an id survives either side being renamed. A mapped
+// record that has since been deleted falls back to the name match.
+function findPortfolioProspect(row, byName, byId) {
+  const mapped = row?.linkedProspectId && byId ? byId.get(row.linkedProspectId) : null;
+  if (mapped) return mapped;
   const name = String(row?.companyName || '').trim();
   if (!name || !byName || byName.size === 0) return null;
   const exact = byName.get(name.toLowerCase());
@@ -4552,7 +4570,7 @@ const BULK_TAG_ANSWERS = [
   { mode: 'unsure', label: 'Not sure', tagModes: ['remove'], help: 'Also records Not sure for each tag above on every selected contact.' },
 ];
 
-export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null, cdmName = '', initialEditContact = null, onSelectProspect = null }) {
+export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null, cdmName = '', initialEditContact = null, onSelectProspect = null, onAddProspect = null }) {
   const { isAdmin, user } = useAuth();
   // The settings as they are NOW, for the handlers that rewrite a whole
   // settings map. The contact popup is memoised, so a callback it was handed
@@ -5063,6 +5081,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     }
     return m;
   }, [prospects]);
+  // Record id → record, for portfolio rows mapped by hand to a Table View
+  // company (row.linkedProspectId; see findPortfolioProspect).
+  const prospectById = useMemo(() => {
+    const m = new Map();
+    for (const p of (prospects || [])) if (p?.id) m.set(p.id, p);
+    return m;
+  }, [prospects]);
 
 
   const [contactView, setContactView] = useState('table'); // 'table' | 'orgchart'
@@ -5137,11 +5162,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const seen = new Set();
     const out = [];
     for (const r of (fields.portfolioCompanies || [])) {
-      const p = findPortfolioProspect(r, prospectByName);
+      const p = findPortfolioProspect(r, prospectByName, prospectById);
       if (p?.id && !seen.has(p.id)) { seen.add(p.id); out.push(p); }
     }
     return out;
-  }, [activeTab, fields.portfolioCompanies, prospectByName]);
+  }, [activeTab, fields.portfolioCompanies, prospectByName, prospectById]);
   const portfolioSavedAnalyses = useSavedAnalyses(portfolioLinkedProspects);
 
   // The Potential tab's working estimate: which services are ticked against
@@ -5366,6 +5391,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // it and the row takes its real rank.
   const [portfolioNewStamps, setPortfolioNewStamps] = useState([]);
   const [portfolioFocusStamp, setPortfolioFocusStamp] = useState(null);
+  // The Portfolio Companies row whose "link to Table View" picker is open
+  // (its index), and that picker's create in flight / last failure.
+  const [portfolioLinkIdx, setPortfolioLinkIdx] = useState(null);
+  const [portfolioLinkBusy, setPortfolioLinkBusy] = useState(false);
+  const [portfolioLinkError, setPortfolioLinkError] = useState('');
   useEffect(() => {
     setPortfolioNewStamps([]);
     setPortfolioFocusStamp(null);
@@ -7810,6 +7840,77 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // and the timer is cleared when this modal unmounts - so an edit made in the
   // last 600ms would be dropped by the navigation that replaces us. Write it
   // out first, then hand over.
+  // Tie a Portfolio Companies row to a Table View record by id. Written
+  // through setFields' updater, matched on index AND name, because a create
+  // resolves after an await and the rows may have changed meanwhile.
+  function setPortfolioRowLink(idx, rowName, prospectId) {
+    setFields(prev => {
+      const rows = prev.portfolioCompanies || [];
+      const r = rows[idx];
+      if (!r || String(r.companyName || '') !== rowName) return prev;
+      const next = rows.map((x, i) => {
+        if (i !== idx) return x;
+        const out = { ...x };
+        if (prospectId) out.linkedProspectId = prospectId;
+        else delete out.linkedProspectId;
+        return out;
+      });
+      return { ...prev, portfolioCompanies: next };
+    });
+  }
+
+  // This firm as one of the record's PE owners, so the company shows up
+  // under it everywhere else the app reads ownership (PE tab, rosters).
+  // Left alone when it's already listed.
+  function withThisFirmAsOwner(peOwner) {
+    const firm = String(fields.company || '').trim();
+    if (!firm) return peOwner || '';
+    const owners = splitPeOwners(peOwner);
+    if (owners.some(o => o.toLowerCase() === firm.toLowerCase())) return peOwner || '';
+    return joinPeOwners([...owners, firm]);
+  }
+
+  function mapPortfolioRow(idx, target) {
+    const row = (fields.portfolioCompanies || [])[idx];
+    if (!row || !target?.id) return;
+    setPortfolioRowLink(idx, String(row.companyName || ''), target.id);
+    const nextOwner = withThisFirmAsOwner(target.peOwner);
+    if (nextOwner !== (target.peOwner || '')) {
+      try { onUpdateProspect?.(target.id, { peOwner: nextOwner }); }
+      catch (err) { console.error('Portfolio link: peOwner update failed', target.id, err); }
+    }
+    setPortfolioLinkIdx(null);
+    setPortfolioLinkError('');
+  }
+
+  // Create the row's company on Table View, owned by this firm, and link
+  // the row to it. addProspect is idempotent by company key, so a name that
+  // is already there under a variant spelling links to that record instead
+  // of making a second one.
+  async function createPortfolioProspect(idx) {
+    const row = (fields.portfolioCompanies || [])[idx];
+    const name = String(row?.companyName || '').trim();
+    if (!row || !name || !onAddProspect || portfolioLinkBusy) return;
+    setPortfolioLinkBusy(true);
+    setPortfolioLinkError('');
+    try {
+      const id = await onAddProspect({
+        company: name,
+        peOwner: withThisFirmAsOwner(''),
+        hqRegion: classifyHqCountry(row.hqCountry) || '',
+        status: String(row.status || '').trim(),
+      });
+      if (!id) throw new Error('The company was not created.');
+      setPortfolioRowLink(idx, String(row.companyName || ''), id);
+      setPortfolioLinkIdx(null);
+    } catch (err) {
+      console.error('Portfolio link: create failed', name, err);
+      setPortfolioLinkError(err?.message || 'Could not create the company.');
+    } finally {
+      setPortfolioLinkBusy(false);
+    }
+  }
+
   function openProspect(target) {
     if (!target || !onSelectProspect) return;
     if (saveTimerRef.current) {
@@ -10564,6 +10665,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
           )}
 
+          {portfolioLinkIdx != null && (fields.portfolioCompanies || [])[portfolioLinkIdx] && (
+            <PortfolioCompanyLinkPicker
+              rowName={String((fields.portfolioCompanies || [])[portfolioLinkIdx].companyName || '')}
+              firmName={fields.company || ''}
+              prospects={(prospects || []).filter(p => p.id !== prospect?.id)}
+              creating={portfolioLinkBusy}
+              error={portfolioLinkError}
+              onMap={(p) => mapPortfolioRow(portfolioLinkIdx, p)}
+              onCreate={onAddProspect ? () => createPortfolioProspect(portfolioLinkIdx) : null}
+              onClose={() => { if (!portfolioLinkBusy) setPortfolioLinkIdx(null); }}
+            />
+          )}
+
           {siteListPasteOpen && (
             <SiteListPasteModal
               companyName={fields.company || ''}
@@ -10783,7 +10897,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     cmForRaClient,
                     tierForTarget,
                     repForTarget,
-                    statusForRow: (r) => resolvePortfolioStatus(r, prospectStatusByName).status,
+                    statusForRow: (r) => resolvePortfolioStatus(r, prospectStatusByName, prospectById).status,
                   });
                 }
                 async function handleUpload(e) {
@@ -10801,7 +10915,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 // resolve to the same company don't double it.
                 const savingsSeen = new Set();
                 const totalSavings = rows.reduce((sum, r) => {
-                  const p = findPortfolioProspect(r, prospectByName);
+                  const p = findPortfolioProspect(r, prospectByName, prospectById);
                   if (!p?.id || savingsSeen.has(p.id)) return sum;
                   savingsSeen.add(p.id);
                   const v = Number(p.indicativeAnnualSavings);
@@ -11375,7 +11489,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   // when the row actually matches a Table View
                                   // record, which is also the signal that there
                                   // is something to open.
-                                  const linked = onSelectProspect ? findPortfolioProspect(r, prospectByName) : null;
+                                  const linked = onSelectProspect ? findPortfolioProspect(r, prospectByName, prospectById) : null;
                                   return (
                                     <td style={{ padding: '0.15rem 0.25rem' }}>
                                       <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -11411,12 +11525,34 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                             }}
                                           >↗</button>
                                         ) : null}
+                                        {linked && r.linkedProspectId === linked.id ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => setPortfolioRowLink(i, String(r.companyName || ''), null)}
+                                            title={`Mapped by hand to "${linked.company}". Click to unmap it.`}
+                                            aria-label={`Unmap ${r.companyName || 'row'} from ${linked.company}`}
+                                            style={{ flex: '0 0 auto', padding: '0 2px', border: 'none', background: 'transparent', color: '#94A3B8', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1.2 }}
+                                          >×</button>
+                                        ) : null}
+                                        {!linked && r.companyName && (onAddProspect || prospects.length > 0) ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => { setPortfolioLinkError(''); setPortfolioLinkIdx(i); }}
+                                            title={`"${r.companyName}" is not on Table View. Map it to an existing company, or create it.`}
+                                            aria-label={`Link ${r.companyName} to Table View`}
+                                            style={{
+                                              flex: '0 0 auto', padding: '0 4px', border: '1px dashed #CBD5E1', borderRadius: 4,
+                                              background: '#fff', color: '#64748B', fontSize: '0.62rem', fontWeight: 700,
+                                              fontFamily: 'inherit', cursor: 'pointer', lineHeight: 1.4, whiteSpace: 'nowrap',
+                                            }}
+                                          >+ Link</button>
+                                        ) : null}
                                       </div>
                                     </td>
                                   );
                                 })()}
                                 {(() => {
-                                  const { status, from, outsideNa } = resolvePortfolioStatus(r, prospectStatusByName);
+                                  const { status, from, outsideNa } = resolvePortfolioStatus(r, prospectStatusByName, prospectById);
                                   // Both a tracker status and the outside-NA
                                   // default are shown italic: neither was
                                   // typed on this row, and picking one here
@@ -11455,7 +11591,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   // list under its name in settings, the
                                   // analysis on the record - so a row the
                                   // tracker doesn't know has nothing to show.
-                                  const linked = findPortfolioProspect(r, prospectByName);
+                                  const linked = findPortfolioProspect(r, prospectByName, prospectById);
                                   const dash = (tip) => <span title={tip} style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>-</span>;
                                   const notTracked = `"${r.companyName || 'This company'}" is not in the tracker yet, so nothing can be saved against it.`;
                                   const listSlug = linked ? String(linked.company || '').toLowerCase().replace(/[^a-z0-9]/g, '-') : '';
@@ -12856,8 +12992,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               if (entry.raClientMatch || entry.targetAccount) implicitMappings[k] = entry;
             }
             const effectiveMappings = { ...implicitMappings, ...savedMappings };
-            const withSaved = parsed.map(r => {
-              const key = (r.companyName || '').toLowerCase().trim();
+            // Rows mapped by hand to a Table View company keep that mapping
+            // when the same company comes back in the new file.
+            const priorLinks = new Map();
+            for (const pr of (fields.portfolioCompanies || [])) {
+              const k = (pr.companyName || '').toLowerCase().trim();
+              if (k && pr.linkedProspectId && !priorLinks.has(k)) priorLinks.set(k, pr.linkedProspectId);
+            }
+            const withSaved = parsed.map(r0 => {
+              const key = (r0.companyName || '').toLowerCase().trim();
+              const r = key && priorLinks.has(key) && !r0.linkedProspectId
+                ? { ...r0, linkedProspectId: priorLinks.get(key) }
+                : r0;
               const saved = key && effectiveMappings[key];
               if (!saved) return r;
               const out = { ...r };
