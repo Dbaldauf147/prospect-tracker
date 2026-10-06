@@ -46,6 +46,7 @@ import { splitFullName } from '../../utils/splitFullName';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../utils/reportingFrameworks';
 import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
+import { companyDedupeKey } from '../../utils/companyKey';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { serviceStatusColor, serviceStatusBucket, serviceBucket } from '../../utils/serviceStatusColors';
 import { pricedServiceRows } from '../../utils/serviceRows';
@@ -7887,28 +7888,57 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // the row to it. addProspect is idempotent by company key, so a name that
   // is already there under a variant spelling links to that record instead
   // of making a second one.
-  async function createPortfolioProspect(idx) {
+  //
+  // The add's promise only settles once Firestore's server acknowledges
+  // the write, which on a slow or stalled connection can take minutes - and
+  // holding the picker on "Creating..." until then read as a freeze. The
+  // write lands in the local cache straight away, though, so the new record
+  // shows up in `prospects` within a moment: the effect below links the row
+  // as soon as it does, and the picker closes. The promise still links it
+  // if it happens to answer first, and still reports a write that fails.
+  const [portfolioPendingCreate, setPortfolioPendingCreate] = useState(null); // { idx, rowName, key }
+  function finishPortfolioCreate(pending, id) {
+    // Both the effect and the promise can get here; the first one links.
+    if (pending.done) return;
+    pending.done = true;
+    setPortfolioPendingCreate(cur => (cur === pending ? null : cur));
+    setPortfolioRowLink(pending.idx, pending.rowName, id);
+    setPortfolioLinkIdx(cur => (cur === pending.idx ? null : cur));
+    setPortfolioLinkBusy(false);
+  }
+  useEffect(() => {
+    const pending = portfolioPendingCreate;
+    if (!pending) return;
+    const hit = (prospects || []).find(p => p?.id && companyDedupeKey(p.company) === pending.key);
+    if (hit) finishPortfolioCreate(pending, hit.id);
+  // finishPortfolioCreate only touches state setters.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prospects, portfolioPendingCreate]);
+
+  function createPortfolioProspect(idx) {
     const row = (fields.portfolioCompanies || [])[idx];
     const name = String(row?.companyName || '').trim();
     if (!row || !name || !onAddProspect || portfolioLinkBusy) return;
+    const pending = { idx, rowName: String(row.companyName || ''), key: companyDedupeKey(name) };
     setPortfolioLinkBusy(true);
     setPortfolioLinkError('');
-    try {
-      const id = await onAddProspect({
-        company: name,
-        peOwner: withThisFirmAsOwner(''),
-        hqRegion: classifyHqCountry(row.hqCountry) || '',
-        status: String(row.status || '').trim(),
-      });
+    setPortfolioPendingCreate(pending);
+    Promise.resolve(onAddProspect({
+      company: name,
+      peOwner: withThisFirmAsOwner(''),
+      hqRegion: classifyHqCountry(row.hqCountry) || '',
+      status: String(row.status || '').trim(),
+    })).then((id) => {
       if (!id) throw new Error('The company was not created.');
-      setPortfolioRowLink(idx, String(row.companyName || ''), id);
-      setPortfolioLinkIdx(null);
-    } catch (err) {
+      finishPortfolioCreate(pending, id);
+    }).catch((err) => {
       console.error('Portfolio link: create failed', name, err);
-      setPortfolioLinkError(err?.message || 'Could not create the company.');
-    } finally {
+      pending.done = true;
+      setPortfolioPendingCreate(cur => (cur === pending ? null : cur));
       setPortfolioLinkBusy(false);
-    }
+      setPortfolioLinkError(`Could not create "${name}": ${err?.message || 'unknown error'}`);
+      setPortfolioLinkIdx(cur => (cur == null ? pending.idx : cur));
+    });
   }
 
   function openProspect(target) {
@@ -10674,7 +10704,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               error={portfolioLinkError}
               onMap={(p) => mapPortfolioRow(portfolioLinkIdx, p)}
               onCreate={onAddProspect ? () => createPortfolioProspect(portfolioLinkIdx) : null}
-              onClose={() => { if (!portfolioLinkBusy) setPortfolioLinkIdx(null); }}
+              // Closable mid-create: the row still links when the record
+              // arrives (see createPortfolioProspect).
+              onClose={() => setPortfolioLinkIdx(null)}
             />
           )}
 
