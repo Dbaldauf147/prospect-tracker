@@ -175,6 +175,8 @@ import {
 } from '../../data/countryRates';
 import styles from './SitesView.module.css';
 import { mergeSavedSitesMapping } from './sitesMapping.js';
+import { MasterAnalysisTabPicker } from './MasterAnalysisTabPicker.jsx';
+import { pruneMasterAnalysisTabs } from '../../utils/masterAnalysisTabs.js';
 
 const SITES_STORAGE_KEY = 'sites-list-override';
 // The column mapping the site list was imported (or last re-mapped) with,
@@ -1550,6 +1552,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // label / disabled state while the analysis blob is being built and
   // uploaded to Firestore.
   const [savePickerSearch, setSavePickerSearch] = useState(null);
+  // Whether the Master Analysis download's tab picker is open.
+  const [tabPickerOpen, setTabPickerOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState({ state: 'idle', message: '' });
   // How long the save in flight has been running. "Saving…" and "Saving…,
   // and it is never going to finish" are the same sentence, and the only
@@ -14861,7 +14865,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // that was never going to finish looked exactly like one that was nearly
   // done. Naming the stage is what makes "it stopped on the utility
   // mapping" something anyone can say.
-  async function exportMasterAnalysis({ returnBuffer = false, companyName = null, onStep = null } = {}) {
+  // `tabs` is the list of tab names the download's picker left ticked; the
+  // rest are dropped just before the workbook is written. Null keeps every
+  // tab, which is what a save to a company always does: that copy is the
+  // one imported back onto this page, so it has to stay whole.
+  async function exportMasterAnalysis({ returnBuffer = false, companyName = null, onStep = null, tabs = null } = {}) {
     // Inside this export, "the sites" means the ones the company still
     // has: every count, every roll-up and every dollar below reads this
     // name, so scoping it once here is what keeps the workbook internally
@@ -15013,6 +15021,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     await step('adding the site list');
     addRoundTripSheets(wb);
 
+    // Drop the tabs the download's picker left unticked. Last, so every
+    // builder above still sees the sheets it reads from; the charts bound
+    // for a dropped tab are skipped below.
+    if (Array.isArray(tabs)) pruneMasterAnalysisTabs(wb, tabs);
+
     // Write the merged workbook once, then inject the Indicative Savings
     // native charts (ExcelJS drops charts on re-load, so this must run on
     // the final buffer, last).
@@ -15020,6 +15033,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     let buf = await wb.xlsx.writeBuffer();
     await step('adding the charts');
     for (const injection of chartInjections) {
+      if (!wb.getWorksheet(injection.sheetName)) continue;
       buf = await injectLiveLineChart(buf, injection);
     }
 
@@ -16304,22 +16318,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           {sitesData.length > 0 && (
             <button
               type="button"
-              onClick={async () => {
-                // Surface failures: the export is a big async pipeline
-                // (60+ tranches, multiple worksheets, a live chart
-                // injection) and any thrown error inside it would
-                // otherwise vanish into an unhandled promise rejection,
-                // leaving the user staring at a button that "does
-                // nothing." Console.error keeps the stack trace for
-                // diagnosis; alert tells the user the export tripped.
-                try {
-                  await exportMasterAnalysis();
-                } catch (err) {
-                  console.error('Master Analysis export failed:', err);
-                  alert(`Master Analysis export failed:\n\n${err?.message || err}`);
-                }
-              }}
-              title={`Download one master workbook that combines the Indicative Savings and Building Compliance (Excel) tabs plus a Corporate Compliance tab and a Compliance Report Methodology tab.\n\nCounts and totals cover the sites the company still has.${inactiveRowsNote ? ` ${inactiveRowsNote}` : ''}`}
+              onClick={() => setTabPickerOpen(true)}
+              title={`Download one master workbook that combines the Indicative Savings and Building Compliance (Excel) tabs plus a Corporate Compliance tab and a Compliance Report Methodology tab. Opens a list of the tabs first so you can choose which ones go in the file.\n\nCounts and totals cover the sites the company still has.${inactiveRowsNote ? ` ${inactiveRowsNote}` : ''}`}
               style={{ padding: '0.4rem 0.8rem', border: '1px solid #005A9E', background: '#005A9E', color: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
             >
               ⬇ Master Analysis
@@ -16437,6 +16437,28 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             }
             persistPropertyTypeMap(next);
             setPropertyTypeModalOpen(false);
+          }}
+        />
+      )}
+
+      {tabPickerOpen && (
+        <MasterAnalysisTabPicker
+          onClose={() => setTabPickerOpen(false)}
+          onDownload={async (tabs) => {
+            // Surface failures: the export is a big async pipeline
+            // (60+ tranches, multiple worksheets, a live chart
+            // injection) and any thrown error inside it would
+            // otherwise vanish into an unhandled promise rejection,
+            // leaving the user staring at a button that "does
+            // nothing." Console.error keeps the stack trace for
+            // diagnosis; alert tells the user the export tripped.
+            try {
+              await exportMasterAnalysis({ tabs });
+              setTabPickerOpen(false);
+            } catch (err) {
+              console.error('Master Analysis export failed:', err);
+              alert(`Master Analysis export failed:\n\n${err?.message || err}`);
+            }
           }}
         />
       )}
