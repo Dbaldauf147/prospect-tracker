@@ -5048,21 +5048,32 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
   // the same roster below so the user can tag the PE firms' people
   // alongside the deal company's. PE ownership normally lives on the
   // Table View company record (prospect.peOwner), not on each opp row,
-  // so fall back to the matched company's peOwner when the opp's own PE
-  // Owner column is blank. A company can list several owners
-  // (comma-separated); each gets its own roster entry.
-  const peOwnerStr = String(peOwner || matched?.peOwner || '').trim();
-  const peResolved = useMemo(
-    () => splitPeOwners(peOwnerStr).map(owner => ({
-      owner,
-      prospect: findProspectForAccount(owner, prospects),
-    })),
-    [peOwnerStr, prospects],
-  );
+  // so the owners are the UNION of the opp's own PE Owner column and the
+  // matched company's peOwner - an opp row that names only one of a
+  // company's two owners still lists both firms' people. A company can
+  // list several owners (comma-separated); each gets its own roster entry.
+  const peOwnerStr = joinPeOwners([
+    ...splitPeOwners(peOwner),
+    ...splitPeOwners(matched?.peOwner),
+  ]);
+  const peResolved = useMemo(() => {
+    const seenOwners = new Set();
+    const out = [];
+    for (const owner of splitPeOwners(peOwnerStr)) {
+      const prospect = findProspectForAccount(owner, prospects);
+      // "Warburg Pincus" on the opp and "Warburg Pincus LLC" on the
+      // company resolve to the same record; keep one roster entry.
+      const key = (prospect?.company || owner).trim().toLowerCase();
+      if (seenOwners.has(key)) continue;
+      seenOwners.add(key);
+      out.push({ owner, prospect });
+    }
+    return out;
+  }, [peOwnerStr, prospects]);
   const peLabel = peResolved
     .map(({ owner, prospect }) => (prospect?.company || owner).trim())
     .filter(Boolean)
-    .join(' & ');
+    .join(', ');
 
   // The company popup lets the user pin a contact to a company by hand
   // (settings.companyContactLinks) and drop one from its roster
@@ -5647,7 +5658,7 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
               marginBottom: '0.3rem',
             }}>
               + Add from {matched?.company || account || 'this company'}
-              {peLabel && <> &amp; {peLabel} <span style={{ color: '#7C3AED' }}>(PE Owner)</span></>}
+              {peLabel && <> &amp; {peLabel} <span style={{ color: '#7C3AED' }}>({peResolved.length > 1 ? 'PE Owners' : 'PE Owner'})</span></>}
             </div>
             <input
               type="text"
@@ -5699,7 +5710,8 @@ function ContactCell({ value, onChange, account, peOwner, prospects, updateProsp
                             color: '#6D28D9', background: '#F3E8FF', border: '1px solid #DDD6FE',
                             borderRadius: 999, verticalAlign: 'middle', whiteSpace: 'nowrap',
                           }}
-                        >PE</span>
+                        >{/* Two owners: name the firm, or the badge can't tell them apart. */}
+                          {peResolved.length > 1 ? `PE · ${opt.company}` : 'PE'}</span>
                       )}
                     </div>
                     {opt.email && (
