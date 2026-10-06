@@ -1,0 +1,140 @@
+// The rows behind the Prospecting page's "My Prospects" and "PCs" subtabs:
+// one line per company with how many sites it has, how many utility
+// accounts sit behind them, and how much energy they use.
+//
+// The figures are the ones the Utility Lookup page writes onto a company
+// when its Master Analysis is saved (numberOfSites, numberOfAccounts,
+// totalEnergyMwh), so a company reads the same here as on its own popup.
+// Where that hasn't happened yet the next-best source fills in and says so:
+//
+//   Sites   the saved site list on the company's popup, by row count.
+//   Energy  the Electric MWh typed on the popup (electric only).
+//
+// A portfolio company with no tracker record of its own falls back to the
+// estimates on its PE firm's Portfolio Companies table, marked as estimates,
+// because "-" beside a company the firm's table already sized would throw
+// away the only number there is.
+//
+// Imported with extensions so this loads under plain Node for the tests.
+import { matchesCdm } from './cdmMatch.js';
+import { buildProspectPcIndex, lookupProspectByPc, topPcCompanyKey } from './topPortfolioCompany.js';
+import { siteCountNumber } from './portfolioCompaniesWorkbook.js';
+
+// Same slug ProspectModal keys a company's saved site list by.
+export function siteListSlug(company) {
+  return String(company || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
+}
+
+function positiveNumber(v) {
+  if (v == null || v === '') return null;
+  const n = typeof v === 'number' ? v : Number(String(v).replace(/[^0-9.-]/g, ''));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * Sites / accounts / energy for one tracker record, each with where it came
+ * from: 'analysis' (written by a Master Analysis save or typed on the popup),
+ * 'siteList' (counted off the saved list), 'electric' (Electric MWh only).
+ */
+export function companyFigures(prospect, siteLists) {
+  const out = {
+    sites: null, sitesFrom: null,
+    accounts: null, accountsFrom: null,
+    energyMwh: null, energyFrom: null,
+    hasSiteList: false,
+    hasAnalysis: !!prospect?.indicativeAnalysisMeta,
+  };
+  if (!prospect) return out;
+  const list = (siteLists || {})[siteListSlug(prospect.company)];
+  const listRows = Array.isArray(list?.rows) ? list.rows.length : 0;
+  out.hasSiteList = listRows > 0;
+
+  const sites = positiveNumber(prospect.numberOfSites);
+  if (sites != null) { out.sites = sites; out.sitesFrom = 'analysis'; }
+  else if (listRows > 0) { out.sites = listRows; out.sitesFrom = 'siteList'; }
+
+  const accounts = positiveNumber(prospect.numberOfAccounts);
+  if (accounts != null) { out.accounts = accounts; out.accountsFrom = 'analysis'; }
+
+  const total = positiveNumber(prospect.totalEnergyMwh);
+  const electric = positiveNumber(prospect.annualMwh);
+  if (total != null) { out.energyMwh = total; out.energyFrom = 'analysis'; }
+  else if (electric != null) { out.energyMwh = electric; out.energyFrom = 'electric'; }
+  return out;
+}
+
+/** Every tracker company whose CDM is this user, A to Z. */
+export function myProspectRows(prospects, cdmName, siteLists) {
+  return (prospects || [])
+    .filter(p => p?.company && matchesCdm(p.cdm, cdmName))
+    .map(p => ({
+      key: p.id || p.company,
+      company: String(p.company).trim(),
+      status: p.status || '',
+      prospect: p,
+      peFirms: [],
+      ...companyFigures(p, siteLists),
+    }))
+    .sort((a, b) => a.company.localeCompare(b.company));
+}
+
+/**
+ * Every portfolio company mapped on any PE firm's Portfolio Companies
+ * table, once each. A company two firms both list (a co-investment, or the
+ * same row pasted twice) is one line naming both firms, with the figures
+ * of whichever row carries them.
+ */
+export function allPcRows(prospects, siteLists) {
+  const index = buildProspectPcIndex(prospects);
+  const byKey = new Map();
+  for (const firm of (prospects || [])) {
+    const pcs = firm?.portfolioCompanies;
+    if (!Array.isArray(pcs) || pcs.length === 0) continue;
+    const firmName = String(firm.company || '').trim();
+    for (const pc of pcs) {
+      const name = String(pc?.companyName || '').trim();
+      if (!name) continue;
+      const key = topPcCompanyKey(name) || name.toLowerCase();
+      let row = byKey.get(key);
+      if (!row) {
+        row = { key, company: name, peFirms: [], estSites: null, estEnergyMwh: null, rowStatus: '' };
+        byKey.set(key, row);
+      }
+      if (firmName && !row.peFirms.includes(firmName)) row.peFirms.push(firmName);
+      if (row.estSites == null) row.estSites = siteCountNumber(pc.siteCount) || null;
+      // The firm's table sizes energy in GWh.
+      if (row.estEnergyMwh == null) {
+        const gwh = positiveNumber(pc.energyGwh);
+        if (gwh != null) row.estEnergyMwh = gwh * 1000;
+      }
+      if (!row.rowStatus && pc.status) row.rowStatus = String(pc.status).trim();
+    }
+  }
+  const rows = [];
+  for (const row of byKey.values()) {
+    const prospect = lookupProspectByPc(index, row.company);
+    const figs = companyFigures(prospect, siteLists);
+    if (figs.sites == null && row.estSites != null) { figs.sites = row.estSites; figs.sitesFrom = 'estimate'; }
+    if (figs.energyMwh == null && row.estEnergyMwh != null) { figs.energyMwh = row.estEnergyMwh; figs.energyFrom = 'estimate'; }
+    rows.push({
+      key: row.key,
+      company: prospect?.company ? String(prospect.company).trim() : row.company,
+      status: prospect?.status || row.rowStatus || '',
+      prospect: prospect || null,
+      peFirms: row.peFirms.sort((a, b) => a.localeCompare(b)),
+      ...figs,
+    });
+  }
+  return rows.sort((a, b) => a.company.localeCompare(b.company));
+}
+
+/** Column totals over whatever rows are on screen. */
+export function sumFigures(rows) {
+  const t = { sites: 0, accounts: 0, energyMwh: 0, count: rows.length };
+  for (const r of rows) {
+    if (r.sites != null) t.sites += r.sites;
+    if (r.accounts != null) t.accounts += r.accounts;
+    if (r.energyMwh != null) t.energyMwh += r.energyMwh;
+  }
+  return t;
+}

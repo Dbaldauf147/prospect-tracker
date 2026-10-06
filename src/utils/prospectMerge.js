@@ -15,7 +15,7 @@ export const MERGE_FIELDS = [
   'tier', 'status', 'notes', 'website', 'emailDomain', 'zoomCompanyName',
   'hqRegion', 'type', 'vertical', 'cdm', 'geography', 'publicPrivate', 'rank',
   'peAum', 'reAum', 'numberOfSites', 'numberOfAccounts', 'assetTypes', 'frameworks',
-  'numberOfMeters', 'equipmentCount', 'annualMwh', 'sitesWithMandate',
+  'numberOfMeters', 'equipmentCount', 'annualMwh', 'sitesWithMandate', 'totalEnergyMwh',
 ];
 
 export function isEmptyValue(v) {

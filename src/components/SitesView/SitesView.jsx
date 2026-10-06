@@ -6577,6 +6577,17 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         allRows.reduce((sum, r) => sum + (equipmentForTenure(r.__ownership__, r.__propertyType__) || 0), 0),
       );
       const equipmentTotal = Math.max(loadedEquipment, siteList.equipment || 0);
+      // Total energy across the active sites, electric and gas together in
+      // MWh: the kWh each site reports (or is estimated at from its property
+      // type) plus its therms at 0.0293071 MWh each. Same rows and same
+      // scope as Number of Sites, and read by the Prospecting page's My
+      // Prospects and PCs lists. Only written when something resolved, for
+      // the reason Equipment is: zero here means unknown, not none.
+      const totalEnergyMwh = Math.round(activeSites(allRows).reduce((sum, r) => {
+        const kwh = (typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) ? r.__kwh__ : 0;
+        const therms = (typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) ? r.__therms__ : 0;
+        return sum + kwh / 1000 + therms * 0.0293071;
+      }, 0));
       setSaveStatus({ state: 'saving', message: `Saving to ${prospect.company || 'company'}: updating the company record…` });
       if (updateProspect) {
         try {
@@ -6590,6 +6601,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             ...(siteCount > 0 ? { numberOfSites: siteCount } : {}),
             ...(accountCount > 0 ? { numberOfAccounts: accountCount } : {}),
             ...(equipmentTotal > 0 ? { equipmentCount: equipmentTotal } : {}),
+            ...(totalEnergyMwh > 0 ? { totalEnergyMwh } : {}),
             // Written even at zero, unlike the two above: "none of these
             // sites is mandated" is a screening result, and leaving the
             // field on a stale number from a previous analysis would be
@@ -6617,6 +6629,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // Said out loud like the other two, zero included: a company screened
       // and found clear is a result worth reading on the way past.
       const mandateNote = ` Sites with a Mandate set to ${mandateSites.toLocaleString()}.`;
+      const energyNote = totalEnergyMwh > 0
+        ? ` Total Energy set to ${totalEnergyMwh.toLocaleString()} MWh.`
+        : '';
       const equipmentNote = equipmentTotal > 0
         ? ` Equipment set to ${equipmentTotal.toLocaleString()} (estimated from property type).`
         : '';
@@ -6632,7 +6647,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const nameMapNote = nameMapUnavailable
         ? ' The Utility Name Mapping table could not be read, so the three Utility Mapping sheets are empty - the rest of the analysis is complete.'
         : '';
-      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${equipmentNote}${mandateNote}${deregNote}${savingsNote}${exposureNote}${siteList.note}${nameMapNote}${savedOverRest ? ' (saved over a plain web request - the app\'s usual database connection is not getting through on this network.)' : ''}` });
+      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.${siteCountNote}${accountCountNote}${equipmentNote}${energyNote}${mandateNote}${deregNote}${savingsNote}${exposureNote}${siteList.note}${nameMapNote}${savedOverRest ? ' (saved over a plain web request - the app\'s usual database connection is not getting through on this network.)' : ''}` });
       setSavePickerSearch(null);
       setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 4000);
     } catch (err) {
