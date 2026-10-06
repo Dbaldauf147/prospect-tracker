@@ -15,6 +15,8 @@ import { readWorkKey, writeWorkKey } from '../../utils/mirroredWorkKeys';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
 import { excludeUntrackedFromWeeks, untrackedNoteFor } from '../../utils/progressUntracked';
 import { COVERAGE_CHARTS, COVERAGE_T1, COVERAGE_T2 } from '../../utils/progressCoverage';
+import { apiFetch } from '../../utils/apiFetch';
+import { weeksFromBackupValue, missingWeeksFromBackups, mergeRecoveredWeeks } from '../../utils/progressHistoryRecovery';
 
 function EditableCell({ value, onCommit, color, suffix = '', bold = false }) {
   const [editing, setEditing] = useState(false);
@@ -1104,6 +1106,9 @@ export function ProgressView({ prospects, settings, cdmName }) {
   // Edit a single numeric field on a historical week (or promote the current-week row into history)
   async function updateWeekField(weekKey, field, rawValue) {
     if (!user?.uid) return;
+    // Every edit writes the whole weeks array. If the history never loaded,
+    // that array is just this week, and saving it would wipe the rest.
+    if (!historyLoaded) { setSaveStatus('History has not loaded, so edits are off. Reload the page.'); return; }
     const parsed = rawValue === '' || rawValue == null ? null : Number(rawValue);
     if (rawValue !== '' && Number.isNaN(parsed)) return;
     const inHistory = history.find(h => h.week === weekKey);
@@ -1128,6 +1133,83 @@ export function ProgressView({ prospects, settings, cdmName }) {
       console.error('[ProgressView] Failed to save cell edit:', err);
       setSaveStatus('Save failed: ' + (err?.message || err));
       setTimeout(() => setSaveStatus(''), 5000);
+    }
+  }
+
+  // Weeks the daily cloud backups hold that the live history is missing.
+  // `null` until a scan has run; `scan` is 'idle' | 'scanning' | 'done'.
+  const [recovery, setRecovery] = useState({ scan: 'idle', missing: null, error: '' });
+
+  // Reads the newest `limit` backups (newest first) and keeps the weeks
+  // the live history lacks. With `stopAtFirst`, stops at the first backup
+  // that has any, which is all the automatic check needs to raise the
+  // banner without pulling a month of backups on every visit.
+  async function scanBackupsForWeeks(liveWeeks, { limit = 30, stopAtFirst = false } = {}) {
+    const resp = await apiFetch('/api/backups-list');
+    if (!resp.ok) throw new Error(`backup list failed (${resp.status})`);
+    const files = ((await resp.json())?.files || [])
+      .slice()
+      .sort((a, b) => String(b.createdTime || b.name).localeCompare(String(a.createdTime || a.name)))
+      .slice(0, limit);
+    const backups = [];
+    for (const f of files) {
+      const r = await apiFetch(`/api/backup-fetch?name=${encodeURIComponent(f.name)}&part=progressHistory`);
+      if (!r.ok) continue;
+      backups.push(weeksFromBackupValue((await r.json())?.value));
+      if (stopAtFirst && missingWeeksFromBackups(liveWeeks, backups).length) break;
+    }
+    return missingWeeksFromBackups(liveWeeks, backups);
+  }
+
+  async function findLostWeeks() {
+    setRecovery({ scan: 'scanning', missing: null, error: '' });
+    try {
+      const missing = await scanBackupsForWeeks(history);
+      setRecovery({ scan: 'done', missing, error: '' });
+    } catch (err) {
+      setRecovery({ scan: 'done', missing: null, error: String(err?.message || err) });
+    }
+  }
+
+  // A history this short is what a clobbered document looks like, so check
+  // the backups once on load and offer the weeks back if they hold any.
+  useEffect(() => {
+    if (!historyLoaded || history.length > 2) return;
+    let cancelled = false;
+    scanBackupsForWeeks(history, { limit: 10, stopAtFirst: true })
+      .then(missing => {
+        if (!cancelled && missing.length) setRecovery({ scan: 'idle', missing, error: '' });
+      })
+      .catch(() => { /* backups are a safety net; no banner if they can't be read */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyLoaded]);
+
+  // Adds the recovered weeks back. Re-reads the live document first and
+  // only ever adds weeks it lacks, so this week's numbers and any edit
+  // made since are kept.
+  async function restoreLostWeeks() {
+    if (!user?.uid || !recovery.missing?.length) return;
+    setSaveStatus('Restoring…');
+    try {
+      // The banner's check stops at the first backup with anything to
+      // offer; read the full month now so older weeks come back as well.
+      let found = recovery.missing;
+      try { found = mergeRecoveredWeeks(found, await scanBackupsForWeeks(history)); } catch { /* keep what the banner found */ }
+      const ref = doc(db, 'progressHistory', user.uid);
+      const snap = await getDoc(ref);
+      const remoteWeeks = snap.exists() ? (snap.data().weeks || []) : [];
+      const merged = mergeRecoveredWeeks(mergeRecoveredWeeks(remoteWeeks, history), found);
+      await setDoc(ref, { weeks: merged, updatedAt: new Date().toISOString() });
+      setHistory(merged);
+      setHistoryLoaded(true);
+      setRecovery({ scan: 'idle', missing: null, error: '' });
+      setSaveStatus(`Restored ✓ (${merged.length} weeks)`);
+      setTimeout(() => setSaveStatus(''), 4000);
+    } catch (err) {
+      console.error('[ProgressView] Failed to restore weeks:', err);
+      setSaveStatus('Restore failed: ' + (err?.message || err));
+      setTimeout(() => setSaveStatus(''), 6000);
     }
   }
 
@@ -1416,6 +1498,31 @@ export function ProgressView({ prospects, settings, cdmName }) {
         );
       })()}
 
+      {/* Weeks the daily backups hold that this history lost. */}
+      {recovery.missing?.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', margin: '0 0 1rem', padding: '0.7rem 1rem', background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: 8, color: '#78350F', fontSize: '0.8rem' }}>
+          <span style={{ flex: '1 1 320px' }}>
+            The daily backups hold {recovery.missing.length} saved week{recovery.missing.length === 1 ? '' : 's'} missing from this history
+            ({fmtWeek(recovery.missing[0].week)} to {fmtWeek(recovery.missing[recovery.missing.length - 1].week)}).
+            Restoring adds them back and keeps every week already here.
+          </span>
+          <button
+            type="button"
+            onClick={restoreLostWeeks}
+            style={{ padding: '0.4rem 0.9rem', background: '#B45309', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
+          >
+            Restore {recovery.missing.length} week{recovery.missing.length === 1 ? '' : 's'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setRecovery({ scan: 'idle', missing: null, error: '' })}
+            style={{ background: 'none', border: 'none', color: '#78350F', cursor: 'pointer', fontSize: '0.8rem', textDecoration: 'underline', fontFamily: 'inherit' }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Charts */}
       {chartData.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -1517,6 +1624,21 @@ export function ProgressView({ prospects, settings, cdmName }) {
                     (as recorded, Don&rsquo;t Track clients included)
                   </span>
                 )}
+                <button
+                  type="button"
+                  onClick={findLostWeeks}
+                  disabled={recovery.scan === 'scanning'}
+                  title="Search the last 30 daily cloud backups for saved weeks missing from this history"
+                  style={{ float: 'right', background: 'none', border: 'none', color: 'var(--color-text-secondary)', fontSize: '0.7rem', fontWeight: 500, cursor: recovery.scan === 'scanning' ? 'wait' : 'pointer', textDecoration: 'underline', fontFamily: 'inherit', padding: 0 }}
+                >
+                  {recovery.scan === 'scanning'
+                    ? 'Searching backups…'
+                    : recovery.scan === 'done' && recovery.error
+                      ? `Backup search failed: ${recovery.error}`
+                      : recovery.scan === 'done' && !recovery.missing?.length
+                        ? 'Backups hold no missing weeks'
+                        : 'Find lost weeks in backups'}
+                </button>
               </h3>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
                 <thead>
@@ -1535,7 +1657,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {[...historyRows].reverse().map((h, i) => (
+                  {[...historyRows].reverse().map((h) => (
                     <tr key={h.week} style={{ borderBottom: '1px solid var(--color-border-light)' }}>
                       <td style={{ padding: '0.4rem 0.6rem', fontWeight: 600, color: 'var(--color-text)' }}>
                         {editingWeek === h.week ? (
@@ -1548,6 +1670,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
                               const newDate = e.target.value;
                               setEditingWeek(null);
                               if (!newDate || newDate === h.week) return;
+                              if (!historyLoaded) { setSaveStatus('History has not loaded, so edits are off. Reload the page.'); return; }
                               const newWeek = getWeekKey(newDate);
                               if (newWeek === h.week) return;
                               if (history.find(x => x.week === newWeek)) {
@@ -1604,7 +1727,11 @@ export function ProgressView({ prospects, settings, cdmName }) {
                       <td style={{ padding: '0.4rem 0.3rem', textAlign: 'center' }}>
                         <button
                           onClick={() => {
-                            const updated = history.filter((_, j) => j !== history.length - 1 - i);
+                            // By week, not by row index: the table also shows this
+                            // week's unsaved row, which shifts every index by one.
+                            if (!historyLoaded) { setSaveStatus('History has not loaded, so edits are off. Reload the page.'); return; }
+                            if (!history.some(x => x.week === h.week)) return;
+                            const updated = history.filter(x => x.week !== h.week);
                             setHistory(updated);
                             const ref = doc(db, 'progressHistory', user.uid);
                             setDoc(ref, { weeks: updated, updatedAt: new Date().toISOString() });
