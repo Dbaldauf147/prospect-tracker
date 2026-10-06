@@ -13,6 +13,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "@kenjiuno/msgreader": "^1.28.0",
     "exceljs": "^4.4.0",
     "firebase": "^12.18.0",
