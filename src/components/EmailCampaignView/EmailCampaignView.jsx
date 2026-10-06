@@ -42,7 +42,7 @@ import {
   findContactRows, lookupSummary, lookupSuggestions, LOOKUP_MIN_CHARS,
 } from '../../utils/campaignContactLookup';
 import { contactName } from '../../utils/contactSuggest';
-import { mergeCampaignContacts, adoptedCount } from '../../utils/campaignRoster';
+import { mergeCampaignContacts, adoptedCount, withoutInternalRows, isInternalAddress } from '../../utils/campaignRoster';
 
 // The contact table's columns, and how wide each one starts.
 //
@@ -295,9 +295,15 @@ export function EmailCampaignView({ openSubject, onOpened }) {
         const snap = await getDoc(ref);
         if (snap.exists()) {
           const data = snap.data();
-          const campaigns = data.campaigns || [];
-          console.log(`Loaded ${campaigns.length} saved campaigns from Firestore`);
-          setSavedCampaigns(campaigns);
+          const stored = data.campaigns || [];
+          console.log(`Loaded ${stored.length} saved campaigns from Firestore`);
+          // Campaigns saved before @se.com rows were left out still carry
+          // them, and so do the counts they saved. Clean them up once, and
+          // write it back so the Prospecting ladder and Email Tracking,
+          // which read the saved doc, stop counting them too.
+          const campaigns = stored.map(withoutInternal);
+          if (campaigns.some((c, i) => c !== stored[i])) saveCampaigns(campaigns);
+          else setSavedCampaigns(campaigns);
         } else {
           console.log('No saved campaigns found in Firestore');
         }
@@ -403,6 +409,16 @@ export function EmailCampaignView({ openSubject, onOpened }) {
 
   const normEmail = (e) => String(e || '').toLowerCase().trim();
 
+  // A campaign with its @se.com rows taken off and its counts re-derived
+  // over what is left (see isInternalRow). Returned as-is when there were
+  // none, so a campaign without colleagues on it keeps its identity.
+  function withoutInternal(c) {
+    if (!c || !Array.isArray(c.contacts)) return c;
+    const contacts = withoutInternalRows(c.contacts);
+    if (contacts.length === c.contacts.length) return c;
+    return { ...c, contacts, ...deriveCounts(contacts) };
+  }
+
   // Layer freshly-fetched HubSpot activity onto a campaign's own roster, and
   // pull in the recipients that aren't on it yet — anybody sent one of the
   // campaign's subject lines belongs to the campaign whether or not somebody
@@ -478,7 +494,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     setSubjectDraft('');
     cancelEventEdit();
     try {
-      setResults(await fetchCampaignActivity(subject));
+      setResults(withoutInternal(await fetchCampaignActivity(subject)));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -664,6 +680,11 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       .map(e => e.trim())
       .filter(e => /.+@.+\..+/.test(e));
     if (wanted.length === 0) { setError('Enter a valid email address to add.'); return; }
+    // Colleagues are never campaign contacts (see isInternalRow).
+    if (wanted.every(isInternalAddress)) {
+      setError('@se.com addresses are left out of campaigns, so they are not added or counted.');
+      return;
+    }
     const known = new Map((hints || [])
       .map(h => [normEmail(h?.email), h])
       .filter(([k]) => k));
@@ -673,7 +694,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     const seen = new Set();
     for (const e of wanted) {
       const key = normEmail(e);
-      if (!key || existing.has(key) || seen.has(key)) continue;
+      if (!key || existing.has(key) || seen.has(key) || isInternalAddress(key)) continue;
       seen.add(key);
       const hint = known.get(key);
       additions.push({

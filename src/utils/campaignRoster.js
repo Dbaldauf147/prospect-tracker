@@ -107,6 +107,29 @@ export function adoptedRow(address, act) {
   };
 }
 
+// Schneider's own addresses. A campaign goes out to prospects, but the
+// sender's colleagues end up on the send too (cc'd, forwarded, a test sent
+// to themselves) and HubSpot reports them like anybody else - so without
+// this a colleague's "thanks" counted as a reply and every internal copy
+// as a send. They are never a campaign contact: not adopted, not kept on a
+// roster, not counted.
+const INTERNAL_DOMAIN = '@se.com';
+
+export function isInternalAddress(e) {
+  return normEmail(e).endsWith(INTERNAL_DOMAIN);
+}
+
+// A row is internal when every address it stands for is. A group send that
+// also reached a prospect stays: the prospect is who it is about.
+export function isInternalRow(c) {
+  const addresses = rowAddresses(c);
+  return addresses.length > 0 && addresses.every(isInternalAddress);
+}
+
+export function withoutInternalRows(contacts) {
+  return (contacts || []).filter(c => !isInternalRow(c));
+}
+
 /**
  * Layer freshly-fetched activity onto a campaign's roster, and adopt the
  * recipients that aren't on it yet.
@@ -141,6 +164,8 @@ export function mergeCampaignContacts(savedContacts, fetchedContacts, removedEma
     const addresses = rowAddresses(rc);
     // Manually removed, and it stays that way.
     if (addresses.some(e => removed.has(e))) continue;
+    // A colleague, not a contact (see isInternalRow).
+    if (isInternalRow(rc)) continue;
     for (const e of addresses) claimed.add(e);
     // A row can carry several addresses; the first one with a send behind it
     // is the row's activity.
@@ -152,7 +177,7 @@ export function mergeCampaignContacts(savedContacts, fetchedContacts, removedEma
 
   for (const fc of (fetchedContacts || [])) {
     for (const e of rowAddresses(fc)) {
-      if (removed.has(e) || claimed.has(e)) continue;
+      if (removed.has(e) || claimed.has(e) || isInternalAddress(e)) continue;
       claimed.add(e);
       merged.push(adoptedRow(e, fc));
     }
