@@ -24,7 +24,7 @@ import { matchesCdm } from '../../utils/cdmMatch';
 import { checkCity, checkState } from '../../utils/locationStandardize';
 import { getStateForCity, lookupStateForCity, CITY_OPTIONS, matchCities } from '../../data/cities';
 import { useDraftCampaignQueue, setQueuedContactIds } from '../../utils/draftCampaignQueue';
-import { withCompanyOverride } from '../../utils/contactCompanyOverride';
+import { companyOverrideUpdate, contactLocalFieldsUpdate } from '../../utils/contactCompanyOverride';
 import { primarySubject } from '../../utils/campaignSubjects';
 
 // Curated city names for the inline City autocomplete. Matches the
@@ -746,7 +746,6 @@ function KeyContactsViewInner({
       // Always pin the typed value locally so it survives a refresh
       // regardless of HubSpot sync/association timing; the API also renamed
       // the linked Company record. (Empty string → clear the override.)
-      const nextLocal = withCompanyOverride(settings?.contactLocalFields, id, next);
       if (companyAssignment?.ok === false) {
         const what = companyAssignment.mode === 'rename-failed' ? 'rename the Company record' : 'pin the Company association';
         setMassStatus({ type: 'success', message: `Saved "${next}" locally. HubSpot couldn't ${what}: Prospect Tracker will keep your typed value here.` });
@@ -755,7 +754,7 @@ function KeyContactsViewInner({
       } else if (companyAssignment?.mode === 'renamed') {
         setMassStatus({ type: 'success', message: `Renamed the HubSpot Company "${companyAssignment.oldName || '-'}" → "${next}" (updates every contact linked to it).` });
       }
-      if (nextLocal) updateSettings({ contactLocalFields: nextLocal });
+      updateSettings(companyOverrideUpdate(id, next));
     }
   }
 
@@ -767,9 +766,8 @@ function KeyContactsViewInner({
   // cell has always pinned it; the popup is the way a contact already mapped
   // to a prospect gets edited at all, since that cell renders as a link.
   const saveCompanyOverride = useCallback((contactId, value) => {
-    const nextLocal = withCompanyOverride(settings?.contactLocalFields, contactId, value);
-    if (nextLocal) updateSettings({ contactLocalFields: nextLocal });
-  }, [settings?.contactLocalFields, updateSettings]);
+    updateSettings(companyOverrideUpdate(contactId, value));
+  }, [updateSettings]);
 
   // Persist the "New Company" a changed-jobs contact moved to. Stored in
   // the same per-contact local settings bag as _companyOverride, under
@@ -780,14 +778,10 @@ function KeyContactsViewInner({
     const id = String(contact?.id || contact?.vid || '');
     if (!id) return;
     const next = String(value ?? '').trim();
-    const cur = settings?.contactLocalFields || {};
-    const merged = { ...(cur[id] || {}) };
-    if (next) merged._newCompany = next;
-    else delete merged._newCompany;
-    const nextLocal = { ...cur };
-    if (Object.keys(merged).length === 0) delete nextLocal[id];
-    else nextLocal[id] = merged;
-    updateSettings({ contactLocalFields: nextLocal });
+    updateSettings(contactLocalFieldsUpdate(id, (entry) => {
+      if (next) entry._newCompany = next;
+      else delete entry._newCompany;
+    }));
   }
 
   // Toggle the "reached out" flag for a changed-jobs contact. Stored in
@@ -797,15 +791,11 @@ function KeyContactsViewInner({
   function toggleReachedOut(contact, next) {
     const id = String(contact?.id || contact?.vid || '');
     if (!id) return;
-    const cur = settings?.contactLocalFields || {};
-    const merged = { ...(cur[id] || {}) };
-    const value = next === undefined ? !merged._reachedOut : !!next;
-    if (value) { merged._reachedOut = true; merged._reachedOutAt = new Date().toISOString(); }
-    else { delete merged._reachedOut; delete merged._reachedOutAt; }
-    const nextLocal = { ...cur };
-    if (Object.keys(merged).length === 0) delete nextLocal[id];
-    else nextLocal[id] = merged;
-    updateSettings({ contactLocalFields: nextLocal });
+    updateSettings(contactLocalFieldsUpdate(id, (entry) => {
+      const value = next === undefined ? !entry._reachedOut : !!next;
+      if (value) { entry._reachedOut = true; entry._reachedOutAt = new Date().toISOString(); }
+      else { delete entry._reachedOut; delete entry._reachedOutAt; }
+    }));
   }
 
   // When a City is committed inline, auto-fill State and Country the

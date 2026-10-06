@@ -14,7 +14,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { resolveSignature, plainBodyToHtml, personalizeDraftText, buildUnsentEml, downloadDrafts, safeFileName } from '../../utils/draftEmail';
 import { addQueuedLeads } from '../../utils/draftLeadsQueue';
 import { leadToDraftContact } from '../../utils/workingLeads';
-import { withCompanyOverride } from '../../utils/contactCompanyOverride';
+import { companyOverrideUpdate } from '../../utils/contactCompanyOverride';
 import { saveTagReview } from '../../utils/contactTagReview';
 import {
   LEAD_PASTE_TARGETS as PASTE_TARGETS,
@@ -1440,8 +1440,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
   // next HubSpot refresh doesn't rewrite it back from the Company record
   // the contact is associated with. See utils/contactCompanyOverride.js.
   const saveCompanyOverride = (contactId, value) => {
-    const nextLocal = withCompanyOverride(settings?.contactLocalFields, contactId, value);
-    if (nextLocal) updateSettings({ contactLocalFields: nextLocal });
+    updateSettings(companyOverrideUpdate(contactId, value));
   };
 
   // opts.clearLeadLinks names the leads whose Salesforce Link this write

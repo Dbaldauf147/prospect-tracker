@@ -23,7 +23,7 @@ import {
 } from '../../utils/emailBanners';
 import { htmlSectionLines } from '../../utils/inlineImages.js';
 import { downscaleInlineImage, needsDownscale } from '../../utils/downscaleInlineImage.js';
-import { withCompanyOverride } from '../../utils/contactCompanyOverride';
+import { companyOverrideUpdate } from '../../utils/contactCompanyOverride';
 import { makeRosterGates, ROSTER_CATEGORIES } from '../../utils/contactRosters';
 import { useOppsRecords, useClientFlagMaps } from '../../utils/rosterHooks';
 import { companyPopupTarget } from '../../utils/companyLookup';
@@ -1512,8 +1512,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   // next HubSpot refresh doesn't rewrite it back from the Company record
   // the contact is associated with. See utils/contactCompanyOverride.js.
   const saveCompanyOverride = (contactId, value) => {
-    const nextLocal = withCompanyOverride(settings?.contactLocalFields, contactId, value);
-    if (nextLocal) updateSettings({ contactLocalFields: nextLocal });
+    updateSettings(companyOverrideUpdate(contactId, value));
   };
 
   // Same-company HubSpot contacts + company-name autocomplete for the popup's

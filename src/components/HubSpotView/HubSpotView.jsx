@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
+import { companyOverrideUpdate, contactLocalFieldsUpdate } from '../../utils/contactCompanyOverride';
 import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
 import { logAction } from '../../utils/auditLog';
@@ -1508,19 +1509,18 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       }
       // Save local-only fields to Firestore settings, plus any
       // companyOverride decision the API outcome above triggered.
+      // Built from the settings at save time (see contactLocalFieldsUpdate):
+      // this runs after the HubSpot round-trip, by which time the map this
+      // render saw can be missing pins saved since.
       if (Object.keys(localProps).length > 0 || companyOverrideSetTo !== undefined) {
-        const next = { ...contactLocalFields };
-        const merged = { ...(next[contactId] || {}), ...localProps };
-        if (companyOverrideSetTo === null) {
-          delete merged._companyOverride;
-        } else if (typeof companyOverrideSetTo === 'string') {
-          merged._companyOverride = companyOverrideSetTo;
-        }
-        // Drop the entry entirely when nothing remains so settings
-        // doesn't accumulate empty objects per contact.
-        if (Object.keys(merged).length === 0) delete next[contactId];
-        else next[contactId] = merged;
-        updateSettings({ contactLocalFields: next });
+        updateSettings(contactLocalFieldsUpdate(contactId, (entry) => {
+          Object.assign(entry, localProps);
+          if (companyOverrideSetTo === null) {
+            delete entry._companyOverride;
+          } else if (typeof companyOverrideSetTo === 'string') {
+            entry._companyOverride = companyOverrideSetTo;
+          }
+        }));
       }
       // Update local cache for all properties (including local-only).
       // Compute the next-state snapshot outside the setData callback so
@@ -1547,15 +1547,12 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       console.error('Inline update failed:', err);
       setPushStatus({ type: 'error', message: `Update failed: ${err.message}` });
     }
-    // contactLocalFields and dansTagOptions must be in the deps: the body
-    // reads contactLocalFields to merge the per-contact _companyOverride
-    // (and other local-only fields) before writing them back with
-    // updateSettings, and reads dansTagOptions to filter tag values. With
-    // a stale [user]-only closure, the override write started from the
-    // snapshot captured at first render (empty), so each inline edit
-    // clobbered overrides saved by earlier edits — making a typed company
-    // name silently revert on the next HubSpot sync.
-  }, [user, contactLocalFields, dansTagOptions, updateSettings]);
+    // dansTagOptions must be in the deps: the body reads it to filter tag
+    // values. contactLocalFields no longer is: the override write reads
+    // the settings at save time instead of this closure, which a fresh
+    // closure alone never fixed, because the closure is still captured
+    // before the HubSpot round-trip it waits on.
+  }, [user, dansTagOptions, updateSettings]);
 
   // Re-fire the Company-association reassignment for one contact without
   // changing the text. Useful when the original inline edit's reassign
@@ -1583,25 +1580,14 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
         // so the user's value sticks regardless. Same shape we use from
         // the inline-edit path so a manual click here never leaves the
         // user with a hard error.
-        const next = { ...contactLocalFields };
-        const merged = { ...(next[contactId] || {}), _companyOverride: name };
-        next[contactId] = merged;
-        updateSettings({ contactLocalFields: next });
+        updateSettings(companyOverrideUpdate(contactId, name));
         setPushStatus({
           type: 'success',
           message: `Saved "${name}" locally. HubSpot reassign still failed${hubspotFailureDetail(ca)} Prospect Tracker will keep your value through future syncs.`,
         });
       } else {
         // Reassign worked — clear any prior local override.
-        const cur = contactLocalFields[contactId];
-        if (cur && typeof cur._companyOverride === 'string') {
-          const next = { ...contactLocalFields };
-          const merged = { ...cur };
-          delete merged._companyOverride;
-          if (Object.keys(merged).length === 0) delete next[contactId];
-          else next[contactId] = merged;
-          updateSettings({ contactLocalFields: next });
-        }
+        updateSettings(companyOverrideUpdate(contactId, null));
         const created = ca?.created ? ' · created new Company record' : '';
         setPushStatus({ type: 'success', message: `Reassigned "${name}" on this contact${created}` });
       }
@@ -1610,22 +1596,15 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       setPushStatus({ type: 'error', message: `Reassign failed: ${err.message}` });
     }
     setReassigningId(null);
-  }, [contactLocalFields, updateSettings]);
+  }, [updateSettings]);
 
   // Drop the local company override for one contact, surfacing the
   // HubSpot-synced value again. Useful once the user has fixed the
   // association in HubSpot and wants Prospect Tracker to follow that
   // again instead of pinning the local value.
   const clearCompanyOverride = useCallback((contactId) => {
-    const next = { ...contactLocalFields };
-    const cur = next[contactId];
-    if (!cur || typeof cur._companyOverride !== 'string') return;
-    const merged = { ...cur };
-    delete merged._companyOverride;
-    if (Object.keys(merged).length === 0) delete next[contactId];
-    else next[contactId] = merged;
-    updateSettings({ contactLocalFields: next });
-  }, [contactLocalFields, updateSettings]);
+    updateSettings(companyOverrideUpdate(contactId, null));
+  }, [updateSettings]);
 
   const handleDeleteContact = useCallback(async (contactId, name) => {
     if (!confirm(`Delete "${name}" from HubSpot? This cannot be undone.`)) return;
