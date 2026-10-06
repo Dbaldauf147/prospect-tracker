@@ -28,8 +28,12 @@ export function useDecisionMakerCoverage({ prospects, cdmName, settings, userId 
   }, [userId]);
 
   const localFields = settings?.contactLocalFields || null;
+  // The account popup's own links and removals, so an account reads as
+  // mapped exactly when its Contacts tab shows a decision maker.
+  const links = settings?.companyContactLinks || null;
+  const exclusions = settings?.companyContactExclusions || null;
   return useMemo(
-    () => decisionMakerCoverage({ prospects, contacts, cdmName, localFields }),
-    [prospects, contacts, cdmName, localFields],
+    () => decisionMakerCoverage({ prospects, contacts, cdmName, localFields, links, exclusions }),
+    [prospects, contacts, cdmName, localFields, links, exclusions],
   );
 }

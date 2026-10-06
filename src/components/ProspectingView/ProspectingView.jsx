@@ -1477,6 +1477,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           mode={subtab}
           prospects={prospects}
           settings={settings}
+          updateSettings={updateSettings}
           cdmName={cdmName}
           onSelectProspect={onSelectProspect}
           maxWidth={PAGE_MAX}

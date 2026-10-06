@@ -26,6 +26,7 @@ import {
   tierAccounts,
   COLD_OUTREACH_EXCLUDED_STATUSES,
   isColdOutreachExcluded,
+  makeAccountContactIndex,
 } from '../src/utils/decisionMakerCoverage.js';
 
 let passed = 0, failed = 0;
@@ -244,6 +245,35 @@ check('no contacts yet is null, not a book of unmapped accounts',
   decisionMakerCoverage({ prospects: [acct('Alpha', 'Tier 1')], contacts: null, cdmName: CDM }), null);
 check('and neither are prospects that haven\'t loaded',
   decisionMakerCoverage({ prospects: null, contacts: [], cdmName: CDM }), null);
+
+// --- the account's Contacts tab decides, not only the Company text --------
+// USAA: the decision maker shows on the account's Contacts tab with a DM
+// badge, but her HubSpot Company is blank (she is there on the email
+// domain) or she was linked by hand. Either way the account is mapped.
+{
+  const usaa = acct('USAA', 'Tier 2', { website: 'https://www.usaa.com', status: 'Inside Sales' });
+  const blankDm = { id: '901', company: '', email: 'lindsey.oneill@usaa.com', dans_tags: 'Decision Maker;ESG' };
+  check('a blank-Company DM on the account domain maps it',
+    decisionMakerCoverage({ prospects: [usaa], contacts: [blankDm], cdmName: CDM }).tiers[1].missing.length, 0);
+
+  const otherDm = { id: '902', company: 'United Services Automobile Assn', email: 'x@usaa.org', dans_tags: 'Decision Maker' };
+  const plain = acct('USAA', 'Tier 2');
+  check('a DM under another Company name is not matched by name alone',
+    decisionMakerCoverage({ prospects: [plain], contacts: [otherDm], cdmName: CDM }).tiers[1].missing.length, 1);
+  check('but linked to the account by hand, it maps it',
+    decisionMakerCoverage({ prospects: [plain], contacts: [otherDm], cdmName: CDM, links: { usaa: ['902'] } }).tiers[1].missing.length, 0);
+
+  const named = { id: '903', company: 'USAA', email: 'y@usaa.com', dans_tags: 'Decision Maker' };
+  check('a DM removed from the account by hand no longer maps it',
+    decisionMakerCoverage({ prospects: [plain], contacts: [named], cdmName: CDM, exclusions: { usaa: ['903'] } }).tiers[1].missing.length, 1);
+  check('free-mail domains never tie a contact to an account',
+    decisionMakerCoverage({ prospects: [acct('Gmail', 'Tier 2', { website: 'gmail.com' })],
+      contacts: [{ id: '904', company: '', email: 'z@gmail.com', dans_tags: 'Decision Maker' }], cdmName: CDM }).tiers[1].missing.length, 1);
+  check('a domain-matched non-DM still counts as a contact there',
+    decisionMakerCoverage({ prospects: [usaa], contacts: [{ id: '905', company: '', email: 'a@usaa.com' }], cdmName: CDM }).tiers[1].missing[0].contactCount, 1);
+  check('the Key Prospects helper answers the same with the index',
+    accountHasDecisionMaker(usaa, decisionMakerCompanies([blankDm]), makeAccountContactIndex([blankDm])), true);
+}
 
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
