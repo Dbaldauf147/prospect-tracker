@@ -209,3 +209,23 @@ export function keyContactsNotMet(coverage, metMap = null, isOwnedContact = null
   ));
   return { total, accounts: out.filter(g => g.company).length, groups: out, onHold, asked };
 }
+
+/**
+ * The settings update that stores one contact's answer, for
+ * `updateSettings`.
+ *
+ * A function of the settings as they are when the write runs, not as the
+ * caller last rendered them. Every place that sets the answer used to spread
+ * its own copy of the map, so a save that finished after a newer one (the
+ * contact popup writes the dropdown again when its HubSpot save comes back)
+ * put the older map back and the answer just picked was lost. Anything that
+ * isn't one of the four answers is normalized on the way in: `true` is
+ * Yes, `false` is No, and anything unreadable is Yes, as it always was.
+ */
+export function metInPersonUpdate(contactId, met) {
+  const id = String(contactId ?? '');
+  const value = normalizeMetState(met) ?? MET_YES;
+  return (settings) => (id
+    ? { contactMetInPerson: { ...(settings?.contactMetInPerson || {}), [id]: value } }
+    : null);
+}

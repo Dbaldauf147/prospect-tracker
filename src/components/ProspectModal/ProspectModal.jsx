@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo, Suspense } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
-import { hasMetInPersonTag, metInPersonState, normalizeMetState, MET_STATE_OPTIONS, MET_YES, MET_ASKED, MET_HOLD } from '../../utils/metInPerson';
+import { hasMetInPersonTag, metInPersonState, normalizeMetState, metInPersonUpdate, MET_STATE_OPTIONS, MET_YES, MET_ASKED, MET_HOLD } from '../../utils/metInPerson';
 import { contactDisplayName } from '../../utils/contactRosters';
 import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagRecordKeyFor, recordForVerdict, sameTagRecord, planTagEdit, tagVocabulary, saveTagReview, mergeTagEdit, tagListSignature, isStaleTagEcho, TAG_ECHO_WINDOW_MS } from '../../utils/contactTagReview';
 import { contactEditPropsEqual, contactTagString } from '../../utils/contactEditProps';
@@ -1750,16 +1750,23 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       if (savedCid && onSaveFamily) {
         onSaveFamily(savedCid, familyValue);
       }
+      // These three save on click; this is the write for a contact that had
+      // no id at click time (and for a Met In Person answer only seeded
+      // from the HubSpot tag). Read them NOW, not from `snap`: the HubSpot
+      // round trip above takes long enough to change the dropdown in, and
+      // the click's own save of the new answer has already gone out, so
+      // writing the value captured before the trip put the old one back.
+      const latest = stateRef.current || snap;
       if (savedCid && onSaveMetInPerson) {
-        onSaveMetInPerson(savedCid, snap.metInPerson);
+        onSaveMetInPerson(savedCid, latest.metInPerson);
       }
       if (savedCid && onSaveInvitedToLouisville) {
-        onSaveInvitedToLouisville(savedCid, snap.invitedToLouisville);
+        onSaveInvitedToLouisville(savedCid, latest.invitedToLouisville);
       }
       // A contact created here has no id until HubSpot hands one back, so the
       // click-time save above was a no-op — persist it under the real id now.
       if (savedCid && onSaveSentiment) {
-        onSaveSentiment(savedCid, snap.sentiment);
+        onSaveSentiment(savedCid, latest.sentiment);
       }
       // Company edits behave the same here as on the HubSpot Contacts
       // page: the API renames the Company record this contact is linked to,
@@ -6507,10 +6514,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // boolean write one of the four answers rather than a second shape for
   // the same map to hold.
   const handleSaveContactMetInPerson = useCallback((contactId, met) => {
-    const current = settings.contactMetInPerson || {};
-    const next = { ...current, [contactId]: normalizeMetState(met) ?? MET_YES };
-    updateSettings({ contactMetInPerson: next });
-  }, [settings.contactMetInPerson, updateSettings]);
+    updateSettings(metInPersonUpdate(contactId, met));
+  }, [updateSettings]);
 
   const handleSaveContactInvitedToLouisville = useCallback((contactId, invited) => {
     const current = settings.contactInvitedToLouisville || {};
