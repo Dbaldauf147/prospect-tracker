@@ -14,7 +14,7 @@ import { peStageOf } from '../../utils/peStages';
 import { readWorkKey, writeWorkKey } from '../../utils/mirroredWorkKeys';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
 import { excludeUntrackedFromWeeks, untrackedNoteFor } from '../../utils/progressUntracked';
-import { COVERAGE_CHARTS, COVERAGE_T1, COVERAGE_T2 } from '../../utils/progressCoverage';
+import { COVERAGE_CHARTS, COVERAGE_T1, COVERAGE_T2, COVERAGE_T3 } from '../../utils/progressCoverage';
 import { apiFetch } from '../../utils/apiFetch';
 import { weeksFromBackupValue, missingWeeksFromBackups, mergeRecoveredWeeks } from '../../utils/progressHistoryRecovery';
 
@@ -99,8 +99,16 @@ function withGreenKeys(data, series) {
   });
 }
 
-function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide, onRename, onViewChange, pins = [], onTogglePin, onClearPins, onDownload, onDownloadPoint, onDownloadPins }) {
+function ProgressChart({ title, data, series: allSeries, isPct, defaultView = 'line', secondarySeries, showTier3 = false, onToggleTier3, onHide, onRename, onViewChange, pins = [], onTogglePin, onClearPins, onDownload, onDownloadPoint, onDownloadPins }) {
   const [viewType, setViewType] = useState(defaultView);
+  // The Tier 3 line is hidden until this chart's Tier 3 button turns it
+  // on. Everything drawn below (lines, bars, legend, pinned callouts) reads
+  // the filtered list, so a hidden Tier 3 leaves no trace on the chart.
+  const hasTier3 = allSeries.some(s => s.tier3);
+  const series = useMemo(
+    () => (showTier3 ? allSeries : allSeries.filter(s => !s.tier3)),
+    [allSeries, showTier3],
+  );
   // Persist the picked view so it becomes this chart's default next visit.
   const changeView = (v) => { setViewType(v); if (onViewChange) onViewChange(v); };
   // Resolve pinned week keys to the data rows still present, preserving
@@ -179,6 +187,27 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
               <option key={opt.key} value={opt.key}>{opt.label}</option>
             ))}
           </select>
+          {hasTier3 && onToggleTier3 && (
+            <button
+              type="button"
+              onClick={onToggleTier3}
+              aria-pressed={showTier3}
+              title={showTier3 ? 'Hide the Tier 3 line' : 'Show the Tier 3 line'}
+              style={{
+                background: showTier3 ? '#FEF3C7' : 'none',
+                border: `1px solid ${showTier3 ? '#F59E0B' : 'var(--color-border)'}`,
+                borderRadius: 5,
+                color: showTier3 ? '#B45309' : 'var(--color-text-secondary)',
+                cursor: 'pointer',
+                padding: '0.1rem 0.45rem',
+                fontSize: '0.7rem',
+                fontWeight: 600,
+                lineHeight: 1.4,
+                fontFamily: 'inherit',
+                whiteSpace: 'nowrap',
+              }}
+            >{showTier3 ? 'Hide Tier 3' : 'Show Tier 3'}</button>
+          )}
           {onDownload && (
             <button
               type="button"
@@ -387,6 +416,9 @@ function companiesMatch(a, b) {
 }
 
 const HIDDEN_CHARTS_KEY = 'progress:hidden-charts';
+// Chart ids whose Tier 3 line the user has turned on. Absent = hidden,
+// which is the default for every chart.
+const TIER3_SHOWN_KEY = 'progress:tier3-shown';
 const CHART_TITLES_KEY = 'progress:chart-titles';
 const CHART_VIEWS_KEY = 'progress:chart-views';
 const CHART_PINS_KEY = 'progress:chart-pins';
@@ -407,6 +439,10 @@ const PE_STAGE_SERIES = [
 // series (and optional secondary series) it plots, whether it's a percent
 // chart, and its default view. Both the rendered charts and the Excel
 // raw-data export read from this so the download always matches the charts.
+// A series flagged `tier3` is the chart's Tier 3 line. Those start hidden
+// (the book is worked Tier 1 and 2 first, and a third line crowds the two
+// that matter) and each chart's "Tier 3" button shows them; the choice is
+// remembered per chart. PE Firms by PE Stage has no tiers, so no button.
 const PROGRESS_CHART_DEFS = [
   // The first two come from the shared definition in utils/progressCoverage:
   // the Weekly Report email draws the same two series, and a label or a
@@ -419,24 +455,25 @@ const PROGRESS_CHART_DEFS = [
     series: [
       { key: c.t1Key, name: 'Tier 1', color: COVERAGE_T1 },
       { key: c.t2Key, name: 'Tier 2', color: COVERAGE_T2 },
+      { key: c.t3Key, name: 'Tier 3', color: COVERAGE_T3, tier3: true },
     ],
   })),
   { id: 'connectedPct', label: '% of Accounts Connected (Had Opportunity)', isPct: true,
-    series: [{ key: 't1ConnectedPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ConnectedPct', name: 'Tier 2', color: '#3B82F6' }] },
+    series: [{ key: 't1ConnectedPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ConnectedPct', name: 'Tier 2', color: '#3B82F6' }, { key: 't3ConnectedPct', name: 'Tier 3', color: COVERAGE_T3, tier3: true }] },
   { id: 'inactivePct',  label: '% of Accounts Inactive (Lost / Hold Off / Old Client)', isPct: true,
-    series: [{ key: 't1InactivePct', name: 'Tier 1', color: '#DC2626' }, { key: 't2InactivePct', name: 'Tier 2', color: '#3B82F6' }] },
+    series: [{ key: 't1InactivePct', name: 'Tier 1', color: '#DC2626' }, { key: 't2InactivePct', name: 'Tier 2', color: '#3B82F6' }, { key: 't3InactivePct', name: 'Tier 3', color: COVERAGE_T3, tier3: true }] },
   { id: 'tierTotals',   label: 'My Accounts by Tier',
     series: [
       { key: 't1Total', name: 'Tier 1', color: '#DC2626' },
       { key: 't2Total', name: 'Tier 2', color: '#3B82F6' },
-      { key: 't3Total', name: 'Tier 3', color: '#F59E0B' },
+      { key: 't3Total', name: 'Tier 3', color: COVERAGE_T3, tier3: true },
     ],
     secondarySeries: [{ key: 'totalAccounts', name: 'Total Accounts', color: '#111827' }] },
   { id: 'noOppsActivity', label: 'Activity on Accounts with No Opportunities (30d)',
     series: [
       { key: 'noOppsActivityT1', name: 'Tier 1', color: '#DC2626' },
       { key: 'noOppsActivityT2', name: 'Tier 2', color: '#3B82F6' },
-      { key: 'noOppsActivityT3', name: 'Tier 3', color: '#F59E0B' },
+      { key: 'noOppsActivityT3', name: 'Tier 3', color: COVERAGE_T3, tier3: true },
     ],
     secondarySeries: [{ key: 'noOppsAccountCount', name: 'No-Opps Accounts', color: '#111827' }] },
   { id: 'peStages',     label: 'PE Firms by PE Stage', defaultView: 'stackedBar',
@@ -452,27 +489,32 @@ const PROGRESS_CHART_DEFS = [
 function pointDetailRows(chartId, details) {
   if (!details) return null;
   const asStr = (v) => (typeof v === 'string' ? v : (v?.company || ''));
-  const yesNo = (metric, t1Yes, t1No, t2Yes, t2No) => {
+  const yesNo = (metric, t1Yes, t1No, t2Yes, t2No, t3Yes, t3No) => {
     const rows = [];
     (details[t1Yes] || []).forEach(v => rows.push([asStr(v), 'Tier 1', 'Yes']));
     (details[t1No] || []).forEach(v => rows.push([asStr(v), 'Tier 1', 'No']));
     (details[t2Yes] || []).forEach(v => rows.push([asStr(v), 'Tier 2', 'Yes']));
     (details[t2No] || []).forEach(v => rows.push([asStr(v), 'Tier 2', 'No']));
+    // Tier 3 lists exist only on weeks saved since the Tier 3 lines were
+    // added; earlier weeks simply have none.
+    (details[t3Yes] || []).forEach(v => rows.push([asStr(v), 'Tier 3', 'Yes']));
+    (details[t3No] || []).forEach(v => rows.push([asStr(v), 'Tier 3', 'No']));
     return { columns: ['Company', 'Tier', metric], rows };
   };
   switch (chartId) {
     case 'contactPct':
-      return yesNo('Has HubSpot Contacts', 't1WithContacts', 't1NoContacts', 't2WithContacts', 't2NoContacts');
+      return yesNo('Has HubSpot Contacts', 't1WithContacts', 't1NoContacts', 't2WithContacts', 't2NoContacts', 't3WithContacts', 't3NoContacts');
     case 'dmPct':
-      return yesNo('Decision Maker Identified', 't1WithDM', 't1NoDM', 't2WithDM', 't2NoDM');
+      return yesNo('Decision Maker Identified', 't1WithDM', 't1NoDM', 't2WithDM', 't2NoDM', 't3WithDM', 't3NoDM');
     case 'connectedPct':
-      return yesNo('Connected (Had Opportunity)', 't1Connected', 't1NotConnected', 't2Connected', 't2NotConnected');
+      return yesNo('Connected (Had Opportunity)', 't1Connected', 't1NotConnected', 't2Connected', 't2NotConnected', 't3Connected', 't3NotConnected');
     case 'inactivePct': {
       // Only the inactive accounts (the numerator) are stored, each with
       // its status. Those ARE the raw data behind the percentage.
       const rows = [];
       (details.t1Inactive || []).forEach(v => rows.push([asStr(v), 'Tier 1', typeof v === 'string' ? '' : (v.status || '')]));
       (details.t2Inactive || []).forEach(v => rows.push([asStr(v), 'Tier 2', typeof v === 'string' ? '' : (v.status || '')]));
+      (details.t3Inactive || []).forEach(v => rows.push([asStr(v), 'Tier 3', typeof v === 'string' ? '' : (v.status || '')]));
       return { columns: ['Company', 'Tier', 'Inactive Status'], rows };
     }
     case 'peStages': {
@@ -511,6 +553,17 @@ function loadHiddenCharts() {
 }
 function persistHiddenCharts(set) {
   try { writeWorkKey(HIDDEN_CHARTS_KEY, JSON.stringify([...set])); } catch {}
+}
+
+function loadTier3Shown() {
+  try {
+    const raw = readWorkKey(TIER3_SHOWN_KEY);
+    const arr = raw ? JSON.parse(raw) : null;
+    return Array.isArray(arr) ? new Set(arr) : new Set();
+  } catch { return new Set(); }
+}
+function persistTier3Shown(set) {
+  try { writeWorkKey(TIER3_SHOWN_KEY, JSON.stringify([...set])); } catch { /* storage unavailable: the choice just isn't remembered */ }
 }
 
 function loadChartTitles() {
@@ -589,6 +642,15 @@ export function ProgressView({ prospects, settings, cdmName }) {
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   const [hiddenCharts, setHiddenCharts] = useState(() => loadHiddenCharts());
+  const [tier3Shown, setTier3Shown] = useState(() => loadTier3Shown());
+  const toggleTier3 = (id) => {
+    setTier3Shown(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      persistTier3Shown(next);
+      return next;
+    });
+  };
   const [showChartsMenu, setShowChartsMenu] = useState(false);
   const [chartTitles, setChartTitles] = useState(() => loadChartTitles());
   const [chartViews, setChartViews] = useState(() => loadChartViews());
@@ -956,6 +1018,17 @@ export function ProgressView({ prospects, settings, cdmName }) {
     const t2Connected = t2ConnectedList.length;
     const t1Inactive = t1InactiveList.length;
     const t2Inactive = t2InactiveList.length;
+    // Tier 3, the same four measures. Recorded by name like Tier 1 and 2
+    // so the drill-down and the "Don't Track" exclusion work on it too.
+    const t3Total = t3.length;
+    const t3WithContactsList = t3.filter(p => hasContact(p));
+    const t3WithDMList = t3.filter(p => hasDM(p.company));
+    const t3ConnectedList = t3.filter(p => hasOpp(p.company));
+    const t3InactiveList = t3.filter(p => inactiveStatuses.has(p.status));
+    const t3WithContacts = t3WithContactsList.length;
+    const t3WithDM = t3WithDMList.length;
+    const t3Connected = t3ConnectedList.length;
+    const t3Inactive = t3InactiveList.length;
 
     // Also build "not" lists
     const t1NoContacts = t1.filter(p => !hasContact(p));
@@ -964,6 +1037,9 @@ export function ProgressView({ prospects, settings, cdmName }) {
     const t2NoDM = t2.filter(p => !hasDM(p.company));
     const t1NotConnected = t1.filter(p => !hasOpp(p.company));
     const t2NotConnected = t2.filter(p => !hasOpp(p.company));
+    const t3NoContacts = t3.filter(p => !hasContact(p));
+    const t3NoDM = t3.filter(p => !hasDM(p.company));
+    const t3NotConnected = t3.filter(p => !hasOpp(p.company));
 
     // No-opps activity: sum 30-day activity event count across My
     // Accounts that DON'T have any opps — track outreach to cold
@@ -974,9 +1050,9 @@ export function ProgressView({ prospects, settings, cdmName }) {
     }, 0);
     const noOppsActivityT1 = sumActivity(t1NotConnected);
     const noOppsActivityT2 = sumActivity(t2NotConnected);
-    const noOppsActivityT3 = sumActivity(t3.filter(p => !hasOpp(p.company)));
+    const noOppsActivityT3 = sumActivity(t3NotConnected);
     const noOppsActivityTotal = noOppsActivityT1 + noOppsActivityT2 + noOppsActivityT3;
-    const noOppsAccountCount = t1NotConnected.length + t2NotConnected.length + t3.filter(p => !hasOpp(p.company)).length;
+    const noOppsAccountCount = t1NotConnected.length + t2NotConnected.length + t3NotConnected.length;
 
     // PE firms by PE Stage — mirrors the PE Portfolio page, which lists
     // every prospect typed "Private Equity" and buckets it by the peStage
@@ -1000,12 +1076,13 @@ export function ProgressView({ prospects, settings, cdmName }) {
 
     return {
       week: getWeekKey(new Date()),
-      t1Total, t2Total, t3Total: t3.length,
+      t1Total, t2Total, t3Total,
       tierCounts: { t1: t1.length, t2: t2.length, t3: t3.length },
       t1WithContacts, t2WithContacts,
       t1WithDM, t2WithDM,
       t1Connected, t2Connected,
       t1Inactive, t2Inactive,
+      t3WithContacts, t3WithDM, t3Connected, t3Inactive,
       noOppsActivityT1,
       noOppsActivityT2,
       noOppsActivityT3,
@@ -1021,6 +1098,10 @@ export function ProgressView({ prospects, settings, cdmName }) {
       t2ConnectedPct: t2Total > 0 ? Math.round((t2Connected / t2Total) * 100) : 0,
       t1InactivePct: t1Total > 0 ? Math.round((t1Inactive / t1Total) * 100) : 0,
       t2InactivePct: t2Total > 0 ? Math.round((t2Inactive / t2Total) * 100) : 0,
+      t3ContactPct: t3Total > 0 ? Math.round((t3WithContacts / t3Total) * 100) : 0,
+      t3DMPct: t3Total > 0 ? Math.round((t3WithDM / t3Total) * 100) : 0,
+      t3ConnectedPct: t3Total > 0 ? Math.round((t3Connected / t3Total) * 100) : 0,
+      t3InactivePct: t3Total > 0 ? Math.round((t3Inactive / t3Total) * 100) : 0,
       // Detail lists for drill-down
       details: {
         t1WithContacts: t1WithContactsList.map(p => p.company),
@@ -1037,6 +1118,13 @@ export function ProgressView({ prospects, settings, cdmName }) {
         t2NotConnected: t2NotConnected.map(p => p.company),
         t1Inactive: t1InactiveList.map(p => ({ company: p.company, status: p.status })),
         t2Inactive: t2InactiveList.map(p => ({ company: p.company, status: p.status })),
+        t3WithContacts: t3WithContactsList.map(p => p.company),
+        t3NoContacts: t3NoContacts.map(p => p.company),
+        t3WithDM: t3WithDMList.map(p => p.company),
+        t3NoDM: t3NoDM.map(p => p.company),
+        t3Connected: t3ConnectedList.map(p => p.company),
+        t3NotConnected: t3NotConnected.map(p => p.company),
+        t3Inactive: t3InactiveList.map(p => ({ company: p.company, status: p.status })),
         ...peStageDetails,
       },
     };
@@ -1060,6 +1148,8 @@ export function ProgressView({ prospects, settings, cdmName }) {
     currentSnapshot.t1WithDM, currentSnapshot.t2WithDM,
     currentSnapshot.t1Connected, currentSnapshot.t2Connected,
     currentSnapshot.t1Inactive, currentSnapshot.t2Inactive,
+    currentSnapshot.t3WithContacts, currentSnapshot.t3WithDM,
+    currentSnapshot.t3Connected, currentSnapshot.t3Inactive,
     currentSnapshot.noOppsActivityTotal, currentSnapshot.noOppsAccountCount,
     currentSnapshot.peTotal,
     currentSnapshot.peDiscovery, currentSnapshot.pePiloting,
@@ -1592,6 +1682,8 @@ export function ProgressView({ prospects, settings, cdmName }) {
                 data={chartData}
                 series={c.series}
                 secondarySeries={c.secondarySeries}
+                showTier3={tier3Shown.has(c.id)}
+                onToggleTier3={() => toggleTier3(c.id)}
                 isPct={c.isPct}
                 defaultView={viewFor(c.id, c.defaultView || 'line')}
                 onViewChange={(v) => setChartView(c.id, v)}

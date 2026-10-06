@@ -13,8 +13,12 @@
 // Tier 1 red and Tier 2 blue, the pair used across the Progress charts.
 export const COVERAGE_T1 = '#DC2626';
 export const COVERAGE_T2 = '#3B82F6';
+// Tier 3 amber, the colour the Tier 3 counts already use on the Progress
+// tab. The Progress charts carry it as an optional line (hidden until
+// asked for); the Weekly Report email does not.
+export const COVERAGE_T3 = '#F59E0B';
 
-// `t1Key` / `t2Key` are the fields ProgressView writes into each weekly
+// `t1Key` / `t2Key` / `t3Key` are the fields ProgressView writes into each weekly
 // snapshot. A snapshot that predates one of them reports null for that
 // week rather than zero: a week nobody recorded is not a week at 0%.
 export const COVERAGE_CHARTS = [
@@ -23,11 +27,13 @@ export const COVERAGE_CHARTS = [
     label: '% of Accounts with HubSpot Contacts',
     t1Key: 't1ContactPct',
     t2Key: 't2ContactPct',
+    t3Key: 't3ContactPct',
   },
   {
     id: 'dmPct',
     label: '% of Accounts with Decision Maker Identified',
     t1Key: 't1DMPct',
     t2Key: 't2DMPct',
+    t3Key: 't3DMPct',
   },
 ];

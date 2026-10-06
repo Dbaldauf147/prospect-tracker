@@ -18,8 +18,9 @@
 // Two numbers it cannot re-answer, both because the week never recorded
 // the accounts behind them:
 //
-//   • Tier 3 totals. `details` carries Tier 1 and Tier 2 by name; Tier 3
-//     is only ever a count.
+//   • Tier 3, on weeks saved before its lines were added. Those weeks
+//     carried Tier 1 and Tier 2 by name and Tier 3 only as a count; weeks
+//     saved since record Tier 3 by name too and are adjusted like the rest.
 //   • The No-Opps Activity chart, which stores summed activity events
 //     rather than a per-account breakdown.
 //
@@ -65,9 +66,14 @@ const METRICS = [
   // Its denominator is the tier total, same as the rest.
   { tier: 't1', yes: 't1Inactive', no: null, count: 't1Inactive', pct: 't1InactivePct' },
   { tier: 't2', yes: 't2Inactive', no: null, count: 't2Inactive', pct: 't2InactivePct' },
+  // Tier 3, the same four, on weeks that recorded it by name.
+  { tier: 't3', yes: 't3WithContacts', no: 't3NoContacts', count: 't3WithContacts', pct: 't3ContactPct' },
+  { tier: 't3', yes: 't3WithDM', no: 't3NoDM', count: 't3WithDM', pct: 't3DMPct' },
+  { tier: 't3', yes: 't3Connected', no: 't3NotConnected', count: 't3Connected', pct: 't3ConnectedPct' },
+  { tier: 't3', yes: 't3Inactive', no: null, count: 't3Inactive', pct: 't3InactivePct' },
 ];
 
-const TIER_TOTAL = { t1: 't1Total', t2: 't2Total' };
+const TIER_TOTAL = { t1: 't1Total', t2: 't2Total', t3: 't3Total' };
 
 function listOf(details, listKey) {
   const v = listKey ? details?.[listKey] : null;
@@ -82,10 +88,12 @@ function listOf(details, listKey) {
  * than one pair means a week saved before a metric existed still finds
  * its ticked accounts through the metrics it does have.
  *
- * Returns { t1: Set, t2: Set } of normalized names.
+ * Returns { t1: Set, t2: Set, t3: Set } of normalized names. A week saved
+ * before Tier 3 was recorded by name finds nothing for t3, so its Tier 3
+ * count keeps the number it was saved with.
  */
 function untrackedByTier(details, nameSet) {
-  const out = { t1: new Set(), t2: new Set() };
+  const out = { t1: new Set(), t2: new Set(), t3: new Set() };
   if (!details || nameSet.size === 0) return out;
   for (const m of METRICS) {
     for (const listKey of [m.yes, m.no]) {
@@ -117,7 +125,7 @@ function pctOf(count, total) {
 export function excludeUntrackedFromWeek(week, nameSet) {
   if (!week || !nameSet || nameSet.size === 0) return week;
   const dropped = untrackedByTier(week.details, nameSet);
-  if (dropped.t1.size === 0 && dropped.t2.size === 0) return week;
+  if (dropped.t1.size === 0 && dropped.t2.size === 0 && dropped.t3.size === 0) return week;
 
   const next = { ...week };
   const details = { ...(week.details || {}) };
