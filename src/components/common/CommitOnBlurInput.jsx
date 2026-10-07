@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, memo } from 'react';
 import { BULLET, bulletBreak, bulletExit, dashToBullet, onBulletLine } from '../../utils/bulletText';
-import { asMoney, fromMoney } from '../../utils/moneyInput';
+import { asMoney, asCount, fromMoney } from '../../utils/moneyInput';
 
 // Uncontrolled-ish text input / textarea that holds its own local state
 // and only propagates up on blur. Drop-in replacement for a controlled
@@ -30,17 +30,24 @@ import { asMoney, fromMoney } from '../../utils/moneyInput';
 //                 commits is the bare number, exactly as a type="number" box
 //                 would have committed it — the formatting is a way of
 //                 READING the field, never of storing it.
+//   grouped     — `money` without the dollar sign: "12,345" at rest, bare
+//                 digits while focused, the bare number committed. For the
+//                 counts (sites, meters, MWh) that would otherwise be
+//                 type="number" boxes that can't hold a comma.
 //   type        — input type (default 'text'); ignored when multiline, and
-//                 overridden by `money`, which has to be a text box to hold
-//                 a comma
+//                 overridden by `money` / `grouped`, which have to be a text
+//                 box to hold a comma
 //   ...rest     — forwarded to the underlying element (style, placeholder, etc.)
 export const CommitOnBlurInput = memo(function CommitOnBlurInput({
-  value, onCommit, multiline, autoGrow, bulletList, smartBullets, money, type, onKeyDown, onFocus, style, ...rest
+  value, onCommit, multiline, autoGrow, bulletList, smartBullets, money, grouped, type, onKeyDown, onFocus, style, ...rest
 }) {
   const [local, setLocal] = useState(value ?? '');
   const lastExternal = useRef(value ?? '');
   const taRef = useRef(null);
-  // Only a `money` box cares. It formats itself when it is not being typed
+  // A box that formats itself - money or grouped. Only those care whether
+  // they are focused.
+  const numeric = money || grouped;
+  // Only a `money` / `grouped` box cares. It formats itself when it is not being typed
   // into, which means it has to know whether it is.
   const [focused, setFocused] = useState(false);
 
@@ -88,8 +95,8 @@ export const CommitOnBlurInput = memo(function CommitOnBlurInput({
     setFocused(false);
     // A money box commits what it parsed, not what was typed: "$1,696,113"
     // and "1696113" are the same figure, and only one of them is a number.
-    const committed = money ? fromMoney(local) : local;
-    if (money && committed !== local) setLocal(committed);
+    const committed = numeric ? fromMoney(local) : local;
+    if (numeric && committed !== local) setLocal(committed);
     if (committed !== lastExternal.current) {
       lastExternal.current = committed;
       if (onCommit) onCommit(committed);
@@ -170,11 +177,11 @@ export const CommitOnBlurInput = memo(function CommitOnBlurInput({
   // inputMode keeps the numeric keypad on a phone.
   return (
     <input
-      type={money ? 'text' : (type || 'text')}
-      inputMode={money ? 'decimal' : undefined}
+      type={numeric ? 'text' : (type || 'text')}
+      inputMode={numeric ? 'decimal' : undefined}
       {...rest}
       style={style}
-      value={money && !focused ? asMoney(local) : local}
+      value={numeric && !focused ? (money ? asMoney(local) : asCount(local)) : local}
       onChange={e => setLocal(e.target.value)}
       onFocus={handleFocus}
       onBlur={handleBlur}

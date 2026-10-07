@@ -9153,7 +9153,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div>
               <label className={styles.label} title="Number of sites">Sites</label>
-              <CommitOnBlurInput className={styles.input} type="number" value={fields.numberOfSites ?? ''} onCommit={v => set('numberOfSites', v)} />
+              <CommitOnBlurInput className={styles.input} grouped value={fields.numberOfSites ?? ''} onCommit={v => set('numberOfSites', v)} />
             </div>
 
             <div>
@@ -9161,7 +9161,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 className={styles.label}
                 title="How many of this company's sites owe a building-performance obligation - benchmarking, an energy audit or a performance standard. Filled in from the Utility Lookup page's Building Compliance screening when a Master Analysis is saved against the company, and typed over here if you know better."
               >Sites w/ Mandate</label>
-              <CommitOnBlurInput className={styles.input} type="number" value={fields.sitesWithMandate ?? ''} onCommit={v => set('sitesWithMandate', v)} />
+              <CommitOnBlurInput className={styles.input} grouped value={fields.sitesWithMandate ?? ''} onCommit={v => set('sitesWithMandate', v)} />
             </div>
 
             <div>
@@ -9169,17 +9169,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 className={styles.label}
                 title="How many of this company's sites sit in a deregulated market for electricity or natural gas, and can therefore be shopped. Filled in from the Utility Lookup page's market classification when a Master Analysis is saved against the company, and typed over here if you know better."
               >Deregulated Sites</label>
-              <CommitOnBlurInput className={styles.input} type="number" value={fields.deregulatedSites ?? ''} onCommit={v => set('deregulatedSites', v)} />
+              <CommitOnBlurInput className={styles.input} grouped value={fields.deregulatedSites ?? ''} onCommit={v => set('deregulatedSites', v)} />
             </div>
 
             <div>
               <label className={styles.label} title="Number of utility accounts">Accounts</label>
-              <CommitOnBlurInput className={styles.input} type="number" value={fields.numberOfAccounts ?? ''} onCommit={v => set('numberOfAccounts', v)} />
+              <CommitOnBlurInput className={styles.input} grouped value={fields.numberOfAccounts ?? ''} onCommit={v => set('numberOfAccounts', v)} />
             </div>
 
             <div>
               <label className={styles.label} title="Number of utility meters. Priced against by any per-meter service on the Services Pricing rate card.">Meters</label>
-              <CommitOnBlurInput className={styles.input} type="number" value={fields.numberOfMeters ?? ''} onCommit={v => set('numberOfMeters', v)} />
+              <CommitOnBlurInput className={styles.input} grouped value={fields.numberOfMeters ?? ''} onCommit={v => set('numberOfMeters', v)} />
             </div>
 
             <div>
@@ -9187,12 +9187,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 className={styles.label}
                 title="How many pieces of equipment - chillers, boilers, EV chargers - are in scope. Priced against by any per-equipment service. Filled in from the Utility Lookup page's per-site estimate when a Master Analysis is saved against the company, and typed over here if you know better."
               >Equipment</label>
-              <CommitOnBlurInput className={styles.input} type="number" value={fields.equipmentCount ?? ''} onCommit={v => set('equipmentCount', v)} />
+              <CommitOnBlurInput className={styles.input} grouped value={fields.equipmentCount ?? ''} onCommit={v => set('equipmentCount', v)} />
             </div>
 
             <div>
               <label className={styles.label} title="Estimated annual electricity consumption, in MWh. Priced against by any per-MWh service.">Electric MWh</label>
-              <CommitOnBlurInput className={styles.input} type="number" value={fields.annualMwh ?? ''} onCommit={v => set('annualMwh', v)} />
+              <CommitOnBlurInput className={styles.input} grouped value={fields.annualMwh ?? ''} onCommit={v => set('annualMwh', v)} />
             </div>
 
             {/* The two headline dollars off the Utility Lookup analysis: what
