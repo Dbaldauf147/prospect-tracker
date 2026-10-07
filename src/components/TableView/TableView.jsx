@@ -6,7 +6,7 @@ import {
 } from '../../utils/tablePrefsSync';
 import { Badge } from '../common/Badge';
 import { statusColor, tierColor, formatAum, formatNumber } from '../../utils/formatters';
-import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS } from '../../data/enums';
+import { STATUSES, TYPES, TIER_OPTIONS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS } from '../../data/enums';
 import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildAssetTypeOptions } from '../../utils/prospectOptions';
 import { PasteAddModal } from './PasteAddModal';
 import {
@@ -31,7 +31,7 @@ const COLUMNS = [
   { key: 'numberOfSites', label: 'Sites', type: 'number', defaultWidth: 70 },
   { key: 'revenue', label: 'Revenue', defaultWidth: 110 },
   { key: 'rank', label: 'Rank', defaultWidth: 70 },
-  { key: 'tier', label: 'Tier', type: 'enum', options: TIERS, defaultWidth: 80 },
+  { key: 'tier', label: 'Tier', type: 'enum', options: TIER_OPTIONS, defaultWidth: 80 },
   { key: 'hqRegion', label: 'HQ Region', defaultWidth: 110 },
   { key: 'frameworks', label: 'Frameworks', type: 'tags', defaultWidth: 130 },
   { key: 'notes', label: 'Notes', type: 'notes', defaultWidth: 200 },

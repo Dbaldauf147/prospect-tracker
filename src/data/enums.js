@@ -134,6 +134,11 @@ export const FRAMEWORKS = [
 ];
 
 export const TIERS = ['Tier 1', 'Tier 2', 'Tier 3'];
+// What the Tier dropdowns offer: the three tiers, plus an explicit answer
+// that the account is not on the tier list at all. Kept out of TIERS, which
+// code reads as "the tiers" (coverage by tier, Tier 1/2/3 filters).
+export const NOT_ON_TIER_LIST = 'Not on tier list';
+export const TIER_OPTIONS = [...TIERS, NOT_ON_TIER_LIST];
 
 export const COUNTRIES = [
   'United States', 'Canada', 'Mexico',

@@ -7,7 +7,7 @@ import { loadOpps2Cache, loadOpps2FromFirestore, setOppField } from '../../utils
 import { formatAum } from '../../utils/formatters';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { formatDateDisplay, toISODate, daysFromToday } from '../../utils/oppsCallIn';
-import { NOT_SOLD_STATUS, PE_STAGES, STATUSES, STATUS_COLORS, TYPES, TIERS, GEOGRAPHIES } from '../../data/enums';
+import { NOT_SOLD_STATUS, PE_STAGES, STATUSES, STATUS_COLORS, TYPES, TIER_OPTIONS, GEOGRAPHIES } from '../../data/enums';
 import { PE_STAGE_META, PE_DEFAULT_STAGE, PE_NOT_SOLD_STAGE, peStageOf, peStageMeta, peStageStatusConflict } from '../../utils/peStages';
 import { InlineCell } from '../TableView/TableView';
 import { buildTypeOptions, buildCdmOptions, persistCustomOption, buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions } from '../../utils/prospectOptions';
@@ -2603,7 +2603,7 @@ const BLUE_OWL_BULK_FIELDS = [
   { key: 'status', label: 'Status', options: STATUSES },
   { key: 'cdm', label: 'CDM' },
   { key: 'type', label: 'Type', options: TYPES },
-  { key: 'tier', label: 'Tier', options: TIERS },
+  { key: 'tier', label: 'Tier', options: TIER_OPTIONS },
   { key: 'geography', label: 'Geography', options: GEOGRAPHIES },
   { key: 'hqRegion', label: 'HQ Region', options: ['North America', 'Outside of North America'] },
   { key: 'website', label: 'Website' },
@@ -3481,7 +3481,7 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
         getFilterValue: (r) => r.assetTypes.join(', '),
         exportValue: (r) => r.assetTypes.join(', '),
         render: editable({ key: 'assetTypes', label: 'Asset Types', type: 'tags', options: assetTypeOptions }, (r) => r.assetTypes) },
-      { key: 'tier', label: 'Tier', defaultWidth: 100, render: editable({ key: 'tier', label: 'Tier', type: 'enum', options: TIERS }) },
+      { key: 'tier', label: 'Tier', defaultWidth: 100, render: editable({ key: 'tier', label: 'Tier', type: 'enum', options: TIER_OPTIONS }) },
       { key: 'geography', label: 'Geography', defaultWidth: 130, render: editable({ key: 'geography', label: 'Geography', type: 'enum', options: GEOGRAPHIES }) },
       { key: 'hqRegion', label: 'HQ Region', defaultWidth: 130, render: editable({ key: 'hqRegion', label: 'HQ Region' }) },
       { key: 'website', label: 'Website', defaultWidth: 200, render: editable({ key: 'website', label: 'Website', type: 'link' }) },
