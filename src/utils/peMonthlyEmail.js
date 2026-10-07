@@ -25,7 +25,9 @@ export const PE_MONTHLY_COLUMNS = [
   { key: 'CDM', label: 'CDM' },
   { key: 'PE Owner', label: 'PE Owner' },
   { key: 'Vertical', label: 'Vertical' },
-  { key: 'Salesperson', label: 'Salesperson' },
+  // Labelled Other CDM: on this table the person Coverage names is the
+  // other pod's CDM. The key stays Salesperson so saved rows still read.
+  { key: 'Salesperson', label: 'Other CDM' },
   { key: 'Stage', label: 'Stage' },
   { key: 'Scope', label: 'Scope' },
   { key: 'Deal Size', label: 'Deal Size', align: 'right' },

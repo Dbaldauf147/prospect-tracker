@@ -36,6 +36,7 @@ check('one row per deal, in the deals\' order', rows.map(r => r.Account), ['Kens
 check('row carries every column', Object.keys(rows[0]).filter(k => k !== 'id'), PE_MONTHLY_COLUMNS.map(c => c.key));
 check('opp fields joined by id', [rows[0].Scope, rows[0]['BFO Address']], ['Bill pay', 'https://bfo.example/7']);
 check('salespeople off Coverage for the vertical', rows[0].Salesperson, 'Pat, Lee');
+check('shown as Other CDM', PE_MONTHLY_COLUMNS.find(c => c.key === 'Salesperson').label, 'Other CDM');
 check('no vertical, no salesperson', rows[1].Salesperson, '');
 check('blanks stay blank', [rows[1].Tier, rows[1]['Deal Size'], rows[1].Scope], ['', '', '']);
 
