@@ -101,6 +101,10 @@ function mathPhrase(part) {
 function countSource(part) {
   if (part?.kind !== 'unit') return '';
   if (part.unitsTyped) return 'Count typed against this service for this deal';
+  // Priced on part of the book (see SITE_SHARE_BY_SERVICE in servicePricing).
+  if (part.siteShare) {
+    return `${part.siteShare.pct}% of the ${count(part.siteShare.of)} sites in the shared count above the table: this service is only sold to that share of sites`;
+  }
   return `${part.unitLabel || 'Count'} taken from the shared count above the table`;
 }
 

@@ -1811,6 +1811,44 @@ function legacyParts(line, bases) {
 // apart on the way through: a $60k/yr service over three years and a $180k
 // project are the same contract value but not the same deal — and they are
 // very different first years, which is why both totals come back.
+/**
+ * Services sold to only part of a portfolio, priced on that part.
+ *
+ * The shared Sites count is the whole book, and most per-site services are
+ * sold across all of it. Open/Close isn't: it is charged when a site opens
+ * or closes an account, and in a year that is a minority of the book, so
+ * pricing it on every site overstates the deal. Each entry here is the
+ * share of the shared site count the service is priced on, keyed by the
+ * service name with case and punctuation dropped.
+ *
+ * Only the SHARED count is scaled. A count typed against the service for
+ * this deal is already that deal's answer, and stays exactly as typed.
+ */
+export const SITE_SHARE_BY_SERVICE = {
+  openclose: 0.3,
+};
+
+const serviceShareKey = (name) => String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/** The share of the shared site count a service is priced on, or null for all of it. */
+export function siteShareFor(name) {
+  return SITE_SHARE_BY_SERVICE[serviceShareKey(name)] ?? null;
+}
+
+// The shared counts as one service sees them: its site share applied to the
+// Sites box, rounded to whole sites and never below one while there are any.
+// Returns the counts untouched for every other service.
+function countsForService(name, counts) {
+  const share = siteShareFor(name);
+  const sites = parseMoney(counts?.sites);
+  if (!share || sites === null || sites <= 0) return { counts, siteShare: null };
+  const scaled = Math.max(1, Math.round(sites * share));
+  return {
+    counts: { ...counts, sites: scaled },
+    siteShare: { pct: Math.round(share * 100), of: sites, sites: scaled },
+  };
+}
+
 export function estimateScope({
   rows, services, pricing, counts, dealSize, bases = PRICING_BASES, serviceUnits = null,
   // A deal size worked out per service, as a Map of name -> { low, high }.
@@ -1898,11 +1936,23 @@ export function estimateScope({
     // puts the mark ahead of any rate that survived it.
     const entry = isGraveyardBucket(row.bucket) ? { ...withUnits, noFee: true } : withUnits;
     const ownDeal = dealSizeByService?.get(row.name) || null;
+    // A service sold to only part of the book prices on that part of the
+    // shared site count - see SITE_SHARE_BY_SERVICE.
+    const { counts: rowCounts, siteShare } = countsForService(row.name, counts);
     const est = ownDeal
       ? estimateServiceRange({
-        entry, meta: row.meta, counts, bases, dealSize: ownDeal.low, dealSizeHigh: ownDeal.high,
+        entry, meta: row.meta, counts: rowCounts, bases, dealSize: ownDeal.low, dealSizeHigh: ownDeal.high,
       })
-      : estimateService({ entry, meta: row.meta, counts, dealSize, bases });
+      : estimateService({ entry, meta: row.meta, counts: rowCounts, dealSize, bases });
+    // Mark the parts that took the scaled count, so the working can say
+    // "30% of 819" rather than leave a site count nobody typed.
+    if (siteShare) {
+      const mark = (parts) => (Array.isArray(parts)
+        ? parts.map(p => (p?.unit === 'sites' && !p.unitsTyped ? { ...p, siteShare } : p))
+        : parts);
+      est.breakdown = mark(est.breakdown);
+      est.setupBreakdown = mark(est.setupBreakdown);
+    }
     // A row carrying its own unit count doesn't need the shared one, so it
     // doesn't put a box on the estimator asking for it. Neither does a row
     // whose fee was typed straight in: that fee is multiplied by a count
