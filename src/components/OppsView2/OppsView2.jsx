@@ -161,7 +161,7 @@ const PE_MONTHLY_SCHEDULE_KIND = {
   store: schedulesStore('/api/pe-monthly-schedules'),
   sendNowPath: '/api/pe-monthly-send-now',
   title: 'Schedule PE Monthly email',
-  columnsNote: 'The emailed table always shows: Account, Tier, CDM, PE Owner, Vertical, Salesperson, Stage, Scope, Deal Size, Next Steps, and a BFO Link - the PE overlap deals at Stage 3 or later, worked out fresh each time it sends.',
+  columnsNote: 'The emailed table always shows: Account, Tier, CDM, PE Owner, Vertical, Other CDM, Stage, Scope, Deal Size, Next Steps, and a BFO Link - the PE overlap deals at Stage 3 or later, worked out fresh each time it sends.',
   emptyLabel: 'Don\u2019t send if there are no PE overlap deals',
   namePlaceholder: 'e.g. Monthly PE overlap deals',
   defaults: {
@@ -18657,7 +18657,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           </div>
           <div style={{ padding: '0 0 0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
             The PE overlap deals from the Keith agenda: every Private Equity or Portfolio Company opp at Stage 3 (Lead) or later that is still open, furthest along first.
-            Salesperson is who Opps &gt; Coverage lists against the deal's vertical, so you can see where another pod is already in. The Outlook draft is the same email as New Opps, with this table.
+            Other CDM is who Opps &gt; Coverage lists against the deal's vertical, so you can see where another pod is already in. The Outlook draft is the same email as New Opps, with this table.
           </div>
           {loading && !data ? (
             <div className={styles.loading}>Loading...</div>
