@@ -26,6 +26,11 @@ const inputStyle = {
   border: '1px solid var(--color-border)', borderRadius: 4,
 };
 
+// Defaults to the New Opps email. PE Monthly passes its own wording, body
+// builder and download (utils/peMonthlyEmail.js) and reuses the rest:
+//   defaults / resolveTemplate / buildHtml / download / itemNoun / footnote
+const NEW_OPPS_FOOTNOTE = 'The table and your signature are added automatically. Scheduled emails keep their own subject and message: edit those under “Schedule email”.';
+
 // The editor mounts only while the modal is open, so its draft state seeds
 // from the saved template on every open — closing without saving discards the
 // edit rather than resurrecting it next time.
@@ -34,26 +39,34 @@ export function NewOppsDraftEmailModal({ open, ...props }) {
   return <DraftEmailEditor {...props} />;
 }
 
-function DraftEmailEditor({ onClose, records = [], signature = '', template, onSave }) {
-  const [form, setForm] = useState(() => resolveNewOppsDraftTemplate(template));
+function DraftEmailEditor({
+  onClose, records = [], signature = '', template, onSave,
+  defaults = NEW_OPPS_DRAFT_DEFAULTS,
+  resolveTemplate = resolveNewOppsDraftTemplate,
+  buildHtml = buildNewOppsDigestEmailHtml,
+  download = downloadNewOppsOutlookDraft,
+  itemNoun = 'opp',
+  footnote = NEW_OPPS_FOOTNOTE,
+}) {
+  const [form, setForm] = useState(() => resolveTemplate(template));
   const [saved, setSaved] = useState(false);
 
   const set = (key, value) => { setForm((f) => ({ ...f, [key]: value })); setSaved(false); };
 
   const previewHtml = useMemo(
-    () => buildNewOppsDigestEmailHtml(records, {
+    () => buildHtml(records, {
       message: form.message, greeting: form.greeting, signature,
     }),
-    [records, form.message, form.greeting, signature],
+    [buildHtml, records, form.message, form.greeting, signature],
   );
 
-  const isDefault = Object.keys(NEW_OPPS_DRAFT_DEFAULTS)
-    .every((k) => form[k] === NEW_OPPS_DRAFT_DEFAULTS[k]);
+  const isDefault = Object.keys(defaults)
+    .every((k) => form[k] === defaults[k]);
 
   const save = () => { onSave?.({ ...form }); setSaved(true); };
   const saveAndDownload = () => {
     onSave?.({ ...form });
-    downloadNewOppsOutlookDraft(records, { ...form, signature });
+    download(records, { ...form, signature });
     onClose?.();
   };
 
@@ -90,7 +103,7 @@ function DraftEmailEditor({ onClose, records = [], signature = '', template, onS
               type="button"
               onClick={saveAndDownload}
               disabled={records.length === 0}
-              title={records.length ? 'Save this wording and download the draft now' : 'No new opps to draft'}
+              title={records.length ? 'Save this wording and download the draft now' : `No ${itemNoun}s to draft`}
               style={{
                 padding: '0.4rem 0.9rem', background: records.length ? '#0F6CBD' : '#94A3B8',
                 border: `1px solid ${records.length ? '#0F6CBD' : '#94A3B8'}`, borderRadius: 4,
@@ -157,11 +170,11 @@ function DraftEmailEditor({ onClose, records = [], signature = '', template, onS
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginTop: '0.55rem' }}>
             <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)' }}>
-              The table and your signature are added automatically. Scheduled emails keep their own subject and message: edit those under “Schedule email”.
+              {footnote}
             </span>
             <button
               type="button"
-              onClick={() => { setForm({ ...NEW_OPPS_DRAFT_DEFAULTS }); setSaved(false); }}
+              onClick={() => { setForm({ ...defaults }); setSaved(false); }}
               disabled={isDefault}
               style={{
                 fontSize: '0.72rem', fontFamily: 'inherit', background: 'none', border: 'none', padding: 0,
@@ -173,7 +186,7 @@ function DraftEmailEditor({ onClose, records = [], signature = '', template, onS
 
           <div style={{ marginTop: '0.85rem' }}>
             <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 4 }}>
-              Preview {records.length ? `(${records.length} opp${records.length === 1 ? '' : 's'})` : '(no opps right now)'}
+              Preview {records.length ? `(${records.length} ${itemNoun}${records.length === 1 ? '' : 's'})` : `(no ${itemNoun}s right now)`}
             </div>
             <div
               style={{ border: '1px solid var(--color-border)', borderRadius: 4, padding: '0.75rem', background: '#fff', overflowX: 'auto' }}
