@@ -226,7 +226,7 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
 
   const columns = useMemo(() => {
     const num = (key, fromKey) => ({
-      render: r => <div style={{ textAlign: 'right', width: '100%' }}><Figure value={r[key]} from={r[fromKey]} /></div>,
+      render: r => <div style={{ textAlign: 'left', width: '100%' }}><Figure value={r[key]} from={r[fromKey]} /></div>,
       getSortValue: r => r[key] ?? null,
       getFilterValue: r => (r[key] == null ? '' : Math.round(r[key]).toLocaleString()),
       exportValue: r => (r[key] == null ? '' : Math.round(r[key])),
@@ -327,7 +327,7 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
         getFilterValue: r => (r.deal ? formatMoneyRange(r.deal.fee, r.deal.feeHigh) : ''),
         exportValue: r => (r.deal ? formatMoneyRange(r.deal.fee, r.deal.feeHigh) : ''),
         render: r => (
-          <div style={{ textAlign: 'right', width: '100%', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+          <div style={{ textAlign: 'left', width: '100%', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
             {r.deal
               ? formatMoneyRange(r.deal.fee, r.deal.feeHigh)
               : <span title={r.prospect ? 'Nothing still open on this company can be priced' : 'Not in the tracker yet'} style={{ color: '#CBD5E1' }}>-</span>}
