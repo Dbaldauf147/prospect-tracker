@@ -2355,20 +2355,27 @@ function KeyContactsViewInner({
 
   // No Reply figures per contact id, from both sources (see the fetch above).
   const campaignSendIndex = useMemo(() => campaignSendsByAddress(savedCampaigns), [savedCampaigns]);
+  // Active contacts (an open opp, inside the active window) are already in
+  // conversation, so a run of unanswered emails isn't the signal there that
+  // it is for everyone else. Their cell stays blank.
+  const noReplyHidden = useCallback(
+    (c) => !!categorizeContact && (categorizeContact(c?.raw || c) || []).includes('Active'),
+    [categorizeContact],
+  );
   const contactUnanswered = useMemo(() => {
     const map = new Map();
     if (!hasFullTable(storagePrefix)) return map;
     const sources = { index: unansweredIndex, campaignSends: savedCampaigns.length ? campaignSendIndex : null, campaignReplies };
     for (const c of (hubspotCache?.contacts || [])) {
       const id = String(c.id || '');
-      if (!id) continue;
+      if (!id || noReplyHidden(c)) continue;
       const hit = unansweredFor(sources, {
         id, email: c.email, name: [c.firstname, c.lastname].filter(Boolean).join(' '),
       });
       if (hit && (hit.count > 0 || hit.lastReplyMs)) map.set(id, hit);
     }
     return map;
-  }, [storagePrefix, unansweredIndex, campaignSendIndex, campaignReplies, savedCampaigns.length, hubspotCache]);
+  }, [storagePrefix, unansweredIndex, campaignSendIndex, campaignReplies, savedCampaigns.length, hubspotCache, noReplyHidden]);
   // The feed is the complete record; until it's in, a 0 only means "nothing
   // in the saved campaigns", so the cell says it's still loading.
   const unansweredDataLoaded = !!unansweredIndex;
@@ -3137,7 +3144,7 @@ function KeyContactsViewInner({
     taggedPct: c => `${tagScoreFor(c).pct}%`,
     lastOutreach: c => fmtLastOutreach(contactLastOutreach.get(String(c.id || ''))),
     campaignReply: c => campaignReplyFor(c)?.label || '',
-    noReply: c => String(contactUnanswered.get(String(c.id || ''))?.count || 0),
+    noReply: c => (noReplyHidden(c) ? '' : String(contactUnanswered.get(String(c.id || ''))?.count || 0)),
     emailCampaigns: c => campaignForContact(c)?.subject || '',
     campaignSends60: c => String(campaignSends60For(c)),
     toCc:     c => {
@@ -4517,6 +4524,9 @@ function KeyContactsViewInner({
                       );
                     })(),
                     noReply: (() => {
+                      if (noReplyHidden(c)) {
+                        return <div style={{ padding: '0.45rem 0.6rem' }} title="Active contact: No Reply isn't shown for contacts you're already working with" />;
+                      }
                       const hit = contactUnanswered.get(String(c.id || ''));
                       if (!hit || hit.count === 0) {
                         const loading = !unansweredDataLoaded && unansweredStatus === 'loading';
