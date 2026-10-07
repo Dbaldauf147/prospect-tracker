@@ -26,10 +26,15 @@
 // carries a status (Exploring, Quoted, ...) is being worked, not prospected,
 // so it is left off the list. Picking a status from the row therefore takes
 // the row away; "- (auto)" on the company card brings it back.
-import { useEffect, useMemo, useState } from 'react';
+//
+// Many rows at once, too: tick companies (or every one on screen) and set
+// one status on each of their listed services in a single go, with Undo.
+// See utils/prospectingBulkStatus.js.
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { STATUS_COLORS, SERVICE_STATUSES } from '../../data/enums.js';
 import { serviceStatusColor } from '../../utils/serviceStatusColors.js';
 import { withServiceStatus } from '../../utils/clientDealSizing.js';
+import { planProspectingBulkStatus } from '../../utils/prospectingBulkStatus.js';
 import { allPcRows, myProspectRows, sumFigures } from '../../utils/prospectingPortfolio.js';
 import { biggestDealFor, dealHasStatus } from '../../utils/prospectingDeals.js';
 import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
@@ -287,6 +292,60 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
     }
     : null), [updateProspect]);
 
+  // Bulk status. `picked` holds row keys; a row only counts while it is
+  // still listed and has a service and a record to write to, so rows that
+  // leave the list once they carry a status drop out of the pick on their
+  // own.
+  const [picked, setPicked] = useState(() => new Set());
+  const [bulkStatus, setBulkStatus] = useState('');
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkUndo, setBulkUndo] = useState(null);
+  useEffect(() => { setPicked(new Set()); setBulkUndo(null); }, [mode]);
+  const pickable = useCallback((r) => !!(setDealStatus && r?.prospect?.id && r?.deal?.name), [setDealStatus]);
+  const togglePick = useCallback((key) => setPicked((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  }), []);
+  const pickedRows = useMemo(() => searched.filter(r => picked.has(r.key) && pickable(r)), [searched, picked, pickable]);
+  const pickableOnScreen = useMemo(() => shown.filter(pickable), [shown, pickable]);
+  const allOnScreenPicked = pickableOnScreen.length > 0 && pickableOnScreen.every(r => picked.has(r.key));
+  const toggleAllOnScreen = () => setPicked((prev) => {
+    const next = new Set(prev);
+    if (allOnScreenPicked) for (const r of pickableOnScreen) next.delete(r.key);
+    else for (const r of pickableOnScreen) next.add(r.key);
+    return next;
+  });
+  const bulkPlan = useMemo(() => planProspectingBulkStatus(pickedRows, bulkStatus), [pickedRows, bulkStatus]);
+  // One write per company, all at once, the way Deal Sizing's bulk bar does
+  // it. Undo puts each Services Explored map back exactly as it was.
+  const applyBulkStatus = async () => {
+    if (!bulkPlan.change.length || typeof updateProspect !== 'function') return;
+    const entries = bulkPlan.change;
+    const before = entries.map(e => [e.client.id, { ...(e.client.servicesExplored || {}) }]);
+    setBulkBusy(true);
+    try {
+      await Promise.all(entries.map(e => updateProspect(e.client.id, { servicesExplored: e.servicesExplored })));
+    } finally {
+      setBulkBusy(false);
+    }
+    setPicked(new Set());
+    setBulkUndo({
+      before,
+      message: `Set ${bulkStatus} on ${entries.length} ${entries.length === 1 ? 'company' : 'companies'}. ${entries.length === 1 ? 'It leaves' : 'They leave'} this list now that ${entries.length === 1 ? 'its service has' : 'their services have'} a status.`,
+    });
+  };
+  const undoBulkStatus = async () => {
+    if (!bulkUndo || typeof updateProspect !== 'function') return;
+    setBulkBusy(true);
+    try {
+      await Promise.all(bulkUndo.before.map(([id, map]) => updateProspect(id, { servicesExplored: map })));
+    } finally {
+      setBulkBusy(false);
+    }
+    setBulkUndo(null);
+  };
+
   const columns = useMemo(() => {
     const num = (key, fromKey) => ({
       render: r => <div style={{ textAlign: 'left', width: '100%' }}><Figure value={r[key]} from={r[fromKey]} /></div>,
@@ -300,7 +359,21 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
         getSortValue: r => r.company.toLowerCase(),
         getFilterValue: r => r.company,
         exportValue: r => r.company,
-        render: r => (r.prospect && onSelectProspect ? (
+        render: r => (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            {setDealStatus && (
+              <input
+                type="checkbox"
+                checked={picked.has(r.key) && pickable(r)}
+                disabled={!pickable(r)}
+                onClick={e => e.stopPropagation()}
+                onChange={() => togglePick(r.key)}
+                aria-label={`Pick ${r.company} for a bulk status`}
+                title={pickable(r) ? 'Pick for a bulk status' : (r.prospect ? 'No open service to set a status on' : 'Not in the tracker yet')}
+                style={{ margin: 0, flexShrink: 0, cursor: pickable(r) ? 'pointer' : 'default' }}
+              />
+            )}
+            {r.prospect && onSelectProspect ? (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onSelectProspect(r.prospect); }}
@@ -309,7 +382,9 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
           >{r.company}</button>
         ) : (
           <span style={{ fontWeight: 600 }} title={isPcs ? 'Not in the tracker yet' : undefined}>{r.company}</span>
-        )),
+            )}
+          </span>
+        ),
       },
       {
         key: 'status', label: 'Status', defaultWidth: 110,
@@ -425,7 +500,7 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
         ) : <span style={{ color: '#CBD5E1' }}>-</span>),
       },
     ];
-  }, [isPcs, onSelectProspect, setDealStatus]);
+  }, [isPcs, onSelectProspect, setDealStatus, picked, pickable, togglePick]);
 
   // DataTable keys its rows on `id`.
   const tableRows = useMemo(() => searched.map(r => ({ ...r, id: r.key })), [searched]);
@@ -447,6 +522,66 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
           style={{ padding: '0.35rem 0.6rem', border: '1px solid #CBD5E1', borderRadius: 6, fontSize: '0.76rem', fontFamily: 'inherit', width: 240 }}
         />
       </div>
+      {setDealStatus && !loading && rows.length > 0 && (
+        <div
+          data-bulk-status-bar
+          style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem 0.75rem', padding: '0.45rem 0.75rem', marginBottom: '0.6rem', border: '1px solid #E2E8F0', borderRadius: 8, background: '#F8FAFC', fontSize: '0.74rem', color: '#475569' }}
+        >
+          <span style={{ fontWeight: 700, color: '#1E293B' }}>Bulk status</span>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: pickableOnScreen.length ? 'pointer' : 'default' }}>
+            <input type="checkbox" checked={allOnScreenPicked} disabled={!pickableOnScreen.length} onChange={toggleAllOnScreen} style={{ margin: 0 }} />
+            Pick all {pickableOnScreen.length.toLocaleString()} on screen
+          </label>
+          <span style={{ fontWeight: 600, color: pickedRows.length ? '#1D4ED8' : '#94A3B8' }}>
+            {pickedRows.length.toLocaleString()} picked
+          </span>
+          <span>Set</span>
+          <select
+            value={bulkStatus}
+            onChange={e => setBulkStatus(e.target.value)}
+            aria-label="Status to set"
+            style={{ fontSize: '0.72rem', fontFamily: 'inherit', padding: '2px 4px', borderRadius: 4, border: '1px solid #CBD5E1', fontWeight: 600, ...(bulkStatus ? { background: serviceStatusColor(bulkStatus).bg || '#fff', color: serviceStatusColor(bulkStatus).color || '#475569' } : {}) }}
+          >
+            <option value="">Pick a status</option>
+            {SERVICE_STATUSES.filter(st => st !== '-').map(st => <option key={st} value={st}>{st}</option>)}
+          </select>
+          <span>on each one&apos;s Biggest Deal Service</span>
+          <button
+            type="button"
+            onClick={applyBulkStatus}
+            disabled={bulkBusy || !bulkStatus || !bulkPlan.change.length}
+            title={!pickedRows.length ? 'Tick companies first, or pick all on screen' : !bulkStatus ? 'Pick a status first' : !bulkPlan.change.length ? 'Every picked company already has that status' : undefined}
+            style={{ padding: '3px 10px', borderRadius: 6, border: 'none', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700, background: bulkBusy || !bulkStatus || !bulkPlan.change.length ? '#CBD5E1' : '#0A66C2', color: '#fff', cursor: bulkBusy || !bulkStatus || !bulkPlan.change.length ? 'default' : 'pointer' }}
+          >{bulkBusy ? 'Saving...' : `Apply to ${bulkPlan.change.length.toLocaleString()} ${bulkPlan.change.length === 1 ? 'company' : 'companies'}`}</button>
+          {pickedRows.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setPicked(new Set())}
+              style={{ padding: '2px 8px', borderRadius: 6, border: '1px solid #CBD5E1', background: '#fff', fontFamily: 'inherit', fontSize: '0.7rem', color: '#475569', cursor: 'pointer' }}
+            >Clear picks</button>
+          )}
+          {pickedRows.length > 0 && bulkStatus && (
+            <span
+              style={{ flexBasis: '100%', fontSize: '0.7rem', color: '#64748B' }}
+              title={bulkPlan.services.join('\n')}
+            >
+              Sets {bulkStatus} on {bulkPlan.services.length === 1 ? bulkPlan.services[0] : `${bulkPlan.services.length} different services (hover to list them)`} across {bulkPlan.companies.toLocaleString()} {bulkPlan.companies === 1 ? 'company' : 'companies'}
+              {bulkPlan.same.length > 0 ? `, ${bulkPlan.same.length.toLocaleString()} already ${bulkStatus} and left alone` : ''}. Each company leaves this list once its service has a status.
+            </span>
+          )}
+          {bulkUndo && (
+            <span style={{ flexBasis: '100%', display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.7rem', color: '#166534' }}>
+              {bulkUndo.message}
+              <button
+                type="button"
+                onClick={undoBulkStatus}
+                disabled={bulkBusy}
+                style={{ padding: '1px 8px', borderRadius: 6, border: '1px solid #86EFAC', background: '#F0FDF4', fontFamily: 'inherit', fontSize: '0.7rem', fontWeight: 700, color: '#166534', cursor: 'pointer' }}
+              >Undo</button>
+            </span>
+          )}
+        </div>
+      )}
       {loading ? (
         <div style={{ fontSize: '0.75rem', color: '#94A3B8', padding: '1rem 0' }}>Loading companies…</div>
       ) : rows.length === 0 ? (
@@ -456,7 +591,7 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
             : `No companies in the tracker list ${cdmName || 'you'} as their CDM.`}
         </div>
       ) : (
-        <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 230px)', minHeight: 320 }}>
+        <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', display: 'flex', flexDirection: 'column', height: setDealStatus ? 'calc(100vh - 280px)' : 'calc(100vh - 230px)', minHeight: 320 }}>
           <DataTable
             key={tableId}
             tableId={tableId}
