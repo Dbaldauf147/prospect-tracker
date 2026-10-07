@@ -26,6 +26,7 @@ import { getStateForCity, lookupStateForCity, CITY_OPTIONS, matchCities } from '
 import { useDraftCampaignQueue, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { companyOverrideUpdate, contactLocalFieldsUpdate } from '../../utils/contactCompanyOverride';
 import { primarySubject } from '../../utils/campaignSubjects';
+import { EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
 import { latestCampaignReplies, campaignReplyForContact } from '../../utils/campaignReplies';
 import { campaignSendDetailWithin } from '../../utils/campaignFollowUp';
 import { buildUnansweredIndex, unansweredFor, campaignSendsByAddress, UNANSWERED_VERSION } from '../../utils/unansweredOutreach';
@@ -2152,13 +2153,17 @@ function KeyContactsViewInner({
   useEffect(() => {
     if (!hasFullTable(storagePrefix) || !user?.uid) return;
     let cancelled = false;
-    (async () => {
+    const load = async () => {
       try {
         const snap = await getDoc(doc(db, 'emailCampaigns', user.uid));
         if (!cancelled) setSavedCampaigns(snap.exists() ? (snap.data().campaigns || []) : []);
       } catch { if (!cancelled) setSavedCampaigns([]); }
-    })();
-    return () => { cancelled = true; };
+    };
+    load();
+    // Re-read when the contact popup adds somebody to a campaign, so the
+    // campaign columns pick it up without a reload.
+    window.addEventListener(EMAIL_CAMPAIGNS_UPDATED_EVENT, load);
+    return () => { cancelled = true; window.removeEventListener(EMAIL_CAMPAIGNS_UPDATED_EVENT, load); };
   }, [user, storagePrefix]);
 
   // Campaign membership filter (All Contacts only): pick a saved email
