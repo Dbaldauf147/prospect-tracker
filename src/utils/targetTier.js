@@ -9,8 +9,8 @@
 //   2. A fuzzy name match of the prospect's company against the target
 //      list (only when the user never explicitly set/cleared a mapping).
 
-import { matchesCdm, resolveTargetAccountCdm } from './cdmMatch';
-import { buildCompanyIndex, findMatchesInIndex } from './companyIndex';
+import { matchesCdm, resolveTargetAccountCdm } from './cdmMatch.js';
+import { buildCompanyIndex, findMatchesInIndex } from './companyIndex.js';
 
 // Pull the company + tier out of a Target Accounts workbook, keeping every
 // tier (1–9), not just Tier 1/2. When `scopeToCdm` is true the rows are
@@ -58,7 +58,11 @@ export function parseTargetAccountTiers(targetAccountsData, cdmName, targetCdmCo
 // nothing maps. `name` is the target account the tier came from; `source`
 // is 'mapped' (explicit targetMap) or 'fuzzy' (name match). Build once per
 // (targetAccountsData, cdmName, settings) change and reuse for every row.
-export function buildTargetTierResolver({ targetAccountsData, cdmName, settings }) {
+//
+// `includeAllReps` widens the name search to every rep's rows once this
+// CDM's have nothing: for a list of OTHER pods' accounts (the Keith
+// agenda's PE overlap deals), where the account is usually not this CDM's.
+export function buildTargetTierResolver({ targetAccountsData, cdmName, settings, includeAllReps = false }) {
   const targetCdmColumn = settings?.targetCdmColumn;
   const cdmScoped = parseTargetAccountTiers(targetAccountsData, cdmName, targetCdmColumn, { scopeToCdm: true });
   const allReps = parseTargetAccountTiers(targetAccountsData, cdmName, targetCdmColumn, { scopeToCdm: false });
@@ -75,6 +79,7 @@ export function buildTargetTierResolver({ targetAccountsData, cdmName, settings 
     if (k && !byNameAll.has(k)) byNameAll.set(k, t.tier);
   }
   const cdmIndex = buildCompanyIndex(cdmScoped.map(t => t.company));
+  const allIndex = includeAllReps ? buildCompanyIndex(allReps.map(t => t.company)) : null;
 
   const lookupName = (nm) => {
     const k = (nm || '').toLowerCase().trim();
@@ -99,7 +104,72 @@ export function buildTargetTierResolver({ targetAccountsData, cdmName, settings 
         const t = byNameCdm.get((tName || '').toLowerCase().trim());
         if (t) return { tier: t, name: tName, source: 'fuzzy' };
       }
+      if (allIndex) {
+        const exact = byNameAll.get(String(prospect.company || '').toLowerCase().trim());
+        if (exact) return { tier: exact, name: prospect.company, source: 'fuzzy' };
+        for (const tName of findMatchesInIndex(allIndex, prospect.company || '')) {
+          const t = byNameAll.get((tName || '').toLowerCase().trim());
+          if (t) return { tier: t, name: tName, source: 'fuzzy' };
+        }
+      }
     }
     return { tier: '', name: '', source: '' };
+  };
+}
+
+// Who owns each account on the Target Accounts list: the CDM column of its
+// row (settings.targetCdmColumn when set, else the column whose header
+// reads like a CDM / owner). Every rep's rows, not just this user's: the
+// point of reading it is to see whose account a deal is.
+export function parseTargetAccountCdms(targetAccountsData, targetCdmColumn) {
+  const data = targetAccountsData;
+  if (!data?.sheets) return [];
+  const out = [];
+  for (const sheetName of data.sheetNames || []) {
+    for (const r of data.sheets[sheetName]?.records || []) {
+      let company = '';
+      for (const key of Object.keys(r)) {
+        const lower = key.toLowerCase();
+        if (['account', 'company', 'account name', 'client', 'name'].some(kw => lower.includes(kw))) {
+          company = String(r[key] || '').trim();
+          if (company) break;
+        }
+      }
+      const cdm = resolveTargetAccountCdm(r, targetCdmColumn);
+      if (company && cdm) out.push({ company, cdm });
+    }
+  }
+  return out;
+}
+
+// Build a resolver: prospect-like { id?, company } → the CDM the Target
+// Accounts list names for it, or ''. Matched the way the tier resolver
+// matches: the explicit My Accounts mapping first, then the exact name,
+// then a fuzzy name match.
+export function buildTargetCdmResolver({ targetAccountsData, settings }) {
+  const rows = parseTargetAccountCdms(targetAccountsData, settings?.targetCdmColumn);
+  const byName = new Map();
+  for (const t of rows) {
+    const k = t.company.toLowerCase().trim();
+    if (k && !byName.has(k)) byName.set(k, t.cdm);
+  }
+  const index = buildCompanyIndex(rows.map(t => t.company));
+  const targetMap = settings?.targetMap || {};
+  return function resolveTargetCdm(prospect) {
+    if (!prospect) return '';
+    const rawMap = prospect.id != null ? targetMap[prospect.id] : undefined;
+    const names = Array.isArray(rawMap) ? rawMap : (rawMap ? [rawMap] : []);
+    for (const nm of names) {
+      const c = byName.get(String(nm || '').toLowerCase().trim());
+      if (c) return c;
+    }
+    const exact = byName.get(String(prospect.company || '').toLowerCase().trim());
+    if (exact) return exact;
+    if (rawMap !== undefined) return ''; // mapped (or cleared) on purpose
+    for (const tName of findMatchesInIndex(index, prospect.company || '')) {
+      const c = byName.get(String(tName || '').toLowerCase().trim());
+      if (c) return c;
+    }
+    return '';
   };
 }

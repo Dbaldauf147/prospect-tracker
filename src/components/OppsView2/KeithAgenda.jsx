@@ -375,6 +375,8 @@ export function KeithAgenda({ settings, updateSettings, stage6Deals = [], peDeal
                           <tr>
                             <th aria-label="Covered" />
                             <th>Account</th>
+                            <th title="The account's tier: its company card's, or the Target Accounts list's where that card's tier came from an import">Tier</th>
+                            <th title="Whose account it is on the Target Accounts list">CDM</th>
                             <th>PE Owner</th>
                             <th>Vertical</th>
                             <th title="Who Opps > Coverage lists against the deal's vertical">Salesperson</th>
@@ -407,6 +409,16 @@ export function KeithAgenda({ settings, updateSettings, stage6Deals = [], peDeal
                                     {deal.name}
                                   </button>
                                 </td>
+                                <td
+                                  className={deal.tier ? undefined : styles.agendaSubMeta}
+                                  style={{ whiteSpace: 'nowrap' }}
+                                  title={deal.tier ? undefined : 'No tier on the company card or the Target Accounts list'}
+                                >{deal.tier || '-'}</td>
+                                <td
+                                  className={deal.targetCdm ? undefined : styles.agendaSubMeta}
+                                  style={{ whiteSpace: 'nowrap' }}
+                                  title={deal.targetCdm ? undefined : 'Not on the Target Accounts list (or no CDM on its row)'}
+                                >{deal.targetCdm || '-'}</td>
                                 <td className={deal.peOwner ? undefined : styles.agendaSubMeta}>{deal.peOwner || '-'}</td>
                                 <td><VerticalCell deal={deal} onSetVertical={onSetVertical} /></td>
                                 {(() => {

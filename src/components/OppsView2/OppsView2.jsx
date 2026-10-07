@@ -46,6 +46,7 @@ import {
 } from '../../utils/clientCoaFlags';
 import { KeithAgenda } from './KeithAgenda';
 import { buildPeOverlapDeals, oppStageNumber } from '../../utils/keithPeDeals';
+import { buildTargetTierResolver, buildTargetCdmResolver } from '../../utils/targetTier';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { getEffectiveServiceMetadata, formatRolloutWeeks } from '../../data/serviceCatalog';
 import { missingServiceTimelines, isServiceTimelineRow } from '../../utils/serviceTimelines';
@@ -13763,7 +13764,7 @@ function TodoBox() {
   );
 }
 
-export function OppsView2({ settings, updateSettings, updateSettingsPath, prospects = [], updateProspect, addProspect, onSelectProspect } = {}) {
+export function OppsView2({ settings, updateSettings, updateSettingsPath, prospects = [], updateProspect, addProspect, onSelectProspect, targetAccountsData = null, cdmName = '' } = {}) {
   const { user, isAdmin } = useAuth();
 
   // The clients' COA requirements (company card > Contracts) for the COA
@@ -16854,9 +16855,20 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // The deals behind the "PE overlap deals" line: every Private Equity or
   // Portfolio Company opp at Stage 3 or later. Off every opp, not the tab's
   // filtered rows, for the same reason as the Stage 6 list above.
+  // The Target Accounts list's tier for an account, so the deals' Tier
+  // reads the way My Accounts reads it (see keithPeDeals.accountTier).
+  const targetTierFor = useMemo(
+    () => (targetAccountsData ? buildTargetTierResolver({ targetAccountsData, cdmName, settings, includeAllReps: true }) : null),
+    [targetAccountsData, cdmName, settings?.targetMap, settings?.targetCdmColumn], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  // And whose account the Target Accounts list says it is.
+  const targetCdmFor = useMemo(
+    () => (targetAccountsData ? buildTargetCdmResolver({ targetAccountsData, settings }) : null),
+    [targetAccountsData, settings?.targetMap, settings?.targetCdmColumn], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const peOverlapDeals = useMemo(
-    () => buildPeOverlapDeals(records, { parseAmount: parseMoney, fmtAmount: fmtMoneyWhole, prospects }),
-    [records, prospects],
+    () => buildPeOverlapDeals(records, { parseAmount: parseMoney, fmtAmount: fmtMoneyWhole, prospects, targetTierFor, targetCdmFor }),
+    [records, prospects, targetTierFor, targetCdmFor],
   );
 
   // Mass Edit → "Email table": the selected opps to feed the preview/copy
