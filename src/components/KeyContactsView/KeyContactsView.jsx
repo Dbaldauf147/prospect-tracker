@@ -556,8 +556,8 @@ function buildContactColumns({ categorizeContact, showSuggestedCompany, showNewC
     // When the contact last replied to a saved email campaign.
     ...(hasFullTable(storagePrefix) ? [{ key: 'campaignReply', label: 'Campaign Reply' }] : []),
     ...(hasFullTable(storagePrefix) ? [{ key: 'emailCampaigns', label: 'Email Campaigns' }] : []),
-    // How many campaign emails went to this contact in the last 60 days,
-    // across every saved campaign, follow-ups included.
+    // How many saved campaigns emailed this contact in the last 60 days.
+    // One per campaign: a follow-up under the same campaign doesn't add.
     ...(hasFullTable(storagePrefix) ? [{ key: 'campaignSends60', label: 'Campaigns (60d)' }] : []),
   ].filter(Boolean);
 }
@@ -2340,12 +2340,13 @@ function KeyContactsViewInner({
 
   // Lowercased email -> { count, campaigns } for campaign emails sent in
   // the last 60 days, over every saved campaign (see
-  // campaignSendDetailWithin). The count fills the column; the per-campaign
-  // list is what opens when the count is clicked.
+  // campaignSendDetailWithin). The column counts CAMPAIGNS, not emails -
+  // three follow-ups under one campaign is still one - and the
+  // per-campaign list is what opens when the count is clicked.
   const campaignSends60Detail = useMemo(() => campaignSendDetailWithin(savedCampaigns, 60), [savedCampaigns]);
   const campaignSends60 = useMemo(() => {
     const m = new Map();
-    for (const [em, entry] of campaignSends60Detail) m.set(em, entry.count);
+    for (const [em, entry] of campaignSends60Detail) m.set(em, entry.campaigns.length);
     return m;
   }, [campaignSends60Detail]);
   const campaignSends60For = (c) => campaignSends60.get(String(c?.email || '').toLowerCase().trim()) || 0;
@@ -4568,7 +4569,7 @@ function KeyContactsViewInner({
                         return (
                           <div
                             style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1', textAlign: 'center' }}
-                            title="No campaign emails sent to this contact in the last 60 days"
+                            title="No campaigns emailed this contact in the last 60 days"
                           >0</div>
                         );
                       }
@@ -4590,7 +4591,7 @@ function KeyContactsViewInner({
                                 left: Math.max(8, Math.min(r.left + r.width / 2 - 160, window.innerWidth - 328)),
                               });
                             }}
-                            title={`${n} campaign email${n === 1 ? '' : 's'} sent to this contact in the last 60 days, across all saved campaigns (follow-ups included). Click to see which campaigns.`}
+                            title={`${n} saved campaign${n === 1 ? '' : 's'} emailed this contact in the last 60 days. Click to see which.`}
                             style={{
                               fontSize: '0.7rem', fontWeight: 600, color: '#1D4ED8', background: open ? '#DBEAFE' : 'transparent',
                               border: 'none', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2,
@@ -5123,7 +5124,7 @@ function KeyContactsViewInner({
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sends60Pop.name}</div>
                 <div style={{ color: '#64748B', fontSize: '0.65rem' }}>
-                  {entry ? `${entry.count} email${entry.count === 1 ? '' : 's'} across ${entry.campaigns.length} campaign${entry.campaigns.length === 1 ? '' : 's'}, last 60 days` : 'No campaign emails in the last 60 days'}
+                  {entry ? `${entry.campaigns.length} campaign${entry.campaigns.length === 1 ? '' : 's'}, last 60 days` : 'No campaigns in the last 60 days'}
                 </div>
               </div>
               <button
@@ -5139,7 +5140,6 @@ function KeyContactsViewInner({
                   <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={x.label}>{x.label}</div>
                   {fmt(x.lastSentDate) && <div style={{ color: '#94A3B8', fontSize: '0.65rem' }}>Last sent {fmt(x.lastSentDate)}</div>}
                 </div>
-                <span style={{ flexShrink: 0, fontWeight: 700, color: '#1D4ED8' }}>×{x.count}</span>
               </div>
             ))}
           </div>
