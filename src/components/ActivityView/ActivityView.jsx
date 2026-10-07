@@ -25,6 +25,7 @@ import {
   recordWeeklyActivity, loadWeeklyActivityLog, weeklyActivityEntry,
 } from '../../utils/weeklyActivityLog';
 import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
+import { buildUnansweredIndex } from '../../utils/unansweredOutreach';
 import styles from './ActivityView.module.css';
 
 const CACHE_KEY = 'hubspot-activity-cache';
@@ -75,7 +76,7 @@ function normalizeOutreachPhone(p) {
   return digits.length >= 10 ? digits.slice(-10) : '';
 }
 
-function buildOutreachIndex(data) {
+function buildOutreachIndex(data, workEmail) {
   const emails = {};
   const phones = {};
   const consider = (bucket, key, ts, type) => {
@@ -103,7 +104,11 @@ function buildOutreachIndex(data) {
       if (ph) consider(phones, ph, c.hs_timestamp, 'call');
     }
   }
-  return { emails, phones, fetchedAt: data?.fetchedAt };
+  // Per-address count of emails sent since their last reply, for the All
+  // Contacts "No Reply" column. Only addresses with something unanswered
+  // are kept, so it stays as small as the rest of the index.
+  const unanswered = buildUnansweredIndex(data?.emails, workEmail);
+  return { emails, phones, unanswered, fetchedAt: data?.fetchedAt };
 }
 
 // Stages that mean an opportunity has been closed out (won OR lost) and
@@ -129,7 +134,7 @@ function companiesMatchFuzz(a, b) {
 function loadCache() {
   try { return JSON.parse(userLsGet(CACHE_KEY)); } catch { return null; }
 }
-function saveCache(data) {
+function saveCache(data, workEmail) {
   try {
     userLsSet(CACHE_KEY, JSON.stringify(data));
   } catch (err) { console.warn('ActivityView cache write skipped (quota):', err?.message || err); }
@@ -137,7 +142,7 @@ function saveCache(data) {
   // above couldn't fit — it's what the All Contacts "Last Outreach" column
   // actually reads.
   try {
-    userLsSet(OUTREACH_INDEX_KEY, JSON.stringify(buildOutreachIndex(data)));
+    userLsSet(OUTREACH_INDEX_KEY, JSON.stringify(buildOutreachIndex(data, workEmail)));
   } catch (err) { console.warn('ActivityView outreach-index write skipped:', err?.message || err); }
   // Notify in-tab consumers (e.g. the Last Outreach column on
   // KeyContactsView) since the `storage` event only fires across tabs.
@@ -254,7 +259,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
       const meetings = await fetchAllPages('meeting');
       const result = { emails, calls, meetings, fetchedAt: new Date().toISOString() };
       setData(result);
-      saveCache(result);
+      saveCache(result, settings?.workEmail);
     } catch (err) {
       console.error('Activity fetch error:', err);
       setError(err.message || 'Failed to fetch activity');
