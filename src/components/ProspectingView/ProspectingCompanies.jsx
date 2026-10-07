@@ -21,12 +21,17 @@
 // the card's own grid writes. Only open services are ever the biggest deal,
 // so marking one Not Sold or N/A takes it off the row and the next biggest
 // open service takes its place.
+//
+// And only the ones nobody has started on: a row whose biggest deal already
+// carries a status (Exploring, Quoted, ...) is being worked, not prospected,
+// so it is left off the list. Picking a status from the row therefore takes
+// the row away; "- (auto)" on the company card brings it back.
 import { useEffect, useMemo, useState } from 'react';
 import { STATUS_COLORS, SERVICE_STATUSES } from '../../data/enums.js';
 import { serviceStatusColor } from '../../utils/serviceStatusColors.js';
 import { withServiceStatus } from '../../utils/clientDealSizing.js';
 import { allPcRows, myProspectRows, sumFigures } from '../../utils/prospectingPortfolio.js';
-import { biggestDealFor } from '../../utils/prospectingDeals.js';
+import { biggestDealFor, dealHasStatus } from '../../utils/prospectingDeals.js';
 import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
 import { pricedServiceRows } from '../../utils/serviceRows';
 import { formatMoneyRange, getServicePricing, resolvePricingBases } from '../../utils/servicePricing';
@@ -78,7 +83,7 @@ function DealStatusSelect({ deal, disabled, onPick }) {
   const { bg, color } = serviceStatusColor(deal.status);
   const title = disabled
     ? 'Open the company to change this status'
-    : `Set the status of ${deal.name} on this company. ${deal.fromOpp ? 'Now coming from an opportunity; picking one here overrides it.' : ''} Not Sold or N/A takes it off this row and the next biggest open service takes its place.`;
+    : `Set the status of ${deal.name} on this company. This list only shows services with no status yet, so picking one takes the company off it until the status is set back to "-" on the company card.`;
   return (
     <select
       value={value}
@@ -236,6 +241,11 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
     };
   }), [baseRows, savedAnalyses, dealById, dmLookup, serviceOverrides]);
 
+  // Rows whose biggest deal already has a status are left out (see the
+  // header). Counted so the page can say how many.
+  const unworked = useMemo(() => rows.filter(r => !dealHasStatus(r.deal)), [rows]);
+  const hiddenWorked = rows.length - unworked.length;
+
   const [query, setQuery] = useState('');
   // The search box narrows the rows before the table sees them; the
   // table's own column filters narrow them again, and it reports back
@@ -243,11 +253,11 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
   const searched = useMemo(() => {
     const q = query.trim().toLowerCase();
     return q
-      ? rows.filter(r => r.company.toLowerCase().includes(q)
+      ? unworked.filter(r => r.company.toLowerCase().includes(q)
         || r.peFirms.some(f => f.toLowerCase().includes(q))
         || r.status.toLowerCase().includes(q))
-      : rows;
-  }, [rows, query]);
+      : unworked;
+  }, [unworked, query]);
   // Null until the table first reports, which it does on every change of
   // rows or filters.
   const [onScreen, setOnScreen] = useState(null);
@@ -427,7 +437,7 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
     <div style={{ padding: '0.25rem 1.25rem 1.25rem', maxWidth }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.6rem' }}>
         <div style={{ fontSize: '0.72rem', color: '#64748B', flex: '1 1 320px' }}>
-          {intro} Sites, accounts and energy come from each company Master Analysis save, Biggest Deal is the same figure as on the company card, and Decision Makers lists who is tagged Decision Maker there and also carries a contact tag of the Biggest Deal service (hover for titles). Service Status is that service's status on the company card: pick one to change it, and a service marked Not Sold or N/A leaves the row for the next biggest open one. Grey italic figures are stand-ins until one is saved: hover them for where they came from. Drag a header edge to resize a column, type under a header to filter it, and star your standard columns in the Columns menu.
+          {intro} Sites, accounts and energy come from each company Master Analysis save, Biggest Deal is the same figure as on the company card, and Decision Makers lists who is tagged Decision Maker there and also carries a contact tag of the Biggest Deal service (hover for titles). Service Status is that service's status on the company card: only services with no status yet are listed, so picking one here takes the row off the list{hiddenWorked > 0 ? ` (${hiddenWorked.toLocaleString()} ${hiddenWorked === 1 ? 'company is' : 'companies are'} hidden now for having one)` : ''}. Grey italic figures are stand-ins until one is saved: hover them for where they came from. Drag a header edge to resize a column, type under a header to filter it, and star your standard columns in the Columns menu.
         </div>
         <input
           type="search"
