@@ -14,6 +14,9 @@
 // user to confirm. That arrives as `autoClear` (see categorizeStep) rather
 // than as a count, because it says "done" and never "N to do".
 //
+// A counted step can be marked too: a mark made today outranks its count
+// for the rest of the day (see categorizeStep).
+//
 // A manual mark is stamped with the day it was made and only counts on
 // that day. Prospecting is daily work, and a tick that stayed on from
 // last Tuesday would read as "done" forever — the honest default when a
@@ -181,9 +184,15 @@ export function countServiceGaps(gaps) {
 // mark still wins over a `null`: a step the user has ticked is caught up
 // whatever else is still loading.
 export function categorizeStep({ count, marked = false, autoClear = undefined } = {}) {
+  // A mark made today wins over everything, a real count included: the
+  // count says what is still listed, the mark says the user has worked the
+  // step as far as they are going to today (the last service gap is a call
+  // that can't happen until next week, say). It clears tomorrow like any
+  // other mark, and the count is back in charge.
+  if (marked) return 'caught-up';
   if (count === null) return 'unknown';
   if (typeof count === 'number' && Number.isFinite(count)) return count > 0 ? 'work' : 'caught-up';
-  if (marked || autoClear === true) return 'caught-up';
+  if (autoClear === true) return 'caught-up';
   if (autoClear === null) return 'unknown';
   return 'open';
 }
@@ -224,6 +233,8 @@ export function ladderStates({ steps, counts = null, autoClear = null, caughtUpM
     // of offering an undo for a mark that was never made.
     const row = { key: step.key, state, count, tracked };
     if (state === 'caught-up' && !marked && auto === true) row.auto = true;
+    // Cleared by a tick, counted step or not - the row offers the undo.
+    if (marked) row.marked = true;
     // Whose nav item already carries this step's number, if any — see
     // countLadderWork at the foot of this file.
     if (step.badgedOn) row.badgedOn = step.badgedOn;

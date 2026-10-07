@@ -35,8 +35,9 @@ eq(categorizeStep({ count: null }), 'unknown', 'a count still loading is unknown
 eq(categorizeStep({ count: undefined, marked: false }), 'open', 'an uncounted step starts the day open');
 eq(categorizeStep({ count: undefined, marked: true }), 'caught-up', 'an uncounted step marked today is caught up');
 eq(categorizeStep(), 'open', 'no argument at all reads as an unmarked, uncounted step');
-// A marked-today flag must not talk over a real count: the data wins.
-eq(categorizeStep({ count: 2, marked: true }), 'work', 'a real count outranks a manual mark');
+// A mark made today clears a counted step for the day, count or not.
+eq(categorizeStep({ count: 2, marked: true }), 'caught-up', 'a manual mark outranks a real count for the day');
+eq(categorizeStep({ count: null, marked: true }), 'caught-up', 'and a count still loading');
 
 // An uncounted step the app can still answer for — the market-updates step,
 // once every campaign that isn't paused has finished sending.
@@ -204,9 +205,14 @@ eq(countDueSteps([]), 0, 'no steps at all means no dot');
     'at the top of the ladder it is outstanding whatever sits below it');
 }
 
-// A tracked step is never talked over by this: its count still decides.
-eq(stateOf(STEPS, { opps: 4 }, { opps: TODAY }, 'opps'), 'work',
-  'a real count still outranks a manual mark inside the ladder walk');
+// A counted step marked today is caught up for the day, count or not, and
+// the row carries the mark so the page can offer the undo.
+eq(stateOf(STEPS, { opps: 4 }, { opps: TODAY }, 'opps'), 'caught-up',
+  'a manual mark clears a counted step inside the ladder walk');
+eq(stateOf(STEPS, { opps: 4 }, { opps: '2020-01-01' }, 'opps'), 'work',
+  "yesterday's mark leaves the count in charge");
+eq(statesByKey(ladderStates({ steps: STEPS, counts: { opps: 4 }, caughtUpMap: { opps: TODAY }, today: TODAY })).opps.marked, true,
+  'the row says it was cleared by a mark');
 
 // --- the campaigns answering for the market-updates step -------------------
 //

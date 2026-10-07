@@ -379,9 +379,10 @@ function TagCoverageBar({ coverage, onNavigate, missing = [], onOpenContact, onA
   );
 }
 
-// One cell of the Status column. Untracked steps render a button (the
-// mark is the user's to set); counted steps render static text, since
-// clicking couldn't change what the data says. A row tall enough to hold
+// One cell of the Status column. Any step not yet clear can be marked
+// caught up for the day, and a marked one clicks to undo; a step cleared
+// by its count or by the data renders static text, since there is no mark
+// to take back. A row tall enough to hold
 // a list aligns its cells to the top instead of floating them in the
 // middle of all that space.
 function StatusCell({ state, label, title, onToggle, align = 'center' }) {
@@ -399,6 +400,26 @@ function StatusCell({ state, label, title, onToggle, align = 'center' }) {
     overflow: 'hidden', textOverflow: 'ellipsis',
   };
   if (!onToggle) return <div style={base} title={title}>{label}</div>;
+  // A pill that names the work ("1 service", "Outstanding") doesn't read
+  // as a button, so those carry a plain "Mark caught up" under them. The
+  // grey "Mark caught up" pill and the green undo already say it.
+  if (state === 'work' || state === 'due') {
+    return (
+      <div style={{ width: STATUS_COL, flexShrink: 0, alignSelf: align, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+        <div style={base} title={title}>{label}</div>
+        <button
+          type="button"
+          onClick={onToggle}
+          title="Mark this step caught up for today - the mark clears tomorrow"
+          style={{
+            padding: 0, border: 0, background: 'none', fontFamily: 'inherit',
+            fontSize: '0.64rem', fontWeight: 700, color: '#64748B', cursor: 'pointer',
+            textDecoration: 'underline', textDecorationColor: '#CBD5E1', textUnderlineOffset: 2,
+          }}
+        >Mark caught up</button>
+      </div>
+    );
+  }
   return (
     <button
       type="button"
@@ -1469,7 +1490,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
             ? 'Reorder with the arrows, click a title or description to rewrite it, and add steps of your own at the bottom. Changes save as you go.'
             : `The order prospecting work gets done, ranked. Start at the top and work down -
                each step is warmer than the one below it. A step turns green once it is clear:
-               counted steps answer for themselves, the rest you mark caught up for the day -
+               counted steps answer for themselves, and any step can be marked caught up for the day -
                and the first one you haven't shows as outstanding once everything above it
                is clear.`}
         </div>
@@ -1516,11 +1537,6 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           const tracked = typeof step.workLabel === 'function';
           const count = row?.count;
           const state = row?.state || (tracked ? 'unknown' : 'open');
-          // Cleared by what the app already knows rather than by a tick —
-          // the market-updates step, once the campaigns have all gone out.
-          // It reads like a counted step from here: no undo, because there
-          // is no mark to undo.
-          const autoCleared = row?.auto === true;
           // Green once the step is clear — but never while the ladder is
           // being edited: the Status column is hidden there, so a green row
           // would be a colour with nothing on screen to explain it, on the
@@ -1528,16 +1544,18 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           const colors = !editing && state === 'caught-up'
             ? CAUGHT_UP_COLORS
             : RANK_COLORS[Math.min(i, RANK_COLORS.length - 1)];
-          // A hand-marked step is caught up only because it was marked,
-          // so the toggle reads its state rather than the map again.
-          const marked = !tracked && !autoCleared && state === 'caught-up';
+          // Any step can be marked caught up for the day, counted or not:
+          // the row says whether this one was.
+          const marked = row?.marked === true;
+          // Cleared by its count or by the data, with no mark to undo.
+          const selfCleared = state === 'caught-up' && !marked;
           const label = state === 'work' ? step.workLabel(count)
             : state === 'caught-up' ? 'All caught up'
               : state === 'due' ? 'Outstanding'
                 : 'Mark caught up';
           const title = state === 'work' ? step.workTitle(count)
             : state === 'caught-up'
-              ? (tracked || autoCleared ? step.clearTitle : 'Marked caught up today - clears tomorrow. Click to undo.')
+              ? (marked ? 'Marked caught up today - clears tomorrow. Click to undo.' : step.clearTitle)
               : state === 'due'
                 ? 'Every step above this one is clear, so this is the work owed right now. Click once you\'ve done it today - the mark clears tomorrow.'
                 : 'Nothing counts this step automatically - click once you\'ve worked it today';
@@ -1688,7 +1706,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                     label={label}
                     title={title}
                     align={hasList ? 'flex-start' : 'center'}
-                    onToggle={tracked || autoCleared ? null : () => setStepCaughtUp(step.key, !marked, today)}
+                    onToggle={selfCleared ? null : () => setStepCaughtUp(step.key, !marked, today)}
                   />
                   {onNavigate && (step.view ? (
                     <button
