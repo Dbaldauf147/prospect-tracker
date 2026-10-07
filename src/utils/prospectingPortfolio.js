@@ -63,10 +63,19 @@ export function companyFigures(prospect, siteLists) {
   return out;
 }
 
-/** Every tracker company whose CDM is this user, A to Z. */
+// Statuses that mean there is nothing to prospect: the account has said no,
+// been parked, or already been a client and moved on. Both subtabs leave
+// these companies out (and so do their totals).
+export const CLOSED_STATUSES = ['Old Client', 'Lost - Not Sold', 'Hold Off'];
+const CLOSED_SET = new Set(CLOSED_STATUSES.map(s => s.toLowerCase()));
+export function isClosedStatus(status) {
+  return CLOSED_SET.has(String(status || '').trim().toLowerCase());
+}
+
+/** Every tracker company whose CDM is this user, A to Z, minus closed ones. */
 export function myProspectRows(prospects, cdmName, siteLists) {
   return (prospects || [])
-    .filter(p => p?.company && matchesCdm(p.cdm, cdmName))
+    .filter(p => p?.company && matchesCdm(p.cdm, cdmName) && !isClosedStatus(p.status))
     .map(p => ({
       key: p.id || p.company,
       company: String(p.company).trim(),
@@ -113,6 +122,7 @@ export function allPcRows(prospects, siteLists) {
   const rows = [];
   for (const row of byKey.values()) {
     const prospect = lookupProspectByPc(index, row.company);
+    if (isClosedStatus(prospect?.status || row.rowStatus)) continue;
     const figs = companyFigures(prospect, siteLists);
     if (figs.sites == null && row.estSites != null) { figs.sites = row.estSites; figs.sitesFrom = 'estimate'; }
     if (figs.energyMwh == null && row.estEnergyMwh != null) { figs.energyMwh = row.estEnergyMwh; figs.energyFrom = 'estimate'; }

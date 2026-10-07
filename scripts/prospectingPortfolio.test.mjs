@@ -50,5 +50,23 @@ const siteLists = { 'beta-logistics': { rows: [{}, {}, {}] } };
 
 eq(companyFigures(null, {}).sites, null, 'no record, no figures');
 
+// Old Client, Lost - Not Sold and Hold Off companies are left off both lists.
+{
+  const closed = [
+    { id: 'pe', company: 'Firm', cdm: 'Dan Baldauf', status: 'Client',
+      portfolioCompanies: [
+        { companyName: 'Live PC' },
+        { companyName: 'Tracked Lost PC' },
+        { companyName: 'Row Hold PC', status: 'hold off' },
+      ] },
+    { id: 'o', company: 'Old Co', cdm: 'Dan Baldauf', status: 'Old Client' },
+    { id: 'l', company: 'Tracked Lost PC', cdm: 'Dan Baldauf', status: 'Lost - Not Sold' },
+    { id: 'h', company: 'Held Co', cdm: 'Dan Baldauf', status: ' Hold Off ' },
+    { id: 'q', company: 'Open Co', cdm: 'Dan Baldauf', status: 'Qualifying' },
+  ];
+  eq(myProspectRows(closed, 'Dan Baldauf', {}).map(r => r.company), ['Firm', 'Open Co'], 'prospects drop closed statuses');
+  eq(allPcRows(closed, {}).map(r => r.company), ['Live PC'], 'PCs drop closed statuses, from the record or the firm row');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

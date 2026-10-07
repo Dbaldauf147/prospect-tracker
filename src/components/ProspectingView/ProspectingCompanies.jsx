@@ -221,8 +221,8 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
   const isPcs = mode === 'pcs';
   const loading = prospects == null;
   const intro = isPcs
-    ? 'Every portfolio company mapped on a PE firm Portfolio Companies table, once each.'
-    : `Every company in the tracker with ${cdmName || 'you'} as its CDM.`;
+    ? 'Every portfolio company mapped on a PE firm Portfolio Companies table, once each, except Old Client, Lost - Not Sold and Hold Off.'
+    : `Every company in the tracker with ${cdmName || 'you'} as its CDM, except Old Client, Lost - Not Sold and Hold Off.`;
 
   const columns = useMemo(() => {
     const num = (key, fromKey) => ({
