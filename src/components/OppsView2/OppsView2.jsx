@@ -147,6 +147,11 @@ import {
 } from './daysInStage';
 import { downloadNewOppsOutlookDraft, resolveNewOppsDraftTemplate } from '../../utils/newOppsDigestEmail';
 import { NewOppsDraftEmailModal } from './NewOppsDraftEmailModal';
+import {
+  peMonthlyRows, PE_MONTHLY_COLUMNS, PE_MONTHLY_DRAFT_DEFAULTS, resolvePeMonthlyDraftTemplate,
+  buildPeMonthlyEmailHtml, downloadPeMonthlyOutlookDraft,
+} from '../../utils/peMonthlyEmail';
+import { coverageFromSettings, salespeopleForVertical } from '../../utils/salesCoverage';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { reasonOptionsForCompetition } from '../../data/closeNotSoldRules';
 import { BfoCloseOutPreview } from '../BfoCloseOutPreview';
@@ -14015,6 +14020,13 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     () => resolveNewOppsDraftTemplate(settings?.newOppsDraftEmail),
     [settings?.newOppsDraftEmail],
   );
+  // PE Monthly subtab: the same draft flow over the PE overlap deals, with
+  // its own saved wording (userSettings.peMonthlyDraftEmail).
+  const [peMonthlyDraftTextOpen, setPeMonthlyDraftTextOpen] = useState(false);
+  const peMonthlyDraftTemplate = useMemo(
+    () => resolvePeMonthlyDraftTemplate(settings?.peMonthlyDraftEmail),
+    [settings?.peMonthlyDraftEmail],
+  );
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   // Dedicated Start Date range for the "By Source" tab. Kept separate
@@ -16871,6 +16883,43 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     [records, prospects, targetTierFor, targetCdmFor],
   );
 
+  // PE Monthly subtab: those same deals as flat rows - with the salesperson
+  // Opps > Coverage lists against each vertical, and the opp's Scope, Next
+  // Steps and BFO link - for the table and the Outlook draft alike.
+  const peMonthly = useMemo(() => {
+    const coverage = coverageFromSettings(settings);
+    return peMonthlyRows(peOverlapDeals, records, v => salespeopleForVertical(coverage, v));
+  }, [peOverlapDeals, records, settings?.salesCoverage]); // eslint-disable-line react-hooks/exhaustive-deps
+  const peMonthlyColumns = useMemo(() => PE_MONTHLY_COLUMNS.map(c => ({
+    key: c.key,
+    label: c.label,
+    defaultWidth: c.key === 'Next Steps' ? 260 : c.key === 'Account' ? 200 : c.key === 'Tier' ? 80 : 140,
+    getSortValue: (row) => String(row[c.key] || '').toLowerCase() || null,
+    getFilterValue: (row) => String(row[c.key] || ''),
+    exportValue: (row) => String(row[c.key] || ''),
+    render: (row) => {
+      const v = row[c.key];
+      if (!v) return <span style={{ color: '#CBD5E1' }}>-</span>;
+      if (c.key === 'Account') {
+        return (
+          <button
+            type="button"
+            onClick={() => setInfoOppId(row.id)}
+            title={`Open ${v}`}
+            style={{ border: 'none', background: 'none', padding: 0, font: 'inherit', fontWeight: 600, color: '#0A66C2', cursor: 'pointer', textAlign: 'left' }}
+          >{v}</button>
+        );
+      }
+      if (c.key === 'BFO Address') {
+        return /^https?:\/\//i.test(v)
+          ? <a href={v} target="_blank" rel="noreferrer">BFO Link</a>
+          : <span>{v}</span>;
+      }
+      if (c.key === 'Next Steps') return <span style={{ whiteSpace: 'pre-wrap' }}>{v.replace(/\u2028/g, '\n')}</span>;
+      return <span>{v}</span>;
+    },
+  })), []);
+
   // Mass Edit → "Email table": the selected opps to feed the preview/copy
   // modal (which lets the user pick columns and copies a plain bordered
   // table). Null when closed.
@@ -18262,6 +18311,10 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           onClick={() => setActiveTab('newOpps')}
         >New Opps{newOpps.length ? ` (${newOpps.length})` : ''}</button>
         <button
+          className={activeTab === 'peMonthly' ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab('peMonthly')}
+        >PE Monthly{peMonthly.length ? ` (${peMonthly.length})` : ''}</button>
+        <button
           className={activeTab === 'services' ? styles.tabActive : styles.tab}
           onClick={() => setActiveTab('services')}
         >By Service</button>
@@ -18535,6 +18588,63 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         </>
       )}
 
+      {activeTab === 'peMonthly' && (
+        <>
+          <div className={styles.searchRow}>
+            <span className={styles.resultCount}>
+              {peMonthly.length} PE overlap deal{peMonthly.length === 1 ? '' : 's'} (PE or portfolio company, Stage 3 or later)
+            </span>
+            <button
+              type="button"
+              onClick={() => downloadPeMonthlyOutlookDraft(peMonthly, {
+                ...peMonthlyDraftTemplate,
+                signature: settings?.emailSignature || (isAdmin ? DEFAULT_EMAIL_SIGNATURE : ''),
+              })}
+              disabled={peMonthly.length === 0}
+              title={peMonthly.length
+                ? 'Download an Outlook draft (.eml) of this email: open it in Outlook to review and send it yourself'
+                : 'No PE overlap deals to draft'}
+              style={{
+                marginLeft: '0.5rem', padding: '0.3rem 0.7rem', fontSize: '0.78rem', fontWeight: 600,
+                fontFamily: 'inherit', color: peMonthly.length ? '#0F6CBD' : '#94A3B8',
+                background: '#fff',
+                border: `1px solid ${peMonthly.length ? '#0F6CBD' : '#CBD5E1'}`,
+                borderRadius: 6, cursor: peMonthly.length ? 'pointer' : 'not-allowed',
+              }}
+            >Download Outlook draft</button>
+            <button
+              type="button"
+              onClick={() => setPeMonthlyDraftTextOpen(true)}
+              title="Edit the recipient, subject, greeting and intro paragraph the Outlook draft starts with"
+              style={{
+                marginLeft: '0.5rem', padding: '0.3rem 0.7rem', fontSize: '0.78rem', fontWeight: 600,
+                fontFamily: 'inherit', color: '#0F6CBD', background: '#fff',
+                border: '1px solid #0F6CBD', borderRadius: 6, cursor: 'pointer',
+              }}
+            >✎ Edit email text</button>
+          </div>
+          <div style={{ padding: '0 0 0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
+            The PE overlap deals from the Keith agenda: every Private Equity or Portfolio Company opp at Stage 3 (Lead) or later that is still open, furthest along first.
+            Salesperson is who Opps &gt; Coverage lists against the deal's vertical, so you can see where another pod is already in. The Outlook draft is the same email as New Opps, with this table.
+          </div>
+          {loading && !data ? (
+            <div className={styles.loading}>Loading...</div>
+          ) : (
+            <DataTable
+              tableId="opps2-pe-monthly"
+              columns={peMonthlyColumns}
+              rows={peMonthly}
+              alwaysVisible={['Account']}
+              enableColumnFilters
+              variableRowHeight
+              emptyMessage="No PE or Portfolio Company deals at Stage 3 or later right now."
+              settings={settings}
+              updateSettings={updateSettings}
+            />
+          )}
+        </>
+      )}
+
       {activeTab === 'waitingKeith' && (
         // One scroll for the whole tab. The agenda can run taller than the
         // window (its deal lists grow with the pipeline), and under the
@@ -18595,6 +18705,21 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         signature={settings?.emailSignature || (isAdmin ? DEFAULT_EMAIL_SIGNATURE : '')}
         template={settings?.newOppsDraftEmail}
         onSave={(next) => updateSettings?.({ newOppsDraftEmail: next })}
+      />
+
+      <NewOppsDraftEmailModal
+        open={peMonthlyDraftTextOpen}
+        onClose={() => setPeMonthlyDraftTextOpen(false)}
+        records={peMonthly}
+        signature={settings?.emailSignature || (isAdmin ? DEFAULT_EMAIL_SIGNATURE : '')}
+        template={settings?.peMonthlyDraftEmail}
+        onSave={(next) => updateSettings?.({ peMonthlyDraftEmail: next })}
+        defaults={PE_MONTHLY_DRAFT_DEFAULTS}
+        resolveTemplate={resolvePeMonthlyDraftTemplate}
+        buildHtml={buildPeMonthlyEmailHtml}
+        download={downloadPeMonthlyOutlookDraft}
+        itemNoun="deal"
+        footnote="The table and your signature are added automatically."
       />
 
       <NewOppsScheduleModal

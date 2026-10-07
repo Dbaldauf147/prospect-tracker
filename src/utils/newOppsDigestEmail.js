@@ -60,13 +60,21 @@ const cellValue = (r, c) => (c.value ? c.value(r) : (r[c.key] ?? ''));
 // The SE-free, black-and-white bordered digest table. Mirrors
 // buildNewOppsTableHtml in api/_lib/newOpps.js.
 export function buildNewOppsDigestTableHtml(records) {
+  return buildDigestTableHtml(records, DIGEST_COLUMNS, 'No new opportunities to report.');
+}
+
+// The same table over any column set - { key, label, align?, value? } - so
+// another digest (PE Monthly) reads exactly like the New Opps one. A
+// 'BFO Address' column renders "BFO Link" and 'Next Steps' keeps its line
+// breaks, whichever list they appear in.
+export function buildDigestTableHtml(records, columns, emptyText = 'Nothing to report.') {
   if (!Array.isArray(records) || records.length === 0) {
-    return '<p style="color:#000000;font-size:13px;margin:0">No new opportunities to report.</p>';
+    return `<p style="color:#000000;font-size:13px;margin:0">${escapeHtml(emptyText)}</p>`;
   }
 
   const BORDER = '1px solid #000000';
   const thAlign = (c) => (c.align === 'right' ? 'right' : 'left');
-  const head = DIGEST_COLUMNS.map((c) =>
+  const head = columns.map((c) =>
     `<th style="text-align:${thAlign(c)};padding:6px 10px;font:700 13px Arial,sans-serif;color:#000000;border:${BORDER};white-space:nowrap">${escapeHtml(c.label)}</th>`
   ).join('');
 
@@ -78,7 +86,7 @@ export function buildNewOppsDigestTableHtml(records) {
     `<a href="${escapeHtml(href)}" style="color:#000000;text-decoration:underline">${escapeHtml(text)}</a>`;
 
   const rows = records.map((r) => {
-    const cells = DIGEST_COLUMNS.map((c) => {
+    const cells = columns.map((c) => {
       const v = cellValue(r, c);
       let inner;
       if (c.key === 'BFO Address') {
@@ -107,6 +115,11 @@ export function buildNewOppsDigestTableHtml(records) {
 // (the same `settings.emailSignature` HTML the Draft Email tab appends to
 // its drafts - see DraftEmailView's buildStyledBodyHtml).
 export function buildNewOppsDigestEmailHtml(records, { message = '', greeting = '', signature = '' } = {}) {
+  return buildDigestEmailHtml(buildNewOppsDigestTableHtml(records), { message, greeting, signature });
+}
+
+// The body around any digest table: greeting, intro, the table, signature.
+export function buildDigestEmailHtml(tableHtml, { message = '', greeting = '', signature = '' } = {}) {
   // Explicit <br> blank lines (rather than CSS margins, which Outlook can
   // collapse) so a clear empty line separates the greeting from the table
   // and the table from the signature.
@@ -116,7 +129,7 @@ export function buildNewOppsDigestEmailHtml(records, { message = '', greeting = 
   const intro = message
     ? `<p style="color:#334155;font-size:14px;white-space:pre-wrap;margin:0 0 16px">${escapeHtml(message)}</p>`
     : '';
-  const table = buildNewOppsDigestTableHtml(records);
+  const table = tableHtml;
   // The signature is stored as trusted HTML (pasted by the user in the
   // Draft Email tab's signature editor) - appended verbatim, same as the
   // Draft Email .eml export does.
@@ -180,15 +193,20 @@ export function downloadNewOppsOutlookDraft(records, {
   signature = '',
 } = {}) {
   const html = buildNewOppsDigestEmailHtml(records, { message, greeting, signature });
+  downloadEml({ to, subject, html, filePrefix: 'new-opps' });
+  return Array.isArray(records) ? records.length : 0;
+}
+
+// Save an HTML email as an Outlook draft (.eml), named <prefix>-<date>.eml.
+export function downloadEml({ to = '', subject = '', html = '', filePrefix = 'draft' } = {}) {
   const eml = buildNewOppsEml({ to, subject, html });
   const blob = new Blob([eml], { type: 'message/rfc822' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `new-opps-${new Date().toISOString().slice(0, 10)}.eml`;
+  a.download = `${filePrefix}-${new Date().toISOString().slice(0, 10)}.eml`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  return Array.isArray(records) ? records.length : 0;
 }
