@@ -1,5 +1,5 @@
 import { buildListRegistry, resolveColumnLink } from '../common/columnLinks';
-import { STATUSES, TIERS } from '../../data/enums';
+import { STATUSES, TIER_OPTIONS } from '../../data/enums';
 import { HQ_REGION_OPTIONS } from '../../utils/hqRegion';
 import { HANDOFF_FIELDS } from '../../utils/dealHandoff';
 import { DEAL_IGNORED_KEY } from '../../utils/postSaleFollowUp';
@@ -147,7 +147,7 @@ export function buildResolution(row, ctx) {
         subtitle,
         note: `Target Accounts has this account at ${r.targetTier || '-'}. Match it, or keep your tier and stop flagging it.`,
         fields: [
-          field('tier', 'Tier', 'select', prospect.tier || r.myTier, { options: TIERS, start: r.targetTier || prospect.tier }),
+          field('tier', 'Tier', 'select', prospect.tier || r.myTier, { options: TIER_OPTIONS, start: r.targetTier || prospect.tier }),
           field('ignore', 'Keep my tier and ignore this mismatch', 'checkbox', false),
         ],
         async save(v, changed) {

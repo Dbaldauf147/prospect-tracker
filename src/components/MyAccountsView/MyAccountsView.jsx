@@ -7,7 +7,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { Badge } from '../common/Badge';
 import { DataTable } from '../common/DataTable';
 import { statusColor, formatAum } from '../../utils/formatters';
-import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
+import { STATUSES, TYPES, TIER_OPTIONS, NOT_ON_TIER_LIST, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
 import { buildTypeOptions } from '../../utils/prospectOptions';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { buildCompanyIndex, findMatchesInIndex, findStrictMatchesInIndex, hasMatchInIndex, containsWholeWords } from '../../utils/companyIndex';
@@ -1053,7 +1053,7 @@ function parseXlsx(file) {
 // carry their `options`; number fields set type:'number'; everything else
 // is a free-text input. Keys match the prospect fields written via onUpdate.
 const BULK_FIELDS = [
-  { key: 'tier', label: 'Tier', options: TIERS },
+  { key: 'tier', label: 'Tier', options: TIER_OPTIONS },
   { key: 'status', label: 'Status', options: STATUSES },
   { key: 'type', label: 'Type', options: TYPES },
   { key: 'geography', label: 'Geography', options: GEOGRAPHIES },
@@ -1850,7 +1850,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   // is what drops a record out of the view entirely.
   function hasResolvedTier(prospect) {
     const tier = prospect?.tier;
-    return tier === 'Tier 1' || tier === 'Tier 2' || tier === 'Tier 3' || tier === '' || tier === '-';
+    return tier === 'Tier 1' || tier === 'Tier 2' || tier === 'Tier 3' || tier === NOT_ON_TIER_LIST || tier === '' || tier === '-';
   }
 
   // The record a new My Accounts row would be built from, shared by the
@@ -2262,7 +2262,7 @@ Fix that now?
       if (isDismissed(p.company)) continue;
       // Use Firestore tier if explicitly set, otherwise fall back to map/target accounts
       let tier;
-      if (p.tier === 'Tier 1' || p.tier === 'Tier 2' || p.tier === 'Tier 3') {
+      if (p.tier === 'Tier 1' || p.tier === 'Tier 2' || p.tier === 'Tier 3' || p.tier === NOT_ON_TIER_LIST) {
         // Any explicitly-chosen tier wins — including Tier 3. Previously
         // Tier 3 fell through to the hardcoded map below, so setting a
         // mapped account (e.g. one the map lists as Tier 2) to Tier 3 got
@@ -3280,7 +3280,7 @@ Fix that now?
                 value={row.myTier}
                 displayValue={stripped || row.myTier}
                 onUpdate={onUpdate}
-                options={TIERS}
+                options={TIER_OPTIONS}
               />
               {row.tierMismatch && <TierMismatchWarning
                 row={row}
@@ -3438,7 +3438,7 @@ Fix that now?
         return { ...col, render: (row) => <InlineCell row={row} field="rank" value={row.rank} onUpdate={onUpdate} /> };
       }
       if (col.key === 'tier') {
-        return { ...col, render: (row) => <InlineCell row={row} field="tier" value={row.tier} onUpdate={onUpdate} options={TIERS} /> };
+        return { ...col, render: (row) => <InlineCell row={row} field="tier" value={row.tier} onUpdate={onUpdate} options={TIER_OPTIONS} /> };
       }
       if (col.key === 'website') {
         return { ...col, render: (row) => <InlineCell row={row} field="website" value={row.website} onUpdate={onUpdate} /> };

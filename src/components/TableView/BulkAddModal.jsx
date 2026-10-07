@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { companyDedupeKey } from '../../utils/firestoreSync';
-import { STATUSES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS } from '../../data/enums';
+import { STATUSES, TIER_OPTIONS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS } from '../../data/enums';
 import { buildTypeOptions, buildCdmOptions, buildAssetTypeOptions, buildStrategyOptions } from '../../utils/prospectOptions';
 import { splitPeOwners } from '../../utils/peOwners';
 import { FIELDS, autoMap, parseDelimitedRows, cellsToProspect } from './pasteFields';
@@ -27,7 +27,7 @@ const SHARED_FIELDS = [
   { key: 'status', label: 'Status', options: STATUSES },
   { key: 'cdm', label: 'CDM', dynamic: 'cdm' },
   { key: 'type', label: 'Type', dynamic: 'type' },
-  { key: 'tier', label: 'Tier', options: TIERS },
+  { key: 'tier', label: 'Tier', options: TIER_OPTIONS },
   { key: 'geography', label: 'Geography', options: GEOGRAPHIES },
   { key: 'publicPrivate', label: 'Pub/Priv', options: PUBLIC_PRIVATE },
   // A company cannot be created without one, so it is one of the always-on

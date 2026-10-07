@@ -27,7 +27,7 @@ import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { ContractsTab } from './ContractsTab';
 import { useCompanyContracts } from '../../hooks/useCompanyContracts';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
-import { STATUSES, STATUS_COLORS, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
+import { STATUSES, STATUS_COLORS, TIER_OPTIONS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { peStageOf } from '../../utils/peStages';
 import { getServiceCategories, buildServiceBoard, moveServiceToBucket, serviceBucketOf, UNGROUPED_SERVICES, addServiceBox, renameServiceBox } from '../../utils/serviceCategoriesStore';
 import { isCoverageTracked } from '../../utils/pipelineDashboardStore';
@@ -8909,7 +8909,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <label className={styles.label}>Tier</label>
               <select className={styles.select} value={fields.tier} onChange={e => set('tier', e.target.value)}>
                 <option value="">-</option>
-                {TIERS.map(t => <option key={t} value={t}>{t}</option>)}
+                {TIER_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
 
