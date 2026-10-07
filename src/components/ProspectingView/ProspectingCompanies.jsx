@@ -10,10 +10,11 @@
 // is. The deal is the company card's own Biggest Deal reading, run per row
 // (utils/prospectingDeals.js), so the two never disagree.
 //
-// And who the decision makers are: the contacts tagged Decision Maker at
-// each company, matched the way the ladder's DM mapping matches them
-// (utils/decisionMakerCoverage.js), so a blank cell here is an account the
-// ladder counts as unmapped.
+// And who the decision makers are for that deal: the contacts tagged
+// Decision Maker at each company, matched the way the ladder's DM mapping
+// matches them (utils/decisionMakerCoverage.js), narrowed to the ones who
+// also carry one of the Biggest Deal service's contact tags (set in the
+// Services popup). A service with no contact tags narrows nothing.
 import { useEffect, useMemo, useState } from 'react';
 import { STATUS_COLORS } from '../../data/enums.js';
 import { allPcRows, myProspectRows, sumFigures } from '../../utils/prospectingPortfolio.js';
@@ -26,7 +27,8 @@ import { loadOpps2Newest } from '../../utils/opps2Store';
 import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
-import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
+import { decisionMakersWithTags, makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
+import { getEffectiveServiceMetadata, parseServiceContactTags } from '../../data/serviceCatalog';
 
 
 // Where a figure came from, for the tooltip and for whether it reads as
@@ -171,14 +173,24 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
     return m;
   }, [tracked, dealCtx, oppRecords]);
 
-  const rows = useMemo(() => baseRows.map(r => ({
-    ...r,
-    analysis: r.prospect?.id ? (savedAnalyses.get(r.prospect.id) || null) : null,
-    deal: r.prospect?.id ? (dealById.get(r.prospect.id) || null) : null,
+  const serviceOverrides = settings?.serviceOverrides || null;
+  const rows = useMemo(() => baseRows.map(r => {
+    const deal = r.prospect?.id ? (dealById.get(r.prospect.id) || null) : null;
     // Null while the contacts load, so the cell can say so rather than
     // claim nobody is there. A PC with no record matches on its name.
-    dms: dmLookup ? dmLookup.forAccount(r.prospect || { company: r.company }) : null,
-  })), [baseRows, savedAnalyses, dealById, dmLookup]);
+    const dmsAll = dmLookup ? dmLookup.forAccount(r.prospect || { company: r.company }) : null;
+    // The contact tags of the service the biggest deal is for: the
+    // decision makers shown are the ones that service is sold to.
+    const dmTags = deal?.name ? parseServiceContactTags(getEffectiveServiceMetadata(deal.name, serviceOverrides).contactTags) : [];
+    return {
+      ...r,
+      analysis: r.prospect?.id ? (savedAnalyses.get(r.prospect.id) || null) : null,
+      deal,
+      dmsAll,
+      dmTags,
+      dms: dmsAll ? decisionMakersWithTags(dmsAll, dmTags) : null,
+    };
+  }), [baseRows, savedAnalyses, dealById, dmLookup, serviceOverrides]);
 
   const [query, setQuery] = useState('');
   // The search box narrows the rows before the table sees them; the
@@ -260,14 +272,23 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
       }] : []),
       {
         key: 'dms', label: 'Decision Makers', defaultWidth: 190,
-        headerTitle: 'Contacts at the company tagged Decision Maker in HubSpot (Hide, Left and Schneider contacts left out), matched the way the ladder maps decision makers: by company name, plus anyone the company popup links by email domain or by hand. Blank means the ladder counts the account as unmapped.',
+        headerTitle: 'Contacts at the company tagged Decision Maker in HubSpot who also carry one of the Biggest Deal service\'s contact tags (set in the Services popup), so the people that deal is sold to. A service with no contact tags shows every decision maker. Hide, Left and Schneider contacts are left out, and contacts are matched the way the ladder maps decision makers: by company name, plus anyone the company popup links by email domain or by hand.',
         getSortValue: r => (r.dms ? r.dms.length : null),
         getFilterValue: r => (r.dms ? r.dms.map(dmLabel).join(', ') : ''),
         exportValue: r => (r.dms ? r.dms.map(dmLabel).join(', ') : ''),
         render: (r) => {
           if (!r.dms) return <span title="Loading contacts" style={{ color: '#CBD5E1' }}>…</span>;
-          if (r.dms.length === 0) return <span title="Nobody at this company is tagged Decision Maker" style={{ color: '#CBD5E1' }}>-</span>;
-          const tip = r.dms.map(c => [dmLabel(c), c.jobtitle].filter(Boolean).join(' - ')).join('\n');
+          const tagNote = r.dmTags.length ? `Decision Maker and ${r.dmTags.join(' or ')}, for ${r.deal.name}` : '';
+          if (r.dms.length === 0) {
+            const why = !r.dmTags.length || r.dmsAll.length === 0
+              ? 'Nobody at this company is tagged Decision Maker'
+              : `Nobody at this company is tagged ${tagNote}. ${r.dmsAll.length} other decision ${r.dmsAll.length === 1 ? 'maker' : 'makers'}: ${r.dmsAll.map(dmLabel).join(', ')}`;
+            return <span title={why} style={{ color: '#CBD5E1' }}>-</span>;
+          }
+          const tip = [
+            tagNote ? `Tagged ${tagNote}:` : '',
+            ...r.dms.map(c => [dmLabel(c), c.jobtitle].filter(Boolean).join(' - ')),
+          ].filter(Boolean).join('\n');
           return (
             <span title={tip} style={{ color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
               {dmLabel(r.dms[0])}
@@ -339,7 +360,7 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
     <div style={{ padding: '0.25rem 1.25rem 1.25rem', maxWidth }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.6rem' }}>
         <div style={{ fontSize: '0.72rem', color: '#64748B', flex: '1 1 320px' }}>
-          {intro} Sites, accounts and energy come from each company Master Analysis save, Biggest Deal is the same figure as on the company card, and Decision Makers lists who is tagged Decision Maker there (hover for titles). Grey italic figures are stand-ins until one is saved: hover them for where they came from. Drag a header edge to resize a column, type under a header to filter it, and star your standard columns in the Columns menu.
+          {intro} Sites, accounts and energy come from each company Master Analysis save, Biggest Deal is the same figure as on the company card, and Decision Makers lists who is tagged Decision Maker there and also carries a contact tag of the Biggest Deal service (hover for titles). Grey italic figures are stand-ins until one is saved: hover them for where they came from. Drag a header edge to resize a column, type under a header to filter it, and star your standard columns in the Columns menu.
         </div>
         <input
           type="search"
