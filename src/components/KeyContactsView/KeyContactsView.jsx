@@ -10,7 +10,7 @@ import { db } from '../../firebase';
 import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
-import { userLsGet } from '../../utils/userLs';
+import { userLsGet, userLsSet } from '../../utils/userLs';
 import { useOppsRecords } from '../../utils/rosterHooks';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import { resolveMetInPerson as resolveMetInPersonWith, metInPersonUpdate } from '../../utils/metInPerson';
@@ -26,8 +26,10 @@ import { getStateForCity, lookupStateForCity, CITY_OPTIONS, matchCities } from '
 import { useDraftCampaignQueue, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { companyOverrideUpdate, contactLocalFieldsUpdate } from '../../utils/contactCompanyOverride';
 import { primarySubject } from '../../utils/campaignSubjects';
+import { latestCampaignReplies, campaignReplyForContact } from '../../utils/campaignReplies';
 import { campaignSendDetailWithin } from '../../utils/campaignFollowUp';
-import { buildUnansweredIndex } from '../../utils/unansweredOutreach';
+import { buildUnansweredIndex, unansweredFor, UNANSWERED_VERSION } from '../../utils/unansweredOutreach';
+import { fetchAllActivityPages } from '../../utils/hubspotActivityPages';
 
 // Curated city names for the inline City autocomplete. Matches the
 // predictive-text dropdown the Edit HubSpot Contact popup uses, so the
@@ -551,6 +553,8 @@ function buildContactColumns({ categorizeContact, showSuggestedCompany, showNewC
     { key: 'lastOutreach', label: 'Last Outreach' },
     // Emails sent since the contact last replied. All Contacts only.
     ...(hasFullTable(storagePrefix) ? [{ key: 'noReply', label: 'No Reply' }] : []),
+    // When the contact last replied to a saved email campaign.
+    ...(hasFullTable(storagePrefix) ? [{ key: 'campaignReply', label: 'Campaign Reply' }] : []),
     ...(hasFullTable(storagePrefix) ? [{ key: 'emailCampaigns', label: 'Email Campaigns' }] : []),
     // How many campaign emails went to this contact in the last 60 days,
     // across every saved campaign, follow-ups included.
@@ -1726,7 +1730,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, lastOutreach: 160, noReply: 100, emailCampaigns: 240, campaignSends60: 120,
+    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, lastOutreach: 160, noReply: 100, campaignReply: 200, emailCampaigns: 240, campaignSends60: 120,
   };
   // Column visibility - every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -1746,7 +1750,7 @@ function KeyContactsViewInner({
   // keys removes the guess: anything not on the list shows, so the next
   // column to ship here needs none of this. They stay only to convert a
   // layout saved under the old model, once.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(hasFullTable(storagePrefix) ? ['custom', 'toCc'] : []), 'tags', ...(hasFullTable(storagePrefix) ? ['taggedPct'] : []), 'lastOutreach', ...(hasFullTable(storagePrefix) ? ['noReply', 'emailCampaigns', 'campaignSends60'] : [])];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(hasFullTable(storagePrefix) ? ['custom', 'toCc'] : []), 'tags', ...(hasFullTable(storagePrefix) ? ['taggedPct'] : []), 'lastOutreach', ...(hasFullTable(storagePrefix) ? ['noReply', 'campaignReply', 'emailCampaigns', 'campaignSends60'] : [])];
   function loadLegacyVisibleCols() {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -2233,25 +2237,61 @@ function KeyContactsViewInner({
     return map;
   }, [activityCache, outreachIndex, hubspotCache]);
 
-  // contactId → { count, lastSentMs, lastReplyMs }: emails sent since the
-  // contact's last reply, keyed by their email address. The compact index
-  // carries it pre-built; an index saved before it did falls back to the
-  // full feed when that is cached. Contacts not in the map have nothing
-  // unanswered.
+  // No Reply column: emails sent since the contact's last reply (see
+  // utils/unansweredOutreach). The Activity tab builds the index into the
+  // compact outreach index; an index saved by older code (or none at all,
+  // on a browser that has never opened the Activity tab) falls back to the
+  // full feed when that is cached, and otherwise this page loads the email
+  // feed itself. Waiting on a visit to another tab is how the column first
+  // shipped empty.
+  const storedUnanswered = outreachIndex?.unanswered?.v === UNANSWERED_VERSION ? outreachIndex.unanswered : null;
+  const cachedUnanswered = useMemo(
+    () => (!storedUnanswered && activityCache?.emails ? buildUnansweredIndex(activityCache.emails, settings?.workEmail) : null),
+    [storedUnanswered, activityCache, settings?.workEmail],
+  );
+  const [fetchedUnanswered, setFetchedUnanswered] = useState(null);
+  const [unansweredStatus, setUnansweredStatus] = useState('idle'); // idle | loading | error
+  const unansweredIndex = storedUnanswered || cachedUnanswered || fetchedUnanswered;
+  const needsUnansweredFetch = hasFullTable(storagePrefix) && !storedUnanswered && !cachedUnanswered;
+  useEffect(() => {
+    if (!needsUnansweredFetch || !user?.uid) return undefined;
+    let cancelled = false;
+    setUnansweredStatus('loading');
+    (async () => {
+      try {
+        const emails = await fetchAllActivityPages('email');
+        if (cancelled) return;
+        const built = buildUnansweredIndex(emails, settings?.workEmail);
+        setFetchedUnanswered(built);
+        setUnansweredStatus('idle');
+        // Keep it for next time, on top of whatever the Activity tab last
+        // wrote (Last Outreach reads the rest of that object).
+        try {
+          const prev = JSON.parse(userLsGet('hubspot-outreach-index') || 'null') || {};
+          userLsSet('hubspot-outreach-index', JSON.stringify({ ...prev, unanswered: built }));
+        } catch { /* quota: the in-memory copy still fills the column */ }
+      } catch (err) {
+        console.warn('No Reply email fetch failed:', err?.message || err);
+        if (!cancelled) setUnansweredStatus('error');
+      }
+    })();
+    return () => { cancelled = true; };
+  // Run once per page visit; a later Activity refresh lands through
+  // outreachIndex instead.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsUnansweredFetch, user?.uid]);
   const contactUnanswered = useMemo(() => {
     const map = new Map();
-    if (!hasFullTable(storagePrefix)) return map;
-    const byAddr = outreachIndex?.unanswered
-      || (activityCache?.emails ? buildUnansweredIndex(activityCache.emails, settings?.workEmail) : null);
-    if (!byAddr) return map;
+    if (!hasFullTable(storagePrefix) || !unansweredIndex) return map;
     for (const c of (hubspotCache?.contacts || [])) {
       const id = String(c.id || '');
-      const hit = c.email ? byAddr[String(c.email).toLowerCase().trim()] : null;
-      if (id && hit) map.set(id, hit);
+      if (!id) continue;
+      const hit = unansweredFor(unansweredIndex, { id, email: c.email });
+      if (hit && (hit.count > 0 || hit.lastReplyMs)) map.set(id, hit);
     }
     return map;
-  }, [storagePrefix, outreachIndex, activityCache, hubspotCache, settings?.workEmail]);
-  const unansweredDataLoaded = !!(outreachIndex?.unanswered || activityCache?.emails);
+  }, [storagePrefix, unansweredIndex, hubspotCache]);
+  const unansweredDataLoaded = !!unansweredIndex;
 
   // Whole days between the most recent outreach and now. Floored, so an
   // outreach earlier today reads as 0.
@@ -2291,6 +2331,12 @@ function KeyContactsViewInner({
     return map;
   }, [savedCampaigns]);
   const campaignForContact = (c) => contactCampaign.get(String(c?.email || '').toLowerCase().trim());
+
+  // Campaign Reply column: the newest reply each contact sent to any saved
+  // campaign. Built by utils/campaignReplies from the reply detail the
+  // campaign refresh stores on each recipient row.
+  const campaignReplies = useMemo(() => latestCampaignReplies(savedCampaigns), [savedCampaigns]);
+  const campaignReplyFor = (c) => campaignReplyForContact(campaignReplies, c);
 
   // Lowercased email -> { count, campaigns } for campaign emails sent in
   // the last 60 days, over every saved campaign (see
@@ -2918,6 +2964,10 @@ function KeyContactsViewInner({
           cmp = av - bv;
           break;
         }
+        case 'campaignReply': {
+          cmp = (campaignReplyFor(a)?.tsMs || 0) - (campaignReplyFor(b)?.tsMs || 0);
+          break;
+        }
         case 'category': {
           const av = (categorizeContact ? (categorizeContact(a.raw || a) || []) : []).join(' ');
           const bv = (categorizeContact ? (categorizeContact(b.raw || b) || []) : []).join(' ');
@@ -2942,7 +2992,7 @@ function KeyContactsViewInner({
       return cmp;
     });
     return arr;
-  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactUnanswered, contactEvents, categorizeContact, contactCampaign, campaignSends60, tagScoreFor]);
+  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactUnanswered, campaignReplies, contactEvents, categorizeContact, contactCampaign, campaignSends60, tagScoreFor]);
 
   // Combined "To Also" + "CC" recipients edited in the contact popup,
   // keyed by lowercased primary email so the All Contacts "To / CC"
@@ -3050,6 +3100,7 @@ function KeyContactsViewInner({
     events:   c => contactEvents[String(c.id || '')] || '',
     taggedPct: c => `${tagScoreFor(c).pct}%`,
     lastOutreach: c => fmtLastOutreach(contactLastOutreach.get(String(c.id || ''))),
+    campaignReply: c => campaignReplyFor(c)?.label || '',
     noReply: c => String(contactUnanswered.get(String(c.id || ''))?.count || 0),
     emailCampaigns: c => campaignForContact(c)?.subject || '',
     campaignSends60: c => String(campaignSends60For(c)),
@@ -4431,12 +4482,19 @@ function KeyContactsViewInner({
                     })(),
                     noReply: (() => {
                       const hit = contactUnanswered.get(String(c.id || ''));
-                      if (!hit) {
+                      if (!hit || hit.count === 0) {
+                        const tip = unansweredDataLoaded
+                          ? (hit?.lastReplyMs
+                            ? `Nothing unanswered: they last replied ${new Date(hit.lastReplyMs).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} and nothing has gone out since`
+                            : 'Nothing unanswered: no emails to this contact on record')
+                          : unansweredStatus === 'loading' ? 'Loading HubSpot emails...'
+                          : unansweredStatus === 'error' ? 'Couldn\'t load HubSpot emails. Open the Activity tab to retry'
+                          : 'Open the Activity tab once to load HubSpot activity';
                         return (
                           <div
                             style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}
-                            title={unansweredDataLoaded ? 'Nothing unanswered: no emails to this contact since their last reply' : 'Open the Activity tab once to load HubSpot activity'}
-                          >{unansweredDataLoaded ? '0' : '-'}</div>
+                            title={tip}
+                          >{unansweredDataLoaded ? '0' : unansweredStatus === 'loading' ? '...' : '-'}</div>
                         );
                       }
                       const fmt = ms => new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -4445,13 +4503,36 @@ function KeyContactsViewInner({
                       const heavy = hit.count >= 3;
                       const tip = `${hit.count} email${hit.count === 1 ? '' : 's'} sent without a reply, latest ${fmt(hit.lastSentMs)}. `
                         + (hit.lastReplyMs ? `Last reply ${fmt(hit.lastReplyMs)}.` : 'No reply on record.')
-                        + ' From the Activity tab.';
+                        + ' From HubSpot email activity.';
                       return (
                         <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem' }} title={tip}>
                           <span style={{
                             display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontWeight: 700,
                             background: heavy ? '#FEE2E2' : '#FEF3C7', color: heavy ? '#991B1B' : '#92400E',
                           }}>{hit.count}</span>
+                        </div>
+                      );
+                    })(),
+                    campaignReply: (() => {
+                      const r = campaignReplyFor(c);
+                      if (!r) {
+                        return (
+                          <div
+                            style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}
+                            title={savedCampaigns.length ? 'No reply to a saved email campaign on record. Refresh a campaign on the Email Campaigns subtab to pick up new replies' : 'Save a campaign on the Email Campaigns subtab (Draft Emails) to populate this column'}
+                          >-</div>
+                        );
+                      }
+                      const tip = `Replied ${new Date(r.tsMs).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })} to "${r.subject}"`
+                        + (r.repliedBy ? ` (from ${r.repliedBy})` : '')
+                        + (r.count > 1 ? `. Replied to ${r.count} campaigns in all.` : '.');
+                      return (
+                        <div
+                          style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#166534', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                          title={tip}
+                        >
+                          <span style={{ fontWeight: 700 }}>{r.label}</span>
+                          <span style={{ color: '#64748B' }}> · {r.subject}</span>
                         </div>
                       );
                     })(),
