@@ -130,6 +130,12 @@ export async function addVerticalCoverage(db, uid, email, records) {
 }
 
 export async function loadNewOpps(db, uid) {
+  return filterNewOpps(await loadOpps2Records(db, uid));
+}
+
+// Every opp in the user's `opps2Data` doc, unfiltered. Shared with the PE
+// Monthly email (api/_lib/peMonthly.js), which picks its own rows.
+export async function loadOpps2Records(db, uid) {
   const ref = db.collection('opps2Data').doc(uid);
   const snap = await ref.get();
   if (!snap.exists) return [];
@@ -153,9 +159,7 @@ export async function loadNewOpps(db, uid) {
 
   let parsed;
   try { parsed = JSON.parse(json); } catch { return []; }
-  const records = Array.isArray(parsed?.records) ? parsed.records : [];
-
-  return filterNewOpps(records);
+  return Array.isArray(parsed?.records) ? parsed.records : [];
 }
 
 // Filter + sort an in-memory record list to the qualifying new opps. Freshest
@@ -235,17 +239,6 @@ export function buildNewOppsTableHtml(records) {
 // intentionally minimal — just the optional intro message and the table, with
 // no heading, summary line, or footer.
 export async function sendNewOppsEmail({ to, subject, message, records, replyTo }) {
-  const user = process.env.GMAIL_USER;
-  const pass = process.env.GMAIL_APP_PASSWORD;
-  if (!user || !pass) {
-    throw new Error('Email not configured (set GMAIL_USER and GMAIL_APP_PASSWORD)');
-  }
-
-  const recipients = (Array.isArray(to) ? to : [to])
-    .map((e) => String(e || '').trim())
-    .filter(Boolean);
-  if (recipients.length === 0) throw new Error('No recipients');
-
   const intro = message
     ? `<p style="color:#334155;font-size:14px;white-space:pre-wrap;margin:0 0 16px">${escapeHtml(message)}</p>`
     : '';
@@ -256,6 +249,21 @@ export async function sendNewOppsEmail({ to, subject, message, records, replyTo 
       ${table}
     </div>
   `;
+  return sendHtmlEmail({ to, subject: subject || 'New Opportunities', html, replyTo });
+}
+
+// Send an already-built HTML body from the connected Gmail account. Shared
+// with the PE Monthly email so both go out the same way.
+export async function sendHtmlEmail({ to, subject, html, replyTo }) {
+  const user = process.env.GMAIL_USER;
+  const pass = process.env.GMAIL_APP_PASSWORD;
+  if (!user || !pass) {
+    throw new Error('Email not configured (set GMAIL_USER and GMAIL_APP_PASSWORD)');
+  }
+  const recipients = (Array.isArray(to) ? to : [to])
+    .map((e) => String(e || '').trim())
+    .filter(Boolean);
+  if (recipients.length === 0) throw new Error('No recipients');
 
   const nm = await import('nodemailer');
   const nodemailer = nm.default || nm;
@@ -271,7 +279,7 @@ export async function sendNewOppsEmail({ to, subject, message, records, replyTo 
     from: `${fromName} <${user}>`,
     to: recipients,
     replyTo: replyTo || user,
-    subject: subject || 'New Opportunities',
+    subject,
     html,
   });
   return { id: result.messageId };

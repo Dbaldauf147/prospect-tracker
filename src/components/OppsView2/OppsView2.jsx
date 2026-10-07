@@ -152,6 +152,27 @@ import {
   buildPeMonthlyEmailHtml, downloadPeMonthlyOutlookDraft,
 } from '../../utils/peMonthlyEmail';
 import { coverageFromSettings, salespeopleForVertical } from '../../utils/salesCoverage';
+import { schedulesStore } from '../../utils/newOppsSchedulesStore';
+
+// The New Opps schedule modal, pointed at the PE Monthly email: its own
+// schedules (api/pe-monthly-schedules), its own send-now route, and a
+// monthly-on-the-1st default with the draft's subject and intro.
+const PE_MONTHLY_SCHEDULE_KIND = {
+  store: schedulesStore('/api/pe-monthly-schedules'),
+  sendNowPath: '/api/pe-monthly-send-now',
+  title: 'Schedule PE Monthly email',
+  columnsNote: 'The emailed table always shows: Account, Tier, CDM, PE Owner, Vertical, Salesperson, Stage, Scope, Deal Size, Next Steps, and a BFO Link - the PE overlap deals at Stage 3 or later, worked out fresh each time it sends.',
+  emptyLabel: 'Don\u2019t send if there are no PE overlap deals',
+  namePlaceholder: 'e.g. Monthly PE overlap deals',
+  defaults: {
+    subject: PE_MONTHLY_DRAFT_DEFAULTS.subject,
+    message: PE_MONTHLY_DRAFT_DEFAULTS.message,
+    frequency: 'monthly',
+    dayOfWeekLocal: 1,
+    dayOfMonthLocal: 1,
+  },
+  sendBody: (rows) => ({ rows: Array.isArray(rows) ? rows : undefined }),
+};
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { reasonOptionsForCompetition } from '../../data/closeNotSoldRules';
 import { BfoCloseOutPreview } from '../BfoCloseOutPreview';
@@ -14023,6 +14044,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // PE Monthly subtab: the same draft flow over the PE overlap deals, with
   // its own saved wording (userSettings.peMonthlyDraftEmail).
   const [peMonthlyDraftTextOpen, setPeMonthlyDraftTextOpen] = useState(false);
+  const [peMonthlyScheduleOpen, setPeMonthlyScheduleOpen] = useState(false);
   const peMonthlyDraftTemplate = useMemo(
     () => resolvePeMonthlyDraftTemplate(settings?.peMonthlyDraftEmail),
     [settings?.peMonthlyDraftEmail],
@@ -18622,6 +18644,16 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 border: '1px solid #0F6CBD', borderRadius: 6, cursor: 'pointer',
               }}
             >✎ Edit email text</button>
+            <button
+              type="button"
+              onClick={() => setPeMonthlyScheduleOpen(true)}
+              title="Schedule a recurring email that sends these PE overlap deals as a table in the email body"
+              style={{
+                marginLeft: '0.5rem', padding: '0.3rem 0.7rem', fontSize: '0.78rem', fontWeight: 600,
+                fontFamily: 'inherit', color: '#009530', background: '#fff',
+                border: '1px solid #009530', borderRadius: 6, cursor: 'pointer',
+              }}
+            >Schedule email</button>
           </div>
           <div style={{ padding: '0 0 0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
             The PE overlap deals from the Keith agenda: every Private Equity or Portfolio Company opp at Stage 3 (Lead) or later that is still open, furthest along first.
@@ -18720,6 +18752,15 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         download={downloadPeMonthlyOutlookDraft}
         itemNoun="deal"
         footnote="The table and your signature are added automatically."
+      />
+
+      <NewOppsScheduleModal
+        open={peMonthlyScheduleOpen}
+        onClose={() => setPeMonthlyScheduleOpen(false)}
+        uid={user?.uid}
+        email={user?.email}
+        oppsRows={peMonthly}
+        kind={PE_MONTHLY_SCHEDULE_KIND}
       />
 
       <NewOppsScheduleModal

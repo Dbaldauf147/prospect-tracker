@@ -14,8 +14,29 @@ import { firstLocalRun, FREQUENCIES, WEEKDAYS } from './peOppsSchedulesStore';
 
 export { FREQUENCIES, WEEKDAYS };
 
-async function call(action, payload = {}) {
-  const res = await apiFetch('/api/new-opps-schedules', {
+// The same CRUD against another schedules route (PE Monthly uses
+// /api/pe-monthly-schedules). The exports below are the New Opps instance.
+export function schedulesStore(endpoint) {
+  const callAt = (action, payload) => call(action, payload, endpoint);
+  return {
+    listSchedules: async () => (await callAt('list')).schedules || [],
+    createSchedule: async (_uid, _email, input) => (await callAt('create', { schedule: toPayload(input) })).id,
+    updateSchedule: async (id, input) => { await callAt('update', { id, schedule: toPayload(input) }); },
+    setEnabled: async (id, enabled) => { await callAt('setEnabled', { id, enabled: !!enabled }); },
+    removeSchedule: async (id) => { await callAt('delete', { id }); },
+  };
+}
+
+function toPayload(input) {
+  return {
+    ...input,
+    ...buildRecurrenceFields(input),
+    recipients: normalizeRecipients(input.recipients),
+  };
+}
+
+async function call(action, payload = {}, endpoint = '/api/new-opps-schedules') {
+  const res = await apiFetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, ...payload }),
