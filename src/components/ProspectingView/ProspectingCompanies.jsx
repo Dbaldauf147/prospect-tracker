@@ -40,7 +40,7 @@ import { STATUS_COLORS, SERVICE_STATUSES } from '../../data/enums.js';
 import { serviceStatusColor } from '../../utils/serviceStatusColors.js';
 import { withServiceStatus } from '../../utils/clientDealSizing.js';
 import { planProspectingBulkStatus } from '../../utils/prospectingBulkStatus.js';
-import { allPcRows, myProspectRows, sumFigures, rowTypeLabel, typesOnRows, withoutTypes } from '../../utils/prospectingPortfolio.js';
+import { allPcRows, myProspectRows, sumFigures, rowTypeLabel, typesOnRows, withoutTypes, typeLabel } from '../../utils/prospectingPortfolio.js';
 import { biggestDealFor, dealHasStatus, excludedServiceSet, withoutExcludedServices, PROSPECTING_EXCLUDED_KEY } from '../../utils/prospectingDeals.js';
 import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
 import { pricedServiceRows } from '../../utils/serviceRows';
@@ -356,6 +356,12 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
   const typeOptions = useMemo(() => (isPcsList ? [] : typesOnRows(unworked)), [isPcsList, unworked]);
   const typed = useMemo(() => (isPcsList ? unworked : withoutTypes(unworked, hiddenTypes)), [isPcsList, unworked, hiddenTypes]);
   const hiddenByType = unworked.length - typed.length;
+  // The saved labels as the menu lists them: a "PE Firm" saved before it
+  // was merged into "Private Equity" shows as that one ticked entry.
+  const hiddenLabels = useMemo(
+    () => [...new Set(hiddenTypes.map(x => typeLabel(x)))],
+    [hiddenTypes],
+  );
 
   const [query, setQuery] = useState('');
   // The search box narrows the rows before the table sees them; the
@@ -653,19 +659,21 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
                 whiteSpace: 'nowrap',
               }}
             >
-              {hiddenTypes.length ? `Hiding ${hiddenTypes.length} type${hiddenTypes.length === 1 ? '' : 's'} (${hiddenByType.toLocaleString()})` : 'Hide types'} ▾
+              {hiddenLabels.length ? `Hiding ${hiddenLabels.length} type${hiddenLabels.length === 1 ? '' : 's'} (${hiddenByType.toLocaleString()})` : 'Hide types'} ▾
             </summary>
             <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 1000, minWidth: 220, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 8, boxShadow: '0 8px 24px rgba(15,23,42,0.12)', padding: '0.4rem 0' }}>
               <div style={{ padding: '0.2rem 0.75rem 0.4rem', fontSize: '0.66rem', color: '#64748B' }}>Tick a type to hide it</div>
               {typeOptions.map(t => {
                 const count = unworked.filter(r => rowTypeLabel(r) === t).length;
-                const on = hiddenTypes.includes(t);
+                const on = hiddenLabels.includes(t);
                 return (
                   <label key={t} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.25rem 0.75rem', fontSize: '0.74rem', color: '#334155', cursor: 'pointer' }}>
                     <input
                       type="checkbox"
                       checked={on}
-                      onChange={() => setHiddenTypes(on ? hiddenTypes.filter(x => x !== t) : [...hiddenTypes, t])}
+                      onChange={() => setHiddenTypes(on
+                        ? hiddenTypes.filter(x => typeLabel(x) !== t)
+                        : [...hiddenTypes, t])}
                     />
                     <span style={{ flex: 1 }}>{t}</span>
                     <span style={{ color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>{count.toLocaleString()}</span>

@@ -2,7 +2,7 @@
 // companies land on each, and where each Sites / Accounts / Energy figure
 // comes from. Plain Node, no framework. Run:
 //   node scripts/prospectingPortfolio.test.mjs
-import { allPcRows, companyFigures, myProspectRows, sumFigures, NO_TYPE, rowTypeLabel, typesOnRows, withoutTypes } from '../src/utils/prospectingPortfolio.js';
+import { allPcRows, companyFigures, myProspectRows, sumFigures, NO_TYPE, rowTypeLabel, typesOnRows, withoutTypes, typeLabel } from '../src/utils/prospectingPortfolio.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -81,6 +81,20 @@ eq(companyFigures(null, {}).sites, null, 'no record, no figures');
   eq(withoutTypes(rs, ['Private Equity']).map(r => r.company), ['Blank', 'Owner'], 'hiding PE drops the firm');
   eq(withoutTypes(rs, [NO_TYPE]).map(r => r.company), ['Firm', 'Owner'], 'and (No type) can be hidden too');
   eq(withoutTypes(rs, []).length, 3, 'nothing hidden, nothing dropped');
+}
+
+// "PE Firm" and "Private Equity" are one type.
+{
+  const rs = myProspectRows([
+    { id: 1, company: 'Thoma Bravo', cdm: 'Dan Baldauf', type: 'Private Equity' },
+    { id: 2, company: 'Dragoneer', cdm: 'Dan Baldauf', type: 'PE Firm' },
+    { id: 3, company: 'Owner', cdm: 'Dan Baldauf', type: 'Owner Operator' },
+  ], 'Dan Baldauf', {});
+  eq(typesOnRows(rs), ['Owner Operator', 'Private Equity'], 'PE Firm and Private Equity list as one');
+  eq(withoutTypes(rs, ['Private Equity']).map(r => r.company), ['Owner'], 'hiding Private Equity hides the PE Firm too');
+  eq(withoutTypes(rs, ['PE Firm']).map(r => r.company), ['Owner'], 'a saved "PE Firm" still hides both');
+  eq(typeLabel(' pe firm '), 'Private Equity', 'any case and spacing');
+  eq(typeLabel('Developer'), 'Developer', 'other types are left as they are');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

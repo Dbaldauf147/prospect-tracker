@@ -154,8 +154,27 @@ export function sumFigures(rows) {
 // filed under NO_TYPE so it can be hidden like any other.
 export const NO_TYPE = '(No type)';
 
+// Type spellings that mean the same thing, filed under one label. "PE Firm"
+// is what the Blue Owl GP-stakes backfill wrote (utils/peOwnerBackfill.js);
+// everything else uses the standard "Private Equity" - so hiding one and
+// still seeing Thoma Bravo under the other read as the filter not working.
+const TYPE_ALIASES = new Map([
+  ['pe firm', 'Private Equity'],
+  ['pe', 'Private Equity'],
+  ['private equity', 'Private Equity'],
+  ['private equity firm', 'Private Equity'],
+]);
+
+// The label a Type is listed and hidden under. Also used on saved hidden
+// labels, so a "PE Firm" ticked before the two were merged still hides both.
+export function typeLabel(type) {
+  const t = String(type || '').trim();
+  if (!t) return NO_TYPE;
+  return TYPE_ALIASES.get(t.toLowerCase()) || t;
+}
+
 export function rowTypeLabel(row) {
-  return String(row?.type || '').trim() || NO_TYPE;
+  return typeLabel(row?.type);
 }
 
 // The types on these rows, for the control's checklist: alphabetical, with
@@ -169,6 +188,6 @@ export function typesOnRows(rows) {
 // The rows left once the hidden types come out. `hidden` is a list of
 // labels as rowTypeLabel gives them.
 export function withoutTypes(rows, hidden) {
-  const h = new Set(hidden || []);
+  const h = new Set((hidden || []).map(x => typeLabel(x)));
   return h.size ? (rows || []).filter(r => !h.has(rowTypeLabel(r))) : (rows || []);
 }
