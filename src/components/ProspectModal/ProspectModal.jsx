@@ -40,6 +40,7 @@ import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { prwEmailEml } from '../../utils/prwRequestEmail';
 import { downloadDrafts, resolveSignature, safeFileName } from '../../utils/draftEmail';
 import { useAuth } from '../../contexts/AuthContext';
+import { ContactCampaignAdd } from './ContactCampaignAdd';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { nameFromEmail } from '../../utils/nameFromEmail';
 import { splitFullName } from '../../utils/splitFullName';
@@ -2037,6 +2038,15 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               })}
             </div>
           </div>
+          {/* Put this contact on a saved email campaign, and see which ones
+              they are already on. Self-contained: see ContactCampaignAdd. */}
+          {(contact.id || contact.vid) && (
+            <ContactCampaignAdd
+              email={f.email}
+              name={`${f.firstname || ''} ${f.lastname || ''}`.trim()}
+              company={f.company}
+            />
+          )}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem' }}>
           {/* Editing either half by hand settles the question the Full Name
