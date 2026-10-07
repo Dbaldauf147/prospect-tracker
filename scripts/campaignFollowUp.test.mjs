@@ -8,7 +8,7 @@
 // reportable when the detail is capped, and — the one that matters most on
 // screen — "not counted yet" never turns into "no follow-up".
 import {
-  SEND_HISTORY_CAP, sendHistoryByAddress, sendHistoryFor, followUpInfo, followUpLabel, campaignSendsWithin,
+  SEND_HISTORY_CAP, sendHistoryByAddress, sendHistoryFor, followUpInfo, followUpLabel, campaignSendsWithin, campaignSendDetailWithin,
 } from '../src/utils/campaignFollowUp.js';
 
 let passed = 0, failed = 0;
@@ -127,6 +127,11 @@ check('first sent falls back to the send date',
   check('60d: uncounted send in window', m.get('d@x.com'), 1);
   check('60d: outside the window is absent', m.has('old@x.com'), false);
   check('60d: unsent is absent', m.has('unsent@x.com'), false);
+  const a = campaignSendDetailWithin([{ title: 'Second', contacts: [] }, ...camps], 60, now).get('a@x.com');
+  check('60d detail: one entry per campaign, newest first, labelled',
+    a.campaigns.map(x => [x.index, x.label, x.count]), [[1, '(untitled campaign)', 8], [2, '(untitled campaign)', 1]]);
+  const named = campaignSendDetailWithin([{ subject: 'Q3 update', contacts: [{ email: 'z@x.com', sentDate: '2026-10-01' }, { email: 'z@x.com; y@x.com', sentDate: '2026-10-03' }] }], 60, now).get('z@x.com');
+  check('60d detail: two rows of one campaign merge', [named.count, named.campaigns.length, named.campaigns[0].label, named.campaigns[0].lastSentDate], [2, 1, 'Q3 update', '2026-10-03']);
   check('60d: no campaigns', campaignSendsWithin(null, 60, now).size, 0);
 }
 

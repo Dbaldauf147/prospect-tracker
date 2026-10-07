@@ -17,6 +17,8 @@
 // them alone are two different recipient sets, and to the person reading the
 // row it is still one contact who has been emailed twice.
 
+import { primarySubject } from './campaignSubjects.js';
+
 // How many of a contact's sends travel with them. The count is always exact;
 // only the per-send detail behind the tooltip is capped, because a campaign
 // roster is stored in Firestore and a long history on every row is weight
@@ -102,9 +104,9 @@ export function followUpLabel(contact) {
   return info.followUp ? 'Yes' : 'No';
 }
 
-// How many campaign emails each address has been sent in the last `days`
-// days, across every saved campaign — the All Contacts "Campaigns (60d)"
-// column.
+// Which saved campaigns emailed each address in the last `days` days, and
+// how many times — the All Contacts "Campaigns (60d)" column and the list
+// that opens when you click it.
 //
 // Each roster row knows its own sends: `sendHistory` (capped, newest end),
 // `sendCount` (exact) and `firstSentDate`. When the first send is inside the
@@ -113,16 +115,20 @@ export function followUpLabel(contact) {
 // has only `sentDate`, which is worth one send if it falls in the window.
 //
 // A roster row's `email` can be a '; '-joined group send, so each address
-// in it is credited. Returns Map<lowercased email, count>, only for
-// addresses with at least one send in the window.
-export function campaignSendsWithin(campaigns, days, nowMs = Date.now()) {
+// in it is credited. Returns Map<lowercased email, { count, campaigns }>,
+// only for addresses with at least one send in the window. `campaigns` is
+// one entry per campaign — { index, label, count, lastSentDate } — newest
+// send first; `index` is the campaign's position in the saved list, which
+// is what identifies it (subjects need not be unique).
+export function campaignSendDetailWithin(campaigns, days, nowMs = Date.now()) {
   const cutoff = nowMs - days * 24 * 60 * 60 * 1000;
   const inWindow = (d) => {
     const t = d ? new Date(d).getTime() : NaN;
     return Number.isFinite(t) && t >= cutoff && t <= nowMs;
   };
-  const counts = new Map();
-  for (const camp of (campaigns || [])) {
+  const byEmail = new Map();
+  (campaigns || []).forEach((camp, index) => {
+    const label = camp?.title || primarySubject(camp) || '(untitled campaign)';
     for (const ct of (camp?.contacts || [])) {
       const info = followUpInfo(ct);
       if (!info.sent) continue;
@@ -131,11 +137,33 @@ export function campaignSendsWithin(campaigns, days, nowMs = Date.now()) {
       else if (info.history.length) n = info.history.filter(h => inWindow(h?.date)).length;
       else n = inWindow(ct.sentDate) ? 1 : 0;
       if (!n) continue;
+      const last = info.lastSentDate || '';
       for (const part of String(ct.email || '').split(/[;,]/)) {
         const em = part.trim().toLowerCase();
-        if (em) counts.set(em, (counts.get(em) || 0) + n);
+        if (!em) continue;
+        let entry = byEmail.get(em);
+        if (!entry) { entry = { count: 0, campaigns: [] }; byEmail.set(em, entry); }
+        entry.count += n;
+        // One address on two rows of the same campaign is still one campaign.
+        const prev = entry.campaigns.find(x => x.index === index);
+        if (prev) {
+          prev.count += n;
+          if (String(last) > String(prev.lastSentDate)) prev.lastSentDate = last;
+        } else {
+          entry.campaigns.push({ index, label, count: n, lastSentDate: last });
+        }
       }
     }
+  });
+  for (const entry of byEmail.values()) {
+    entry.campaigns.sort((a, b) => String(b.lastSentDate).localeCompare(String(a.lastSentDate)));
   }
+  return byEmail;
+}
+
+// Just the totals: Map<lowercased email, count>.
+export function campaignSendsWithin(campaigns, days, nowMs = Date.now()) {
+  const counts = new Map();
+  for (const [em, entry] of campaignSendDetailWithin(campaigns, days, nowMs)) counts.set(em, entry.count);
   return counts;
 }
