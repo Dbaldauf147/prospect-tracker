@@ -296,6 +296,10 @@ function buildDefaultOpportunityTemplate(dateLine, timeLine) {
 // The opps list's table cells, above the Notes section. Plain objects rather
 // than a stylesheet because everything else in this popup is styled inline
 // and a single class hiding in the module would be the odd one out.
+// Portfolio companies whose saved analysis the Portfolio tab has already
+// read for a missing Indicative Savings figure this page load.
+const autoSavingsTried = new Set();
+
 const oppTh = { fontWeight: 600, padding: '0 0.5rem 0.3rem 0', whiteSpace: 'nowrap' };
 const oppTd = { padding: '0.3rem 0.5rem 0.3rem 0', verticalAlign: 'top' };
 
@@ -5237,6 +5241,28 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       setPortfolioSavingsRefresh({ running: false, note: 'None of these companies has a Master Analysis saved, so there is no savings figure to read. Save one from Utility Lookup first.' });
       return;
     }
+    await runPortfolioSavingsRefresh(targets, { auto: false });
+  }
+  // The same read, done without being asked: a company with a saved
+  // analysis and an empty savings field gets its headline filled in when
+  // the tab opens. Only blanks - a figure already on the record (typed or
+  // stamped) is left for the button to refresh. Each company is tried once
+  // per page load (autoSavingsTried is module-level), so a workbook with no
+  // headline isn't re-downloaded every time the popup reopens.
+  useEffect(() => {
+    if (activeTab !== 'portfolio' || portfolioSavingsRefresh?.running) return;
+    const targets = portfolioLinkedProspects.filter(p => {
+      const raw = p.indicativeAnnualSavings;
+      return (raw == null || raw === '')
+        && portfolioSavedAnalyses.get(p.id)
+        && !autoSavingsTried.has(p.id);
+    });
+    if (!targets.length) return;
+    for (const t of targets) autoSavingsTried.add(t.id);
+    runPortfolioSavingsRefresh(targets, { auto: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, portfolioLinkedProspects, portfolioSavedAnalyses, portfolioSavingsRefresh?.running]);
+  async function runPortfolioSavingsRefresh(targets, { auto }) {
     setPortfolioSavingsRefresh({ running: true, done: 0, total: targets.length, note: '' });
     const XLSX = await import('xlsx');
     let updated = 0;
@@ -5266,12 +5292,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       }
       setPortfolioSavingsRefresh(s => ({ ...s, done: i + 1 }));
     }
-    const parts = [`${updated} updated`];
-    if (unchanged) parts.push(`${unchanged} already current`);
-    let note = `Indicative Savings refreshed from ${targets.length} saved ${targets.length === 1 ? 'analysis' : 'analyses'}: ${parts.join(', ')}.`;
+    let note;
+    if (auto) {
+      // Quiet unless it did something: a pass that found nothing to fill
+      // shouldn't leave a line of text over the table on every open.
+      note = updated
+        ? `Filled in Indicative Savings for ${updated} ${updated === 1 ? 'company' : 'companies'} from ${updated === 1 ? 'its' : 'their'} saved Master Analysis.`
+        : '';
+    } else {
+      const parts = [`${updated} updated`];
+      if (unchanged) parts.push(`${unchanged} already current`);
+      note = `Indicative Savings refreshed from ${targets.length} saved ${targets.length === 1 ? 'analysis' : 'analyses'}: ${parts.join(', ')}.`;
+    }
     if (noFigure.length) note += ` No savings headline in the analysis for ${noFigure.join(', ')}.`;
     if (failed.length) note += ` Could not read ${failed.join(', ')}.`;
-    setPortfolioSavingsRefresh({ running: false, note });
+    setPortfolioSavingsRefresh({ running: false, note: note.trim() });
   }
 
   // The Potential tab's working estimate: which services are ticked against
