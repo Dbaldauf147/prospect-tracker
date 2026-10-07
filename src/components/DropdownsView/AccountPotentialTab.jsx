@@ -9,6 +9,8 @@ import { accountPotential, lineYear1 } from '../../utils/accountPotential';
 import { clientCounts } from '../../utils/clientDealSizing';
 import { buildOppStagesByClient } from '../../utils/serviceCoverage';
 import { findProspectByCompany } from '../../utils/companyLookup';
+import { serviceStatusColor } from '../../utils/serviceStatusColors';
+import { SERVICE_STATUSES } from '../../data/enums';
 import {
   impactAmount,
   impactAmountTitle,
@@ -80,6 +82,10 @@ const DEAL_TABLE_COLUMNS = [
   { key: 'rank',         label: '#',                   width: 56 },
   { key: 'name',         label: 'Service',             width: 280 },
   { key: 'serviceBucket',label: 'Service Bucket',      width: 200 },
+  // Where the service stands on this account, settable from the row the
+  // same way the card's Services grid sets it. Not Sold, Sold and N/A are
+  // answers, so picking one greys the row and takes it out of the totals.
+  { key: 'status',       label: 'Service Status',      width: 130 },
   // What the rate card says, read-only: this tab prices a deal, it doesn't
   // rewrite the card. The basis and the rate behind a fee are what make the
   // fee checkable, so they travel with it rather than being left a subtab away.
@@ -150,6 +156,12 @@ export function AccountPotentialTab({
   // Leave the prop off and this page pulls them itself. `null` means the
   // host has them in flight, which is not the same as there being none.
   oppRecords: hostOppRecords,
+  // The company card's live Services Explored map and its setter. Both
+  // optional: with them the Service Status column can be edited and reads
+  // the card's unsaved state, so a pick shows here at once; without them
+  // the column reads the saved record and is read-only.
+  servicesExplored = null,
+  onSetServiceStatus = null,
 }) {
   // `|| {}` so the tab still renders outside the AuthProvider (tests,
   // harnesses): with no user it reads the local opps cache and skips the
@@ -206,10 +218,10 @@ export function AccountPotentialTab({
   // this null, which the page shows as "no record" rather than pretending
   // to have found one - the counts and the statuses both come off the
   // record, so a wrong match would price the page against somebody else.
-  const client = useMemo(
-    () => (company ? findProspectByCompany(prospects, company) : null),
-    [prospects, company],
-  );
+  const client = useMemo(() => {
+    const found = company ? findProspectByCompany(prospects, company) : null;
+    return found && servicesExplored ? { ...found, servicesExplored } : found;
+  }, [prospects, company, servicesExplored]);
 
   // What this account's opportunities say about each service. The company
   // page treats an opp whose Scope names a service as having explored it,
@@ -978,18 +990,8 @@ export function AccountPotentialTab({
               {row._bundledInto && (
                 <span className={styles.bundleWithChip}>{`with ${row._bundledInto}`}</span>
               )}
-              {/* Why the row looks the way it does, in a word. Without it a
-                  greyed row is a row somebody has to come and ask about,
-                  and a service sitting at Quoting reads as untouched
-                  whitespace - which is the one thing it is not. */}
-              {row._status && (
-                <span
-                  className={row._closed ? styles.potentialAnsweredChip : styles.potentialFlightChip}
-                  title={row._closed
-                    ? `Answered: ${row._status}. Left out of the totals and out of the biggest deal.`
-                    : `In flight: ${row._status}. Nobody has said yes or no yet, so it is still potential and still counts here.`}
-                >{row._status}</span>
-              )}
+              {/* The status is its own column now (Service Status), which
+                  says the same thing in a word and can change it. */}
             </span>
           ),
         };
@@ -1235,6 +1237,51 @@ export function AccountPotentialTab({
                   : (row._roi.multiple < 1 ? styles.roiCellThin : styles.roiCell)}
                 title={row._roiTitle}
               >{row._roi.text}</span>
+            );
+          },
+        };
+      case 'status':
+        return {
+          ...base,
+          getSortValue: (row) => (row._status || '').toLowerCase(),
+          getFilterValue: (row) => row._status || '',
+          exportValue: (row) => row._status || '',
+          render: (row) => {
+            const value = row._status || '-';
+            // Typed on the card, as opposed to read off a matching opp.
+            const manual = !!client?.servicesExplored?.[row.name];
+            const { bg, color } = serviceStatusColor(row._status);
+            const meaning = !row._status
+              ? 'No status yet, so it counts as potential.'
+              : row._closed
+                ? `Answered: ${row._status}. Left out of the totals and out of the biggest deal.`
+                : `In flight: ${row._status}. Nobody has said yes or no yet, so it is still potential and still counts here.`;
+            const how = !onSetServiceStatus
+              ? ''
+              : manual
+                ? ' Set on the company card. Pick "- (auto)" to go back to what a matching opp says.'
+                : ' Pick a status to set it on the company card.';
+            return (
+              <select
+                value={value}
+                disabled={!onSetServiceStatus}
+                title={meaning + how}
+                onClick={swallow}
+                onChange={(e) => { swallow(e); onSetServiceStatus(row.name, e.target.value); }}
+                style={{
+                  maxWidth: '100%', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit',
+                  padding: '2px 3px', borderRadius: 4, cursor: onSetServiceStatus ? 'pointer' : 'default',
+                  border: `1px solid ${manual ? '#3B82F6' : '#CBD5E1'}`,
+                  background: bg || '#fff',
+                  color: color || '#475569',
+                }}
+              >
+                {/* An opp stage the card's list doesn't offer still shows. */}
+                {!SERVICE_STATUSES.includes(value) && <option value={value}>{value}</option>}
+                {SERVICE_STATUSES.map(st => (
+                  <option key={st} value={st}>{st === '-' ? '- (auto)' : st}</option>
+                ))}
+              </select>
             );
           },
         };

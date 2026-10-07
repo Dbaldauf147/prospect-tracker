@@ -2361,31 +2361,6 @@
   opacity: 0.85;
 }
 
-/* Why a row looks the way it does, in a word: the service's own status.
-   Grey on an answered service, amber on one somebody is working on right
-   now - which is still potential, and would otherwise be indistinguishable
-   from a service nobody has ever touched. The two colours are the ones the
-   services board already paints those statuses. */
-.potentialAnsweredChip,
-.potentialFlightChip {
-  margin-left: 0.4rem;
-  padding: 0 0.3rem;
-  border-radius: 8px;
-  font-size: 0.62rem;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.potentialAnsweredChip {
-  color: #475569;
-  background: #e2e8f0;
-}
-
-.potentialFlightChip {
-  color: #854d0e;
-  background: #fef9c3;
-}
-
 /* ── Odds and ends the pricing panels share ────────────────────────── */
 
 /* An outlined accent button, and a grey prose note under a bar. Both were
