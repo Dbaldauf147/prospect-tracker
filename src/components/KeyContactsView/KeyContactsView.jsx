@@ -27,6 +27,7 @@ import { useDraftCampaignQueue, setQueuedContactIds } from '../../utils/draftCam
 import { companyOverrideUpdate, contactLocalFieldsUpdate } from '../../utils/contactCompanyOverride';
 import { primarySubject } from '../../utils/campaignSubjects';
 import { campaignSendsWithin } from '../../utils/campaignFollowUp';
+import { buildUnansweredIndex } from '../../utils/unansweredOutreach';
 
 // Curated city names for the inline City autocomplete. Matches the
 // predictive-text dropdown the Edit HubSpot Contact popup uses, so the
@@ -548,6 +549,8 @@ function buildContactColumns({ categorizeContact, showSuggestedCompany, showNewC
     // the other columns that report on the popup's local fields.
     ...(hasFullTable(storagePrefix) ? [{ key: 'taggedPct', label: 'Tagged %' }] : []),
     { key: 'lastOutreach', label: 'Last Outreach' },
+    // Emails sent since the contact last replied. All Contacts only.
+    ...(hasFullTable(storagePrefix) ? [{ key: 'noReply', label: 'No Reply' }] : []),
     ...(hasFullTable(storagePrefix) ? [{ key: 'emailCampaigns', label: 'Email Campaigns' }] : []),
     // How many campaign emails went to this contact in the last 60 days,
     // across every saved campaign, follow-ups included.
@@ -1723,7 +1726,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, lastOutreach: 160, emailCampaigns: 240, campaignSends60: 120,
+    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, lastOutreach: 160, noReply: 100, emailCampaigns: 240, campaignSends60: 120,
   };
   // Column visibility - every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -1743,7 +1746,7 @@ function KeyContactsViewInner({
   // keys removes the guess: anything not on the list shows, so the next
   // column to ship here needs none of this. They stay only to convert a
   // layout saved under the old model, once.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(hasFullTable(storagePrefix) ? ['custom', 'toCc'] : []), 'tags', ...(hasFullTable(storagePrefix) ? ['taggedPct'] : []), 'lastOutreach', ...(hasFullTable(storagePrefix) ? ['emailCampaigns', 'campaignSends60'] : [])];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(hasFullTable(storagePrefix) ? ['custom', 'toCc'] : []), 'tags', ...(hasFullTable(storagePrefix) ? ['taggedPct'] : []), 'lastOutreach', ...(hasFullTable(storagePrefix) ? ['noReply', 'emailCampaigns', 'campaignSends60'] : [])];
   function loadLegacyVisibleCols() {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -2229,6 +2232,26 @@ function KeyContactsViewInner({
 
     return map;
   }, [activityCache, outreachIndex, hubspotCache]);
+
+  // contactId → { count, lastSentMs, lastReplyMs }: emails sent since the
+  // contact's last reply, keyed by their email address. The compact index
+  // carries it pre-built; an index saved before it did falls back to the
+  // full feed when that is cached. Contacts not in the map have nothing
+  // unanswered.
+  const contactUnanswered = useMemo(() => {
+    const map = new Map();
+    if (!hasFullTable(storagePrefix)) return map;
+    const byAddr = outreachIndex?.unanswered
+      || (activityCache?.emails ? buildUnansweredIndex(activityCache.emails, settings?.workEmail) : null);
+    if (!byAddr) return map;
+    for (const c of (hubspotCache?.contacts || [])) {
+      const id = String(c.id || '');
+      const hit = c.email ? byAddr[String(c.email).toLowerCase().trim()] : null;
+      if (id && hit) map.set(id, hit);
+    }
+    return map;
+  }, [storagePrefix, outreachIndex, activityCache, hubspotCache, settings?.workEmail]);
+  const unansweredDataLoaded = !!(outreachIndex?.unanswered || activityCache?.emails);
 
   // Whole days between the most recent outreach and now. Floored, so an
   // outreach earlier today reads as 0.
@@ -2862,6 +2885,12 @@ function KeyContactsViewInner({
           cmp = av - bv;
           break;
         }
+        case 'noReply': {
+          const av = contactUnanswered.get(String(a.id || ''))?.count || 0;
+          const bv = contactUnanswered.get(String(b.id || ''))?.count || 0;
+          cmp = av - bv;
+          break;
+        }
         case 'category': {
           const av = (categorizeContact ? (categorizeContact(a.raw || a) || []) : []).join(' ');
           const bv = (categorizeContact ? (categorizeContact(b.raw || b) || []) : []).join(' ');
@@ -2886,7 +2915,7 @@ function KeyContactsViewInner({
       return cmp;
     });
     return arr;
-  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactEvents, categorizeContact, contactCampaign, campaignSends60, tagScoreFor]);
+  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactUnanswered, contactEvents, categorizeContact, contactCampaign, campaignSends60, tagScoreFor]);
 
   // Combined "To Also" + "CC" recipients edited in the contact popup,
   // keyed by lowercased primary email so the All Contacts "To / CC"
@@ -2994,6 +3023,7 @@ function KeyContactsViewInner({
     events:   c => contactEvents[String(c.id || '')] || '',
     taggedPct: c => `${tagScoreFor(c).pct}%`,
     lastOutreach: c => fmtLastOutreach(contactLastOutreach.get(String(c.id || ''))),
+    noReply: c => String(contactUnanswered.get(String(c.id || ''))?.count || 0),
     emailCampaigns: c => campaignForContact(c)?.subject || '',
     campaignSends60: c => String(campaignSends60For(c)),
     toCc:     c => {
@@ -4369,6 +4399,32 @@ function KeyContactsViewInner({
                         >
                           {stale && <span style={{ flexShrink: 0, marginRight: 4, color: '#B45309', fontWeight: 700 }}>⚠</span>}
                           {days == null ? '' : `${days} ${days === 1 ? 'day' : 'days'}`}
+                        </div>
+                      );
+                    })(),
+                    noReply: (() => {
+                      const hit = contactUnanswered.get(String(c.id || ''));
+                      if (!hit) {
+                        return (
+                          <div
+                            style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}
+                            title={unansweredDataLoaded ? 'Nothing unanswered: no emails to this contact since their last reply' : 'Open the Activity tab once to load HubSpot activity'}
+                          >{unansweredDataLoaded ? '0' : '-'}</div>
+                        );
+                      }
+                      const fmt = ms => new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                      // Three or more in a row with nothing back reads as
+                      // "try another way in", so it's flagged.
+                      const heavy = hit.count >= 3;
+                      const tip = `${hit.count} email${hit.count === 1 ? '' : 's'} sent without a reply, latest ${fmt(hit.lastSentMs)}. `
+                        + (hit.lastReplyMs ? `Last reply ${fmt(hit.lastReplyMs)}.` : 'No reply on record.')
+                        + ' From the Activity tab.';
+                      return (
+                        <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem' }} title={tip}>
+                          <span style={{
+                            display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontWeight: 700,
+                            background: heavy ? '#FEE2E2' : '#FEF3C7', color: heavy ? '#991B1B' : '#92400E',
+                          }}>{hit.count}</span>
                         </div>
                       );
                     })(),
