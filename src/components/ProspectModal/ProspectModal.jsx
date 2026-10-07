@@ -53,7 +53,7 @@ import { pricedServiceRows } from '../../utils/serviceRows';
 import { AccountPotentialTab } from '../DropdownsView/AccountPotentialTab';
 import { loadPricingEstimate } from '../../utils/pricingEstimateStore';
 import { accountPotential } from '../../utils/accountPotential';
-import { clientCounts } from '../../utils/clientDealSizing';
+import { clientCounts, withServiceStatus } from '../../utils/clientDealSizing';
 import { formatMoneyRange, getServicePricing, resolvePricingBases } from '../../utils/servicePricing';
 import { classifyHqCountry, hqRegionMissing, HQ_REGION_OPTIONS, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
 import { estimateEmailDomainCandidates } from '../../utils/emailDomainPattern';
@@ -10659,6 +10659,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               // thing left to sell this account. Null while the card is
               // still loading them, which the tab says out loud.
               oppRecords={oppsCache}
+              // The Services grid's own field, so a status picked on
+              // either tab is the same edit and autosaves the same way.
+              servicesExplored={fields.servicesExplored || {}}
+              onSetServiceStatus={(name, status) => set('servicesExplored',
+                withServiceStatus(fields.servicesExplored, [name], status))}
             />
             </div>
           )}
