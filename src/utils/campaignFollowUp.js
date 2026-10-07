@@ -101,3 +101,41 @@ export function followUpLabel(contact) {
   if (!info.sent || !info.known) return '';
   return info.followUp ? 'Yes' : 'No';
 }
+
+// How many campaign emails each address has been sent in the last `days`
+// days, across every saved campaign — the All Contacts "Campaigns (60d)"
+// column.
+//
+// Each roster row knows its own sends: `sendHistory` (capped, newest end),
+// `sendCount` (exact) and `firstSentDate`. When the first send is inside the
+// window every send is, so the exact count stands; otherwise the capped
+// history is counted date by date. A row from before send counts existed
+// has only `sentDate`, which is worth one send if it falls in the window.
+//
+// A roster row's `email` can be a '; '-joined group send, so each address
+// in it is credited. Returns Map<lowercased email, count>, only for
+// addresses with at least one send in the window.
+export function campaignSendsWithin(campaigns, days, nowMs = Date.now()) {
+  const cutoff = nowMs - days * 24 * 60 * 60 * 1000;
+  const inWindow = (d) => {
+    const t = d ? new Date(d).getTime() : NaN;
+    return Number.isFinite(t) && t >= cutoff && t <= nowMs;
+  };
+  const counts = new Map();
+  for (const camp of (campaigns || [])) {
+    for (const ct of (camp?.contacts || [])) {
+      const info = followUpInfo(ct);
+      if (!info.sent) continue;
+      let n;
+      if (info.known && inWindow(info.firstSentDate)) n = info.sendCount;
+      else if (info.history.length) n = info.history.filter(h => inWindow(h?.date)).length;
+      else n = inWindow(ct.sentDate) ? 1 : 0;
+      if (!n) continue;
+      for (const part of String(ct.email || '').split(/[;,]/)) {
+        const em = part.trim().toLowerCase();
+        if (em) counts.set(em, (counts.get(em) || 0) + n);
+      }
+    }
+  }
+  return counts;
+}

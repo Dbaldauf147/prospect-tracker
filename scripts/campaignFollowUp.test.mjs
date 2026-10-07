@@ -8,7 +8,7 @@
 // reportable when the detail is capped, and — the one that matters most on
 // screen — "not counted yet" never turns into "no follow-up".
 import {
-  SEND_HISTORY_CAP, sendHistoryByAddress, sendHistoryFor, followUpInfo, followUpLabel,
+  SEND_HISTORY_CAP, sendHistoryByAddress, sendHistoryFor, followUpInfo, followUpLabel, campaignSendsWithin,
 } from '../src/utils/campaignFollowUp.js';
 
 let passed = 0, failed = 0;
@@ -103,6 +103,32 @@ check('first sent falls back to history',
   '2026-09-01');
 check('first sent falls back to the send date',
   followUpInfo({ sentDate: '2026-09-08', sendCount: 1 }).firstSentDate, '2026-09-08');
+
+// Campaign sends in the last 60 days, per address, across campaigns.
+{
+  const now = Date.parse('2026-10-07T12:00:00Z');
+  const camps = [
+    { contacts: [
+      // Every send inside the window: the exact count stands even past the cap.
+      { email: 'a@x.com', sentDate: '2026-10-01', sendCount: 8, firstSentDate: '2026-09-01', sendHistory: [{ date: '2026-10-01' }] },
+      // Started before the window: only the in-window history counts.
+      { email: 'B@x.com; c@x.com', sentDate: '2026-09-20', sendCount: 3, firstSentDate: '2026-06-01',
+        sendHistory: [{ date: '2026-06-01' }, { date: '2026-08-30' }, { date: '2026-09-20' }] },
+      // Saved before counts existed: one send if its date is in the window.
+      { email: 'd@x.com', sentDate: '2026-09-15' },
+      { email: 'old@x.com', sentDate: '2026-07-01' },
+      { email: 'unsent@x.com', sentDate: '' },
+    ] },
+    { contacts: [{ email: 'a@x.com', sentDate: '2026-09-10', sendCount: 1 }] },
+  ];
+  const m = campaignSendsWithin(camps, 60, now);
+  check('60d: summed across campaigns', m.get('a@x.com'), 9);
+  check('60d: group send credits each address', [m.get('b@x.com'), m.get('c@x.com')], [2, 2]);
+  check('60d: uncounted send in window', m.get('d@x.com'), 1);
+  check('60d: outside the window is absent', m.has('old@x.com'), false);
+  check('60d: unsent is absent', m.has('unsent@x.com'), false);
+  check('60d: no campaigns', campaignSendsWithin(null, 60, now).size, 0);
+}
 
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
