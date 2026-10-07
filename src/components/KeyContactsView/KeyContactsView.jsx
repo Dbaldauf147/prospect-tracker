@@ -26,6 +26,7 @@ import { getStateForCity, lookupStateForCity, CITY_OPTIONS, matchCities } from '
 import { useDraftCampaignQueue, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { companyOverrideUpdate, contactLocalFieldsUpdate } from '../../utils/contactCompanyOverride';
 import { primarySubject } from '../../utils/campaignSubjects';
+import { campaignSendsWithin } from '../../utils/campaignFollowUp';
 
 // Curated city names for the inline City autocomplete. Matches the
 // predictive-text dropdown the Edit HubSpot Contact popup uses, so the
@@ -548,6 +549,9 @@ function buildContactColumns({ categorizeContact, showSuggestedCompany, showNewC
     ...(hasFullTable(storagePrefix) ? [{ key: 'taggedPct', label: 'Tagged %' }] : []),
     { key: 'lastOutreach', label: 'Last Outreach' },
     ...(hasFullTable(storagePrefix) ? [{ key: 'emailCampaigns', label: 'Email Campaigns' }] : []),
+    // How many campaign emails went to this contact in the last 60 days,
+    // across every saved campaign, follow-ups included.
+    ...(hasFullTable(storagePrefix) ? [{ key: 'campaignSends60', label: 'Campaigns (60d)' }] : []),
   ].filter(Boolean);
 }
 
@@ -1719,7 +1723,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, lastOutreach: 160, emailCampaigns: 240,
+    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, lastOutreach: 160, emailCampaigns: 240, campaignSends60: 120,
   };
   // Column visibility - every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -1739,7 +1743,7 @@ function KeyContactsViewInner({
   // keys removes the guess: anything not on the list shows, so the next
   // column to ship here needs none of this. They stay only to convert a
   // layout saved under the old model, once.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(hasFullTable(storagePrefix) ? ['custom', 'toCc'] : []), 'tags', ...(hasFullTable(storagePrefix) ? ['taggedPct'] : []), 'lastOutreach', ...(hasFullTable(storagePrefix) ? ['emailCampaigns'] : [])];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(hasFullTable(storagePrefix) ? ['custom', 'toCc'] : []), 'tags', ...(hasFullTable(storagePrefix) ? ['taggedPct'] : []), 'lastOutreach', ...(hasFullTable(storagePrefix) ? ['emailCampaigns', 'campaignSends60'] : [])];
   function loadLegacyVisibleCols() {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -1803,6 +1807,16 @@ function KeyContactsViewInner({
           if (!localStorage.getItem(campMigKey) && !next.includes('emailCampaigns')) {
             try { localStorage.setItem(campMigKey, '1'); } catch {}
             next = [...next, 'emailCampaigns'];
+          }
+          // Same for "Campaigns (60d)" - surfaced once, after Email
+          // Campaigns. Sticky flag so hiding it again sticks.
+          const sends60MigKey = lsKey('visible-cols-mig-campaignSends60');
+          if (!localStorage.getItem(sends60MigKey) && !next.includes('campaignSends60')) {
+            try { localStorage.setItem(sends60MigKey, '1'); } catch { /* private mode - column just re-offers next load */ }
+            const cIdx = next.indexOf('emailCampaigns');
+            next = cIdx >= 0
+              ? [...next.slice(0, cIdx + 1), 'campaignSends60', ...next.slice(cIdx + 1)]
+              : [...next, 'campaignSends60'];
           }
           // Same for the "Tagged %" column - surfaced once, after Tags, for
           // users whose saved visibility predates it. Sticky flag so hiding
@@ -2254,6 +2268,11 @@ function KeyContactsViewInner({
     return map;
   }, [savedCampaigns]);
   const campaignForContact = (c) => contactCampaign.get(String(c?.email || '').toLowerCase().trim());
+
+  // Lowercased email -> campaign emails sent in the last 60 days, summed
+  // over every saved campaign (see campaignSendsWithin).
+  const campaignSends60 = useMemo(() => campaignSendsWithin(savedCampaigns, 60), [savedCampaigns]);
+  const campaignSends60For = (c) => campaignSends60.get(String(c?.email || '').toLowerCase().trim()) || 0;
 
   // One option per saved campaign, each carrying the full set of its
   // recipient emails (lowercased). Unlike contactCampaign (which keeps
@@ -2855,6 +2874,11 @@ function KeyContactsViewInner({
           cmp = av - bv;
           break;
         }
+        case 'campaignSends60': {
+          cmp = (campaignSends60.get(String(a.email || '').toLowerCase().trim()) || 0)
+            - (campaignSends60.get(String(b.email || '').toLowerCase().trim()) || 0);
+          break;
+        }
         default: cmp = 0;
       }
       if (contactSortDir === 'desc') cmp = -cmp;
@@ -2862,7 +2886,7 @@ function KeyContactsViewInner({
       return cmp;
     });
     return arr;
-  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactEvents, categorizeContact, contactCampaign, tagScoreFor]);
+  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactEvents, categorizeContact, contactCampaign, campaignSends60, tagScoreFor]);
 
   // Combined "To Also" + "CC" recipients edited in the contact popup,
   // keyed by lowercased primary email so the All Contacts "To / CC"
@@ -2971,6 +2995,7 @@ function KeyContactsViewInner({
     taggedPct: c => `${tagScoreFor(c).pct}%`,
     lastOutreach: c => fmtLastOutreach(contactLastOutreach.get(String(c.id || ''))),
     emailCampaigns: c => campaignForContact(c)?.subject || '',
+    campaignSends60: c => String(campaignSends60For(c)),
     toCc:     c => {
       const entry = toCcEntryFor(c);
       if (!entry) return '';
@@ -4371,6 +4396,17 @@ function KeyContactsViewInner({
                             {entry.subject}{dateLabel ? ` · ${dateLabel}` : ''}
                           </span>
                         </div>
+                      );
+                    })(),
+                    campaignSends60: (() => {
+                      const n = campaignSends60For(c);
+                      return (
+                        <div
+                          style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: n ? '#475569' : '#CBD5E1', fontWeight: n ? 600 : 400, textAlign: 'center' }}
+                          title={n
+                            ? `${n} campaign email${n === 1 ? '' : 's'} sent to this contact in the last 60 days, across all saved campaigns (follow-ups included)`
+                            : 'No campaign emails sent to this contact in the last 60 days'}
+                        >{n}</div>
                       );
                     })(),
                   };
