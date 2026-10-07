@@ -5,7 +5,7 @@
 // The pricing is accountPotential's and is tested there. What matters here
 // is that a row reads the company record the way the company card does:
 // its own counts price the services, and an answered service never wins.
-import { biggestDealFor, dealMid } from '../src/utils/prospectingDeals.js';
+import { biggestDealFor, dealMid, dealHasStatus } from '../src/utils/prospectingDeals.js';
 import { PRICING_BASES } from '../src/utils/servicePricing.js';
 
 let passed = 0, failed = 0;
@@ -66,6 +66,13 @@ eq(biggestDealFor({ company: 'X' }, { ...ctx, serviceRows: [] }), null, 'no rate
 eq(biggestDealFor(null, ctx), null, 'no record, no deal');
 eq(dealMid({ fee: 100, feeHigh: 300 }), 200, 'sorts on the middle of the range');
 eq(dealMid(null), -1, 'no deal sorts last');
+
+eq(dealHasStatus({ status: 'Quoted' }), true, 'a status hides the row');
+eq(dealHasStatus({ status: 'Exploring', fromOpp: true }), true, 'one from an opp too');
+eq(dealHasStatus({ status: '' }), false, 'blank is no status');
+eq(dealHasStatus({ status: '-' }), false, '"-" (auto) is no status');
+eq(dealHasStatus({ status: '  ' }), false, 'whitespace is no status');
+eq(dealHasStatus(null), false, 'no deal, nothing to hide');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

@@ -61,3 +61,14 @@ export function dealMid(deal) {
   if (!deal) return -1;
   return (deal.fee + deal.feeHigh) / 2;
 }
+
+// Whether the biggest deal's service already has a status - Exploring,
+// Proposed, Quoted and the rest, typed on the card or coming from an opp.
+// The Prospects and PCs lists leave those rows out: a service somebody is
+// already working is not prospecting any more. Blank and "-" (auto, nothing
+// set) are the only no-status answers. A company with no deal at all has
+// nothing to hide.
+export function dealHasStatus(deal) {
+  const s = String(deal?.status ?? '').trim();
+  return s !== '' && s !== '-';
+}
