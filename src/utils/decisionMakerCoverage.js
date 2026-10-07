@@ -255,6 +255,22 @@ export function makeDecisionMakerLookup(contacts, { localFields = null, links = 
 }
 
 /**
+ * The decision makers among `dms` who also carry one of a service's contact
+ * tags (the Contact Tags set on the service in the Services popup, e.g.
+ * "Capital Planning"), for a column that names who to sell THAT service to.
+ *
+ * Whole tags, any casing: a contact tagged "Decision Maker; Capital
+ * Planning" matches the tag "capital planning", and "ESG Lead" does not
+ * match "ESG". Any one of the service's tags is enough. No tags on the
+ * service means no narrowing, so the full list comes back.
+ */
+export function decisionMakersWithTags(dms, tags) {
+  const want = new Set((tags || []).map(t => String(t || '').trim().toLowerCase()).filter(Boolean));
+  if (want.size === 0) return dms || [];
+  return (dms || []).filter(c => tagsOf(c).split(';').some(t => want.has(t.trim())));
+}
+
+/**
  * Statuses that take an account out of cold outreach entirely.
  *
  * The step is for names with no relationship yet, so every one of these is
