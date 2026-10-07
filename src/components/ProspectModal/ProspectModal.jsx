@@ -96,6 +96,7 @@ import {
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, buildCdmOptions, buildTypeOptions } from '../../utils/prospectOptions';
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
+import { buildTargetTierResolver } from '../../utils/targetTier';
 import {
   buildTargetCdmResolver, targetCdmConflictLabel, describeTargetCdmConflict,
   canonicalCdmOption, targetCdmApplyHint,
@@ -4979,6 +4980,26 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return targetAccountTierMap.get(targetAccount.toLowerCase()) || '';
   }, [targetAccountTierMap]);
 
+  // The tier the Target Accounts list gives this company, shown beside the
+  // Tier dropdown: the target account it is mapped to on My Accounts, else
+  // a name match - the same resolution the Clients page and My Accounts use.
+  // Every rep's rows, so an account listed under another CDM still shows.
+  const resolveTargetsTier = useMemo(
+    () => (targetAccountsData
+      ? buildTargetTierResolver({
+        targetAccountsData,
+        cdmName,
+        settings: { targetCdmColumn: settings?.targetCdmColumn, targetMap: settings?.targetMap },
+        includeAllReps: true,
+      })
+      : null),
+    [targetAccountsData, cdmName, settings?.targetCdmColumn, settings?.targetMap],
+  );
+  const targetsTier = useMemo(
+    () => (resolveTargetsTier ? resolveTargetsTier({ id: prospect?.id, company: fields.company }) : null),
+    [resolveTargetsTier, prospect?.id, fields.company],
+  );
+
   // Does the Target Accounts tab have this company under a different CDM?
   // The workbook is the shared record of who covers what, so the Coverage
   // CDM field shows a warning beside it rather than letting the two
@@ -8912,7 +8933,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             )}
 
             <div>
-              <label className={styles.label}>Tier</label>
+              <label className={styles.label}>
+                Tier
+                {/* What the Targets list says, beside what the card says.
+                    Left off until the list has loaded, so "No tier" is
+                    never a list that simply hasn't arrived yet. */}
+                {targetsTier && (
+                  <span
+                    style={{ marginLeft: 6, fontWeight: 500, textTransform: 'none', letterSpacing: 0, color: targetsTier.tier ? '#1E3A8A' : '#94A3B8' }}
+                    title={targetsTier.tier
+                      ? `The Target Accounts list has ${targetsTier.name || fields.company} at ${targetsTier.tier}`
+                        + (targetsTier.source === 'mapped' ? ' (mapped on My Accounts).' : ' (matched by name).')
+                      : targetsTier.name
+                        ? `Mapped to ${targetsTier.name} on My Accounts, which has no tier on the Target Accounts list.`
+                        : 'Not mapped to any account on the Target Accounts list.'}
+                  >
+                    {`(Targets: ${targetsTier.tier || 'No tier'})`}
+                  </span>
+                )}
+              </label>
               <select className={styles.select} value={fields.tier} onChange={e => set('tier', e.target.value)}>
                 <option value="">-</option>
                 {TIER_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
