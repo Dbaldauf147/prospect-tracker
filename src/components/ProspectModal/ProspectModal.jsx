@@ -41,6 +41,7 @@ import { prwEmailEml } from '../../utils/prwRequestEmail';
 import { downloadDrafts, resolveSignature, safeFileName } from '../../utils/draftEmail';
 import { useAuth } from '../../contexts/AuthContext';
 import { ContactCampaignAdd } from './ContactCampaignAdd';
+import { withDefaultCdm } from '../../utils/defaultCdm';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { nameFromEmail } from '../../utils/nameFromEmail';
 import { splitFullName } from '../../utils/splitFullName';
@@ -4604,8 +4605,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const [fields, setFields] = useState(() => {
-    if (prospect) return { ...EMPTY, ...prospect };
-    return { ...EMPTY };
+    const base = prospect ? { ...EMPTY, ...prospect } : { ...EMPTY };
+    // A company being created starts out as yours: the CDM is prefilled
+    // with this user's CDM name (Dan Baldauf on the admin account), and can
+    // still be changed before saving. Only on create - an existing company
+    // with no CDM is never quietly assigned one just by being opened.
+    if (isNew) return withDefaultCdm(base, cdmName);
+    return base;
   });
 
   // A company cannot be created without an HQ Region. It decides which book
