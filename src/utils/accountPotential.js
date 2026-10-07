@@ -261,11 +261,33 @@ export function bundleAutoAdds(lines = [], overrides = null, names = null) {
   return bundles;
 }
 
-/** A bundle's figures: the lead plus every open add-on, at both ends. */
+/**
+ * One priced line's first-year money: its fee plus its setup.
+ *
+ * An estimate line keeps setup out of `fee` (the fee states what the
+ * service costs to run), but a Year 1 figure is what the account pays in
+ * its first twelve months, and the setup is billed in them. The same split
+ * estimateScope's year1Total adds back together. Contract value carries it
+ * once too, the way the scope's contractValue does.
+ */
+export function lineYear1(line) {
+  if (!line?.priced) return { fee: null, feeHigh: null, value: null, valueHigh: null };
+  const n = (v) => Number(v) || 0;
+  const setup = n(line.setup);
+  const setupHigh = Number.isFinite(Number(line.setupHigh)) ? n(line.setupHigh) : setup;
+  return {
+    fee: n(line.fee) + setup,
+    feeHigh: n(line.feeHigh ?? line.fee) + setupHigh,
+    value: n(line.value) + setup,
+    valueHigh: n(line.valueHigh ?? line.value) + setupHigh,
+  };
+}
+
+/** A bundle's figures: the lead plus every open add-on, at both ends, setup included. */
 export function bundleTotals({ lead, adds = [] }) {
   const open = adds.filter(a => a.open && a.line?.priced);
-  const sum = (key) => (lead?.priced ? Number(lead[key]) || 0 : 0)
-    + open.reduce((n, a) => n + (Number(a.line[key]) || 0), 0);
+  const sum = (key) => (lead?.priced ? lineYear1(lead)[key] : 0)
+    + open.reduce((n, a) => n + lineYear1(a.line)[key], 0);
   return {
     // Priced when ANY part of it is: a lead with no rate that drags in two
     // services that have one is worth what those two are worth, and

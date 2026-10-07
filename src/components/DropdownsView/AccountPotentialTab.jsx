@@ -5,7 +5,7 @@ import { loadOpps2Newest } from '../../utils/opps2Store';
 import { loadPricingEstimate, savePricingEstimate } from '../../utils/pricingEstimateStore';
 import { ScopeLineMathModal } from './ScopeLineMathModal';
 import { CountInput, NumberCell } from './pricingCells';
-import { accountPotential } from '../../utils/accountPotential';
+import { accountPotential, lineYear1 } from '../../utils/accountPotential';
 import { clientCounts } from '../../utils/clientDealSizing';
 import { buildOppStagesByClient } from '../../utils/serviceCoverage';
 import { findProspectByCompany } from '../../utils/companyLookup';
@@ -612,8 +612,8 @@ export function AccountPotentialTab({
         _feeAvg: feeAvg,
         // The lead's own share of that, for the first line of the
         // breakdown.
-        _ownFee: est?.priced ? est.fee : null,
-        _ownFeeHigh: est?.priced ? est.feeHigh : null,
+        _ownFee: lineYear1(est).fee,
+        _ownFeeHigh: lineYear1(est).feeHigh,
         _adds: bundle?.adds || [],
         _kind: basis?.kind || '',
         _note: est?.note || '',
@@ -671,8 +671,8 @@ export function AccountPotentialTab({
           fee: null,
           feeHigh: null,
           _feeAvg: null,
-          _ownFee: est?.priced ? est.fee : null,
-          _ownFeeHigh: est?.priced ? est.feeHigh : null,
+          _ownFee: lineYear1(est).fee,
+          _ownFeeHigh: lineYear1(est).feeHigh,
           _adds: [],
           _kind: basis?.kind || '',
           _note: est?.note || '',
@@ -709,7 +709,9 @@ export function AccountPotentialTab({
       const entry = pricingFor(pricing, name, bases);
       const basis = basisFor(entry.basis, bases);
       const ownUnits = parseMoney(serviceUnits[name]);
-      const answeredFeeAvg = line?.priced ? avgMoney(line.fee, line.feeHigh) : null;
+      // Year 1, so setup in: the same figure an open row shows.
+      const year1 = lineYear1(line);
+      const answeredFeeAvg = line?.priced ? avgMoney(year1.fee, year1.feeHigh) : null;
       return {
         id: name,
         name,
@@ -734,11 +736,11 @@ export function AccountPotentialTab({
         // What it would be worth, which is the only thing this figure is
         // for: it puts the row in size order. Not bundled, because a bundle
         // is a sale being proposed and this one is not on offer.
-        fee: line?.priced ? line.fee : null,
-        feeHigh: line?.priced ? line.feeHigh : null,
+        fee: year1.fee,
+        feeHigh: year1.feeHigh,
         _feeAvg: answeredFeeAvg,
-        _ownFee: line?.priced ? line.fee : null,
-        _ownFeeHigh: line?.priced ? line.feeHigh : null,
+        _ownFee: year1.fee,
+        _ownFeeHigh: year1.feeHigh,
         _adds: [],
         _kind: basis?.kind || '',
         _note: line?.note || '',
@@ -856,8 +858,8 @@ export function AccountPotentialTab({
             {line(row.name, row._ownFee, row._ownFeeHigh, true, true)}
             {row._adds.map(a => line(
               a.name,
-              a.open ? (a.line?.priced ? a.line.fee : null) : null,
-              a.open ? (a.line?.priced ? a.line.feeHigh : null) : null,
+              a.open ? lineYear1(a.line).fee : null,
+              a.open ? lineYear1(a.line).feeHigh : null,
               a.open,
               false,
             ))}

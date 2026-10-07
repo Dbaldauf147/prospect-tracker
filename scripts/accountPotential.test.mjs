@@ -37,7 +37,7 @@
 // this page depends on them staying different.
 import {
   accountPotential, serviceDecision, splitByDecision, decidedCounts, rankByPotential,
-  bundleAutoAdds, bundleTotals, dealSizesByBundle, pricesOnDeal, CLOSED_BUCKETS,
+  bundleAutoAdds, bundleTotals, lineYear1, dealSizesByBundle, pricesOnDeal, CLOSED_BUCKETS,
 } from '../src/utils/accountPotential.js';
 import { PRICING_BASES } from '../src/utils/servicePricing.js';
 
@@ -401,6 +401,29 @@ const run = (client, oppStages = null) => accountPotential({
   check('it counts what it names', totals.addCount, 2);
   check('and what it charges for', totals.openAddCount, 1);
   check('no lines, no bundles', bundleAutoAdds([], null).length, 0);
+}
+
+// ---- setup is first-year money ------------------------------------------
+// Open/Close priced per site with a setup line read $0 of setup in its
+// Year 1 column: the line's fee is what it costs to run, and the setup sat
+// in its own column and never reached the figure the page ranks on.
+{
+  const p = accountPotential({
+    serviceRows: [row('Bill payment'), row('GHG reporting', 'GHG Reporting')],
+    pricing: {
+      'Bill payment': { basis: 'per_site', rate: 100, setupLines: [{ basis: 'flat', rate: 5000, rateHigh: 8000 }] },
+      'GHG reporting': { basis: 'flat', rate: 12000 },
+    },
+    bases, counts: COUNTS,
+  });
+  const bill = p.bundleOf.get('Bill payment');
+  check('a Year 1 fee carries the setup', bill.totals.fee, 15000);
+  check('at the top of its range too', bill.totals.feeHigh, 18000);
+  check('and the term value carries it once', bill.totals.value, 35000);
+  check('so it now outranks a bigger run fee with no setup', p.top.name, 'Bill payment');
+  check('and the bundles still foot to the scope Year 1',
+    p.bundles.reduce((n, b) => n + b.totals.fee, 0), p.estimate.year1Total);
+  check('a line nobody priced has no Year 1', lineYear1({ priced: false, fee: 0 }).fee, null);
 }
 
 // ---- a service priced as a cut of the deal it comes with ------------------
