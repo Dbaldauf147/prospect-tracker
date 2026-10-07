@@ -44,6 +44,9 @@ const btn = {
 
 const suggestBtn = {
   ...btn, border: '1px solid #86EFAC', background: '#F0FDF4', color: '#166534', fontWeight: 600,
+  // A long scope list would otherwise run the chip off the screen; let it
+  // wrap inside the panel instead.
+  whiteSpace: 'normal', textAlign: 'left', maxWidth: '100%', overflowWrap: 'anywhere',
 };
 
 /** One untagged call, its suggestions, and the two ways to settle it. */
@@ -88,7 +91,7 @@ function CallRow({ call, opps, closedOpps, onTag, onNa, busy }) {
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap', flex: '2 1 420px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap', flex: '2 1 420px', minWidth: 0, maxWidth: '100%' }}>
         {suggestions.map(({ opp, reasons }) => (
           <button
             key={opp._id}
