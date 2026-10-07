@@ -5,6 +5,7 @@ import { buildTypeOptions, buildCdmOptions, buildAssetTypeOptions, buildStrategy
 import { splitPeOwners } from '../../utils/peOwners';
 import { FIELDS, autoMap, parseDelimitedRows, cellsToProspect } from './pasteFields';
 import { HQ_REGION_OPTIONS, resolveHqRegion } from '../../utils/hqRegion';
+import { withDefaultCdm } from '../../utils/defaultCdm';
 
 // Defaults a bulk-added company starts with, matching what the single
 // "+ Add" popup pre-fills (see EMPTY in ProspectModal) so a company
@@ -172,9 +173,10 @@ function looksLikeHeader(row) {
 // header row is detected and dropped rather than being read as a
 // company. Either way, companies already on the roster and repeats
 // inside the paste are listed as skipped rather than duplicated.
-export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings }) {
+export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings, cdmName = '' }) {
   const [text, setText] = useState('');
-  const [shared, setShared] = useState(BULK_DEFAULTS);
+  // The shared CDM starts as this user's, like the + New popup's does.
+  const [shared, setShared] = useState(() => withDefaultCdm(BULK_DEFAULTS, cdmName));
   // Fields added to the shared row beyond the six fixed dropdowns, in the
   // order they were added: [{ key, value }].
   const [extras, setExtras] = useState([]);
@@ -196,7 +198,14 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings 
   }, [busy, onClose]);
 
   const typeOptions = useMemo(() => buildTypeOptions(existingProspects, settings), [existingProspects, settings]);
-  const cdmOptions = useMemo(() => buildCdmOptions(existingProspects, settings), [existingProspects, settings]);
+  // The user's own CDM is always offered: it is the shared CDM's starting
+  // value, and a select whose value isn't among its options shows blank
+  // while still stamping that name on every company added.
+  const cdmOptions = useMemo(() => {
+    const base = buildCdmOptions(existingProspects, settings);
+    const own = String(cdmName || '').trim();
+    return own && !base.some(o => o.toLowerCase() === own.toLowerCase()) ? [own, ...base] : base;
+  }, [existingProspects, settings, cdmName]);
   // Built-in vocabularies for the tag fields, so an added Asset Types /
   // Frameworks / Strategies row suggests the real options rather than
   // only what the roster happens to use already.
