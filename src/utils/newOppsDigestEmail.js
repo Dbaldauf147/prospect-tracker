@@ -12,11 +12,16 @@
 // honors by opening the file as an editable, unsent draft rather than a
 // received message — so the user can review, tweak, and send it themselves.
 
+import { OPP_VERTICAL_KEY, OPP_SALESPERSON_KEY } from './oppVerticalCoverage.js';
+
 // Fixed digest columns, in order. Mirrors NEW_OPPS_EMAIL_COLUMNS in
 // api/_lib/newOpps.js. The "BFO Address" column renders the literal text
 // "BFO Link" hyperlinked to the row's BFO Address.
 const DIGEST_COLUMNS = [
   { key: 'Account', label: 'Account' },
+  // Filled in by withVerticalCoverage (utils/oppVerticalCoverage.js).
+  { key: OPP_VERTICAL_KEY, label: 'Vertical' },
+  { key: OPP_SALESPERSON_KEY, label: 'Salesperson' },
   { key: 'Stage', label: 'Stage' },
   { key: 'Scope', label: 'Scope' },
   { key: 'Source', label: 'Source' },

@@ -8,6 +8,8 @@
 // subtab of Opps 2 applies the same filter so the emailed table matches
 // what the user sees.
 
+import { withVerticalCoverage, OPP_VERTICAL_KEY, OPP_SALESPERSON_KEY } from '../../src/utils/oppVerticalCoverage.js';
+
 // ---- Email column set (fixed) -------------------------------------------
 // The digest email always shows exactly these columns, in this order. The
 // "BFO Link" column renders a literal "BFO Link" hyperlink pointing at the
@@ -15,6 +17,10 @@
 // leave the cell blank.
 export const NEW_OPPS_EMAIL_COLUMNS = [
   { key: 'Account', label: 'Account' },
+  // Filled in by withVerticalCoverage (src/utils/oppVerticalCoverage.js):
+  // the opp's vertical, else its company's, and who Coverage lists for it.
+  { key: OPP_VERTICAL_KEY, label: 'Vertical' },
+  { key: OPP_SALESPERSON_KEY, label: 'Salesperson' },
   { key: 'Stage', label: 'Stage' },
   { key: 'Scope', label: 'Scope' },
   { key: 'Source', label: 'Source' },
@@ -97,6 +103,32 @@ const cellValue = (r, c) => (c.value ? c.value(r) : (r[c.key] ?? ''));
 // ---- Load + filter the user's new opps from Firestore -------------------
 // Reads `opps2Data/{uid}` (reassembling the chunked JSON when present) and
 // keeps only the opps that qualify for the New Opps report.
+// ---- Vertical + Salesperson ------------------------------------------------
+// The two columns the page fills from the Coverage tab and the company
+// cards. Rows the page posted already carry them; rows read here from the
+// cloud are filled the same way, from the owner's saved settings and their
+// prospects. A failed read leaves the cells blank rather than failing the
+// send.
+const ADMIN_EMAIL = 'baldaufdan@gmail.com';
+export async function addVerticalCoverage(db, uid, email, records) {
+  const list = Array.isArray(records) ? records : [];
+  if (list.length === 0 || list.every((r) => OPP_SALESPERSON_KEY in (r || {}))) return list;
+  let settings = null;
+  let prospects = [];
+  try {
+    const snap = await db.collection('userSettings').doc(uid).get();
+    settings = snap.exists ? (snap.data() || null) : null;
+  } catch { /* the shipped Coverage default still applies */ }
+  try {
+    const col = email === ADMIN_EMAIL
+      ? db.collection('prospects')
+      : db.collection('users').doc(uid).collection('prospects');
+    const snap = await col.select('company', 'vertical').get();
+    prospects = snap.docs.map((d) => d.data() || {});
+  } catch { /* opps' own verticals still apply */ }
+  return withVerticalCoverage(list, { settings, prospects });
+}
+
 export async function loadNewOpps(db, uid) {
   const ref = db.collection('opps2Data').doc(uid);
   const snap = await ref.get();
