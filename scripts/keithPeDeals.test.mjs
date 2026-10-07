@@ -49,10 +49,10 @@ check('else the matched company\'s PE Owner',
   peOwnerAndVertical({ Account: 'Vibrantz Technology' }, prospects).peOwner, 'American Securities');
 check('else the firm whose portfolio names it, with its sector as the vertical',
   peOwnerAndVertical({ Account: 'Kensing Solutions' }, prospects),
-  { peOwner: 'KKR', vertical: 'Chemicals', verticalFromOpp: false });
+  { peOwner: 'KKR', vertical: 'Chemicals', verticalFrom: 'portfolio', verticalFromOpp: false });
 check('the opp\'s own vertical beats the sector',
   peOwnerAndVertical({ Account: 'Kensing Solutions', Vertical: 'Specialty Chem' }, prospects),
-  { peOwner: 'KKR', vertical: 'Specialty Chem', verticalFromOpp: true });
+  { peOwner: 'KKR', vertical: 'Specialty Chem', verticalFrom: 'opp', verticalFromOpp: true });
 check('else the firm named in the account', ownerFromAccountName('Oxea (a SVP co.)'), 'SVP');
 check('longer form', ownerFromAccountName('Solenis (a Platinum Equity Co.)'), 'Platinum Equity');
 check('no parenthetical, no owner', ownerFromAccountName('Peranel'), '');
@@ -60,10 +60,29 @@ check('a PE firm is its own owner',
   peOwnerAndVertical({ Account: 'Platinum Equity', Type: 'Private Equity' }, prospects).peOwner, 'Platinum Equity');
 check('unknown stays blank',
   peOwnerAndVertical({ Account: 'Peranel', Type: 'Portfolio Company' }, prospects),
-  { peOwner: '', vertical: '', verticalFromOpp: false });
+  { peOwner: '', vertical: '', verticalFrom: '', verticalFromOpp: false });
 check('deals carry owner and vertical',
   buildPeOverlapDeals([{ _id: 9, Account: 'Kensing Solutions', Type: 'Portfolio Company', Stage: 'Quoting' }], { prospects })
     .map(d => [d.peOwner, d.vertical]), [['KKR', 'Chemicals']]);
+
+// The Vertical set on the company popup.
+{
+  const withVertical = [
+    { company: 'Kensing Solutions', type: 'Portfolio Company', vertical: 'Industrials' },
+    ...prospects,
+  ];
+  check('the company popup\'s vertical beats the portfolio sector',
+    peOwnerAndVertical({ Account: 'Kensing Solutions' }, withVertical),
+    { peOwner: 'KKR', vertical: 'Industrials', verticalFrom: 'company', verticalFromOpp: false });
+  check('the opp\'s own vertical still beats the popup',
+    peOwnerAndVertical({ Account: 'Kensing Solutions', Vertical: 'Specialty Chem' }, withVertical).vertical, 'Specialty Chem');
+  check('a company with no portfolio entry gets its popup vertical too',
+    peOwnerAndVertical({ Account: 'Vibrantz Technology' }, [{ ...prospects[0], vertical: 'Chemicals' }]),
+    { peOwner: 'American Securities', vertical: 'Chemicals', verticalFrom: 'company', verticalFromOpp: false });
+  check('and the deal list picks it up',
+    buildPeOverlapDeals([{ _id: 10, Account: 'Kensing Solutions', Type: 'Portfolio Company', Stage: 'Quoting' }], { prospects: withVertical })
+      .map(d => d.vertical), ['Industrials']);
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

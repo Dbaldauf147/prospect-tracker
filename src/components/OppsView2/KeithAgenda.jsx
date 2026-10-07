@@ -128,7 +128,9 @@ function VerticalCell({ deal, onSetVertical }) {
       />
     );
   }
-  const borrowed = deal.vertical && !deal.verticalFromOpp;
+  // Only the portfolio-list sector is a guess; a Vertical set on the
+  // company popup is somebody's answer and reads like one.
+  const borrowed = deal.vertical && deal.verticalFrom === 'portfolio';
   return (
     <button
       type="button"
@@ -136,7 +138,9 @@ function VerticalCell({ deal, onSetVertical }) {
       onClick={() => { setDraft(deal.vertical || ''); setEditing(true); }}
       title={borrowed
         ? `Sector from ${deal.peOwner || 'the owner'}'s portfolio list. Click to set the vertical on this opp.`
-        : 'Click to set the vertical on this opp'}
+        : deal.verticalFrom === 'company'
+          ? 'Vertical set on the company popup. Click to set one on this opp instead.'
+          : 'Click to set the vertical on this opp'}
     >
       {deal.vertical || '+ add'}
     </button>

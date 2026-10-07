@@ -14,9 +14,13 @@
 //             else the PE firm whose portfolio list names it, else the
 //             "(a SVP co.)" in the account name. An opp at a PE firm itself
 //             is its own owner.
-//   Vertical  the opp's Vertical, else the Sector on the owning firm's
-//             portfolio list. `verticalFromOpp` says which, so the page can
-//             show a borrowed sector as a suggestion rather than a fact.
+//   Vertical  the opp's Vertical, else the Vertical set on the matched
+//             company's popup, else the Sector on the owning firm's
+//             portfolio list. `verticalFrom` says which ('opp' | 'company' |
+//             'portfolio' | ''), and `verticalFromOpp` is kept for the save
+//             check, so the page can show a borrowed sector as a suggestion
+//             rather than a fact. The company popup's Vertical used to be
+//             skipped, so setting one there never reached this list.
 //
 // Pure, so the rule can be asserted without a browser:
 // scripts/keithPeDeals.test.mjs.
@@ -79,7 +83,7 @@ export function ownerFromAccountName(account) {
 /**
  * Who owns the company behind an opp, and its vertical.
  *
- *   { peOwner, vertical, verticalFromOpp }
+ *   { peOwner, vertical, verticalFrom, verticalFromOpp }
  */
 export function peOwnerAndVertical(row, prospects = []) {
   const list = Array.isArray(prospects) ? prospects : [];
@@ -96,8 +100,10 @@ export function peOwnerAndVertical(row, prospects = []) {
     || (isFirm ? account : '');
 
   const own = text(row?.['Vertical']);
+  const onCompany = text(company?.vertical);
   const sector = entries.map(e => text(e.row?.sector)).find(Boolean) || '';
-  return { peOwner, vertical: own || sector, verticalFromOpp: !!own };
+  const verticalFrom = own ? 'opp' : onCompany ? 'company' : sector ? 'portfolio' : '';
+  return { peOwner, vertical: own || onCompany || sector, verticalFrom, verticalFromOpp: !!own };
 }
 
 /**
