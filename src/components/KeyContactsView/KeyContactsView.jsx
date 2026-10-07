@@ -26,7 +26,7 @@ import { getStateForCity, lookupStateForCity, CITY_OPTIONS, matchCities } from '
 import { useDraftCampaignQueue, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { companyOverrideUpdate, contactLocalFieldsUpdate } from '../../utils/contactCompanyOverride';
 import { primarySubject } from '../../utils/campaignSubjects';
-import { campaignSendsWithin } from '../../utils/campaignFollowUp';
+import { campaignSendDetailWithin } from '../../utils/campaignFollowUp';
 import { buildUnansweredIndex } from '../../utils/unansweredOutreach';
 
 // Curated city names for the inline City autocomplete. Matches the
@@ -2292,10 +2292,37 @@ function KeyContactsViewInner({
   }, [savedCampaigns]);
   const campaignForContact = (c) => contactCampaign.get(String(c?.email || '').toLowerCase().trim());
 
-  // Lowercased email -> campaign emails sent in the last 60 days, summed
-  // over every saved campaign (see campaignSendsWithin).
-  const campaignSends60 = useMemo(() => campaignSendsWithin(savedCampaigns, 60), [savedCampaigns]);
+  // Lowercased email -> { count, campaigns } for campaign emails sent in
+  // the last 60 days, over every saved campaign (see
+  // campaignSendDetailWithin). The count fills the column; the per-campaign
+  // list is what opens when the count is clicked.
+  const campaignSends60Detail = useMemo(() => campaignSendDetailWithin(savedCampaigns, 60), [savedCampaigns]);
+  const campaignSends60 = useMemo(() => {
+    const m = new Map();
+    for (const [em, entry] of campaignSends60Detail) m.set(em, entry.count);
+    return m;
+  }, [campaignSends60Detail]);
   const campaignSends60For = (c) => campaignSends60.get(String(c?.email || '').toLowerCase().trim()) || 0;
+  // The open "which campaigns" list: { email, name, top, left } anchored
+  // under the clicked count, or null. Closes on Escape, scroll, or a click
+  // anywhere else.
+  const [sends60Pop, setSends60Pop] = useState(null);
+  useEffect(() => {
+    if (!sends60Pop) return undefined;
+    const close = () => setSends60Pop(null);
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    const onDown = (e) => { if (!e.target.closest?.('[data-sends60-pop]')) close(); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [sends60Pop]);
 
   // One option per saved campaign, each carrying the full set of its
   // recipient emails (lowercased). Unlike contactCampaign (which keeps
@@ -4456,13 +4483,39 @@ function KeyContactsViewInner({
                     })(),
                     campaignSends60: (() => {
                       const n = campaignSends60For(c);
+                      if (!n) {
+                        return (
+                          <div
+                            style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1', textAlign: 'center' }}
+                            title="No campaign emails sent to this contact in the last 60 days"
+                          >0</div>
+                        );
+                      }
+                      const email = String(c.email || '').toLowerCase().trim();
+                      const open = sends60Pop?.email === email;
                       return (
-                        <div
-                          style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: n ? '#475569' : '#CBD5E1', fontWeight: n ? 600 : 400, textAlign: 'center' }}
-                          title={n
-                            ? `${n} campaign email${n === 1 ? '' : 's'} sent to this contact in the last 60 days, across all saved campaigns (follow-ups included)`
-                            : 'No campaign emails sent to this contact in the last 60 days'}
-                        >{n}</div>
+                        <div style={{ padding: '0.3rem 0.6rem', textAlign: 'center' }}>
+                          <button
+                            type="button"
+                            data-sends60-pop
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (open) { setSends60Pop(null); return; }
+                              const r = e.currentTarget.getBoundingClientRect();
+                              setSends60Pop({
+                                email,
+                                name: c.name || c.email || '',
+                                top: r.bottom + 4,
+                                left: Math.max(8, Math.min(r.left + r.width / 2 - 160, window.innerWidth - 328)),
+                              });
+                            }}
+                            title={`${n} campaign email${n === 1 ? '' : 's'} sent to this contact in the last 60 days, across all saved campaigns (follow-ups included). Click to see which campaigns.`}
+                            style={{
+                              fontSize: '0.7rem', fontWeight: 600, color: '#1D4ED8', background: open ? '#DBEAFE' : 'transparent',
+                              border: 'none', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2,
+                            }}
+                          >{n}</button>
+                        </div>
                       );
                     })(),
                   };
@@ -4967,6 +5020,48 @@ function KeyContactsViewInner({
             emailDomains={emailDomains}
             companyNames={prospects.map(p => p.company).filter(Boolean)}
           />
+        );
+      })()}
+      {sends60Pop && (() => {
+        const entry = campaignSends60Detail.get(sends60Pop.email);
+        const fmt = (d) => {
+          const t = d ? new Date(d) : null;
+          return t && !isNaN(t) ? t.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+        };
+        return (
+          <div
+            data-sends60-pop
+            role="dialog"
+            aria-label={`Campaigns sent to ${sends60Pop.name} in the last 60 days`}
+            style={{
+              position: 'fixed', top: sends60Pop.top, left: sends60Pop.left, width: 320, maxHeight: 320, overflowY: 'auto', zIndex: 1000,
+              background: '#fff', border: '1px solid #E2E8F0', borderRadius: 8, boxShadow: '0 8px 24px rgba(15,23,42,0.15)', fontSize: '0.72rem', color: '#334155',
+            }}
+          >
+            <div style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #F1F5F9', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sends60Pop.name}</div>
+                <div style={{ color: '#64748B', fontSize: '0.65rem' }}>
+                  {entry ? `${entry.count} email${entry.count === 1 ? '' : 's'} across ${entry.campaigns.length} campaign${entry.campaigns.length === 1 ? '' : 's'}, last 60 days` : 'No campaign emails in the last 60 days'}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSends60Pop(null)}
+                aria-label="Close"
+                style={{ border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '0.9rem', lineHeight: 1, padding: 2 }}
+              >×</button>
+            </div>
+            {(entry?.campaigns || []).map(x => (
+              <div key={x.index} style={{ padding: '0.4rem 0.75rem', borderBottom: '1px solid #F8FAFC', display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={x.label}>{x.label}</div>
+                  {fmt(x.lastSentDate) && <div style={{ color: '#94A3B8', fontSize: '0.65rem' }}>Last sent {fmt(x.lastSentDate)}</div>}
+                </div>
+                <span style={{ flexShrink: 0, fontWeight: 700, color: '#1D4ED8' }}>×{x.count}</span>
+              </div>
+            ))}
+          </div>
         );
       })()}
     </div>
