@@ -8,19 +8,38 @@ import { apiFetch } from '../../utils/apiFetch';
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
 const DOM = Array.from({ length: 28 }, (_, i) => i + 1);
 
-// New schedules default to a weekly Monday 9am digest, pre-addressed to the
-// signed-in user, since the report covers the actively-progressing new opps.
-function emptyForm(defaultRecipient) {
+// What the modal is scheduling. Defaults to the New Opps digest; PE Monthly
+// passes its own (see OppsView2) and reuses everything else.
+//   store        CRUD (utils/newOppsSchedulesStore.js schedulesStore)
+//   sendNowPath  the "send now" route
+//   title / columnsNote / emptyLabel / namePlaceholder  wording
+//   defaults     what a new schedule starts with
+//   sendBody     (rowsOnScreen) => the extra fields "send now" posts
+const NEW_OPPS_KIND = {
+  store: { listSchedules, createSchedule, updateSchedule, removeSchedule, setEnabled },
+  sendNowPath: '/api/new-opps-send-now',
+  title: 'Schedule New Opps email',
+  columnsNote: 'The emailed table always shows: Account, Stage, Scope, Source, Start Date, Quoted Amount, Next Steps, and a BFO Link.',
+  emptyLabel: 'Don\u2019t send if there are no new opps',
+  namePlaceholder: 'e.g. Weekly new-opps digest',
+  // New schedules default to a weekly Monday 9am digest, since the report
+  // covers the actively-progressing new opps.
+  defaults: { subject: 'New Opportunities', message: '', frequency: 'weekly', dayOfWeekLocal: 1, dayOfMonthLocal: 1 },
+  sendBody: (rows) => ({ records: Array.isArray(rows) ? rows : undefined }),
+};
+
+// Pre-addressed to the signed-in user.
+function emptyForm(defaultRecipient, defaults) {
   return {
     id: null,
     name: '',
     recipients: defaultRecipient ? String(defaultRecipient) : '',
-    subject: 'New Opportunities',
-    message: '',
-    frequency: 'weekly',
+    subject: defaults.subject,
+    message: defaults.message,
+    frequency: defaults.frequency,
     hourLocal: 9,
-    dayOfWeekLocal: 1, // Monday
-    dayOfMonthLocal: 1,
+    dayOfWeekLocal: defaults.dayOfWeekLocal,
+    dayOfMonthLocal: defaults.dayOfMonthLocal,
     skipWhenEmpty: false,
     enabled: true,
   };
@@ -36,9 +55,10 @@ const tzLabel = (() => {
 // recipients. Mirrors PEOppsScheduleModal, minus a column picker — the
 // emailed table's column set is fixed (see NEW_OPPS_EMAIL_COLUMNS in
 // api/_lib/newOpps.js).
-export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows }) {
+export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows, kind = NEW_OPPS_KIND }) {
+  const { store, sendNowPath, title, columnsNote, emptyLabel, namePlaceholder, defaults, sendBody } = { ...NEW_OPPS_KIND, ...kind };
   const [schedules, setSchedules] = useState([]);
-  const [form, setForm] = useState(() => emptyForm(email));
+  const [form, setForm] = useState(() => emptyForm(email, defaults));
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -49,7 +69,7 @@ export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows }) {
   const reload = async () => {
     if (!uid) { setSchedules([]); return; }
     setLoading(true);
-    try { setSchedules(await listSchedules()); }
+    try { setSchedules(await store.listSchedules()); }
     catch (err) { setError(String(err.message || err)); }
     finally { setLoading(false); }
   };
@@ -72,15 +92,15 @@ export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows }) {
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
-  const startNew = () => { setForm(emptyForm(email)); setEditing(true); setError(''); };
+  const startNew = () => { setForm(emptyForm(email, defaults)); setEditing(true); setError(''); };
   const startEdit = (s) => {
     setForm({
       id: s.id,
       name: s.name || '',
       recipients: (s.recipients || []).join('\n'),
-      subject: s.subject || 'New Opportunities',
+      subject: s.subject || defaults.subject,
       message: s.message || '',
-      frequency: s.frequency || 'weekly',
+      frequency: s.frequency || defaults.frequency,
       hourLocal: s.hourLocal ?? 9,
       dayOfWeekLocal: s.dayOfWeekLocal ?? 1,
       dayOfMonthLocal: s.dayOfMonthLocal ?? 1,
@@ -105,8 +125,8 @@ export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows }) {
     setSaving(true);
     setError('');
     try {
-      if (form.id) await updateSchedule(form.id, form);
-      else await createSchedule(uid, email, form);
+      if (form.id) await store.updateSchedule(form.id, form);
+      else await store.createSchedule(uid, email, form);
       setEditing(false);
       setToast('Schedule saved.');
       await reload();
@@ -119,12 +139,12 @@ export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows }) {
 
   const handleDelete = async (s) => {
     if (!window.confirm(`Delete this schedule? "${describeSchedule(s)}" to ${(s.recipients || []).length} recipient(s).`)) return;
-    try { await removeSchedule(s.id); setToast('Schedule deleted.'); await reload(); }
+    try { await store.removeSchedule(s.id); setToast('Schedule deleted.'); await reload(); }
     catch (err) { setToast(`Delete failed: ${err.message || err}`); }
   };
 
   const handleToggle = async (s) => {
-    try { await setEnabled(s.id, !(s.enabled !== false)); await reload(); }
+    try { await store.setEnabled(s.id, !(s.enabled !== false)); await reload(); }
     catch (err) { setToast(`Update failed: ${err.message || err}`); }
   };
 
@@ -133,23 +153,23 @@ export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows }) {
     setBusyId(s ? s.id : 'form');
     setError('');
     try {
-      // Send exactly the new opps shown on the page (the page reads the
+      // Send exactly the rows shown on the page (the page reads the
       // newest local/cloud data, which can be ahead of the cloud copy the
       // server would otherwise re-read) so the email matches the table.
-      const records = Array.isArray(oppsRows) ? oppsRows : undefined;
+      const rows = sendBody(oppsRows);
       const body = s
-        ? { scheduleId: s.id, records }
+        ? { scheduleId: s.id, ...rows }
         : {
             recipients: normalizeRecipients(form.recipients),
             subject: form.subject,
             message: form.message,
-            records,
+            ...rows,
           };
       if (!s) {
         const v = validate();
         if (v) { setError(v); setBusyId(null); return; }
       }
-      const res = await apiFetch('/api/new-opps-send-now', {
+      const res = await apiFetch(sendNowPath, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -174,7 +194,7 @@ export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows }) {
     >
       <div style={{ background: '#fff', borderRadius: 10, width: 'min(680px, 100%)', boxShadow: '0 20px 60px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
         <div style={{ padding: '0.9rem 1.25rem', background: '#009530', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ fontSize: '1rem', fontWeight: 700 }}>Schedule New Opps email</div>
+          <div style={{ fontSize: '1rem', fontWeight: 700 }}>{title}</div>
           <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: '#fff', fontSize: '1.3rem', cursor: 'pointer', lineHeight: 1 }}>×</button>
         </div>
 
@@ -227,7 +247,7 @@ export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows }) {
           {editing && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
               <Field label="Name (optional)">
-                <input style={inp} value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="e.g. Weekly new-opps digest" />
+                <input style={inp} value={form.name} onChange={(e) => set('name', e.target.value)} placeholder={namePlaceholder} />
               </Field>
 
               <Field label="Recipients (one per line or comma-separated)">
@@ -273,12 +293,12 @@ export function NewOppsScheduleModal({ open, onClose, uid, email, oppsRows }) {
               </div>
 
               <div style={{ fontSize: '0.7rem', color: '#64748B', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.45rem 0.6rem' }}>
-                The emailed table always shows: Account, Stage, Scope, Source, Start Date, Quoted Amount, Next Steps, and a BFO Link.
+                {columnsNote}
               </div>
 
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.76rem', color: '#334155' }}>
                 <input type="checkbox" checked={form.skipWhenEmpty} onChange={(e) => set('skipWhenEmpty', e.target.checked)} />
-                Don&apos;t send if there are no new opps
+                {emptyLabel}
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.76rem', color: '#334155' }}>
                 <input type="checkbox" checked={form.enabled} onChange={(e) => set('enabled', e.target.checked)} />

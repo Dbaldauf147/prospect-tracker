@@ -13,6 +13,11 @@
 // without a browser: scripts/peMonthlyEmail.test.mjs.
 
 import { buildDigestTableHtml, buildDigestEmailHtml, downloadEml } from './newOppsDigestEmail.js';
+import { buildPeOverlapDeals } from './keithPeDeals.js';
+import { buildTargetTierResolver, buildTargetCdmResolver } from './targetTier.js';
+import { coverageFromSettings, salespeopleForVertical } from './salesCoverage.js';
+import { parseMoney } from './oppsMetrics.js';
+import { fmtMoneyWhole } from './pricingOptionCalc.js';
 
 export const PE_MONTHLY_COLUMNS = [
   { key: 'Account', label: 'Account' },
@@ -56,6 +61,43 @@ export function peMonthlyRows(deals, records = [], salespeopleFor = () => []) {
       'BFO Address': String(opp['BFO Address'] ?? '').trim(),
     };
   });
+}
+
+/**
+ * The whole list from the raw inputs, built the way the Opps page builds it
+ * (buildPeOverlapDeals with the Target Accounts tier / CDM resolvers, then
+ * peMonthlyRows with Opps > Coverage). The scheduled email runs on the
+ * server with no page open, so it calls this with what it reads from
+ * Firestore and gets the same rows the tab shows.
+ */
+export function buildPeMonthlyRows({ records = [], prospects = [], settings = null, targetAccountsData = null, cdmName = '' } = {}) {
+  const targetTierFor = targetAccountsData
+    ? buildTargetTierResolver({ targetAccountsData, cdmName, settings, includeAllReps: true })
+    : null;
+  const targetCdmFor = targetAccountsData
+    ? buildTargetCdmResolver({ targetAccountsData, settings })
+    : null;
+  const deals = buildPeOverlapDeals(records, {
+    parseAmount: parseMoney, fmtAmount: fmtMoneyWhole, prospects, targetTierFor, targetCdmFor,
+  });
+  const coverage = coverageFromSettings(settings);
+  return peMonthlyRows(deals, records, v => salespeopleForVertical(coverage, v));
+}
+
+/**
+ * Rows the page posts for "Send now", cut down to the email's columns as
+ * plain strings - the server sends exactly what is on screen, and nothing
+ * else rides along.
+ */
+export function sanitizePeMonthlyRows(rows, max = 1000) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter(r => r && typeof r === 'object')
+    .slice(0, max)
+    .map((r) => {
+      const out = {};
+      for (const c of PE_MONTHLY_COLUMNS) out[c.key] = String(r[c.key] ?? '').slice(0, 5000);
+      return out;
+    });
 }
 
 // The wording a draft starts with until the user saves their own (Edit email
