@@ -15,8 +15,16 @@
 // matches them (utils/decisionMakerCoverage.js), narrowed to the ones who
 // also carry one of the Biggest Deal service's contact tags (set in the
 // Services popup). A service with no contact tags narrows nothing.
+//
+// And where that service stands, settable from the row: the Service Status
+// column writes the company card's Services Explored map, the same field
+// the card's own grid writes. Only open services are ever the biggest deal,
+// so marking one Not Sold or N/A takes it off the row and the next biggest
+// open service takes its place.
 import { useEffect, useMemo, useState } from 'react';
-import { STATUS_COLORS } from '../../data/enums.js';
+import { STATUS_COLORS, SERVICE_STATUSES } from '../../data/enums.js';
+import { serviceStatusColor } from '../../utils/serviceStatusColors.js';
+import { withServiceStatus } from '../../utils/clientDealSizing.js';
 import { allPcRows, myProspectRows, sumFigures } from '../../utils/prospectingPortfolio.js';
 import { biggestDealFor } from '../../utils/prospectingDeals.js';
 import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
@@ -59,6 +67,42 @@ function Figure({ value, from, unit = '' }) {
 }
 
 
+// The biggest deal service's status, set from the row. Painted the colour of
+// the status it shows, like the pills elsewhere, with the company card's
+// own vocabulary and "- (auto)": no override, so the service reads whatever
+// a matching opp says. A blue border means the status is typed on the card
+// rather than coming from an opp.
+function DealStatusSelect({ deal, disabled, onPick }) {
+  const value = deal.status || '-';
+  const manual = !!deal.status && !deal.fromOpp;
+  const { bg, color } = serviceStatusColor(deal.status);
+  const title = disabled
+    ? 'Open the company to change this status'
+    : `Set the status of ${deal.name} on this company. ${deal.fromOpp ? 'Now coming from an opportunity; picking one here overrides it.' : ''} Not Sold or N/A takes it off this row and the next biggest open service takes its place.`;
+  return (
+    <select
+      value={value}
+      disabled={disabled}
+      title={title.replace(/\s+/g, ' ').trim()}
+      onClick={e => e.stopPropagation()}
+      onChange={e => { e.stopPropagation(); onPick(e.target.value); }}
+      style={{
+        maxWidth: '100%', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit',
+        padding: '2px 3px', borderRadius: 4, cursor: disabled ? 'default' : 'pointer',
+        border: `1px solid ${manual ? '#3B82F6' : '#CBD5E1'}`,
+        background: bg || '#fff',
+        color: color || '#475569',
+      }}
+    >
+      {/* A status off the opp list the card doesn't offer still shows. */}
+      {!SERVICE_STATUSES.includes(value) && <option value={value}>{value}</option>}
+      {SERVICE_STATUSES.map(st => (
+        <option key={st} value={st}>{st === '-' ? '- (auto)' : st}</option>
+      ))}
+    </select>
+  );
+}
+
 // Each record's biggest deal, remembered against the rate card and opps it
 // was priced with, so an edit to one company re-prices that company rather
 // than the whole list. Keyed by the record object, so a record that is
@@ -77,7 +121,7 @@ function cachedDeal(prospect, ctx, oppRecords) {
   return deal;
 }
 
-export function ProspectingCompanies({ mode, prospects, settings, updateSettings = null, cdmName = '', onSelectProspect, maxWidth }) {
+export function ProspectingCompanies({ mode, prospects, settings, updateSettings = null, updateProspect = null, cdmName = '', onSelectProspect, maxWidth }) {
   const siteLists = settings?.companySiteLists || null;
   const baseRows = useMemo(() => (
     mode === 'pcs'
@@ -224,6 +268,15 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
     ? 'Every portfolio company mapped on a PE firm Portfolio Companies table, once each, except Old Client, Lost - Not Sold and Hold Off.'
     : `Every company in the tracker with ${cdmName || 'you'} as its CDM, except Old Client, Lost - Not Sold and Hold Off.`;
 
+  // Writes the one field the card's Services Explored grid writes. The
+  // record comes back replaced, so its deal is re-priced on the next render.
+  const setDealStatus = useMemo(() => (typeof updateProspect === 'function'
+    ? (prospect, name, status) => {
+      if (!prospect?.id || !name) return;
+      updateProspect(prospect.id, { servicesExplored: withServiceStatus(prospect.servicesExplored, [name], status) });
+    }
+    : null), [updateProspect]);
+
   const columns = useMemo(() => {
     const num = (key, fromKey) => ({
       render: r => <div style={{ textAlign: 'right', width: '100%' }}><Figure value={r[key]} from={r[fromKey]} /></div>,
@@ -347,8 +400,22 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
           </span>
         ) : <span style={{ color: '#CBD5E1' }}>-</span>),
       },
+      {
+        key: 'dealStatus', label: 'Service Status', defaultWidth: 130,
+        headerTitle: 'Where the Biggest Deal Service stands on this company: the status on the company card, else what a matching opportunity says. Pick one to set it on the card. Not Sold and N/A are answers, so the service leaves the row and the next biggest open service takes its place.',
+        getSortValue: r => (r.deal ? (r.deal.status || '').toLowerCase() : null),
+        getFilterValue: r => r.deal?.status || '',
+        exportValue: r => r.deal?.status || '',
+        render: r => (r.deal ? (
+          <DealStatusSelect
+            deal={r.deal}
+            disabled={!setDealStatus || !r.prospect?.id}
+            onPick={status => setDealStatus(r.prospect, r.deal.name, status)}
+          />
+        ) : <span style={{ color: '#CBD5E1' }}>-</span>),
+      },
     ];
-  }, [isPcs, onSelectProspect]);
+  }, [isPcs, onSelectProspect, setDealStatus]);
 
   // DataTable keys its rows on `id`.
   const tableRows = useMemo(() => searched.map(r => ({ ...r, id: r.key })), [searched]);
@@ -360,7 +427,7 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
     <div style={{ padding: '0.25rem 1.25rem 1.25rem', maxWidth }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.6rem' }}>
         <div style={{ fontSize: '0.72rem', color: '#64748B', flex: '1 1 320px' }}>
-          {intro} Sites, accounts and energy come from each company Master Analysis save, Biggest Deal is the same figure as on the company card, and Decision Makers lists who is tagged Decision Maker there and also carries a contact tag of the Biggest Deal service (hover for titles). Grey italic figures are stand-ins until one is saved: hover them for where they came from. Drag a header edge to resize a column, type under a header to filter it, and star your standard columns in the Columns menu.
+          {intro} Sites, accounts and energy come from each company Master Analysis save, Biggest Deal is the same figure as on the company card, and Decision Makers lists who is tagged Decision Maker there and also carries a contact tag of the Biggest Deal service (hover for titles). Service Status is that service's status on the company card: pick one to change it, and a service marked Not Sold or N/A leaves the row for the next biggest open one. Grey italic figures are stand-ins until one is saved: hover them for where they came from. Drag a header edge to resize a column, type under a header to filter it, and star your standard columns in the Columns menu.
         </div>
         <input
           type="search"

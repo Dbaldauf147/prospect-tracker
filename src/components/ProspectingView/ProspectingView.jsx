@@ -1207,7 +1207,7 @@ function AddStepForm({ onAdd }) {
   );
 }
 
-export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null, prospects = null, onSelectProspect, settings = null, settingsLoaded = false, updateSettings = null, tagCoverage = null, tagDebt = null, dmCoverage = null, cdmName = '' }) {
+export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null, prospects = null, onSelectProspect, settings = null, settingsLoaded = false, updateSettings = null, updateProspect = null, tagCoverage = null, tagDebt = null, dmCoverage = null, cdmName = '' }) {
   // The ladder's status — the steps, what each one counts, and which of
   // them is caught up, outstanding or still loading. Computed once in App
   // (useProspectingLadder) and handed down, so this page's Status column
@@ -1484,6 +1484,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           prospects={prospects}
           settings={settings}
           updateSettings={updateSettings}
+          updateProspect={updateProspect}
           cdmName={cdmName}
           onSelectProspect={onSelectProspect}
         />

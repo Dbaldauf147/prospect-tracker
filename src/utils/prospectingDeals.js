@@ -8,11 +8,11 @@
 // So the figure on this list is the figure on the card.
 //
 // Imported with extensions so this loads under plain Node for the tests.
-import { accountPotential } from './accountPotential.js';
+import { accountPotential, serviceDecision } from './accountPotential.js';
 import { clientCounts } from './clientDealSizing.js';
 
 /**
- * { name, fee, feeHigh, adds } for the biggest open service on this company,
+ * { name, fee, feeHigh, adds, status, fromOpp } for the biggest open service on this company,
  * or null when nothing open can be priced. `ctx` carries what every row
  * shares: { serviceRows, pricing, bases, overrides } and, per company,
  * `oppStages` (what its opportunities say about each service).
@@ -41,11 +41,17 @@ export function biggestDealFor(prospect, { serviceRows, pricing, bases, override
   });
   const top = reading?.top;
   if (!top) return null;
+  // Where that service stands today, so the list can show it and set it.
+  // Always an open status (never Sold, Not Sold or N/A): those are answers,
+  // and an answered service is never the biggest deal.
+  const { status, fromOpp } = serviceDecision(client, top.name, oppStages);
   return {
     name: top.name,
     fee: Number(top.fee) || 0,
     feeHigh: Number.isFinite(Number(top.feeHigh)) ? Number(top.feeHigh) : Number(top.fee) || 0,
     adds: (top.bundle?.adds || []).filter(a => a.open).map(a => a.name),
+    status,
+    fromOpp,
   };
 }
 
