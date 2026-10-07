@@ -656,6 +656,7 @@ function App() {
               settings={settings}
               settingsLoaded={settingsLoaded}
               updateSettings={updateSettings}
+              updateProspect={updateProspect}
               tagCoverage={tagDebt.coverage}
               tagDebt={tagDebt.missing}
               dmCoverage={dmCoverage}

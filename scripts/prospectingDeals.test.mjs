@@ -42,6 +42,26 @@ const ctx = { serviceRows, pricing, bases: PRICING_BASES };
   const deal = biggestDealFor({ company: 'Opp Co', numberOfSites: 200 }, { ...ctx, oppStages: new Map([['Bill payment', 'Sold']]) });
   eq(deal?.name, 'GHG reporting', 'a service sold through an opp is ruled out too');
 }
+{
+  const deal = biggestDealFor({ company: 'NS Co', numberOfSites: 200, servicesExplored: { 'Bill payment': 'Not Sold' } }, ctx);
+  eq(deal?.name, 'GHG reporting', 'a Not Sold service is never the biggest deal');
+}
+{
+  const deal = biggestDealFor({ company: 'NA Co', numberOfSites: 200, servicesExplored: { 'Bill payment': 'N/A' } }, ctx);
+  eq(deal?.name, 'GHG reporting', 'an N/A service is never the biggest deal');
+}
+{
+  const deal = biggestDealFor({ company: 'Q Co', numberOfSites: 200, servicesExplored: { 'Bill payment': 'Quoting' } }, ctx);
+  eq([deal?.name, deal?.status, deal?.fromOpp], ['Bill payment', 'Quoting', false], 'the deal carries its service status');
+}
+{
+  const deal = biggestDealFor({ company: 'P Co', numberOfSites: 200 }, { ...ctx, oppStages: new Map([['Bill payment', 'Proposed']]) });
+  eq([deal?.status, deal?.fromOpp], ['Proposed', true], 'a status from an opp says so');
+}
+{
+  const deal = biggestDealFor({ company: 'Fresh Co', numberOfSites: 200 }, ctx);
+  eq(deal?.status, '', 'an unexplored service has no status');
+}
 eq(biggestDealFor({ company: 'X' }, { ...ctx, serviceRows: [] }), null, 'no rate card, no deal');
 eq(biggestDealFor(null, ctx), null, 'no record, no deal');
 eq(dealMid({ fee: 100, feeHigh: 300 }), 200, 'sorts on the middle of the range');
