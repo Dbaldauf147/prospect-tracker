@@ -812,3 +812,22 @@
   outline-offset: 1px;
   border-radius: 2px;
 }
+
+/* Keith tab: the agenda and the table scroll together, since the agenda can
+   be taller than the window. The table keeps its own header-pinned scroll
+   inside a box of fixed height, so it never collapses under the agenda. */
+.keithScroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.keithTableBox {
+  flex-shrink: 0;
+  height: 75vh;
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+}

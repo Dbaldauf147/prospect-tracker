@@ -45,7 +45,7 @@ import {
   clientRequiredCoaNotRequested, EMPTY_CLIENT_COA_INDEX,
 } from '../../utils/clientCoaFlags';
 import { KeithAgenda } from './KeithAgenda';
-import { buildPeOverlapDeals } from '../../utils/keithPeDeals';
+import { buildPeOverlapDeals, oppStageNumber } from '../../utils/keithPeDeals';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { getEffectiveServiceMetadata, formatRolloutWeeks } from '../../data/serviceCatalog';
 import { missingServiceTimelines, isServiceTimelineRow } from '../../utils/serviceTimelines';
@@ -16802,6 +16802,22 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     });
   }, [prefiltered]);
 
+  // The deals behind the "Immediate asks" line on the Keith agenda: the same
+  // opps as the table under it, so the line walks exactly what's waiting on
+  // him, in the table's order. Stage shows the number where there is one
+  // (Stage 3-6) and the raw stage name otherwise.
+  const immediateAskDeals = useMemo(() => waitingOnKeith.map(row => {
+    const amount = parseMoney(row?.['Quoted Amount']);
+    const stage = String(row?.Stage || '').trim();
+    const n = oppStageNumber(row);
+    return {
+      id: String(row._id),
+      name: String(row?.['Account'] || '').trim() || '(no account)',
+      amountLabel: amount == null ? '' : fmtMoneyWhole(amount),
+      stageLabel: n ? `Stage ${n} · ${stage}` : stage,
+    };
+  }), [waitingOnKeith]);
+
   // The deals behind the "Stage 6 deals" line on the Keith agenda, so that
   // line can list them underneath and tick them off one at a time instead
   // of standing for a set the user has to remember.
@@ -18484,13 +18500,18 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       )}
 
       {activeTab === 'waitingKeith' && (
-        <>
+        // One scroll for the whole tab. The agenda can run taller than the
+        // window (its deal lists grow with the pipeline), and under the
+        // wrapper's overflow: hidden that squeezed the table to nothing with
+        // no way to scroll down to it.
+        <div className={styles.keithScroll}>
           {/* What to raise with him, above what the data says is stuck on him. */}
           <KeithAgenda
             settings={settings}
             updateSettings={updateSettings}
             stage6Deals={stage6Deals}
             peDeals={peOverlapDeals}
+            askDeals={immediateAskDeals}
             onOpenOpp={setInfoOppId}
             onSetVertical={(id, v) => updateOppField(id, 'Vertical', v)}
           />
@@ -18505,6 +18526,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           {loading && !data ? (
             <div className={styles.loading}>Loading...</div>
           ) : (
+            <div className={styles.keithTableBox}>
             <DataTable
               tableId="opps2-waiting-keith"
               columns={columns}
@@ -18525,8 +18547,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 return undefined;
               }}
             />
+            </div>
           )}
-        </>
+        </div>
       )}
 
       <NewOppsDraftEmailModal
