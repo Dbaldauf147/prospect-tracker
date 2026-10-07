@@ -31,6 +31,9 @@
 // bullets, because the point of walking it is who owns each company and
 // what vertical it is in: PE Owner and Vertical sit in their own columns,
 // and Vertical can be typed in place (it writes the opp's Vertical column).
+//
+// "Immediate asks" is the third: the opps in the table below, the ones with
+// Keith in Waiting On (`askDeals`), as plain sub-bullets. Ticks under `ask:`.
 
 import { useEffect, useRef, useState } from 'react';
 import styles from './OppsView2.module.css';
@@ -61,9 +64,18 @@ function isPeOverlapLine(text) {
   return /overlap/i.test(t) && (/\bpe\b/i.test(t) || /private\s*equity/i.test(t) || /portfolio/i.test(t));
 }
 
+// The line the waiting-on-Keith opps hang under: "Immediate asks", or
+// "Immediate ask" / "immediate asks for Keith".
+function isImmediateAsksLine(text) {
+  return /immediate\s*asks?\b/i.test(String(text || ''));
+}
+
 // Which deal list a line carries, if any: the tick-key prefix, the deals,
 // and what to say when there are none.
-function dealListFor(text, stage6Deals, peDeals) {
+function dealListFor(text, stage6Deals, peDeals, askDeals) {
+  if (isImmediateAsksLine(text)) {
+    return { prefix: 'ask:', deals: askDeals, empty: 'No opps have Keith in Waiting On right now.' };
+  }
   if (isStage6Line(text)) {
     return { prefix: '', deals: stage6Deals, empty: 'No deals in Stage 6 (Agreement Sent) right now.' };
   }
@@ -147,7 +159,7 @@ function VerticalCell({ deal, onSetVertical }) {
   );
 }
 
-export function KeithAgenda({ settings, updateSettings, stage6Deals = [], peDeals = [], onOpenOpp, onSetVertical }) {
+export function KeithAgenda({ settings, updateSettings, stage6Deals = [], peDeals = [], askDeals = [], onOpenOpp, onSetVertical }) {
   const items = readAgenda(settings);
   const dealTicks = readDealTicks(settings);
   // Which line is open for editing, and the text as it's being typed. Held
@@ -174,7 +186,8 @@ export function KeithAgenda({ settings, updateSettings, stage6Deals = [], peDeal
   });
   const doneCount = items.filter(it => it.done).length;
   const dealsDone = stage6Deals.filter(d => dealTicks[d.id]).length
-    + peDeals.filter(d => dealTicks[`pe:${d.id}`]).length;
+    + peDeals.filter(d => dealTicks[`pe:${d.id}`]).length
+    + askDeals.filter(d => dealTicks[`ask:${d.id}`]).length;
   // A tick is only worth storing while it's on: an untick drops the key so the
   // map stays the size of what's actually covered rather than of every deal
   // ever seen on the tab.
@@ -298,7 +311,7 @@ export function KeithAgenda({ settings, updateSettings, stage6Deals = [], peDeal
                       {item.text}
                     </button>
                     {(() => {
-                      const list = dealListFor(item.text, stage6Deals, peDeals);
+                      const list = dealListFor(item.text, stage6Deals, peDeals, askDeals);
                       if (!list || list.deals.length === 0) return null;
                       const done = list.deals.filter(d => dealTicks[`${list.prefix}${d.id}`]).length;
                       return (
@@ -343,7 +356,7 @@ export function KeithAgenda({ settings, updateSettings, stage6Deals = [], peDeal
                   inside its row, so each keeps its own tick and the parent
                   line still reads as one agenda item. */}
               {editingId !== item.id && (() => {
-                const list = dealListFor(item.text, stage6Deals, peDeals);
+                const list = dealListFor(item.text, stage6Deals, peDeals, askDeals);
                 if (!list) return null;
                 if (list.deals.length === 0) {
                   // Said rather than left blank: no sub-bullets under a line
