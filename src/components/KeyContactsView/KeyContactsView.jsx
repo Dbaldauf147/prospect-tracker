@@ -28,7 +28,7 @@ import { companyOverrideUpdate, contactLocalFieldsUpdate } from '../../utils/con
 import { primarySubject } from '../../utils/campaignSubjects';
 import { latestCampaignReplies, campaignReplyForContact } from '../../utils/campaignReplies';
 import { campaignSendDetailWithin } from '../../utils/campaignFollowUp';
-import { buildUnansweredIndex, unansweredFor, UNANSWERED_VERSION } from '../../utils/unansweredOutreach';
+import { buildUnansweredIndex, unansweredFor, campaignSendsByAddress, UNANSWERED_VERSION } from '../../utils/unansweredOutreach';
 import { fetchAllActivityPages } from '../../utils/hubspotActivityPages';
 
 // Curated city names for the inline City autocomplete. Matches the
@@ -511,6 +511,36 @@ export function KeyContactsView(props) {
 const FULL_TABLE_PREFIXES = new Set(['all-contacts', 'dm-contacts']);
 function hasFullTable(storagePrefix) {
   return FULL_TABLE_PREFIXES.has(storagePrefix);
+}
+
+// The No Reply column's own load of the HubSpot email feed, for when no
+// current index is stored (see utils/unansweredOutreach). It pages through
+// the whole history, which can take a minute, so it lives at module level:
+// leaving the page doesn't throw the work away, and coming back joins the
+// load already running instead of starting another. The result is saved to
+// the outreach index and announced on the same event the Activity tab uses,
+// so every open copy of the table picks it up.
+const UNANSWERED_PROGRESS_EVENT = 'no-reply-emails-progress';
+let unansweredLoad = null;
+function loadUnansweredFromHubspot(workEmail) {
+  if (!unansweredLoad) {
+    unansweredLoad = fetchAllActivityPages('email', (n) => {
+      window.dispatchEvent(new CustomEvent(UNANSWERED_PROGRESS_EVENT, { detail: n }));
+    }).then((emails) => {
+      const built = buildUnansweredIndex(emails, workEmail);
+      try {
+        const prev = JSON.parse(userLsGet('hubspot-outreach-index') || 'null') || {};
+        userLsSet('hubspot-outreach-index', JSON.stringify({ ...prev, unanswered: built }));
+        window.dispatchEvent(new CustomEvent('hubspot-activity-cache-updated'));
+      } catch { /* quota: the in-memory copy still fills the column */ }
+      return built;
+    }).catch((err) => {
+      console.warn('No Reply email fetch failed:', err?.message || err);
+      unansweredLoad = null; // let the next visit try again
+      throw err;
+    });
+  }
+  return unansweredLoad;
 }
 
 // Every column the flat contacts table can show, in its default order.
@@ -2238,12 +2268,13 @@ function KeyContactsViewInner({
   }, [activityCache, outreachIndex, hubspotCache]);
 
   // No Reply column: emails sent since the contact's last reply (see
-  // utils/unansweredOutreach). The Activity tab builds the index into the
-  // compact outreach index; an index saved by older code (or none at all,
-  // on a browser that has never opened the Activity tab) falls back to the
-  // full feed when that is cached, and otherwise this page loads the email
-  // feed itself. Waiting on a visit to another tab is how the column first
-  // shipped empty.
+  // utils/unansweredOutreach). Two sources, merged per contact: the saved
+  // campaigns (on the page already, so campaigned contacts fill in at once)
+  // and the HubSpot email feed. The Activity tab builds the feed's index
+  // into the compact outreach index; an index saved by older code (or none,
+  // on a browser that hasn't opened the Activity tab) falls back to the
+  // full feed when that is cached, and otherwise this page pages the feed
+  // in itself (loadUnansweredFromHubspot, which outlives a tab switch).
   const storedUnanswered = outreachIndex?.unanswered?.v === UNANSWERED_VERSION ? outreachIndex.unanswered : null;
   const cachedUnanswered = useMemo(
     () => (!storedUnanswered && activityCache?.emails ? buildUnansweredIndex(activityCache.emails, settings?.workEmail) : null),
@@ -2251,47 +2282,31 @@ function KeyContactsViewInner({
   );
   const [fetchedUnanswered, setFetchedUnanswered] = useState(null);
   const [unansweredStatus, setUnansweredStatus] = useState('idle'); // idle | loading | error
+  const [unansweredProgress, setUnansweredProgress] = useState(0);
   const unansweredIndex = storedUnanswered || cachedUnanswered || fetchedUnanswered;
   const needsUnansweredFetch = hasFullTable(storagePrefix) && !storedUnanswered && !cachedUnanswered;
   useEffect(() => {
     if (!needsUnansweredFetch || !user?.uid) return undefined;
     let cancelled = false;
     setUnansweredStatus('loading');
-    (async () => {
-      try {
-        const emails = await fetchAllActivityPages('email');
-        if (cancelled) return;
-        const built = buildUnansweredIndex(emails, settings?.workEmail);
-        setFetchedUnanswered(built);
-        setUnansweredStatus('idle');
-        // Keep it for next time, on top of whatever the Activity tab last
-        // wrote (Last Outreach reads the rest of that object).
-        try {
-          const prev = JSON.parse(userLsGet('hubspot-outreach-index') || 'null') || {};
-          userLsSet('hubspot-outreach-index', JSON.stringify({ ...prev, unanswered: built }));
-        } catch { /* quota: the in-memory copy still fills the column */ }
-      } catch (err) {
-        console.warn('No Reply email fetch failed:', err?.message || err);
-        if (!cancelled) setUnansweredStatus('error');
-      }
-    })();
-    return () => { cancelled = true; };
-  // Run once per page visit; a later Activity refresh lands through
+    const onProgress = (e) => { if (!cancelled) setUnansweredProgress(e.detail || 0); };
+    window.addEventListener(UNANSWERED_PROGRESS_EVENT, onProgress);
+    loadUnansweredFromHubspot(settings?.workEmail)
+      .then((built) => { if (!cancelled) { setFetchedUnanswered(built); setUnansweredStatus('idle'); } })
+      .catch(() => { if (!cancelled) setUnansweredStatus('error'); });
+    return () => { cancelled = true; window.removeEventListener(UNANSWERED_PROGRESS_EVENT, onProgress); };
+  // Once per page visit; a later Activity refresh lands through
   // outreachIndex instead.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsUnansweredFetch, user?.uid]);
-  const contactUnanswered = useMemo(() => {
-    const map = new Map();
-    if (!hasFullTable(storagePrefix) || !unansweredIndex) return map;
-    for (const c of (hubspotCache?.contacts || [])) {
-      const id = String(c.id || '');
-      if (!id) continue;
-      const hit = unansweredFor(unansweredIndex, { id, email: c.email });
-      if (hit && (hit.count > 0 || hit.lastReplyMs)) map.set(id, hit);
-    }
-    return map;
-  }, [storagePrefix, unansweredIndex, hubspotCache]);
-  const unansweredDataLoaded = !!unansweredIndex;
+  // The contact whose unanswered emails are open in the popup, or null.
+  const [noReplyPop, setNoReplyPop] = useState(null);
+  useEffect(() => {
+    if (!noReplyPop) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setNoReplyPop(null); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [noReplyPop]);
 
   // Whole days between the most recent outreach and now. Floored, so an
   // outreach earlier today reads as 0.
@@ -2337,6 +2352,26 @@ function KeyContactsViewInner({
   // campaign refresh stores on each recipient row.
   const campaignReplies = useMemo(() => latestCampaignReplies(savedCampaigns), [savedCampaigns]);
   const campaignReplyFor = (c) => campaignReplyForContact(campaignReplies, c);
+
+  // No Reply figures per contact id, from both sources (see the fetch above).
+  const campaignSendIndex = useMemo(() => campaignSendsByAddress(savedCampaigns), [savedCampaigns]);
+  const contactUnanswered = useMemo(() => {
+    const map = new Map();
+    if (!hasFullTable(storagePrefix)) return map;
+    const sources = { index: unansweredIndex, campaignSends: savedCampaigns.length ? campaignSendIndex : null, campaignReplies };
+    for (const c of (hubspotCache?.contacts || [])) {
+      const id = String(c.id || '');
+      if (!id) continue;
+      const hit = unansweredFor(sources, {
+        id, email: c.email, name: [c.firstname, c.lastname].filter(Boolean).join(' '),
+      });
+      if (hit && (hit.count > 0 || hit.lastReplyMs)) map.set(id, hit);
+    }
+    return map;
+  }, [storagePrefix, unansweredIndex, campaignSendIndex, campaignReplies, savedCampaigns.length, hubspotCache]);
+  // The feed is the complete record; until it's in, a 0 only means "nothing
+  // in the saved campaigns", so the cell says it's still loading.
+  const unansweredDataLoaded = !!unansweredIndex;
 
   // Lowercased email -> { count, campaigns } for campaign emails sent in
   // the last 60 days, over every saved campaign (see
@@ -4484,33 +4519,36 @@ function KeyContactsViewInner({
                     noReply: (() => {
                       const hit = contactUnanswered.get(String(c.id || ''));
                       if (!hit || hit.count === 0) {
-                        const tip = unansweredDataLoaded
-                          ? (hit?.lastReplyMs
-                            ? `Nothing unanswered: they last replied ${new Date(hit.lastReplyMs).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} and nothing has gone out since`
-                            : 'Nothing unanswered: no emails to this contact on record')
-                          : unansweredStatus === 'loading' ? 'Loading HubSpot emails...'
-                          : unansweredStatus === 'error' ? 'Couldn\'t load HubSpot emails. Open the Activity tab to retry'
-                          : 'Open the Activity tab once to load HubSpot activity';
+                        const loading = !unansweredDataLoaded && unansweredStatus === 'loading';
+                        const tip = hit?.lastReplyMs && (unansweredDataLoaded || !loading)
+                          ? `Nothing unanswered: they last replied ${new Date(hit.lastReplyMs).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} and nothing has gone out since`
+                          : unansweredDataLoaded ? 'Nothing unanswered: no emails to this contact on record'
+                          : loading ? `Loading your HubSpot emails${unansweredProgress ? ` (${unansweredProgress.toLocaleString()} so far)` : ''}. Saved campaigns are already counted.`
+                          : unansweredStatus === 'error' ? 'Couldn\'t load HubSpot emails, so only saved campaigns are counted. Reload the page to retry'
+                          : 'Only saved campaigns are counted until HubSpot emails load';
                         return (
                           <div
                             style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}
                             title={tip}
-                          >{unansweredDataLoaded ? '0' : unansweredStatus === 'loading' ? '...' : '-'}</div>
+                          >{loading ? '...' : '0'}</div>
                         );
                       }
-                      const fmt = ms => new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                       // Three or more in a row with nothing back reads as
                       // "try another way in", so it's flagged.
                       const heavy = hit.count >= 3;
-                      const tip = `${hit.count} email${hit.count === 1 ? '' : 's'} sent without a reply, latest ${fmt(hit.lastSentMs)}. `
-                        + (hit.lastReplyMs ? `Last reply ${fmt(hit.lastReplyMs)}.` : 'No reply on record.')
-                        + ' From HubSpot email activity.';
+                      const open = noReplyPop?.id === String(c.id || '');
                       return (
-                        <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem' }} title={tip}>
-                          <span style={{
-                            display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontWeight: 700,
-                            background: heavy ? '#FEE2E2' : '#FEF3C7', color: heavy ? '#991B1B' : '#92400E',
-                          }}>{hit.count}</span>
+                        <div style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem' }}>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setNoReplyPop({ id: String(c.id || ''), name: c.name || c.email || '', email: c.email || '' }); }}
+                            title={`${hit.count} email${hit.count === 1 ? '' : 's'} sent without a reply. Click to see them.`}
+                            style={{
+                              display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontWeight: 700, fontSize: '0.7rem', fontFamily: 'inherit',
+                              background: heavy ? '#FEE2E2' : '#FEF3C7', color: heavy ? '#991B1B' : '#92400E',
+                              border: `1px solid ${open ? (heavy ? '#991B1B' : '#92400E') : 'transparent'}`, cursor: 'pointer',
+                            }}
+                          >{hit.count}</button>
                         </div>
                       );
                     })(),
@@ -5102,6 +5140,82 @@ function KeyContactsViewInner({
             emailDomains={emailDomains}
             companyNames={prospects.map(p => p.company).filter(Boolean)}
           />
+        );
+      })()}
+      {noReplyPop && (() => {
+        const hit = contactUnanswered.get(noReplyPop.id);
+        const rows = hit?.emails || [];
+        const fmt = (ms, withTime) => new Date(ms).toLocaleString('en-US', withTime
+          ? { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }
+          : { month: 'short', day: 'numeric', year: 'numeric' });
+        const daysAgo = (ms) => Math.max(0, Math.floor((Date.now() - ms) / 86400000));
+        const th = { textAlign: 'left', padding: '0.4rem 0.6rem', fontSize: '0.65rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0', background: '#F8FAFC', position: 'sticky', top: 0 };
+        const td = { padding: '0.4rem 0.6rem', borderBottom: '1px solid #F1F5F9', verticalAlign: 'top' };
+        return (
+          <div
+            onMouseDown={(e) => { if (e.target === e.currentTarget) setNoReplyPop(null); }}
+            style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,23,42,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          >
+            <div
+              data-no-reply-pop
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Emails ${noReplyPop.name} hasn't replied to`}
+              style={{ width: 'min(720px, 100%)', maxHeight: '80vh', display: 'flex', flexDirection: 'column', background: '#fff', borderRadius: 10, boxShadow: '0 16px 48px rgba(15,23,42,0.25)', fontSize: '0.75rem', color: '#334155' }}
+            >
+              <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#1E293B' }}>{noReplyPop.name}: no reply</div>
+                  <div style={{ color: '#64748B', marginTop: 2 }}>
+                    {hit ? `${hit.count} email${hit.count === 1 ? '' : 's'} sent ${hit.lastReplyMs ? `since their last reply on ${fmt(hit.lastReplyMs)}` : 'with no reply on record'}` : 'Nothing unanswered'}
+                    {noReplyPop.email ? ` · ${noReplyPop.email}` : ''}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setNoReplyPop(null)}
+                  aria-label="Close"
+                  style={{ border: 'none', background: 'transparent', color: '#94A3B8', cursor: 'pointer', fontSize: '1.1rem', lineHeight: 1, padding: 2 }}
+                >×</button>
+              </div>
+              <div style={{ overflow: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th style={th}>Sent</th>
+                      <th style={{ ...th, textAlign: 'right' }}>Days ago</th>
+                      <th style={th}>Subject</th>
+                      <th style={th}>Source</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r, i) => (r.hidden ? (
+                      <tr key={`hidden-${i}`}>
+                        <td style={{ ...td, color: '#94A3B8' }} colSpan={4}>
+                          {r.hidden} earlier campaign send{r.hidden === 1 ? '' : 's'}, counted but not itemized (saved campaigns keep the latest few per contact)
+                        </td>
+                      </tr>
+                    ) : (
+                      <tr key={`${r.ms}-${i}`}>
+                        <td style={{ ...td, whiteSpace: 'nowrap' }}>{fmt(r.ms, true)}</td>
+                        <td style={{ ...td, textAlign: 'right', color: '#64748B' }}>{daysAgo(r.ms)}</td>
+                        <td style={{ ...td, fontWeight: 600, color: '#1E293B' }}>{r.subject || <span style={{ color: '#94A3B8', fontWeight: 400 }}>(no subject)</span>}</td>
+                        <td style={{ ...td, color: '#64748B' }}>{r.source}</td>
+                      </tr>
+                    )))}
+                    {rows.length === 0 && (
+                      <tr><td style={{ ...td, color: '#94A3B8' }} colSpan={4}>No unanswered emails.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              {!unansweredDataLoaded && (
+                <div style={{ padding: '0.5rem 1rem', borderTop: '1px solid #E2E8F0', color: '#92400E', background: '#FFFBEB', fontSize: '0.7rem' }}>
+                  {unansweredStatus === 'loading' ? 'Still loading your HubSpot emails, so only saved campaign sends are listed so far.' : 'HubSpot emails didn\'t load, so only saved campaign sends are listed.'}
+                </div>
+              )}
+            </div>
+          </div>
         );
       })()}
       {sends60Pop && (() => {
