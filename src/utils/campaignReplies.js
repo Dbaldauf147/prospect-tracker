@@ -45,17 +45,24 @@ export function latestCampaignReplies(savedCampaigns) {
   return map;
 }
 
-// The newest reply this contact sent: { tsMs, subject, repliedBy, label,
-// count } or null. `count` is how many campaign replies are theirs.
-export function campaignReplyForContact(replies, contact) {
+// Every campaign reply that is this contact's own: on a group row, only the
+// one whose repliedBy is them. Shared with the No Reply count, where a reply
+// is what resets the run.
+export function campaignRepliesForContact(replies, contact) {
   const email = norm(contact?.email);
-  if (!email || !replies) return null;
+  if (!email || !replies) return [];
   const name = norm(contact?.name || [contact?.firstname, contact?.lastname].filter(Boolean).join(' '));
-  const mine = (replies.get(email) || []).filter((r) => {
+  return (replies.get(email) || []).filter((r) => {
     if (!r.group) return true;
     const by = norm(r.repliedBy);
     return !!by && (by === email || (!!name && by === name));
   });
+}
+
+// The newest reply this contact sent: { tsMs, subject, repliedBy, label,
+// count } or null. `count` is how many campaign replies are theirs.
+export function campaignReplyForContact(replies, contact) {
+  const mine = campaignRepliesForContact(replies, contact);
   if (mine.length === 0) return null;
   const best = mine.reduce((a, b) => (b.tsMs > a.tsMs ? b : a));
   return { ...best, label: fmtReplyDate(best.tsMs), count: mine.length };
