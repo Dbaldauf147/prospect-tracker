@@ -150,6 +150,7 @@ import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { reasonOptionsForCompetition } from '../../data/closeNotSoldRules';
 import { BfoCloseOutPreview } from '../BfoCloseOutPreview';
 import { buildNewOppsTableHtml, downloadOppsTableOutlookDraft, NEW_OPPS_EMAIL_COLUMNS, NEW_OPPS_EMAIL_DEFAULT_COLUMN_KEYS } from '../../utils/newOppsEmailTable';
+import { withVerticalCoverage, OPP_VERTICAL_KEY, OPP_SALESPERSON_KEY } from '../../utils/oppVerticalCoverage';
 import { closedAgoLabel, recentlyClosedOpps, RECENTLY_CLOSED_DAYS } from '../../utils/recentlyClosedOpps';
 // Shared with the closed-this-week table's own filter, so "has a BFO
 // Opportunity Name" means one thing on this page.
@@ -519,8 +520,11 @@ const SEED_TODAY_DATE_COLUMNS = new Set(['Start Date', 'Last Client Heard From U
 const NEW_OPPS_MAX_STAGE_AGE_DAYS = 7;
 const NEW_OPPS_ACTIVE_STAGES = ['Lead', 'Qualifying', 'Quoting'];
 const NEW_OPPS_ACTIVE_STAGES_SET = new Set(NEW_OPPS_ACTIVE_STAGES);
+// The Vertical and Salesperson columns are worked out per row (see
+// utils/oppVerticalCoverage): the opp's vertical, else its company's, and
+// whoever Opps > Coverage lists for it.
 const NEW_OPPS_REPORT_COLUMNS = [
-  'Account', 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
+  'Account', OPP_VERTICAL_KEY, OPP_SALESPERSON_KEY, 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
   'Sales Partner', 'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Next Steps',
   'BFO Link', 'BFO Address',
 ];
@@ -16867,7 +16871,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // (lowest combined age) first. Mirrors filterNewOpps in
   // api/_lib/newOpps.js so the on-screen list matches the emailed file.
   const newOpps = useMemo(() => {
-    return records
+    const list = records
       .map(r => ({ r, age: combinedActiveStageAge(r) }))
       .filter(({ r, age }) => {
         const stage = String(r['Stage'] || '').trim();
@@ -16878,7 +16882,10 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       .sort((a, b) =>
         a.age - b.age || String(a.r['Account'] || '').localeCompare(String(b.r['Account'] || '')))
       .map(({ r }) => r);
-  }, [records]);
+    // Copies carrying the Vertical and Salesperson columns, which the
+    // table, the Excel export and both emails all read.
+    return withVerticalCoverage(list, { settings, prospects });
+  }, [records, settings?.salesCoverage, prospects]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The other half of the same week: the opps that finished in it. Sold and
   // Not Sold both — a loss this week is as much news as a win, and a table
@@ -16926,13 +16933,30 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // def so the BFO fields always show on the subtab and stay pickable for
   // the emailed table.
   const newOppsColumns = useMemo(
-    () => NEW_OPPS_REPORT_COLUMNS.map(key =>
-      columns.find(c => c.key === key) || {
+    () => NEW_OPPS_REPORT_COLUMNS.map((key) => {
+      if (key === OPP_VERTICAL_KEY || key === OPP_SALESPERSON_KEY) {
+        const isVertical = key === OPP_VERTICAL_KEY;
+        return {
+          key,
+          label: isVertical ? 'Vertical' : 'Salesperson',
+          defaultWidth: isVertical ? 170 : 170,
+          headerTitle: isVertical
+            ? "The opp's own Vertical, or its company card's when the opp has none."
+            : 'Who Opps > Coverage lists against this vertical.',
+          getSortValue: (row) => String(row[key] || '').toLowerCase() || null,
+          getFilterValue: (row) => String(row[key] || ''),
+          exportValue: (row) => String(row[key] || ''),
+          render: (row) => (row[key]
+            ? <span>{row[key]}</span>
+            : <span style={{ color: '#CBD5E1' }} title={isVertical ? 'No vertical on the opp or its company card' : 'Nobody on the Coverage tab covers this vertical'}>-</span>),
+        };
+      }
+      return columns.find(c => c.key === key) || {
         key,
         label: headerLabel(key),
         defaultWidth: key === 'BFO Address' ? 260 : 160,
-      }
-    ),
+      };
+    }),
     [columns]
   );
 

@@ -9,7 +9,7 @@
 // `?secret=` query param is also accepted for manual triggering.
 
 import { adminDb } from './_lib/firebaseAdmin.js';
-import { loadNewOpps, sendNewOppsEmail } from './_lib/newOpps.js';
+import { loadNewOpps, sendNewOppsEmail, addVerticalCoverage } from './_lib/newOpps.js';
 import { computeNextRun } from './_lib/peOppsSchedule.js';
 
 export default async function handler(req, res) {
@@ -49,7 +49,7 @@ export default async function handler(req, res) {
     }
 
     try {
-      const records = await loadNewOpps(db, s.ownerUid);
+      const records = await addVerticalCoverage(db, s.ownerUid, s.ownerEmail, await loadNewOpps(db, s.ownerUid));
       if (records.length === 0 && s.skipWhenEmpty) {
         await docSnap.ref.update({
           lastStatus: 'skipped-empty',
