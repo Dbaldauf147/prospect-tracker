@@ -40,7 +40,7 @@ import { STATUS_COLORS, SERVICE_STATUSES } from '../../data/enums.js';
 import { serviceStatusColor } from '../../utils/serviceStatusColors.js';
 import { withServiceStatus } from '../../utils/clientDealSizing.js';
 import { planProspectingBulkStatus } from '../../utils/prospectingBulkStatus.js';
-import { allPcRows, myProspectRows, sumFigures } from '../../utils/prospectingPortfolio.js';
+import { allPcRows, myProspectRows, sumFigures, rowTypeLabel, typesOnRows, withoutTypes } from '../../utils/prospectingPortfolio.js';
 import { biggestDealFor, dealHasStatus, excludedServiceSet, withoutExcludedServices, PROSPECTING_EXCLUDED_KEY } from '../../utils/prospectingDeals.js';
 import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
 import { pricedServiceRows } from '../../utils/serviceRows';
@@ -340,6 +340,23 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
   const unworked = useMemo(() => rows.filter(r => !dealHasStatus(r.deal)), [rows]);
   const hiddenWorked = rows.length - unworked.length;
 
+  // Prospects only: company Types to leave off the list (PE firms, say).
+  // Saved to settings so the choice sticks across visits and devices;
+  // held locally too so a page with no updateSettings still filters.
+  const isPcsList = mode === 'pcs';
+  const savedHiddenTypes = settings?.prospectingHiddenTypes;
+  const [hiddenTypes, setHiddenTypesLocal] = useState(() => (Array.isArray(savedHiddenTypes) ? savedHiddenTypes : []));
+  useEffect(() => {
+    if (Array.isArray(savedHiddenTypes)) setHiddenTypesLocal(savedHiddenTypes);
+  }, [savedHiddenTypes]);
+  const setHiddenTypes = (next) => {
+    setHiddenTypesLocal(next);
+    if (typeof updateSettings === 'function') updateSettings({ prospectingHiddenTypes: next });
+  };
+  const typeOptions = useMemo(() => (isPcsList ? [] : typesOnRows(unworked)), [isPcsList, unworked]);
+  const typed = useMemo(() => (isPcsList ? unworked : withoutTypes(unworked, hiddenTypes)), [isPcsList, unworked, hiddenTypes]);
+  const hiddenByType = unworked.length - typed.length;
+
   const [query, setQuery] = useState('');
   // The search box narrows the rows before the table sees them; the
   // table's own column filters narrow them again, and it reports back
@@ -347,11 +364,11 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
   const searched = useMemo(() => {
     const q = query.trim().toLowerCase();
     return q
-      ? unworked.filter(r => r.company.toLowerCase().includes(q)
+      ? typed.filter(r => r.company.toLowerCase().includes(q)
         || r.peFirms.some(f => f.toLowerCase().includes(q))
         || r.status.toLowerCase().includes(q))
-      : unworked;
-  }, [unworked, query]);
+      : typed;
+  }, [typed, query]);
   // Null until the table first reports, which it does on every change of
   // rows or filters.
   const [onScreen, setOnScreen] = useState(null);
@@ -486,6 +503,13 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
           return <span style={{ fontSize: '0.68rem', fontWeight: 700, color, background: `${color}1A`, padding: '1px 7px', borderRadius: 999, whiteSpace: 'nowrap' }}>{r.status}</span>;
         },
       },
+      ...(!isPcs ? [{
+        key: 'type', label: 'Type', defaultWidth: 140,
+        getSortValue: r => (r.type ? r.type.toLowerCase() : null),
+        getFilterValue: r => r.type || '',
+        exportValue: r => r.type || '',
+        render: r => (r.type ? <span style={{ color: '#475569' }}>{r.type}</span> : <span style={{ color: '#CBD5E1' }}>-</span>),
+      }] : []),
       ...(isPcs ? [{
         key: 'peFirms', label: 'PE Firm', defaultWidth: 170,
         getSortValue: r => (r.peFirms[0] ? r.peFirms[0].toLowerCase() : null),
@@ -617,6 +641,47 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
           placeholder={isPcs ? 'Search companies or PE firms' : 'Search companies'}
           style={{ padding: '0.35rem 0.6rem', border: '1px solid #CBD5E1', borderRadius: 6, fontSize: '0.76rem', fontFamily: 'inherit', width: 240 }}
         />
+        {!isPcs && typeOptions.length > 0 && (
+          <details style={{ position: 'relative' }}>
+            <summary
+              title="Leave companies of these Types off the list - PE firms, for example. Your choice is saved."
+              style={{
+                listStyle: 'none', cursor: 'pointer', padding: '0.35rem 0.6rem', borderRadius: 6, fontSize: '0.76rem', fontWeight: 600,
+                border: `1px solid ${hiddenTypes.length ? '#F59E0B' : '#CBD5E1'}`,
+                background: hiddenTypes.length ? '#FFFBEB' : '#fff',
+                color: hiddenTypes.length ? '#92400E' : '#475569',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {hiddenTypes.length ? `Hiding ${hiddenTypes.length} type${hiddenTypes.length === 1 ? '' : 's'} (${hiddenByType.toLocaleString()})` : 'Hide types'} ▾
+            </summary>
+            <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 1000, minWidth: 220, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 8, boxShadow: '0 8px 24px rgba(15,23,42,0.12)', padding: '0.4rem 0' }}>
+              <div style={{ padding: '0.2rem 0.75rem 0.4rem', fontSize: '0.66rem', color: '#64748B' }}>Tick a type to hide it</div>
+              {typeOptions.map(t => {
+                const count = unworked.filter(r => rowTypeLabel(r) === t).length;
+                const on = hiddenTypes.includes(t);
+                return (
+                  <label key={t} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.25rem 0.75rem', fontSize: '0.74rem', color: '#334155', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => setHiddenTypes(on ? hiddenTypes.filter(x => x !== t) : [...hiddenTypes, t])}
+                    />
+                    <span style={{ flex: 1 }}>{t}</span>
+                    <span style={{ color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>{count.toLocaleString()}</span>
+                  </label>
+                );
+              })}
+              {hiddenTypes.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setHiddenTypes([])}
+                  style={{ margin: '0.3rem 0.75rem 0', border: 'none', background: 'none', padding: 0, fontSize: '0.7rem', color: '#0A66C2', cursor: 'pointer' }}
+                >Show all types</button>
+              )}
+            </div>
+          </details>
+        )}
       </div>
       {setDealStatus && !loading && rows.length > 0 && (
         <div

@@ -80,6 +80,7 @@ export function myProspectRows(prospects, cdmName, siteLists) {
       key: p.id || p.company,
       company: String(p.company).trim(),
       status: p.status || '',
+      type: String(p.type || '').trim(),
       prospect: p,
       peFirms: [],
       ...companyFigures(p, siteLists),
@@ -147,4 +148,27 @@ export function sumFigures(rows) {
     if (r.energyMwh != null) t.energyMwh += r.energyMwh;
   }
   return t;
+}
+
+// The Prospects list's "Hide types" control. A company with no Type set is
+// filed under NO_TYPE so it can be hidden like any other.
+export const NO_TYPE = '(No type)';
+
+export function rowTypeLabel(row) {
+  return String(row?.type || '').trim() || NO_TYPE;
+}
+
+// The types on these rows, for the control's checklist: alphabetical, with
+// NO_TYPE last.
+export function typesOnRows(rows) {
+  const set = new Set((rows || []).map(rowTypeLabel));
+  const named = [...set].filter(t => t !== NO_TYPE).sort((a, b) => a.localeCompare(b));
+  return set.has(NO_TYPE) ? [...named, NO_TYPE] : named;
+}
+
+// The rows left once the hidden types come out. `hidden` is a list of
+// labels as rowTypeLabel gives them.
+export function withoutTypes(rows, hidden) {
+  const h = new Set(hidden || []);
+  return h.size ? (rows || []).filter(r => !h.has(rowTypeLabel(r))) : (rows || []);
 }
