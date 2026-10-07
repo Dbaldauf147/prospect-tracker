@@ -1,3 +1,5 @@
+import { coverageFromSettings, withCoverageSalesperson } from '../../src/utils/salesCoverage.js';
+
 // Shared "New Opps" helpers used by the scheduled-email cron
 // (api/new-opps-scheduler.js), the "send now" route
 // (api/new-opps-send-now.js) and the CRUD route (api/new-opps-schedules.js).
@@ -15,6 +17,8 @@
 // leave the cell blank.
 export const NEW_OPPS_EMAIL_COLUMNS = [
   { key: 'Account', label: 'Account' },
+  { key: 'Vertical', label: 'Vertical' },
+  { key: 'Salesperson', label: 'Salesperson' },
   { key: 'Stage', label: 'Stage' },
   { key: 'Scope', label: 'Scope' },
   { key: 'Source', label: 'Source' },
@@ -23,6 +27,18 @@ export const NEW_OPPS_EMAIL_COLUMNS = [
   { key: 'Next Steps', label: 'Next Steps' },
   { key: 'BFO Address', label: 'BFO Link' },
 ];
+
+// The owner's Opps > Coverage list (their saved edit, else the default), so
+// the Salesperson column matches what the New Opps subtab shows. A failed
+// read falls back to the default rather than blocking the send.
+export async function loadOwnerCoverage(db, uid) {
+  try {
+    const snap = await db.collection('userSettings').doc(uid).get();
+    return coverageFromSettings(snap.exists ? snap.data() : null);
+  } catch {
+    return coverageFromSettings(null);
+  }
+}
 
 // New-opps qualification rules (mirror NEW_OPPS_* in OppsView2): an opp shows
 // when it has a BFO Opportunity Name, its current Stage is one of these, and
@@ -123,7 +139,7 @@ export async function loadNewOpps(db, uid) {
   try { parsed = JSON.parse(json); } catch { return []; }
   const records = Array.isArray(parsed?.records) ? parsed.records : [];
 
-  return filterNewOpps(records);
+  return withCoverageSalesperson(filterNewOpps(records), await loadOwnerCoverage(db, uid));
 }
 
 // Filter + sort an in-memory record list to the qualifying new opps. Freshest

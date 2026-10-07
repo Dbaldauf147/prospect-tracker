@@ -59,3 +59,13 @@ export function salespeopleForVertical(coverage, vertical) {
   }
   return [...byName.values()];
 }
+
+// Copies of the opps with a 'Salesperson' field naming whoever covers each
+// opp's Vertical on Opps > Coverage ("A, B" when several do, '' when nobody).
+// Used by the New Opps subtab and its emails.
+export function withCoverageSalesperson(records, coverage) {
+  return (Array.isArray(records) ? records : []).map(r => ({
+    ...r,
+    Salesperson: salespeopleForVertical(coverage, r?.['Vertical']).map(p => p.name).join(', '),
+  }));
+}

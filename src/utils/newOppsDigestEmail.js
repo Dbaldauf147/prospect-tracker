@@ -1,7 +1,7 @@
 // Build a downloadable Outlook draft (.eml) of the New Opps digest email.
 //
 // This mirrors the *scheduled* New Opps email exactly — the fixed
-// 8-column black-and-white table from api/_lib/newOpps.js
+// 10-column black-and-white table from api/_lib/newOpps.js
 // (NEW_OPPS_EMAIL_COLUMNS + buildNewOppsTableHtml + the sendNewOppsEmail
 // body wrapper) — so a downloaded draft reads identically to what the
 // cron would send, just authored in the user's own Outlook instead of
@@ -17,6 +17,8 @@
 // "BFO Link" hyperlinked to the row's BFO Address.
 const DIGEST_COLUMNS = [
   { key: 'Account', label: 'Account' },
+  { key: 'Vertical', label: 'Vertical' },
+  { key: 'Salesperson', label: 'Salesperson' },
   { key: 'Stage', label: 'Stage' },
   { key: 'Scope', label: 'Scope' },
   { key: 'Source', label: 'Source' },

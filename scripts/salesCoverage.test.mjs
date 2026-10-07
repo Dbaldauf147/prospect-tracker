@@ -3,7 +3,7 @@
 // Plain Node - no test framework (the project has none). Run:
 //   node scripts/salesCoverage.test.mjs
 import { SALES_COVERAGE } from '../src/data/salesCoverage.js';
-import { cleanCoverage, coverageFromSettings, splitSalespeople, salespeopleForVertical } from '../src/utils/salesCoverage.js';
+import { cleanCoverage, coverageFromSettings, splitSalespeople, salespeopleForVertical, withCoverageSalesperson } from '../src/utils/salesCoverage.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -35,6 +35,9 @@ eq(salespeopleForVertical(cov, 'Hotels').map(p => p.name), ['Doug'], 'one owner'
 eq(salespeopleForVertical(cov, 'Mining'), [], 'an uncovered vertical is nobody');
 eq(salespeopleForVertical(cov, ''), [], 'no vertical is nobody');
 eq(salespeopleForVertical(SALES_COVERAGE, 'Real Estate').map(p => p.name), ['Dan Baldauf'], 'reads the shipped list');
+eq(withCoverageSalesperson([{ Account: 'X', Vertical: 'Grocery' }, { Account: 'Y', Vertical: '' }], cov),
+  [{ Account: 'X', Vertical: 'Grocery', Salesperson: 'Jackie Cobb, Sara Rahme' }, { Account: 'Y', Vertical: '', Salesperson: '' }],
+  'New Opps rows get a Salesperson field');
 
 // ── tidying an edit ──────────────────────────────────────────────────────
 eq(cleanCoverage([

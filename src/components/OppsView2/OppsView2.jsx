@@ -84,6 +84,7 @@ import {
 import { fmtMarginPct, fmtMoneyWhole, pricingSnapshotYear1 } from '../../utils/pricingOptionCalc';
 import { parseMoney, closeReasonOf, summarizeOppsMoneyAndReasons } from '../../utils/oppsMetrics';
 import { Coverage } from './Coverage';
+import { coverageFromSettings, withCoverageSalesperson } from '../../utils/salesCoverage';
 import { NotSoldAnalysis } from './NotSoldAnalysis';
 import { PricingAnalysisModal } from './PricingAnalysisModal';
 import { ANALYSIS_FIELD, ESTIMATED_FEE_COLUMN, normalizePricingAnalysis } from '../../utils/pricingAnalysis';
@@ -520,7 +521,7 @@ const NEW_OPPS_MAX_STAGE_AGE_DAYS = 7;
 const NEW_OPPS_ACTIVE_STAGES = ['Lead', 'Qualifying', 'Quoting'];
 const NEW_OPPS_ACTIVE_STAGES_SET = new Set(NEW_OPPS_ACTIVE_STAGES);
 const NEW_OPPS_REPORT_COLUMNS = [
-  'Account', 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
+  'Account', 'Vertical', 'Salesperson', 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
   'Sales Partner', 'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Next Steps',
   'BFO Link', 'BFO Address',
 ];
@@ -16866,8 +16867,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // three stages is at most NEW_OPPS_MAX_STAGE_AGE_DAYS days. Freshest
   // (lowest combined age) first. Mirrors filterNewOpps in
   // api/_lib/newOpps.js so the on-screen list matches the emailed file.
+  const savedSalesCoverage = settings?.salesCoverage;
   const newOpps = useMemo(() => {
-    return records
+    const list = records
       .map(r => ({ r, age: combinedActiveStageAge(r) }))
       .filter(({ r, age }) => {
         const stage = String(r['Stage'] || '').trim();
@@ -16878,7 +16880,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       .sort((a, b) =>
         a.age - b.age || String(a.r['Account'] || '').localeCompare(String(b.r['Account'] || '')))
       .map(({ r }) => r);
-  }, [records]);
+    // Salesperson is read off Opps > Coverage for the opp's Vertical.
+    return withCoverageSalesperson(list, coverageFromSettings({ salesCoverage: savedSalesCoverage }));
+  }, [records, savedSalesCoverage]);
 
   // The other half of the same week: the opps that finished in it. Sold and
   // Not Sold both — a loss this week is as much news as a win, and a table
