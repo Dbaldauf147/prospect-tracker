@@ -2,7 +2,7 @@
 // companies land on each, and where each Sites / Accounts / Energy figure
 // comes from. Plain Node, no framework. Run:
 //   node scripts/prospectingPortfolio.test.mjs
-import { allPcRows, companyFigures, myProspectRows, sumFigures } from '../src/utils/prospectingPortfolio.js';
+import { allPcRows, companyFigures, myProspectRows, sumFigures, NO_TYPE, rowTypeLabel, typesOnRows, withoutTypes } from '../src/utils/prospectingPortfolio.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -66,6 +66,21 @@ eq(companyFigures(null, {}).sites, null, 'no record, no figures');
   ];
   eq(myProspectRows(closed, 'Dan Baldauf', {}).map(r => r.company), ['Firm', 'Open Co'], 'prospects drop closed statuses');
   eq(allPcRows(closed, {}).map(r => r.company), ['Live PC'], 'PCs drop closed statuses, from the record or the firm row');
+}
+
+// Hide types on the Prospects list.
+{
+  const rs = myProspectRows([
+    { id: 1, company: 'Firm', cdm: 'Dan Baldauf', type: 'Private Equity' },
+    { id: 2, company: 'Owner', cdm: 'Dan Baldauf', type: ' Owner Operator ' },
+    { id: 3, company: 'Blank', cdm: 'Dan Baldauf' },
+  ], 'Dan Baldauf', {});
+  eq(rs.map(r => r.type), ['', 'Private Equity', 'Owner Operator'], 'prospect rows carry their type, trimmed');
+  eq(rowTypeLabel(rs[0]), NO_TYPE, 'no type files under (No type)');
+  eq(typesOnRows(rs), ['Owner Operator', 'Private Equity', NO_TYPE], 'types listed A-Z, (No type) last');
+  eq(withoutTypes(rs, ['Private Equity']).map(r => r.company), ['Blank', 'Owner'], 'hiding PE drops the firm');
+  eq(withoutTypes(rs, [NO_TYPE]).map(r => r.company), ['Firm', 'Owner'], 'and (No type) can be hidden too');
+  eq(withoutTypes(rs, []).length, 3, 'nothing hidden, nothing dropped');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
