@@ -14,7 +14,7 @@
 // answers this field exists to tell apart.
 //
 // Run: node scripts/moneyInput.test.mjs
-import { asMoney, fromMoney } from '../src/utils/moneyInput.js';
+import { asMoney, asCount, fromMoney } from '../src/utils/moneyInput.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -41,6 +41,18 @@ function check(label, actual, expected) {
   check('nor an undefined', asMoney(undefined), '');
   // The alternative is "$NaN" sitting on a company card.
   check('junk shows nothing rather than NaN', asMoney('abc'), '');
+}
+
+// ---- a count box: commas, no dollar sign ----------------------------------
+{
+  check('a count gets its commas', asCount(12345), '12,345');
+  check('and no dollar sign', asCount('1696113'), '1,696,113');
+  check('a small count is left alone', asCount(42), '42');
+  check('an MWh estimate keeps two decimals', asCount(12345.678), '12,345.68');
+  check('zero is a count', asCount(0), '0');
+  check('empty stays empty', asCount(''), '');
+  check('junk shows nothing', asCount('abc'), '');
+  check('the formatted count parses back', fromMoney('12,345'), '12345');
 }
 
 // ---- what the box stores --------------------------------------------------

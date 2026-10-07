@@ -29,6 +29,19 @@ export function asMoney(value) {
 }
 
 /**
+ * The same for a plain count - sites, meters, MWh: "12,345", no dollar
+ * sign. Keeps up to two decimals, because an MWh estimate can carry them
+ * and a count that has none just shows none. '' for anything that isn't a
+ * number, as above. What it stores is fromMoney's job too.
+ */
+export function asCount(value) {
+  if (value === '' || value === null || value === undefined) return '';
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '';
+  return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
+
+/**
  * What the box stores: the bare number, as a string.
  *
  * Everything that is not part of a number comes off, so a figure pasted in
