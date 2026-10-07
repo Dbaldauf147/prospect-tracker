@@ -1000,7 +1000,13 @@ function DecisionMakerTable({ coverage, onSelectProspect }) {
         </div>
       ) : (
         <>
-          <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff', overflow: 'hidden' }}>
+          {/* position: relative anchors the visually-hidden <caption> below.
+              Without it the caption's containing block is the viewport, it
+              escapes every scroll box on the way up, and its spot far down
+              the ladder makes the whole document scrollable: scrolling past
+              the bottom of the page then shifts the app frame up and leaves
+              the lower part of the screen blank. */}
+          <div style={{ position: 'relative', border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff', overflow: 'hidden' }}>
             {/* Above the scroll area rather than in the table, so the tier
                 the rows belong to is still named once the list is long
                 enough to be scrolled. */}
