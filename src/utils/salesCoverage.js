@@ -34,3 +34,28 @@ export function cleanCoverage(groups) {
     }))
     .filter(g => g.team || g.rows.length);
 }
+
+// Who covers a vertical: every salesperson listed against it, once each,
+// with the team(s) they are listed under. A vertical can sit under several
+// teams (Grocery is under two), so this can name more than one person.
+// Matched on the vertical with case and spacing dropped, so "real estate"
+// on an opp finds "Real Estate" on the Coverage tab.
+export function salespeopleForVertical(coverage, vertical) {
+  const key = (s) => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const want = key(vertical);
+  if (!want) return [];
+  const byName = new Map();
+  for (const group of coverage || []) {
+    for (const row of group?.rows || []) {
+      if (key(row?.vertical) !== want) continue;
+      for (const name of row.salespeople || []) {
+        const n = String(name || '').trim();
+        if (!n) continue;
+        if (!byName.has(n)) byName.set(n, { name: n, teams: [] });
+        const team = String(group.team || '').trim();
+        if (team && !byName.get(n).teams.includes(team)) byName.get(n).teams.push(team);
+      }
+    }
+  }
+  return [...byName.values()];
+}

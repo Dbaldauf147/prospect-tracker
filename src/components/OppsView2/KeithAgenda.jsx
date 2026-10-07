@@ -31,8 +31,11 @@
 // bullets, because the point of walking it is who owns each company and
 // what vertical it is in: PE Owner and Vertical sit in their own columns,
 // and Vertical can be typed in place (it writes the opp's Vertical column).
+// Salesperson is whoever Opps > Coverage lists against that vertical, so
+// typing a Vertical fills it in.
 
 import { useEffect, useRef, useState } from 'react';
+import { coverageFromSettings, salespeopleForVertical } from '../../utils/salesCoverage';
 import styles from './OppsView2.module.css';
 
 const KEITH_AGENDA_DEFAULTS = [
@@ -128,7 +131,9 @@ function VerticalCell({ deal, onSetVertical }) {
       />
     );
   }
-  const borrowed = deal.vertical && !deal.verticalFromOpp;
+  // Only the portfolio-list sector is a guess; a Vertical set on the
+  // company popup is somebody's answer and reads like one.
+  const borrowed = deal.vertical && deal.verticalFrom === 'portfolio';
   return (
     <button
       type="button"
@@ -136,7 +141,9 @@ function VerticalCell({ deal, onSetVertical }) {
       onClick={() => { setDraft(deal.vertical || ''); setEditing(true); }}
       title={borrowed
         ? `Sector from ${deal.peOwner || 'the owner'}'s portfolio list. Click to set the vertical on this opp.`
-        : 'Click to set the vertical on this opp'}
+        : deal.verticalFrom === 'company'
+          ? 'Vertical set on the company popup. Click to set one on this opp instead.'
+          : 'Click to set the vertical on this opp'}
     >
       {deal.vertical || '+ add'}
     </button>
@@ -146,6 +153,7 @@ function VerticalCell({ deal, onSetVertical }) {
 export function KeithAgenda({ settings, updateSettings, stage6Deals = [], peDeals = [], onOpenOpp, onSetVertical }) {
   const items = readAgenda(settings);
   const dealTicks = readDealTicks(settings);
+  const coverage = coverageFromSettings(settings);
   // Which line is open for editing, and the text as it's being typed. Held
   // here rather than written through on every keystroke — a settings write
   // per character would round-trip to Firestore and fight the cursor.
@@ -356,6 +364,7 @@ export function KeithAgenda({ settings, updateSettings, stage6Deals = [], peDeal
                             <th>Account</th>
                             <th>PE Owner</th>
                             <th>Vertical</th>
+                            <th title="Who Opps > Coverage lists against the deal's vertical">Salesperson</th>
                             <th className={styles.agendaDealNum}>Amount</th>
                             <th>Stage</th>
                           </tr>
@@ -387,6 +396,24 @@ export function KeithAgenda({ settings, updateSettings, stage6Deals = [], peDeal
                                 </td>
                                 <td className={deal.peOwner ? undefined : styles.agendaSubMeta}>{deal.peOwner || '-'}</td>
                                 <td><VerticalCell deal={deal} onSetVertical={onSetVertical} /></td>
+                                {(() => {
+                                  const people = salespeopleForVertical(coverage, deal.vertical);
+                                  if (!people.length) {
+                                    return (
+                                      <td
+                                        className={styles.agendaSubMeta}
+                                        title={deal.vertical
+                                          ? `Nobody is listed against ${deal.vertical} on Opps > Coverage`
+                                          : 'No vertical, so no salesperson. Set one to look it up on Opps > Coverage.'}
+                                      >-</td>
+                                    );
+                                  }
+                                  return (
+                                    <td title={people.map(p => `${p.name}${p.teams.length ? ` (${p.teams.join(', ')} team)` : ''}`).join('\n')}>
+                                      {people.map(p => p.name).join(', ')}
+                                    </td>
+                                  );
+                                })()}
                                 <td className={`${styles.agendaSubMeta} ${styles.agendaDealNum}`}>{deal.amountLabel || '-'}</td>
                                 <td className={styles.agendaSubMeta}>{deal.stageLabel}</td>
                               </tr>
