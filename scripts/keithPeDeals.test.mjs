@@ -1,6 +1,7 @@
 // Assertion tests for the "PE overlap deals" list on the Keith agenda.
 //   node scripts/keithPeDeals.test.mjs
-import { buildPeOverlapDeals, isPeOpp, oppStageNumber, peOwnerAndVertical, ownerFromAccountName } from '../src/utils/keithPeDeals.js';
+import { buildPeOverlapDeals, isPeOpp, oppStageNumber, peOwnerAndVertical, ownerFromAccountName, accountTier, accountTargetCdm } from '../src/utils/keithPeDeals.js';
+import { buildTargetCdmResolver, buildTargetTierResolver } from '../src/utils/targetTier.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -82,6 +83,58 @@ check('deals carry owner and vertical',
   check('and the deal list picks it up',
     buildPeOverlapDeals([{ _id: 10, Account: 'Kensing Solutions', Type: 'Portfolio Company', Stage: 'Quoting' }], { prospects: withVertical })
       .map(d => d.vertical), ['Industrials']);
+}
+
+// Tier: the company's own, the Targets list over an imported one, and the
+// Targets list alone for an account with no company record.
+{
+  const tiered = [
+    { company: 'Chosen Co', tier: 'Tier 1' },
+    { company: 'Imported Co', tier: 'Tier 3', tierSource: 'import' },
+    { company: 'Dash Co', tier: '-' },
+  ];
+  const targets = { 'chosen co': 'Tier 2', 'imported co': 'Tier 2', 'no record co': 'Tier 1' };
+  const targetTierFor = (p) => ({ tier: targets[String(p?.company || '').toLowerCase()] || '' });
+  check('company tier, no targets list', accountTier({ Account: 'Chosen Co' }, tiered), 'Tier 1');
+  check('a tier somebody chose beats the targets list', accountTier({ Account: 'Chosen Co' }, tiered, targetTierFor), 'Tier 1');
+  check('the targets list beats an imported tier', accountTier({ Account: 'Imported Co' }, tiered, targetTierFor), 'Tier 2');
+  check('"-" is no tier', accountTier({ Account: 'Dash Co' }, tiered), '');
+  check('no company record, tiered by the targets list', accountTier({ Account: 'No Record Co' }, tiered, targetTierFor), 'Tier 1');
+  check('nothing anywhere', accountTier({ Account: 'Nobody' }, tiered, targetTierFor), '');
+  const d = buildPeOverlapDeals([{ _id: 't1', Account: 'Imported Co', Type: 'Portfolio Company', Stage: 'Quoted' }], { prospects: tiered, targetTierFor });
+  check('the deal carries its tier', d[0]?.tier, 'Tier 2');
+}
+
+// CDM from the Target Accounts list: every rep's rows, mapped, exact or fuzzy.
+{
+  const data = { sheetNames: ['S'], sheets: { S: { records: [
+    { Account: 'Acme Corp', Tier: 'Tier 1', CDM: 'Sara Rahme' },
+    { Account: 'Beta Holdings', Tier: 'Tier 2', 'Account Owner': 'Jen Debias' },
+    { Account: 'Gamma', Tier: 'Tier 3', CDM: '' },
+  ] } } };
+  const cdmFor = buildTargetCdmResolver({ targetAccountsData: data, settings: { targetMap: { p9: ['Acme Corp'] } } });
+  check('exact name', accountTargetCdm({ Account: 'Acme Corp' }, [], cdmFor), 'Sara Rahme');
+  check('owner column read too', accountTargetCdm({ Account: 'Beta Holdings' }, [], cdmFor), 'Jen Debias');
+  check('mapped on My Accounts', accountTargetCdm({ Account: 'Acme Renamed' }, [{ id: 'p9', company: 'Acme Renamed' }], cdmFor), 'Sara Rahme');
+  check('blank CDM is no CDM', accountTargetCdm({ Account: 'Gamma' }, [], cdmFor), '');
+  check('not on the list', accountTargetCdm({ Account: 'Nobody' }, [], cdmFor), '');
+  check('no list', accountTargetCdm({ Account: 'Acme Corp' }, [], null), '');
+  const d = buildPeOverlapDeals([{ _id: 'c1', Account: 'Acme Corp', Type: 'Portfolio Company', Stage: 'Quoted' }], { targetCdmFor: cdmFor });
+  check('the deal carries the CDM', d[0]?.targetCdm, 'Sara Rahme');
+}
+
+// Tier for another pod's account: the all-reps fallback.
+{
+  const data = { sheetNames: ['S'], sheets: { S: { records: [
+    { Account: 'Mine Co', Tier: 'Tier 2', CDM: 'Dan Baldauf' },
+    { Account: 'Their Co', Tier: 'Tier 1', CDM: 'Sara Rahme' },
+  ] } } };
+  const scoped = buildTargetTierResolver({ targetAccountsData: data, cdmName: 'Dan Baldauf', settings: {} });
+  const wide = buildTargetTierResolver({ targetAccountsData: data, cdmName: 'Dan Baldauf', settings: {}, includeAllReps: true });
+  check('scoped resolver keeps to this CDM', scoped({ company: 'Their Co' }).tier, '');
+  check('all-reps resolver finds another pod\'s tier', wide({ company: 'Their Co' }).tier, 'Tier 1');
+  check('this CDM\'s rows still first', wide({ company: 'Mine Co' }).tier, 'Tier 2');
+  check('import defers to the other pod\'s list tier', accountTier({ Account: 'Their Co' }, [{ company: 'Their Co', tier: 'Tier 3', tierSource: 'import' }], wide), 'Tier 1');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -22,12 +22,22 @@
 //             rather than a fact. The company popup's Vertical used to be
 //             skipped, so setting one there never reached this list.
 //
+//   Tier      the account's tier, read the way My Accounts reads it: the
+//             matched company's own Tier, with the Target Accounts list
+//             winning over a tier an import wrote (see tierSource.js). An
+//             account with no company record can still be tiered by the
+//             Targets list. The caller passes that list's resolver as
+//             `targetTierFor`; without one, the company's Tier alone.
+//   CDM       who the Target Accounts list names as the account's CDM
+//             (`targetCdmFor`, targetTier.js's CDM resolver), or ''.
+//
 // Pure, so the rule can be asserted without a browser:
 // scripts/keithPeDeals.test.mjs.
 
 import { STAGE_BANDS } from './stageBands.js';
 import { splitPeOwners, joinPeOwners } from './peOwners.js';
 import { companiesMatch } from './listFlags.js';
+import { tierPreferringTargetsList } from './tierSource.js';
 
 const PE_TYPES = new Set(['private equity', 'portfolio company']);
 
@@ -107,15 +117,41 @@ export function peOwnerAndVertical(row, prospects = []) {
 }
 
 /**
+ * The tier of the account behind an opp, 'Tier N' or ''.
+ *
+ *   targetTierFor  (prospect-like { id?, company }) => { tier } from the
+ *                  Target Accounts list (targetTier.js's resolver), or null.
+ */
+export function accountTier(row, prospects = [], targetTierFor = null) {
+  const list = Array.isArray(prospects) ? prospects : [];
+  const account = text(row?.['Account']);
+  const company = findCompany(account, list);
+  const own = text(company?.tier);
+  const tier = own && own !== '-' ? own : '';
+  const targetTier = typeof targetTierFor === 'function'
+    ? text(targetTierFor(company || { company: account })?.tier)
+    : '';
+  return tierPreferringTargetsList({ tier, targetTier, tierSource: company?.tierSource }) || targetTier || '';
+}
+
+/** The CDM the Target Accounts list names for the account behind an opp, or ''. */
+export function accountTargetCdm(row, prospects = [], targetCdmFor = null) {
+  if (typeof targetCdmFor !== 'function') return '';
+  const account = text(row?.['Account']);
+  const company = findCompany(account, Array.isArray(prospects) ? prospects : []);
+  return text(targetCdmFor(company || { company: account }));
+}
+
+/**
  * PE / Portfolio Company opps at Stage 3+, furthest along first, then
  * biggest, then by account so the order is stable.
  *
  *   parseAmount  (raw) => number | null
  *   fmtAmount    (number) => string
  *
- *   [{ id, name, amount, amountLabel, stage, stageLabel, peOwner, vertical, verticalFromOpp }]
+ *   [{ id, name, amount, amountLabel, stage, stageLabel, peOwner, vertical, verticalFromOpp, tier, targetCdm }]
  */
-export function buildPeOverlapDeals(records, { parseAmount = () => null, fmtAmount = String, prospects = [] } = {}) {
+export function buildPeOverlapDeals(records, { parseAmount = () => null, fmtAmount = String, prospects = [], targetTierFor = null, targetCdmFor = null } = {}) {
   return (Array.isArray(records) ? records : [])
     .filter(row => isPeOpp(row) && oppStageNumber(row) != null)
     .map(row => {
@@ -129,6 +165,8 @@ export function buildPeOverlapDeals(records, { parseAmount = () => null, fmtAmou
         stage,
         stageLabel: `Stage ${stage} · ${String(row.Stage).trim()}`,
         ...peOwnerAndVertical(row, prospects),
+        tier: accountTier(row, prospects, targetTierFor),
+        targetCdm: accountTargetCdm(row, prospects, targetCdmFor),
       };
     })
     .sort((a, b) => b.stage - a.stage
