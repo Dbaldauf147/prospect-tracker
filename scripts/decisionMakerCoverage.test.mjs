@@ -28,6 +28,7 @@ import {
   isColdOutreachExcluded,
   makeAccountContactIndex,
   makeDecisionMakerLookup,
+  decisionMakersWithTags,
 } from '../src/utils/decisionMakerCoverage.js';
 
 let passed = 0, failed = 0;
@@ -299,6 +300,24 @@ check('and neither are prospects that haven\'t loaded',
   check('agrees with accountHasDecisionMaker',
     lookup.forAccount({ company: 'Prologis' }).length > 0,
     accountHasDecisionMaker({ company: 'Prologis' }, decisionMakerCompanies(contacts), null));
+}
+
+// ---- narrowing to the decision makers a service is sold to -----------------
+{
+  const cap = { id: 'a', firstname: 'Cap', dans_tags: 'Decision Maker; Capital Planning' };
+  const esgLead = { id: 'b', firstname: 'Lead', dans_tags: 'Decision Maker;ESG Lead' };
+  const esg = { id: 'c', firstname: 'Esg', dans_tags: 'decision maker;esg' };
+  const plain = { id: 'd', firstname: 'Plain', dans_tags: 'Decision Maker' };
+  const all = [cap, esgLead, esg, plain];
+  check('keeps only the DMs carrying the service tag, any casing',
+    decisionMakersWithTags(all, ['capital planning']).map(c => c.id), ['a']);
+  check('whole tags only: ESG Lead is not ESG',
+    decisionMakersWithTags(all, ['ESG']).map(c => c.id), ['c']);
+  check('any one of several tags is enough',
+    decisionMakersWithTags(all, ['ESG', 'Capital Planning']).map(c => c.id), ['a', 'c']);
+  check('a service with no tags narrows nothing',
+    decisionMakersWithTags(all, []).map(c => c.id), ['a', 'b', 'c', 'd']);
+  check('nobody tagged for it lists no one', decisionMakersWithTags(all, ['Procurement']), []);
 }
 
 console.log(`${passed} passed, ${failed} failed`);
