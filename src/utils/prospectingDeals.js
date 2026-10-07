@@ -72,3 +72,20 @@ export function dealHasStatus(deal) {
   const s = String(deal?.status ?? '').trim();
   return s !== '' && s !== '-';
 }
+
+// The Prospects and PCs lists can leave services out of their analysis
+// altogether (settings.prospectingExcludedServices, picked on the page). An
+// excluded service is taken off the rate card the rows are priced against,
+// so it is never a row's biggest deal and never bundled in behind another
+// one. The company card and every other page are untouched.
+export const PROSPECTING_EXCLUDED_KEY = 'prospectingExcludedServices';
+
+export function excludedServiceSet(settings) {
+  const raw = settings?.[PROSPECTING_EXCLUDED_KEY];
+  return new Set(Array.isArray(raw) ? raw.map(s => String(s || '').trim()).filter(Boolean) : []);
+}
+
+export function withoutExcludedServices(serviceRows, excluded) {
+  if (!excluded || excluded.size === 0) return serviceRows || [];
+  return (serviceRows || []).filter(r => !excluded.has(r?.name));
+}

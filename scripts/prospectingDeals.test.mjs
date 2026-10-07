@@ -5,7 +5,7 @@
 // The pricing is accountPotential's and is tested there. What matters here
 // is that a row reads the company record the way the company card does:
 // its own counts price the services, and an answered service never wins.
-import { biggestDealFor, dealMid, dealHasStatus } from '../src/utils/prospectingDeals.js';
+import { biggestDealFor, dealMid, dealHasStatus, excludedServiceSet, withoutExcludedServices } from '../src/utils/prospectingDeals.js';
 import { PRICING_BASES } from '../src/utils/servicePricing.js';
 
 let passed = 0, failed = 0;
@@ -25,6 +25,18 @@ const pricing = {
   'GHG reporting': { basis: 'flat', rate: 5000 },
 };
 const ctx = { serviceRows, pricing, bases: PRICING_BASES };
+
+// Excluded services: taken off the card the rows are priced against.
+{
+  const excluded = excludedServiceSet({ prospectingExcludedServices: ['Bill payment', ' ', null] });
+  eq([...excluded], ['Bill payment'], 'the excluded list drops blanks');
+  const deal = biggestDealFor({ company: 'Big Co', numberOfSites: 200 }, { ...ctx, serviceRows: withoutExcludedServices(serviceRows, excluded) });
+  eq(deal?.name, 'GHG reporting', 'an excluded service is never the biggest deal, the next one is');
+  const none = biggestDealFor({ company: 'Big Co', numberOfSites: 200 }, { ...ctx, serviceRows: withoutExcludedServices(serviceRows, new Set(['Bill payment', 'GHG reporting'])) });
+  eq(none, null, 'everything excluded leaves no deal');
+  eq(withoutExcludedServices(serviceRows, excludedServiceSet({})).length, 2, 'nothing excluded leaves the card alone');
+  eq(excludedServiceSet({ prospectingExcludedServices: 'oops' }).size, 0, 'a malformed setting excludes nothing');
+}
 
 {
   const deal = biggestDealFor({ company: 'Big Co', numberOfSites: 200 }, ctx);
