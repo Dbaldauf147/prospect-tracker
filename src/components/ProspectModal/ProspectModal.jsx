@@ -98,6 +98,7 @@ import { TagMultiSelect } from '../common/TagMultiSelect';
 import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, buildCdmOptions, buildTypeOptions } from '../../utils/prospectOptions';
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { buildTargetTierResolver, tierMismatch, targetVerticalFor } from '../../utils/targetTier';
+import { targetAccountRows, suggestTargetMatches, mappedTargetNames, targetRowFlags } from '../../utils/targetAccountMatch';
 import {
   buildTargetCdmResolver, targetCdmConflictLabel, describeTargetCdmConflict,
   canonicalCdmOption, targetCdmApplyHint,
@@ -5122,6 +5123,32 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     () => getEffectiveDropdownLists(settings).find(l => l.key === 'vertical')?.options || [],
     [settings],
   );
+  // The Targets list box at the top of Classification. Unmapped, it
+  // suggests rows that look like this company (looser than the resolvers'
+  // name match, since it only suggests) with a Map button; mapped, it shows
+  // that row's CDM, Tier and Vertical and flags each one the card disagrees
+  // with. The mapping is the settings.targetMap entry My Accounts writes.
+  const targetRows = useMemo(
+    () => (targetAccountsData
+      ? targetAccountRows(targetAccountsData, { targetCdmColumn: settings?.targetCdmColumn, targetVerticalColumn: settings?.targetVerticalColumn })
+      : null),
+    [targetAccountsData, settings?.targetCdmColumn, settings?.targetVerticalColumn],
+  );
+  const mappedNames = mappedTargetNames(settings, prospect?.id);
+  const mappedRows = useMemo(() => {
+    if (!targetRows) return [];
+    const byName = new Map(targetRows.map(r => [r.name.toLowerCase(), r]));
+    return mappedNames.map(n => byName.get(n.toLowerCase()) || { name: n, cdm: '', tier: '', vertical: '', missing: true });
+  }, [targetRows, mappedNames.join('\u0001')]); // eslint-disable-line react-hooks/exhaustive-deps
+  const targetSuggestions = useMemo(
+    () => (targetRows && mappedNames.length === 0 ? suggestTargetMatches(fields.company, targetRows) : []),
+    [targetRows, fields.company, mappedNames.length],
+  );
+  function setTargetMapping(names) {
+    if (!prospect?.id) return;
+    updateSettings({ targetMap: { ...(settings?.targetMap || {}), [prospect.id]: names } });
+  }
+
   const targetsVertical = useMemo(() => (targetAccountsData
     ? targetVerticalFor({
       targetAccountsData,
@@ -8882,6 +8909,66 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
 
             <div className={styles.sectionHead}>Classification</div>
+
+            {/* The Targets list row this company is. Hidden for a new
+                company (nothing to map yet) and until the list loads. */}
+            {targetRows && prospect?.id && !isNew && (mappedRows.length > 0 || targetSuggestions.length > 0) && (
+              <div style={{ gridColumn: '1 / -1', border: '1px solid var(--color-border)', borderRadius: 6, padding: '0.45rem 0.6rem', background: 'var(--color-surface)', fontSize: '0.72rem' }}>
+                <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)', marginBottom: 4 }}>
+                  {mappedRows.length > 0 ? 'Targets list: mapped' : 'Targets list: suggested match'}
+                </div>
+                {mappedRows.length > 0 ? mappedRows.map(row => {
+                  const flags = targetRowFlags(row, fields, dropdownVerticals);
+                  const field = (label, value, flag, key) => (
+                    <span key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginRight: 12 }}>
+                      <span style={{ color: 'var(--color-text-muted)' }}>{label}</span>
+                      <strong style={{ color: value ? 'var(--color-text)' : '#94A3B8' }}>{value || 'none'}</strong>
+                      {flag && (
+                        <button
+                          type="button"
+                          onClick={() => (key === 'cdm' ? applyTargetCdm(flag.apply) : set(key, flag.apply))}
+                          title={`This card has ${flag.card || 'nothing'} for ${label}. Click to set it to ${flag.apply}, as the Targets list has it.`}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '0 0.3rem', borderRadius: 4, background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E', fontSize: '0.62rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
+                        >
+                          <span aria-hidden="true">⚠</span>{`card: ${flag.card || 'none'}`}
+                        </button>
+                      )}
+                    </span>
+                  );
+                  return (
+                    <div key={row.name} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', rowGap: 4, marginTop: 2 }}>
+                      <strong style={{ marginRight: 12 }}>{row.name}</strong>
+                      {row.missing
+                        ? <span style={{ color: '#B91C1C', marginRight: 12 }}>Not on the current Targets list</span>
+                        : <>
+                          {field('CDM', row.cdm, flags.cdm, 'cdm')}
+                          {field('Tier', row.tier, flags.tier, 'tier')}
+                          {field('Vertical', flags.vertical?.row || row.vertical, flags.vertical, 'vertical')}
+                        </>}
+                      <button
+                        type="button"
+                        onClick={() => setTargetMapping(mappedNames.filter(n => n !== row.name))}
+                        title={`Unmap ${row.name}. This is the same mapping My Accounts uses.`}
+                        style={{ marginLeft: 'auto', padding: 0, border: 0, background: 'none', color: '#64748B', fontSize: '0.66rem', textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit' }}
+                      >Unmap</button>
+                    </div>
+                  );
+                }) : targetSuggestions.map(row => (
+                  <div key={row.name} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.25rem 0.75rem', marginTop: 2 }}>
+                    <strong>{row.name}</strong>
+                    <span style={{ color: 'var(--color-text-secondary)' }}>
+                      {[row.cdm && `CDM ${row.cdm}`, row.tier, row.vertical].filter(Boolean).join(' · ') || 'no details on the list'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setTargetMapping([row.name])}
+                      title={`Map ${fields.company} to ${row.name} on the Target Accounts list (the same mapping My Accounts uses). Its CDM, Tier and Vertical are then checked against this card.`}
+                      style={{ marginLeft: 'auto', padding: '0 0.45rem', border: '1px solid #93C5FD', borderRadius: 4, background: '#EFF6FF', color: '#1E40AF', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+                    >Map</button>
+                  </div>
+                ))}
+              </div>
+            )}
 
             <div>
               <label className={styles.label}>Type</label>
