@@ -8362,9 +8362,10 @@ function OppCoaItemsSection({ opp, onFieldChange }) {
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
-            <th style={{ ...th, width: '40%' }}>COA item</th>
+            <th style={{ ...th, width: '26%' }}>COA item</th>
             <th style={th}>Requested</th>
             <th style={th}>Approved</th>
+            <th style={{ ...th, width: '26%' }}>Notes</th>
             <th style={th}>Status</th>
             <th style={{ ...th, width: 24 }} aria-label="Remove" />
           </tr>
@@ -8401,6 +8402,17 @@ function OppCoaItemsSection({ opp, onFieldChange }) {
                   disabled={!!row.na}
                   title={row.na ? 'Marked N/A - un-mark it to record dates.' : 'The date it came back approved. Leave blank until it does.'}
                   style={{ ...cellInput, width: 'auto', ...(row.na ? naCell : null) }}
+                />
+              </td>
+              {/* Open on an N/A row too: why it doesn't apply is worth a note. */}
+              <td style={td}>
+                <input
+                  value={row.notes || ''}
+                  placeholder="Notes"
+                  onChange={(e) => updateRow(idx, 'notes', e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+                  title="Anything worth remembering about this item on this deal"
+                  style={cellInput}
                 />
               </td>
               <td style={{ ...td, whiteSpace: 'nowrap', paddingTop: '0.4rem' }}>
