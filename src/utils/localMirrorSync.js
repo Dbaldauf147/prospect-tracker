@@ -368,6 +368,7 @@ async function loadMirroredStores() {
     import('./coaItemOptions.js'),
     import('./prospectingStatus.js'),
     import('./prospectingHistory.js'),
+    import('./dmTagHistory.js'),
     import('./soldWarningIgnore.js'),
     import('./fillerIgnoreStore.js'),
     import('./pricingOptionLinks.js'),
