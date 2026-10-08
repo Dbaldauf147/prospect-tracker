@@ -28,6 +28,11 @@ check('an untiered row is still a row', rows[2].tier, '');
 
 // suggestions
 check('Technology vs Technologies is a match', nameSimilarity('Vibrantz Technology', 'Vibrantz Technologies'), 1);
+check('a typo in a long word still matches (Techonology)', nameSimilarity('Vibrantz Techonology', 'Vibrantz Technologies'), 1);
+check('and the typo case is suggested', suggestTargetMatches('Vibrantz Techonology', rows).map(r => r.name), ['Vibrantz Technologies']);
+check('a typo in the first word still matches', nameSimilarity('Vibrantx Technologies', 'Vibrantz Technologies'), 1);
+check('short words must match exactly (Acme is not Acne)', nameSimilarity('Acme Corp', 'Acne Corp'), 0);
+check('Vibrantz is not Vibrant (one letter, but a different company)', suggestTargetMatches('Vibrantz Technology', rows).some(r => r.name === 'Vibrant Energy'), false);
 check('a different first word is no match', nameSimilarity('Acme Technology', 'Vibrantz Technologies'), 0);
 check('suffixes are ignored', nameSimilarity('Acme Corp', 'Acme, Inc.'), 1);
 check('a short name inside a longer one is a likely match', nameSimilarity('Vibrantz', 'Vibrantz Technologies'), 0.75);

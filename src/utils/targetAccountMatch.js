@@ -72,21 +72,49 @@ const stem = (t) => (t.length > 4 && t.endsWith('ies') ? `${t.slice(0, -3)}y`
   : t.length > 3 && t.endsWith('s') && !t.endsWith('ss') ? t.slice(0, -1) : t);
 const tokensOf = (s) => normalizeCompanyName(s).split(' ').filter(Boolean).map(stem);
 
+// Edit distance, capped: stops counting once it is past `cap`.
+function editDistance(a, b, cap) {
+  if (Math.abs(a.length - b.length) > cap) return cap + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i += 1) {
+    const cur = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (cur[j] < best) best = cur[j];
+    }
+    if (best > cap) return cap + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+// Two words are the same word when equal, or one typo apart: a slip
+// ("Techonology") shouldn't hide the row it was meant to be. Short words
+// must match exactly, or "Acme" would find "Acne".
+export function sameWord(a, b) {
+  if (a === b) return true;
+  const len = Math.min(a.length, b.length);
+  const cap = len >= 9 ? 2 : len >= 5 ? 1 : 0;
+  return cap > 0 && editDistance(a, b, cap) <= cap;
+}
+
 /** How alike two company names are, 0..1. The first word has to agree. */
 export function nameSimilarity(a, b) {
-  const ta = tokensOf(a);
-  const tb = tokensOf(b);
-  if (!ta.length || !tb.length || ta[0] !== tb[0]) return 0;
-  const ja = ta.join(' ');
-  const jb = tb.join(' ');
-  if (ja === jb) return 1;
-  const A = new Set(ta);
-  const B = new Set(tb);
+  const ta = [...new Set(tokensOf(a))];
+  const tb = [...new Set(tokensOf(b))];
+  if (!ta.length || !tb.length || !sameWord(ta[0], tb[0])) return 0;
+  // Pair words off one to one, so a word can't be counted twice.
+  const free = [...tb];
   let both = 0;
-  for (const t of A) if (B.has(t)) both += 1;
-  const jaccard = both / (A.size + B.size - both);
+  for (const t of ta) {
+    const i = free.findIndex(u => sameWord(t, u));
+    if (i >= 0) { both += 1; free.splice(i, 1); }
+  }
+  if (both === ta.length && both === tb.length) return 1;
+  const jaccard = both / (ta.length + tb.length - both);
   // One name wholly inside the other ("Vibrantz" / "Vibrantz Technologies").
-  const inside = (A.size <= B.size ? [...A].every(t => B.has(t)) : [...B].every(t => A.has(t))) ? 0.75 : 0;
+  const inside = both === Math.min(ta.length, tb.length) ? 0.75 : 0;
   return Math.max(jaccard, inside);
 }
 
