@@ -25,8 +25,8 @@ const answer = JSON.stringify({ summaries: [
   { id: 'c', bullets: [] },
 ] });
 const read = readSummaries(answer, items);
-check('only asked ids, markers stripped, em dashes swapped, capped', read, { a: ['Waiting on Keith - for pricing', 'Call Friday', 'x', 'y'] });
-check('cap is MAX_BULLETS', read.a.length, MAX_BULLETS);
+check('only asked ids, markers stripped, em dashes swapped, capped', read, { a: ['Waiting on Keith - for pricing', 'Call Friday', 'x'] });
+check('cap is 3 bullets', [read.a.length, MAX_BULLETS], [3, 3]);
 check('unreadable answer is null', readSummaries('nope', items), null);
 
 const req = buildRequest(items);

@@ -18,7 +18,7 @@ export const MAX_NOTE_CHARS = 6000;
 
 // The most bullets a summary may have. The cell is a table cell, not a
 // report: anything that needs more than this is better read in the popup.
-export const MAX_BULLETS = 4;
+export const MAX_BULLETS = 3;
 
 /**
  * The items to summarise: { id, text } with a non-blank id and text, ids
@@ -88,7 +88,7 @@ export function outputSchema() {
 function cleanBullet(s) {
   return String(s ?? '')
     .replace(/^\s*(?:[-*•·]|\d+[.)])\s*/, '')
-    .replace(/\s*—\s*/g, ' - ')
+    .replace(/\s*\u2014\s*/g, ' - ') // em-dash-ok: strips em dashes out of the model's answer
     .replace(/\s+/g, ' ')
     .trim();
 }
