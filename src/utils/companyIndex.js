@@ -61,6 +61,30 @@ function addTo(map, key, value) {
   set.add(value);
 }
 
+// A company name with its bracketed notes taken out: "Rehlko (a Platinum
+// Equity Co.)" is Rehlko. What sits in brackets describes the company (its
+// owner, its region, an old name) rather than naming it, so the fuzzy
+// "one name inside the other" checks must not read it: left in, the owner's
+// name inside the note made every Platinum Equity opp land on Rehlko's
+// card. Returns the input unchanged when nothing is left outside brackets.
+export function withoutParenNotes(name) {
+  const s = String(name || '');
+  const out = s.replace(/\([^)]*\)?/g, ' ').replace(/\s+/g, ' ').trim();
+  return out || s.trim();
+}
+
+// The one-word aliases a name carries in brackets, "Jones Lang LaSalle
+// (JLL)" -> ['jll']. A bracket holding a single word is the company's own
+// short name, which is worth matching on; a longer note is not.
+export function parenAliases(name) {
+  const out = [];
+  for (const m of String(name || '').matchAll(/\(([^)]*)\)/g)) {
+    const words = m[1].toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+    if (words.length === 1) out.push(words[0]);
+  }
+  return out;
+}
+
 // Does `longer` contain `shorter` as whole words? The match has to start
 // and end on a word edge (string end or a non-alphanumeric neighbour), so
 // "Bank of America" is inside "Bank of America Holdings" but "sp global"

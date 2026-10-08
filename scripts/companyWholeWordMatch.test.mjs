@@ -3,7 +3,7 @@
 // "sp global", which sits inside "wsp global" mid-word; that let an opp
 // filed under WSP Global pull S&P Global onto My Accounts. Run:
 //   node scripts/companyWholeWordMatch.test.mjs
-import { buildCompanyIndex, findMatchesInIndex, findStrictMatchesInIndex, containsWholeWords } from '../src/utils/companyIndex.js';
+import { buildCompanyIndex, findMatchesInIndex, findStrictMatchesInIndex, containsWholeWords, withoutParenNotes, parenAliases } from '../src/utils/companyIndex.js';
 import { companiesMatch } from '../src/utils/listFlags.js';
 
 let passed = 0, failed = 0;
@@ -26,6 +26,18 @@ eq(strict('bank of america', 'bank of america holdings'), true, 'and via the str
 eq(loose('s&p global', 's&p global inc.'), true, 'S&P Global matches itself with a suffix');
 eq(companiesMatch('Blue Owl Capital', 'Blue Owl Capital Group'), true, 'companiesMatch keeps whole-word containment');
 eq(companiesMatch('WSP Global', 'WSP Global Inc'), true, 'WSP Global matches itself with a suffix');
+
+// ── A bracketed note is not part of the name ─────────────────────────
+// "Rehlko (a Platinum Equity Co.)" carried every Platinum Equity opp's
+// services onto its card, because the owner's name sits in the note.
+eq(companiesMatch('Rehlko (a Platinum Equity Co.)', 'Platinum Equity'), false, 'owner named in a note does not match');
+eq(companiesMatch('Platinum Equity', 'Rehlko (a Platinum Equity Co.)'), false, 'nor the other way round');
+eq(companiesMatch('Rehlko (a Platinum Equity Co.)', 'Rehlko'), true, 'the company itself still matches');
+eq(companiesMatch('Rehlko (a Platinum Equity Co.)', 'Rehlko (a Platinum Equity Co.)'), true, 'and its exact name');
+eq(withoutParenNotes('Rehlko (a Platinum Equity Co.)'), 'Rehlko', 'withoutParenNotes drops the note');
+eq(withoutParenNotes('(TIAA)'), '(TIAA)', 'a name that is all bracket is kept');
+eq(parenAliases('Jones Lang LaSalle (JLL)').join(), 'jll', 'a one-word bracket is an alias');
+eq(parenAliases('Rehlko (a Platinum Equity Co.)').length, 0, 'a longer bracket is not');
 
 // ── The helper itself ─────────────────────────────────────────────────
 eq(containsWholeWords('wsp global', 'sp global'), false, 'mid-word start is rejected');
