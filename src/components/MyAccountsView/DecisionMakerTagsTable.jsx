@@ -7,7 +7,12 @@
 // It is a DataTable, so the columns can be renamed, reordered, resized,
 // hidden and starred from the Columns menu, and the layout persists under
 // settings.tablePrefs['my-accounts-dm-tags'].
-import { useMemo } from 'react';
+//
+// Zoom Export by Tag mirrors the My Accounts tab's Zoom Export (same four
+// columns, same Inside Sales rows on screen) cut to one tag: the accounts
+// with no decision maker carrying it yet, i.e. the gaps behind that
+// column's percentages, ready to take into ZoomInfo.
+import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { tagMatrixColumns, tagColumnKey, tagMatrixRows, tagMatrixCoverage } from '../../utils/decisionMakerTagMatrix';
@@ -39,7 +44,54 @@ function TierCoverage({ coverage }) {
   );
 }
 
-export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSettings, onSelect }) {
+// The Inside Sales rows with nobody in `key`'s column: what one tag's Zoom
+// export holds.
+const zoomRowsFor = (rows, key) => rows.filter(r => r.status === 'Inside Sales' && !(r.byTag[key] || []).length);
+
+// Pick a tag, get its Zoom CSV. Each tag shows how many accounts its file
+// would hold, and a tag with none can't be picked.
+function ZoomByTagPicker({ tags, rows, onPick, onClose }) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
+      <div style={{ background: '#fff', borderRadius: 10, padding: '1rem 1.1rem', width: 380, maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 10px 30px rgba(0,0,0,0.2)' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
+          <strong style={{ fontSize: '0.9rem', color: '#1E293B' }}>Zoom Export by Tag</strong>
+          <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer' }}>&times;</button>
+        </div>
+        <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.6rem', lineHeight: 1.4 }}>
+          Downloads the Inside Sales accounts shown here that have no decision maker with the tag yet: Company, Zoom Company ID, Zoom Company Name, Zoom Website.
+        </div>
+        {tags.map(tag => {
+          const n = zoomRowsFor(rows, tagColumnKey(tag)).length;
+          return (
+            <button
+              key={tag}
+              type="button"
+              disabled={n === 0}
+              onClick={() => onPick(tag)}
+              style={{
+                display: 'flex', justifyContent: 'space-between', width: '100%', padding: '0.45rem 0.6rem', marginBottom: 4,
+                border: '1px solid #E2E8F0', borderRadius: 6, background: n ? '#fff' : '#F8FAFC', fontFamily: 'inherit',
+                fontSize: '0.8rem', color: n ? '#1E293B' : '#94A3B8', cursor: n ? 'pointer' : 'default', textAlign: 'left',
+              }}
+            >
+              <span>{tag}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: '0.72rem', color: n ? '#3B82F6' : '#CBD5E1' }}>
+                {n} account{n === 1 ? '' : 's'}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSettings, onSelect, onZoomExport }) {
+  // The rows the column filters leave on screen, so the export matches
+  // Export Excel the way the My Accounts tab's Zoom Export does.
+  const [onScreen, setOnScreen] = useState(null);
+  const [zoomOpen, setZoomOpen] = useState(false);
   const localFields = settings?.contactLocalFields || null;
   const links = settings?.companyContactLinks || null;
   const exclusions = settings?.companyContactExclusions || null;
@@ -100,10 +152,23 @@ export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSet
     }),
   ], [tags, coverage]);
 
+  const zoomSource = onScreen || rows;
+  function exportTag(tag) {
+    const picked = zoomRowsFor(zoomSource, tagColumnKey(tag));
+    setZoomOpen(false);
+    if (picked.length === 0) {
+      alert(`Every Inside Sales account shown here already has a decision maker tagged ${tag}.`);
+      return;
+    }
+    const slug = tag.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    onZoomExport(picked, `my-accounts-dm-tags-${slug}-${new Date().toISOString().slice(0, 10)}.csv`);
+  }
+
   if (!contacts) {
     return <div style={{ fontSize: '0.75rem', color: '#94A3B8', padding: '1rem' }}>Loading contacts…</div>;
   }
   return (
+    <>
     <DataTable
       tableId="my-accounts-dm-tags"
       exportFileName="My Accounts DM Tags"
@@ -112,11 +177,20 @@ export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSet
       defaultSort={{ key: 'company', direction: 'asc' }}
       alwaysVisible={['company']}
       enableColumnFilters
+      onFilteredRowsChange={setOnScreen}
+      toolbarActions={onZoomExport ? [{
+        key: 'zoom-export-by-tag',
+        label: 'Zoom Export by Tag',
+        title: 'Pick a tag and download a CSV of the Inside Sales accounts shown here with no decision maker carrying it: Company, Zoom Company ID, Zoom Company Name, Zoom Website',
+        onClick: () => setZoomOpen(true),
+      }] : undefined}
       gridLines
       onRowClick={r => { if (!r._oppsOnly) onSelect(r); }}
       emptyMessage="No accounts match these filters"
       settings={settings}
       updateSettings={updateSettings}
     />
+    {zoomOpen && <ZoomByTagPicker tags={tags} rows={zoomSource} onPick={exportTag} onClose={() => setZoomOpen(false)} />}
+    </>
   );
 }
