@@ -30,6 +30,10 @@ import {
   removeDivisionRulePatch,
 } from '../../utils/divisions';
 import { DecisionMakerTagsTable } from './DecisionMakerTagsTable';
+import { DmTagHistoryView } from './DmTagHistoryView';
+import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
+import { tagMatrixColumns } from '../../utils/decisionMakerTagMatrix';
+import { dmTagReading, recordDmTagDay } from '../../utils/dmTagHistory';
 import styles from './MyAccountsView.module.css';
 
 function InlineCell({ row, field, value, onUpdate, type, options, displayValue }) {
@@ -3071,6 +3075,31 @@ Fix that now?
 
   // DM Tags subtab: allAccounts narrowed by the inactive toggle and the
   // search box only, the same two filters the Company Type subtab honours.
+  // Record today's DM tag mapping for the DM Tags History subtab, on the
+  // fixed basis it is charted on (every account, inactive ones out, no
+  // search), whichever My Accounts subtab is open. Debounced: allAccounts
+  // settles over a few renders as the opps and Target Accounts land, and
+  // the last reading of the day is the one kept anyway.
+  const dmTagLocalFields = settings?.contactLocalFields || null;
+  const dmTagLinks = settings?.companyContactLinks || null;
+  const dmTagExclusions = settings?.companyContactExclusions || null;
+  useEffect(() => {
+    if (!hubspotCache || !allAccounts?.length) return undefined;
+    const timer = setTimeout(() => {
+      try {
+        const contacts = hubspotCache.contacts || [];
+        const lookup = makeDecisionMakerLookup(contacts, {
+          localFields: dmTagLocalFields, links: dmTagLinks, exclusions: dmTagExclusions,
+        });
+        const reading = dmTagReading(allAccounts, lookup, tagMatrixColumns(contacts));
+        const now = new Date();
+        const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        if (reading) recordDmTagDay(day, reading);
+      } catch { /* a missed reading just leaves a gap in the chart */ }
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [hubspotCache, allAccounts, dmTagLocalFields, dmTagLinks, dmTagExclusions]);
+
   const dmTagAccounts = useMemo(() => {
     let rows = allAccounts;
     if (inactiveMode === 'hide') rows = rows.filter(a => !INACTIVE_STATUSES.has(a.status));
@@ -3595,6 +3624,16 @@ Fix that now?
   // DM Tags subtab - the same accounts, one column per contact tag, each
   // cell the decision makers there who also carry that tag. Honours the
   // inactive toggle and the search box, like the Company Type subtab.
+  // DM Tags History subtab - the starred DM tag columns, % mapped per tier
+  // day by day, from the readings recorded above.
+  if (mode === 'dmTagsHistory') {
+    return (
+      <div className={styles.wrapper}>
+        <DmTagHistoryView settings={settings} updateSettings={updateSettings} />
+      </div>
+    );
+  }
+
   if (mode === 'dmTags') {
     return (
       <div className={styles.wrapper}>
