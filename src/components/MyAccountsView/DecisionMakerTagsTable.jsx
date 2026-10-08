@@ -14,6 +14,8 @@
 // column's percentages, ready to take into ZoomInfo.
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
+import { Badge } from '../common/Badge';
+import { statusColor } from '../../utils/formatters';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { tagMatrixColumns, tagColumnKey, tagMatrixRows, tagMatrixCoverage } from '../../utils/decisionMakerTagMatrix';
 import { TIERS } from '../../data/enums';
@@ -116,6 +118,14 @@ export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSet
     {
       key: 'myTier', label: 'Tier', defaultWidth: 80,
       render: r => <span style={{ fontWeight: 600, color: TIER_INK[r.myTier] || '#64748B' }}>{r.myTier || '-'}</span>,
+    },
+    {
+      key: 'status', label: 'Status', defaultWidth: 130,
+      render: r => (r.status ? <Badge label={r.status} color={statusColor(r.status)} /> : <span style={{ color: '#CBD5E1' }}>-</span>),
+    },
+    {
+      key: 'type', label: 'Company Type', defaultWidth: 170,
+      render: r => (r.type ? <span>{r.type}</span> : <span style={{ color: '#CBD5E1' }}>-</span>),
     },
     {
       key: 'dmCount', label: 'Decision Makers', defaultWidth: 110,
