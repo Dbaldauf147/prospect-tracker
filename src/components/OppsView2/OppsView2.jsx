@@ -18335,7 +18335,10 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       })()}
 
       {infoOppId != null && (() => {
-        const opp = records.find(r => r._id === infoOppId);
+        // Compared as text: the PE Monthly table and the Keith agenda carry
+        // the opp id as a string (keithPeDeals), while records keep the
+        // number they were stored with, so a strict match opened nothing.
+        const opp = records.find(r => String(r._id) === String(infoOppId));
         if (!opp) return null;
         // Splat in the computed values so the popup shows the same
         // numbers the table cells do without re-deriving them inside
