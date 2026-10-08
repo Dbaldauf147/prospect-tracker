@@ -59,6 +59,12 @@ async function handler(req, res, auth, { fetchImpl, sleep, now } = {}) {
 
   if (action === 'overview') {
     const out = { recentSince, source: {}, target: { configured: !!target }, properties: null };
+    // The shared-portal guard's settings (api/_lib/hubspotScope.js), so the
+    // tab can show whether they are on and whether they match.
+    out.guard = {
+      portalId: String(process.env.HUBSPOT_PORTAL_ID || '').trim(),
+      ownerEmail: String(process.env.HUBSPOT_OWNER_EMAIL || '').trim(),
+    };
     try {
       out.source.account = await accountDetails(source);
     } catch (err) {

@@ -1,5 +1,6 @@
 import { withAuth } from './_lib/http.js';
 import { describeHubSpotError, describeHubSpotResponse, rejectedOptionValues } from './_lib/hubspotError.js';
+import { hubspotScope, ownerFilters } from './_lib/hubspotScope.js';
 
 // The tag rules the pages write by, imported rather than restated: a restore
 // that planned its writes differently from the editors would be a second
@@ -75,12 +76,49 @@ export const CONTACT_SYNC_PROPERTIES = [
   'decision_maker', 'role',
 ];
 
-async function getAllContacts(token) {
+// The contacts one owner holds in a shared portal, via search. Walks by
+// hs_object_id (each request asks for ids above the last one seen) rather
+// than by search's own cursor, which stops dead at 10,000 results.
+async function searchOwnedContacts(token, scope) {
+  const contacts = [];
+  let lastId = '0';
+  while (true) {
+    const res = await fetchRetryingRateLimit(`${BASE}/crm/v3/objects/contacts/search`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        limit: 200,
+        properties: CONTACT_SYNC_PROPERTIES,
+        sorts: [{ propertyName: 'hs_object_id', direction: 'ASCENDING' }],
+        filterGroups: [{ filters: [
+          ...ownerFilters(scope),
+          { propertyName: 'hs_object_id', operator: 'GT', value: lastId },
+        ] }],
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`HubSpot API ${res.status}: ${text.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    const page = data.results || [];
+    contacts.push(...page);
+    if (page.length < 200) break;
+    lastId = String(page[page.length - 1].id);
+    // Same safety limit as the unscoped walk.
+    if (contacts.length > 10000) break;
+  }
+  return contacts;
+}
+
+async function getAllContacts(token, scope = null) {
   const contacts = [];
   let after = undefined;
   const properties = CONTACT_SYNC_PROPERTIES;
 
-  while (true) {
+  // In a shared portal only the owner's contacts are the app's to show.
+  if (scope?.scoped) contacts.push(...await searchOwnedContacts(token, scope));
+  while (!scope?.scoped) {
     const params = new URLSearchParams({
       limit: '100',
       properties: properties.join(','),
@@ -232,14 +270,14 @@ async function findCompanyByName(token, rawName) {
 // { ok: false, status, errorText } so the caller can surface the
 // real reason (permissions, duplicate name validation, etc.) instead
 // of a generic miss.
-async function createCompanyByName(token, rawName) {
+async function createCompanyByName(token, rawName, ownerId = '') {
   const name = String(rawName || '').trim();
   if (!name) return { ok: false, status: 0, errorText: 'Empty company name' };
   try {
     const res = await fetch(`${BASE}/crm/v3/objects/companies`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ properties: { name } }),
+      body: JSON.stringify({ properties: ownerId ? { name, hubspot_owner_id: ownerId } : { name } }),
     });
     if (res.ok) {
       const data = await res.json();
@@ -282,7 +320,7 @@ async function setContactPrimaryCompany(token, contactId, companyId) {
 // a companyAssignment summary the client can use to keep its local
 // override when the matched Company's name differs from what was typed,
 // or null when there's no name to assign.
-async function assignContactPrimaryCompanyByName(token, contactId, rawName) {
+async function assignContactPrimaryCompanyByName(token, contactId, rawName, ownerId = '') {
   const companyName = (rawName || '').trim();
   if (!companyName) return null;
   let match = await findCompanyByName(token, companyName);
@@ -291,7 +329,7 @@ async function assignContactPrimaryCompanyByName(token, contactId, rawName) {
   let created = false;
   let createError = null;
   if (!companyId) {
-    const createRes = await createCompanyByName(token, companyName);
+    const createRes = await createCompanyByName(token, companyName, ownerId);
     if (createRes.ok) {
       companyId = createRes.id;
       matchedName = companyName;
@@ -575,9 +613,11 @@ async function getContactsByCompany(token, companyName) {
   return data;
 }
 
-async function getSequences(token) {
+async function getSequences(token, scope = null) {
   try {
-    const data = await hubspotFetch('/automation/v4/sequences', token);
+    // In a shared portal, only the owner's own sequences.
+    const qs = scope?.scoped && scope.ownerUserId ? `?userId=${encodeURIComponent(scope.ownerUserId)}` : '';
+    const data = await hubspotFetch(`/automation/v4/sequences${qs}`, token);
     return data.results || [];
   } catch {
     return [];
@@ -593,7 +633,16 @@ async function getSequenceEnrollments(token) {
   }
 }
 
-async function getRecentEmails(token) {
+async function getRecentEmails(token, scope = null) {
+  if (scope?.scoped) {
+    const data = await hubspotPost('/crm/v3/objects/emails/search', token, {
+      limit: 100,
+      properties: ['hs_email_subject', 'hs_email_status', 'hs_email_direction', 'hs_timestamp', 'hs_email_to_email', 'hs_email_from_email', 'hs_email_to_firstname', 'hs_email_to_lastname', 'hs_email_from_firstname', 'hs_email_from_lastname'],
+      sorts: [{ propertyName: 'hs_timestamp', direction: 'DESCENDING' }],
+      filterGroups: [{ filters: ownerFilters(scope) }],
+    });
+    return data.results || [];
+  }
   const data = await hubspotFetch('/crm/v3/objects/emails?limit=100&properties=hs_email_subject,hs_email_status,hs_email_direction,hs_timestamp,hs_email_to_email,hs_email_from_email,hs_email_to_firstname,hs_email_to_lastname,hs_email_from_firstname,hs_email_from_lastname&sort=-hs_timestamp', token);
   return data.results || [];
 }
@@ -633,9 +682,41 @@ async function handler(req, res) {
 
   const action = req.query.action;
 
+  // Which portal this token is for, and in a shared portal whose records
+  // are the app's (api/_lib/hubspotScope.js). Refuses outright when the
+  // token isn't for the portal the settings say it should be.
+  let scope;
+  try {
+    scope = await hubspotScope(token);
+  } catch (err) {
+    return res.status(err?.status || 500).json({ error: err.message, scope: true });
+  }
+  const ownerId = scope.scoped ? scope.ownerId : '';
+  const notInSharedPortal = (what) => res.status(403).json({
+    error: `${what} is switched off while the app is connected to a shared HubSpot portal, so it can't touch a colleague's records. Do it in HubSpot directly.`,
+  });
+  // Every edit in a shared portal is limited to records the owner holds.
+  // Answers the ids (of those asked about) that belong to somebody else,
+  // or that HubSpot has no contact for.
+  const notOwnedContacts = async (ids) => {
+    if (!scope.scoped) return [];
+    const owned = new Set();
+    const list = [...new Set(ids.map(String))];
+    for (let i = 0; i < list.length; i += 100) {
+      const data = await hubspotPost('/crm/v3/objects/contacts/batch/read', token, {
+        properties: ['hubspot_owner_id'],
+        inputs: list.slice(i, i + 100).map(id => ({ id })),
+      });
+      for (const r of (data.results || [])) {
+        if (String(r.properties?.hubspot_owner_id || '') === ownerId) owned.add(String(r.id));
+      }
+    }
+    return list.filter(id => !owned.has(id));
+  };
+
   try {
     if (action === 'contacts') {
-      const contacts = await getAllContacts(token);
+      const contacts = await getAllContacts(token, scope);
       return res.json({
         contacts: contacts.map(c => ({
           id: c.id,
@@ -752,6 +833,8 @@ async function handler(req, res) {
       const ids = [...wanted.keys()];
       if (ids.length === 0) return res.status(400).json({ error: 'Nothing to restore.' });
       if (ids.length > 100) return res.status(400).json({ error: 'Restore at most 100 contacts per call.' });
+      // In a shared portal a contact someone else owns is never written.
+      const notMine = new Set(await notOwnedContacts(ids));
 
       // What HubSpot holds right now, for exactly these contacts.
       const current = new Map();
@@ -774,7 +857,9 @@ async function handler(req, res) {
       for (const id of ids) {
         // Absent from the read means HubSpot has no such contact: skip, never
         // write. planTagEdit refuses on the same grounds.
-        const plan = planTagEdit('add', wanted.get(id), current.get(id));
+        const plan = notMine.has(id)
+          ? { action: 'skip', reason: 'owned by another HubSpot user' }
+          : planTagEdit('add', wanted.get(id), current.get(id));
         plans.push({
           id,
           adding: wanted.get(id),
@@ -813,7 +898,7 @@ async function handler(req, res) {
     }
 
     if (action === 'sequences') {
-      const sequences = await getSequences(token);
+      const sequences = await getSequences(token, scope);
       return res.json({ sequences });
     }
 
@@ -823,7 +908,7 @@ async function handler(req, res) {
     }
 
     if (action === 'emails') {
-      const emails = await getRecentEmails(token);
+      const emails = await getRecentEmails(token, scope);
       return res.json({ emails: emails.map(e => ({ id: e.id, ...e.properties })) });
     }
 
@@ -922,9 +1007,9 @@ async function handler(req, res) {
         properties: props,
       };
       if (offset) body.after = String(offset);
-      if (before) {
-        body.filterGroups = [{ filters: [{ propertyName: 'hs_timestamp', operator: 'LTE', value: before }] }];
-      }
+      const filters = [...ownerFilters(scope)];
+      if (before) filters.push({ propertyName: 'hs_timestamp', operator: 'LTE', value: before });
+      if (filters.length) body.filterGroups = [{ filters }];
 
       const data = await hubspotPost(`/crm/v3/objects/${objectType}/search`, token, body);
       const objects = data.results || [];
@@ -985,8 +1070,8 @@ async function handler(req, res) {
     if (action === 'full-sync') {
       // Get contacts, sequences, campaigns (activity fetched separately by Activity tab)
       const [contacts, sequences, campaigns] = await Promise.all([
-        getAllContacts(token),
-        getSequences(token),
+        getAllContacts(token, scope),
+        getSequences(token, scope),
         getEmailCampaigns(token),
       ]);
 
@@ -1009,6 +1094,9 @@ async function handler(req, res) {
         return res.status(400).json({ error: 'Email is required to create a contact' });
       }
       const cleanProps = normalizeContactPropertiesForHubSpot(properties);
+      // A contact created in a shared portal is created as the owner's, or
+      // the app would lose sight of it on the next sync.
+      if (ownerId && !cleanProps.hubspot_owner_id) cleanProps.hubspot_owner_id = ownerId;
       const postContact = () => fetch(`${BASE}/crm/v3/objects/contacts`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -1035,7 +1123,7 @@ async function handler(req, res) {
         let companyAssignment = null;
         if (typeof cleanProps.company === 'string') {
           try {
-            companyAssignment = await assignContactPrimaryCompanyByName(token, created.id, cleanProps.company);
+            companyAssignment = await assignContactPrimaryCompanyByName(token, created.id, cleanProps.company, ownerId);
           } catch (err) {
             companyAssignment = { ok: false, status: 0, errorText: String(err?.message || err).slice(0, 300), requestedName: (cleanProps.company || '').trim() };
           }
@@ -1076,6 +1164,9 @@ async function handler(req, res) {
       if (!contactId) {
         return res.status(400).json({ error: 'contactId is required' });
       }
+      if ((await notOwnedContacts([contactId])).length) {
+        return res.status(403).json({ error: 'This contact belongs to another HubSpot user in this portal, so the app leaves it alone. Edit it in HubSpot, or have it reassigned to you first.' });
+      }
       const cleanProps = normalizeContactPropertiesForHubSpot(properties);
       // If `company` is being set, rename the Company record the contact is
       // linked to (see renameContactCompany). That pushes the new name onto
@@ -1085,7 +1176,13 @@ async function handler(req, res) {
       // company yet it falls back to find-or-create + associate.
       let companyAssignment = null;
       if (typeof cleanProps.company === 'string') {
-        companyAssignment = await renameContactCompany(token, contactId, cleanProps.company);
+        // Renaming the linked Company record renames it for everyone linked
+        // to it. In a shared portal that record is often a colleague's
+        // account, so the contact is re-linked to a company by that name
+        // instead, and the Company record itself is left as it is.
+        companyAssignment = scope.scoped
+          ? await assignContactPrimaryCompanyByName(token, contactId, cleanProps.company, ownerId)
+          : await renameContactCompany(token, contactId, cleanProps.company);
       }
       const patchContact = () => fetch(`${BASE}/crm/v3/objects/contacts/${contactId}`, {
         method: 'PATCH',
@@ -1140,7 +1237,7 @@ async function handler(req, res) {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          properties: { hs_note_body: noteBody, hs_timestamp: new Date().toISOString() },
+          properties: { hs_note_body: noteBody, hs_timestamp: new Date().toISOString(), ...(ownerId ? { hubspot_owner_id: ownerId } : {}) },
           associations: [{ to: { id: contactId }, types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 202 }] }],
         }),
       });
@@ -1158,7 +1255,9 @@ async function handler(req, res) {
       }
 
       // First get all existing contacts to match by email
-      const existing = await getAllContacts(token);
+      // Scoped, so in a shared portal only the owner's contacts are updated;
+      // an address someone else owns comes back from the create as a 409.
+      const existing = await getAllContacts(token, scope);
       const emailMap = new Map();
       for (const c of existing) {
         if (c.properties.email) emailMap.set(c.properties.email.toLowerCase(), c.id);
@@ -1180,6 +1279,7 @@ async function handler(req, res) {
         if (contact.state) props.state = contact.state;
         if (contact.country) props.country = contact.country;
         if (contact.dans_tags) props.dans_tags = contact.dans_tags;
+        if (ownerId) props.hubspot_owner_id = ownerId;
         const normProps = normalizeContactPropertiesForHubSpot(props);
         const noteBody = (contact.notes || '').toString().trim();
 
@@ -1213,7 +1313,9 @@ async function handler(req, res) {
             });
             if (!createRes.ok) {
               const text = await createRes.text();
-              errors.push(`Failed to create ${props.email}: ${text.slice(0, 100)}`);
+              errors.push(createRes.status === 409 && ownerId
+                ? `${props.email} already exists in HubSpot under another owner, so it was left unchanged.`
+                : `Failed to create ${props.email}: ${text.slice(0, 100)}`);
             } else {
               const createJson = await createRes.json();
               contactId = createJson?.id;
@@ -1230,7 +1332,7 @@ async function handler(req, res) {
                   method: 'POST',
                   headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
                   body: JSON.stringify({
-                    properties: { hs_note_body: noteBody, hs_timestamp: new Date().toISOString() },
+                    properties: { hs_note_body: noteBody, hs_timestamp: new Date().toISOString(), ...(ownerId ? { hubspot_owner_id: ownerId } : {}) },
                     associations: [{ to: { id: contactId }, types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 202 }] }],
                   }),
                 });
@@ -1334,6 +1436,7 @@ async function handler(req, res) {
     }
 
     if (action === 'merge-contacts' && req.method === 'POST') {
+      if (scope.scoped) return notInSharedPortal('Merging contacts');
       // Merge two HubSpot contacts. The `primaryObjectId` keeps its
       // identity and inherits all properties / engagements from
       // `objectIdToMerge`; the secondary is removed. We pass both
@@ -1359,6 +1462,7 @@ async function handler(req, res) {
     }
 
     if (action === 'delete-contact' && req.method === 'POST') {
+      if (scope.scoped) return notInSharedPortal('Deleting contacts');
       const { contactId } = req.body;
       if (!contactId) {
         return res.status(400).json({ error: 'contactId is required' });

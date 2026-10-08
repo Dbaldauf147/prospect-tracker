@@ -58,6 +58,39 @@ function AccountCard({ title, side }) {
   );
 }
 
+// The shared-portal guard's settings, as the server sees them. The pin is
+// what stops a token swap from quietly pointing the app at another portal.
+function GuardStatus({ guard, sourcePortalId }) {
+  if (!guard) return null;
+  const pinMatches = guard.portalId && guard.portalId === sourcePortalId;
+  return (
+    <section className={styles.section}>
+      <h3 className={styles.sectionTitle}>Safety settings</h3>
+      <table className={styles.table}>
+        <tbody>
+          <tr>
+            <td className={styles.mono}>HUBSPOT_PORTAL_ID</td>
+            <td>{guard.portalId || <i>not set</i>}</td>
+            <td className={pinMatches ? styles.okText : styles.errText}>
+              {!guard.portalId && sourcePortalId && `Set it to ${sourcePortalId} (the current portal) so a swapped token is refused instead of used.`}
+              {guard.portalId && (pinMatches ? 'Matches the portal in use.' : 'Does not match the portal in use: HubSpot calls are being refused.')}
+            </td>
+          </tr>
+          <tr>
+            <td className={styles.mono}>HUBSPOT_OWNER_EMAIL</td>
+            <td>{guard.ownerEmail || <i>not set</i>}</td>
+            <td className={styles.muted}>
+              {guard.ownerEmail
+                ? 'The app only shows and edits records this HubSpot user owns, and delete and merge are off.'
+                : 'Not needed for a personal portal. Set it with the new token on switch-over day.'}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
 function CompareSection({ kind, ownerEmail, recentDays }) {
   const [rows, setRows] = useState([]);
   const [running, setRunning] = useState(false);
@@ -236,6 +269,8 @@ export function HubSpotMoveTab() {
             <AccountCard title="Current portal (in use)" side={overview.source} />
             <AccountCard title="New portal" side={overview.target} />
           </div>
+
+          <GuardStatus guard={overview.guard} sourcePortalId={overview.source?.account?.portalId} />
 
           <section className={styles.section}>
             <h3 className={styles.sectionTitle}>What each portal holds</h3>

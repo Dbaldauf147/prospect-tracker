@@ -14,6 +14,7 @@
  */
 
 import { withAuth } from './_lib/http.js';
+import { hubspotScope, ownerFilters } from './_lib/hubspotScope.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 import { classifyAutoReply, attributeBounce } from './_lib/autoReply.js';
 import { sendHistoryByAddress, sendHistoryFor } from '../src/utils/campaignFollowUp.js';
@@ -91,12 +92,14 @@ function distinctiveSubjectToken(subjectLower) {
 
 // Page through emails whose subject contains a token, via the CRM search API.
 // Far cheaper than scanning the whole emails object on a large portal.
-async function searchEmailsBySubjectToken(token, searchToken) {
+async function searchEmailsBySubjectToken(token, searchToken, scope = null) {
   const collected = [];
   let after;
   while (true) {
+    const filters = [...ownerFilters(scope)];
+    if (searchToken) filters.push({ propertyName: 'hs_email_subject', operator: 'CONTAINS_TOKEN', value: searchToken });
     const body = {
-      filterGroups: [{ filters: [{ propertyName: 'hs_email_subject', operator: 'CONTAINS_TOKEN', value: searchToken }] }],
+      filterGroups: [{ filters }],
       properties: EMAIL_PROPERTIES.split(','),
       sorts: [{ propertyName: 'hs_timestamp', direction: 'DESCENDING' }],
       limit: 100,
@@ -138,11 +141,13 @@ async function listAllEmails(token) {
 // cheaper than a mailbox scan even at several lines. A line with no
 // distinctive token can only be served by listing everything, and that
 // list is a superset of every other line's, so it short-circuits the rest.
-async function fetchCandidateEmails(token, subjectsLower) {
+async function fetchCandidateEmails(token, subjectsLower, scope = null) {
   const searchTokens = [];
   for (const subjectLower of subjectsLower) {
     const searchToken = distinctiveSubjectToken(subjectLower);
-    if (!searchToken) return listAllEmails(token);
+    // The plain list can't be filtered by owner, so in a shared portal the
+    // no-token case is a search on the owner alone.
+    if (!searchToken) return scope?.scoped ? searchEmailsBySubjectToken(token, '', scope) : listAllEmails(token);
     searchTokens.push(searchToken);
   }
   const byId = new Map();
@@ -153,7 +158,7 @@ async function fetchCandidateEmails(token, subjectsLower) {
     // as two pages of one line do.
     if (!first) await sleep(PAGE_PACING_MS);
     first = false;
-    for (const email of await searchEmailsBySubjectToken(token, searchToken)) {
+    for (const email of await searchEmailsBySubjectToken(token, searchToken, scope)) {
       if (!byId.has(email.id)) byId.set(email.id, email);
     }
   }
@@ -190,7 +195,9 @@ async function handler(req, res, auth) {
     // large portals). The exact case-insensitive substring match below is
     // unchanged, so the result set is identical to the old list-everything
     // approach.
-    const allEmails = await fetchCandidateEmails(token, subjectsLower);
+    // In a shared portal, only the owner's emails (api/_lib/hubspotScope.js).
+    const scope = await hubspotScope(token);
+    const allEmails = await fetchCandidateEmails(token, subjectsLower, scope);
 
     // Filter emails matching any of the subject lines
     const matching = allEmails.filter((e) => {
