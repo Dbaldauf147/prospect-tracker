@@ -97,7 +97,7 @@ import {
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, buildCdmOptions, buildTypeOptions } from '../../utils/prospectOptions';
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
-import { buildTargetTierResolver, tierMismatch } from '../../utils/targetTier';
+import { buildTargetTierResolver, tierMismatch, targetVerticalFor } from '../../utils/targetTier';
 import {
   buildTargetCdmResolver, targetCdmConflictLabel, describeTargetCdmConflict,
   canonicalCdmOption, targetCdmApplyHint,
@@ -5114,6 +5114,23 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return current && !opts.includes(current) ? [...opts, current] : opts;
   }, [settings, fields.vertical]);
 
+  // The vertical the Target Accounts list gives this company, offered for
+  // import under the Vertical field - only once the company is mapped to a
+  // target account on My Accounts, never off a name guess. Null while the
+  // list hasn't loaded or the company isn't mapped.
+  const dropdownVerticals = useMemo(
+    () => getEffectiveDropdownLists(settings).find(l => l.key === 'vertical')?.options || [],
+    [settings],
+  );
+  const targetsVertical = useMemo(() => (targetAccountsData
+    ? targetVerticalFor({
+      targetAccountsData,
+      settings: { targetMap: settings?.targetMap, targetVerticalColumn: settings?.targetVerticalColumn },
+      prospectId: prospect?.id,
+      options: dropdownVerticals,
+    })
+    : null), [targetAccountsData, settings?.targetMap, settings?.targetVerticalColumn, prospect?.id, dropdownVerticals]);
+
   // "Suggest" beside Vertical: Claude picks one from the Dropdowns ›
   // Vertical list (never a value outside it) using what this card knows
   // about the company. It only suggests - the answer sits under the field
@@ -8901,6 +8918,29 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   placeholder="-"
                   allowCustom={false}
                 />
+                {/* From the Targets list, once the company is mapped there.
+                    Shown only when it would change the field. */}
+                {targetsVertical?.vertical && targetsVertical.vertical !== String(fields.vertical || '').trim() && (
+                  <div
+                    style={{
+                      marginTop: '0.3rem', display: 'flex', alignItems: 'center', gap: '0.4rem',
+                      fontSize: '0.68rem', lineHeight: 1.35, color: 'var(--color-text-secondary)',
+                    }}
+                  >
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      Targets list: <strong>{targetsVertical.vertical}</strong>
+                      <span style={{ color: '#94A3B8' }}>
+                        {` (from ${targetsVertical.name}${targetsVertical.onList ? '' : ', not on your Dropdowns › Vertical list'})`}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => set('vertical', targetsVertical.vertical)}
+                      title={`Set Vertical to ${targetsVertical.vertical}, from the Target Accounts row this company is mapped to (${targetsVertical.name})`}
+                      style={{ padding: '0 0.4rem', border: '1px solid #93C5FD', borderRadius: 4, background: '#EFF6FF', color: '#1E40AF', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+                    >Import</button>
+                  </div>
+                )}
                 {liveVerticalSuggestion && !liveVerticalSuggestion.loading && (
                   <div
                     role="status"
