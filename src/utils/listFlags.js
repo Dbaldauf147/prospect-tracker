@@ -1,5 +1,5 @@
 import { userLsGet } from './userLs.js';
-import { containsWholeWords } from './companyIndex.js';
+import { containsWholeWords, withoutParenNotes } from './companyIndex.js';
 
 // Shared helper for computing "which Lists-tab lists is this company
 // flagged on" across the app. Used by MyAccountsView's List Flags
@@ -49,9 +49,15 @@ export function normalizeListCompany(name) {
 // MyAccountsView companiesMatch helper exactly so the two views stay
 // consistent.
 export function companiesMatch(a, b) {
-  const na = (a || '').toLowerCase().trim();
-  const nb = (b || '').toLowerCase().trim();
-  if (!na || !nb) return false;
+  const fa = (a || '').toLowerCase().trim();
+  const fb = (b || '').toLowerCase().trim();
+  if (!fa || !fb) return false;
+  if (fa === fb) return true;
+  // Everything below compares the names without their bracketed notes, so
+  // "Rehlko (a Platinum Equity Co.)" isn't read as containing "Platinum
+  // Equity" (see withoutParenNotes).
+  const na = withoutParenNotes(fa);
+  const nb = withoutParenNotes(fb);
   if (na === nb) return true;
   const longer = na.length >= nb.length ? na : nb;
   const shorter = na.length >= nb.length ? nb : na;

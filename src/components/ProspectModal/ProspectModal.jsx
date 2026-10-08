@@ -46,6 +46,7 @@ import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadP
 import { nameFromEmail } from '../../utils/nameFromEmail';
 import { splitFullName } from '../../utils/splitFullName';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
+import { withoutParenNotes, parenAliases } from '../../utils/companyIndex';
 import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../utils/reportingFrameworks';
 import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
 import { companyDedupeKey } from '../../utils/companyKey';
@@ -326,10 +327,17 @@ function oppStageColors(stage) {
 }
 
 function companiesMatch(a, b) {
-  const na = (a || '').toLowerCase().trim();
-  const nb = (b || '').toLowerCase().trim();
-  if (!na || !nb) return false;
-  if (na === nb) return true;
+  const fullA = (a || '').toLowerCase().trim();
+  const fullB = (b || '').toLowerCase().trim();
+  if (!fullA || !fullB) return false;
+  if (fullA === fullB) return true;
+  // The fuzzy checks below read the names without their bracketed notes:
+  // "Rehlko (a Platinum Equity Co.)" contains "Platinum Equity" only in a
+  // note about its owner, and matching on it put every Platinum Equity opp
+  // on Rehlko's card. One-word brackets ("(JLL)") are still matched as
+  // aliases at the end.
+  const na = withoutParenNotes(fullA);
+  const nb = withoutParenNotes(fullB);
   // Ultra-tolerant equality. Normalizes Unicode (NFKD), drops
   // diacritics, replaces every non-letter/digit with a single
   // space, collapses whitespace, then compares. Catches the case
@@ -345,6 +353,8 @@ function companiesMatch(a, b) {
   const fa = flatten(na);
   const fb = flatten(nb);
   if (fa && fb && fa === fb) return true;
+  // Equality still counts with the brackets in: "Acme (US)" is "Acme US".
+  if (flatten(fullA) === flatten(fullB)) return true;
   // Whitespace-collapsed equality on the original lower-trimmed
   // strings — catches copy/paste variants with double spaces.
   const squish = (s) => s.replace(/\s+/g, ' ').trim();
@@ -361,12 +371,13 @@ function companiesMatch(a, b) {
   if (sShorter.length >= 4 && sShorter.length >= sLonger.length * 0.6 && sLonger.includes(sShorter)) return true;
   // Acronym / single-token match. Catches "TIAA" vs
   // "(TIAA) Teachers Insurance and Annuity Association of America"
-  // and "JLL" vs "Jones Lang LaSalle (JLL)" by treating parens
-  // as word separators.
+  // and "JLL" vs "Jones Lang LaSalle (JLL)": a one-word bracket is
+  // an alias (parenAliases), a longer one is a note and doesn't count.
   const tokensOf = (s) => s.replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
   const sTokens = tokensOf(shorter);
   if (sTokens.length === 1 && sTokens[0].length >= 3) {
-    if (tokensOf(longer).includes(sTokens[0])) return true;
+    const longerFull = na.length >= nb.length ? fullA : fullB;
+    if ([...tokensOf(longer), ...parenAliases(longerFull)].includes(sTokens[0])) return true;
   }
   return false;
 }
