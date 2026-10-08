@@ -12,6 +12,7 @@ import { summarizeTagAudit, tagAuditCsv } from '../../utils/tagHistoryAudit';
 import { useTagAuditQueue, clearQueuedAuditContacts } from '../../utils/tagAuditQueue';
 import { mergeTagEdit } from '../../utils/contactTagReview';
 import { createTagWriter } from '../../utils/tagWriteQueue';
+import { HubSpotMoveTab } from './HubSpotMoveTab';
 import styles from './HubSpotView.module.css';
 
 function HubSpotFilterDrop({ label, options, selected, onToggle, onBulkSet, draft = '', onDraftChange }) {
@@ -3034,7 +3035,14 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
         <button className={tab === 'campaigns' ? styles.tabActive : styles.tab} onClick={() => setTab('campaigns')}>
           Campaigns <span className={styles.tabCount}>{campaigns.length}</span>
         </button>
+        {isAdmin && (
+          <button className={tab === 'move' ? styles.tabActive : styles.tab} onClick={() => setTab('move')}>
+            Account move
+          </button>
+        )}
       </div>
+
+      {tab === 'move' && isAdmin && <HubSpotMoveTab />}
 
       {loading && !data && <div className={styles.loading}>Loading from HubSpot...</div>}
 
