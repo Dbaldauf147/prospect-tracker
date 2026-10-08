@@ -12,6 +12,7 @@
 // black-and-white table - sent from the same Gmail account.
 
 import { loadOpps2Records, sendHtmlEmail } from './newOpps.js';
+import { loadTargetAccounts } from './firestoreChunks.js';
 import { buildPeMonthlyRows, buildPeMonthlyEmailHtml, PE_MONTHLY_DRAFT_DEFAULTS } from '../../src/utils/peMonthlyEmail.js';
 
 const ADMIN_EMAIL = 'baldaufdan@gmail.com';
@@ -37,14 +38,12 @@ export async function loadPeMonthlyRows(db, uid, email) {
     prospects = snap.docs.map((d) => d.data() || {});
   } catch { /* the opps' own owner / vertical still apply */ }
 
-  // Same doc the Target Accounts page saves (a JSON string under `json`).
+  // Same doc the Target Accounts page saves: a JSON string under `json`,
+  // or split across its `chunks` subcollection once it outgrows one
+  // document (utils/chunkedDoc, slices under `s`).
   let targetAccountsData = null;
   try {
-    const snap = await db.collection('targetAccounts').doc(uid).get();
-    if (snap.exists) {
-      const raw = snap.data() || {};
-      targetAccountsData = raw.json ? JSON.parse(raw.json) : raw;
-    }
+    targetAccountsData = await loadTargetAccounts(db, uid);
   } catch { /* Tier falls back to the company card, CDM stays blank */ }
 
   // Mirrors App's cdmName, which scopes the Target Accounts tier lookup.

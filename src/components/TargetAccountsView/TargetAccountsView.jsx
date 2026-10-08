@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
@@ -10,6 +10,7 @@ import { loadOpps2Newest } from '../../utils/opps2Store';
 import { buildActiveOppsIndex, activeOppsForCompany, findUntiedActiveOpps } from '../../utils/targetAccountOpps';
 import styles from './TargetAccountsView.module.css';
 import { writeWorkKey } from '../../utils/mirroredWorkKeys';
+import { readChunkedDoc, writeChunkedDoc } from '../../utils/chunkedDoc';
 
 const STORE_NAME = 'target-accounts';
 
@@ -23,16 +24,25 @@ async function saveCache(data) {
   catch (err) { console.error('Failed to save to IndexedDB:', err); }
 }
 
-// Firestore persistence for target accounts
+// Firestore persistence for target accounts.
+//
+// The workbook is one JSON value, and a big one: past Firestore's 1 MiB
+// per-document cap the old single-document write ({ json }) was refused
+// outright ("The value of property "json" is longer than 1048487 bytes").
+// It now goes through utils/chunkedDoc, which keeps a small payload inline
+// on `targetAccounts/{uid}` and splits a large one across its `chunks`
+// subcollection. Reads take either layout, so a document saved the old
+// way still loads.
 async function loadFromFirestore(userId) {
   try {
     const ref = doc(db, 'targetAccounts', userId);
+    const stored = await readChunkedDoc(ref);
+    if (stored?.value) return stored.value;
+    // Oldest layout of all: the workbook's own fields on the document.
     const snap = await getDoc(ref);
     if (snap.exists()) {
-      const raw = snap.data();
-      // Data is stored as JSON string to handle large payloads
-      if (raw.json) return JSON.parse(raw.json);
-      return raw;
+      const raw = snap.data() || {};
+      if (raw.sheets) return raw;
     }
   } catch (err) {
     console.error('Failed to load target accounts from Firestore:', err);
@@ -43,8 +53,7 @@ async function loadFromFirestore(userId) {
 async function saveToFirestore(userId, data) {
   try {
     const ref = doc(db, 'targetAccounts', userId);
-    // Store as JSON string to avoid Firestore nested field limits
-    await setDoc(ref, { json: JSON.stringify(data), updatedAt: new Date().toISOString() });
+    await writeChunkedDoc(ref, data);
     console.log('Target accounts saved to Firestore');
   } catch (err) {
     console.error('Failed to save target accounts to Firestore:', err);
