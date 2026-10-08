@@ -10,10 +10,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../utils/apiFetch';
 import { chunk, needsSummary, oppNotesText, summaryKey } from '../utils/notesSummary';
 
-const STORAGE_KEY = 'notes-summary-cache:v1';
+// v2: summaries capped at 3 bullets (v1 allowed 4), so older cached ones
+// are asked for again rather than shown at the old length.
+const STORAGE_KEY = 'notes-summary-cache:v2';
 // Enough for every opp a person works, a few edits deep, without letting
 // the stored map grow forever.
 const MAX_STORED = 1500;
+
+try { localStorage.removeItem('notes-summary-cache:v1'); } catch { /* ignore */ }
 // Matches MAX_ITEMS in api/_lib/summarizeNotes.js.
 const BATCH = 25;
 
