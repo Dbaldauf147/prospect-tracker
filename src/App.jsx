@@ -527,12 +527,15 @@ function App() {
         onCreateCompany={handleCreateCompany}
       />
       <div className="main">
-        {(view === 'accounts' || view === 'companyType' || view === 'table' || view === 'kanban') && (
+        {(view === 'accounts' || view === 'companyType' || view === 'dmTags' || view === 'table' || view === 'kanban') && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderBottom: '1px solid #E2E8F0', padding: '0 0.25rem' }}>
             {[
               { key: 'accounts', label: 'My Accounts', active: view === 'accounts' },
               // Same My Accounts set, grouped by the Type column.
               { key: 'companyType', label: 'Company Type', active: view === 'companyType' },
+              // Same My Accounts set, one column per contact tag, listing the
+              // decision makers who carry it.
+              { key: 'dmTags', label: 'DM Tags', active: view === 'dmTags' },
               // Pipeline (kanban) is a mode of the Table experience, so the
               // Table subtab stays highlighted for both.
               { key: 'table', label: 'Table', active: view === 'table' || view === 'kanban' },
@@ -670,9 +673,9 @@ function App() {
             <OppsView2 settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} prospects={prospects} updateProspect={updateProspect} addProspect={addProspect} onSelectProspect={handleSelect} targetAccountsData={targetAccountsData} cdmName={cdmName} />
           ) : view === 'dropdowns' ? (
             <DropdownsView settings={settings} updateSettings={updateSettings} />
-          ) : view === 'accounts' || view === 'companyType' ? (
+          ) : view === 'accounts' || view === 'companyType' || view === 'dmTags' ? (
             <MyAccountsView
-              mode={view === 'companyType' ? 'companyType' : 'table'}
+              mode={view === 'companyType' || view === 'dmTags' ? view : 'table'}
               prospects={prospects}
               onSelect={handleSelect}
               onUpdate={updateProspect}
