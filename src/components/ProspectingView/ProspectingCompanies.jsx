@@ -605,6 +605,31 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
         ) : <span style={{ color: '#CBD5E1' }}>-</span>),
       },
       {
+        // The Biggest Deal Service's Contact Tags from the Services popup:
+        // who that deal is sold to, and what narrows Decision Makers.
+        key: 'contactTags', label: 'Contact Tags', defaultWidth: 170,
+        headerTitle: 'The Contact Tags set on the Biggest Deal Service in Dropdowns › Services: the kinds of contact that service is sold to. Decision Makers is narrowed to people carrying one of them.',
+        getSortValue: r => (r.dmTags.length ? r.dmTags.join(', ').toLowerCase() : null),
+        getFilterValue: r => r.dmTags.join(', '),
+        exportValue: r => r.dmTags.join(', '),
+        render: (r) => {
+          if (!r.dmTags.length) {
+            const why = r.deal ? `No contact tags are set on ${r.deal.name} in Dropdowns › Services` : undefined;
+            return <span title={why} style={{ color: '#CBD5E1' }}>-</span>;
+          }
+          return (
+            <span
+              title={`Contact tags of ${r.deal.name}: ${r.dmTags.join(', ')}`}
+              style={{ display: 'flex', gap: 3, overflow: 'hidden', whiteSpace: 'nowrap' }}
+            >
+              {r.dmTags.map(t => (
+                <span key={t} style={{ padding: '1px 6px', borderRadius: 999, background: '#EEF2FF', color: '#3730A3', fontSize: '0.66rem', fontWeight: 600 }}>{t}</span>
+              ))}
+            </span>
+          );
+        },
+      },
+      {
         key: 'dealStatus', label: 'Service Status', defaultWidth: 130,
         headerTitle: 'Where the Biggest Deal Service stands on this company: the status on the company card, else what a matching opportunity says. Pick one to set it on the card. Not Sold and N/A are answers, so the service leaves the row and the next biggest open service takes its place.',
         getSortValue: r => (r.deal ? (r.deal.status || '').toLowerCase() : null),
