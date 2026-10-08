@@ -3624,6 +3624,7 @@ Fix that now?
             settings={settings}
             updateSettings={updateSettings}
             onSelect={onSelect}
+            onZoomExport={downloadZoomCsv}
           />
         </div>
       </div>
