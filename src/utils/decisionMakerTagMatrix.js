@@ -13,8 +13,14 @@
 // Above each column, how much of each tier is mapped for that tag: the
 // share of the Tier 1 / 2 / 3 accounts on screen that have at least one
 // such contact.
+//
+// A cell also lists the "maybes": decision makers who don't carry the tag
+// but whose tag review (the contact popup's Yes / No / Not sure) says Not
+// sure for it. They sit in `maybeByTag`, apart from `byTag`, so they show
+// in the cell without counting as mapped - the percentages, the Zoom
+// export of gaps and the History snapshots stay on confirmed tags only.
 
-import { tagKey, tagVocabulary, TAG_OPTIONS } from './contactTagReview.js';
+import { tagKey, tagVocabulary, TAG_OPTIONS, findTagRecord, isLocalTagVerdict, tagAnswerFrom } from './contactTagReview.js';
 import { TIERS } from '../data/enums.js';
 
 // Tags that are never a column. Decision Maker is the gate every cell
@@ -53,16 +59,40 @@ export function decisionMakersTagged(dms, tag) {
 }
 
 /**
+ * The decision makers in `dms` who don't carry `tag` but are marked Not
+ * sure for it in the tag review (`review` is settings.contactTagReview,
+ * keyed by contact id, then by tag in either spelling). Read the way the
+ * All Contacts tag filter reads it, so "maybe" means the same on both pages.
+ */
+export function decisionMakersMaybe(dms, tag, review) {
+  if (!review || typeof review !== 'object') return [];
+  const k = tagKey(tag);
+  return (dms || []).filter((c) => {
+    if (contactTagList(c).some(t => tagKey(t) === k)) return false;
+    const cid = c?.id ?? c?.vid;
+    if (cid == null) return false;
+    const stored = findTagRecord(review[cid], tag);
+    return tagAnswerFrom(false, isLocalTagVerdict(stored) ? stored : '') === 'unsure';
+  });
+}
+
+/**
  * One row per account: the account itself plus `byTag`, keyed by
- * tagColumnKey, each the list of tagged decision makers there.
+ * tagColumnKey, each the list of tagged decision makers there, and
+ * `maybeByTag`, the Not sure ones (empty without a `review`).
  * `dmLookup` is makeDecisionMakerLookup's result.
  */
-export function tagMatrixRows(accounts, dmLookup, tags) {
+export function tagMatrixRows(accounts, dmLookup, tags, review = null) {
   return (accounts || []).map(a => {
     const dms = dmLookup ? dmLookup.forAccount(a) : [];
     const byTag = {};
-    for (const tag of (tags || [])) byTag[tagColumnKey(tag)] = decisionMakersTagged(dms, tag);
-    return { ...a, dmCount: dms.length, byTag };
+    const maybeByTag = {};
+    for (const tag of (tags || [])) {
+      const key = tagColumnKey(tag);
+      byTag[key] = decisionMakersTagged(dms, tag);
+      maybeByTag[key] = decisionMakersMaybe(dms, tag, review);
+    }
+    return { ...a, dmCount: dms.length, byTag, maybeByTag };
   });
 }
 
