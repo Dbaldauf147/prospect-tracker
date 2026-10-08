@@ -29,6 +29,7 @@ import {
   addDivisionRulePatch,
   removeDivisionRulePatch,
 } from '../../utils/divisions';
+import { DecisionMakerTagsTable } from './DecisionMakerTagsTable';
 import styles from './MyAccountsView.module.css';
 
 function InlineCell({ row, field, value, onUpdate, type, options, displayValue }) {
@@ -3068,6 +3069,21 @@ Fix that now?
     return { groups, total: rows.length };
   }, [allAccounts, inactiveMode, search]);
 
+  // DM Tags subtab: allAccounts narrowed by the inactive toggle and the
+  // search box only, the same two filters the Company Type subtab honours.
+  const dmTagAccounts = useMemo(() => {
+    let rows = allAccounts;
+    if (inactiveMode === 'hide') rows = rows.filter(a => !INACTIVE_STATUSES.has(a.status));
+    else if (inactiveMode === 'only') rows = rows.filter(a => INACTIVE_STATUSES.has(a.status));
+    if (search.trim()) {
+      const term = search.toLowerCase();
+      rows = rows.filter(a =>
+        [a.company, a.type, a.status, a.myTier].filter(Boolean).join(' ').toLowerCase().includes(term)
+      );
+    }
+    return rows;
+  }, [allAccounts, inactiveMode, search]);
+
   // Publish the visible (post-filter) company list to a second
   // localStorage key so downstream features (like the Bulk Add
   // Contacts "Accounts without contacts" export) can target exactly
@@ -3574,6 +3590,44 @@ Fix that now?
     } finally {
       setBulkRunning(false);
     }
+  }
+
+  // DM Tags subtab - the same accounts, one column per contact tag, each
+  // cell the decision makers there who also carry that tag. Honours the
+  // inactive toggle and the search box, like the Company Type subtab.
+  if (mode === 'dmTags') {
+    return (
+      <div className={styles.wrapper}>
+        <div className={styles.filterBar}>
+          <input
+            className={styles.searchInput}
+            type="text"
+            placeholder="Search accounts..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+          <button
+            onClick={() => setInactiveMode(prev => prev === 'hide' ? 'only' : prev === 'only' ? 'show' : 'hide')}
+            title="Cycle how inactive accounts (Old Client / Hold Off / Lost - Not Sold) are shown: hidden → only → all"
+            style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
+          >
+            {inactiveMode === 'only' ? 'Inactive only' : inactiveMode === 'show' ? 'Showing all' : 'Inactive hidden'}
+          </button>
+          <span className={styles.resultCount} style={{ whiteSpace: 'normal' }}>
+            {dmTagAccounts.length} account{dmTagAccounts.length === 1 ? '' : 's'} · each cell lists the contacts tagged Decision Maker AND that column's tag · T1/T2/T3 is the share of each tier with at least one
+          </span>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden' }}>
+          <DecisionMakerTagsTable
+            accounts={dmTagAccounts}
+            contacts={hubspotCache ? (hubspotCache.contacts || []) : null}
+            settings={settings}
+            updateSettings={updateSettings}
+            onSelect={onSelect}
+          />
+        </div>
+      </div>
+    );
   }
 
   // Company Type subtab - the My Accounts firms grouped by their Type
