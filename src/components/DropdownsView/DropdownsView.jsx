@@ -30,6 +30,7 @@ import { parseServiceRefs, formatServiceRef } from '../../utils/serviceStepDeps'
 import { DataTable } from '../common/DataTable';
 import { useAuth } from '../../contexts/AuthContext';
 import { ServiceDetailModal } from './ServiceDetailModal';
+import { serviceFieldOptions, serviceFieldOptionUpdates } from '../../utils/serviceFieldOptions';
 import { parseMulti } from '../common/columnLinks';
 import { formatAutoAddList, autoAddedByMap } from '../../utils/serviceAutoAdd';
 import { autoNaedByMap } from '../../utils/serviceAutoNa';
@@ -1270,6 +1271,12 @@ export function DropdownsView({ settings, updateSettings }) {
   // service that is "recurring, 3 years" on this page and a project on that
   // one would price to two different deals.
   const serviceRows = useMemo(() => buildServiceRows(settings), [settings]);
+  // The menus behind the popup's free-text fields: every value the services
+  // already carry, plus the user's own edits to each list.
+  const serviceFieldMenus = useMemo(
+    () => serviceFieldOptions(settings, serviceRows),
+    [settings, serviceRows],
+  );
   // Services the user has retired. The same app-wide set the company card's
   // Services Explored board and the Opps Scope picker read, so hiding here
   // takes a service out of circulation everywhere rather than only on this
@@ -2026,6 +2033,10 @@ export function DropdownsView({ settings, updateSettings }) {
               bucketOptions={serviceBucketNames}
               onSaveBucket={saveServiceBucket}
               onSaveField={saveServiceField}
+              fieldOptions={serviceFieldMenus}
+              onEditFieldOption={(kind, field, from, to) => updateSettings?.(
+                s => serviceFieldOptionUpdates(s, kind, field, from, to),
+              )}
               onSaveUrl={saveServiceLink}
               onToggleHide={toggleHideService}
               onDelete={(name) => {

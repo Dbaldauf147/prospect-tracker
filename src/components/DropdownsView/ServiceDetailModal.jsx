@@ -239,6 +239,192 @@ function ContactTagsField({ value, onCommit }) {
   );
 }
 
+// The menu's two actions, kept out of the way of any real value.
+const ADD_OPTION = '\u0000add';
+const EDIT_OPTIONS = '\u0000edit';
+
+// A free-text field picked from a menu of what the services already say
+// (src/utils/serviceFieldOptions.js). The menu ends in "+ Add new…", which
+// swaps the picker for a box to type a value the menu doesn't have yet, and
+// "Edit list…", which opens the menu itself for renaming, removing and
+// adding. The current value is always offered, even one taken off the
+// menu, so opening the popup can't quietly change a field.
+function OptionField({ label, value, options, onCommit, onEditOption }) {
+  const current = value || '';
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [editing, setEditing] = useState(false);
+  const wrapRef = useRef(null);
+
+  const values = options.map(o => o.value);
+  const has = (v) => values.some(x => x.toLowerCase() === v.toLowerCase());
+  const menu = current && current !== '-' && !has(current) ? [current, ...values] : values;
+
+  // Both ends of a change stay on the menu: the value picked, and the one it
+  // replaced, which may have been on it only because this service used it.
+  function choose(v) {
+    if (v === current) return;
+    if (current && current !== '-') onEditOption('add', current);
+    if (v) onEditOption('add', v);
+    onCommit(v);
+  }
+
+  // The list editor closes on a click anywhere outside it.
+  useEffect(() => {
+    if (!editing) return undefined;
+    const onDown = (e) => { if (!wrapRef.current?.contains(e.target)) setEditing(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [editing]);
+
+  function commitAdd() {
+    const v = draft.trim();
+    setAdding(false);
+    setDraft('');
+    if (!v) return;
+    // Match the menu's spelling when the typed value is already on it.
+    const known = values.find(x => x.toLowerCase() === v.toLowerCase());
+    choose(known || v);
+  }
+
+  return (
+    <div className={styles.detailField} ref={wrapRef} style={{ position: 'relative' }}>
+      <span className={styles.detailLabel}>{label}</span>
+      {adding ? (
+        <input
+          type="text"
+          autoFocus
+          className={styles.detailInput}
+          value={draft}
+          placeholder={`New ${label.toLowerCase()}, Enter to save`}
+          aria-label={`New ${label}`}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={commitAdd}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+            else if (e.key === 'Escape') {
+              e.preventDefault(); e.stopPropagation();
+              setDraft(''); setAdding(false);
+            }
+          }}
+        />
+      ) : (
+        <select
+          className={styles.detailInput}
+          value={current === '-' ? '' : current}
+          aria-label={label}
+          onChange={e => {
+            const v = e.target.value;
+            if (v === ADD_OPTION) { setAdding(true); return; }
+            if (v === EDIT_OPTIONS) { setEditing(true); return; }
+            choose(v);
+          }}
+        >
+          <option value="">-</option>
+          {menu.map(o => <option key={o} value={o}>{o}</option>)}
+          <option value={ADD_OPTION}>+ Add new…</option>
+          <option value={EDIT_OPTIONS}>Edit list…</option>
+        </select>
+      )}
+      {editing && (
+        <OptionListEditor
+          label={label}
+          options={options}
+          onEditOption={onEditOption}
+          onClose={() => setEditing(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// The menu behind an OptionField, editable in place: rename an option (which
+// rewrites every service carrying it), take one off the menu (the services
+// carrying it keep it), or add one no service uses yet.
+function OptionListEditor({ label, options, onEditOption, onClose }) {
+  const [draft, setDraft] = useState('');
+
+  function add() {
+    const v = draft.trim();
+    setDraft('');
+    if (v) onEditOption('add', v);
+  }
+
+  return (
+    <div
+      className={styles.detailOptionEditor}
+      role="dialog"
+      aria-label={`Edit the ${label} list`}
+      onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); } }}
+    >
+      <div className={styles.detailOptionEditorHead}>
+        <span>{label} options</span>
+        <button type="button" className={styles.detailChipRemove} onClick={onClose} title="Done" aria-label="Done">×</button>
+      </div>
+      {options.length === 0 && <p className={styles.detailEmpty}>Nothing on this list yet.</p>}
+      {options.map(o => (
+        <OptionRow key={o.value} option={o} onEditOption={onEditOption} />
+      ))}
+      <div className={styles.detailOptionRow}>
+        <input
+          type="text"
+          className={styles.detailInput}
+          value={draft}
+          placeholder="+ Add an option"
+          aria-label={`Add a ${label} option`}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
+          onBlur={add}
+        />
+      </div>
+    </div>
+  );
+}
+
+function OptionRow({ option, onEditOption }) {
+  const { value, count } = option;
+  const [draft, setDraft] = useState(value);
+
+  function rename() {
+    const v = draft.trim();
+    if (!v || v === value) { setDraft(value); return; }
+    if (count > 0 && !window.confirm(`Rename "${value}" to "${v}"? ${count} service${count === 1 ? '' : 's'} using it will be updated.`)) {
+      setDraft(value);
+      return;
+    }
+    onEditOption('rename', value, v);
+  }
+
+  return (
+    <div className={styles.detailOptionRow}>
+      <input
+        type="text"
+        className={styles.detailInput}
+        value={draft}
+        aria-label={`Rename ${value}`}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={rename}
+        onKeyDown={e => {
+          if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        }}
+      />
+      <span
+        className={styles.detailOptionCount}
+        title={count ? `${count} service${count === 1 ? '' : 's'} use this` : 'No service uses this yet'}
+      >{count}</span>
+      <button
+        type="button"
+        className={styles.detailChipRemove}
+        onClick={() => onEditOption('remove', value)}
+        title={count
+          ? `Take "${value}" off the list. The ${count} service${count === 1 ? '' : 's'} using it keep it.`
+          : `Take "${value}" off the list`}
+        aria-label={`Remove ${value}`}
+      >×</button>
+    </div>
+  );
+}
+
 function SelectField({ label, value, options, onCommit }) {
   const current = value || '';
   const opts = current && !options.includes(current) ? [current, ...options] : options;
@@ -1255,6 +1441,8 @@ function LinkField({ name, url, onSaveUrl }) {
  *   autoAddedBy - string[], services whose Auto-add list names this one
  *   autoNaedBy  - string[], services whose Auto-N/A list names this one
  *   onSaveField - (name, field, value) => void, the table's own save path
+ *   fieldOptions / onEditFieldOption - optional; the dropdown menus behind
+ *                 BFO Tag, Region, Years, Service Type, Product Line, SME, KTM
  *   onSaveUrl   - (name, url) => void
  *   onToggleHide- (name) => void
  *   onSaveTemplates - (next) => void, the Timelines tab's own save path
@@ -1286,6 +1474,12 @@ export function ServiceDetailModal({
   bucketOptions = [],
   onSaveBucket,
   onSaveField,
+  // The menus behind the free-text fields, { [field]: [{ value, count }] },
+  // and the edits to them: (kind, field, a, b) with kind 'add' | 'remove' |
+  // 'rename' (src/utils/serviceFieldOptions.js). Omitted, the fields stay
+  // plain text boxes.
+  fieldOptions,
+  onEditFieldOption,
   onSaveUrl,
   onToggleHide,
   // Takes the service off the Solutions list (and its box on the board).
@@ -1313,6 +1507,18 @@ export function ServiceDetailModal({
   if (!service) return null;
   const { name, meta } = service;
   const save = (field) => (value) => onSaveField(name, field, value);
+  // A field with a menu when the caller supplied one, a plain box otherwise.
+  const pick = (field, label) => (fieldOptions && onEditFieldOption ? (
+    <OptionField
+      label={label}
+      value={meta?.[field]}
+      options={fieldOptions[field] || []}
+      onCommit={save(field)}
+      onEditOption={(kind, a, b) => onEditFieldOption(kind, field, a, b)}
+    />
+  ) : (
+    <TextField label={label} value={meta?.[field]} onCommit={save(field)} />
+  ));
 
   return createPortal(
     <div
@@ -1366,21 +1572,21 @@ export function ServiceDetailModal({
             {/* One field, not two: BFO Tag and Local Project Name always
                 held the same tag, and the catalog now derives the Local
                 Project Name from this value. */}
-            <TextField label="BFO Tag / Local Project Name" value={meta?.bfoTag} onCommit={save('bfoTag')} />
+            {pick('bfoTag', 'BFO Tag / Local Project Name')}
             <SelectField
               label="Service Bucket"
               value={bucket || UNGROUPED_SERVICES}
               options={[...bucketOptions, UNGROUPED_SERVICES]}
               onCommit={(v) => onSaveBucket?.(name, v)}
             />
-            <TextField label="Region" value={meta?.region} onCommit={save('region')} />
-            <TextField label="Years" value={meta?.years} onCommit={save('years')} />
-            <TextField label="Service Type" value={meta?.serviceType} onCommit={save('serviceType')} />
-            <TextField label="Product Line" value={meta?.productLine} onCommit={save('productLine')} />
+            {pick('region', 'Region')}
+            {pick('years', 'Years')}
+            {pick('serviceType', 'Service Type')}
+            {pick('productLine', 'Product Line')}
             <YesNoField label="Timeline Driven" value={meta?.timelineDriven} onCommit={save('timelineDriven')} />
             <WeeksField label="Rollout Time" value={meta?.rolloutTime} onCommit={save('rolloutTime')} />
-            <TextField label="SME" value={meta?.sme} onCommit={save('sme')} />
-            <TextField label="KTM" value={meta?.ktm} onCommit={save('ktm')} />
+            {pick('sme', 'SME')}
+            {pick('ktm', 'KTM')}
             <ContactTagsField value={meta?.contactTags} onCommit={save('contactTags')} />
             <NotesField value={meta?.notes} onCommit={save('notes')} />
           </div>

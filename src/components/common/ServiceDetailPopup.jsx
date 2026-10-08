@@ -15,6 +15,7 @@ import { ServiceDetailModal } from '../DropdownsView/ServiceDetailModal';
 import { buildServiceDetail } from '../../utils/serviceDetailProps';
 import { getServiceCategories, moveServiceToBucket } from '../../utils/serviceCategoriesStore';
 import { deleteServiceUpdates } from '../../utils/serviceDelete';
+import { serviceFieldOptions, serviceFieldOptionUpdates } from '../../utils/serviceFieldOptions';
 
 export function ServiceDetailPopup({
   // The service to show, by name. By name rather than by row object because
@@ -30,6 +31,7 @@ export function ServiceDetailPopup({
   zIndex,
 }) {
   const detail = useMemo(() => buildServiceDetail(settings, name), [settings, name]);
+  const fieldOptions = useMemo(() => serviceFieldOptions(settings), [settings]);
 
   // Plain functions rather than useCallback, as on the Services subtab: the
   // popup isn't memoized, so a stable identity buys nothing, and the compiler
@@ -84,6 +86,10 @@ export function ServiceDetailPopup({
     onClose?.();
   }
 
+  function onEditFieldOption(kind, field, a, b) {
+    updateSettings?.(s => serviceFieldOptionUpdates(s, kind, field, a, b));
+  }
+
   function onSaveTemplates(next) {
     updateSettings?.({ timelineTemplates: next });
   }
@@ -104,6 +110,8 @@ export function ServiceDetailPopup({
       bucketOptions={detail.bucketOptions}
       onSaveBucket={onSaveBucket}
       onSaveField={onSaveField}
+      fieldOptions={fieldOptions}
+      onEditFieldOption={onEditFieldOption}
       onSaveUrl={onSaveUrl}
       onToggleHide={onToggleHide}
       // Only offered for a name that is on the list: an unlisted one (typed
