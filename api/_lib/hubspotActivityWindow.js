@@ -11,6 +11,8 @@
 // Re-deriving "emails sent" here with a different rule is the one thing
 // that would let the mailed figure and the on-screen figure disagree.
 
+import { hubspotScope, ownerFilters } from './hubspotScope.js';
+
 const BASE = 'https://api.hubapi.com';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -72,6 +74,7 @@ async function fetchType(type, token, from, to, opts) {
         filters: [
           { propertyName: 'hs_timestamp', operator: 'GTE', value: String(from) },
           { propertyName: 'hs_timestamp', operator: 'LTE', value: String(to) },
+          ...(opts?.ownerFilters || []),
         ],
       }],
     };
@@ -122,7 +125,12 @@ async function fetchTypeSliced(type, token, from, to, opts) {
  */
 export async function fetchActivityWindow(token, start, end, opts = {}) {
   if (!token) throw new Error('HUBSPOT_ACCESS_TOKEN is not configured');
-  const { emailsFrom, ...fetchOpts } = opts || {};
+  const { emailsFrom, ...rest } = opts || {};
+  // In a shared portal, only the owner's activity (hubspotScope.js). Throws
+  // when the token isn't for the portal the settings name, which the caller
+  // already treats as "HubSpot refused".
+  const scope = await hubspotScope(token, rest.fetchImpl ? { fetchImpl: rest.fetchImpl } : undefined);
+  const fetchOpts = { ...rest, ownerFilters: ownerFilters(scope) };
   const from = Math.max(0, Number(start) - PAD_MS);
   const to = Number(end) + PAD_MS;
   const emailFrom = Number.isFinite(Number(emailsFrom)) && emailsFrom != null
