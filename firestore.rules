@@ -170,6 +170,12 @@ service cloud.firestore {
       allow read, write: if owns(userId);
     }
 
+    // Target accounts payload chunks: a workbook past Firestore's 1 MB
+    // document cap is split across this subcollection (utils/chunkedDoc).
+    match /targetAccounts/{userId}/chunks/{chunkId} {
+      allow read, write: if owns(userId);
+    }
+
     // Opps data: users can only read/write their own data
     match /oppsData/{userId} {
       allow read, write: if owns(userId);

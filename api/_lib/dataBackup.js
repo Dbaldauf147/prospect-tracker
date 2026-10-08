@@ -1,3 +1,4 @@
+import { readChunkedJson } from './firestoreChunks.js';
 // Collects a full point-in-time snapshot of one user's Firestore data
 // for the daily backup job, plus a lightweight summary (counts only)
 // used for the notification email and day-over-day anomaly detection.
@@ -60,8 +61,17 @@ export async function collectUserBackup(db, uid, email) {
   // Single-document blobs
   for (const col of SINGLE_DOC_COLLECTIONS) {
     try {
-      const s = await db.collection(col).doc(uid).get();
-      backup.collections[col] = s.exists ? s.data() : null;
+      const ref = db.collection(col).doc(uid);
+      const s = await ref.get();
+      let data = s.exists ? s.data() : null;
+      // Target Accounts outgrew one document and is written in chunks
+      // (utils/chunkedDoc), leaving the parent with an empty `json` and a
+      // chunkCount. Back up the joined JSON in the `json` field it always
+      // had, so the snapshot holds the workbook rather than a pointer.
+      if (col === 'targetAccounts' && data && Number(data.chunkCount) > 0) {
+        data = { ...data, json: await readChunkedJson(ref, { field: 's' }), chunkCount: 0 };
+      }
+      backup.collections[col] = data;
       if (s.exists) summary.captured.push(col);
       // Counted so the day-over-day check flags a wiped Weekly Progress
       // history the same way it flags a shrunken Opps 2.

@@ -62,6 +62,19 @@ export async function loadOpps2(db, uid) {
   return readChunkedValue(db.collection('opps2Data').doc(uid), { field: 'json' });
 }
 
+// `targetAccounts/{uid}` — the Target Accounts workbook, as `{ sheets, ... }`.
+// Written by utils/chunkedDoc (slices under `s`); a document from before
+// that kept the JSON under `json`, and the oldest kept the workbook's own
+// fields on the document, which is returned as is.
+export async function loadTargetAccounts(db, uid) {
+  const ref = db.collection('targetAccounts').doc(uid);
+  const value = await readChunkedValue(ref, { field: 's' });
+  if (value) return value;
+  const snap = await ref.get();
+  const raw = snap.exists ? (snap.data() || {}) : null;
+  return raw?.sheets ? raw : null;
+}
+
 // A localStorage / IndexedDB mirror. `id` is the document id
 // utils/localMirrorSync writes under: the bare localStorage key, or
 // `idb__<store>__<key>` for an IndexedDB record.
