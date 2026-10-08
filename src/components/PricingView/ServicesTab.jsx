@@ -10,7 +10,7 @@ import {
 } from '../../utils/pricingServices';
 import { isUsageUnit, fmtFeePerUnit } from '../../utils/siaUsageCounts';
 import { RATE_CHECK, checkPartOf, PASS_THROUGH_MODELS, passThroughModelOf, feeUnitCountsFor } from '../../utils/serviceRateCheck';
-import { unitLabelFor } from '../../utils/servicePricing';
+import { unitLabelFor, PROJECT_UNIT } from '../../utils/servicePricing';
 
 const fmtMoney = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -1731,12 +1731,17 @@ function EnergyVolume({ kwhCount, dthCount, rates }) {
 // With `fallback` (the service's counts) the boxes are one line's own: the
 // placeholder is the count the line is on until one is typed, and the
 // reset puts the line back on it.
+//
+// Projects always get a box when the card prices per project. A project
+// count nobody typed prices as one (servicePricing lineContext), so it is
+// never "missing", and the SIA never carries one, which left nowhere to
+// type 2 or 3: the box shows 1 as its placeholder instead.
 function CheckCounts({ missing = [], used = [], entered = {}, fallback = null, fromSia = {}, onSetCount }) {
   const fields = [...missing];
   const add = (key) => {
     if (!fields.some(f => f.key === key)) fields.push({ key, label: key === 'dealSize' ? 'Deal size' : unitLabelFor(key) });
   };
-  for (const key of used) if (fromSia[key] != null || (fallback && typeof fallback[key] === 'number')) add(key);
+  for (const key of used) if (key === PROJECT_UNIT || fromSia[key] != null || (fallback && typeof fallback[key] === 'number')) add(key);
   for (const key of Object.keys(entered)) if (used.includes(key)) add(key);
   if (fields.length === 0) return null;
   return (
@@ -1745,8 +1750,9 @@ function CheckCounts({ missing = [], used = [], entered = {}, fallback = null, f
         const isMoney = f.key === 'dealSize';
         const v = entered[f.key];
         const siaV = fromSia[f.key];
-        const baseV = fallback && typeof fallback[f.key] === 'number' ? fallback[f.key] : siaV;
-        const baseFromSia = baseV === siaV;
+        const projectDefault = f.key === PROJECT_UNIT && siaV == null ? 1 : null;
+        const baseV = fallback && typeof fallback[f.key] === 'number' ? fallback[f.key] : (siaV ?? projectDefault ?? undefined);
+        const baseFromSia = siaV != null && baseV === siaV;
         if (fallback && f.key !== 'dealSize') {
           return (
             <label key={f.key} className={styles.countField}>
@@ -1769,7 +1775,7 @@ function CheckCounts({ missing = [], used = [], entered = {}, fallback = null, f
                     {baseV != null ? `${baseFromSia ? 'Use SIA' : 'Reset'} (${baseV.toLocaleString('en-US')})` : 'Clear'}
                   </button>
                 )
-                : (typeof v === 'number' ? null : <span className={styles.subNote}>{baseV == null ? '' : (baseFromSia ? 'from SIA' : 'service count')}</span>)}
+                : (typeof v === 'number' ? null : <span className={styles.subNote}>{baseV == null ? '' : (baseFromSia ? 'from SIA' : (baseV === projectDefault ? 'default' : 'service count'))}</span>)}
             </label>
           );
         }
@@ -1778,10 +1784,10 @@ function CheckCounts({ missing = [], used = [], entered = {}, fallback = null, f
             {f.label}
             <DraftInput
               value={typeof v === 'number' ? (isMoney ? fmtPlain(v) : String(v)) : ''}
-              placeholder={isMoney ? '$' : (siaV != null ? String(siaV) : 'Enter')}
+              placeholder={isMoney ? '$' : (siaV != null ? String(siaV) : (f.key === PROJECT_UNIT ? '1' : 'Enter'))}
               align="right"
               width={isMoney ? 110 : 72}
-              className={`${styles.cellInput} ${v == null && siaV == null ? styles.countNeeded : ''}`}
+              className={`${styles.cellInput} ${v == null && siaV == null && f.key !== PROJECT_UNIT ? styles.countNeeded : ''}`}
               onCommit={(raw) => {
                 const n = isMoney ? parseMoney(raw) : parseCount(raw);
                 if (n !== undefined) onSetCount(f.key, n);
