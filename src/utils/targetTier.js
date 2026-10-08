@@ -195,3 +195,73 @@ export function tierMismatch(cardTier, reading) {
   if (card === target) return null;
   return { cardTier: card, targetTier: target, apply: target || NOT_ON_TIER_LIST };
 }
+
+// Header words that read like a vertical column when none is picked on the
+// Target Accounts page (settings.targetVerticalColumn).
+const VERTICAL_COLUMN_KEYWORDS = ['vertical', 'industry', 'sector', 'segment'];
+
+/** A Target Accounts row's vertical: the picked column, else the first header that reads like one. */
+export function resolveTargetAccountVertical(record, verticalColumn) {
+  if (!record) return '';
+  const col = String(verticalColumn || '').trim();
+  if (col) return Object.prototype.hasOwnProperty.call(record, col) ? String(record[col] ?? '').trim() : '';
+  // A header that IS one of the words ("Vertical") before one that only
+  // contains it ("Sub Vertical").
+  const keys = Object.keys(record);
+  const exact = (k) => VERTICAL_COLUMN_KEYWORDS.includes(String(k).trim().toLowerCase());
+  for (const key of [...keys.filter(exact), ...keys.filter(k => !exact(k))]) {
+    const lower = String(key).toLowerCase();
+    if (VERTICAL_COLUMN_KEYWORDS.some(kw => lower.includes(kw))) {
+      const v = String(record[key] ?? '').trim();
+      if (v) return v;
+    }
+  }
+  return '';
+}
+
+/**
+ * The vertical the Target Accounts list gives a company, but only once the
+ * company has been MAPPED to a target account (settings.targetMap, set on
+ * My Accounts) - never off a name guess, since importing a field off the
+ * wrong row writes something wrong onto the card.
+ *
+ * Returns null when the company is not mapped, else { name, vertical }:
+ * the target account the vertical came from (the first mapped one that
+ * has a vertical) and its vertical, '' when the mapped rows carry none.
+ * `options` (Dropdowns > Vertical) snaps the value to the list's own
+ * spelling when it matches one ignoring case; `onList` says whether it did.
+ */
+export function targetVerticalFor({ targetAccountsData, settings, prospectId, options = [] }) {
+  if (prospectId == null) return null;
+  const raw = settings?.targetMap?.[prospectId];
+  const names = (Array.isArray(raw) ? raw : (raw ? [raw] : []))
+    .map(n => String(n || '').trim()).filter(Boolean);
+  if (names.length === 0) return null;
+  const wanted = new Set(names.map(n => n.toLowerCase()));
+  const col = settings?.targetVerticalColumn;
+  const found = new Map();
+  const data = targetAccountsData;
+  for (const sheetName of data?.sheetNames || []) {
+    for (const r of data?.sheets?.[sheetName]?.records || []) {
+      let company = '';
+      for (const key of Object.keys(r)) {
+        const lower = key.toLowerCase();
+        if (['account', 'company', 'account name', 'client', 'name'].some(kw => lower.includes(kw))) {
+          company = String(r[key] || '').trim();
+          if (company) break;
+        }
+      }
+      const k = company.toLowerCase();
+      if (!wanted.has(k) || found.has(k)) continue;
+      const v = resolveTargetAccountVertical(r, col);
+      if (v) found.set(k, v);
+    }
+  }
+  for (const n of names) {
+    const v = found.get(n.toLowerCase());
+    if (!v) continue;
+    const listed = (options || []).find(o => String(o).trim().toLowerCase() === v.toLowerCase());
+    return { name: n, vertical: listed || v, onList: !!listed };
+  }
+  return { name: names[0], vertical: '', onList: false };
+}

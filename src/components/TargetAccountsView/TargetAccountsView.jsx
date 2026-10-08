@@ -535,6 +535,9 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
   // My Accounts (and the prospect modal, bulk Agenda, etc.) use this to
   // decide whose account a row is, instead of guessing by header keyword.
   const cdmColumn = String(settings?.targetCdmColumn || '');
+  // The column a company's Vertical is imported from, on its popup, once
+  // the company is mapped to a row here. Auto guesses from the header.
+  const verticalColumn = String(settings?.targetVerticalColumn || '');
 
   // Filtered records — text search only.
   const filtered = useMemo(() => {
@@ -613,6 +616,7 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
           settings={settings}
           updateSettings={updateSettings}
           cdmColumn={cdmColumn}
+          verticalColumn={verticalColumn}
           allHeaderOptions={allHeaderOptions}
           untiedOpps={untiedOpps}
           cdmName={cdmName}
@@ -687,7 +691,7 @@ function UntiedOppsWarning({ untiedOpps, cdmName }) {
 function ListSection({
   error, status, data, loading, dragOver, setDragOver, handleDrop, fileRef,
   activeSheet, setActiveSheet, search, setSearch, filtered, handleFileChange,
-  columns, settings, updateSettings, cdmColumn, allHeaderOptions,
+  columns, settings, updateSettings, cdmColumn, verticalColumn, allHeaderOptions,
   untiedOpps, cdmName,
 }) {
   return (
@@ -799,6 +803,20 @@ function ListSection({
               <select
                 value={cdmColumn}
                 onChange={e => updateSettings({ targetCdmColumn: e.target.value })}
+                style={{ padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#fff', fontSize: '0.72rem', fontFamily: 'inherit', color: 'var(--color-text)', maxWidth: 200 }}
+              >
+                <option value="">Auto (guess)</option>
+                {allHeaderOptions.map(h => <option key={h} value={h}>{h}</option>)}
+              </select>
+            </label>
+            <label
+              title="Pick which column holds each account's vertical. A company mapped to a row here (on My Accounts) can import it into its Vertical field from its popup. Leave on Auto to use the first column headed Vertical, Industry, Sector or Segment."
+              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
+            >
+              Vertical column
+              <select
+                value={verticalColumn}
+                onChange={e => updateSettings({ targetVerticalColumn: e.target.value })}
                 style={{ padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#fff', fontSize: '0.72rem', fontFamily: 'inherit', color: 'var(--color-text)', maxWidth: 200 }}
               >
                 <option value="">Auto (guess)</option>
