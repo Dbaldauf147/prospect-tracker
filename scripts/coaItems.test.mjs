@@ -99,6 +99,16 @@ eq('N/A on the seeded row is worth storing',
 eq('but N/A on a row with no item still is not',
   coaItemsToStore([{ ...emptyCoaItem(), na: true }]), []);
 
+// A note is something recorded too, trimmed, and absent when blank.
+eq('a note survives normalizing, trimmed',
+  normalizeCoaItems([{ ...row('x'), notes: ' with legal ' }]), [{ ...row('x'), notes: 'with legal' }]);
+eq('a blank note carries no notes key', normalizeCoaItems([{ ...row('x'), notes: '  ' }]), [row('x')]);
+eq('a note on the seeded row is worth storing',
+  coaItemsToStore([{ ...row('3% esc'), notes: 'client pushing back' }]), [{ ...row('3% esc'), notes: 'client pushing back' }]);
+eq('a catalog change keeps a retired row that has a note',
+  applyCoaCatalogChange([{ ...row('Old'), notes: 'n' }], ['Old'], ['3% esc']),
+  [row('3% esc'), { ...row('Old'), notes: 'n' }]);
+
 // --- where a row stands ---------------------------------------------------
 
 eq('nothing asked for yet', coaItemStatus(row('3% esc')), 'open');

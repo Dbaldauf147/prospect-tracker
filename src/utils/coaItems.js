@@ -22,6 +22,9 @@
 // clear one were to delete the row (which says nothing) or to leave it
 // reading as outstanding forever.
 //
+// And a row can carry `notes`, free text about that item on that deal. A note
+// is something recorded, so a catalog row with only a note on it is stored.
+//
 // WHICH items every opp is asked about is a list the user keeps, on the
 // Dropdowns page's COA Items tab (utils/coaItemOptions.js holds it). It
 // arrives here as the `catalog` argument: every name on it shows as a row on
@@ -79,6 +82,10 @@ export function normalizeCoaItems(raw) {
       // Only present when it is set, so a row nobody marked reads on the
       // record exactly as it always did.
       if (r.na === true || r.na === 'true') row.na = true;
+      // Same for a note: free text about this item on this deal (who it is
+      // with, what was pushed back), absent rather than '' when blank.
+      const notes = String(r.notes ?? '').trim();
+      if (notes) row.notes = notes;
       return row;
     });
 }
@@ -138,7 +145,7 @@ export function applyCoaCatalogChange(rows, prevCatalog, nextCatalog) {
   const retired = new Set(coaCatalogNames(prevCatalog).map(n => n.toLowerCase()));
   for (const name of coaCatalogNames(nextCatalog)) retired.delete(name.toLowerCase());
   const kept = normalizeCoaItems(rows).filter(r => !(
-    r.item && !r.requested && !r.approved && !r.na && retired.has(r.item.toLowerCase())
+    r.item && !r.requested && !r.approved && !r.na && !r.notes && retired.has(r.item.toLowerCase())
   ));
   return withCoaCatalog(kept, nextCatalog);
 }
@@ -168,7 +175,7 @@ export function coaItemsForOpp(opp, catalog = DEFAULT_COA_ITEMS) {
 export function coaItemsToStore(list, catalog = DEFAULT_COA_ITEMS) {
   const names = new Set(coaCatalogNames(catalog).map(n => n.toLowerCase()));
   return normalizeCoaItems(list)
-    .filter(r => r.requested || r.approved || (r.na && r.item)
+    .filter(r => r.requested || r.approved || (r.na && r.item) || (r.notes && r.item)
       || (r.item && !names.has(r.item.toLowerCase())));
 }
 
