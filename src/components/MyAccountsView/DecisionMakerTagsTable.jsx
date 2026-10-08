@@ -1,7 +1,9 @@
 // My Accounts > "DM Tags" subtab: the My Accounts list down the side, one
 // column per contact tag, and in each cell the decision makers at that
 // account who also carry that tag. Above each tag, how much of Tier 1, 2
-// and 3 has at least one. The matching lives in
+// and 3 has at least one. After them, in amber, the "maybes": decision
+// makers marked Not sure for the tag in the contact popup. They're shown,
+// not counted - the percentages and the Zoom export are confirmed tags only. The matching lives in
 // utils/decisionMakerTagMatrix.js; this file lays it out.
 //
 // It is a DataTable, so the columns can be renamed, reordered, resized,
@@ -111,11 +113,12 @@ export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSet
     [contacts, localFields, links, exclusions],
   );
   const tags = useMemo(() => tagMatrixColumns(contacts || []), [contacts]);
+  const review = settings?.contactTagReview || null;
   // A-Z going in, so the tier sort (stable) keeps each tier alphabetical.
   const rows = useMemo(() => tagMatrixRows(
     [...(accounts || [])].sort((a, b) => String(a.company || '').localeCompare(String(b.company || ''))),
-    dmLookup, tags,
-  ), [accounts, dmLookup, tags]);
+    dmLookup, tags, review,
+  ), [accounts, dmLookup, tags, review]);
   const coverage = useMemo(() => tagMatrixCoverage(rows, tags), [rows, tags]);
 
   const columns = useMemo(() => [
@@ -148,12 +151,16 @@ export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSet
     },
     ...tags.map(tag => {
       const key = tagColumnKey(tag);
-      const value = r => namesOf(r.byTag[key]);
+      const maybes = r => r.maybeByTag?.[key] || [];
+      const value = r => [
+        namesOf(r.byTag[key]),
+        ...maybes(r).map(c => `${nameOf(c)} (maybe)`),
+      ].filter(Boolean).join(', ');
       return {
         key,
         label: tag,
         defaultWidth: 160,
-        headerTitle: `Decision makers also tagged ${tag}`,
+        headerTitle: `Decision makers also tagged ${tag}, then in amber the ones marked Not sure for it (shown, not counted in the percentages)`,
         renderHeader: label => (
           <div style={{ display: 'inline-block', verticalAlign: 'top' }}>
             <div>{label}</div>
@@ -162,13 +169,21 @@ export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSet
         ),
         getFilterValue: value,
         exportValue: value,
-        getSortValue: r => r.byTag[key].length || null,
+        // Confirmed first; a maybe-only cell sorts just above an empty one.
+        getSortValue: r => (r.byTag[key].length + maybes(r).length / 100) || null,
         render: r => {
           const list = r.byTag[key];
-          if (!list.length) return <span style={{ color: '#CBD5E1' }}>-</span>;
+          const maybe = maybes(r);
+          if (!list.length && !maybe.length) return <span style={{ color: '#CBD5E1' }}>-</span>;
+          const line = (c) => [nameOf(c), c.jobtitle].filter(Boolean).join(', ');
           return (
-            <span title={list.map(c => [nameOf(c), c.jobtitle].filter(Boolean).join(', ')).join('\n')}>
+            <span title={[...list.map(line), ...maybe.map(c => `${line(c)} (maybe: marked Not sure)`)].join('\n')}>
               {namesOf(list)}
+              {maybe.length > 0 && (
+                <span style={{ color: '#B45309', fontStyle: 'italic' }}>
+                  {list.length ? ', ' : ''}{maybe.map(c => `${nameOf(c)} (maybe)`).join(', ')}
+                </span>
+              )}
             </span>
           );
         },
