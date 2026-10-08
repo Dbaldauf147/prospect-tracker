@@ -36,7 +36,7 @@
 // price against, so the next biggest open service leads instead. Saved in
 // settings, shared by the two subtabs.
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { STATUS_COLORS, SERVICE_STATUSES } from '../../data/enums.js';
+import { STATUS_COLORS, SERVICE_STATUSES, TIERS } from '../../data/enums.js';
 import { serviceStatusColor } from '../../utils/serviceStatusColors.js';
 import { withServiceStatus } from '../../utils/clientDealSizing.js';
 import { planProspectingBulkStatus } from '../../utils/prospectingBulkStatus.js';
@@ -61,6 +61,13 @@ const SOURCE_NOTE = {
   siteList: 'Counted off the site list saved on the company popup. Save a Master Analysis to replace it with the active-site count.',
   electric: 'Electric MWh typed on the company popup: electricity only, no gas. Save a Master Analysis to get the electric + gas total.',
   estimate: 'Estimate from the PE firm Portfolio Companies table. Add the company to the tracker and save a Master Analysis for the real figure.',
+};
+
+// The Tier pill's colours, the same ones the ladder's DM mapping uses.
+const TIER_TINTS = {
+  'Tier 1': { bg: '#EFF6FF', border: '#BFDBFE', ink: '#1D4ED8' },
+  'Tier 2': { bg: '#F5F3FF', border: '#DDD6FE', ink: '#6D28D9' },
+  'Tier 3': { bg: '#F8FAFC', border: '#E2E8F0', ink: '#475569' },
 };
 
 // A decision maker as the cell names them.
@@ -507,6 +514,26 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
           if (!r.status) return <span style={{ color: '#CBD5E1' }}>-</span>;
           const color = STATUS_COLORS[r.status] || '#64748B';
           return <span style={{ fontSize: '0.68rem', fontWeight: 700, color, background: `${color}1A`, padding: '1px 7px', borderRadius: 999, whiteSpace: 'nowrap' }}>{r.status}</span>;
+        },
+      },
+      {
+        key: 'tier', label: 'Tier', defaultWidth: 90,
+        headerTitle: 'The company Tier, as set on the company card.',
+        // Tier 1 before Tier 2 before Tier 3; "Not on tier list" after them.
+        getSortValue: r => {
+          const t = r.prospect?.tier;
+          if (!t) return null;
+          const i = TIERS.indexOf(t);
+          return i >= 0 ? i : TIERS.length;
+        },
+        getFilterValue: r => r.prospect?.tier || '',
+        exportValue: r => r.prospect?.tier || '',
+        render: (r) => {
+          const t = r.prospect?.tier;
+          if (!t) return <span style={{ color: '#CBD5E1' }}>-</span>;
+          const tint = TIER_TINTS[t];
+          if (!tint) return <span title={t} style={{ color: '#94A3B8', fontSize: '0.7rem', whiteSpace: 'nowrap' }}>{t}</span>;
+          return <span style={{ fontSize: '0.68rem', fontWeight: 700, color: tint.ink, background: tint.bg, border: `1px solid ${tint.border}`, padding: '0 7px', borderRadius: 999, whiteSpace: 'nowrap' }}>{t}</span>;
         },
       },
       ...(!isPcs ? [{
