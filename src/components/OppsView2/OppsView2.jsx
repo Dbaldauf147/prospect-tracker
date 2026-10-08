@@ -16944,11 +16944,18 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       const v = row[c.key];
       if (!v) return <span style={{ color: '#CBD5E1' }}>-</span>;
       if (c.key === 'Account') {
+        // The company popup, found the way the Opportunities tab's Account
+        // links find it; an account with no company record yet opens the
+        // popup on its name so it can be added. Without a popup handler,
+        // the opp's own details instead.
+        const open = onSelectProspect
+          ? () => onSelectProspect(findProspectForAccount(v, prospects) || companyPopupTarget(prospects, v))
+          : () => setInfoOppId(row.id);
         return (
           <button
             type="button"
-            onClick={() => setInfoOppId(row.id)}
-            title={`Open ${v}`}
+            onClick={(e) => { e.stopPropagation(); open(); }}
+            title={onSelectProspect ? `Open ${v}'s company page` : `Open ${v}`}
             style={{ border: 'none', background: 'none', padding: 0, font: 'inherit', fontWeight: 600, color: '#0A66C2', cursor: 'pointer', textAlign: 'left' }}
           >{v}</button>
         );
@@ -16961,7 +16968,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       if (c.key === 'Next Steps') return <span style={{ whiteSpace: 'pre-wrap' }}>{v.replace(/\u2028/g, '\n')}</span>;
       return <span>{v}</span>;
     },
-  })), []);
+  })), [prospects, onSelectProspect]);
 
   // Mass Edit → "Email table": the selected opps to feed the preview/copy
   // modal (which lets the user pick columns and copies a plain bordered
