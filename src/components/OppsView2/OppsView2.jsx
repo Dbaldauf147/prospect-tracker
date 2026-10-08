@@ -568,6 +568,13 @@ const CLOSED_OPPS_REPORT_COLUMNS = [
   'BFO Link', 'BFO Address',
 ];
 
+// What each clickable count on the By Service tab downloads.
+const SERVICE_EXPORT_KINDS = {
+  all: { label: 'All opps', keep: () => true },
+  active: { label: 'Active opps', keep: (stage) => isActiveOppStage(stage) },
+  wins: { label: 'Wins', keep: (stage) => stage === 'Sold' },
+};
+
 const MONTH_FULL_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
@@ -17158,6 +17165,17 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     URL.revokeObjectURL(url);
   }, [newOpps, newOppsColumns]);
 
+  // The services an opp counts toward on the By Service tab: its Scope split
+  // on commas, or "(Unspecified)". Shared with the click-to-download below so
+  // the file always holds exactly the opps the row counted.
+  const servicesOfOpp = useCallback((r) => {
+    const raw = (r['Scope'] || '').trim();
+    const cleaned = raw && raw !== '-' && raw !== '#N/A' ? raw : '';
+    return cleaned
+      ? [...new Set(cleaned.split(',').map(s => s.trim()).filter(Boolean))]
+      : ['(Unspecified)'];
+  }, []);
+
   const serviceBreakdown = useMemo(() => {
     // The breakdown only shows on the "By Service" tab. Skipping the
     // O(N×services) work while the Opportunities tab is active shaves
@@ -17166,11 +17184,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     const stats = {};
     const totalOpps = prefiltered.length;
     for (const r of prefiltered) {
-      const raw = (r['Scope'] || '').trim();
-      const cleaned = raw && raw !== '-' && raw !== '#N/A' ? raw : '';
-      const services = cleaned
-        ? cleaned.split(',').map(s => s.trim()).filter(Boolean)
-        : ['(Unspecified)'];
+      const services = servicesOfOpp(r);
       const stage = (r['Stage'] || '').trim();
       const isWin = stage === 'Sold';
       const isLoss = stage === 'Not Sold';
@@ -17203,7 +17217,90 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       })
       .sort((a, b) => b.count - a.count);
     return { rows, total: totalOpps };
-  }, [prefiltered, activeTab]);
+  }, [prefiltered, activeTab, servicesOfOpp]);
+
+  // Click a count on the By Service tab to download those opps as Excel:
+  // Total Opps gives every opp on the service, Active Opps the ones still in
+  // play, Wins the Sold ones. Same opps the count was made from (prefiltered,
+  // split by servicesOfOpp), every column of the opps sheet that has a value.
+  const exportServiceOpps = useCallback(async (scope, kind) => {
+    const spec = SERVICE_EXPORT_KINDS[kind] || SERVICE_EXPORT_KINDS.all;
+    const opps = prefiltered.filter(r => servicesOfOpp(r).includes(scope)
+      && spec.keep(String(r['Stage'] || '').trim()));
+    if (opps.length === 0) return;
+    const cols = (data?.headers || []).filter(h => h && opps.some(r => {
+      const v = r[h];
+      return v != null && String(v).trim() !== '';
+    }));
+    const { Workbook } = await import('exceljs');
+    const SE_GREEN_DARK = 'FF009530';
+    const SE_GREEN_LIGHT = 'FFE6F7EC';
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('Opps', { views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }] });
+    ws.columns = cols.map(c => ({ width: Math.min(Math.max(String(c).length + 4, 14), 40) }));
+    ws.mergeCells(1, 1, 1, Math.max(cols.length, 1));
+    const title = ws.getCell(1, 1);
+    title.value = `${scope} · ${spec.label} · ${opps.length} opp${opps.length === 1 ? '' : 's'}`;
+    title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+    title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+    title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(1).height = 28;
+    ws.getRow(2).height = 6;
+    const headerRow = ws.getRow(3);
+    cols.forEach((col, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.value = col;
+      cell.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_GREEN_DARK } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+    });
+    headerRow.height = 22;
+    const sorted = [...opps].sort((a, b) => String(a['Account'] || '').localeCompare(String(b['Account'] || '')));
+    sorted.forEach((r, idx) => {
+      const row = ws.getRow(4 + idx);
+      cols.forEach((col, i) => {
+        const cell = row.getCell(i + 1);
+        const v = r[col];
+        cell.value = v == null ? '' : (typeof v === 'object' ? JSON.stringify(v) : v);
+        cell.font = { name: 'Nunito Sans', size: 10 };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: false };
+        if (idx % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF6FCF8' } };
+      });
+      row.height = 18;
+    });
+    if (cols.length) ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: cols.length } };
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const slug = scope.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'service';
+    a.download = `opps-${slug}${kind === 'all' ? '' : `-${kind}`}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [prefiltered, servicesOfOpp, data?.headers]);
+
+  // A By Service count that downloads its opps when clicked.
+  const serviceCountLink = useCallback((row, kind, n, bold) => {
+    if (!n) return <div style={{ textAlign: 'right', fontWeight: bold ? 600 : 400 }}>{n}</div>;
+    const what = kind === 'active' ? 'active ' : kind === 'wins' ? 'won ' : '';
+    return (
+      <div style={{ textAlign: 'right' }}>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); exportServiceOpps(row.scope, kind); }}
+          title={`Download the ${n} ${what}opp${n === 1 ? '' : 's'} on ${row.scope} to Excel`}
+          aria-label={`Download ${n} ${what}opps on ${row.scope} to Excel`}
+          style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: bold ? 600 : 400, color: '#2563EB', textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: 3, cursor: 'pointer' }}
+        >{n}</button>
+      </div>
+    );
+  }, [exportServiceOpps]);
 
   const filtersActive = !!(dateFrom || dateTo || statusFilter !== 'all' || activityFilter !== 'all');
   const clearFilters = () => {
@@ -17324,7 +17421,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       key: 'wins',
       label: 'Wins',
       defaultWidth: 90,
-      render: (row) => <div style={{ textAlign: 'right' }}>{row.wins}</div>,
+      render: (row) => serviceCountLink(row, 'wins', row.wins, false),
     },
     {
       key: 'winRate',
@@ -17362,17 +17459,16 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       renderHeader: (label) => (
         <span title="Opps still in play: not yet Sold or Not Sold.">{label}</span>
       ),
-      render: (row) => (
-        <div style={{ textAlign: 'right' }}>{row.active}</div>
-      ),
+      render: (row) => serviceCountLink(row, 'active', row.active, false),
     },
     {
       key: 'count',
       label: 'Total Opps',
       defaultWidth: 110,
-      render: (row) => (
-        <div style={{ textAlign: 'right', fontWeight: 600 }}>{row.count}</div>
+      renderHeader: (label) => (
+        <span title="Click a count to download those opps to Excel.">{label}</span>
       ),
+      render: (row) => serviceCountLink(row, 'all', row.count, true),
     },
     {
       key: '_actions',
@@ -17388,7 +17484,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         </button>
       ),
     },
-  ], [toggleHideService, serviceSMEs, saveServiceSME]);
+  ], [toggleHideService, serviceSMEs, saveServiceSME, serviceCountLink]);
 
   // Leads grouped by Source for the "By Source" tab, scoped to the
   // tab's own Start Date range. Mirrors serviceBreakdown's shape
