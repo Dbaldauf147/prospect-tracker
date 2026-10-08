@@ -28,6 +28,8 @@ import { makeRosterGates, ROSTER_CATEGORIES } from '../../utils/contactRosters';
 import { useOppsRecords, useClientFlagMaps } from '../../utils/rosterHooks';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import styles from './DraftEmailView.module.css';
+import { campaignsByRecency, campaignPickerDetail } from '../../utils/campaignPicker';
+import { CampaignPicker } from '../common/CampaignPicker';
 import { primarySubject, withSubjects } from '../../utils/campaignSubjects';
 import { responseRateOf } from '../../utils/campaignContactHold';
 
@@ -1837,6 +1839,16 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   // contacts are new (will be added) and which are already on that campaign's
   // roster (will be skipped), so duplicates can't be added blind.
   const [campaignPreview, setCampaignPreview] = useState(null);
+  // The picker's options: most recently active first, keyed by subject.
+  const existingCampaignOptions = useMemo(() => campaignsByRecency(existingCampaigns)
+    .map(({ campaign: c }) => ({
+      key: primarySubject(c),
+      label: primarySubject(c) || '(untitled)',
+      text: [c.title, ...(Array.isArray(c.subjects) ? c.subjects : [])].filter(Boolean).join(' '),
+      detail: campaignPickerDetail(c),
+    }))
+    // Keyed by subject, which is how the add finds it again: one row each.
+    .filter((o, i, all) => o.key && all.findIndex(x => x.key === o.key) === i), [existingCampaigns]);
 
   // Open the campaign panel and pull the current campaign list so the user
   // can either name a new campaign or add to one that already exists.
@@ -2867,18 +2879,15 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
                     <div style={{ marginBottom: '0.6rem' }}>
                       <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 700, color: '#1E3A8A', marginBottom: 4 }}>Add to existing campaign</label>
                       <div style={{ display: 'flex', gap: 6 }}>
-                        <select
+                        <CampaignPicker
+                          options={existingCampaignOptions}
                           value={targetCampaign}
-                          onChange={e => setTargetCampaign(e.target.value)}
-                          style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', padding: '0.35rem 0.4rem', border: '1px solid #93C5FD', borderRadius: 4, fontSize: '0.74rem', fontFamily: 'inherit', background: '#fff' }}
-                        >
-                          <option value="">Choose a campaign…</option>
-                          {existingCampaigns.map((c, i) => {
-                            const subj = primarySubject(c);
-                            const count = c.totalContacts ?? c.contacts?.length ?? 0;
-                            return <option key={i} value={subj}>{subj || '(untitled)'}: {count}</option>;
-                          })}
-                        </select>
+                          onChange={setTargetCampaign}
+                          ariaLabel="Existing campaign to add these contacts to"
+                          placeholder="Type to search, or pick a recent one..."
+                          title="Most recent campaigns first. Type any word of a subject line to narrow the list."
+                          style={{ flex: 1 }}
+                        />
                         <button
                           type="button"
                           onClick={previewAddToExistingCampaign}
