@@ -22,6 +22,15 @@ import { TIERS } from '../../data/enums';
 
 const TIER_INK = { 'Tier 1': '#DC2626', 'Tier 2': '#3B82F6', 'Tier 3': '#F59E0B' };
 
+// Tier 1 first, then 2, 3, then anything else that was typed (Not on tier
+// list); no tier at all sorts last. A number, because DataTable compares
+// sort values numerically when it can.
+const tierRank = (tier) => {
+  const i = TIERS.indexOf(tier);
+  if (i >= 0) return i + 1;
+  return tier ? TIERS.length + 1 : null;
+};
+
 const nameOf = (c) => [c?.firstname, c?.lastname].filter(Boolean).join(' ').trim() || String(c?.email || '');
 const namesOf = (list) => (list || []).map(nameOf).join(', ');
 
@@ -102,7 +111,11 @@ export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSet
     [contacts, localFields, links, exclusions],
   );
   const tags = useMemo(() => tagMatrixColumns(contacts || []), [contacts]);
-  const rows = useMemo(() => tagMatrixRows(accounts, dmLookup, tags), [accounts, dmLookup, tags]);
+  // A-Z going in, so the tier sort (stable) keeps each tier alphabetical.
+  const rows = useMemo(() => tagMatrixRows(
+    [...(accounts || [])].sort((a, b) => String(a.company || '').localeCompare(String(b.company || ''))),
+    dmLookup, tags,
+  ), [accounts, dmLookup, tags]);
   const coverage = useMemo(() => tagMatrixCoverage(rows, tags), [rows, tags]);
 
   const columns = useMemo(() => [
@@ -117,6 +130,7 @@ export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSet
     },
     {
       key: 'myTier', label: 'Tier', defaultWidth: 80,
+      getSortValue: r => tierRank(r.myTier),
       render: r => <span style={{ fontWeight: 600, color: TIER_INK[r.myTier] || '#64748B' }}>{r.myTier || '-'}</span>,
     },
     {
@@ -184,7 +198,8 @@ export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSet
       exportFileName="My Accounts DM Tags"
       columns={columns}
       rows={rows}
-      defaultSort={{ key: 'company', direction: 'asc' }}
+      // Opens Tier 1 first, A-Z within each tier.
+      defaultSort={{ key: 'myTier', direction: 'asc' }}
       alwaysVisible={['company']}
       enableColumnFilters
       onFilteredRowsChange={setOnScreen}
