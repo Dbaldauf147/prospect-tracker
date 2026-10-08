@@ -15,6 +15,8 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { primarySubject } from '../../utils/campaignSubjects';
 import { addContactToCampaign, campaignHasContact } from '../../utils/campaignAddContact';
+import { campaignsByRecency, campaignPickerDetail } from '../../utils/campaignPicker';
+import { CampaignPicker } from '../common/CampaignPicker';
 
 // Pages that show campaign membership (the All Contacts columns) listen for
 // this to re-read the list after an add.
@@ -41,12 +43,20 @@ export function ContactCampaignAdd({ email, name, company }) {
 
   const trimmed = String(email || '').trim();
   const hasEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
-  // Indexed against the list as loaded, newest campaigns first in the picker.
-  const entries = useMemo(() => (campaigns || [])
-    .map((c, index) => ({ index, label: campaignLabel(c), on: hasEmail && campaignHasContact(c, trimmed), c }))
-    .reverse(), [campaigns, hasEmail, trimmed]);
-  const onCampaigns = entries.filter(e => e.on);
-  const offCampaigns = entries.filter(e => !e.on);
+  // Indexed against the list as loaded, most recently active campaigns first
+  // in the picker (utils/campaignPicker.js).
+  const entries = useMemo(() => campaignsByRecency(campaigns)
+    .map(({ campaign: c, index }) => ({ index, label: campaignLabel(c), on: hasEmail && campaignHasContact(c, trimmed), c })),
+  [campaigns, hasEmail, trimmed]);
+  const onCampaigns = useMemo(() => entries.filter(e => e.on), [entries]);
+  const offCampaigns = useMemo(() => entries.filter(e => !e.on), [entries]);
+  const pickerOptions = useMemo(() => offCampaigns.map(e => ({
+    key: String(e.index),
+    label: e.label,
+    // Every subject line, so a campaign can be found by any of them.
+    text: [e.c?.subject, ...(Array.isArray(e.c?.subjects) ? e.c.subjects : [])].filter(Boolean).join(' '),
+    detail: campaignPickerDetail(e.c),
+  })), [offCampaigns]);
 
   const add = async () => {
     const target = entries.find(e => String(e.index) === pick);
@@ -108,17 +118,16 @@ export function ContactCampaignAdd({ email, name, company }) {
           style={{ fontSize: '0.7rem', fontWeight: 600, color: '#1D4ED8', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 999, padding: '1px 8px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
         >{e.label}</span>
       ))}
-      <select
+      <CampaignPicker
+        options={pickerOptions}
         value={pick}
-        onChange={e => { setPick(e.target.value); setNote(null); }}
+        onChange={(key) => { setPick(key); setNote(null); }}
         disabled={!!disabledWhy || busy || offCampaigns.length === 0}
-        title={disabledWhy || (offCampaigns.length === 0 ? 'Already on every saved campaign' : 'Pick a saved campaign to add this contact to')}
-        aria-label="Campaign to add this contact to"
-        style={{ padding: '0.2rem 0.35rem', border: '1px solid #E2E8F0', borderRadius: '6px', fontSize: '0.76rem', fontFamily: 'inherit', maxWidth: 220, background: '#fff', color: '#334155' }}
-      >
-        <option value="">{campaigns === null ? 'Loading...' : offCampaigns.length === 0 && campaigns.length > 0 ? 'On every campaign' : 'Add to a campaign...'}</option>
-        {offCampaigns.map(e => <option key={e.index} value={String(e.index)}>{e.label}</option>)}
-      </select>
+        title={disabledWhy || (offCampaigns.length === 0 ? 'Already on every saved campaign' : 'Type to search, or pick from the most recent campaigns')}
+        ariaLabel="Campaign to add this contact to"
+        placeholder={campaigns === null ? 'Loading...' : offCampaigns.length === 0 && campaigns.length > 0 ? 'On every campaign' : 'Add to a campaign...'}
+        style={{ width: 240, maxWidth: '100%' }}
+      />
       <button
         type="button"
         onClick={add}
