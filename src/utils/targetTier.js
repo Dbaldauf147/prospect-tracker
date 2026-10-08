@@ -11,6 +11,7 @@
 
 import { matchesCdm, resolveTargetAccountCdm } from './cdmMatch.js';
 import { buildCompanyIndex, findMatchesInIndex } from './companyIndex.js';
+import { NOT_ON_TIER_LIST } from '../data/enums.js';
 
 // Pull the company + tier out of a Target Accounts workbook, keeping every
 // tier (1–9), not just Tier 1/2. When `scopeToCdm` is true the rows are
@@ -172,4 +173,25 @@ export function buildTargetCdmResolver({ targetAccountsData, settings }) {
     }
     return '';
   };
+}
+
+// Whether the tier on a company card disagrees with the Target Accounts
+// list. `cardTier` is the card's Tier field; `reading` is what
+// buildTargetTierResolver returned for it, or null while the list has not
+// loaded (no warning then: an unloaded list is not a disagreement).
+//
+// Blank, "-" and "Not on tier list" all mean "no tier", so a card left
+// blank or marked Not on tier list agrees with a company the list doesn't
+// tier. Returns null when they agree, else { cardTier, targetTier, apply },
+// where `apply` is the value to set the card to so it matches the list.
+export function tierMismatch(cardTier, reading) {
+  if (!reading) return null;
+  const norm = (t) => {
+    const s = String(t || '').trim();
+    return (!s || s === '-' || s === NOT_ON_TIER_LIST) ? '' : s;
+  };
+  const card = norm(cardTier);
+  const target = norm(reading.tier);
+  if (card === target) return null;
+  return { cardTier: card, targetTier: target, apply: target || NOT_ON_TIER_LIST };
 }

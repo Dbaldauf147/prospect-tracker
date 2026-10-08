@@ -97,7 +97,7 @@ import {
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, buildCdmOptions, buildTypeOptions } from '../../utils/prospectOptions';
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
-import { buildTargetTierResolver } from '../../utils/targetTier';
+import { buildTargetTierResolver, tierMismatch } from '../../utils/targetTier';
 import {
   buildTargetCdmResolver, targetCdmConflictLabel, describeTargetCdmConflict,
   canonicalCdmOption, targetCdmApplyHint,
@@ -5010,6 +5010,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     () => (resolveTargetsTier ? resolveTargetsTier({ id: prospect?.id, company: fields.company }) : null),
     [resolveTargetsTier, prospect?.id, fields.company],
   );
+  // The card's Tier against that: a warning under the dropdown when they
+  // disagree, compared to the draft so fixing the field clears it at once.
+  const tierConflict = useMemo(() => tierMismatch(fields.tier, targetsTier), [fields.tier, targetsTier]);
 
   // Does the Target Accounts tab have this company under a different CDM?
   // The workbook is the shared record of who covers what, so the Coverage
@@ -8967,6 +8970,33 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 <option value="">-</option>
                 {TIER_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
+              {/* Same look as the Coverage CDM warning: the Targets list
+                  is the shared record, so a disagreement is flagged, and a
+                  click sets the card to what the list says. */}
+              {tierConflict && (
+                <button
+                  type="button"
+                  onClick={() => set('tier', tierConflict.apply)}
+                  title={(tierConflict.targetTier
+                    ? `The Target Accounts list has ${targetsTier?.name || fields.company} at ${tierConflict.targetTier}`
+                    : 'This company is not tiered on the Target Accounts list')
+                    + `, but this card says ${tierConflict.cardTier || 'no tier'}. Click to set the card to ${tierConflict.apply}.`}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '0.2rem', marginTop: 3,
+                    maxWidth: '100%', padding: '0.15rem 0.35rem', borderRadius: 4,
+                    background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E',
+                    fontSize: '0.62rem', fontWeight: 700, lineHeight: 1.3, cursor: 'pointer',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  <span aria-hidden="true">⚠</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {tierConflict.targetTier
+                      ? `Targets list says ${tierConflict.targetTier}`
+                      : 'Not tiered on the Targets list'}
+                  </span>
+                </button>
+              )}
             </div>
 
             <div>
