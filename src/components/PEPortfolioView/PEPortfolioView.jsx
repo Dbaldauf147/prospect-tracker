@@ -31,6 +31,8 @@ import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalys
 import { getServiceCategories, serviceBucketOf, UNGROUPED_SERVICES } from '../../utils/serviceCategoriesStore';
 import { classifyHqRegion, normalizeHqRegion, NORTH_AMERICA } from '../../utils/hqRegion';
 import { serviceStatusColor } from '../../utils/serviceStatusColors';
+import { useNotesSummaries } from '../../hooks/useNotesSummaries';
+import NotesSummaryCell from '../NotesSummaryCell';
 
 // Reference list behind the "Strategies" sub-tab — the core private-equity
 // investment strategies, each with a short plain-language description. The
@@ -4399,7 +4401,7 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmO
     { key: 'Quoted Amount', label: 'Quoted Amount', width: '1fr', align: 'right' },
     { key: 'Status', label: 'Status', width: '1.4fr' },
     { key: 'BFO Link', label: 'BFO Opportunity Name', width: '1.6fr' },
-    { key: 'Next Steps', label: 'Next Steps', width: '1.8fr' },
+    { key: 'Next Steps', label: 'Next Steps', width: '2.4fr' },
     { key: 'Last Client Heard From Us', label: 'Last Client Heard From Us', width: '1.3fr', value: r => formatDateDisplay(r['Last Client Heard From Us']) },
     { key: 'Call In', label: 'Call In', width: '0.8fr', align: 'right', value: r => { const n = resolveCallIn(r); return n == null ? '' : String(n); } },
     { key: 'Close Date', label: 'Close Date', width: '1fr', value: r => formatDateDisplay(r['Close Date']) },
@@ -4441,6 +4443,10 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmO
 
   const COLUMNS = ALL_COLUMNS.filter(c => visibleCols.has(c.key));
   const GRID = COLUMNS.map(c => c.width).join(' ');
+
+  // The Next Steps column shows each opp's notes summarised into a few
+  // bullets (full notes on hover). Only fetched while the column is shown.
+  const notesSummaries = useNotesSummaries(opps, { enabled: visibleCols.has('Next Steps') });
 
   // Default ordering: Sales Partner first, then Stage. Blanks sort last so
   // populated rows group at the top; Account breaks any remaining ties.
@@ -4667,6 +4673,13 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmO
                   {COLUMNS.map(c => {
                     const val = cellValue(r, c) || '';
                     const isAccount = c.key === 'Account';
+                    if (c.key === 'Next Steps') {
+                      return (
+                        <div key={c.key} style={{ padding: '0.5rem 0.6rem', fontSize: '0.74rem', color: '#334155', borderRight: '1px solid #F1F5F9', minWidth: 0 }}>
+                          <NotesSummaryCell summary={notesSummaries.get(r)} />
+                        </div>
+                      );
+                    }
                     if (c.editable && onEditField) {
                       return (
                         <EditableCell

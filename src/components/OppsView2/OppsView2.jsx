@@ -210,6 +210,8 @@ import { effectiveLineItemServices, servicesForCostLine, lineItemServicesOnOptio
 // saves, so the estimate table's columns are picked the same way.
 import { ColumnToggle } from '../common/ColumnToggle';
 import { useTableColumnPrefs } from '../../hooks/useTableColumnPrefs';
+import { useNotesSummaries } from '../../hooks/useNotesSummaries';
+import NotesSummaryCell from '../NotesSummaryCell';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -17043,8 +17045,28 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // "BFO Address" on a default-headers install) still get a minimal column
   // def so the BFO fields always show on the subtab and stay pickable for
   // the emailed table.
+  // The Notes column (Next Steps) on this subtab shows each opp's notes
+  // summarised into a few bullets rather than the raw checklist; the full
+  // notes stay on hover and in the Follow Up Notes popup. Only fetched
+  // while the subtab is open.
+  const newOppsNotes = useNotesSummaries(newOpps, { enabled: activeTab === 'newOpps' });
+
   const newOppsColumns = useMemo(
     () => NEW_OPPS_REPORT_COLUMNS.map((key) => {
+      if (key === 'Next Steps') {
+        const base = columns.find(c => c.key === key) || { key, label: headerLabel(key) };
+        return {
+          ...base,
+          defaultWidth: 300,
+          headerTitle: 'A summary of the opp\'s notes. Hover for the full notes, click to open Follow Up Notes.',
+          render: (row) => (
+            <NotesSummaryCell
+              summary={newOppsNotes.get(row)}
+              onClick={(e) => { e.stopPropagation(); setFollowUpNotes({ id: row._id, prev: null }); }}
+            />
+          ),
+        };
+      }
       if (key === OPP_VERTICAL_KEY || key === OPP_SALESPERSON_KEY) {
         const isVertical = key === OPP_VERTICAL_KEY;
         return {
@@ -17068,7 +17090,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         defaultWidth: key === 'BFO Address' ? 260 : 160,
       };
     }),
-    [columns]
+    [columns, newOppsNotes]
   );
 
   // SE-branded (Schneider green) Excel of the new opps shown, mirroring the
