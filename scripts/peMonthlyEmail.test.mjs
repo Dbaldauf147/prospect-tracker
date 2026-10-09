@@ -48,7 +48,18 @@ check('one row per deal, in the deals\' order', rows.map(r => r.Account), ['Kens
 check('row carries every column', Object.keys(rows[0]).filter(k => k !== 'id' && k !== 'companyId'), PE_MONTHLY_COLUMNS.map(c => c.key));
 check('opp fields joined by id', [rows[0].Scope, rows[0]['BFO Address']], ['Bill pay', 'https://bfo.example/7']);
 check('salespeople off Coverage for the vertical', rows[0].Salesperson, 'Pat, Lee');
-check('shown as Other CDM', PE_MONTHLY_COLUMNS.find(c => c.key === 'Salesperson').label, 'Other CDM');
+check('shown as Vertical CDM', PE_MONTHLY_COLUMNS.find(c => c.key === 'Salesperson').label, 'Vertical CDM');
+{
+  const cov = (v) => ({ Mine: [{ name: 'Dan Baldauf' }], Shared: [{ name: 'Dan Baldauf' }, { name: 'Pat' }], Theirs: [{ name: 'Pat' }] }[v] || []);
+  const vr = peMonthlyRows([
+    { id: 1, name: 'M', vertical: 'Mine', tier: 'Tier 1' },
+    { id: 2, name: 'S', vertical: 'Shared', tier: 'Tier 1' },
+    { id: 3, name: 'T', vertical: 'Theirs', tier: 'Tier 1' },
+    { id: 4, name: 'N', vertical: 'Nobody', tier: 'Tier 1' },
+  ], [], cov, { cdmName: 'Dan Baldauf' });
+  check('Vertical CDM: only you is N/A, you are dropped from a shared list',
+    vr.map(r => r.Salesperson), ['N/A', 'Pat', 'Pat', '']);
+}
 check('no vertical, no salesperson', rows[1].Salesperson, '');
 check('blanks stay blank', [rows[1].Tier, rows[1]['Deal Size'], rows[1].Scope], ['', '', '']);
 
@@ -56,7 +67,7 @@ const table = buildPeMonthlyTableHtml(rows);
 check('BFO link rendered as "BFO Link"', /<a href="https:\/\/bfo\.example\/7"[^>]*>BFO Link<\/a>/.test(table), true);
 check('email leaves out Next Steps', [table.includes('Next Steps'), table.includes('Call Tue')], [false, false]);
 check('email leaves out Scope', [table.includes('>Scope<'), table.includes('Bill pay')], [false, false]);
-check('email leaves out CDM but keeps Other CDM', [/>CDM</.test(table), table.includes('>Other CDM<')], [false, true]);
+check('email leaves out CDM but keeps Vertical CDM', [/>CDM</.test(table), table.includes('>Vertical CDM<')], [false, true]);
 check('email columns are the tab columns minus CDM, Scope and Next Steps',
   PE_MONTHLY_EMAIL_COLUMNS.map(c => c.key), PE_MONTHLY_COLUMNS.map(c => c.key).filter(k => !['CDM', 'Scope', 'Next Steps'].includes(k)));
 check('empty list says so', buildPeMonthlyTableHtml([]).includes('No PE or portfolio company deals'), true);
@@ -142,11 +153,11 @@ check('no opps doc, no rows', await loadPeMonthlyRows(fakeDb({}, {}), 'u1', 'x@y
 const sched = buildPeMonthlyEmailHtml(built, { message: 'Monthly' });
 check('scheduled body: intro then table, nothing else', [sched.includes('Monthly'), sched.includes('<table'), sched.includes('Hey Keith')], [true, true, false]);
 
-// CDMs aligned: right of Other CDM, Yes / No off the popup checkbox, N/A
+// CDMs aligned: right of Vertical CDM, Yes / No off the popup checkbox, N/A
 // when the account is not on the tier list.
 {
   const keys = PE_MONTHLY_COLUMNS.map(c => c.key);
-  check('CDMs aligned sits right of Other CDM', keys.indexOf('CDMs Aligned'), keys.indexOf('Salesperson') + 1);
+  check('CDMs aligned sits right of Vertical CDM', keys.indexOf('CDMs Aligned'), keys.indexOf('Salesperson') + 1);
   check('labelled CDMs aligned', PE_MONTHLY_COLUMNS.find(c => c.key === 'CDMs Aligned').label, 'CDMs aligned');
   check('ticked on a tiered account: Yes', peMonthlyCdmsAligned('Tier 2', true), 'Yes');
   check('unticked on a tiered account: No', peMonthlyCdmsAligned('Tier 1', false), 'No');

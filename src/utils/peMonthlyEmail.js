@@ -18,6 +18,7 @@ import { buildTargetTierResolver, buildTargetCdmResolver } from './targetTier.js
 import { coverageFromSettings, salespeopleForVertical } from './salesCoverage.js';
 import { parseMoney } from './oppsMetrics.js';
 import { fmtMoneyWhole } from './pricingOptionCalc.js';
+import { matchesCdm } from './cdmMatch.js';
 
 export const PE_MONTHLY_COLUMNS = [
   { key: 'Account', label: 'Account' },
@@ -25,9 +26,10 @@ export const PE_MONTHLY_COLUMNS = [
   { key: 'CDM', label: 'CDM' },
   { key: 'PE Owner', label: 'PE Owner' },
   { key: 'Vertical', label: 'Vertical' },
-  // Labelled Other CDM: on this table the person Coverage names is the
-  // other pod's CDM. The key stays Salesperson so saved rows still read.
-  { key: 'Salesperson', label: 'Other CDM' },
+  // Labelled Vertical CDM: on this table the person Coverage names is the
+  // CDM for the deal's vertical. The key stays Salesperson so saved rows
+  // still read.
+  { key: 'Salesperson', label: 'Vertical CDM' },
   // Yes / No off the company popup's "aligned w/other CDM" checkbox; N/A
   // when the account is not on the tier list (peMonthlyCdmsAligned).
   { key: 'CDMs Aligned', label: 'CDMs aligned' },
@@ -68,12 +70,16 @@ export function peMonthlyTierRank(tier) {
  *   deals           buildPeOverlapDeals output (agenda order; re-sorted by tier)
  *   records         the opp rows, to fill Scope / Next Steps / BFO Address
  *   salespeopleFor  (vertical) => [{ name }] - Opps > Coverage's lookup
+ *   cdmName         you; left out of Vertical CDM, which reads N/A when
+ *                   Coverage lists only you for the vertical
  */
-export function peMonthlyRows(deals, records = [], salespeopleFor = () => []) {
+export function peMonthlyRows(deals, records = [], salespeopleFor = () => [], { cdmName = '' } = {}) {
   const byId = new Map((Array.isArray(records) ? records : []).map(r => [String(r?._id), r]));
   return (Array.isArray(deals) ? deals : []).map((d) => {
     const opp = byId.get(String(d.id)) || {};
-    const people = d.vertical ? (salespeopleFor(d.vertical) || []) : [];
+    const people = (d.vertical ? (salespeopleFor(d.vertical) || []) : [])
+      .map(p => String(p?.name || '').trim()).filter(Boolean);
+    const others = cdmName ? people.filter(n => !matchesCdm(n, cdmName)) : people;
     return {
       id: d.id,
       // Not a column: the company the CDM was read from, for the tab's links.
@@ -83,7 +89,7 @@ export function peMonthlyRows(deals, records = [], salespeopleFor = () => []) {
       CDM: d.targetCdm || '',
       'PE Owner': d.peOwner || '',
       Vertical: d.vertical || '',
-      Salesperson: people.map(p => p?.name).filter(Boolean).join(', '),
+      Salesperson: people.length > 0 && others.length === 0 ? 'N/A' : others.join(', '),
       'CDMs Aligned': peMonthlyCdmsAligned(d.tier, d.cdmAligned),
       Stage: d.stageLabel || '',
       Scope: String(opp.Scope ?? '').trim(),
@@ -117,7 +123,7 @@ export function buildPeMonthlyRows({ records = [], prospects = [], settings = nu
     parseAmount: parseMoney, fmtAmount: fmtMoneyWhole, prospects, targetTierFor, targetCdmFor,
   });
   const coverage = coverageFromSettings(settings);
-  return peMonthlyRows(deals, records, v => salespeopleForVertical(coverage, v));
+  return peMonthlyRows(deals, records, v => salespeopleForVertical(coverage, v), { cdmName });
 }
 
 /**

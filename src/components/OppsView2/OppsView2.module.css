@@ -831,3 +831,21 @@
   display: flex;
   flex-direction: column;
 }
+
+/* SE header band on the PE Monthly table: Schneider dark green with white
+   type, the look of the SE-formatted Excel exports. Only the header row;
+   the column-filter row under it keeps its usual inputs. The wrapper
+   passes the tab's flex sizing through to the table inside it. */
+.seHeaderTable {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.seHeaderTable thead tr:first-child th,
+.seHeaderTable thead tr:first-child th:hover {
+  background: #009530;
+  color: #FFFFFF;
+}
