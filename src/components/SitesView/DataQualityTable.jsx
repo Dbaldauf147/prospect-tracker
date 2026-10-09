@@ -111,7 +111,8 @@ export function DataQualityTable({ summary, onEdit }) {
   return (
     <div
       style={{
-        margin: '0.5rem 1.25rem 0.75rem',
+        // The page lays this out beside the Data quality card, so the
+        // margin around the pair is the page's, not this card's.
         border: '1px solid #E2E8F0',
         borderRadius: 8,
         background: '#FFFFFF',
@@ -120,7 +121,7 @@ export function DataQualityTable({ summary, onEdit }) {
         // box two thirds empty on a wide monitor, which reads as something
         // missing rather than as something short.
         width: 'fit-content',
-        maxWidth: 'calc(100% - 2.5rem)',
+        maxWidth: '100%',
       }}
     >
       <div

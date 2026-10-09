@@ -57,6 +57,8 @@ import {
 import { SavingsScopeToggle } from './OwnershipScopeBar.jsx';
 import { DataQualityTable } from './DataQualityTable.jsx';
 import { buildDataQualitySummary } from './dataQualitySummary.js';
+import { DataOutliersTable } from './DataOutliersTable.jsx';
+import { findOutliers, normalizeThresholds, DEFAULT_OUTLIER_THRESHOLDS, OUTLIER_METRICS } from './dataOutliers.js';
 import CorporateCompliance from './CorporateCompliance';
 // The savings bands this page quotes, editable. A subtab rather than a
 // page of its own because the figures are only ever read here: every
@@ -3565,6 +3567,38 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // which a search box can't: typing "Closed" also matches a site called
   // Closed Gate Road and a note that says "closed in 2019".
   const [statusFilter, setStatusFilter] = useState('');
+
+  // --- Data quality: outlier thresholds --------------------------------
+  //
+  // A min and a max per measure (sqft, $/kWh, $/therm), set on the Data
+  // quality card beside the Data summary. Kept with the rest of the
+  // page's work keys so the bounds a reader settled on survive a reload
+  // and carry across uploads.
+  const [outlierThresholds, setOutlierThresholds] = useState(() => {
+    try {
+      const raw = readWorkKey('utility-lookup:outlier-thresholds');
+      return normalizeThresholds(raw ? JSON.parse(raw) : null);
+    } catch { return normalizeThresholds(null); }
+  });
+  const persistOutlierThresholds = useCallback((next) => {
+    setOutlierThresholds(next);
+    try { writeWorkKey('utility-lookup:outlier-thresholds', JSON.stringify(next)); } catch { /* storage full or blocked: keep the in-memory value */ }
+  }, []);
+  const updateOutlierThreshold = useCallback((key, side, value) => {
+    setOutlierThresholds(prev => {
+      const next = { ...prev, [key]: { ...prev[key], [side]: value } };
+      try { writeWorkKey('utility-lookup:outlier-thresholds', JSON.stringify(next)); } catch { /* storage full or blocked: keep the in-memory value */ }
+      return next;
+    });
+  }, []);
+  const outliers = useMemo(() => findOutliers(rows, outlierThresholds), [rows, outlierThresholds]);
+  // Which measure's outliers the site list is narrowed to, or ''. Not
+  // persisted: it is a lens on the list, like the status filter.
+  const [outlierFilter, setOutlierFilter] = useState('');
+  // A filter on a measure that no longer has any outliers (a bound was
+  // just widened) would hide every row with nothing on screen saying why.
+  const activeOutlierFilter = outlierFilter && outliers[outlierFilter]?.ids.size ? outlierFilter : '';
+  const activeOutlierIds = activeOutlierFilter ? outliers[activeOutlierFilter].ids : null;
   // A filter pinned to a status the estate no longer has (the last one was
   // just re-typed, or a new file was uploaded) would hide every row with
   // nothing on screen saying why.
@@ -3574,8 +3608,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
-    if (!term && !activeStatusFilter) return rows;
+    if (!term && !activeStatusFilter && !activeOutlierIds) return rows;
     return rows.filter(r => {
+      if (activeOutlierIds && !activeOutlierIds.has(r.id)) return false;
       if (activeStatusFilter === '__none__' && r.__siteStatus__) return false;
       if (activeStatusFilter && activeStatusFilter !== '__none__' && r.__siteStatus__ !== activeStatusFilter) return false;
       if (!term) return true;
@@ -3583,7 +3618,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         !k.startsWith('__') && String(v).toLowerCase().includes(term)
       );
     });
-  }, [search, rows, activeStatusFilter]);
+  }, [search, rows, activeStatusFilter, activeOutlierIds]);
 
   // ---- Mass edit: which columns, and writing them ----------------------
   // The uploaded row's headers, with the status and City columns added when
@@ -17210,7 +17245,23 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
           six numbers per card and work out the shares themselves. The
           fixes those banners offered are still one click away, on Update
           Column Mapping and Data sources in the toolbar above. */}
-      <DataQualityTable summary={dataQuality} onEdit={sitesData.length ? setSummaryEditKey : undefined} />
+      {/* The Data quality card sits to the right of the summary: the
+          summary says where each input came from, this one says whether
+          the inputs are believable. They wrap onto two lines on a narrow
+          window rather than squeezing either table. */}
+      {dataQuality && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '0.75rem', margin: '0.5rem 1.25rem 0.75rem' }}>
+          <DataQualityTable summary={dataQuality} onEdit={sitesData.length ? setSummaryEditKey : undefined} />
+          <DataOutliersTable
+            thresholds={outlierThresholds}
+            results={outliers}
+            activeKey={activeOutlierFilter}
+            onChange={updateOutlierThreshold}
+            onPick={key => setOutlierFilter(activeOutlierFilter === key ? '' : key)}
+            onReset={() => persistOutlierThresholds(normalizeThresholds(DEFAULT_OUTLIER_THRESHOLDS))}
+          />
+        </div>
+      )}
       {summaryEditDef && summaryEditTarget?.header && (
         <SummaryFieldEditModal
           key={summaryEditKey}
@@ -17250,7 +17301,18 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
             {statusCounts.has('') && <option value="__none__">No status ({statusCounts.get('')})</option>}
           </select>
         )}
-        {(search || activeStatusFilter) && <span className={styles.resultCount}>{filtered.length} results</span>}
+        {activeOutlierFilter && (
+          <button
+            type="button"
+            className={styles.searchInput}
+            style={{ maxWidth: 'none', cursor: 'pointer', background: '#FEF2F2', color: '#991B1B', borderColor: '#FCA5A5' }}
+            onClick={() => setOutlierFilter('')}
+            title="Show every site again"
+          >
+            {OUTLIER_METRICS.find(m => m.key === activeOutlierFilter)?.label} outliers only ×
+          </button>
+        )}
+        {(search || activeStatusFilter || activeOutlierFilter) && <span className={styles.resultCount}>{filtered.length} results</span>}
         {sitesData.length > 0 && (
           <button
             type="button"
