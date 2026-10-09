@@ -2369,6 +2369,9 @@ Fix that now?
       const hasExplicitMapping = rawMap !== undefined; // explicit empty array means user cleared it
       let targetNames = Array.isArray(rawMap) ? rawMap : (rawMap ? [rawMap] : []);
       let targetTier = '';
+      // Set when the tier only came from another rep's Targets rows (the
+      // all-reps fallback), i.e. it is not a tier on this CDM's list.
+      let targetTierFromOtherRep = false;
       if (targetNames.length > 0) {
         const matched = targetAccounts.find(t => targetNames.includes(t.company));
         if (matched) targetTier = matched.tier;
@@ -2385,7 +2388,7 @@ Fix that now?
         if (!targetTier) {
           for (const nm of targetNames) {
             const tt = targetTierByNameAllReps.get((nm || '').toLowerCase().trim());
-            if (tt) { targetTier = tt; break; }
+            if (tt) { targetTier = tt; targetTierFromOtherRep = true; break; }
           }
         }
       } else if (!hasExplicitMapping) {
@@ -2412,7 +2415,7 @@ Fix that now?
         if (!targetTier) {
           for (const tName of findMatchesInIndex(targetTierIndexAllReps, p.company)) {
             const tt = targetTierByNameAllReps.get((tName || '').toLowerCase().trim());
-            if (tt) { targetTier = tt; break; }
+            if (tt) { targetTier = tt; targetTierFromOtherRep = true; break; }
           }
         }
       }
@@ -2422,7 +2425,11 @@ Fix that now?
       // first resolved because that is above the point targetTier is
       // known — and `tier` is not read in between.
       tier = tierPreferringTargetsList({ tier, targetTier, tierSource: p.tierSource });
-      const tierMismatch = targetTier && targetTier !== tier && !p.ignoreTierMismatch;
+      // "Not on tier list" means not on THIS CDM's list, so another rep
+      // tiering the company (e.g. Triumph Group at Tier 3 under someone
+      // else) agrees with it rather than contradicting it.
+      const otherRepOnly = tier === NOT_ON_TIER_LIST && targetTierFromOtherRep;
+      const tierMismatch = targetTier && targetTier !== tier && !otherRepOnly && !p.ignoreTierMismatch;
       // Check for decision maker — fuzzy match across parent + divisions
       let dmNames = null;
       for (const name of allCompanyNames) {
