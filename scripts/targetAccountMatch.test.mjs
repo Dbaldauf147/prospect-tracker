@@ -23,7 +23,7 @@ const rows = targetAccountRows(data, {});
 
 // rows
 check('one row per account, first wins', rows.map(r => r.name), ['Vibrantz Technologies', 'Vibrant Energy', 'Acme Corp']);
-check('a row carries CDM, Tier and Vertical', rows[0], { name: 'Vibrantz Technologies', cdm: 'Sam Ouimet', tier: 'Tier 2', vertical: 'chemicals & plastics' });
+check('a row carries CDM, Tier and Vertical', rows[0], { name: 'Vibrantz Technologies', cdm: 'Sam Ouimet', tier: 'Tier 2', vertical: 'chemicals & plastics', sheet: 'S' });
 check('an untiered row is still a row', rows[2].tier, '');
 
 // suggestions

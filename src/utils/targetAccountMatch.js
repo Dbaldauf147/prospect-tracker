@@ -10,31 +10,41 @@
 
 import { normalizeCompanyName } from './companyKey.js';
 import { resolveTargetAccountCdm, matchesCdm } from './cdmMatch.js';
-import { resolveTargetAccountVertical, tierMismatch, targetRowCompany as rowCompany, targetRowTier as rowTier, targetTierColumn } from './targetTier.js';
+import { resolveTargetAccountVertical, tierMismatch, targetRowCompany as rowCompany, targetRowTier as rowTier, targetTierColumns } from './targetTier.js';
 
 /**
- * Every account on the Target Accounts list, once each (first row wins),
- * with what the popup shows for it: { name, cdm, tier, vertical }. Every
- * rep's rows, since the point is to see whose account it is.
+ * Every account on the Target Accounts list, once each, with what the
+ * popup shows for it: { name, cdm, tier, vertical, sheet }. Every rep's
+ * rows, since the point is to see whose account it is.
+ *
+ * An account on more than one row (two sheets, or listed twice on one)
+ * shows its first TIERED row, else its first row. It used to be the first
+ * row outright, so an untiered duplicate ahead of the Tier 3 row made the
+ * box read "none" and ask to move the card to Not on tier list, while the
+ * Targets page row said Tier 3.
  */
 export function targetAccountRows(targetAccountsData, settings) {
   const data = targetAccountsData;
   const out = [];
-  const seen = new Set();
+  const at = new Map();
   for (const sheetName of data?.sheetNames || []) {
     const sheet = data?.sheets?.[sheetName];
-    const tierCol = targetTierColumn(sheet?.headers?.length ? sheet.headers : Object.keys(sheet?.records?.[0] || {}));
+    const tierCols = targetTierColumns(sheet?.headers?.length ? sheet.headers : Object.keys(sheet?.records?.[0] || {}));
     for (const r of sheet?.records || []) {
       const name = rowCompany(r);
+      if (!name) continue;
       const k = name.toLowerCase();
-      if (!name || seen.has(k)) continue;
-      seen.add(k);
-      out.push({
+      const tier = rowTier(r, tierCols);
+      if (at.has(k) && (out[at.get(k)].tier || !tier)) continue;
+      const row = {
         name,
         cdm: resolveTargetAccountCdm(r, settings?.targetCdmColumn),
-        tier: rowTier(r, tierCol),
+        tier,
         vertical: resolveTargetAccountVertical(r, settings?.targetVerticalColumn),
-      });
+        sheet: sheetName,
+      };
+      if (at.has(k)) out[at.get(k)] = row;
+      else { at.set(k, out.length); out.push(row); }
     }
   }
   return out;

@@ -9017,7 +9017,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   return (
                     <div key={row.name} style={{ marginTop: 2 }}>
                       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', rowGap: 4 }}>
-                        <strong style={{ marginRight: 12 }}>{row.name}</strong>
+                        <strong
+                          style={{ marginRight: 12 }}
+                          title={row.sheet ? `Read from the "${row.sheet}" sheet of the Targets list` : undefined}
+                        >{row.name}</strong>
                         {row.missing
                           ? <span style={{ color: '#B91C1C', marginRight: 12 }}>Not on the current Targets list</span>
                           : <>
