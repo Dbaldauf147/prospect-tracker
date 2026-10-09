@@ -8941,22 +8941,56 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       )}
                     </span>
                   );
+                  const cardCdm = String(fields.cdm || '').trim();
                   return (
-                    <div key={row.name} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', rowGap: 4, marginTop: 2 }}>
-                      <strong style={{ marginRight: 12 }}>{row.name}</strong>
-                      {row.missing
-                        ? <span style={{ color: '#B91C1C', marginRight: 12 }}>Not on the current Targets list</span>
-                        : <>
-                          {field('CDM', row.cdm, flags.cdm, 'cdm')}
-                          {field('Tier', row.tier, flags.tier, 'tier')}
-                          {field('Vertical', flags.vertical?.row || row.vertical, flags.vertical, 'vertical')}
-                        </>}
-                      <button
-                        type="button"
-                        onClick={() => setTargetMapping(mappedNames.filter(n => n !== row.name))}
-                        title={`Unmap ${row.name}. This is the same mapping My Accounts uses.`}
-                        style={{ marginLeft: 'auto', padding: 0, border: 0, background: 'none', color: '#64748B', fontSize: '0.66rem', textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit' }}
-                      >Unmap</button>
+                    <div key={row.name} style={{ marginTop: 2 }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', rowGap: 4 }}>
+                        <strong style={{ marginRight: 12 }}>{row.name}</strong>
+                        {row.missing
+                          ? <span style={{ color: '#B91C1C', marginRight: 12 }}>Not on the current Targets list</span>
+                          : <>
+                            {/* The CDM gets its own warning line below rather
+                                than the small chip, so it is only marked
+                                here when it agrees. */}
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginRight: 12 }}>
+                              <span style={{ color: 'var(--color-text-muted)' }}>CDM</span>
+                              <strong style={{ color: row.cdm ? 'var(--color-text)' : '#94A3B8' }}>{row.cdm || 'none on the list'}</strong>
+                              {row.cdm && !flags.cdm && (
+                                <span title="Matches the CDM on this card." style={{ color: '#16A34A', fontWeight: 700 }}>✓</span>
+                              )}
+                            </span>
+                            {field('Tier', row.tier, flags.tier, 'tier')}
+                            {field('Vertical', flags.vertical?.row || row.vertical, flags.vertical, 'vertical')}
+                          </>}
+                        <button
+                          type="button"
+                          onClick={() => setTargetMapping(mappedNames.filter(n => n !== row.name))}
+                          title={`Unmap ${row.name}. This is the same mapping My Accounts uses.`}
+                          style={{ marginLeft: 'auto', padding: 0, border: 0, background: 'none', color: '#64748B', fontSize: '0.66rem', textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit' }}
+                        >Unmap</button>
+                      </div>
+                      {!row.missing && flags.cdm && (
+                        // Who covers the account is the disagreement that
+                        // matters most, so it is spelled out in full rather
+                        // than left to a chip beside the name.
+                        <div
+                          role="alert"
+                          style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.25rem 0.6rem', marginTop: 6, padding: '0.35rem 0.5rem', borderRadius: 4, background: '#FEF2F2', border: '1px solid #FCA5A5', borderLeft: '3px solid #DC2626', color: '#991B1B' }}
+                        >
+                          <span>
+                            <span aria-hidden="true" style={{ marginRight: 4 }}>⚠</span>
+                            <strong>CDM mismatch:</strong>{' '}
+                            the Targets list has <strong>{flags.cdm.row}</strong>,{' '}
+                            {cardCdm ? <>this card has <strong>{cardCdm}</strong>.</> : 'this card has no CDM.'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => applyTargetCdm(flags.cdm.apply)}
+                            title={`Set this card's CDM to ${flags.cdm.apply}, as the Targets list has it${cardCdm ? `, replacing ${cardCdm}` : ''}.`}
+                            style={{ marginLeft: 'auto', padding: '0.1rem 0.45rem', border: '1px solid #DC2626', borderRadius: 4, background: '#DC2626', color: '#FFFFFF', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+                          >Use {flags.cdm.apply}</button>
+                        </div>
+                      )}
                     </div>
                   );
                 }) : targetSuggestions.map(row => (
