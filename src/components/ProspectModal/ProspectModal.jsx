@@ -8913,8 +8913,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             {/* The Targets list row this company is. Hidden for a new
                 company (nothing to map yet) and until the list loads. */}
             {targetRows && prospect?.id && !isNew && (mappedRows.length > 0 || targetSuggestions.length > 0) && (
-              <div style={{ gridColumn: '1 / -1', border: '1px solid var(--color-border)', borderRadius: 6, padding: '0.45rem 0.6rem', background: 'var(--color-surface)', fontSize: '0.72rem' }}>
-                <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)', marginBottom: 4 }}>
+              // An unmapped suggestion is in red so it can't be missed: it is
+              // a Targets list account this card isn't tied to yet. Once
+              // mapped, the box goes back to the quiet look.
+              <div style={mappedRows.length > 0
+                ? { gridColumn: '1 / -1', border: '1px solid var(--color-border)', borderRadius: 6, padding: '0.45rem 0.6rem', background: 'var(--color-surface)', fontSize: '0.72rem' }
+                : { gridColumn: '1 / -1', border: '2px solid #DC2626', borderRadius: 6, padding: '0.45rem 0.6rem', background: '#FEF2F2', color: '#991B1B', fontSize: '0.72rem' }}
+              >
+                <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: mappedRows.length > 0 ? 'var(--color-text-muted)' : '#B91C1C', marginBottom: 4 }}>
                   {mappedRows.length > 0 ? 'Targets list: mapped' : 'Targets list: suggested match'}
                 </div>
                 {mappedRows.length > 0 ? mappedRows.map(row => {
@@ -8956,14 +8962,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 }) : targetSuggestions.map(row => (
                   <div key={row.name} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.25rem 0.75rem', marginTop: 2 }}>
                     <strong>{row.name}</strong>
-                    <span style={{ color: 'var(--color-text-secondary)' }}>
+                    <span style={{ color: '#B91C1C' }}>
                       {[row.cdm && `CDM ${row.cdm}`, row.tier, row.vertical].filter(Boolean).join(' · ') || 'no details on the list'}
                     </span>
                     <button
                       type="button"
                       onClick={() => setTargetMapping([row.name])}
                       title={`Map ${fields.company} to ${row.name} on the Target Accounts list (the same mapping My Accounts uses). Its CDM, Tier and Vertical are then checked against this card.`}
-                      style={{ marginLeft: 'auto', padding: '0 0.45rem', border: '1px solid #93C5FD', borderRadius: 4, background: '#EFF6FF', color: '#1E40AF', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+                      style={{ marginLeft: 'auto', padding: '0 0.45rem', border: '1px solid #DC2626', borderRadius: 4, background: '#DC2626', color: '#FFFFFF', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
                     >Map</button>
                   </div>
                 ))}
