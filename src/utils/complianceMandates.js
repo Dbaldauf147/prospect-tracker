@@ -471,6 +471,27 @@ export function screenSites(sites, opts) {
   return (sites || []).map(s => screenSite(s, opts));
 }
 
+// The names of the mandates a site falls under, one line per ordinance:
+// "BBS / BPS: Local Law 97" when one ordinance covers two categories, else a
+// line each. Only the mandates the building actually has to meet (eligible)
+// are named. An ordinance on file with no name ("" or "Not available") reads
+// as the jurisdiction's, so the line still says whose it is.
+export function siteMandateNames(r) {
+  if (!r?.matched) return [];
+  const byName = new Map();
+  for (const cat of CATEGORIES) {
+    const e = r[cat];
+    if (!(e && e.active && e.eligible === true)) continue;
+    const raw = String(e.policyName || '').trim();
+    const name = raw && !/^not available$/i.test(raw)
+      ? raw
+      : `${r.government || 'Local'} ${CATEGORY_LABEL[cat]} ordinance`;
+    if (!byName.has(name)) byName.set(name, []);
+    byName.get(name).push(CATEGORY_LABEL[cat]);
+  }
+  return [...byName].map(([name, cats]) => `${cats.join(' / ')}: ${name}`);
+}
+
 // Human label for the company / portfolio a compliance site list belongs to,
 // taken from each site's Company Name (mapped on the Utility Lookup upload).
 // One distinct company → that name; a couple → both; more → the first plus a
