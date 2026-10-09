@@ -35,11 +35,19 @@ export const PE_MONTHLY_COLUMNS = [
   { key: 'BFO Address', label: 'BFO Link' },
 ];
 
+// Where a tier sorts: Tier 1 first, then Tier 2, Tier 3 and any higher
+// number, then everything not on the tier list (blank, "-", "Not on tier
+// list") last.
+export function peMonthlyTierRank(tier) {
+  const m = String(tier || '').trim().match(/^(?:tier\s*)?(\d+)$/i);
+  return m ? Number(m[1]) : Number.POSITIVE_INFINITY;
+}
+
 /**
  * One flat row per deal, keyed by PE_MONTHLY_COLUMNS, for the table on the
  * tab and the email alike.
  *
- *   deals           buildPeOverlapDeals output (already in agenda order)
+ *   deals           buildPeOverlapDeals output (agenda order; re-sorted by tier)
  *   records         the opp rows, to fill Scope / Next Steps / BFO Address
  *   salespeopleFor  (vertical) => [{ name }] - Opps > Coverage's lookup
  */
@@ -64,7 +72,12 @@ export function peMonthlyRows(deals, records = [], salespeopleFor = () => []) {
       'Next Steps': String(opp['Next Steps'] ?? '').trim(),
       'BFO Address': String(opp['BFO Address'] ?? '').trim(),
     };
-  });
+  })
+    // Tier 1 at the top, not on the tier list at the bottom. The sort is
+    // stable, so deals within a tier keep the agenda's order.
+    .map((row, i) => ({ row, i, rank: peMonthlyTierRank(row.Tier) }))
+    .sort((a, b) => (a.rank === b.rank ? a.i - b.i : a.rank < b.rank ? -1 : 1))
+    .map(x => x.row);
 }
 
 /**
