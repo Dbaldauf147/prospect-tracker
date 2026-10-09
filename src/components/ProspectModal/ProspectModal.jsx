@@ -5140,10 +5140,24 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const byName = new Map(targetRows.map(r => [r.name.toLowerCase(), r]));
     return mappedNames.map(n => byName.get(n.toLowerCase()) || { name: n, cdm: '', tier: '', vertical: '', missing: true });
   }, [targetRows, mappedNames.join('\u0001')]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Suggestions the user ignored for this card, stored per prospect id as
+  // { [targetNameLower]: true } in synced settings, so Ignore only hides
+  // that one list row and a different suggestion still shows.
+  const ignoredTargetSuggestions = (settings?.ignoredTargetSuggestions || {})[prospect?.id] || null;
   const targetSuggestions = useMemo(
-    () => (targetRows && mappedNames.length === 0 ? suggestTargetMatches(fields.company, targetRows) : []),
-    [targetRows, fields.company, mappedNames.length],
+    () => (targetRows && mappedNames.length === 0
+      ? suggestTargetMatches(fields.company, targetRows).filter(r => !ignoredTargetSuggestions?.[r.name.toLowerCase()])
+      : []),
+    [targetRows, fields.company, mappedNames.length, ignoredTargetSuggestions],
   );
+  function ignoreTargetSuggestion(name) {
+    const id = prospect?.id;
+    if (!id || !name) return;
+    updateSettings(prev => {
+      const all = prev?.ignoredTargetSuggestions || {};
+      return { ignoredTargetSuggestions: { ...all, [id]: { ...(all[id] || {}), [name.toLowerCase()]: true } } };
+    });
+  }
   function setTargetMapping(names) {
     if (!prospect?.id) return;
     updateSettings({ targetMap: { ...(settings?.targetMap || {}), [prospect.id]: names } });
@@ -5478,6 +5492,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     out.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
     return out.slice(0, 5);
   }, [fields.company]);
+  // RA Client matches the user has told us to ignore for this company,
+  // stored per company (lowercased) as { [raNameLower]: true } in synced
+  // settings. Ignoring is per matched client, so a different RA Client
+  // that starts matching later still raises the warning.
+  const raIgnoreKey = (fields.company || '').toLowerCase().trim();
+  const visibleRaClientMatches = useMemo(() => {
+    const ignored = (settings?.ignoredRaClientMatches || {})[raIgnoreKey] || {};
+    return raClientMatches.filter(m => !ignored[m.name.toLowerCase()]);
+  }, [raClientMatches, settings?.ignoredRaClientMatches, raIgnoreKey]);
+  function ignoreRaClientMatches() {
+    if (!raIgnoreKey || visibleRaClientMatches.length === 0) return;
+    const names = visibleRaClientMatches.map(m => m.name.toLowerCase());
+    updateSettings(prev => {
+      const all = prev?.ignoredRaClientMatches || {};
+      const forCompany = { ...(all[raIgnoreKey] || {}) };
+      for (const n of names) forCompany[n] = true;
+      return { ignoredRaClientMatches: { ...all, [raIgnoreKey]: forCompany } };
+    });
+  }
   const [pastePortfolio, setPastePortfolio] = useState('');
   // Slug used as the Firestore path segment for persisted research
   // results - same shape as companySlug below; declared earlier here
@@ -8437,7 +8470,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           </div>
         )}
         <div className={styles.body}>
-          {raClientMatches.length > 0 && (
+          {visibleRaClientMatches.length > 0 && (
             /* One horizontal strip: warning, headline, explanation, then the
                matched clients pushed to the right end. It used to stack those
                four onto their own lines, which cost three rows of the modal
@@ -8456,13 +8489,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             }}>
               <span style={{ fontSize: '0.95rem', lineHeight: 1 }}>⚠️</span>
               <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
-                {raClientMatches.some(m => m.exact) ? 'Matches an RA Client' : 'Possible RA Client match'}
+                {visibleRaClientMatches.some(m => m.exact) ? 'Matches an RA Client' : 'Possible RA Client match'}
               </span>
               <span style={{ fontSize: '0.75rem', color: '#78350F', minWidth: 0 }}>
-                This company looks like {raClientMatches.length === 1 ? 'an existing RA Client' : 'existing RA Clients'} on the Lists → RA Clients tab. Double-check before prospecting.
+                This company looks like {visibleRaClientMatches.length === 1 ? 'an existing RA Client' : 'existing RA Clients'} on the Lists → RA Clients tab. Double-check before prospecting.
               </span>
               <span style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.35rem', marginLeft: 'auto' }}>
-                {raClientMatches.map(m => (
+                {visibleRaClientMatches.map(m => (
                   <span
                     key={m.name}
                     title={m.cm ? `Client Manager: ${m.cm}` : undefined}
@@ -8478,6 +8511,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     {m.cm && <span style={{ fontWeight: 400, color: '#A16207' }}>· {m.cm}</span>}
                   </span>
                 ))}
+                <button
+                  type="button"
+                  onClick={ignoreRaClientMatches}
+                  title={`Stop flagging ${visibleRaClientMatches.map(m => m.name).join(', ')} as an RA Client match for this company`}
+                  style={{
+                    padding: '0.15rem 0.55rem', background: '#fff', border: '1px solid #FCD34D',
+                    borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, color: '#92400E',
+                    cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+                  }}
+                >Ignore</button>
               </span>
             </div>
           )}
@@ -9005,6 +9048,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       title={`Map ${fields.company} to ${row.name} on the Target Accounts list (the same mapping My Accounts uses). Its CDM, Tier and Vertical are then checked against this card.`}
                       style={{ marginLeft: 'auto', padding: '0 0.45rem', border: '1px solid #DC2626', borderRadius: 4, background: '#DC2626', color: '#FFFFFF', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
                     >Map</button>
+                    <button
+                      type="button"
+                      onClick={() => ignoreTargetSuggestion(row.name)}
+                      title={`Stop suggesting ${row.name} as the Targets list match for ${fields.company}.`}
+                      style={{ padding: '0 0.45rem', border: '1px solid #FCA5A5', borderRadius: 4, background: '#FFFFFF', color: '#991B1B', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+                    >Ignore</button>
                   </div>
                 ))}
               </div>
