@@ -133,6 +133,7 @@ import {
   estimateConsumptionForTenure,
   tenureEstimateNote,
 } from '../../utils/ownershipEstimates';
+import { utilityAccountsTotal } from '../../utils/utilityAccountsTotal';
 import { readWorkKey, writeWorkKey, clearWorkKey } from '../../utils/mirroredWorkKeys';
 import {
   normalizeCountryName,
@@ -3510,6 +3511,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // provided" when it wasn't. A raw value still isn't === 'Leased', so
       // it screens like any other unknown status.
       ownership: r.__ownership__ || r.__ownershipRaw__ || null,
+      // Utility accounts (bills) estimated from the property type, for the
+      // Master Analysis's Compliance Site Detail sheet. Same figure the
+      // Site Detail sheet's Est. Utility Accounts column carries.
+      accounts: accountTotalForTenure(r.__ownership__, r.__propertyType__),
       // Carried so the Master Analysis can screen the sites the company
       // still has. The subtabs on this page screen the lot: a closed
       // building's mandate history is still worth reading there.
@@ -12938,10 +12943,35 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         to: { row: 1 + sitesForDetail.length, column: detailCols.length },
       };
     }
-    // Legend for the estimated-data call-out: one row below the table,
-    // spanning the width so it reads as a footnote rather than data.
+    // Utility accounts total, right under the table in the Est. Utility
+    // Accounts column: the total typed on this page when there is one (the
+    // actual figure), else the per-site estimates added up. The per-site
+    // column stays the estimate either way, since a typed portfolio total
+    // can't be divided back over the sites.
     {
-      const legendRowIdx = 2 + sitesForDetail.length + 1;
+      const accTotal = utilityAccountsTotal(manualAccounts, sitesForDetail.map(x => x.accounts));
+      const accCol = detailCols.findIndex(c => c.label === 'Est. Utility Accounts') + 1;
+      if (accTotal && accCol > 0) {
+        const totalRow = detailSheet.getRow(2 + sitesForDetail.length);
+        const labelCell = totalRow.getCell(1);
+        labelCell.value = accTotal.label;
+        labelCell.font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: SE_TEXT_DARK } };
+        labelCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        const valueCell = totalRow.getCell(accCol);
+        valueCell.value = accTotal.value;
+        valueCell.numFmt = '#,##0';
+        valueCell.font = accTotal.entered
+          ? { name: 'Nunito Sans', size: 10, bold: true, color: { argb: SE_TEXT_DARK } }
+          : { name: 'Nunito Sans', size: 10, bold: true, italic: true, color: { argb: SE_EST } };
+        valueCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        for (const c of [labelCell, valueCell]) c.border = { top: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+        totalRow.height = 18;
+      }
+    }
+    // Legend for the estimated-data call-out: below the table and its
+    // accounts total, spanning the width so it reads as a footnote.
+    {
+      const legendRowIdx = 2 + sitesForDetail.length + 2;
       const legendRow = detailSheet.getRow(legendRowIdx);
       const legendCell = legendRow.getCell(1);
       legendCell.value = '† Columns that can contain estimated data. Italic amber values are estimated: annual consumption is modeled from the property type, costs are derived from indicative rates when no actual cost was provided, and the Est. rate columns are indicative ($/kWh and $/Dth), not billed tariffs. Upright black values come from the uploaded file.\n\nRates: Est. is the indicative market rate for the site’s state / country. Actual is the blended rate the uploaded numbers imply - annual spend ÷ annual consumption - and is shown only where the file supplied a real spend, since a cost this tool derived from the indicative rate would divide back out to that same rate. vs Est. is the signed gap: +20% means the site pays 20% more per unit than the market indication. Note the two are not like for like where the uploaded spend is all-in (supply plus delivery) and the indication is not.\n\nEnergy intensity: consumption ÷ Size (ft²), shown next to the per-ft² estimate the site’s property type carries (the reference profile’s consumption ÷ its reference size - unchanged by the site’s own square footage, since the estimate scales linearly). The vs Est. columns are the signed gap between the two: +30% means the site uses 30% more per ft² than its type suggests. Amber marks a 10–25% gap, red 25%+ - worth checking the consumption figure and the property type on that row. Total intensity is electric plus gas converted at 293.07 kWh per Dth, counting a commodity with no figure as zero, so an electric-only site reads low against a type whose estimate includes gas. Cells stay blank where the site has no square footage, or where its property type carries no consumption profile. Where the consumption itself was modeled (italic amber), the gap is 0% by construction.';
@@ -15486,6 +15516,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       siteCount: complianceScopedSites.length,
       siteDetailSheetName: 'Compliance Site Detail',
       companyName: company,
+      // The typed (actual) total, else the screened sites' estimates.
+      utilityAccounts: utilityAccountsTotal(manualAccounts, complianceScopedSites.map(x => x.accounts)),
     });
 
     // 3. Corporate Compliance — company-level portfolio view (site footprint

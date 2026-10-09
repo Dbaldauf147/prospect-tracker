@@ -545,7 +545,7 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   foot.alignment = { horizontal: 'center' };
 
   // === Sheet 2 — Site-by-Site Mandate Detail =============================
-  buildSiteDetailSheet(wb, results, { generatedAt, siteCount, matched, sheetName: meta.siteDetailSheetName });
+  buildSiteDetailSheet(wb, results, { generatedAt, siteCount, matched, sheetName: meta.siteDetailSheetName, utilityAccounts: meta.utilityAccounts || null });
 
   // Combined-export mode: the sheets were added to the caller's shared
   // workbook, which writes and downloads the merged file itself.
@@ -574,9 +574,9 @@ function buildSiteDetailSheet(wb, results, meta) {
     properties: { tabColor: { argb: SE_DARK } },
     views: [{ showGridLines: false, state: 'frozen', ySplit: 4, xSplit: 1 }],
   });
-  const NC = 19;
+  const NC = 20;
   ws.columns = [
-    { width: 26 }, { width: 14 }, { width: 7 }, { width: 20 }, { width: 14 }, { width: 10 }, { width: 11 },
+    { width: 26 }, { width: 14 }, { width: 7 }, { width: 20 }, { width: 14 }, { width: 10 }, { width: 11 }, { width: 12 },
     { width: 11 }, { width: 30 }, { width: 13 }, { width: 14 },
     { width: 11 }, { width: 30 }, { width: 13 }, { width: 14 },
     { width: 11 }, { width: 30 }, { width: 13 }, { width: 14 },
@@ -612,7 +612,10 @@ function buildSiteDetailSheet(wb, results, meta) {
   // Each category's Mandate column names the ordinance (Local Law 97, BEPS)
   // and links to its page. One column per category rather than one for
   // all three, because an Excel cell holds a single hyperlink.
-  const headers = ['Site', 'City', 'State', 'Jurisdiction', 'Gov ID', 'Sq Ft', 'Owned / Leased',
+  //
+  // Est. Utility Accounts is the bills the site is expected to carry, from
+  // its property type: the same estimate as the Site Detail sheet's.
+  const headers = ['Site', 'City', 'State', 'Jurisdiction', 'Gov ID', 'Sq Ft', 'Owned / Leased', 'Est. Utility Accounts',
     'BBS', 'BBS Mandate', 'BBS Deadline', 'BBS Penalty/yr',
     'Energy Audits', 'Audits Mandate', 'Audits Deadline', 'Audits Penalty/yr',
     'BPS', 'BPS Mandate', 'BPS Deadline', 'BPS Penalty/yr'];
@@ -638,16 +641,19 @@ function buildSiteDetailSheet(wb, results, meta) {
     const zebra = idx % 2 === 1;
     const row = ws.getRow(rr);
     const sqft = (r.sqft != null && Number.isFinite(Number(r.sqft))) ? Number(r.sqft) : null;
+    const accounts = (r.accounts != null && Number.isFinite(Number(r.accounts))) ? Number(r.accounts) : null;
     const base = [r.siteName || '', r.city || '', r.state || '', r.matched ? (r.government || '') : 'no match', r.govId || '', sqft,
-      r.ownership || ''];
+      r.ownership || '', accounts];
     base.forEach((v, i) => {
       const c = row.getCell(i + 1);
       c.value = (v === '' || v == null) ? null : v;
       if (i === 5 && typeof v === 'number') c.numFmt = '#,##0';
-      c.font = { name: FONT, size: 9.5, bold: i === 0, color: { argb: i === 0 ? INK : SLATE } };
+      // Two decimals at most: the estimate counts a "0 - 1" as 0.5.
+      if (i === 7 && typeof v === 'number') c.numFmt = '#,##0.##';
+      c.font = { name: FONT, size: 9.5, bold: i === 0, italic: i === 7, color: { argb: i === 0 ? INK : SLATE } };
       c.alignment = {
         vertical: 'middle',
-        horizontal: i === 5 ? 'right' : i === 6 ? 'center' : 'left',
+        horizontal: i === 5 || i === 7 ? 'right' : i === 6 ? 'center' : 'left',
         indent: i === 6 ? 0 : 1,
       };
     });
@@ -655,7 +661,7 @@ function buildSiteDetailSheet(wb, results, meta) {
     CATEGORIES.forEach((cat, ci) => {
       const e = r[cat];
       const applicable = !!(e && e.active && e.eligible === true);
-      const c0 = 8 + ci * 4;
+      const c0 = 9 + ci * 4;
       const appCell = row.getCell(c0);
       appCell.value = applicable ? 'Yes' : (r.matched ? 'No' : '');
       appCell.font = { name: FONT, size: 9.5, bold: applicable, color: { argb: applicable ? argb(CATEGORY_COLOR[cat]) : 'FF94A3B8' } };
@@ -694,6 +700,26 @@ function buildSiteDetailSheet(wb, results, meta) {
   });
 
   ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: NC } };
+
+  // Utility accounts total under the table: the total typed on the Utility
+  // Lookup page when there is one (actual), else the sites' estimates added
+  // up (utils/utilityAccountsTotal.js). Below the filter range, so sorting
+  // or filtering the sites leaves it in place.
+  const acc = meta.utilityAccounts;
+  if (acc && Number.isFinite(Number(acc.value))) {
+    const row = ws.getRow(rr);
+    const label = row.getCell(1);
+    label.value = acc.label;
+    label.font = { name: FONT, size: 9.5, bold: true, color: { argb: INK } };
+    label.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    const val = row.getCell(8);
+    val.value = Number(acc.value);
+    val.numFmt = '#,##0';
+    val.font = { name: FONT, size: 9.5, bold: true, italic: !acc.entered, color: { argb: INK } };
+    val.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
+    for (let ci = 1; ci <= NC; ci++) row.getCell(ci).border = { top: { style: 'thin', color: { argb: SE_DARK } } };
+    row.height = 18;
+  }
 }
 
 // Shared branded title band + floated logo, used by the Corporate Compliance
