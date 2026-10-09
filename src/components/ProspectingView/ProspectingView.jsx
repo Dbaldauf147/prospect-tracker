@@ -50,6 +50,7 @@ import { COLD_OUTREACH_EXCLUDED_STATUSES } from '../../utils/decisionMakerCovera
 import { auditablePeople, setQueuedAuditContacts } from '../../utils/tagAuditQueue';
 import { ProspectingHistory } from './ProspectingHistory';
 import { ProspectingCompanies } from './ProspectingCompanies';
+import { ProspectingTiered } from './ProspectingTiered';
 
 // The contact popup, loaded when one is actually opened. It lives in
 // ProspectModal, which is the largest module in the app — a static import
@@ -110,6 +111,7 @@ const SUBTABS = [
   { key: 'history', label: 'History' },
   { key: 'prospects', label: 'Prospects' },
   { key: 'pcs', label: 'PCs' },
+  { key: 'tiered', label: 'Tiered' },
 ];
 function readSavedSubtab() {
   try {
@@ -1499,6 +1501,15 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
 
       {subtab === 'history' ? (
         <ProspectingHistory today={today} maxWidth={PAGE_MAX} />
+      ) : subtab === 'tiered' ? (
+        <ProspectingTiered
+          prospects={prospects}
+          settings={settings}
+          updateSettings={updateSettings}
+          updateProspect={updateProspect}
+          cdmName={cdmName}
+          onSelectProspect={onSelectProspect}
+        />
       ) : subtab === 'prospects' || subtab === 'pcs' ? (
         <ProspectingCompanies
           mode={subtab}
