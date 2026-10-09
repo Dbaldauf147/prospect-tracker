@@ -3167,7 +3167,7 @@ Fix that now?
       if (k && !prospectByNorm.has(k)) prospectByNorm.set(k, p);
     }
 
-    const header = ['Company', 'Zoom Company ID', 'Zoom Company Name', 'Zoom Website'];
+    const header = ['Company', 'Zoom Company ID', 'Zoom Company Name', 'Company URL'];
     const rows = [header];
     for (const a of accounts) {
       const p = prospectByNorm.get(norm(a.company));
@@ -4254,7 +4254,7 @@ Fix that now?
           toolbarActions={[{
             key: 'zoom-export',
             label: 'Zoom Export',
-            title: 'Download a CSV of the rows shown here whose status is Inside Sales: Company, Zoom Company ID, Zoom Company Name, Zoom Website',
+            title: 'Download a CSV of the rows shown here whose status is Inside Sales: Company, Zoom Company ID, Zoom Company Name, Company URL',
             onClick: downloadZoomExport,
           }]}
           columns={columnsWithSelect}
