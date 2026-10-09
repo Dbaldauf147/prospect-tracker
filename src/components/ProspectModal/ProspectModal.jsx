@@ -637,6 +637,9 @@ const EMPTY = {
   // Opts this company into the weekly acquisition-news digest
   // (api/company-news-scheduler). Off unless explicitly ticked.
   trackAcquisitionNews: false,
+  // Ticked once this user has squared the account with the other CDM who
+  // also covers it (the Coverage CDM checkbox). Off unless ticked.
+  cdmAligned: false,
   salesPartner: '',
 };
 
@@ -9309,6 +9312,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     placeholder="Select CDM…"
                   />
                 </div>
+                {/* Right beside the CDM, named for whoever is signed in
+                    (Dan on the admin account): ticked once this account has
+                    been squared with the other CDM who covers it. */}
+                <label
+                  title="Tick once you've lined this account up with the other CDM who covers it."
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', flexShrink: 0, fontSize: '0.68rem', color: fields.cdmAligned === true ? '#166534' : 'var(--color-text-muted)', fontWeight: fields.cdmAligned === true ? 600 : 400, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={fields.cdmAligned === true}
+                    onChange={e => set('cdmAligned', e.target.checked)}
+                    style={{ accentColor: '#16A34A', margin: 0 }}
+                  />
+                  {`${String(cdmName || '').trim().split(/\s+/)[0] || 'Dan'}'s aligned w/other CDM`}
+                </label>
                 {targetCdmConflict && (() => {
                   // The badge is the fix as well as the warning: one name
                   // goes straight in, several open a list to pick from,
