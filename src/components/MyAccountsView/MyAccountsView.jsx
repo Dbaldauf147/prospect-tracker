@@ -36,6 +36,7 @@ import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { tagMatrixColumns } from '../../utils/decisionMakerTagMatrix';
 import { dmTagReading, recordDmTagDay } from '../../utils/dmTagHistory';
 import styles from './MyAccountsView.module.css';
+import { buildZoomExcludedMatcher, normZoomCompany } from '../../utils/zoomExportExclude';
 
 function InlineCell({ row, field, value, onUpdate, type, options, displayValue }) {
   const [editing, setEditing] = useState(false);
@@ -3148,17 +3149,7 @@ Fix that now?
   // the set of accounts differs, so the building and downloading lives here
   // and each button just decides which rows to hand over.
   function downloadZoomCsv(accounts, filename) {
-    const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
-    const norm = s => String(s || '')
-      .toLowerCase()
-      .normalize('NFKD').replace(/[̀-ͯ]/g, '')
-      .replace(/\(.*?\)/g, ' ')
-      .replace(/\[.*?\]/g, ' ')
-      .replace(/&/g, ' and ')
-      .replace(CORP_SUFFIXES, ' ')
-      .replace(/[^a-z0-9]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    const norm = normZoomCompany;
 
     // Lookup prospects by normalized company name to pull Zoom + site.
     const prospectByNorm = new Map();
@@ -3167,9 +3158,17 @@ Fix that now?
       if (k && !prospectByNorm.has(k)) prospectByNorm.set(k, p);
     }
 
+    // Companies excluded from ZoomInfo exports on their company popup.
+    const isExcluded = buildZoomExcludedMatcher(prospects);
+    const kept = accounts.filter(a => !isExcluded({ id: a.id, company: a.company, zoomId: prospectByNorm.get(norm(a.company))?.zoomCompanyId }));
+    if (kept.length === 0) {
+      alert('Every account in this export is excluded from ZoomInfo exports, so there is nothing to download.');
+      return;
+    }
+
     const header = ['Company', 'Zoom Company ID', 'Zoom Company Name', 'Company URL'];
     const rows = [header];
-    for (const a of accounts) {
+    for (const a of kept) {
       const p = prospectByNorm.get(norm(a.company));
       rows.push([
         a.company || '',
