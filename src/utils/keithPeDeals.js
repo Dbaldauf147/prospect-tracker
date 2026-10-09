@@ -149,7 +149,12 @@ export function accountTargetCdm(row, prospects = [], targetCdmFor = null) {
  *   parseAmount  (raw) => number | null
  *   fmtAmount    (number) => string
  *
- *   [{ id, name, amount, amountLabel, stage, stageLabel, peOwner, vertical, verticalFromOpp, tier, targetCdm }]
+ *   [{ id, name, companyId, amount, amountLabel, stage, stageLabel, peOwner, vertical, verticalFromOpp, tier, targetCdm }]
+ *
+ * `companyId` is the Table View company the Tier and CDM were read from
+ * (null when the account has none), so a page can open THAT company to map
+ * it to its Targets list row - another name matcher could pick a different
+ * record and the mapping would never reach this row.
  */
 export function buildPeOverlapDeals(records, { parseAmount = () => null, fmtAmount = String, prospects = [], targetTierFor = null, targetCdmFor = null } = {}) {
   return (Array.isArray(records) ? records : [])
@@ -157,9 +162,11 @@ export function buildPeOverlapDeals(records, { parseAmount = () => null, fmtAmou
     .map(row => {
       const stage = oppStageNumber(row);
       const amount = parseAmount(row?.['Quoted Amount']);
+      const company = findCompany(text(row?.['Account']), Array.isArray(prospects) ? prospects : []);
       return {
         id: String(row._id),
         name: String(row?.['Account'] || '').trim() || '(no account)',
+        companyId: company?.id ?? null,
         amount,
         amountLabel: amount == null ? '' : fmtAmount(amount),
         stage,

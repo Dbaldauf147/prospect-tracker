@@ -50,6 +50,8 @@ export function peMonthlyRows(deals, records = [], salespeopleFor = () => []) {
     const people = d.vertical ? (salespeopleFor(d.vertical) || []) : [];
     return {
       id: d.id,
+      // Not a column: the company the CDM was read from, for the tab's links.
+      companyId: d.companyId ?? null,
       Account: d.name,
       Tier: d.tier || '',
       CDM: d.targetCdm || '',

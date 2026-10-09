@@ -121,6 +121,13 @@ check('deals carry owner and vertical',
   check('no list', accountTargetCdm({ Account: 'Acme Corp' }, [], null), '');
   const d = buildPeOverlapDeals([{ _id: 'c1', Account: 'Acme Corp', Type: 'Portfolio Company', Stage: 'Quoted' }], { targetCdmFor: cdmFor });
   check('the deal carries the CDM', d[0]?.targetCdm, 'Sara Rahme');
+  check('no company record, no companyId', d[0]?.companyId, null);
+  // The company the CDM was read from rides along, so the page opens THAT
+  // record to map it - and mapping it there fills the CDM.
+  const prospects = [{ id: 'p9', company: 'Acme Renamed' }];
+  const m = buildPeOverlapDeals([{ _id: 'c2', Account: 'Acme Renamed', Type: 'Portfolio Company', Stage: 'Quoted' }], { prospects, targetCdmFor: cdmFor });
+  check('the deal names its company', m[0]?.companyId, 'p9');
+  check('mapped company reads its CDM', m[0]?.targetCdm, 'Sara Rahme');
 }
 
 // Tier for another pod's account: the all-reps fallback.
