@@ -9299,110 +9299,110 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div>
               <label className={styles.label}>CDM</label>
-              {/* Control + conflict badge share the value column, so the
-                  warning reads beside the name it contradicts. The select
-                  keeps flexing; the badge truncates and puts the detail in
-                  its tooltip rather than widening the row. */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <SearchableSelect
-                    options={cdmOptions}
-                    value={fields.cdm || ''}
-                    onChange={v => set('cdm', v)}
-                    placeholder="Select CDM…"
-                  />
-                </div>
-                {/* Right beside the CDM, named for whoever is signed in
-                    (Dan on the admin account): ticked once this account has
-                    been squared with the other CDM who covers it. */}
-                <label
-                  title="Tick once you've lined this account up with the other CDM who covers it."
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', flexShrink: 0, fontSize: '0.68rem', color: fields.cdmAligned === true ? '#166534' : 'var(--color-text-muted)', fontWeight: fields.cdmAligned === true ? 600 : 400, cursor: 'pointer', whiteSpace: 'nowrap' }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={fields.cdmAligned === true}
-                    onChange={e => set('cdmAligned', e.target.checked)}
-                    style={{ accentColor: '#16A34A', margin: 0 }}
-                  />
-                  {`${String(cdmName || '').trim().split(/\s+/)[0] || 'Dan'}'s aligned w/other CDM`}
-                </label>
-                {targetCdmConflict && (() => {
-                  // The badge is the fix as well as the warning: one name
-                  // goes straight in, several open a list to pick from,
-                  // because the page cannot know which of two reps the
-                  // workbook means. Either way it REPLACES what is in the
-                  // field, so the tooltip says so before the click.
-                  const names = targetCdmConflict.cdms || [];
-                  const single = names.length === 1;
-                  return (
-                    <span style={{ position: 'relative', flexShrink: 0, maxWidth: '45%' }}>
-                      <button
-                        type="button"
-                        title={describeTargetCdmConflict(targetCdmConflict, fields.cdm)
-                          + targetCdmApplyHint(targetCdmConflict, fields.cdm)}
-                        aria-haspopup={single ? undefined : 'true'}
-                        aria-expanded={single ? undefined : cdmPickOpen}
-                        onClick={() => {
-                          if (single) applyTargetCdm(names[0]);
-                          else setCdmPickOpen(v => !v);
-                        }}
-                        style={{
-                          display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
-                          maxWidth: '100%', padding: '0.15rem 0.35rem', borderRadius: 4,
-                          background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E',
-                          fontSize: '0.62rem', fontWeight: 700, lineHeight: 1.3, cursor: 'pointer',
-                          fontFamily: 'inherit',
-                        }}
-                      >
-                        <span aria-hidden="true">⚠</span>
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {targetCdmConflictLabel(targetCdmConflict)}
-                        </span>
-                      </button>
-                      {!single && cdmPickOpen && (
-                        <div
+              {/* The select gets the full value column; the aligned tick
+                  and the CDM warnings sit on a row under it, so they read
+                  against the name they're about without squeezing it. Each
+                  badge truncates and puts the detail in its tooltip. */}
+              <div style={{ minWidth: 0 }}>
+                <SearchableSelect
+                  options={cdmOptions}
+                  value={fields.cdm || ''}
+                  onChange={v => set('cdm', v)}
+                  placeholder="Select CDM…"
+                />
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.3rem 0.5rem', marginTop: 4, minWidth: 0 }}>
+                  {/* Named for whoever is signed in (Dan on the admin
+                      account): ticked once this account has been squared
+                      with the other CDM who covers it. */}
+                  <label
+                    title="Tick once you've lined this account up with the other CDM who covers it."
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', flexShrink: 0, fontSize: '0.68rem', color: fields.cdmAligned === true ? '#166534' : 'var(--color-text-muted)', fontWeight: fields.cdmAligned === true ? 600 : 400, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={fields.cdmAligned === true}
+                      onChange={e => set('cdmAligned', e.target.checked)}
+                      style={{ accentColor: '#16A34A', margin: 0 }}
+                    />
+                    {`${String(cdmName || '').trim().split(/\s+/)[0] || 'Dan'}'s aligned w/other CDM`}
+                  </label>
+                  {targetCdmConflict && (() => {
+                    // The badge is the fix as well as the warning: one name
+                    // goes straight in, several open a list to pick from,
+                    // because the page cannot know which of two reps the
+                    // workbook means. Either way it REPLACES what is in the
+                    // field, so the tooltip says so before the click.
+                    const names = targetCdmConflict.cdms || [];
+                    const single = names.length === 1;
+                    return (
+                      <span style={{ position: 'relative', flexShrink: 0, maxWidth: '100%' }}>
+                        <button
+                          type="button"
+                          title={describeTargetCdmConflict(targetCdmConflict, fields.cdm)
+                            + targetCdmApplyHint(targetCdmConflict, fields.cdm)}
+                          aria-haspopup={single ? undefined : 'true'}
+                          aria-expanded={single ? undefined : cdmPickOpen}
+                          onClick={() => {
+                            if (single) applyTargetCdm(names[0]);
+                            else setCdmPickOpen(v => !v);
+                          }}
                           style={{
-                            position: 'absolute', right: 0, top: 'calc(100% + 3px)', zIndex: 60,
-                            background: '#fff', border: '1px solid var(--color-border)', borderRadius: 6,
-                            boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: 180, overflow: 'hidden',
+                            display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
+                            maxWidth: '100%', padding: '0.15rem 0.35rem', borderRadius: 4,
+                            background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E',
+                            fontSize: '0.62rem', fontWeight: 700, lineHeight: 1.3, cursor: 'pointer',
+                            fontFamily: 'inherit',
                           }}
                         >
-                          <div style={{ padding: '0.3rem 0.5rem', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)', borderBottom: '1px solid var(--color-border-light)' }}>
-                            Target Accounts says
+                          <span aria-hidden="true">⚠</span>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {targetCdmConflictLabel(targetCdmConflict)}
+                          </span>
+                        </button>
+                        {!single && cdmPickOpen && (
+                          <div
+                            style={{
+                              position: 'absolute', left: 0, top: 'calc(100% + 3px)', zIndex: 60,
+                              background: '#fff', border: '1px solid var(--color-border)', borderRadius: 6,
+                              boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: 180, overflow: 'hidden',
+                            }}
+                          >
+                            <div style={{ padding: '0.3rem 0.5rem', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)', borderBottom: '1px solid var(--color-border-light)' }}>
+                              Target Accounts says
+                            </div>
+                            {names.map(name => (
+                              <button
+                                key={name}
+                                type="button"
+                                onClick={() => applyTargetCdm(name)}
+                                title={`Put ${name} in the CDM field${String(fields.cdm || '').trim() ? `, replacing ${String(fields.cdm).trim()}` : ''}`}
+                                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.35rem 0.5rem', background: 'none', border: 'none', fontSize: '0.74rem', fontFamily: 'inherit', color: 'var(--color-text)', cursor: 'pointer' }}
+                                onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-surface-alt, #F1F5F9)'; }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+                              >{name}</button>
+                            ))}
                           </div>
-                          {names.map(name => (
-                            <button
-                              key={name}
-                              type="button"
-                              onClick={() => applyTargetCdm(name)}
-                              title={`Put ${name} in the CDM field${String(fields.cdm || '').trim() ? `, replacing ${String(fields.cdm).trim()}` : ''}`}
-                              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.35rem 0.5rem', background: 'none', border: 'none', fontSize: '0.74rem', fontFamily: 'inherit', color: 'var(--color-text)', cursor: 'pointer' }}
-                              onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-surface-alt, #F1F5F9)'; }}
-                              onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
-                            >{name}</button>
-                          ))}
-                        </div>
-                      )}
+                        )}
+                      </span>
+                    );
+                  })()}
+                  {verticalCoverageConflict && (
+                    <span
+                      title={`Opps > Coverage lists ${verticalCoverageConflict.names.join(', ')} for the ${verticalCoverageConflict.vertical} vertical, not ${cdmName}.`}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
+                        flexShrink: 0, maxWidth: '100%', padding: '0.15rem 0.35rem', borderRadius: 4,
+                        background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E',
+                        fontSize: '0.62rem', fontWeight: 700, lineHeight: 1.3,
+                      }}
+                    >
+                      <span aria-hidden="true">⚠</span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {`${verticalCoverageConflict.vertical}: ${verticalCoverageConflict.names.join(', ')}`}
+                      </span>
                     </span>
-                  );
-                })()}
-                {verticalCoverageConflict && (
-                  <span
-                    title={`Opps > Coverage lists ${verticalCoverageConflict.names.join(', ')} for the ${verticalCoverageConflict.vertical} vertical, not ${cdmName}.`}
-                    style={{
-                      display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
-                      flexShrink: 0, maxWidth: '45%', padding: '0.15rem 0.35rem', borderRadius: 4,
-                      background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E',
-                      fontSize: '0.62rem', fontWeight: 700, lineHeight: 1.3,
-                    }}
-                  >
-                    <span aria-hidden="true">⚠</span>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {`${verticalCoverageConflict.vertical}: ${verticalCoverageConflict.names.join(', ')}`}
-                    </span>
-                  </span>
-                )}
+                  )}
+                </div>
               </div>
             </div>
 
