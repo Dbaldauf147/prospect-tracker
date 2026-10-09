@@ -10052,7 +10052,7 @@ function OppFlagsFixModal({ opp, focusFlagId, onClose, onFieldChange, editorProp
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
             {oppName ? `${oppName}. ` : ''}
-            Each flag sits above the fields that clear it. Edits save as you make them, and a flag turns green once it stops firing.
+            Each flag sits above the fields that clear it: click a box to fill it in. Edits save as you make them, and a flag turns green once it stops firing.
           </div>
         </div>
 
@@ -10130,7 +10130,22 @@ function OppFlagsFixModal({ opp, focusFlagId, onClose, onFieldChange, editorProp
                         <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', width: 190, flexShrink: 0, paddingTop: 3 }}>
                           {headerLabel(field)}
                         </span>
-                        <div style={{ flex: 1, minWidth: 0 }}>
+                        {/* Boxed like an input so it reads as something to
+                            fill in: the editor inside is the table's
+                            click-to-edit cell, which on its own is a bare
+                            grey "-". A click anywhere in the box opens it. */}
+                        <div
+                          title="Click to edit"
+                          onClick={(e) => {
+                            if (e.target !== e.currentTarget) return;
+                            e.currentTarget.querySelector('[style*="cursor: text"], button, input, select, textarea')?.click();
+                          }}
+                          style={{
+                            flex: 1, minWidth: 0, minHeight: 26, padding: '3px 6px',
+                            border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff',
+                            cursor: 'text', boxSizing: 'border-box',
+                          }}
+                        >
                           <OppFieldEditor
                             field={field}
                             opp={opp}
