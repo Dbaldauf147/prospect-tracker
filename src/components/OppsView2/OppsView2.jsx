@@ -16948,15 +16948,30 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     exportValue: (row) => String(row[c.key] || ''),
     render: (row) => {
       const v = row[c.key];
+      // The company popup: the company the row's Tier and CDM were read
+      // from first, so mapping it to its Targets list row there fills this
+      // row's CDM; else found the way the Opportunities tab's Account links
+      // find it; an account with no company record yet opens the popup on
+      // its name so it can be added.
+      const openCompany = () => onSelectProspect(
+        (row.companyId != null && prospects.find(p => p.id === row.companyId))
+        || findProspectForAccount(row.Account, prospects)
+        || companyPopupTarget(prospects, row.Account),
+      );
+      if (c.key === 'CDM' && !v && onSelectProspect && row.Account) {
+        return (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); openCompany(); }}
+            title={`No Target Accounts list CDM for ${row.Account}. Open its company page and map it to its row in the Targets list box to show the CDM here.`}
+            style={{ border: 'none', background: 'none', padding: 0, font: 'inherit', fontSize: '0.75rem', color: '#94A3B8', textDecoration: 'underline dotted', cursor: 'pointer', textAlign: 'left' }}
+          >Map</button>
+        );
+      }
       if (!v) return <span style={{ color: '#CBD5E1' }}>-</span>;
       if (c.key === 'Account') {
-        // The company popup, found the way the Opportunities tab's Account
-        // links find it; an account with no company record yet opens the
-        // popup on its name so it can be added. Without a popup handler,
-        // the opp's own details instead.
-        const open = onSelectProspect
-          ? () => onSelectProspect(findProspectForAccount(v, prospects) || companyPopupTarget(prospects, v))
-          : () => setInfoOppId(row.id);
+        // Without a popup handler, the opp's own details instead.
+        const open = onSelectProspect ? openCompany : () => setInfoOppId(row.id);
         return (
           <button
             type="button"
@@ -18803,7 +18818,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           </div>
           <div style={{ padding: '0 0 0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
             The PE overlap deals from the Keith agenda: every Private Equity or Portfolio Company opp at Stage 3 (Lead) or later that is still open, furthest along first.
-            Other CDM is who Opps &gt; Coverage lists against the deal's vertical, so you can see where another pod is already in. The Outlook draft is the same email as New Opps, with this table.
+            CDM is who the Target Accounts list names for the company (click Map on a blank one to map the company to its Targets list row). Other CDM is who Opps &gt; Coverage lists against the deal's vertical, so you can see where another pod is already in. The Outlook draft is the same email as New Opps, with this table.
           </div>
           {loading && !data ? (
             <div className={styles.loading}>Loading...</div>

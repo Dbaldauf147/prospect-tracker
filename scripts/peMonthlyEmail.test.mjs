@@ -33,7 +33,7 @@ const coverage = (v) => (v === 'Chemicals' ? [{ name: 'Pat' }, { name: 'Lee' }] 
 const rows = peMonthlyRows(deals, records, coverage);
 
 check('one row per deal, in the deals\' order', rows.map(r => r.Account), ['Kensing Solutions', 'Acme']);
-check('row carries every column', Object.keys(rows[0]).filter(k => k !== 'id'), PE_MONTHLY_COLUMNS.map(c => c.key));
+check('row carries every column', Object.keys(rows[0]).filter(k => k !== 'id' && k !== 'companyId'), PE_MONTHLY_COLUMNS.map(c => c.key));
 check('opp fields joined by id', [rows[0].Scope, rows[0]['BFO Address']], ['Bill pay', 'https://bfo.example/7']);
 check('salespeople off Coverage for the vertical', rows[0].Salesperson, 'Pat, Lee');
 check('shown as Other CDM', PE_MONTHLY_COLUMNS.find(c => c.key === 'Salesperson').label, 'Other CDM');
