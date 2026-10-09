@@ -3992,7 +3992,9 @@ Fix that now?
         const myNames = allAccounts.map(a => (a.company || '').toLowerCase());
         // Also consider manual target name mappings as "matched"
         const mappedTargetNames = new Set(allAccounts.flatMap(a => (a.targetNames || []).map(n => n.toLowerCase())));
-        const onlyMyAccounts = allAccounts.filter(a => a.myTier !== 'Tier 3' && (!a.targetNames || a.targetNames.length === 0) && !fuzzyHas(targetNames, a.company));
+        // "Not on tier list" already says the account isn't a target, so
+        // it is settled and doesn't belong in the move-to-Tier-3 banner.
+        const onlyMyAccounts = allAccounts.filter(a => a.myTier !== 'Tier 3' && a.myTier !== NOT_ON_TIER_LIST && (!a.targetNames || a.targetNames.length === 0) && !fuzzyHas(targetNames, a.company));
         const onlyTarget = targetAccounts.filter(t => !fuzzyHas(myNames, t.company) && !mappedTargetNames.has((t.company || '').toLowerCase()));
         try {
           if (typeof localStorage !== 'undefined' && localStorage.getItem('debug-myaccounts')) {
