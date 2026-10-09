@@ -892,12 +892,18 @@ function rowTimelineServices(row) {
   return timelineDrivenServices(row, timelineServiceCtx.solutionOptions, timelineServiceCtx.serviceOverrides);
 }
 
+// Stages too early to owe a timeline: nothing has been qualified yet, so
+// a "Timeline?" flag there is noise rather than a gap.
+const TIMELINE_FLAG_QUIET_STAGES = new Set(['not started', 'lead']);
+
 // Every timeline-driven service in the opp's Scope with nothing logged on its
 // timeline row (see utils/serviceTimelines). Budgets in Scope keeps its old
 // rule when no timeline-driven service covers it, so an opp that warned
 // before still does, unless a hidden Budgets row says it isn't needed.
+// Empty for a Not Started or Lead opp, which hides the flag everywhere.
 function missingTimelinesForRow(row) {
   if (!row) return [];
+  if (TIMELINE_FLAG_QUIET_STAGES.has(normCell(rowValueByHeader(row, 'stage')))) return [];
   const services = rowTimelineServices(row);
   const { list } = readTimelines(row);
   const missing = missingServiceTimelines(list, services);
