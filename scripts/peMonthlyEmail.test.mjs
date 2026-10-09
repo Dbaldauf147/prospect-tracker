@@ -1,7 +1,7 @@
 // Assertion tests for the PE Monthly email.
 //   node scripts/peMonthlyEmail.test.mjs
 import {
-  peMonthlyRows, PE_MONTHLY_COLUMNS, resolvePeMonthlyDraftTemplate, PE_MONTHLY_DRAFT_DEFAULTS,
+  peMonthlyRows, PE_MONTHLY_COLUMNS, PE_MONTHLY_EMAIL_COLUMNS, resolvePeMonthlyDraftTemplate, PE_MONTHLY_DRAFT_DEFAULTS,
   buildPeMonthlyEmailHtml, buildPeMonthlyTableHtml, buildPeMonthlyRows, sanitizePeMonthlyRows,
 } from '../src/utils/peMonthlyEmail.js';
 import { buildPeOverlapDeals } from '../src/utils/keithPeDeals.js';
@@ -54,7 +54,11 @@ check('blanks stay blank', [rows[1].Tier, rows[1]['Deal Size'], rows[1].Scope], 
 
 const table = buildPeMonthlyTableHtml(rows);
 check('BFO link rendered as "BFO Link"', /<a href="https:\/\/bfo\.example\/7"[^>]*>BFO Link<\/a>/.test(table), true);
-check('next steps keep their line breaks', table.includes('Call Tue<br>Send quote'), true);
+check('email leaves out Next Steps', [table.includes('Next Steps'), table.includes('Call Tue')], [false, false]);
+check('email leaves out Scope', [table.includes('>Scope<'), table.includes('Bill pay')], [false, false]);
+check('email leaves out CDM but keeps Other CDM', [/>CDM</.test(table), table.includes('>Other CDM<')], [false, true]);
+check('email columns are the tab columns minus CDM, Scope and Next Steps',
+  PE_MONTHLY_EMAIL_COLUMNS.map(c => c.key), PE_MONTHLY_COLUMNS.map(c => c.key).filter(k => !['CDM', 'Scope', 'Next Steps'].includes(k)));
 check('empty list says so', buildPeMonthlyTableHtml([]).includes('No PE or portfolio company deals'), true);
 
 // Same look as the New Opps email: identical cell styling and body wrapper.
@@ -108,7 +112,7 @@ check('and the rows are the PE ones with their details',
 // Posted rows are cut to the email's columns, as strings.
 const clean = sanitizePeMonthlyRows([{ Account: 'A', Tier: 3, evil: '<x>', 'Next Steps': null }, null, 'x']);
 check('posted rows: only email columns, as strings', [clean.length, Object.keys(clean[0]).length, clean[0].Tier, clean[0]['Next Steps'], 'evil' in clean[0]],
-  [1, PE_MONTHLY_COLUMNS.length, '3', '', false]);
+  [1, PE_MONTHLY_EMAIL_COLUMNS.length, '3', undefined, false]);
 
 // The server loader reads the same four things from Firestore.
 function fakeDb(docs, collections) {
