@@ -13,6 +13,41 @@ import { matchesCdm, resolveTargetAccountCdm } from './cdmMatch.js';
 import { buildCompanyIndex, findMatchesInIndex } from './companyIndex.js';
 import { NOT_ON_TIER_LIST } from '../data/enums.js';
 
+// A Target Accounts row's company name: the first column whose header reads
+// like one AND has something in it. A blank "Account ID" ahead of "Account
+// Name" must not hide the name, or the row reads as having no company.
+const NAME_KEYWORDS = ['account', 'company', 'account name', 'client', 'name'];
+export function targetRowCompany(r) {
+  for (const key of Object.keys(r || {})) {
+    const lower = key.toLowerCase();
+    if (NAME_KEYWORDS.some(kw => lower.includes(kw))) {
+      const v = String(r[key] || '').trim();
+      if (v) return v;
+    }
+  }
+  return '';
+}
+
+// A Target Accounts row's tier as "Tier N" (1–9), '' when it has none. The
+// first non-blank tier-ish column, else any cell shaped like "Tier 2". This
+// is the one reading the popup's Targets list box and its Tier warning
+// (and the Clients and Opps pages) share, so they can't disagree about the
+// same row.
+const TIER_KEYWORDS = ['tier', 'account tier', 'tier level', 'target'];
+export function targetRowTier(r) {
+  let raw = '';
+  for (const key of Object.keys(r || {})) {
+    const lower = key.toLowerCase();
+    if (TIER_KEYWORDS.some(kw => lower.includes(kw))) {
+      raw = String(r[key] || '').trim();
+      if (raw) break;
+    }
+  }
+  if (!raw) raw = String(Object.values(r || {}).find(v => /Tier\s*[1-9]/i.test(String(v || ''))) || '');
+  const m = raw.match(/(?:Tier\s*)?([1-9])/i);
+  return m ? `Tier ${m[1]}` : '';
+}
+
 // Pull the company + tier out of a Target Accounts workbook, keeping every
 // tier (1–9), not just Tier 1/2. When `scopeToCdm` is true the rows are
 // filtered to the configured CDM (matching My Accounts' CDM-scoped parse);
@@ -21,15 +56,6 @@ import { NOT_ON_TIER_LIST } from '../data/enums.js';
 export function parseTargetAccountTiers(targetAccountsData, cdmName, targetCdmColumn, { scopeToCdm = true } = {}) {
   const data = targetAccountsData;
   if (!data?.sheets) return [];
-  const findCol = (r, keywords) => {
-    for (const key of Object.keys(r)) {
-      const lower = key.toLowerCase();
-      for (const kw of keywords) {
-        if (lower.includes(kw.toLowerCase())) return String(r[key] || '').trim();
-      }
-    }
-    return '';
-  };
   const cdmLastName = (cdmName || '').toLowerCase().split(/\s+/).filter(Boolean).pop() || '';
   const out = [];
   for (const sheetName of data.sheetNames || []) {
@@ -43,13 +69,11 @@ export function parseTargetAccountTiers(targetAccountsData, cdmName, targetCdmCo
         }
         if (!matchesCdm(cdm, cdmName)) continue;
       }
-      const company = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
+      const company = targetRowCompany(r);
       if (!company) continue;
-      let tierRaw = findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']);
-      if (!tierRaw) tierRaw = String(Object.values(r).find(v => /Tier\s*[1-9]/i.test(String(v || ''))) || '');
-      const m = tierRaw.match(/(?:Tier\s*)?([1-9])/i);
-      if (!m) continue;
-      out.push({ company: company.trim(), tier: `Tier ${m[1]}` });
+      const tier = targetRowTier(r);
+      if (!tier) continue;
+      out.push({ company, tier });
     }
   }
   return out;

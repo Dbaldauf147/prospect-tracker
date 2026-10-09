@@ -10,36 +10,7 @@
 
 import { normalizeCompanyName } from './companyKey.js';
 import { resolveTargetAccountCdm, matchesCdm } from './cdmMatch.js';
-import { resolveTargetAccountVertical, tierMismatch } from './targetTier.js';
-
-const NAME_KEYWORDS = ['account', 'company', 'account name', 'client', 'name'];
-
-function rowCompany(r) {
-  for (const key of Object.keys(r)) {
-    const lower = key.toLowerCase();
-    if (NAME_KEYWORDS.some(kw => lower.includes(kw))) {
-      const v = String(r[key] || '').trim();
-      if (v) return v;
-    }
-  }
-  return '';
-}
-
-// Same reading as parseTargetAccountTiers, but '' instead of skipping a row
-// with no tier: an untiered row is still a row somebody can map to.
-function rowTier(r) {
-  let raw = '';
-  for (const key of Object.keys(r)) {
-    const lower = key.toLowerCase();
-    if (['tier', 'account tier', 'tier level', 'target'].some(kw => lower.includes(kw))) {
-      raw = String(r[key] || '').trim();
-      if (raw) break;
-    }
-  }
-  if (!raw) raw = String(Object.values(r).find(v => /Tier\s*[1-9]/i.test(String(v || ''))) || '');
-  const m = raw.match(/(?:Tier\s*)?([1-9])/i);
-  return m ? `Tier ${m[1]}` : '';
-}
+import { resolveTargetAccountVertical, tierMismatch, targetRowCompany as rowCompany, targetRowTier as rowTier } from './targetTier.js';
 
 /**
  * Every account on the Target Accounts list, once each (first row wins),

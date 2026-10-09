@@ -5007,13 +5007,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       : null),
     [targetAccountsData, cdmName, settings?.targetCdmColumn, settings?.targetMap],
   );
-  const targetsTier = useMemo(
-    () => (resolveTargetsTier ? resolveTargetsTier({ id: prospect?.id, company: fields.company }) : null),
-    [resolveTargetsTier, prospect?.id, fields.company],
-  );
-  // The card's Tier against that: a warning under the dropdown when they
-  // disagree, compared to the draft so fixing the field clears it at once.
-  const tierConflict = useMemo(() => tierMismatch(fields.tier, targetsTier), [fields.tier, targetsTier]);
 
   // Does the Target Accounts tab have this company under a different CDM?
   // The workbook is the shared record of who covers what, so the Coverage
@@ -5150,6 +5143,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       : []),
     [targetRows, fields.company, mappedNames.length, ignoredTargetSuggestions],
   );
+  // The tier the Tier dropdown is checked against. Mapped, it is the mapped
+  // row's tier, read off the very rows the Targets list box above shows, so
+  // the box and the warning can never tell two different stories about the
+  // same account. Unmapped, the resolver's name match.
+  const targetsTier = useMemo(() => {
+    if (!resolveTargetsTier) return null;
+    const hit = mappedRows.find(r => r.tier);
+    if (hit) return { tier: hit.tier, name: hit.name, source: 'mapped' };
+    return resolveTargetsTier({ id: prospect?.id, company: fields.company });
+  }, [resolveTargetsTier, mappedRows, prospect?.id, fields.company]);
+  // The card's Tier against that: a warning under the dropdown when they
+  // disagree, compared to the draft so fixing the field clears it at once.
+  // While the box is still suggesting a tiered row for an unmapped card,
+  // "not tiered" would contradict it, so that warning waits for the mapping.
+  const tierConflict = useMemo(() => {
+    const c = tierMismatch(fields.tier, targetsTier);
+    if (c && !c.targetTier && targetSuggestions.some(r => r.tier)) return null;
+    return c;
+  }, [fields.tier, targetsTier, targetSuggestions]);
   function ignoreTargetSuggestion(name) {
     const id = prospect?.id;
     if (!id || !name) return;
