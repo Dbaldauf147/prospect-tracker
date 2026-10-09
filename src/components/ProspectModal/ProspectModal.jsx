@@ -5188,6 +5188,22 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       return { ignoredTargetSuggestions: { ...all, [id]: { ...(all[id] || {}), [name.toLowerCase()]: true } } };
     });
   }
+  // CDM mismatches the user has chosen to ignore on this card, stored per
+  // prospect id in synced settings as { "<list cdm>|<card cdm>": true }
+  // (lowercased). Keyed on the pair so the warning comes back as soon as
+  // either side changes to something not yet looked at.
+  const cdmMismatchKey = (listCdm, cardCdm) => `${String(listCdm || '').toLowerCase().trim()}|${String(cardCdm || '').toLowerCase().trim()}`;
+  const ignoredCdmMismatches = (settings?.ignoredCdmMismatches || {})[prospect?.id] || null;
+  const isCdmMismatchIgnored = (listCdm, cardCdm) => !!ignoredCdmMismatches?.[cdmMismatchKey(listCdm, cardCdm)];
+  function ignoreCdmMismatch(listCdm, cardCdm) {
+    const id = prospect?.id;
+    if (!id) return;
+    const key = cdmMismatchKey(listCdm, cardCdm);
+    updateSettings(prev => {
+      const all = prev?.ignoredCdmMismatches || {};
+      return { ignoredCdmMismatches: { ...all, [id]: { ...(all[id] || {}), [key]: true } } };
+    });
+  }
   function setTargetMapping(names) {
     if (!prospect?.id) return;
     updateSettings({ targetMap: { ...(settings?.targetMap || {}), [prospect.id]: names } });
@@ -9065,7 +9081,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           style={{ marginLeft: 'auto', padding: 0, border: 0, background: 'none', color: '#64748B', fontSize: '0.66rem', textDecoration: 'underline', cursor: 'pointer', fontFamily: 'inherit' }}
                         >Unmap</button>
                       </div>
-                      {!row.missing && flags.cdm && (
+                      {!row.missing && flags.cdm && !isCdmMismatchIgnored(flags.cdm.row, cardCdm) && (
                         // Who covers the account is the disagreement that
                         // matters most, so it is spelled out in full rather
                         // than left to a chip beside the name.
@@ -9085,6 +9101,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             title={`Set this card's CDM to ${flags.cdm.apply}, as the Targets list has it${cardCdm ? `, replacing ${cardCdm}` : ''}.`}
                             style={{ marginLeft: 'auto', padding: '0.1rem 0.45rem', border: '1px solid #DC2626', borderRadius: 4, background: '#DC2626', color: '#FFFFFF', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
                           >Use {flags.cdm.apply}</button>
+                          <button
+                            type="button"
+                            onClick={() => ignoreCdmMismatch(flags.cdm.row, cardCdm)}
+                            title={`Stop flagging this: the Targets list keeps ${flags.cdm.row} and this card keeps ${cardCdm || 'no CDM'}. It comes back if either one changes.`}
+                            style={{ padding: '0.1rem 0.45rem', border: '1px solid #FCA5A5', borderRadius: 4, background: '#FFFFFF', color: '#991B1B', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+                          >Ignore</button>
                         </div>
                       )}
                     </div>
@@ -9350,7 +9372,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     />
                     {`${String(cdmName || '').trim().split(/\s+/)[0] || 'Dan'}'s aligned w/other CDM`}
                   </label>
-                  {targetCdmConflict && (() => {
+                  {targetCdmConflict
+                    && !((targetCdmConflict.cdms || []).length > 0
+                      && targetCdmConflict.cdms.every(c => isCdmMismatchIgnored(c, fields.cdm)))
+                    && (() => {
                     // The badge is the fix as well as the warning: one name
                     // goes straight in, several open a list to pick from,
                     // because the page cannot know which of two reps the
