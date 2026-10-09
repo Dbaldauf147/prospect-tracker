@@ -57,8 +57,13 @@ check('shown as Vertical CDM', PE_MONTHLY_COLUMNS.find(c => c.key === 'Salespers
     { id: 3, name: 'T', vertical: 'Theirs', tier: 'Tier 1' },
     { id: 4, name: 'N', vertical: 'Nobody', tier: 'Tier 1' },
   ], [], cov, { cdmName: 'Dan Baldauf' });
-  check('Vertical CDM: only you is N/A, you are dropped from a shared list',
-    vr.map(r => r.Salesperson), ['N/A', 'Pat', 'Pat', '']);
+  check('Vertical CDM names you too',
+    vr.map(r => r.Salesperson), ['Dan Baldauf', 'Dan Baldauf, Pat', 'Pat', '']);
+  check('CDMs aligned is N/A when you are a Vertical CDM',
+    vr.map(r => r['CDMs Aligned']), ['N/A', 'N/A', 'No', 'No']);
+  const ticked = peMonthlyRows([{ id: 1, name: 'M', vertical: 'Mine', tier: 'Tier 1', cdmAligned: true }], [], cov, { cdmName: 'Dan Baldauf' });
+  check('N/A even when the aligned box is ticked', ticked[0]['CDMs Aligned'], 'N/A');
+  check('no cdmName: never N/A for the vertical', peMonthlyRows([{ id: 1, name: 'M', vertical: 'Mine', tier: 'Tier 1' }], [], cov)[0]['CDMs Aligned'], 'No');
 }
 check('no vertical, no salesperson', rows[1].Salesperson, '');
 check('blanks stay blank', [rows[1].Tier, rows[1]['Deal Size'], rows[1].Scope], ['', '', '']);

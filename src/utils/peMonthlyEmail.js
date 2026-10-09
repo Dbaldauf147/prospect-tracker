@@ -31,7 +31,8 @@ export const PE_MONTHLY_COLUMNS = [
   // still read.
   { key: 'Salesperson', label: 'Vertical CDM' },
   // Yes / No off the company popup's "aligned w/other CDM" checkbox; N/A
-  // when the account is not on the tier list (peMonthlyCdmsAligned).
+  // when the account is not on the tier list or the vertical is yours
+  // (peMonthlyCdmsAligned).
   { key: 'CDMs Aligned', label: 'CDMs aligned' },
   { key: 'Stage', label: 'Stage' },
   { key: 'Scope', label: 'Scope' },
@@ -47,11 +48,13 @@ export const PE_MONTHLY_EMAIL_COLUMNS = PE_MONTHLY_COLUMNS.filter(c => !PE_MONTH
 
 /**
  * The CDMs aligned cell: 'N/A' for an account not on the tier list (blank,
- * "-" or "Not on tier list", the ones that sort last), else 'Yes' when the
- * company popup's "aligned w/other CDM" box is ticked and 'No' when not.
+ * "-" or "Not on tier list", the ones that sort last) or when you are the
+ * Vertical CDM (nobody else to align with), else 'Yes' when the company
+ * popup's "aligned w/other CDM" box is ticked and 'No' when not.
  */
-export function peMonthlyCdmsAligned(tier, aligned) {
+export function peMonthlyCdmsAligned(tier, aligned, { ownVertical = false } = {}) {
   if (!Number.isFinite(peMonthlyTierRank(tier))) return 'N/A';
+  if (ownVertical) return 'N/A';
   return aligned === true ? 'Yes' : 'No';
 }
 
@@ -70,8 +73,8 @@ export function peMonthlyTierRank(tier) {
  *   deals           buildPeOverlapDeals output (agenda order; re-sorted by tier)
  *   records         the opp rows, to fill Scope / Next Steps / BFO Address
  *   salespeopleFor  (vertical) => [{ name }] - Opps > Coverage's lookup
- *   cdmName         you; left out of Vertical CDM, which reads N/A when
- *                   Coverage lists only you for the vertical
+ *   cdmName         you: Vertical CDM still names you, and CDMs aligned
+ *                   reads N/A when you are one of the vertical's CDMs
  */
 export function peMonthlyRows(deals, records = [], salespeopleFor = () => [], { cdmName = '' } = {}) {
   const byId = new Map((Array.isArray(records) ? records : []).map(r => [String(r?._id), r]));
@@ -79,7 +82,7 @@ export function peMonthlyRows(deals, records = [], salespeopleFor = () => [], { 
     const opp = byId.get(String(d.id)) || {};
     const people = (d.vertical ? (salespeopleFor(d.vertical) || []) : [])
       .map(p => String(p?.name || '').trim()).filter(Boolean);
-    const others = cdmName ? people.filter(n => !matchesCdm(n, cdmName)) : people;
+    const ownVertical = !!cdmName && people.some(n => matchesCdm(n, cdmName));
     return {
       id: d.id,
       // Not a column: the company the CDM was read from, for the tab's links.
@@ -89,8 +92,8 @@ export function peMonthlyRows(deals, records = [], salespeopleFor = () => [], { 
       CDM: d.targetCdm || '',
       'PE Owner': d.peOwner || '',
       Vertical: d.vertical || '',
-      Salesperson: people.length > 0 && others.length === 0 ? 'N/A' : others.join(', '),
-      'CDMs Aligned': peMonthlyCdmsAligned(d.tier, d.cdmAligned),
+      Salesperson: people.join(', '),
+      'CDMs Aligned': peMonthlyCdmsAligned(d.tier, d.cdmAligned, { ownVertical }),
       Stage: d.stageLabel || '',
       Scope: String(opp.Scope ?? '').trim(),
       'Deal Size': d.amountLabel || '',
