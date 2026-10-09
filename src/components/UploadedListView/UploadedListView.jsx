@@ -13,6 +13,7 @@ import { applyCompanyOverride, contactDisplayName } from '../../utils/contactRos
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { buildOppStagesByClient, effectiveServiceStatus } from '../../utils/serviceCoverage';
 import { serviceStatusColor } from '../../utils/serviceStatusColors';
+import { normalizeTierText } from '../../utils/tierText';
 import styles from './UploadedListView.module.css';
 
 function loadMapping(key) {
@@ -1026,8 +1027,8 @@ export function UploadedListView({
         const company = findCol(r, ['Account Name', 'Account', 'Company', 'Client', 'Name']);
         if (!company) continue;
         const cdm = resolveTargetAccountCdm(r, settings?.targetCdmColumn);
-        let tierRaw = findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']);
-        if (!tierRaw) tierRaw = String(Object.values(r).find(v => /Tier\s*[123]/i.test(String(v || ''))) || '');
+        let tierRaw = normalizeTierText(findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']));
+        if (!tierRaw) tierRaw = Object.values(r).map(normalizeTierText).find(v => /Tier\s*[123]/i.test(v)) || '';
         const tier = /1/.test(tierRaw) ? 'Tier 1' : /2/.test(tierRaw) ? 'Tier 2' : (/3/.test(tierRaw) ? 'Tier 3' : tierRaw);
         out.push({ company: company.trim(), tier, status: '', cdm: cdm || '', id: `ta::${idx++}` });
       }

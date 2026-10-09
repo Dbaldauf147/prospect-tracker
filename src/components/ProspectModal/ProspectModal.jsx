@@ -99,6 +99,7 @@ import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, bui
 import { resolveTargetAccountCdm, matchesCdm } from '../../utils/cdmMatch';
 import { coverageFromSettings, salespeopleForVertical } from '../../utils/salesCoverage';
 import { buildTargetTierResolver, tierMismatch, targetVerticalFor } from '../../utils/targetTier';
+import { normalizeTierText } from '../../utils/tierText';
 import { targetAccountRows, suggestTargetMatches, mappedTargetNames, targetRowFlags } from '../../utils/targetAccountMatch';
 import {
   buildTargetCdmResolver, targetCdmConflictLabel, describeTargetCdmConflict,
@@ -4960,7 +4961,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       return '';
     }
     function normalizeTier(raw) {
-      const s = (raw || '').trim();
+      const s = normalizeTierText(raw);
       if (!s) return '';
       const m = s.match(/^(?:tier\s*)?(\d+)$/i);
       if (m) return `Tier ${m[1]}`;
@@ -4979,7 +4980,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         if (rep && !repMap.has(key)) repMap.set(key, rep);
         let tierRaw = findCol(rec, ['Account Tier', 'Tier Level', 'Tier']);
         if (!tierRaw) {
-          tierRaw = Object.values(rec).find(v => /^tier\s*\d+$/i.test(String(v || '').trim())) || '';
+          tierRaw = Object.values(rec).map(normalizeTierText).find(v => /^tier\s*\d+$/i.test(v)) || '';
         }
         const tier = normalizeTier(String(tierRaw));
         if (tier && !tierMap.has(key)) tierMap.set(key, tier);

@@ -12,6 +12,7 @@
 import { matchesCdm, resolveTargetAccountCdm } from './cdmMatch.js';
 import { buildCompanyIndex, findMatchesInIndex } from './companyIndex.js';
 import { NOT_ON_TIER_LIST } from '../data/enums.js';
+import { normalizeTierText } from './tierText.js';
 
 // A Target Accounts row's company name: the first column whose header reads
 // like one AND has something in it. A blank "Account ID" ahead of "Account
@@ -49,7 +50,8 @@ export function targetTierColumns(headers) {
   return tiers.length ? tiers : hs.filter(h => /target/i.test(h));
 }
 
-// A Target Accounts row's tier as "Tier N" (1–9), '' when it has none: the
+// A Target Accounts row's tier as "Tier N" (1–9), '' when it has none,
+// with "Tier III" read as Tier 3 (normalizeTierText): the
 // first tier column (targetTierColumns, best first) whose cell holds a tier
 // number, else any cell shaped like "Tier 2". `tierCols` is the sheet's
 // columns, or one column name; left out, they are picked from the row's own
@@ -59,10 +61,10 @@ export function targetRowTier(r, tierCols = targetTierColumns(Object.keys(r || {
   const cols = Array.isArray(tierCols) ? tierCols : (tierCols ? [tierCols] : []);
   let raw = '';
   for (const col of cols) {
-    const v = String(r?.[col] ?? '').trim();
+    const v = normalizeTierText(r?.[col]);
     if (/[1-9]/.test(v)) { raw = v; break; }
   }
-  if (!raw) raw = String(Object.values(r || {}).find(v => /Tier\s*[1-9]/i.test(String(v || ''))) || '');
+  if (!raw) raw = Object.values(r || {}).map(normalizeTierText).find(v => /Tier\s*[1-9]/i.test(v)) || '';
   const m = raw.match(/(?:Tier\s*)?([1-9])/i);
   return m ? `Tier ${m[1]}` : '';
 }

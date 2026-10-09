@@ -11,6 +11,7 @@ import { buildActiveOppsIndex, activeOppsForCompany, findUntiedActiveOpps } from
 import styles from './TargetAccountsView.module.css';
 import { writeWorkKey } from '../../utils/mirroredWorkKeys';
 import { readChunkedDoc, writeChunkedDoc } from '../../utils/chunkedDoc';
+import { normalizeTierText } from '../../utils/tierText';
 
 const STORE_NAME = 'target-accounts';
 
@@ -573,8 +574,8 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
     for (const r of records) {
       if (!nameKey || !String(r[nameKey] || '').trim()) continue;
       total++;
-      let raw = tierCol ? String(r[tierCol] || '').trim() : '';
-      if (!raw) raw = String(Object.values(r).find(v => /^tier\s*\d+$/i.test(String(v || '').trim())) || '').trim();
+      let raw = tierCol ? normalizeTierText(r[tierCol]) : '';
+      if (!raw) raw = Object.values(r).map(normalizeTierText).find(v => /^tier\s*\d+$/i.test(v)) || '';
       const m = raw.match(/^(?:tier\s*)?(\d+)$/i);
       const tier = m ? `Tier ${m[1]}` : '';
       if (tier in counts) counts[tier]++;
