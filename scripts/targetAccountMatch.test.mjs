@@ -2,7 +2,7 @@
 // (src/utils/targetAccountMatch.js). Plain Node. Run:
 //   node scripts/targetAccountMatch.test.mjs
 import {
-  targetAccountRows, nameSimilarity, suggestTargetMatches, mappedTargetNames, targetRowFlags,
+  targetAccountRows, nameSimilarity, suggestTargetMatches, mappedTargetNames, targetRowFlags, sameWord,
 } from '../src/utils/targetAccountMatch.js';
 
 let passed = 0, failed = 0;
@@ -33,6 +33,10 @@ check('and the typo case is suggested', suggestTargetMatches('Vibrantz Techonolo
 check('a typo in the first word still matches', nameSimilarity('Vibrantx Technologies', 'Vibrantz Technologies'), 1);
 check('short words must match exactly (Acme is not Acne)', nameSimilarity('Acme Corp', 'Acne Corp'), 0);
 check('Vibrantz is not Vibrant (one letter, but a different company)', suggestTargetMatches('Vibrantz Technology', rows).some(r => r.name === 'Vibrant Energy'), false);
+check('swapped letters in the first word still match (Virbantz)', nameSimilarity('Virbantz Technology', 'Vibrantz Technologies'), 1);
+check('and the swapped-letter case is suggested', suggestTargetMatches('Virbantz Technology', rows).map(r => r.name), ['Vibrantz Technologies']);
+check('a swap counts as one edit, so a short word still needs an exact match', sameWord('acme', 'amce'), false);
+check('a swap plus another slip in an 8-letter word is too far', sameWord('virbantx', 'vibrantz'), false);
 check('a different first word is no match', nameSimilarity('Acme Technology', 'Vibrantz Technologies'), 0);
 check('suffixes are ignored', nameSimilarity('Acme Corp', 'Acme, Inc.'), 1);
 check('a short name inside a longer one is a likely match', nameSimilarity('Vibrantz', 'Vibrantz Technologies'), 0.75);

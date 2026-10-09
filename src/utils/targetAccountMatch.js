@@ -72,25 +72,33 @@ const stem = (t) => (t.length > 4 && t.endsWith('ies') ? `${t.slice(0, -3)}y`
   : t.length > 3 && t.endsWith('s') && !t.endsWith('ss') ? t.slice(0, -1) : t);
 const tokensOf = (s) => normalizeCompanyName(s).split(' ').filter(Boolean).map(stem);
 
-// Edit distance, capped: stops counting once it is past `cap`.
+// Edit distance, capped: stops counting once it is past `cap`. Two
+// neighbouring letters swapped ("Virbantz" for "Vibrantz") is one edit, not
+// two: it is the commonest typo there is, and counted as a delete plus an
+// insert it used up an 8-letter word's whole allowance twice over.
 function editDistance(a, b, cap) {
   if (Math.abs(a.length - b.length) > cap) return cap + 1;
+  let before = null;
   let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
   for (let i = 1; i <= a.length; i += 1) {
     const cur = [i];
     let best = i;
     for (let j = 1; j <= b.length; j += 1) {
       cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (before && i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        cur[j] = Math.min(cur[j], before[j - 2] + 1);
+      }
       if (cur[j] < best) best = cur[j];
     }
     if (best > cap) return cap + 1;
+    before = prev;
     prev = cur;
   }
   return prev[b.length];
 }
 
 // Two words are the same word when equal, or one typo apart: a slip
-// ("Techonology") shouldn't hide the row it was meant to be. Short words
+// ("Techonology", "Virbantz") shouldn't hide the row it was meant to be. Short words
 // must match exactly, or "Acme" would find "Acne".
 export function sameWord(a, b) {
   if (a === b) return true;
