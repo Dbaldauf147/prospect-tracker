@@ -10,7 +10,7 @@
 
 import { normalizeCompanyName } from './companyKey.js';
 import { resolveTargetAccountCdm, matchesCdm } from './cdmMatch.js';
-import { resolveTargetAccountVertical, tierMismatch, targetRowCompany as rowCompany, targetRowTier as rowTier } from './targetTier.js';
+import { resolveTargetAccountVertical, tierMismatch, targetRowCompany as rowCompany, targetRowTier as rowTier, targetTierColumn } from './targetTier.js';
 
 /**
  * Every account on the Target Accounts list, once each (first row wins),
@@ -22,7 +22,9 @@ export function targetAccountRows(targetAccountsData, settings) {
   const out = [];
   const seen = new Set();
   for (const sheetName of data?.sheetNames || []) {
-    for (const r of data?.sheets?.[sheetName]?.records || []) {
+    const sheet = data?.sheets?.[sheetName];
+    const tierCol = targetTierColumn(sheet?.headers?.length ? sheet.headers : Object.keys(sheet?.records?.[0] || {}));
+    for (const r of sheet?.records || []) {
       const name = rowCompany(r);
       const k = name.toLowerCase();
       if (!name || seen.has(k)) continue;
@@ -30,7 +32,7 @@ export function targetAccountRows(targetAccountsData, settings) {
       out.push({
         name,
         cdm: resolveTargetAccountCdm(r, settings?.targetCdmColumn),
-        tier: rowTier(r),
+        tier: rowTier(r, tierCol),
         vertical: resolveTargetAccountVertical(r, settings?.targetVerticalColumn),
       });
     }
