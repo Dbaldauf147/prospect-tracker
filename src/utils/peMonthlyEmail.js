@@ -28,6 +28,9 @@ export const PE_MONTHLY_COLUMNS = [
   // Labelled Other CDM: on this table the person Coverage names is the
   // other pod's CDM. The key stays Salesperson so saved rows still read.
   { key: 'Salesperson', label: 'Other CDM' },
+  // Yes / No off the company popup's "aligned w/other CDM" checkbox; N/A
+  // when the account is not on the tier list (peMonthlyCdmsAligned).
+  { key: 'CDMs Aligned', label: 'CDMs aligned' },
   { key: 'Stage', label: 'Stage' },
   { key: 'Scope', label: 'Scope' },
   { key: 'Deal Size', label: 'Deal Size', align: 'right' },
@@ -39,6 +42,16 @@ export const PE_MONTHLY_COLUMNS = [
 // Steps. The user asked for a leaner email; the tab keeps all three.
 const PE_MONTHLY_EMAIL_HIDDEN = new Set(['CDM', 'Scope', 'Next Steps']);
 export const PE_MONTHLY_EMAIL_COLUMNS = PE_MONTHLY_COLUMNS.filter(c => !PE_MONTHLY_EMAIL_HIDDEN.has(c.key));
+
+/**
+ * The CDMs aligned cell: 'N/A' for an account not on the tier list (blank,
+ * "-" or "Not on tier list", the ones that sort last), else 'Yes' when the
+ * company popup's "aligned w/other CDM" box is ticked and 'No' when not.
+ */
+export function peMonthlyCdmsAligned(tier, aligned) {
+  if (!Number.isFinite(peMonthlyTierRank(tier))) return 'N/A';
+  return aligned === true ? 'Yes' : 'No';
+}
 
 // Where a tier sorts: Tier 1 first, then Tier 2, Tier 3 and any higher
 // number, then everything not on the tier list (blank, "-", "Not on tier
@@ -71,6 +84,7 @@ export function peMonthlyRows(deals, records = [], salespeopleFor = () => []) {
       'PE Owner': d.peOwner || '',
       Vertical: d.vertical || '',
       Salesperson: people.map(p => p?.name).filter(Boolean).join(', '),
+      'CDMs Aligned': peMonthlyCdmsAligned(d.tier, d.cdmAligned),
       Stage: d.stageLabel || '',
       Scope: String(opp.Scope ?? '').trim(),
       'Deal Size': d.amountLabel || '',

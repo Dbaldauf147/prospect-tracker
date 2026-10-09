@@ -149,7 +149,7 @@ export function accountTargetCdm(row, prospects = [], targetCdmFor = null) {
  *   parseAmount  (raw) => number | null
  *   fmtAmount    (number) => string
  *
- *   [{ id, name, companyId, amount, amountLabel, stage, stageLabel, peOwner, vertical, verticalFromOpp, tier, targetCdm }]
+ *   [{ id, name, companyId, amount, amountLabel, stage, stageLabel, peOwner, vertical, verticalFromOpp, tier, targetCdm, cdmAligned }]
  *
  * `companyId` is the Table View company the Tier and CDM were read from
  * (null when the account has none), so a page can open THAT company to map
@@ -174,6 +174,8 @@ export function buildPeOverlapDeals(records, { parseAmount = () => null, fmtAmou
         ...peOwnerAndVertical(row, prospects),
         tier: accountTier(row, prospects, targetTierFor),
         targetCdm: accountTargetCdm(row, prospects, targetCdmFor),
+        // The company popup's "aligned w/other CDM" checkbox.
+        cdmAligned: company?.cdmAligned === true,
       };
     })
     .sort((a, b) => b.stage - a.stage

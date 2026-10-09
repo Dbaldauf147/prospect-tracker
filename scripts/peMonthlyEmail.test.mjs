@@ -1,7 +1,7 @@
 // Assertion tests for the PE Monthly email.
 //   node scripts/peMonthlyEmail.test.mjs
 import {
-  peMonthlyRows, PE_MONTHLY_COLUMNS, PE_MONTHLY_EMAIL_COLUMNS, resolvePeMonthlyDraftTemplate, PE_MONTHLY_DRAFT_DEFAULTS,
+  peMonthlyRows, peMonthlyCdmsAligned, PE_MONTHLY_COLUMNS, PE_MONTHLY_EMAIL_COLUMNS, resolvePeMonthlyDraftTemplate, PE_MONTHLY_DRAFT_DEFAULTS,
   buildPeMonthlyEmailHtml, buildPeMonthlyTableHtml, buildPeMonthlyRows, sanitizePeMonthlyRows,
 } from '../src/utils/peMonthlyEmail.js';
 import { buildPeOverlapDeals } from '../src/utils/keithPeDeals.js';
@@ -141,6 +141,30 @@ check('no opps doc, no rows', await loadPeMonthlyRows(fakeDb({}, {}), 'u1', 'x@y
 // The scheduled body is the New Opps scheduled body: intro + table, no greeting.
 const sched = buildPeMonthlyEmailHtml(built, { message: 'Monthly' });
 check('scheduled body: intro then table, nothing else', [sched.includes('Monthly'), sched.includes('<table'), sched.includes('Hey Keith')], [true, true, false]);
+
+// CDMs aligned: right of Other CDM, Yes / No off the popup checkbox, N/A
+// when the account is not on the tier list.
+{
+  const keys = PE_MONTHLY_COLUMNS.map(c => c.key);
+  check('CDMs aligned sits right of Other CDM', keys.indexOf('CDMs Aligned'), keys.indexOf('Salesperson') + 1);
+  check('labelled CDMs aligned', PE_MONTHLY_COLUMNS.find(c => c.key === 'CDMs Aligned').label, 'CDMs aligned');
+  check('ticked on a tiered account: Yes', peMonthlyCdmsAligned('Tier 2', true), 'Yes');
+  check('unticked on a tiered account: No', peMonthlyCdmsAligned('Tier 1', false), 'No');
+  check('Not on tier list: N/A even when ticked', peMonthlyCdmsAligned('Not on tier list', true), 'N/A');
+  check('blank tier: N/A', [peMonthlyCdmsAligned('', false), peMonthlyCdmsAligned('-', false)], ['N/A', 'N/A']);
+  const rowsA = peMonthlyRows([
+    { id: 'a', name: 'A', tier: 'Tier 3', cdmAligned: true },
+    { id: 'b', name: 'B', tier: 'Tier 2' },
+    { id: 'c', name: 'C', tier: 'Not on tier list', cdmAligned: true },
+  ]);
+  check('rows carry it', rowsA.map(r => [r.Account, r['CDMs Aligned']]), [['B', 'No'], ['A', 'Yes'], ['C', 'N/A']]);
+  check('and the email shows it', buildPeMonthlyTableHtml(rowsA).includes('>CDMs aligned<'), true);
+  const viaCompany = buildPeMonthlyRows({
+    records: [{ _id: 9, Account: 'Aligned Co', Type: 'Portfolio Company', Stage: 'Quoting' }],
+    prospects: [{ id: 'x', company: 'Aligned Co', tier: 'Tier 2', cdmAligned: true }],
+  });
+  check('read off the company card', viaCompany[0]?.['CDMs Aligned'], 'Yes');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
