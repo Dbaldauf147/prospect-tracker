@@ -1,7 +1,7 @@
 // Assertion tests for the PE Monthly email.
 //   node scripts/peMonthlyEmail.test.mjs
 import {
-  peMonthlyRows, peMonthlyCdmsAligned, PE_MONTHLY_COLUMNS, PE_MONTHLY_EMAIL_COLUMNS, resolvePeMonthlyDraftTemplate, PE_MONTHLY_DRAFT_DEFAULTS,
+  peMonthlyRows, peMonthlyCdmsAligned, peMonthlyRowStyle, PE_MONTHLY_COLUMNS, PE_MONTHLY_EMAIL_COLUMNS, resolvePeMonthlyDraftTemplate, PE_MONTHLY_DRAFT_DEFAULTS,
   buildPeMonthlyEmailHtml, buildPeMonthlyTableHtml, buildPeMonthlyRows, sanitizePeMonthlyRows,
 } from '../src/utils/peMonthlyEmail.js';
 import { buildPeOverlapDeals } from '../src/utils/keithPeDeals.js';
@@ -80,7 +80,9 @@ check('empty list says so', buildPeMonthlyTableHtml([]).includes('No PE or portf
 // Same look as the New Opps email: identical cell styling and body wrapper.
 const style = (html) => (html.match(/<th style="[^"]*"/) || [''])[0];
 const nRow = [{ Account: 'X', 'Quoted Amount': '$1' }];
-check('table header styled like New Opps', style(table).replace(/text-align:\w+/, ''), style(buildNewOppsDigestTableHtml(nRow)).replace(/text-align:\w+/, ''));
+// Same cell layout as New Opps; only the SE header colours differ.
+const layout = (st) => st.replace(/text-align:\w+/, '').replace(/color:#\w+;/, '').replace(/background:#\w+;/, '');
+check('table header laid out like New Opps', layout(style(table)), layout(style(buildNewOppsDigestTableHtml(nRow))));
 const wrap = (html) => html.slice(0, html.indexOf('>') + 1);
 check('body wrapper like New Opps', wrap(buildPeMonthlyEmailHtml(rows, { greeting: 'Hey Keith,' })), wrap(buildNewOppsDigestEmailHtml(nRow, { greeting: 'Hey Keith,' })));
 const body = buildPeMonthlyEmailHtml(rows, { greeting: 'Hey Keith,', message: 'Intro', signature: '<b>Dan</b>' });
@@ -180,6 +182,29 @@ check('scheduled body: intro then table, nothing else', [sched.includes('Monthly
     prospects: [{ id: 'x', company: 'Aligned Co', tier: 'Tier 2', cdmAligned: true }],
   });
   check('read off the company card', viaCompany[0]?.['CDMs Aligned'], 'Yes');
+}
+
+// The draft carries the tab's colours: SE header band, green aligned rows,
+// grey rows wherever CDMs aligned is N/A (Platinum Equity on Dan's own
+// vertical as well as accounts not on the tier list).
+{
+  check('row style: Yes is green', peMonthlyRowStyle({ 'CDMs Aligned': 'Yes' })?.background, '#DCFCE7');
+  check('row style: N/A is grey', peMonthlyRowStyle({ 'CDMs Aligned': 'N/A' }), { background: '#F1F5F9', color: '#64748B' });
+  check('row style: No is plain', peMonthlyRowStyle({ 'CDMs Aligned': 'No' }), null);
+  const cov = () => [{ name: 'Dan Baldauf' }];
+  const pe = peMonthlyRows([{ id: 1, name: 'Platinum Equity', vertical: 'Industrials', tier: 'Tier 2' }], [], cov, { cdmName: 'Dan Baldauf' });
+  check('Platinum Equity on your vertical: N/A and grey', [pe[0]['CDMs Aligned'], peMonthlyRowStyle(pe[0])?.background], ['N/A', '#F1F5F9']);
+  const html = buildPeMonthlyTableHtml([
+    { Account: 'Green Co', Tier: 'Tier 1', 'CDMs Aligned': 'Yes' },
+    { Account: 'Grey Co', Tier: 'Tier 2', 'CDMs Aligned': 'N/A' },
+    { Account: 'Plain Co', Tier: 'Tier 3', 'CDMs Aligned': 'No' },
+  ]);
+  check('email header is the SE band', /<th style="[^"]*color:#FFFFFF;background:#009530;/.test(html), true);
+  const rowOf = (name) => (html.match(new RegExp(`<tr>(?:(?!</tr>).)*${name}(?:(?!</tr>).)*</tr>`, 's')) || [''])[0];
+  check('email: aligned row green', rowOf('Green Co').includes('background:#DCFCE7'), true);
+  check('email: N/A row grey', [rowOf('Grey Co').includes('background:#F1F5F9'), rowOf('Grey Co').includes('color:#64748B')], [true, true]);
+  check('email: No row plain', rowOf('Plain Co').includes('background:'), false);
+  check('New Opps email stays black and white', buildNewOppsDigestTableHtml([{ Account: 'X' }]).includes('background:'), false);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

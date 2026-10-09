@@ -149,7 +149,7 @@ import { downloadNewOppsOutlookDraft, resolveNewOppsDraftTemplate } from '../../
 import { NewOppsDraftEmailModal } from './NewOppsDraftEmailModal';
 import {
   peMonthlyRows, peMonthlyTierRank, PE_MONTHLY_COLUMNS, PE_MONTHLY_DRAFT_DEFAULTS, resolvePeMonthlyDraftTemplate,
-  buildPeMonthlyEmailHtml, downloadPeMonthlyOutlookDraft,
+  buildPeMonthlyEmailHtml, downloadPeMonthlyOutlookDraft, peMonthlyRowStyle,
 } from '../../utils/peMonthlyEmail';
 import { coverageFromSettings, salespeopleForVertical } from '../../utils/salesCoverage';
 import { schedulesStore } from '../../utils/newOppsSchedulesStore';
@@ -16939,11 +16939,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     const coverage = coverageFromSettings(settings);
     return peMonthlyRows(peOverlapDeals, records, v => salespeopleForVertical(coverage, v), { cdmName });
   }, [peOverlapDeals, records, settings?.salesCoverage, cdmName]); // eslint-disable-line react-hooks/exhaustive-deps
-  const peMonthlyRowStyle = useCallback((row) => {
-    if (row['CDMs Aligned'] === 'Yes') return { background: '#DCFCE7' };
-    if (!Number.isFinite(peMonthlyTierRank(row.Tier))) return { background: '#F1F5F9', color: '#64748B' };
-    return undefined;
-  }, []);
+  // The same row colours the email uses (peMonthlyRowStyle), so the
+  // draft matches the table.
+  const peMonthlyRowStyleOrNone = useCallback((row) => peMonthlyRowStyle(row) || undefined, []);
   const peMonthlyColumns = useMemo(() => PE_MONTHLY_COLUMNS.map(c => ({
     key: c.key,
     label: c.label,
@@ -18827,14 +18825,14 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           </div>
           <div style={{ padding: '0 0 0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
             The PE overlap deals from the Keith agenda: every Private Equity or Portfolio Company opp at Stage 3 (Lead) or later that is still open, furthest along first.
-            CDM is who the Target Accounts list names for the company (click Map on a blank one to map the company to its Targets list row). Vertical CDM is who Opps &gt; Coverage lists against the deal's vertical, so you can see where another pod is already in (N/A when it's only you). Green rows are aligned with the other CDM; grey rows aren't on the tier list. The Outlook draft is the same email as New Opps, with this table.
+            CDM is who the Target Accounts list names for the company (click Map on a blank one to map the company to its Targets list row). Vertical CDM is who Opps &gt; Coverage lists against the deal's vertical, so you can see where another pod is already in Green rows are aligned with the other CDM; grey rows have nothing to align (CDMs aligned is N/A: not on the tier list, or your own vertical). The Outlook draft carries this table with the same colours.
           </div>
           {loading && !data ? (
             <div className={styles.loading}>Loading...</div>
           ) : (
             // SE header band (dark green, white type), like the SE-formatted
-            // exports. Rows: green once the CDMs are aligned, grey when the
-            // account isn't on the tier list.
+            // exports. Rows: green once the CDMs are aligned, grey when
+            // CDMs aligned is N/A. The email uses the same colours.
             <div className={styles.seHeaderTable}>
               <DataTable
                 tableId="opps2-pe-monthly"
@@ -18843,7 +18841,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 alwaysVisible={['Account']}
                 enableColumnFilters
                 variableRowHeight
-                rowStyle={peMonthlyRowStyle}
+                rowStyle={peMonthlyRowStyleOrNone}
                 emptyMessage="No PE or Portfolio Company deals at Stage 3 or later right now."
                 settings={settings}
                 updateSettings={updateSettings}
