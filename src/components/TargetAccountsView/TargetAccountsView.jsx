@@ -560,6 +560,29 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
     return result;
   }, [records, search]);
 
+  // Company count per tier on the current sheet, for the header legend.
+  // Tier is read the same way the prospect popup reads it: an "Account
+  // Tier" / "Tier Level" / "Tier" column, else any cell shaped like
+  // "Tier 2". Rows with no company name are skipped.
+  const tierCounts = useMemo(() => {
+    const counts = { 'Tier 1': 0, 'Tier 2': 0, 'Tier 3': 0 };
+    let other = 0;
+    let total = 0;
+    const tierCol = headers.find(h => /account tier|tier level/i.test(h || ''))
+      || headers.find(h => /tier/i.test(h || ''));
+    for (const r of records) {
+      if (!nameKey || !String(r[nameKey] || '').trim()) continue;
+      total++;
+      let raw = tierCol ? String(r[tierCol] || '').trim() : '';
+      if (!raw) raw = String(Object.values(r).find(v => /^tier\s*\d+$/i.test(String(v || '').trim())) || '').trim();
+      const m = raw.match(/^(?:tier\s*)?(\d+)$/i);
+      const tier = m ? `Tier ${m[1]}` : '';
+      if (tier in counts) counts[tier]++;
+      else other++;
+    }
+    return { counts, other, total };
+  }, [headers, records, nameKey]);
+
   // Set active sheet on first load
   if (data && !activeSheet && data.sheetNames?.length > 0) {
     setActiveSheet(data.sheetNames[0]);
@@ -572,9 +595,28 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
           <div className={styles.titleRow}>
             <h2 className={styles.title}>Target Accounts List</h2>
             <div className={styles.tierLegend}>
-              <div><strong>Tier 1:</strong> Existing Clients</div>
-              <div><strong>Tier 2:</strong> Critical/Major Prospects (10 total)</div>
-              <div><strong>Tier 3:</strong> All remaining assigned in your segments</div>
+              {[
+                ['Tier 1', 'Existing Clients'],
+                ['Tier 2', 'Critical/Major Prospects (10 total)'],
+                ['Tier 3', 'All remaining assigned in your segments'],
+              ].map(([tier, desc]) => (
+                <div key={tier} className={styles.tierRow}>
+                  <span><strong>{tier}:</strong> {desc}</span>
+                  {data && <span className={styles.tierCount}>{tierCounts.counts[tier].toLocaleString()}</span>}
+                </div>
+              ))}
+              {data && tierCounts.other > 0 && (
+                <div className={styles.tierRow} title="Companies whose tier is blank or not Tier 1, 2 or 3">
+                  <span><strong>No tier / other</strong></span>
+                  <span className={styles.tierCount}>{tierCounts.other.toLocaleString()}</span>
+                </div>
+              )}
+              {data && (
+                <div className={`${styles.tierRow} ${styles.tierTotal}`}>
+                  <span><strong>Total companies</strong></span>
+                  <span className={styles.tierCount}>{tierCounts.total.toLocaleString()}</span>
+                </div>
+              )}
             </div>
           </div>
           {data?.uploadedAt && (

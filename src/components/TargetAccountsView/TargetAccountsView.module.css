@@ -52,6 +52,25 @@
   font-weight: 700;
 }
 
+.tierRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1.25rem;
+}
+
+.tierCount {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #2563EB;
+}
+
+.tierTotal {
+  margin-top: 0.15rem;
+  padding-top: 0.3rem;
+  border-top: 1px solid var(--color-border, rgba(148, 163, 184, 0.35));
+}
+
 .headerActions {
   display: flex;
   gap: 0.5rem;
