@@ -12,7 +12,7 @@
 // used by the ISO / NAM exports in SitesView.
 
 import {
-  CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR,
+  CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR, siteMandateNames,
   eligibilityByOrdinance, totalEligible, sitesWithMandate,
   penaltyByOrdinance, totalPenalty, utilityFeedEligibility,
   bpsPrioritization,
@@ -565,8 +565,8 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   return buf;
 }
 
-// Second sheet: one row per screened site with its applicable BBS / Energy
-// Audits / BPS mandates, each mandate's deadline and estimated max yearly
+// Second sheet: one row per screened site with the names of the mandates it
+// falls under and its applicable BBS / Energy Audits / BPS mandates, each mandate's deadline and estimated max yearly
 // penalty. Green branded header, frozen header + Site column, autofilter,
 // zebra rows; "Applicable" cells are coloured in each category's hue.
 function buildSiteDetailSheet(wb, results, meta) {
@@ -574,9 +574,10 @@ function buildSiteDetailSheet(wb, results, meta) {
     properties: { tabColor: { argb: SE_DARK } },
     views: [{ showGridLines: false, state: 'frozen', ySplit: 4, xSplit: 1 }],
   });
-  const NC = 16;
+  const NC = 17;
   ws.columns = [
     { width: 26 }, { width: 14 }, { width: 7 }, { width: 20 }, { width: 14 }, { width: 10 }, { width: 11 },
+    { width: 40 },
     { width: 11 }, { width: 13 }, { width: 14 },
     { width: 11 }, { width: 13 }, { width: 14 },
     { width: 11 }, { width: 13 }, { width: 14 },
@@ -598,7 +599,7 @@ function buildSiteDetailSheet(wb, results, meta) {
 
   ws.mergeCells(2, 1, 2, NC);
   const s = ws.getCell(2, 1);
-  s.value = `Each screened site with its applicable BBS / Energy Audits / BPS mandates, deadlines, and estimated max yearly penalties.  Generated ${meta.generatedAt}`;
+  s.value = `Each screened site with the mandates it falls under, its applicable BBS / Energy Audits / BPS mandates, deadlines, and estimated max yearly penalties.  Generated ${meta.generatedAt}`;
   s.font = { name: FONT, italic: true, size: 10, color: { argb: SLATE } };
   s.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
   ws.getRow(2).height = 18;
@@ -608,7 +609,11 @@ function buildSiteDetailSheet(wb, results, meta) {
   // than of where it is — and ahead of the mandates, since who owns the
   // building is the first question asked of an obligation that falls on
   // the owner.
+  //
+  // Mandate names the ordinances themselves (Local Law 97, BEPS), ahead of
+  // the Yes / No columns that only say which category applies.
   const headers = ['Site', 'City', 'State', 'Jurisdiction', 'Gov ID', 'Sq Ft', 'Owned / Leased',
+    'Mandate',
     'BBS', 'BBS Deadline', 'BBS Penalty/yr',
     'Energy Audits', 'Audits Deadline', 'Audits Penalty/yr',
     'BPS', 'BPS Deadline', 'BPS Penalty/yr'];
@@ -647,10 +652,15 @@ function buildSiteDetailSheet(wb, results, meta) {
         indent: i === 6 ? 0 : 1,
       };
     });
+    const mandates = siteMandateNames(r);
+    const mCell = row.getCell(8);
+    mCell.value = mandates.length ? mandates.join('\n') : null;
+    mCell.font = { name: FONT, size: 9.5, color: { argb: INK } };
+    mCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
     CATEGORIES.forEach((cat, ci) => {
       const e = r[cat];
       const applicable = !!(e && e.active && e.eligible === true);
-      const c0 = 8 + ci * 3;
+      const c0 = 9 + ci * 3;
       const appCell = row.getCell(c0);
       appCell.value = applicable ? 'Yes' : (r.matched ? 'No' : '');
       appCell.font = { name: FONT, size: 9.5, bold: applicable, color: { argb: applicable ? argb(CATEGORY_COLOR[cat]) : 'FF94A3B8' } };
@@ -670,7 +680,8 @@ function buildSiteDetailSheet(wb, results, meta) {
       if (zebra && !c.fill) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
       c.border = { bottom: { style: 'hair', color: { argb: LINE } } };
     }
-    row.height = 16;
+    // A line per mandate name, so a site under two ordinances shows both.
+    row.height = Math.max(16, 13 * mandates.length + 3);
     rr += 1;
   });
 
