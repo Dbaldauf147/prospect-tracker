@@ -139,6 +139,10 @@ export function findUntiedActiveOpps(records, targetData, cdmName, targetCdmColu
         for (const cdm of (lookup.cdmByName.get(String(nm).toLowerCase()) || [])) cdmSet.add(cdm);
       }
       const cdms = [...cdmSet].sort((a, b) => a.localeCompare(b));
+      // The target-list row(s) the opp's account matched, as written on
+      // the list, so the user can see which entry is being flagged.
+      const targetNames = [...new Set(matchedNames.map(n => String(n).trim()))]
+        .sort((a, b) => a.localeCompare(b));
       const owner = !onList
         ? 'Not on list'
         : cdms.length > 0 ? cdms.join(', ') : 'On list · no CDM';
@@ -150,6 +154,7 @@ export function findUntiedActiveOpps(records, targetData, cdmName, targetCdmColu
         onList,
         cdms,
         owner,
+        targetNames,
       };
     })
     // Only flag companies that are actually on the target list (tied to
