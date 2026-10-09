@@ -22,6 +22,7 @@ import { tierPreferringTargetsList } from '../../utils/tierSource';
 import { companyDedupeKey } from '../../utils/companyKey';
 import { MASTER_FIELDS, CANONICAL_HEADERS } from '../MasterSiteListView/masterSiteFields';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
+import { normalizeTierText } from '../../utils/tierText';
 import {
   addDivisionPatch,
   addDivisionsPatch,
@@ -1470,10 +1471,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           if (companyForLog) skippedAccounts.push({ company: companyForLog, reason: `CDM="${cdm}" (not ${cdmName || 'configured CDM'})` });
           continue;
         }
-        let tier = findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']);
+        let tier = normalizeTierText(findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']));
         if (!tier) {
-          tier = Object.values(r).find(v => /Tier\s*[1-3]/i.test(String(v || ''))) || '';
-          tier = String(tier);
+          tier = Object.values(r).map(normalizeTierText).find(v => /Tier\s*[1-3]/i.test(v)) || '';
         }
         // Tier 3 belongs to the book too. It used to be dropped here, which
         // is what kept the rep's Tier 3 targets ("all remaining assigned in
@@ -1527,8 +1527,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         if (!matchesCdm(cdm, cdmName)) continue;
         const company = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
         if (!company) continue;
-        let tierRaw = findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']);
-        if (!tierRaw) tierRaw = String(Object.values(r).find(v => /Tier\s*[1-9]/i.test(String(v || ''))) || '');
+        let tierRaw = normalizeTierText(findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']));
+        if (!tierRaw) tierRaw = Object.values(r).map(normalizeTierText).find(v => /Tier\s*[1-9]/i.test(v)) || '';
         const m = tierRaw.match(/(?:Tier\s*)?([1-9])/i);
         if (!m) continue;
         out.push({ company: company.trim(), tier: `Tier ${m[1]}` });
@@ -1565,8 +1565,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       for (const r of sheet.records) {
         const company = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
         if (!company) continue;
-        let tierRaw = findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']);
-        if (!tierRaw) tierRaw = String(Object.values(r).find(v => /Tier\s*[1-9]/i.test(String(v || ''))) || '');
+        let tierRaw = normalizeTierText(findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']));
+        if (!tierRaw) tierRaw = Object.values(r).map(normalizeTierText).find(v => /Tier\s*[1-9]/i.test(v)) || '';
         const m = tierRaw.match(/(?:Tier\s*)?([1-9])/i);
         if (!m) continue;
         out.push({ company: company.trim(), tier: `Tier ${m[1]}` });
