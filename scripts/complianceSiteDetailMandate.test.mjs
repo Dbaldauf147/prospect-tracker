@@ -1,8 +1,8 @@
-// The Master Analysis "Compliance Site Detail" sheet names each site's
-// mandates in a Mandate column (siteMandateNames, written by
-// utils/complianceReportXlsx.js). Plain Node. Run:
+// The Master Analysis "Compliance Site Detail" sheet names each category's
+// mandate in its own "<category> Mandate" column, linked to the ordinance
+// (siteMandateFor, written by utils/complianceReportXlsx.js). Plain Node. Run:
 //   node scripts/complianceSiteDetailMandate.test.mjs
-import { siteMandateNames } from '../src/utils/complianceMandates.js';
+import { siteMandateFor, screenSite } from '../src/utils/complianceMandates.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -12,30 +12,27 @@ function check(label, actual, expected) {
   console.log(`FAIL ${label}\n  expected ${e}\n  actual   ${a}`);
 }
 
-const hit = (policyName, extra = {}) => ({ active: true, eligible: true, policyName, deadline: null, penalty: 1000, ...extra });
+const hit = (policyName, policyLink = '') => ({ active: true, eligible: true, policyName, policyLink });
 const nyc = {
-  siteName: 'NYC HQ', city: 'New York', state: 'NY', matched: true, government: 'New York City', govId: 'NYC', sqft: 80000,
-  bbs: hit('Local Law 84'), audits: hit('Local Law 87'), bps: hit('Local Law 97'),
+  matched: true, government: 'New York City',
+  bbs: hit('Local Law 84', 'https://www.nyc.gov/ll84'), audits: hit('Local Law 87', 'https://www.nyc.gov/ll87'), bps: hit('Local Law 97'),
 };
-const dc = {
-  siteName: 'DC Office', city: 'Washington', state: 'DC', matched: true, government: 'Washington DC', govId: 'DC', sqft: 60000,
-  bbs: hit('Building Energy Performance Standards (BEPS)'), audits: { active: false, eligible: false }, bps: hit('Building Energy Performance Standards (BEPS)'),
-};
-const small = {
-  siteName: 'Small Shop', city: 'Denver', state: 'CO', matched: true, government: 'Denver', govId: 'DEN', sqft: 2000,
-  bbs: { active: true, eligible: false, policyName: 'Energize Denver' }, audits: { active: false, eligible: false }, bps: { active: true, eligible: false, policyName: 'Energize Denver' },
-};
-const unnamed = {
-  siteName: 'Unnamed', city: 'Austin', state: 'TX', matched: true, government: 'Austin', govId: 'AUS', sqft: 90000,
-  bbs: hit('Not available'), audits: { active: false, eligible: false }, bps: { active: false, eligible: false },
-};
-const nomatch = { siteName: 'Rural', city: 'Nowhere', state: 'KS', matched: false };
+check('name and link, no category prefix', siteMandateFor(nyc, 'bbs'), { name: 'Local Law 84', link: 'https://www.nyc.gov/ll84' });
+check('each category its own', siteMandateFor(nyc, 'audits'), { name: 'Local Law 87', link: 'https://www.nyc.gov/ll87' });
+check('no link on file: name only', siteMandateFor(nyc, 'bps'), { name: 'Local Law 97', link: '' });
+check('not a web address: no link', siteMandateFor({ matched: true, bbs: hit('X', 'see website') }, 'bbs').link, '');
+check('under the size requirement: none',
+  siteMandateFor({ matched: true, bbs: { active: true, eligible: false, policyName: 'Energize Denver' } }, 'bbs'), null);
+check('no name on file: the jurisdiction',
+  siteMandateFor({ matched: true, government: 'Austin', bbs: hit('Not available') }, 'bbs').name, 'Austin BBS ordinance');
+check('no match: none', siteMandateFor({ matched: false }, 'bbs'), null);
 
-check('one line per ordinance', siteMandateNames(nyc), ['BBS: Local Law 84', 'Energy Audits: Local Law 87', 'BPS: Local Law 97']);
-check('one ordinance, two categories: one line', siteMandateNames(dc), ['BBS / BPS: Building Energy Performance Standards (BEPS)']);
-check('under the size requirement: no mandate named', siteMandateNames(small), []);
-check('no name on file: the jurisdiction', siteMandateNames(unnamed), ['BBS: Austin BBS ordinance']);
-check('no match: nothing', siteMandateNames(nomatch), []);
+// The screening carries each ordinance's page through: benchmarking's
+// `link`, the audits / BPS `url`.
+const ny = screenSite({ siteName: 'HQ', city: 'New York', state: 'NY', sqft: 100000, propertyType: 'Office' });
+check('screened NYC site is matched', ny.matched, true);
+check('BBS link off the ordinance list', /^https:\/\/.*nyc\.gov/.test(siteMandateFor(ny, 'bbs')?.link || ''), true);
+check('BPS link off the ordinance list', /^https:\/\/.*nyc\.gov/.test(siteMandateFor(ny, 'bps')?.link || ''), true);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

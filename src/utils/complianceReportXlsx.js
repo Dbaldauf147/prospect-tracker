@@ -12,7 +12,7 @@
 // used by the ISO / NAM exports in SitesView.
 
 import {
-  CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR, siteMandateNames,
+  CATEGORIES, CATEGORY_LABEL, CATEGORY_COLOR, siteMandateFor,
   eligibilityByOrdinance, totalEligible, sitesWithMandate,
   penaltyByOrdinance, totalPenalty, utilityFeedEligibility,
   bpsPrioritization,
@@ -565,8 +565,8 @@ export async function exportComplianceReportXlsx(results, meta = {}) {
   return buf;
 }
 
-// Second sheet: one row per screened site with the names of the mandates it
-// falls under and its applicable BBS / Energy Audits / BPS mandates, each mandate's deadline and estimated max yearly
+// Second sheet: one row per screened site with its applicable BBS / Energy
+// Audits / BPS mandates, each one named and linked to its ordinance page, each mandate's deadline and estimated max yearly
 // penalty. Green branded header, frozen header + Site column, autofilter,
 // zebra rows; "Applicable" cells are coloured in each category's hue.
 function buildSiteDetailSheet(wb, results, meta) {
@@ -574,13 +574,12 @@ function buildSiteDetailSheet(wb, results, meta) {
     properties: { tabColor: { argb: SE_DARK } },
     views: [{ showGridLines: false, state: 'frozen', ySplit: 4, xSplit: 1 }],
   });
-  const NC = 17;
+  const NC = 19;
   ws.columns = [
     { width: 26 }, { width: 14 }, { width: 7 }, { width: 20 }, { width: 14 }, { width: 10 }, { width: 11 },
-    { width: 40 },
-    { width: 11 }, { width: 13 }, { width: 14 },
-    { width: 11 }, { width: 13 }, { width: 14 },
-    { width: 11 }, { width: 13 }, { width: 14 },
+    { width: 11 }, { width: 30 }, { width: 13 }, { width: 14 },
+    { width: 11 }, { width: 30 }, { width: 13 }, { width: 14 },
+    { width: 11 }, { width: 30 }, { width: 13 }, { width: 14 },
   ];
 
   // Branded title band + logo.
@@ -599,7 +598,7 @@ function buildSiteDetailSheet(wb, results, meta) {
 
   ws.mergeCells(2, 1, 2, NC);
   const s = ws.getCell(2, 1);
-  s.value = `Each screened site with the mandates it falls under, its applicable BBS / Energy Audits / BPS mandates, deadlines, and estimated max yearly penalties.  Generated ${meta.generatedAt}`;
+  s.value = `Each screened site with its applicable BBS / Energy Audits / BPS mandates (named and linked to the ordinance), deadlines, and estimated max yearly penalties.  Generated ${meta.generatedAt}`;
   s.font = { name: FONT, italic: true, size: 10, color: { argb: SLATE } };
   s.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
   ws.getRow(2).height = 18;
@@ -610,13 +609,13 @@ function buildSiteDetailSheet(wb, results, meta) {
   // building is the first question asked of an obligation that falls on
   // the owner.
   //
-  // Mandate names the ordinances themselves (Local Law 97, BEPS), ahead of
-  // the Yes / No columns that only say which category applies.
+  // Each category's Mandate column names the ordinance (Local Law 97, BEPS)
+  // and links to its page. One column per category rather than one for
+  // all three, because an Excel cell holds a single hyperlink.
   const headers = ['Site', 'City', 'State', 'Jurisdiction', 'Gov ID', 'Sq Ft', 'Owned / Leased',
-    'Mandate',
-    'BBS', 'BBS Deadline', 'BBS Penalty/yr',
-    'Energy Audits', 'Audits Deadline', 'Audits Penalty/yr',
-    'BPS', 'BPS Deadline', 'BPS Penalty/yr'];
+    'BBS', 'BBS Mandate', 'BBS Deadline', 'BBS Penalty/yr',
+    'Energy Audits', 'Audits Mandate', 'Audits Deadline', 'Audits Penalty/yr',
+    'BPS', 'BPS Mandate', 'BPS Deadline', 'BPS Penalty/yr'];
   const hr = ws.getRow(4);
   headers.forEach((label, i) => {
     const c = hr.getCell(i + 1);
@@ -652,24 +651,32 @@ function buildSiteDetailSheet(wb, results, meta) {
         indent: i === 6 ? 0 : 1,
       };
     });
-    const mandates = siteMandateNames(r);
-    const mCell = row.getCell(8);
-    mCell.value = mandates.length ? mandates.join('\n') : null;
-    mCell.font = { name: FONT, size: 9.5, color: { argb: INK } };
-    mCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+    let longest = 0;
     CATEGORIES.forEach((cat, ci) => {
       const e = r[cat];
       const applicable = !!(e && e.active && e.eligible === true);
-      const c0 = 9 + ci * 3;
+      const c0 = 8 + ci * 4;
       const appCell = row.getCell(c0);
       appCell.value = applicable ? 'Yes' : (r.matched ? 'No' : '');
       appCell.font = { name: FONT, size: 9.5, bold: applicable, color: { argb: applicable ? argb(CATEGORY_COLOR[cat]) : 'FF94A3B8' } };
       appCell.alignment = { vertical: 'middle', horizontal: 'center' };
-      const dlCell = row.getCell(c0 + 1);
+      // The ordinance's name, a link to its page when the list has one.
+      const mandate = siteMandateFor(r, cat);
+      const mCell = row.getCell(c0 + 1);
+      if (mandate?.link) {
+        mCell.value = { text: mandate.name, hyperlink: mandate.link, tooltip: mandate.link };
+        mCell.font = { name: FONT, size: 9.5, color: { argb: 'FF0563C1' }, underline: true };
+      } else {
+        mCell.value = mandate ? mandate.name : null;
+        mCell.font = { name: FONT, size: 9.5, color: { argb: INK } };
+      }
+      mCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+      if (mandate) longest = Math.max(longest, mandate.name.length);
+      const dlCell = row.getCell(c0 + 2);
       dlCell.value = applicable ? (e.deadline ? mdY(e.deadline) : (e.deadlineRaw || '')) : null;
       dlCell.font = { name: FONT, size: 9.5, color: { argb: SLATE } };
       dlCell.alignment = { vertical: 'middle', horizontal: 'center' };
-      const penCell = row.getCell(c0 + 2);
+      const penCell = row.getCell(c0 + 3);
       if (applicable && e.penalty != null) { penCell.value = e.penalty; penCell.numFmt = '"$"#,##0'; }
       else penCell.value = null;
       penCell.font = { name: FONT, size: 9.5, color: { argb: SLATE } };
@@ -680,8 +687,9 @@ function buildSiteDetailSheet(wb, results, meta) {
       if (zebra && !c.fill) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ZEBRA } };
       c.border = { bottom: { style: 'hair', color: { argb: LINE } } };
     }
-    // A line per mandate name, so a site under two ordinances shows both.
-    row.height = Math.max(16, 13 * mandates.length + 3);
+    // Tall enough for the longest mandate name to wrap inside its column
+    // (about 30 characters a line).
+    row.height = Math.max(16, 13 * Math.ceil(longest / 30) + 3);
     rr += 1;
   });
 

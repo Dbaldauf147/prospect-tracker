@@ -373,6 +373,7 @@ function evalCategory(category, mandate, site) {
       penaltyPerSqft: false, penaltyUnsized: false,
       requirements: auditRequirements(mandate),
       policyName: cat.policyName || cat.ordinanceName || '',
+      policyLink: cat.link || cat.url || '',
       status: cat.status || '',
     };
   }
@@ -390,6 +391,7 @@ function evalCategory(category, mandate, site) {
       penalty: null, penaltyRate: null, penaltyUom: null,
       penaltyPerSqft: false, penaltyUnsized: false,
       policyName: cat.policyName || cat.ordinanceName || '',
+      policyLink: cat.link || cat.url || '',
       status: cat.status || '',
     };
   }
@@ -441,6 +443,7 @@ function evalCategory(category, mandate, site) {
     penaltyPerSqft: perSqft,
     penaltyUnsized: perSqft && cat.maxPenalty != null && !Number.isFinite(sqft),
     policyName: cat.policyName || cat.ordinanceName || '',
+    policyLink: cat.link || cat.url || '',
     status: cat.status || '',
     // What the ordinance asks for, not just that it applies: the energy /
     // water / retro-commissioning / tune-up obligations behind an Energy
@@ -471,25 +474,23 @@ export function screenSites(sites, opts) {
   return (sites || []).map(s => screenSite(s, opts));
 }
 
-// The names of the mandates a site falls under, one line per ordinance:
-// "BBS / BPS: Local Law 97" when one ordinance covers two categories, else a
-// line each. Only the mandates the building actually has to meet (eligible)
-// are named. An ordinance on file with no name ("" or "Not available") reads
-// as the jurisdiction's, so the line still says whose it is.
-export function siteMandateNames(r) {
-  if (!r?.matched) return [];
-  const byName = new Map();
-  for (const cat of CATEGORIES) {
-    const e = r[cat];
-    if (!(e && e.active && e.eligible === true)) continue;
-    const raw = String(e.policyName || '').trim();
-    const name = raw && !/^not available$/i.test(raw)
-      ? raw
-      : `${r.government || 'Local'} ${CATEGORY_LABEL[cat]} ordinance`;
-    if (!byName.has(name)) byName.set(name, []);
-    byName.get(name).push(CATEGORY_LABEL[cat]);
-  }
-  return [...byName].map(([name, cats]) => `${cats.join(' / ')}: ${name}`);
+// The mandate a site falls under in one category, for the Compliance Site
+// Detail sheet's "<category> Mandate" column: { name, link }, or null when
+// the building doesn't have to meet one there (no match, no ordinance, or
+// under the size requirement). An ordinance on file with no name ("" or
+// "Not available") reads as the jurisdiction's, so the cell still says
+// whose it is. `link` is the ordinance's page (benchmarking's `link`, the
+// audits / BPS `url`), '' when the list has none or it isn't a web address.
+export function siteMandateFor(r, cat) {
+  if (!r?.matched) return null;
+  const e = r[cat];
+  if (!(e && e.active && e.eligible === true)) return null;
+  const raw = String(e.policyName || '').trim();
+  const name = raw && !/^not available$/i.test(raw)
+    ? raw
+    : `${r.government || 'Local'} ${CATEGORY_LABEL[cat]} ordinance`;
+  const link = String(e.policyLink || '').trim();
+  return { name, link: /^https?:\/\//i.test(link) ? link : '' };
 }
 
 // Human label for the company / portfolio a compliance site list belongs to,
