@@ -16942,7 +16942,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   const peMonthlyColumns = useMemo(() => PE_MONTHLY_COLUMNS.map(c => ({
     key: c.key,
     label: c.label,
-    defaultWidth: c.key === 'Next Steps' ? 260 : c.key === 'Account' ? 200 : c.key === 'Tier' ? 80 : 140,
+    defaultWidth: c.key === 'Next Steps' ? 260 : c.key === 'Account' ? 200 : c.key === 'Tier' ? 80 : c.key === 'CDMs Aligned' ? 110 : 140,
     // Tier sorts by number (Tier 1 before Tier 2, not tiered last) rather
     // than as text, matching the order the rows arrive in.
     getSortValue: c.key === 'Tier'

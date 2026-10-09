@@ -18,7 +18,7 @@ import { buildPeMonthlyRows, buildPeMonthlyEmailHtml, PE_MONTHLY_DRAFT_DEFAULTS 
 const ADMIN_EMAIL = 'baldaufdan@gmail.com';
 
 // The company fields the PE list reads: ownership, vertical, tier.
-const PROSPECT_FIELDS = ['company', 'type', 'peOwner', 'portfolioCompanies', 'vertical', 'tier', 'tierSource'];
+const PROSPECT_FIELDS = ['company', 'type', 'peOwner', 'portfolioCompanies', 'vertical', 'tier', 'tierSource', 'cdmAligned'];
 
 export async function loadPeMonthlyRows(db, uid, email) {
   const records = await loadOpps2Records(db, uid);
