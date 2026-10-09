@@ -96,7 +96,8 @@ import {
 } from '../../utils/clientManagerStore';
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, buildCdmOptions, buildTypeOptions } from '../../utils/prospectOptions';
-import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
+import { resolveTargetAccountCdm, matchesCdm } from '../../utils/cdmMatch';
+import { coverageFromSettings, salespeopleForVertical } from '../../utils/salesCoverage';
 import { buildTargetTierResolver, tierMismatch, targetVerticalFor } from '../../utils/targetTier';
 import { targetAccountRows, suggestTargetMatches, mappedTargetNames, targetRowFlags } from '../../utils/targetAccountMatch';
 import {
@@ -5034,6 +5035,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return resolveTargetCdmConflict({ id: prospect?.id, company }, fields.cdm || '');
   }, [resolveTargetCdmConflict, prospect?.id, fields.company, fields.cdm]);
 
+  // Who Opps > Coverage lists against this card's Vertical, when that list
+  // doesn't include you (cdmName). Shown as a second warning on the CDM
+  // field beside the Target Accounts one: the vertical is someone else's
+  // coverage, so the account likely isn't yours to work.
+  const verticalCoverageConflict = useMemo(() => {
+    const vertical = String(fields.vertical || '').trim();
+    if (!vertical || !cdmName) return null;
+    const people = salespeopleForVertical(coverageFromSettings(settings), vertical);
+    if (people.length === 0) return null;
+    if (people.some(p => matchesCdm(p.name, cdmName))) return null;
+    return { vertical, names: people.map(p => p.name) };
+  }, [fields.vertical, cdmName, settings?.salesCoverage]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Collect all unique tags across all HubSpot contacts for the dropdown.
   //
   // tagVocabulary collapses the spellings: this dataset carries "NAM only"
@@ -9355,6 +9369,22 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     </span>
                   );
                 })()}
+                {verticalCoverageConflict && (
+                  <span
+                    title={`Opps > Coverage lists ${verticalCoverageConflict.names.join(', ')} for the ${verticalCoverageConflict.vertical} vertical, not ${cdmName}.`}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
+                      flexShrink: 0, maxWidth: '45%', padding: '0.15rem 0.35rem', borderRadius: 4,
+                      background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E',
+                      fontSize: '0.62rem', fontWeight: 700, lineHeight: 1.3,
+                    }}
+                  >
+                    <span aria-hidden="true">⚠</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {`${verticalCoverageConflict.vertical}: ${verticalCoverageConflict.names.join(', ')}`}
+                    </span>
+                  </span>
+                )}
               </div>
             </div>
 
