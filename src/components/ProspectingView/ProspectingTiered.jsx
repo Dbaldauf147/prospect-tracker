@@ -1,5 +1,7 @@
-// Prospecting > Tiered: every Tier 1, 2 and 3 account with you as its CDM,
-// when anything last happened on it, and its Status (settable from the row).
+// Prospecting > Tiered Activity: every Tier 1, 2 and 3 account with you as
+// its CDM, when anything last happened on it, and its Status (settable from
+// the row). Statuses ticked in the Hide statuses menu are left off the list;
+// the choice is saved in settings so it applies on every visit.
 // Where the activity date comes from is utils/tieredAccountActivity.js; this
 // file loads the three sources and lays them out.
 
@@ -31,6 +33,11 @@ function ageColors(days) {
   if (days > ACTIVITY_WARM_DAYS) return { color: '#92400E', background: '#FEF3C7' };
   return { color: '#166534', background: '#DCFCE7' };
 }
+
+// Where the Hide statuses choice is saved.
+const HIDDEN_STATUSES_KEY = 'prospectingTieredHiddenStatuses';
+const statusOf = (p) => String(p?.status || '').trim();
+const statusLabel = (st) => st || 'No status';
 
 const toLocalDate = (tsMs) => {
   const d = new Date(tsMs);
@@ -88,12 +95,41 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
     [accounts, contacts, outreachIndex, bfoActivity, localFields, links, exclusions],
   );
 
+  // Statuses to leave off the list, '' standing for "no status". Saved to
+  // settings so the choice sticks across visits and devices; this visit's
+  // own pick is held locally too, so the list answers the click at once and
+  // a page with no updateSettings still filters.
+  const savedHidden = settings?.[HIDDEN_STATUSES_KEY];
+  const [localHidden, setHiddenLocal] = useState(null);
+  const hiddenStatuses = useMemo(
+    () => localHidden ?? (Array.isArray(savedHidden) ? savedHidden : []),
+    [localHidden, savedHidden],
+  );
+  const setHiddenStatuses = (next) => {
+    setHiddenLocal(next);
+    if (typeof updateSettings === 'function') updateSettings({ [HIDDEN_STATUSES_KEY]: next });
+  };
+  const hiddenSet = useMemo(() => new Set(hiddenStatuses), [hiddenStatuses]);
+  // Every status the menu offers, with how many tiered accounts carry it:
+  // the standard list, plus any other value an account actually has.
+  const statusOptions = useMemo(() => {
+    const counts = new Map();
+    for (const p of accounts) {
+      const st = statusOf(p);
+      counts.set(st, (counts.get(st) || 0) + 1);
+    }
+    const extra = [...counts.keys()].filter(st => st && !STATUSES.includes(st)).sort();
+    return [...STATUSES, ...extra, ''].map(st => ({ status: st, count: counts.get(st) || 0 }));
+  }, [accounts]);
+  const shown = useMemo(() => accounts.filter(p => !hiddenSet.has(statusOf(p))), [accounts, hiddenSet]);
+  const hiddenCount = accounts.length - shown.length;
+
   const [query, setQuery] = useState('');
   // Read once per visit: the day count only needs to be right to the day.
   const [now] = useState(() => Date.now());
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return accounts
+    return shown
       .filter(p => !q || String(p.company).toLowerCase().includes(q))
       .map(p => {
         const a = activity ? (activity.get(p.id || p.company) || null) : undefined;
@@ -101,13 +137,13 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
           id: p.id || p.company,
           company: String(p.company).trim(),
           tier: String(p.tier).trim(),
-          status: p.status || '',
+          status: statusOf(p),
           prospect: p,
           activity: a,
           days: a ? daysSince(a.tsMs, now) : null,
         };
       });
-  }, [accounts, activity, query, now]);
+  }, [shown, activity, query, now]);
 
   const canSetStatus = typeof updateProspect === 'function';
   const columns = useMemo(() => [
@@ -137,7 +173,7 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
     },
     {
       key: 'status', label: 'Status', defaultWidth: 170,
-      headerTitle: 'The account Status, as set on the company card. Pick one here to change it there.',
+      headerTitle: 'The account Status, as set on the company card. Pick one here to change it there. Picking a status you hide takes the row off the list.',
       getSortValue: r => (r.status ? r.status.toLowerCase() : null),
       getFilterValue: r => r.status || '',
       exportValue: r => r.status || '',
@@ -241,6 +277,45 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
           placeholder="Search companies"
           style={{ padding: '0.35rem 0.6rem', border: '1px solid #CBD5E1', borderRadius: 6, fontSize: '0.76rem', fontFamily: 'inherit', width: 240 }}
         />
+        <details style={{ position: 'relative' }}>
+          <summary
+            title="Leave accounts with these Statuses off the list. Your choice is saved."
+            style={{
+              listStyle: 'none', cursor: 'pointer', padding: '0.35rem 0.6rem', borderRadius: 6, fontSize: '0.76rem', fontWeight: 600,
+              border: `1px solid ${hiddenStatuses.length ? '#F59E0B' : '#CBD5E1'}`,
+              background: hiddenStatuses.length ? '#FFFBEB' : '#fff',
+              color: hiddenStatuses.length ? '#92400E' : '#475569',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {hiddenStatuses.length ? `Hiding ${hiddenStatuses.length} status${hiddenStatuses.length === 1 ? '' : 'es'} (${hiddenCount.toLocaleString()})` : 'Hide statuses'} ▾
+          </summary>
+          <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 1000, minWidth: 240, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 8, boxShadow: '0 8px 24px rgba(15,23,42,0.12)', padding: '0.4rem 0' }}>
+            <div style={{ padding: '0.2rem 0.75rem 0.4rem', fontSize: '0.66rem', color: '#64748B' }}>Tick a status to hide its accounts</div>
+            {statusOptions.map(({ status: st, count }) => {
+              const on = hiddenSet.has(st);
+              return (
+                <label key={st || '(none)'} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.25rem 0.75rem', fontSize: '0.74rem', color: '#334155', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    aria-label={`Hide ${statusLabel(st)}`}
+                    onChange={() => setHiddenStatuses(on ? hiddenStatuses.filter(x => x !== st) : [...hiddenStatuses, st])}
+                  />
+                  <span style={{ flex: 1, fontStyle: st ? 'normal' : 'italic' }}>{statusLabel(st)}</span>
+                  <span style={{ color: '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>{count.toLocaleString()}</span>
+                </label>
+              );
+            })}
+            {hiddenStatuses.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setHiddenStatuses([])}
+                style={{ margin: '0.3rem 0.75rem 0', border: 'none', background: 'none', padding: 0, fontSize: '0.7rem', color: '#0A66C2', cursor: 'pointer' }}
+              >Show all statuses</button>
+            )}
+          </div>
+        </details>
       </div>
       {accounts.length === 0 ? (
         <div style={{ padding: '1rem', border: '1px dashed #CBD5E1', borderRadius: 8, fontSize: '0.75rem', color: '#64748B' }}>
@@ -257,7 +332,7 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
             fitWidth
             alwaysVisible={['company']}
             enableColumnFilters
-            emptyMessage="No accounts match these filters"
+            emptyMessage={hiddenCount > 0 && shown.length === 0 ? 'Every tiered account has a hidden status' : 'No accounts match these filters'}
             settings={settings}
             updateSettings={updateSettings}
           />

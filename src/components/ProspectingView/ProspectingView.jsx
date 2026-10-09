@@ -111,7 +111,7 @@ const SUBTABS = [
   { key: 'history', label: 'History' },
   { key: 'prospects', label: 'Prospects' },
   { key: 'pcs', label: 'PCs' },
-  { key: 'tiered', label: 'Tiered' },
+  { key: 'tiered', label: 'Tiered Activity' },
 ];
 function readSavedSubtab() {
   try {
