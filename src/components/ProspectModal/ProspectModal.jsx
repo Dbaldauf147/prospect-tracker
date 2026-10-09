@@ -8434,6 +8434,26 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 onRemove={removeIndicativeAnalysis}
               />
             )}
+            {/* Keeps this company out of every CSV the app builds for
+                ZoomInfo (utils/zoomExportExclude.js). A field on the card,
+                so it autosaves like any other edit. */}
+            {!isNew && (
+              <button
+                type="button"
+                onClick={() => setFields(prev => ({ ...prev, excludeFromZoomExports: !prev.excludeFromZoomExports }))}
+                aria-pressed={!!fields.excludeFromZoomExports}
+                title={fields.excludeFromZoomExports
+                  ? 'Excluded from the ZoomInfo exports (Zoom Info page and My Accounts Zoom CSVs). Click to include it again.'
+                  : 'Leave this company out of the ZoomInfo exports (Zoom Info page and My Accounts Zoom CSVs).'}
+                style={{
+                  padding: '0.25rem 0.6rem', borderRadius: 6, fontSize: '0.72rem', fontWeight: 600,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  border: `1px solid ${fields.excludeFromZoomExports ? '#B45309' : '#CBD5E1'}`,
+                  background: fields.excludeFromZoomExports ? '#FEF3C7' : '#fff',
+                  color: fields.excludeFromZoomExports ? '#92400E' : '#334155',
+                }}
+              >{fields.excludeFromZoomExports ? 'Excluded from ZoomInfo' : 'Exclude from ZoomInfo'}</button>
+            )}
             {!isNew && onDeleteProspect && onUpdateProspect && (
               <button
                 type="button"

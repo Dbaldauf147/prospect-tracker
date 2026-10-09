@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { buildTypeOptions, persistCustomOption } from '../../utils/prospectOptions';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
+import { buildZoomExcludedMatcher } from '../../utils/zoomExportExclude';
 
 // Same fuzzy company match the Portfolio Companies analysis uses for
 // its CM lookup, so the CM column on Zoom Info agrees with what shows
@@ -837,9 +838,12 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
   function exportCsv() {
     const exportCols = EXPORT_COLUMN_KEYS.map(k => COLUMNS.find(c => c.key === k));
     const lines = [exportCols.map(c => csvEscape(c.label)).join(',')];
+    // Companies excluded from ZoomInfo exports on their company popup.
+    const isExcluded = buildZoomExcludedMatcher(prospects);
     for (const r of persistedRows) {
       // Skip entirely-empty saved rows so the CSV doesn't carry blank lines.
       if (EXPORT_COLUMN_KEYS.every(k => !String(r[k] || '').trim())) continue;
+      if (isExcluded({ company: r.company, names: [r.acceptedSuggestion, r.zoomName], zoomId: r.zoomId })) continue;
       lines.push(EXPORT_COLUMN_KEYS.map(k => csvEscape(r[k] || '')).join(','));
     }
     // Prepend a UTF-8 BOM so Excel auto-detects the encoding when the
@@ -902,7 +906,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
         <button
           type="button"
           onClick={exportCsv}
-          title="Download the first four columns (Company, Zoom Company ID, Zoom Company Name, Zoom Website) as a CSV file."
+          title="Download the first four columns (Company, Zoom Company ID, Zoom Company Name, Zoom Website) as a CSV file. Companies marked Exclude from ZoomInfo on their company popup are left out."
           style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text)', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
         >Export CSV</button>
         {hasCustomWidths && (
