@@ -76,6 +76,10 @@ check('email leaves out CDM but keeps Vertical CDM', [/>CDM</.test(table), table
 check('email columns are the tab columns minus CDM, Scope and Next Steps',
   PE_MONTHLY_EMAIL_COLUMNS.map(c => c.key), PE_MONTHLY_COLUMNS.map(c => c.key).filter(k => !['CDM', 'Scope', 'Next Steps'].includes(k)));
 check('empty list says so', buildPeMonthlyTableHtml([]).includes('No PE or portfolio company deals'), true);
+// Columns fit their text: the table is sized to its contents rather than
+// stretched to the email's width (New Opps still stretches).
+check('table is not stretched to full width', /<table[^>]*width:100%/.test(table), false);
+check('New Opps table still full width', /<table[^>]*width:100%/.test(buildNewOppsDigestTableHtml([{ Account: 'X' }])), true);
 
 // Same look as the New Opps email: identical cell styling and body wrapper.
 const style = (html) => (html.match(/<th style="[^"]*"/) || [''])[0];

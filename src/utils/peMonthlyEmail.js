@@ -180,6 +180,7 @@ export function buildPeMonthlyTableHtml(rows) {
   return buildDigestTableHtml(rows, PE_MONTHLY_EMAIL_COLUMNS, 'No PE or portfolio company deals at Stage 3 or later right now.', {
     headStyle: PE_MONTHLY_HEADER_STYLE,
     rowStyle: peMonthlyRowStyle,
+    fit: true,
   });
 }
 

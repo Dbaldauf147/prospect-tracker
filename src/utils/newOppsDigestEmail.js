@@ -71,7 +71,10 @@ export function buildNewOppsDigestTableHtml(records) {
 // `rowStyle(record)` ({ background, color } or null) each body row, so a
 // table can carry its page's colours into the email. Both left out, the
 // table is the plain black-and-white one New Opps sends.
-export function buildDigestTableHtml(records, columns, emptyText = 'Nothing to report.', { headStyle = null, rowStyle = null } = {}) {
+// `fit` sizes the table to its contents instead of stretching it across the
+// email: at width:100% Outlook hands the spare width out to every column,
+// so short ones (Tier, Stage) open up far wider than their text.
+export function buildDigestTableHtml(records, columns, emptyText = 'Nothing to report.', { headStyle = null, rowStyle = null, fit = false } = {}) {
   if (!Array.isArray(records) || records.length === 0) {
     return `<p style="color:#000000;font-size:13px;margin:0">${escapeHtml(emptyText)}</p>`;
   }
@@ -112,7 +115,7 @@ export function buildDigestTableHtml(records, columns, emptyText = 'Nothing to r
   }).join('');
 
   return `
-    <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;margin:4px 0 8px;border:${BORDER}">
+    <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;${fit ? '' : 'width:100%;'}margin:4px 0 8px;border:${BORDER}">
       <thead><tr>${head}</tr></thead>
       <tbody>${rows}</tbody>
     </table>
