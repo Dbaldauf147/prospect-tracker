@@ -67,37 +67,46 @@ export function buildNewOppsDigestTableHtml(records) {
 // another digest (PE Monthly) reads exactly like the New Opps one. A
 // 'BFO Address' column renders "BFO Link" and 'Next Steps' keeps its line
 // breaks, whichever list they appear in.
-export function buildDigestTableHtml(records, columns, emptyText = 'Nothing to report.') {
+// `headStyle` ({ background, color }) colours the header row and
+// `rowStyle(record)` ({ background, color } or null) each body row, so a
+// table can carry its page's colours into the email. Both left out, the
+// table is the plain black-and-white one New Opps sends.
+export function buildDigestTableHtml(records, columns, emptyText = 'Nothing to report.', { headStyle = null, rowStyle = null } = {}) {
   if (!Array.isArray(records) || records.length === 0) {
     return `<p style="color:#000000;font-size:13px;margin:0">${escapeHtml(emptyText)}</p>`;
   }
 
   const BORDER = '1px solid #000000';
   const thAlign = (c) => (c.align === 'right' ? 'right' : 'left');
+  // Outlook drops a row's background, so the colour goes on every cell.
+  const paint = (st) => (st?.background ? `background:${st.background};` : '');
+  const headColor = headStyle?.color || '#000000';
   const head = columns.map((c) =>
-    `<th style="text-align:${thAlign(c)};padding:6px 10px;font:700 13px Arial,sans-serif;color:#000000;border:${BORDER};white-space:nowrap">${escapeHtml(c.label)}</th>`
+    `<th style="text-align:${thAlign(c)};padding:6px 10px;font:700 13px Arial,sans-serif;color:${headColor};${paint(headStyle)}border:${BORDER};white-space:nowrap">${escapeHtml(c.label)}</th>`
   ).join('');
 
   const bfoUrl = (r) => {
     const u = String(r['BFO Address'] || '').trim();
     return /^https?:\/\//i.test(u) ? u : '';
   };
-  const link = (href, text) =>
-    `<a href="${escapeHtml(href)}" style="color:#000000;text-decoration:underline">${escapeHtml(text)}</a>`;
+  const link = (href, text, color = '#000000') =>
+    `<a href="${escapeHtml(href)}" style="color:${color};text-decoration:underline">${escapeHtml(text)}</a>`;
 
   const rows = records.map((r) => {
+    const st = typeof rowStyle === 'function' ? rowStyle(r) : null;
+    const color = st?.color || '#000000';
     const cells = columns.map((c) => {
       const v = cellValue(r, c);
       let inner;
       if (c.key === 'BFO Address') {
         const url = bfoUrl(r);
-        inner = url ? link(url, 'BFO Link') : '';
+        inner = url ? link(url, 'BFO Link', color) : '';
       } else if (c.key === 'Next Steps') {
         inner = escapeHtmlMultiline(v);
       } else {
         inner = escapeHtml(v);
       }
-      return `<td style="text-align:${thAlign(c)};padding:6px 10px;font:13px Arial,sans-serif;color:#000000;border:${BORDER};vertical-align:top">${inner}</td>`;
+      return `<td style="text-align:${thAlign(c)};padding:6px 10px;font:13px Arial,sans-serif;color:${color};${paint(st)}border:${BORDER};vertical-align:top">${inner}</td>`;
     }).join('');
     return `<tr>${cells}</tr>`;
   }).join('');

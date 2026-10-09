@@ -58,6 +58,18 @@ export function peMonthlyCdmsAligned(tier, aligned, { ownVertical = false } = {}
   return aligned === true ? 'Yes' : 'No';
 }
 
+// The PE Monthly colours, shared by the tab and the email so the draft
+// looks like the table it came from: the SE header band (Schneider dark
+// green, white type), green rows once the CDMs are aligned, grey rows when
+// there is nothing to align (CDMs aligned reads N/A: not on the tier list,
+// or the vertical is yours).
+export const PE_MONTHLY_HEADER_STYLE = { background: '#009530', color: '#FFFFFF' };
+export function peMonthlyRowStyle(row) {
+  if (row?.['CDMs Aligned'] === 'Yes') return { background: '#DCFCE7', color: '#000000' };
+  if (row?.['CDMs Aligned'] === 'N/A') return { background: '#F1F5F9', color: '#64748B' };
+  return null;
+}
+
 // Where a tier sorts: Tier 1 first, then Tier 2, Tier 3 and any higher
 // number, then everything not on the tier list (blank, "-", "Not on tier
 // list") last.
@@ -165,7 +177,10 @@ export function resolvePeMonthlyDraftTemplate(saved) {
 }
 
 export function buildPeMonthlyTableHtml(rows) {
-  return buildDigestTableHtml(rows, PE_MONTHLY_EMAIL_COLUMNS, 'No PE or portfolio company deals at Stage 3 or later right now.');
+  return buildDigestTableHtml(rows, PE_MONTHLY_EMAIL_COLUMNS, 'No PE or portfolio company deals at Stage 3 or later right now.', {
+    headStyle: PE_MONTHLY_HEADER_STYLE,
+    rowStyle: peMonthlyRowStyle,
+  });
 }
 
 export function buildPeMonthlyEmailHtml(rows, { message = '', greeting = '', signature = '' } = {}) {
