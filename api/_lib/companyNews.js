@@ -994,7 +994,11 @@ export async function logDealsToRecords(db, uid, email, results, now = Date.now(
         const snap = await tx.get(ref);
         if (!snap.exists) return 0;
         const { next, added, rows: fresh } = mergeDealsIntoLog(snap.data()?.portfolioTransactions, r.deals, r.company, now);
-        if (added) tx.update(ref, { portfolioTransactions: next });
+        // updatedAt too: the app loads only the companies changed since its
+        // last visit (src/utils/rosterSync.js), so a write that leaves it
+        // alone is a write the app never sees. A Date is stored as a
+        // Firestore Timestamp, the type that query compares on.
+        if (added) tx.update(ref, { portfolioTransactions: next, updatedAt: new Date() });
         // Reassigned rather than pushed: a transaction can run its body
         // more than once, and only the last attempt's rows were written.
         written = fresh;

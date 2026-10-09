@@ -1,14 +1,23 @@
 import { useEffect, useState } from 'react';
 import { watchEarlierTabs } from '../utils/tabPresence';
+import { getRosterLoadMode, ROSTER_LOAD_MODE_EVENT } from '../utils/firestoreSync';
 
-// Shown in a tab opened while the app was already open in another one.
-// That late tab can't share the first tab's saved copy of the data, so it
-// read every company from the database on load, which is what used up the
-// project's daily read limit. Saying so once, in the tab that paid, is
-// enough for the habit to change; nothing here blocks the tab.
+// Shown in a tab opened while the app was already open in another one, when
+// that tab had to read every company from the database (no usable copy of
+// the roster on this device, or its weekly refresh). Most loads now read
+// only what changed (utils/rosterSync.js), and a second tab doing that
+// costs next to nothing, so there is nothing to warn about then. Nothing
+// here blocks the tab.
 export function OtherTabBanner() {
   const [others, setOthers] = useState(0);
   const [dismissed, setDismissed] = useState(false);
+  const [loadMode, setLoadMode] = useState(getRosterLoadMode);
+
+  useEffect(() => {
+    const onMode = (e) => setLoadMode(e.detail);
+    window.addEventListener(ROSTER_LOAD_MODE_EVENT, onMode);
+    return () => window.removeEventListener(ROSTER_LOAD_MODE_EVENT, onMode);
+  }, []);
 
   useEffect(() => {
     const stop = watchEarlierTabs(setOthers);
@@ -21,7 +30,7 @@ export function OtherTabBanner() {
     };
   }, []);
 
-  if (others === 0 || dismissed) return null;
+  if (others === 0 || dismissed || loadMode !== 'full') return null;
 
   return (
     <div role="status" style={{

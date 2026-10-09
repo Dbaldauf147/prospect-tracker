@@ -1,6 +1,6 @@
 // `getDoc` is aliased: this module already has a local getDoc(id) helper
 // that builds a prospect doc ref, and the two names would collide.
-import { collection, doc, getDoc as fsGetDoc, setDoc, updateDoc, deleteDoc, getDocs, writeBatch, serverTimestamp, enableNetwork } from 'firebase/firestore';
+import { collection, doc, getDoc as fsGetDoc, setDoc, updateDoc, deleteDoc, getDocs, writeBatch, serverTimestamp, enableNetwork, query, where, Timestamp, getCountFromServer, getDocFromServer, getDocsFromServer } from 'firebase/firestore';
 import { onSnapshot } from './safeOnSnapshot';
 import { db } from '../firebase';
 // A ceiling on a Firestore call that might never settle — see the note on
@@ -32,6 +32,9 @@ import { newSheetRows } from './sheetSyncDiff.js';
 // CSV import and the duplicate collapse cannot drift apart.
 import { planProspectReconcile, prospectScore, createdMillis, isEmptyValue, MERGE_FIELDS } from './prospectMerge.js';
 import { markImportedTier } from './tierSource.js';
+// The roster loaded from a device copy plus what changed (see subscribeToProspects).
+import { createRosterSync } from './rosterSync.js';
+import { rosterLocalStore } from './rosterLocalStore.js';
 // Chunk-doc ids, and the rule for which of them a finished save may delete.
 // Pure and firebase-free so it can be tested on its own — see
 // scripts/analysisChunks.test.mjs.
@@ -80,7 +83,64 @@ function getDoc(id) {
 // delivery. Logging it and returning was enough to leave the app on
 // "Loading prospects..." for good, so the failure is handed back to the
 // caller to show.
+//
+// The roster is loaded from this device's copy plus the companies changed
+// since (utils/rosterSync.js), which is what keeps a day of use inside the
+// Spark plan's 50K reads. Setting localStorage 'roster-full-listener' to
+// '1' goes back to listening to the whole collection, the way it always
+// did; any failure in the copy path falls back to that on its own.
 export function subscribeToProspects(onChange, onError) {
+  let fullOnly = false;
+  try { fullOnly = localStorage.getItem('roster-full-listener') === '1'; } catch { /* storage blocked */ }
+  if (fullOnly || typeof indexedDB === 'undefined') {
+    setRosterLoadMode('full');
+    return subscribeToWholeRoster(onChange, onError);
+  }
+
+  const col = getCol();
+  const scope = `${_userId || 'anon'}|${col.path}`;
+  const toDoc = (d) => ({ id: d.id, ...d.data() });
+  const snapOf = (snap) => ({
+    fromCache: snap.metadata.fromCache,
+    docs: snap.docs.map(toDoc),
+    changes: snap.docChanges().map(c => ({ type: c.type, doc: toDoc(c.doc), pending: c.doc.metadata.hasPendingWrites })),
+  });
+  const sync = createRosterSync({
+    api: {
+      listenAll: (next, err) => onSnapshot(col, (snap) => next(snapOf(snap)), err),
+      listenSince: (ms, next, err) => onSnapshot(
+        query(col, where('updatedAt', '>', Timestamp.fromMillis(ms))),
+        (snap) => next(snapOf(snap)),
+        err,
+      ),
+      count: async () => (await getCountFromServer(col)).data().count,
+      getAll: async () => (await getDocsFromServer(col)).docs.map(toDoc),
+      getOne: async (id) => {
+        const d = await getDocFromServer(doc(col, id));
+        return d.exists() ? toDoc(d) : null;
+      },
+    },
+    store: rosterLocalStore(scope, (s, ns) => new Timestamp(s, ns)),
+    onChange,
+    onError: (err) => {
+      console.error('Firestore prospects subscription error:', err);
+      if (onError) onError(err);
+    },
+    onMode: setRosterLoadMode,
+    log: (msg, err) => (err ? console.warn(msg, err) : console.log(msg)),
+  });
+  activeRoster = sync;
+  sync.start().catch((err) => {
+    console.error('Firestore prospects subscription error:', err);
+    if (onError) onError(err);
+  });
+  return () => {
+    sync.stop();
+    if (activeRoster === sync) activeRoster = null;
+  };
+}
+
+function subscribeToWholeRoster(onChange, onError) {
   return onSnapshot(getCol(), (snap) => {
     const prospects = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     onChange(prospects);
@@ -90,13 +150,40 @@ export function subscribeToProspects(onChange, onError) {
   });
 }
 
+// The roster subscription currently running, told about this tab's own
+// writes so they show at once (see rosterSync's overlays) and its deletes,
+// which a changes-only listener cannot see.
+let activeRoster = null;
+const noteWrite = (id, patch) => (activeRoster ? activeRoster.localWrite(id, patch) : () => {});
+const noteDeleted = (ids) => { if (activeRoster) activeRoster.localDeleted(ids); };
+
+// How the roster loaded in this tab: 'delta' (device copy plus changes) or
+// 'full' (every company read). The other-tab notice only applies to 'full'.
+let rosterLoadMode = 'idle';
+export const ROSTER_LOAD_MODE_EVENT = 'roster-load-mode';
+function setRosterLoadMode(mode) {
+  rosterLoadMode = mode;
+  try { window.dispatchEvent(new CustomEvent(ROSTER_LOAD_MODE_EVENT, { detail: mode })); } catch { /* no window */ }
+}
+export function getRosterLoadMode() {
+  return rosterLoadMode;
+}
+
 export async function addProspect(prospect) {
   const ref = doc(getCol());
-  await setDoc(ref, {
-    ...sanitizeFirestoreData(prospect),
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
+  const data = sanitizeFirestoreData(prospect);
+  const settled = noteWrite(ref.id, data);
+  try {
+    await setDoc(ref, {
+      ...data,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    settled(false);
+    throw err;
+  }
+  settled(true);
   return ref.id;
 }
 
@@ -145,10 +232,17 @@ function prospectDocPath(id) {
 // spelling, so the fallback stamps the client clock instead.
 export async function updateProspect(id, updates) {
   const data = sanitizeFirestoreData(updates || {});
-  await viaSdkOrRest(
-    () => updateDoc(getDoc(id), { ...data, updatedAt: serverTimestamp() }),
-    () => restUpdateFields(prospectDocPath(id), keyFieldEntries({ ...data, updatedAt: new Date() })),
-  );
+  const settled = noteWrite(id, data);
+  try {
+    await viaSdkOrRest(
+      () => updateDoc(getDoc(id), { ...data, updatedAt: serverTimestamp() }),
+      () => restUpdateFields(prospectDocPath(id), keyFieldEntries({ ...data, updatedAt: new Date() })),
+    );
+  } catch (err) {
+    settled(false);
+    throw err;
+  }
+  settled(true);
 }
 
 export async function deleteProspect(id) {
@@ -156,6 +250,7 @@ export async function deleteProspect(id) {
     () => deleteDoc(getDoc(id)),
     () => restDeleteDoc(prospectDocPath(id)),
   );
+  noteDeleted([id]);
 }
 
 // The ONE place an import may create prospect documents.
@@ -186,7 +281,10 @@ export async function addProspectsIfNew(rows, roster, { batchSize = 450 } = {}) 
       const now = new Date().toISOString();
       // A tier from an import is not a choice — mark it so the Target
       // Accounts list outranks it (see utils/tierSource).
-      batch.set(doc(col), { ...markImportedTier(p), createdAt: now, updatedAt: now });
+      // updatedAt as a server Timestamp, not the ISO string createdAt
+      // keeps: the roster loads only documents whose updatedAt is past its
+      // last sync, and that query only matches Timestamps.
+      batch.set(doc(col), { ...markImportedTier(p), createdAt: now, updatedAt: serverTimestamp() });
     }
     await batch.commit();
   }
@@ -215,7 +313,10 @@ export async function restoreProspectDocs(rows, { batchSize = 400 } = {}) {
     const batch = writeBatch(db);
     for (const row of list.slice(i, i + batchSize)) {
       const { id, ...data } = row;
-      batch.set(getDoc(id), data, { merge: true });
+      // Stamped now rather than keeping the backup's updatedAt: a restored
+      // record is a change every device must pick up, and the roster only
+      // loads documents updated since its last sync.
+      batch.set(getDoc(id), { ...data, updatedAt: serverTimestamp() }, { merge: true });
     }
     await batch.commit();
   }
@@ -297,8 +398,10 @@ export async function reconcileAllProspects(newProspects, { onProgress, confirm 
 
   for (let i = 0; i < plan.deletes.length; i += 400) {
     const batch = writeBatch(db);
-    plan.deletes.slice(i, i + 400).forEach(id => batch.delete(getDoc(id)));
+    const ids = plan.deletes.slice(i, i + 400);
+    ids.forEach(id => batch.delete(getDoc(id)));
     await batch.commit();
+    noteDeleted(ids);
     completed += Math.min(400, plan.deletes.length - i);
     await report('Removing companies not in the file');
   }
@@ -360,8 +463,10 @@ export async function collapseDuplicateGroups(groups) {
     for (const l of losers) remaps.push({ from: l.id, to: keeper.id });
     for (let i = 0; i < losers.length; i += 400) {
       const batch = writeBatch(db);
-      losers.slice(i, i + 400).forEach(l => batch.delete(getDoc(l.id)));
+      const chunk = losers.slice(i, i + 400);
+      chunk.forEach(l => batch.delete(getDoc(l.id)));
       await batch.commit();
+      noteDeleted(chunk.map(l => l.id));
       removed += Math.min(400, losers.length - i);
     }
     merged.push({ company: keeper.company, removed: losers.length });
