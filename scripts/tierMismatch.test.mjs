@@ -43,5 +43,26 @@ check('a tier on an untiered company warns, and applies Not on tier list',
   check('card at Tier 3 agrees', tierMismatch('Tier 3', resolve({ id: 'p1', company: 'Triumph Group' })), null);
 }
 
+// The tier column is the one the Targets page reads, not the first filled
+// cell under any "tier"/"target" header: an earlier "Target Segment" or
+// "Prior Tier" column must not hide the Tier the page shows.
+for (const [label, rec, headers] of [
+  ['a filled "Target Segment" column first',
+    { 'Account Name': 'Triumph Group', 'Target Segment': 'Aerospace', 'Account Tier': '3' },
+    ['Account Name', 'Target Segment', 'Account Tier']],
+  ['a "Prior Tier" column saying Not on tier list first',
+    { 'Account Name': 'Triumph Group', 'Prior Tier': 'Not on tier list', Tier: 'Tier 3' },
+    ['Account Name', 'Prior Tier', 'Tier']],
+  ['a plain digit in the Tier column',
+    { 'Account Name': 'Triumph Group', Targeted: 'Yes', Tier: '3' },
+    ['Account Name', 'Targeted', 'Tier']],
+]) {
+  const data = { sheetNames: ['S'], sheets: { S: { headers, records: [rec] } } };
+  const settings = { targetMap: { p1: ['Triumph Group'] } };
+  check(`${label}: box reads Tier 3`, targetAccountRows(data, settings)[0]?.tier, 'Tier 3');
+  const resolve = buildTargetTierResolver({ targetAccountsData: data, cdmName: 'Dan Baldauf', settings, includeAllReps: true });
+  check(`${label}: warning reads Tier 3`, resolve({ id: 'p1', company: 'Triumph Group' }).tier, 'Tier 3');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
