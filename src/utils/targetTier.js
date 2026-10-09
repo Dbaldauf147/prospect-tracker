@@ -28,29 +28,41 @@ export function targetRowCompany(r) {
   return '';
 }
 
-// The column a Target Accounts sheet keeps its tier in, picked the way the
-// Targets page picks it (its tier legend): an "Account Tier" / "Tier Level"
-// header, else any header with "tier" in it. Only a sheet with neither falls
-// back to a "Target" header. The popup used to take the first non-blank
-// cell under ANY header containing "tier" or "target", so a filled column
-// like "Target Segment" or "Prior Tier" ahead of the real one hid the tier
-// the Targets page shows, and the popup said Not on tier list.
-export function targetTierColumn(headers) {
-  const hs = (headers || []).filter(Boolean).map(String);
-  return hs.find(h => /account tier|tier level/i.test(h))
-    || hs.find(h => /tier/i.test(h))
-    || hs.find(h => /target/i.test(h))
-    || '';
+// The columns a Target Accounts sheet keeps its tier in, best first, picked
+// the way the Targets page picks its tier column (its tier legend): an
+// "Account Tier" / "Tier Level" header, then one called just "Tier", then
+// any other header with "tier" in it. Only a sheet with neither falls back to "Target" headers. The
+// popup used to take the first non-blank cell under ANY header containing
+// "tier" or "target", so a filled column like "Target Segment" or "Prior
+// Tier" ahead of the real one hid the tier the Targets page shows.
+//
+// A sheet can carry two tier columns (an old "Account Tier" left blank
+// beside the "Tier" that is kept up to date), so a row's tier is the first
+// of these that actually holds one.
+export function targetTierColumns(headers) {
+  const hs = [...new Set((headers || []).filter(Boolean).map(String))];
+  const named = [
+    ...hs.filter(h => /account tier|tier level/i.test(h)),
+    ...hs.filter(h => /^\s*tier\s*$/i.test(h)),
+  ];
+  const tiers = [...named, ...hs.filter(h => /tier/i.test(h) && !named.includes(h))];
+  return tiers.length ? tiers : hs.filter(h => /target/i.test(h));
 }
 
 // A Target Accounts row's tier as "Tier N" (1–9), '' when it has none: the
-// tier column's cell, else any cell shaped like "Tier 2". `tierCol` is the
-// sheet's targetTierColumn; left out, it is picked from the row's own keys.
-// The popup's Targets list box and its Tier warning (and the Clients and
-// Opps pages) all read tiers through this, so they can't disagree.
-export function targetRowTier(r, tierCol = targetTierColumn(Object.keys(r || {}))) {
-  let raw = tierCol ? String(r?.[tierCol] ?? '').trim() : '';
-  if (!/[1-9]/.test(raw)) raw = String(Object.values(r || {}).find(v => /Tier\s*[1-9]/i.test(String(v || ''))) || '');
+// first tier column (targetTierColumns, best first) whose cell holds a tier
+// number, else any cell shaped like "Tier 2". `tierCols` is the sheet's
+// columns, or one column name; left out, they are picked from the row's own
+// keys. The popup's Targets list box and its Tier warning (and the Clients
+// and Opps pages) all read tiers through this, so they can't disagree.
+export function targetRowTier(r, tierCols = targetTierColumns(Object.keys(r || {}))) {
+  const cols = Array.isArray(tierCols) ? tierCols : (tierCols ? [tierCols] : []);
+  let raw = '';
+  for (const col of cols) {
+    const v = String(r?.[col] ?? '').trim();
+    if (/[1-9]/.test(v)) { raw = v; break; }
+  }
+  if (!raw) raw = String(Object.values(r || {}).find(v => /Tier\s*[1-9]/i.test(String(v || ''))) || '');
   const m = raw.match(/(?:Tier\s*)?([1-9])/i);
   return m ? `Tier ${m[1]}` : '';
 }
@@ -68,7 +80,7 @@ export function parseTargetAccountTiers(targetAccountsData, cdmName, targetCdmCo
   for (const sheetName of data.sheetNames || []) {
     const sheet = data.sheets[sheetName];
     if (!sheet?.records) continue;
-    const tierCol = targetTierColumn(sheet.headers?.length ? sheet.headers : Object.keys(sheet.records[0] || {}));
+    const tierCols = targetTierColumns(sheet.headers?.length ? sheet.headers : Object.keys(sheet.records[0] || {}));
     for (const r of sheet.records) {
       if (scopeToCdm) {
         let cdm = resolveTargetAccountCdm(r, targetCdmColumn).toLowerCase();
@@ -79,7 +91,7 @@ export function parseTargetAccountTiers(targetAccountsData, cdmName, targetCdmCo
       }
       const company = targetRowCompany(r);
       if (!company) continue;
-      const tier = targetRowTier(r, tierCol);
+      const tier = targetRowTier(r, tierCols);
       if (!tier) continue;
       out.push({ company, tier });
     }

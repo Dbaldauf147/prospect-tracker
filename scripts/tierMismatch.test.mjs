@@ -64,5 +64,37 @@ for (const [label, rec, headers] of [
   check(`${label}: warning reads Tier 3`, resolve({ id: 'p1', company: 'Triumph Group' }).tier, 'Tier 3');
 }
 
+// Triumph Group again: listed twice, the first row untiered. The box and
+// the warning both take the tiered row, the one the Targets page shows.
+{
+  const data = { sheetNames: ['All', 'Mine'], sheets: {
+    All: { headers: ['Account Name', 'CDM', 'Tier'], records: [{ 'Account Name': 'Triumph Group', CDM: 'Other Rep', Tier: '' }] },
+    Mine: { headers: ['Account Name', 'CDM', 'Tier'], records: [{ 'Account Name': 'Triumph Group', CDM: 'Dan Baldauf', Tier: 'Tier 3' }] },
+  } };
+  const settings = { targetMap: { p1: ['Triumph Group'] } };
+  const rows = targetAccountRows(data, settings);
+  check('duplicate name: one row in the box', rows.length, 1);
+  check('duplicate name: the tiered row wins', [rows[0].tier, rows[0].cdm, rows[0].sheet], ['Tier 3', 'Dan Baldauf', 'Mine']);
+  const resolve = buildTargetTierResolver({ targetAccountsData: data, cdmName: 'Dan Baldauf', settings, includeAllReps: true });
+  check('duplicate name: warning agrees', tierMismatch('Tier 3', resolve({ id: 'p1', company: 'Triumph Group' })), null);
+  const same = { sheetNames: ['S'], sheets: { S: { headers: ['Account Name', 'Tier'], records: [
+    { 'Account Name': 'Triumph Group', Tier: '' }, { 'Account Name': 'Triumph Group', Tier: '3' },
+  ] } } };
+  check('listed twice on one sheet: tiered row wins', targetAccountRows(same, {})[0].tier, 'Tier 3');
+  const both = { sheetNames: ['S'], sheets: { S: { headers: ['Account Name', 'Tier', 'Tier'], records: [
+    { 'Account Name': 'A', Tier: '1' }, { 'Account Name': 'A', Tier: '2' },
+  ] } } };
+  check('both tiered: first row still wins', targetAccountRows(both, {})[0].tier, 'Tier 1');
+}
+
+// Two tier columns: a blank "Account Tier" must not hide "Tier".
+{
+  const data = { sheetNames: ['S'], sheets: { S: {
+    headers: ['Account Name', 'Account Tier', 'Prior Tier', 'Tier'],
+    records: [{ 'Account Name': 'Triumph Group', 'Account Tier': '', 'Prior Tier': '2', Tier: '3' }],
+  } } };
+  check('blank Account Tier: falls to Tier, ahead of Prior Tier', targetAccountRows(data, {})[0].tier, 'Tier 3');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
