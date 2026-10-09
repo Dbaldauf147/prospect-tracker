@@ -78,7 +78,8 @@ const deal = {
   console.error = origErr;
   eq([out.logged, out.failed], [1, 1], 'one logged, the broken record counted and skipped');
   eq(out.rows.map(r => r.asset), ['Acme Services'], 'and the rows written handed back');
-  eq(writes, [['prospects/p1', ['portfolioTransactions']]], 'only portfolioTransactions is written, only where something is new');
+  eq(writes, [['prospects/p1', ['portfolioTransactions', 'updatedAt']]], 'only portfolioTransactions (and its updatedAt stamp) is written, only where something is new');
+  eq(docs['prospects/p1'].updatedAt instanceof Date, true, 'stamped as a Date, which Firestore stores as a Timestamp');
   eq(docs['prospects/p1'].portfolioTransactions.map(r => r.asset), ['Acme Services', 'Riverside'], 'deal added ahead of the typed row');
   const again = await logDealsToRecords(db, 'u1', 'baldaufdan@gmail.com', results.slice(0, 1));
   eq(again.logged, 0, 'next week the same deal is not logged twice');

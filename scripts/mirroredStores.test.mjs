@@ -48,6 +48,7 @@ const LOCAL_BY_DESIGN = {
   // Caches. The real copy is server-side; losing these costs a refetch.
   'callHistoryCache.js': 'cache - the call history itself is one document per call in Firestore',
   'hubspotContactsCache.js': 'cache - refetched from HubSpot',
+  'rosterLocalStore.js': 'cache - the roster lives in Firestore; losing the copy costs one full read',
 
   // Not a store of its own: it rewrites a renamed service inside the Pricing
   // page's cache (and the other stores it names), which keep their own

@@ -257,3 +257,17 @@ export const runTransaction = (_db, fn) => fn({
   delete: (ref) => { deleteDoc(ref); },
 });
 export const serverTimestamp = () => ({ __serverTimestamp: true });
+
+// The roster's changes-only load (utils/rosterSync.js via firestoreSync's
+// subscribeToProspects). Nothing under test subscribes; these only need to
+// exist for the import.
+export const query = (ref, ...constraints) => ({ ...ref, constraints });
+export const where = (field, op, value) => ({ field, op, value });
+export class Timestamp {
+  constructor(seconds, nanoseconds) { this.seconds = seconds; this.nanoseconds = nanoseconds; }
+  static fromMillis(ms) { return new Timestamp(Math.floor(ms / 1000), (ms % 1000) * 1e6); }
+  toMillis() { return this.seconds * 1000 + this.nanoseconds / 1e6; }
+}
+export const getCountFromServer = async () => ({ data: () => ({ count: 0 }) });
+export const getDocFromServer = (ref) => getDoc(ref);
+export const getDocsFromServer = (ref) => getDocs(ref);
