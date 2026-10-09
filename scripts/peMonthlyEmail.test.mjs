@@ -33,6 +33,18 @@ const coverage = (v) => (v === 'Chemicals' ? [{ name: 'Pat' }, { name: 'Lee' }] 
 const rows = peMonthlyRows(deals, records, coverage);
 
 check('one row per deal, in the deals\' order', rows.map(r => r.Account), ['Kensing Solutions', 'Acme']);
+{
+  const tiered = peMonthlyRows([
+    { id: 'a', name: 'NoTier', tier: '' },
+    { id: 'b', name: 'T3', tier: 'Tier 3' },
+    { id: 'c', name: 'NotOnList', tier: 'Not on tier list' },
+    { id: 'd', name: 'T1a', tier: 'Tier 1' },
+    { id: 'e', name: 'T2', tier: '2' },
+    { id: 'f', name: 'T1b', tier: 'Tier 1' },
+  ]);
+  check('ordered Tier 1 first, not on the tier list last, stable within a tier',
+    tiered.map(r => r.Account), ['T1a', 'T1b', 'T2', 'T3', 'NoTier', 'NotOnList']);
+}
 check('row carries every column', Object.keys(rows[0]).filter(k => k !== 'id' && k !== 'companyId'), PE_MONTHLY_COLUMNS.map(c => c.key));
 check('opp fields joined by id', [rows[0].Scope, rows[0]['BFO Address']], ['Bill pay', 'https://bfo.example/7']);
 check('salespeople off Coverage for the vertical', rows[0].Salesperson, 'Pat, Lee');
@@ -90,8 +102,8 @@ const built = buildPeMonthlyRows({ records: oppRecords, prospects: companies, se
 check('buildPeMonthlyRows matches the page', built, pageRows);
 check('and the rows are the PE ones with their details',
   built.map(r => [r.Account, r.Tier, r.CDM, r['PE Owner'], r.Vertical, r.Salesperson, r['Deal Size']]),
-  [['Kensing Solutions', 'Tier 2', 'Dan Baldauf', 'KKR', 'Chemicals', 'Pat Smith', '$120,000'],
-   ['Thoma Bravo', 'Tier 1', 'Jo Rep', 'Thoma Bravo', 'Software', '', '']]);
+  [['Thoma Bravo', 'Tier 1', 'Jo Rep', 'Thoma Bravo', 'Software', '', ''],
+   ['Kensing Solutions', 'Tier 2', 'Dan Baldauf', 'KKR', 'Chemicals', 'Pat Smith', '$120,000']]);
 
 // Posted rows are cut to the email's columns, as strings.
 const clean = sanitizePeMonthlyRows([{ Account: 'A', Tier: 3, evil: '<x>', 'Next Steps': null }, null, 'x']);

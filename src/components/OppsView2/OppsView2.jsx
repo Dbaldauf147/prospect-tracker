@@ -148,7 +148,7 @@ import {
 import { downloadNewOppsOutlookDraft, resolveNewOppsDraftTemplate } from '../../utils/newOppsDigestEmail';
 import { NewOppsDraftEmailModal } from './NewOppsDraftEmailModal';
 import {
-  peMonthlyRows, PE_MONTHLY_COLUMNS, PE_MONTHLY_DRAFT_DEFAULTS, resolvePeMonthlyDraftTemplate,
+  peMonthlyRows, peMonthlyTierRank, PE_MONTHLY_COLUMNS, PE_MONTHLY_DRAFT_DEFAULTS, resolvePeMonthlyDraftTemplate,
   buildPeMonthlyEmailHtml, downloadPeMonthlyOutlookDraft,
 } from '../../utils/peMonthlyEmail';
 import { coverageFromSettings, salespeopleForVertical } from '../../utils/salesCoverage';
@@ -16943,7 +16943,11 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     key: c.key,
     label: c.label,
     defaultWidth: c.key === 'Next Steps' ? 260 : c.key === 'Account' ? 200 : c.key === 'Tier' ? 80 : 140,
-    getSortValue: (row) => String(row[c.key] || '').toLowerCase() || null,
+    // Tier sorts by number (Tier 1 before Tier 2, not tiered last) rather
+    // than as text, matching the order the rows arrive in.
+    getSortValue: c.key === 'Tier'
+      ? (row) => { const r = peMonthlyTierRank(row.Tier); return Number.isFinite(r) ? r : null; }
+      : (row) => String(row[c.key] || '').toLowerCase() || null,
     getFilterValue: (row) => String(row[c.key] || ''),
     exportValue: (row) => String(row[c.key] || ''),
     render: (row) => {
