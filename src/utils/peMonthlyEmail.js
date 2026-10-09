@@ -35,6 +35,11 @@ export const PE_MONTHLY_COLUMNS = [
   { key: 'BFO Address', label: 'BFO Link' },
 ];
 
+// The email leaves three of the tab's columns out: CDM, Scope and Next
+// Steps. The user asked for a leaner email; the tab keeps all three.
+const PE_MONTHLY_EMAIL_HIDDEN = new Set(['CDM', 'Scope', 'Next Steps']);
+export const PE_MONTHLY_EMAIL_COLUMNS = PE_MONTHLY_COLUMNS.filter(c => !PE_MONTHLY_EMAIL_HIDDEN.has(c.key));
+
 // Where a tier sorts: Tier 1 first, then Tier 2, Tier 3 and any higher
 // number, then everything not on the tier list (blank, "-", "Not on tier
 // list") last.
@@ -112,7 +117,7 @@ export function sanitizePeMonthlyRows(rows, max = 1000) {
     .slice(0, max)
     .map((r) => {
       const out = {};
-      for (const c of PE_MONTHLY_COLUMNS) out[c.key] = String(r[c.key] ?? '').slice(0, 5000);
+      for (const c of PE_MONTHLY_EMAIL_COLUMNS) out[c.key] = String(r[c.key] ?? '').slice(0, 5000);
       return out;
     });
 }
@@ -137,7 +142,7 @@ export function resolvePeMonthlyDraftTemplate(saved) {
 }
 
 export function buildPeMonthlyTableHtml(rows) {
-  return buildDigestTableHtml(rows, PE_MONTHLY_COLUMNS, 'No PE or portfolio company deals at Stage 3 or later right now.');
+  return buildDigestTableHtml(rows, PE_MONTHLY_EMAIL_COLUMNS, 'No PE or portfolio company deals at Stage 3 or later right now.');
 }
 
 export function buildPeMonthlyEmailHtml(rows, { message = '', greeting = '', signature = '' } = {}) {
