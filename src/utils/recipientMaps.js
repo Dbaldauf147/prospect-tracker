@@ -104,3 +104,74 @@ export function recoverRecipientMaps(current, sources) {
   }
   return { patch, found };
 }
+
+const lower = (s) => String(s ?? '').trim().toLowerCase();
+const countEntries = (map) => (map && typeof map === 'object'
+  ? Object.values(map).filter(l => clean(l).length).length : 0);
+
+/**
+ * Entries kept under an address that is no contact's email now, but is one
+ * of a contact's Old Emails: the contact's address changed and its To / CC
+ * stayed behind under the old one, where nothing looks it up. Moved onto
+ * the current address, unless that address already has its own.
+ * `contacts` is [{ id or vid, email }]; `oldEmailsById` the contactOldEmails
+ * setting, keyed by that id.
+ *
+ * Returns { patch, moved: [{ key, from, to }] }.
+ */
+export function rekeyOrphanRecipients(current, contacts, oldEmailsById = {}) {
+  const live = new Map(); // lowercased current email -> email as the contact has it
+  const byOld = new Map(); // lowercased old email -> current email
+  for (const c of contacts || []) {
+    const e = String(c?.email ?? '').trim();
+    if (!e) continue;
+    live.set(lower(e), e);
+    const id = c?.id ?? c?.vid;
+    const olds = String((id != null && oldEmailsById?.[id]) || '').split(/[\s,;]+/);
+    for (const o of olds) if (lower(o) && !byOld.has(lower(o))) byOld.set(lower(o), e);
+  }
+  const patch = {};
+  const moved = [];
+  for (const key of RECIPIENT_MAP_KEYS) {
+    const cur = current?.[key] && typeof current[key] === 'object' ? current[key] : {};
+    const has = new Set(Object.keys(cur).filter(k => clean(cur[k]).length).map(lower));
+    let next = null;
+    for (const [k, list] of Object.entries(cur)) {
+      if (live.has(lower(k)) || !clean(list).length) continue;
+      const to = byOld.get(lower(k));
+      if (!to || has.has(lower(to))) continue;
+      next = next || { ...cur };
+      next[to] = clean(list);
+      delete next[k];
+      has.add(lower(to));
+      moved.push({ key, from: k, to });
+    }
+    if (next) patch[key] = next;
+  }
+  return { patch, moved };
+}
+
+/**
+ * What the search saw, for when it finds nothing to put back: how many
+ * contacts have To / CC now and how many of those sit under an address no
+ * contact on the page has, and the most any backup held.
+ */
+export function describeRecipientSearch(current, sources, contacts) {
+  const live = new Set((contacts || []).map(c => lower(c?.email)).filter(Boolean));
+  const now = {};
+  for (const key of RECIPIENT_MAP_KEYS) {
+    const cur = current?.[key] && typeof current[key] === 'object' ? current[key] : {};
+    const keys = Object.keys(cur).filter(k => clean(cur[k]).length);
+    now[key] = { total: keys.length, unmatched: keys.filter(k => !live.has(lower(k))).length };
+  }
+  const most = {};
+  for (const key of RECIPIENT_MAP_KEYS) {
+    let best = { count: 0, label: '' };
+    for (const s of sources || []) {
+      const n = countEntries(s?.data?.[key]);
+      if (n > best.count) best = { count: n, label: s.label || '' };
+    }
+    most[key] = best;
+  }
+  return { now, most, searched: (sources || []).length };
+}
