@@ -351,8 +351,9 @@ function fakeFetch(emails) {
   check('the write is not an error', built.errors.some(e => e.startsWith('coverageRatioHistory')), false);
 }
 
-// A week the tab already measured keeps its reading: the build fills
-// gaps, it does not overwrite what was taken while the week ran.
+// A week the tab measured while it ran takes the send's reading instead:
+// it is later, so it is where the week closed, and it is the figure the
+// KPI card prints, so the chart's last point agrees with the card.
 {
   const db = fakeDb({
     ...docs,
@@ -365,12 +366,16 @@ function fakeFetch(emails) {
     now: NOW, token: 'tok', fetchOpts: { fetchImpl: fakeFetch(hubspotEmails) },
   });
   const pts = built.payload.coverageRatio.points;
-  check('a reading taken during the week stands', pts[7].value, 1.9);
+  check('the closing reading replaces the mid-week one', pts[7].value, 1.78);
+  check('so the last point is the KPI card figure',
+    built.payload.kpiCards.some(c => JSON.stringify(c).includes('1.78')), true);
   check('the week before is drawn from the log', pts[6].value, 1.5);
-  check('and the log is left alone',
-    db.docs[`coverageRatioHistory/${UID}`].weeks['2026-09-07'].at, 2);
+  check('and the log records the closing reading',
+    db.docs[`coverageRatioHistory/${UID}`].weeks['2026-09-07'].at, NOW);
+  check('without touching the week before',
+    db.docs[`coverageRatioHistory/${UID}`].weeks['2026-08-31'].at, 1);
   check('the note says which way it went', built.payload.coverageRatio.note,
-    'Up 0.40× since Aug 31, from 1.50× to 1.90×.');
+    'Up 0.28× since Aug 31, from 1.50× to 1.78×.');
 }
 
 // A send well after the week closed is measuring a different week, so it
