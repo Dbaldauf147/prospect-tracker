@@ -4,7 +4,7 @@ import { loadList as loadListFromIDB } from '../../utils/uploadedListStore';
 import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
 import { UPLOADED_LISTS } from '../../utils/uploadedListsRegistry';
 import { loadEffectiveRaClients, raClientName } from '../../utils/raClientsStore';
-import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
+import { readListField, mapListRow, unmapListRow, writeListField, RA_CLIENTS_MAP_KEY } from '../../utils/listAccountMapping';
 
 // Extract a company name per row using the same header-detection the
 // uploaded-list scan uses. Kept separate so non-IDB sources (RA Clients)
@@ -34,18 +34,10 @@ const MATCH_SOURCES = [
   })),
   {
     label: 'RA Clients',
-    storageKey: 'ra-clients-account-map',
+    storageKey: RA_CLIENTS_MAP_KEY,
     loadNames: async () => (loadEffectiveRaClients().data || []).map(raClientName).filter(Boolean),
   },
 ];
-
-function loadMapping(key) {
-  if (!key) return {};
-  try {
-    const raw = userLsGet(key);
-    return raw ? (JSON.parse(raw) || {}) : {};
-  } catch { return {}; }
-}
 
 function fuzzyScore(rowNorm, prospectNorm) {
   if (!rowNorm || !prospectNorm) return 0;
@@ -65,13 +57,8 @@ function buildItems(storageKey, names, prospectCompany, settings) {
   const prospectNorm = normalizeCompany(prospectCompany || '');
   if (!prospectNorm || !Array.isArray(names) || names.length === 0) return [];
 
-  const remoteMappings = settings?.listMappings?.[storageKey] || {};
-  const mapping = remoteMappings.mapping && typeof remoteMappings.mapping === 'object'
-    ? remoteMappings.mapping
-    : loadMapping(`${storageKey}:account-mapping`);
-  const dismissed = remoteMappings.dismissed && typeof remoteMappings.dismissed === 'object'
-    ? remoteMappings.dismissed
-    : loadMapping(`${storageKey}:account-dismissed`);
+  const mapping = readListField(settings, storageKey, 'mapping');
+  const dismissed = readListField(settings, storageKey, 'dismissed');
 
   const seenKeys = new Set();
   const items = [];
@@ -151,38 +138,25 @@ export function ListsMatchPanel({ anchorRef, prospectCompany, settings, updateSe
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [anchorRef, onClose]);
 
-  function writeListField(storageKey, field, mutate) {
-    const lsKey = `${storageKey}:${field === 'mapping' ? 'account-mapping' : 'account-dismissed'}`;
-    const current = (() => {
-      const remote = settings?.listMappings?.[storageKey]?.[field];
-      if (remote && typeof remote === 'object') return { ...remote };
-      return loadMapping(lsKey);
-    })();
-    const next = mutate({ ...current });
-    try {
-      if (Object.keys(next).length === 0) userLsRemove(lsKey);
-      else userLsSet(lsKey, JSON.stringify(next));
-    } catch {}
-    updateSettingsPath?.({ [`listMappings.${storageKey}.${field}`]: next });
-    return next;
+  function markActed(storageKey, matchKey) {
+    setActedKeys(prev => { const next = new Set(prev); next.add(`${storageKey}::${matchKey}`); return next; });
   }
 
   function accept(storageKey, matchKey) {
-    writeListField(storageKey, 'mapping', (m) => { m[matchKey] = prospectCompany; return m; });
-    // Confirming a mapping should clear any prior dismissal so the row
+    // Confirming a mapping also clears any prior dismissal so the row
     // doesn't show a stale "dismissed" state on the lists page.
-    writeListField(storageKey, 'dismissed', (d) => { delete d[matchKey]; return d; });
-    setActedKeys(prev => { const next = new Set(prev); next.add(`${storageKey}::${matchKey}`); return next; });
+    mapListRow(settings, updateSettingsPath, storageKey, matchKey, prospectCompany);
+    markActed(storageKey, matchKey);
   }
 
   function reject(storageKey, matchKey) {
-    writeListField(storageKey, 'dismissed', (d) => { d[matchKey] = true; return d; });
-    setActedKeys(prev => { const next = new Set(prev); next.add(`${storageKey}::${matchKey}`); return next; });
+    writeListField(settings, updateSettingsPath, storageKey, 'dismissed', (d) => { d[matchKey] = true; return d; });
+    markActed(storageKey, matchKey);
   }
 
   function unmap(storageKey, matchKey) {
-    writeListField(storageKey, 'mapping', (m) => { delete m[matchKey]; return m; });
-    setActedKeys(prev => { const next = new Set(prev); next.add(`${storageKey}::${matchKey}`); return next; });
+    unmapListRow(settings, updateSettingsPath, storageKey, matchKey);
+    markActed(storageKey, matchKey);
   }
 
   const totalShown = useMemo(() => groups.reduce((n, g) => n + g.items.length, 0), [groups]);
