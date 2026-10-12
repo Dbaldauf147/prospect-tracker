@@ -47,7 +47,11 @@ check('one row per deal, in the deals\' order', rows.map(r => r.Account), ['Kens
 }
 check('row carries every column', Object.keys(rows[0]).filter(k => k !== 'id' && k !== 'companyId'), PE_MONTHLY_COLUMNS.map(c => c.key));
 check('opp fields joined by id', [rows[0].Scope, rows[0]['BFO Address']], ['Bill pay', 'https://bfo.example/7']);
-check('salespeople off Coverage for the vertical', rows[0].Salesperson, 'Pat, Lee');
+check('the account\'s own CDM beats the vertical\'s', rows[0].Salesperson, 'Dan');
+{
+  const noOwner = peMonthlyRows([{ ...deals[0], targetCdm: '' }], records, coverage);
+  check('no account CDM: salespeople off Coverage for the vertical', noOwner[0].Salesperson, 'Pat, Lee');
+}
 check('shown as Vertical CDM', PE_MONTHLY_COLUMNS.find(c => c.key === 'Salesperson').label, 'Vertical CDM');
 {
   const cov = (v) => ({ Mine: [{ name: 'Dan Baldauf' }], Shared: [{ name: 'Dan Baldauf' }, { name: 'Pat' }], Theirs: [{ name: 'Pat' }] }[v] || []);
@@ -128,8 +132,8 @@ const built = buildPeMonthlyRows({ records: oppRecords, prospects: companies, se
 check('buildPeMonthlyRows matches the page', built, pageRows);
 check('and the rows are the PE ones with their details',
   built.map(r => [r.Account, r.Tier, r.CDM, r['PE Owner'], r.Vertical, r.Salesperson, r['Deal Size']]),
-  [['Thoma Bravo', 'Tier 1', 'Jo Rep', 'Thoma Bravo', 'Software', '', ''],
-   ['Kensing Solutions', 'Tier 2', 'Dan Baldauf', 'KKR', 'Chemicals', 'Pat Smith', '$120,000']]);
+  [['Thoma Bravo', 'Tier 1', 'Jo Rep', 'Thoma Bravo', 'Software', 'Jo Rep', ''],
+   ['Kensing Solutions', 'Tier 2', 'Dan Baldauf', 'KKR', 'Chemicals', 'Dan Baldauf', '$120,000']]);
 
 // Posted rows are cut to the email's columns, as strings.
 const clean = sanitizePeMonthlyRows([{ Account: 'A', Tier: 3, evil: '<x>', 'Next Steps': null }, null, 'x']);

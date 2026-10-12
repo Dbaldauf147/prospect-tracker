@@ -35,7 +35,8 @@ export async function loadPeMonthlyRows(db, uid, email) {
       ? db.collection('prospects')
       : db.collection('users').doc(uid).collection('prospects');
     const snap = await col.select(...PROSPECT_FIELDS).get();
-    prospects = snap.docs.map((d) => d.data() || {});
+    // The id is what settings.targetMap (the Target Accounts "Map") keys on.
+    prospects = snap.docs.map((d) => ({ id: d.id, ...(d.data() || {}) }));
   } catch { /* the opps' own owner / vertical still apply */ }
 
   // Same doc the Target Accounts page saves: a JSON string under `json`,

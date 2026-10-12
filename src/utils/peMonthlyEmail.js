@@ -13,7 +13,7 @@
 // without a browser: scripts/peMonthlyEmail.test.mjs.
 
 import {
-  buildDigestTableHtml, buildDigestEmailHtml, downloadEml, DIGEST_HEADER_STYLE, alignedRowStyle,
+  buildDigestTableHtml, buildDigestEmailHtml, downloadEml, DIGEST_HEADER_STYLE, alignedRowStyle, verticalCdmFor,
 } from './newOppsDigestEmail.js';
 import { buildPeOverlapDeals, tierRank, cdmsAlignedLabel } from './keithPeDeals.js';
 import { buildTargetTierResolver, buildTargetCdmResolver } from './targetTier.js';
@@ -80,6 +80,9 @@ export function peMonthlyRows(deals, records = [], salespeopleFor = () => [], { 
     const opp = byId.get(String(d.id)) || {};
     const people = (d.vertical ? (salespeopleFor(d.vertical) || []) : [])
       .map(p => String(p?.name || '').trim()).filter(Boolean);
+    // The Vertical CDM column: the account's own CDM (Target Accounts list)
+    // over the vertical's. CDMs aligned still reads the vertical's people.
+    const vertCdm = verticalCdmFor(d.targetCdm, people.join(', '));
     const ownVertical = !!cdmName && people.some(n => matchesCdm(n, cdmName));
     return {
       id: d.id,
@@ -90,7 +93,7 @@ export function peMonthlyRows(deals, records = [], salespeopleFor = () => [], { 
       CDM: d.targetCdm || '',
       'PE Owner': d.peOwner || '',
       Vertical: d.vertical || '',
-      Salesperson: people.join(', '),
+      Salesperson: vertCdm,
       'CDMs Aligned': peMonthlyCdmsAligned(d.tier, d.cdmAligned, { ownVertical }),
       Stage: d.stageLabel || '',
       Scope: String(opp.Scope ?? '').trim(),

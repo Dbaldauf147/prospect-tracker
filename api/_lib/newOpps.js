@@ -12,7 +12,7 @@ import { withVerticalCoverage, OPP_SALESPERSON_KEY } from '../../src/utils/oppVe
 import {
   NEW_OPPS_DIGEST_COLUMNS, NEW_OPPS_CDMS_ALIGNED_KEY, buildNewOppsDigestTableHtml, withTierAndAlignment,
 } from '../../src/utils/newOppsDigestEmail.js';
-import { buildTargetTierResolver } from '../../src/utils/targetTier.js';
+import { buildTargetTierResolver, buildTargetCdmResolver } from '../../src/utils/targetTier.js';
 import { loadTargetAccounts } from './firestoreChunks.js';
 import { NEW_OPPS_ACTIVE_STAGES, NEW_OPPS_MAX_STAGE_AGE_DAYS, combinedActiveStageAge, qualifiesNewOpp } from '../../src/utils/newOppsFilter.js';
 import { chunk, needsSummary, oppNotesText } from '../../src/utils/notesSummary.js';
@@ -59,7 +59,8 @@ export async function addVerticalCoverage(db, uid, email, records) {
       ? db.collection('prospects')
       : db.collection('users').doc(uid).collection('prospects');
     const snap = await col.select(...PROSPECT_FIELDS).get();
-    prospects = snap.docs.map((d) => d.data() || {});
+    // The id is what settings.targetMap (the Target Accounts "Map") keys on.
+    prospects = snap.docs.map((d) => ({ id: d.id, ...(d.data() || {}) }));
   } catch { /* opps' own verticals still apply */ }
   try {
     targetAccountsData = await loadTargetAccounts(db, uid);
@@ -70,7 +71,10 @@ export async function addVerticalCoverage(db, uid, email, records) {
   const targetTierFor = targetAccountsData
     ? buildTargetTierResolver({ targetAccountsData, cdmName, settings, includeAllReps: true })
     : null;
-  return withTierAndAlignment(withVerticalCoverage(list, { settings, prospects }), { prospects, targetTierFor, cdmName });
+  // The account's own CDM off the Target Accounts list, which beats the
+  // vertical's in the Vertical CDM column.
+  const targetCdmFor = targetAccountsData ? buildTargetCdmResolver({ targetAccountsData, settings }) : null;
+  return withTierAndAlignment(withVerticalCoverage(list, { settings, prospects }), { prospects, targetTierFor, targetCdmFor, cdmName });
 }
 
 export async function loadNewOpps(db, uid) {

@@ -16,7 +16,7 @@
 // received message — so the user can review, tweak, and send it themselves.
 
 import { OPP_VERTICAL_KEY, OPP_SALESPERSON_KEY } from './oppVerticalCoverage.js';
-import { accountTier, accountCdmAligned, cdmsAlignedLabel } from './keithPeDeals.js';
+import { accountTier, accountCdmAligned, accountTargetCdm, cdmsAlignedLabel } from './keithPeDeals.js';
 import { matchesCdm } from './cdmMatch.js';
 
 // The record keys withTierAndAlignment fills in. Not 'Tier': an opp row
@@ -63,20 +63,36 @@ export function alignedRowStyle(row) {
  * the PE Monthly list reads them: the account's tier (its company card's,
  * or the Target Accounts list's), and the company popup's "aligned w/other
  * CDM" box, N/A when the account is not on the tier list or you are one of
- * the vertical's CDMs. Run after withVerticalCoverage, whose Vertical CDM
- * names decide the second N/A.
+ * the vertical's CDMs on Coverage. Run after withVerticalCoverage, whose
+ * Coverage names decide the second N/A.
+ *
+ * The Vertical CDM column shows the account's own CDM when the Target
+ * Accounts list names one (`targetCdmFor`), over whoever Coverage lists
+ * against the vertical. CDMs aligned still reads the vertical's Coverage
+ * names: it is about the other pod, whoever owns the account.
  */
-export function withTierAndAlignment(records, { prospects = [], targetTierFor = null, cdmName = '' } = {}) {
+export function withTierAndAlignment(records, { prospects = [], targetTierFor = null, targetCdmFor = null, cdmName = '' } = {}) {
   return (Array.isArray(records) ? records : []).map((r) => {
     const tier = accountTier(r, prospects, targetTierFor);
     const people = String(r?.[OPP_SALESPERSON_KEY] || '').split(',').map(n => n.trim()).filter(Boolean);
+    const vertCdm = verticalCdmFor(accountTargetCdm(r, prospects, targetCdmFor), people.join(', '));
     const ownVertical = !!cdmName && people.some(n => matchesCdm(n, cdmName));
     return {
       ...r,
+      [OPP_SALESPERSON_KEY]: vertCdm,
       [NEW_OPPS_TIER_KEY]: tier,
       [NEW_OPPS_CDMS_ALIGNED_KEY]: cdmsAlignedLabel(tier, accountCdmAligned(r, prospects), { ownVertical }),
     };
   });
+}
+
+/**
+ * The Vertical CDM cell: the CDM the Target Accounts list names for the
+ * account when there is one, else whoever Opps > Coverage lists against
+ * the vertical. Shared by New Opps and PE Monthly.
+ */
+export function verticalCdmFor(accountCdm, coverageNames) {
+  return String(accountCdm ?? '').trim() || String(coverageNames ?? '').trim();
 }
 
 function escapeHtml(s) {
