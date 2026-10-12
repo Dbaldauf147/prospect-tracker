@@ -55,6 +55,28 @@ function formatShortDate(raw) {
   return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
 }
 
+// The Notes cell: the summary bullets the New Opps table shows (attached as
+// `_notesSummary` by withNotesSummaries), so the draft reads like the page;
+// the raw notes when there's no summary (short notes, or not back yet).
+function notesHtml(r, raw) {
+  const bullets = Array.isArray(r?._notesSummary) ? r._notesSummary.filter(Boolean) : [];
+  if (bullets.length === 1) return escapeHtml(bullets[0]);
+  if (bullets.length > 1) {
+    return `<ul style="margin:0;padding-left:18px">${bullets.map((b) => `<li style="margin:0">${escapeHtml(b)}</li>`).join('')}</ul>`;
+  }
+  return escapeHtmlMultiline(raw);
+}
+
+// Each opp with its ready notes summary attached as `_notesSummary`, given
+// the useNotesSummaries lookup the New Opps table renders from.
+export function withNotesSummaries(records, notes) {
+  if (!Array.isArray(records) || !notes?.get) return records;
+  return records.map((r) => {
+    const s = notes.get(r);
+    return s?.status === 'ready' && s.bullets?.length ? { ...r, _notesSummary: s.bullets } : r;
+  });
+}
+
 const cellValue = (r, c) => (c.value ? c.value(r) : (r[c.key] ?? ''));
 
 // The SE-free, black-and-white bordered digest table. Mirrors
@@ -105,7 +127,7 @@ export function buildDigestTableHtml(records, columns, emptyText = 'Nothing to r
         const url = bfoUrl(r);
         inner = url ? link(url, 'BFO Link', color) : '';
       } else if (c.key === 'Next Steps') {
-        inner = escapeHtmlMultiline(v);
+        inner = notesHtml(r, v);
       } else {
         inner = escapeHtml(v);
       }
