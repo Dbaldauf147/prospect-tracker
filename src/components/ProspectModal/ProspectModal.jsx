@@ -5658,7 +5658,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
   const [portfolioColWidths, setPortfolioColWidths] = useState({
-    num: 30, company: 180, status: 130, siteListSaved: 110, analysisSaved: 120, analysisSavings: 110, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, strategy: 140, hqCity: 130, hqCountry: 90, energy: 110, estElectricity: 120, estNaturalGas: 120, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160, listFlags: 200,
+    num: 30, company: 180, status: 130, siteListSaved: 110, analysisSaved: 120, analysisSavings: 110, analysisExposure: 120, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, strategy: 140, hqCity: 130, hqCountry: 90, energy: 110, estElectricity: 120, estNaturalGas: 120, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160, listFlags: 200,
   });
   // Per-column visibility for the Portfolio Companies table. Independent
   // from the export - the export header list is hard-coded so toggling
@@ -5670,6 +5670,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     { key: 'siteListSaved',    label: 'Site List' },
     { key: 'analysisSaved',    label: 'Master Analysis' },
     { key: 'analysisSavings',  label: 'Indicative Savings' },
+    { key: 'analysisExposure', label: 'Est. Max Yearly Exposure' },
     { key: 'hqCity',           label: 'HQ City' },
     { key: 'hqCountry',        label: 'HQ Country' },
     { key: 'energy',           label: 'Energy' },
@@ -5698,7 +5699,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     // Default visibility - every column on except HQ City, which the
     // user keeps hidden by default and reveals via the Columns ▾ menu
     // when they need it.
-    return Object.fromEntries(['rank','company','status','siteListSaved','analysisSaved','analysisSavings','hqCity','hqCountry','energy','estElectricity','estNaturalGas','siteCount','sector','subsector','subsectorScore','strategy','acquisitionYear','pcDescription','notes','raClient','clientManager','targetAccount','tier','salesRep','listFlags'].map(k => [k, k !== 'hqCity']));
+    return Object.fromEntries(['rank','company','status','siteListSaved','analysisSaved','analysisSavings','analysisExposure','hqCity','hqCountry','energy','estElectricity','estNaturalGas','siteCount','sector','subsector','subsectorScore','strategy','acquisitionYear','pcDescription','notes','raClient','clientManager','targetAccount','tier','salesRep','listFlags'].map(k => [k, k !== 'hqCity']));
   });
   useEffect(() => {
     try { localStorage.setItem('portfolio-cols-visible', JSON.stringify(portfolioColsVisible)); } catch { /* noop */ }
@@ -11685,6 +11686,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   const v = Number(p.indicativeAnnualSavings);
                   return sum + (Number.isFinite(v) && v > 0 ? v : 0);
                 }, 0);
+                // Fine exposure, summed the same once-per-record way.
+                const exposureSeen = new Set();
+                const totalExposure = rows.reduce((sum, r) => {
+                  const p = findPortfolioProspect(r, prospectByName, prospectById);
+                  if (!p?.id || exposureSeen.has(p.id)) return sum;
+                  exposureSeen.add(p.id);
+                  const v = Number(p.maxYearlyExposure);
+                  return sum + (Number.isFinite(v) && v > 0 ? v : 0);
+                }, 0);
                 const maxEnergyForRank = rows.reduce((m, r) => Math.max(m, Number(r.energyGwh) || 0), 0);
                 const maxSitesForRank = rows.reduce((m, r) => Math.max(m, siteCountNumber(r.siteCount)), 0);
                 const yearRangeForRank = (() => {
@@ -12127,6 +12137,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             <col style={{ width: colWidth('siteListSaved'),    visibility: colVis('siteListSaved') }} />
                             <col style={{ width: colWidth('analysisSaved'),    visibility: colVis('analysisSaved') }} />
                             <col style={{ width: colWidth('analysisSavings'),  visibility: colVis('analysisSavings') }} />
+                            <col style={{ width: colWidth('analysisExposure'), visibility: colVis('analysisExposure') }} />
                             <col style={{ width: colWidth('hqCity'),           visibility: colVis('hqCity') }} />
                             <col style={{ width: colWidth('hqCountry'),        visibility: colVis('hqCountry') }} />
                             <col style={{ width: colWidth('energy'),           visibility: colVis('energy') }} />
@@ -12169,6 +12180,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               <th style={thBase} title="Whether a site list has been saved on the popup of this portfolio company (Portfolio > Sites & Holdings), and how many sites it holds. Blank when the company is not in the tracker yet.">Site List<span style={resizeHandleStyle} onMouseDown={e => startResize('siteListSaved', e)} /></th>
                               <th style={thBase} title="Whether a Master Analysis has been saved against this portfolio company from the Utility Lookup page, and when. Blank when the company is not in the tracker yet.">Master Analysis<span style={resizeHandleStyle} onMouseDown={e => startResize('analysisSaved', e)} /></th>
                               <th style={{ ...thBase, textAlign: 'right' }} title="Indicative annual savings from the Master Analysis saved against this portfolio company (the headline the Utility Lookup page writes on save, or the figure typed on its popup). Blank when the company is not in the tracker yet or no figure has been recorded.">Indicative Savings<span style={resizeHandleStyle} onMouseDown={e => startResize('analysisSavings', e)} /></th>
+                              <th style={{ ...thBase, textAlign: 'right' }} title="Estimated maximum yearly fine exposure from the compliance screening in the Master Analysis saved against this portfolio company (benchmarking, energy audit and performance standard penalties summed across its sites), or the figure typed on its popup. $0 means the screening found no exposure. Blank when the company is not in the tracker yet or has not been screened.">Est. Max Yearly Exposure<span style={resizeHandleStyle} onMouseDown={e => startResize('analysisExposure', e)} /></th>
                               <th style={thBase}>HQ City<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCity', e)} /></th>
                               <th style={thBase}>HQ Country<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCountry', e)} /></th>
                               <th style={thBase} title="Est. Energy (GWh/yr)">Energy<span style={resizeHandleStyle} onMouseDown={e => startResize('energy', e)} /></th>
@@ -12407,6 +12419,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   const shortUsd = !hasSavings ? '' : savings >= 1e6
                                     ? `$${(savings / 1e6).toFixed(savings >= 1e7 ? 0 : 1)}M`
                                     : savings >= 1e3 ? `$${Math.round(savings / 1e3)}K` : fullUsd;
+                                  // Fine exposure, stamped beside the savings
+                                  // on save. Unlike savings, zero is a result
+                                  // (screened and found clear), so it shows.
+                                  const exposureRaw = linked?.maxYearlyExposure;
+                                  const exposure = exposureRaw === '' || exposureRaw == null ? null : Number(exposureRaw);
+                                  const hasExposure = exposure != null && Number.isFinite(exposure) && exposure >= 0;
+                                  const exposureFull = hasExposure ? exposure.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }) : '';
+                                  const exposureShort = !hasExposure ? '' : exposure >= 1e6
+                                    ? `$${(exposure / 1e6).toFixed(exposure >= 1e7 ? 0 : 1)}M`
+                                    : exposure >= 1e3 ? `$${Math.round(exposure / 1e3)}K` : exposureFull;
                                   return (
                                     <>
                                       <td style={{ padding: '0.15rem 0.3rem' }}>
@@ -12437,6 +12459,20 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                           >{shortUsd}</span>
                                         ) : dash(analysis
                                           ? `The Master Analysis saved against ${linked.company} did not record an annual savings figure. Re-save it from the Utility Lookup page to fill this in.`
+                                          : `No Master Analysis saved against ${linked.company} yet`))}
+                                      </td>
+                                      <td style={{ padding: '0.15rem 0.3rem', textAlign: 'right' }}>
+                                        {!linked ? dash(notTracked) : (hasExposure ? (
+                                          <span
+                                            title={exposure === 0
+                                              ? `The compliance screening found no fine exposure for ${linked.company}.`
+                                              : analysis
+                                                ? `${exposureFull} estimated max yearly fine exposure for ${linked.company}, from the Master Analysis${analysis.savedAt ? ` saved ${new Date(analysis.savedAt).toLocaleString()}` : ''}.`
+                                                : `${exposureFull} estimated max yearly fine exposure for ${linked.company}, as recorded on its popup (no Master Analysis saved).`}
+                                            style={{ ...savedStyle, color: exposure > 0 ? '#B91C1C' : '#64748B', fontVariantNumeric: 'tabular-nums' }}
+                                          >{exposureShort}</span>
+                                        ) : dash(analysis
+                                          ? `The Master Analysis saved against ${linked.company} did not record a fine exposure figure. Re-save it from the Utility Lookup page to fill this in.`
                                           : `No Master Analysis saved against ${linked.company} yet`))}
                                       </td>
                                     </>
@@ -12916,13 +12952,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               </tr>
                               );
                             })}
-                            {(totalEnergy > 0 || totalSites > 0 || totalSavings > 0) && (
+                            {(totalEnergy > 0 || totalSites > 0 || totalSavings > 0 || totalExposure > 0) && (
                               <tr style={{ background: '#F8FAFC', fontWeight: 700 }}>
-                                {/* Cell spans track the 27 columns above: Totals covers
+                                {/* Cell spans track the 28 columns above: Totals covers
                                     the pin column and Opportunity Score → Master Analysis,
                                     then each total sits under the column it sums. */}
                                 <td colSpan={6} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
                                 <td style={{ padding: '0.3rem 0.3rem', textAlign: 'right', whiteSpace: 'nowrap' }} title={totalSavings > 0 ? 'Sum of the indicative annual savings across these portfolio companies' : undefined}>{totalSavings > 0 ? totalSavings.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }) : ''}</td>
+                                <td style={{ padding: '0.3rem 0.3rem', textAlign: 'right', whiteSpace: 'nowrap', color: '#B91C1C' }} title={totalExposure > 0 ? 'Sum of the estimated max yearly fine exposure across these portfolio companies' : undefined}>{totalExposure > 0 ? totalExposure.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }) : ''}</td>
                                 <td colSpan={2}></td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalEnergy > 0 ? totalEnergy.toLocaleString() : ''}</td>
                                 <td colSpan={2}></td>
