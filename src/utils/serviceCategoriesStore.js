@@ -93,6 +93,34 @@ export function graveyardTest(settings) {
   };
 }
 
+// The boxes a company's % of services explored leaves out: Broader SE
+// (Schneider products beyond the consulting services: EV, metering,
+// sensors) and Renewables. Matched on the words so a renamed "Broader SE
+// offers" or "Renewables & PPAs" still counts. Graveyard boxes are left
+// out too, through graveyardTest.
+export const isUncountedBucket = (bucket) => /broader\s*se\b|renewable/i.test(String(bucket ?? ''));
+
+/**
+ * A test for "does this service count toward a company's % of services
+ * explored", built once against settings. Broader SE and Renewables are
+ * not part of what the percentage measures, and a retired service
+ * (graveyardTest) can't be explored any more, so none of them is in the
+ * count or the total.
+ */
+export function exploredCountTest(settings) {
+  const isDead = graveyardTest(settings);
+  const skipped = new Set();
+  for (const cat of getServiceCategories(settings)) {
+    if (!isUncountedBucket(cat.name)) continue;
+    for (const item of cat.items || []) skipped.add(String(item).trim().toLowerCase());
+  }
+  return (name) => {
+    const key = String(name || '').trim().toLowerCase();
+    if (!key || skipped.has(key)) return false;
+    return !isDead(name);
+  };
+}
+
 /**
  * `names` with the retired ones moved to the end, each half in the order it
  * arrived. `isDead` is a graveyardTest.
