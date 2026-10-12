@@ -12,6 +12,7 @@ import { computeNewBfoOpps, computeNewBfoMissingData, normalizeBfoCompany } from
 import { computeCloseNotSoldOpps, computeCloseNotSoldMissingData } from './closeNotSoldOpps';
 import { computeAppDescriptionOpps, NO_COMPANY } from './appDescriptionOpps';
 import { buildOppNumberMap } from './oppNumbers';
+import { newOppsMissingVertical } from './newOppsFilter.js';
 import { dealSoldDate, daysToFollowUpGoal, followUpGoalDate, postSaleFollowUpRows } from './postSaleFollowUp';
 import { incompleteHandoffDeals } from './dealHandoff';
 import { oppScopeOffList, suggestServiceMatch } from './oppScopeOffList';
@@ -535,6 +536,43 @@ function detectOppScopeOffList({ oppsCache = null, knownServices = null, ignored
   return issues;
 }
 
+// ---- New opp with no Vertical / Vertical CDM ----
+// Every opp on Opps > New Opps should say which vertical it sits in and
+// who covers that vertical, because that is what the New Opps email is
+// read by. Same rule as that subtab (utils/newOppsFilter.js) and the same
+// fill (utils/oppVerticalCoverage.js): the opp's own Vertical, else its
+// company card's, and whoever Opps > Coverage lists against it. One row
+// per opp. Suppressed until the prospects have loaded, so the company-card
+// fallback isn't read as missing during the pre-load window.
+function detectNewOppMissingVertical({ oppsCache = null, prospects = [], coverageSettings = null, oppNumbers = new Map() }) {
+  if (!oppsCache?.records?.length || prospects.length === 0) return [];
+  const hits = newOppsMissingVertical(oppsCache.records, { settings: coverageSettings, prospects });
+  if (hits.length === 0) return [];
+  const prospectIdByNorm = new Map();
+  for (const p of prospects) {
+    const norm = normalizeBfoCompany(p.company);
+    if (norm && !prospectIdByNorm.has(norm)) prospectIdByNorm.set(norm, p.id);
+  }
+  return hits.map(({ record: r, vertical }) => {
+    const account = String(r.Account || '').trim();
+    return {
+      // Keyed by what is missing, so filling the vertical but finding
+      // nobody covers it brings a snoozed row back.
+      id: `new-opp-no-vertical:${r._id != null ? r._id : account}:${vertical ? 'cdm' : 'vertical'}`,
+      source: 'Opps',
+      type: vertical ? 'New opp missing Vertical CDM' : 'New opp missing Vertical',
+      company: account || '-',
+      oppNumber: oppNumbers.get(r._id) ?? null,
+      prospectId: prospectIdByNorm.get(normalizeBfoCompany(account)) || null,
+      daysUntil: null,
+      expirationDate: null,
+      detail: vertical
+        ? `This new opp's vertical, "${vertical}", has nobody against it on Opps > Coverage. Add a Vertical CDM for it there, or correct the vertical.`
+        : "This new opp has no Vertical, and neither does its company card, so it has no Vertical CDM either. Set the Vertical on the opp or on the company.",
+    };
+  });
+}
+
 // ---- New BFO Opp prompt missing data ----
 // Mirrors the red banner on the Agents page: an opp that needs a fresh
 // BFO Guided Opportunity created ("BFO Link" == "-") but is missing one
@@ -833,7 +871,7 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
 //
 // Service Exploration Coverage is deliberately not among them — see
 // computeServiceCoverageGaps above; it feeds the Prospecting ladder.
-export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, knownServices = null, ignoredScopeServices = null }) {
+export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, knownServices = null, ignoredScopeServices = null, coverageSettings = null }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   // Opp `_id` → the visible "Opp #" the Opps tab shows. Built once here and
   // handed to the opp-derived detectors so every issue row names its opp by
@@ -851,6 +889,7 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectUntaggedBfoOppNames({ bfoActivity, oppsCache }));
   issues.push(...detectOppBfoNameNotInActivity({ bfoActivity, oppsCache, prospects, oppNumbers }));
   issues.push(...detectOppScopeOffList({ oppsCache, knownServices, ignoredScopeServices, prospects, oppNumbers }));
+  issues.push(...detectNewOppMissingVertical({ oppsCache, prospects, coverageSettings, oppNumbers }));
   issues.push(...detectNewBfoMissingData({ prospects, oppsCache, serviceOverrides, oppNumbers }));
   issues.push(...detectCloseNotSoldMissingData({ oppsCache, bfoActivity, prospects, oppNumbers }));
   issues.push(...detectAppDescriptionMissingContracting({ bfoActivity, oppsCache, prospects, oppNumbers }));

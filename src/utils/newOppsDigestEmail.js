@@ -21,7 +21,7 @@ const DIGEST_COLUMNS = [
   { key: 'Account', label: 'Account' },
   // Filled in by withVerticalCoverage (utils/oppVerticalCoverage.js).
   { key: OPP_VERTICAL_KEY, label: 'Vertical' },
-  { key: OPP_SALESPERSON_KEY, label: 'Salesperson' },
+  { key: OPP_SALESPERSON_KEY, label: 'Vertical CDM' },
   { key: 'Stage', label: 'Stage' },
   { key: 'Scope', label: 'Scope' },
   { key: 'Source', label: 'Source' },

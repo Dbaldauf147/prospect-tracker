@@ -45,7 +45,7 @@ import {
   clientRequiredCoaNotRequested, EMPTY_CLIENT_COA_INDEX,
 } from '../../utils/clientCoaFlags';
 import { KeithAgenda } from './KeithAgenda';
-import { buildPeOverlapDeals, oppStageNumber } from '../../utils/keithPeDeals';
+import { buildPeOverlapDeals, oppStageNumber, accountTier } from '../../utils/keithPeDeals';
 import { buildTargetTierResolver, buildTargetCdmResolver } from '../../utils/targetTier';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { getEffectiveServiceMetadata, formatRolloutWeeks } from '../../data/serviceCatalog';
@@ -549,12 +549,14 @@ const SEED_TODAY_DATE_COLUMNS = new Set(['Start Date', 'Last Client Heard From U
 const NEW_OPPS_MAX_STAGE_AGE_DAYS = 7;
 const NEW_OPPS_ACTIVE_STAGES = ['Lead', 'Qualifying', 'Quoting'];
 const NEW_OPPS_ACTIVE_STAGES_SET = new Set(NEW_OPPS_ACTIVE_STAGES);
-// The Vertical and Salesperson columns are worked out per row (see
+// The Vertical and Vertical CDM columns are worked out per row (see
 // utils/oppVerticalCoverage): the opp's vertical, else its company's, and
-// whoever Opps > Coverage lists for it.
+// whoever Opps > Coverage lists for it. Tier is the account's, read the
+// way PE Monthly reads it (keithPeDeals.accountTier).
+const NEW_OPPS_TIER_KEY = 'Account Tier';
 const NEW_OPPS_REPORT_COLUMNS = [
-  'Account', OPP_VERTICAL_KEY, OPP_SALESPERSON_KEY, 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
-  'Sales Partner', 'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Next Steps',
+  'Account', NEW_OPPS_TIER_KEY, OPP_VERTICAL_KEY, OPP_SALESPERSON_KEY, 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
+  'Sales Partner', 'Status', 'Quoted Amount', 'Sites', 'Next Steps',
   'BFO Link', 'BFO Address',
 ];
 
@@ -17052,10 +17054,11 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       .sort((a, b) =>
         a.age - b.age || String(a.r['Account'] || '').localeCompare(String(b.r['Account'] || '')))
       .map(({ r }) => r);
-    // Copies carrying the Vertical and Salesperson columns, which the
-    // table, the Excel export and both emails all read.
-    return withVerticalCoverage(list, { settings, prospects });
-  }, [records, settings?.salesCoverage, prospects]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Copies carrying the Vertical and Vertical CDM columns, which the
+    // table, the Excel export and both emails all read, plus the Tier.
+    return withVerticalCoverage(list, { settings, prospects })
+      .map(r => ({ ...r, [NEW_OPPS_TIER_KEY]: accountTier(r, prospects, targetTierFor) }));
+  }, [records, settings?.salesCoverage, prospects, targetTierFor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The other half of the same week: the opps that finished in it. Sold and
   // Not Sold both — a loss this week is as much news as a win, and a table
@@ -17126,11 +17129,24 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           ),
         };
       }
+      if (key === NEW_OPPS_TIER_KEY) {
+        return {
+          key,
+          label: 'Tier',
+          defaultWidth: 90,
+          headerTitle: "The account's tier: its company card's, or the Target Accounts list's.",
+          // Tier 1 before Tier 2, not tiered last (same as PE Monthly).
+          getSortValue: (row) => { const r = peMonthlyTierRank(row[key]); return Number.isFinite(r) ? r : null; },
+          getFilterValue: (row) => String(row[key] || ''),
+          exportValue: (row) => String(row[key] || ''),
+          render: (row) => (row[key] ? <span>{row[key]}</span> : <span style={{ color: '#CBD5E1' }}>-</span>),
+        };
+      }
       if (key === OPP_VERTICAL_KEY || key === OPP_SALESPERSON_KEY) {
         const isVertical = key === OPP_VERTICAL_KEY;
         return {
           key,
-          label: isVertical ? 'Vertical' : 'Salesperson',
+          label: isVertical ? 'Vertical' : 'Vertical CDM',
           defaultWidth: isVertical ? 170 : 170,
           headerTitle: isVertical
             ? "The opp's own Vertical, or its company card's when the opp has none."
@@ -17140,7 +17156,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           exportValue: (row) => String(row[key] || ''),
           render: (row) => (row[key]
             ? <span>{row[key]}</span>
-            : <span style={{ color: '#CBD5E1' }} title={isVertical ? 'No vertical on the opp or its company card' : 'Nobody on the Coverage tab covers this vertical'}>-</span>),
+            : <span style={{ color: '#CBD5E1' }} title={isVertical ? 'No vertical on the opp or its company card. Listed on the Issues tab.' : 'Nobody on the Coverage tab covers this vertical. Listed on the Issues tab.'}>-</span>),
         };
       }
       return columns.find(c => c.key === key) || {
