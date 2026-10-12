@@ -59,7 +59,7 @@ eq(excluded.get('a')?.source, 'HubSpot call', 'a contact removed from the accoun
 
 // The Contact column: who you last reached at the account, even when a
 // newer BFO row is the account's latest activity.
-eq(m.get('a')?.contact, { name: 'al@acme.com', email: 'al@acme.com', tsMs: t('2026-09-15T12:00:00Z'), source: 'HubSpot email' }, 'contact is the newest one reached');
+eq(m.get('a')?.contact, { id: '2', name: 'al@acme.com', email: 'al@acme.com', tsMs: t('2026-09-15T12:00:00Z'), source: 'HubSpot email' }, 'contact is the newest one reached');
 eq(m.get('b')?.contact, null, 'BFO-only account has no contact');
 {
   const both = lastActivityByAccount({

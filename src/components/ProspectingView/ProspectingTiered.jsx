@@ -13,6 +13,7 @@ import { userLsGet } from '../../utils/userLs';
 import { loadBfoActivity, BFO_ACTIVITY_EVENT } from '../../utils/bfoActivityStore';
 import { formatDateDisplay } from '../../utils/isoDate';
 import { useAuth } from '../../contexts/AuthContext';
+import { hubspotContactUrl, loadHubspotAccount } from '../../utils/hubspotRecordLink';
 import {
   ACTIVITY_COLD_DAYS, ACTIVITY_WARM_DAYS, daysSince, lastActivityByAccount, myTieredAccounts,
 } from '../../utils/tieredAccountActivity';
@@ -75,6 +76,14 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
       window.removeEventListener('storage', onStorage);
     };
   }, [uid]);
+
+  // The HubSpot portal, so a contact name links to its record.
+  const [hubspotAccount, setHubspotAccount] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    loadHubspotAccount().then(a => { if (!cancelled) setHubspotAccount(a); });
+    return () => { cancelled = true; };
+  }, []);
 
   // The BFO Activity tab's pasted rows.
   const [bfoActivity, setBfoActivity] = useState(null);
@@ -261,10 +270,21 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
           `${c.source.replace(/^HubSpot /, '')} ${formatDateDisplay(toLocalDate(c.tsMs))}`,
           c.email,
         ].filter(Boolean).join('\n');
-        return <span style={{ color: '#334155' }} title={how}>{c.name}</span>;
+        const url = hubspotContactUrl(hubspotAccount, c.id);
+        if (!url) return <span style={{ color: '#334155' }} title={how}>{c.name}</span>;
+        return (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`${how}\nOpen in HubSpot`}
+            onClick={(e) => e.stopPropagation()}
+            style={{ color: '#2563EB', textDecoration: 'underline' }}
+          >{c.name}</a>
+        );
       },
     },
-  ], [canSetStatus, updateProspect, onSelectProspect]);
+  ], [canSetStatus, updateProspect, onSelectProspect, hubspotAccount]);
 
   const counts = useMemo(() => {
     const c = { total: rows.length, warm: 0, cooling: 0, cold: 0 };

@@ -715,6 +715,15 @@ async function handler(req, res) {
   };
 
   try {
+    // Which portal this is and the web address it lives at, so the app can
+    // link a contact straight to its record. Read from HubSpot rather than
+    // written into the app, so the links follow the token if the portal
+    // changes.
+    if (action === 'account') {
+      const d = await hubspotFetch('/account-info/v3/details', token);
+      return res.json({ portalId: d.portalId != null ? String(d.portalId) : '', uiDomain: String(d.uiDomain || '') });
+    }
+
     if (action === 'contacts') {
       const contacts = await getAllContacts(token, scope);
       return res.json({
