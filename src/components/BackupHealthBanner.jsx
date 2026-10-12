@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../utils/apiFetch';
 
 // The red bar across the top of the site when the cloud backups are broken:
@@ -58,7 +58,23 @@ export function BackupHealthBanner({ user }) {
     return () => clearInterval(t);
   }, [user, check]);
 
-  if (!user || !health || dismissed) return null;
+  // The bar sits above the page, not over it: its height goes into
+  // --top-banner-h, which App.css and the sidebar move the layout down by.
+  // Measured rather than fixed, since the message wraps on a narrow window.
+  const barRef = useRef(null);
+  const showing = !!(user && health && !dismissed);
+  useEffect(() => {
+    const root = document.documentElement;
+    const el = barRef.current;
+    if (!showing || !el) { root.style.setProperty('--top-banner-h', '0px'); return undefined; }
+    const apply = () => root.style.setProperty('--top-banner-h', `${el.offsetHeight}px`);
+    apply();
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(apply) : null;
+    ro?.observe(el);
+    return () => { ro?.disconnect(); root.style.setProperty('--top-banner-h', '0px'); };
+  }, [showing]);
+
+  if (!showing) return null;
 
   const isBilling = health.problem === 'billing';
   const fixHref = isBilling ? health.links?.billing : health.links?.storage;
@@ -70,7 +86,7 @@ export function BackupHealthBanner({ user }) {
   };
 
   return (
-    <div role="alert" style={{
+    <div ref={barRef} role="alert" style={{
       position: 'fixed', top: 0, left: 0, right: 0, zIndex: 10000,
       background: '#B91C1C', color: '#fff', boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
       padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem',

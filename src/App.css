@@ -1,6 +1,16 @@
 .layout {
   display: flex;
-  height: 100vh;
+  /* --top-banner-h is the height of the backup warning bar while it shows
+     (BackupHealthBanner sets it), so the page starts below the bar rather
+     than under it. 0 the rest of the time. */
+  height: calc(100vh - var(--top-banner-h, 0px));
+}
+
+/* Padding rather than a margin on .layout: a margin collapses through
+   #root into the body and makes the page a bar's height too tall. */
+#root {
+  padding-top: var(--top-banner-h, 0px);
+  box-sizing: border-box;
 }
 
 .main {
