@@ -57,6 +57,21 @@ eq(noIndex.get('a')?.source, 'HubSpot last contacted', 'falls back to HubSpot La
 const excluded = lastActivityByAccount({ accounts, contacts, outreachIndex, exclusions: { 'acme corp': ['2'] } });
 eq(excluded.get('a')?.source, 'HubSpot call', 'a contact removed from the account by hand no longer counts');
 
+// The Contact column: who you last reached at the account, even when a
+// newer BFO row is the account's latest activity.
+eq(m.get('a')?.contact, { name: 'al@acme.com', email: 'al@acme.com', tsMs: t('2026-09-15T12:00:00Z'), source: 'HubSpot email' }, 'contact is the newest one reached');
+eq(m.get('b')?.contact, null, 'BFO-only account has no contact');
+{
+  const both = lastActivityByAccount({
+    accounts,
+    contacts: [...contacts, { id: '9', company: 'Beta Industries', firstname: 'Pat', lastname: 'Lee', email: 'pat@beta.com' }],
+    outreachIndex: { ...outreachIndex, emails: { ...outreachIndex.emails, 'pat@beta.com': { tsMs: t('2026-09-10T12:00:00Z') } } },
+    bfoActivity,
+  });
+  eq([both.get('b')?.source, both.get('b')?.contact?.name], ['BFO activity', 'Pat Lee'], 'newer BFO row still keeps the contact reached');
+}
+eq(noIndex.get('a')?.contact?.source, 'HubSpot last contacted', 'contact from Last Contacted without the index');
+
 eq(daysSince(t('2026-10-01T00:00:00Z'), t('2026-10-09T12:00:00Z')), 8, 'whole days since');
 eq(daysSince(null), null, 'no activity, no days');
 

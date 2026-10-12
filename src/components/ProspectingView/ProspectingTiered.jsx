@@ -248,6 +248,22 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
         );
       },
     },
+    {
+      key: 'contact', label: 'Contact', defaultWidth: 200,
+      headerTitle: 'The contact at the account you most recently emailed, called or contacted in HubSpot, whatever the newest activity was. Hover for how and when.',
+      getSortValue: r => (r.activity?.contact ? r.activity.contact.name.toLowerCase() : null),
+      getFilterValue: r => (r.activity?.contact ? `${r.activity.contact.name} ${r.activity.contact.email}` : ''),
+      exportValue: r => r.activity?.contact?.name || '',
+      render: (r) => {
+        const c = r.activity?.contact;
+        if (!c) return <span style={{ color: '#CBD5E1' }} title={r.activity === undefined ? undefined : 'No HubSpot email, call or contact found with anyone at this account'}>-</span>;
+        const how = [
+          `${c.source.replace(/^HubSpot /, '')} ${formatDateDisplay(toLocalDate(c.tsMs))}`,
+          c.email,
+        ].filter(Boolean).join('\n');
+        return <span style={{ color: '#334155' }} title={how}>{c.name}</span>;
+      },
+    },
   ], [canSetStatus, updateProspect, onSelectProspect]);
 
   const counts = useMemo(() => {
