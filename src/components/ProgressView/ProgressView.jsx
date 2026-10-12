@@ -476,6 +476,11 @@ const PROGRESS_CHART_DEFS = [
       { key: 'noOppsActivityT3', name: 'Tier 3', color: COVERAGE_T3, tier3: true },
     ],
     secondarySeries: [{ key: 'noOppsAccountCount', name: 'No-Opps Accounts', color: '#111827' }] },
+  // Every PE firm (the same list PE Firms by PE Stage counts), and the
+  // share with a contact tagged Decision Maker: the same test the tier
+  // charts use.
+  { id: 'peDMPct', label: '% of PE Firms with Decision Maker Identified', isPct: true,
+    series: [{ key: 'peDMPct', name: 'PE Firms', color: '#7C3AED' }] },
   { id: 'peStages',     label: 'PE Firms by PE Stage', defaultView: 'stackedBar',
     series: PE_STAGE_SERIES.map(s => ({ key: s.key, name: s.stage, color: s.color })),
     secondarySeries: [{ key: 'peTotal', name: 'Total PE Firms', color: '#111827' }] },
@@ -516,6 +521,12 @@ function pointDetailRows(chartId, details) {
       (details.t2Inactive || []).forEach(v => rows.push([asStr(v), 'Tier 2', typeof v === 'string' ? '' : (v.status || '')]));
       (details.t3Inactive || []).forEach(v => rows.push([asStr(v), 'Tier 3', typeof v === 'string' ? '' : (v.status || '')]));
       return { columns: ['Company', 'Tier', 'Inactive Status'], rows };
+    }
+    case 'peDMPct': {
+      const rows = [];
+      (details.peWithDM || []).forEach(v => rows.push([asStr(v), 'Yes']));
+      (details.peNoDM || []).forEach(v => rows.push([asStr(v), 'No']));
+      return { columns: ['PE Firm', 'Decision Maker Identified'], rows };
     }
     case 'peStages': {
       const rows = [];
@@ -1073,6 +1084,8 @@ export function ProgressView({ prospects, settings, cdmName }) {
       peStageDetails[s.key].push(p.company);
     }
     const peTotal = peFirms.length;
+    const peWithDMList = peFirms.filter(p => hasDM(p.company));
+    const peNoDMList = peFirms.filter(p => !hasDM(p.company));
 
     return {
       week: getWeekKey(new Date()),
@@ -1090,6 +1103,9 @@ export function ProgressView({ prospects, settings, cdmName }) {
       noOppsAccountCount,
       ...peStageCounts,
       peTotal,
+      peWithDM: peWithDMList.length,
+      // null with no PE firms: no firms is not 0% covered.
+      peDMPct: peTotal > 0 ? Math.round((peWithDMList.length / peTotal) * 100) : null,
       t1ContactPct: t1Total > 0 ? Math.round((t1WithContacts / t1Total) * 100) : 0,
       t2ContactPct: t2Total > 0 ? Math.round((t2WithContacts / t2Total) * 100) : 0,
       t1DMPct: t1Total > 0 ? Math.round((t1WithDM / t1Total) * 100) : 0,
@@ -1126,6 +1142,8 @@ export function ProgressView({ prospects, settings, cdmName }) {
         t3NotConnected: t3NotConnected.map(p => p.company),
         t3Inactive: t3InactiveList.map(p => ({ company: p.company, status: p.status })),
         ...peStageDetails,
+        peWithDM: peWithDMList.map(p => p.company),
+        peNoDM: peNoDMList.map(p => p.company),
       },
     };
   }, [prospects, settings, oppsRecordsState, hubspotContactsState, cdmName]);
@@ -1154,6 +1172,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
     currentSnapshot.peTotal,
     currentSnapshot.peDiscovery, currentSnapshot.pePiloting,
     currentSnapshot.peExistingPartnership, currentSnapshot.peNotSold,
+    currentSnapshot.peWithDM,
   ]);
 
   // Save current week snapshot — re-reads Firestore first to avoid overwriting
