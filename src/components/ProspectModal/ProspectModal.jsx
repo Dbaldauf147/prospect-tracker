@@ -4810,8 +4810,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     }
   }
 
-  // Local contact state - updated optimistically after HubSpot saves
-  const baseContacts = useMemo(() => {
+  // The company's contacts, built once with the hide-tagged / removed ones
+  // and once without: the list shows one per the "Show hidden" toggle, and
+  // the toggle's badge is the difference, so it counts exactly the contacts
+  // the toggle would bring back. It used to count on its own rule (every
+  // hidden contact on a known email domain, whatever their Company text),
+  // so a parent company's people on a shared domain were counted here but
+  // never listed: the badge said 12 and the toggle showed nothing.
+  const buildCompanyContacts = useCallback((showHiddenContacts) => {
     if (!fields.company || isNew) return [];
     // Collect this prospect's registered email domains so we can
     // include contacts whose Company text doesn't match the prospect
@@ -4894,7 +4900,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       }
     }
     return matched;
-  }, [fields.company, fields.emailDomain, fields.website, hubspotContacts, isNew, showHiddenContacts, settings.companyContactLinks, settings.companyContactExclusions]);
+  }, [fields.company, fields.emailDomain, fields.website, hubspotContacts, isNew, settings.companyContactLinks, settings.companyContactExclusions]);
+  const contactsWithHidden = useMemo(() => buildCompanyContacts(true), [buildCompanyContacts]);
+  const contactsWithoutHidden = useMemo(() => buildCompanyContacts(false), [buildCompanyContacts]);
+  // Local contact state - updated optimistically after HubSpot saves
+  const baseContacts = showHiddenContacts ? contactsWithHidden : contactsWithoutHidden;
 
   const [localContacts, setLocalContacts] = useState(baseContacts);
   useEffect(() => { setLocalContacts(baseContacts); }, [baseContacts]);
@@ -5374,37 +5384,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
 
   const [contactView, setContactView] = useState('table'); // 'table' | 'orgchart'
-  // (showHiddenContacts state is declared earlier - above
-  // baseContacts - so its useMemo can reference it without a TDZ.)
-  // Number of hide-tagged contacts at this company / domain - drives
-  // the badge on the "Show hidden" toggle. Memoized so the full
-  // hubspotContacts walk only runs when the inputs actually change
-  // (was previously inline in the JSX which made the modal freeze on
-  // big-name accounts like URW).
-  const hiddenContactsCount = useMemo(() => {
-    const FREE_HIDDEN = new Set(['gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com', 'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com']);
-    const knownDomains = new Set();
-    for (const entry of String(fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
-      const at = entry.lastIndexOf('@');
-      const d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
-      if (d && !FREE_HIDDEN.has(d)) knownDomains.add(d);
-    }
-    if (fields.website) {
-      const d = String(fields.website).replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase().trim();
-      if (d) knownDomains.add(d);
-    }
-    let n = 0;
-    for (const c of (hubspotContacts || [])) {
-      if (!contactIsHidden(c)) continue;
-      if (companiesMatch(c.company, fields.company)) { n += 1; continue; }
-      const email = String(c.email || '').toLowerCase().trim();
-      const at = email.lastIndexOf('@');
-      if (at < 0) continue;
-      const d = email.slice(at + 1).trim();
-      if (d && !FREE_HIDDEN.has(d) && knownDomains.has(d)) n += 1;
-    }
-    return n;
-  }, [hubspotContacts, fields.company, fields.emailDomain, fields.website]);
+  // How many contacts the "Show hidden" toggle brings back: hide-tagged
+  // ones and ones removed from this company. Off the same two lists the
+  // table shows (see buildCompanyContacts), so the badge can't count
+  // anybody the toggle won't then list.
+  const hiddenContactsCount = contactsWithHidden.length - contactsWithoutHidden.length;
   // Seed the contact editor when the modal was opened by clicking a specific
   // contact (e.g. a Decision Maker on the Pipeline renewals table).
   const [editingContact, setEditingContact] = useState(initialEditContact);
@@ -13089,7 +13073,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   onClick={() => setShowHiddenContacts(v => !v)}
                   title={showHiddenContacts
                     ? 'Hide contacts tagged "hide" again. Click an uncovered contact to clear the tag from the contact card.'
-                    : `Surface ${hiddenContactsCount} hide-tagged contact${hiddenContactsCount === 1 ? '' : 's'} at this company so you can audit them or clear the tag.`}
+                    : `Surface ${hiddenContactsCount} hidden contact${hiddenContactsCount === 1 ? '' : 's'} at this company (tagged "hide", or removed from this company) so you can audit them or bring them back.`}
                   style={{
                     padding: '0.25rem 0.6rem',
                     border: '1px solid ' + (showHiddenContacts ? '#7C3AED' : 'var(--color-border)'),
