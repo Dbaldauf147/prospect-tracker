@@ -1,7 +1,7 @@
 // Assertion tests for Prospecting > Tiered's last-activity reading. Plain
 // Node, no framework. Run:
 //   node scripts/tieredAccountActivity.test.mjs
-import { lastActivityByAccount, myTieredAccounts, daysSince, ownerVia } from '../src/utils/tieredAccountActivity.js';
+import { lastActivityByAccount, myTieredAccounts, daysSince, ownerVia, tierActivityCoverage } from '../src/utils/tieredAccountActivity.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -80,6 +80,25 @@ eq(noIndex.get('a')?.contact?.source, 'HubSpot last contacted', 'contact from La
     outreachIndex: { emails: { 'sam@bss.com': { tsMs: t('2026-09-01T12:00:00Z') } } },
   });
   eq([own.get('s')?.contact?.name, own.get('s')?.contact?.owner], ['Sam Roe', ''], 'contact at the account itself has no owner');
+}
+
+{
+  // The 60-day summary tiles: share of each tier touched in the window.
+  const now = t('2026-10-12T12:00:00Z');
+  const accts = [
+    { id: 'x1', tier: 'Tier 1' }, { id: 'x2', tier: 'Tier 1' }, { id: 'x3', tier: 'Tier 1' },
+    { id: 'y1', tier: 'Tier 2' },
+  ];
+  const act = new Map([
+    ['x1', { tsMs: t('2026-10-01T12:00:00Z') }], // 11 days
+    ['x2', { tsMs: t('2026-08-13T12:00:00Z') }], // 60 days: counts
+    ['x3', { tsMs: t('2026-08-12T12:00:00Z') }], // 61 days: doesn't
+  ]);
+  eq(tierActivityCoverage(accts, act, { nowMs: now }), [
+    { tier: 'Tier 1', total: 3, active: 2, pct: 67 },
+    { tier: 'Tier 2', total: 1, active: 0, pct: 0 },
+    { tier: 'Tier 3', total: 0, active: 0, pct: null },
+  ], 'per tier: active within 60 days (inclusive), no accounts reads null');
 }
 
 eq(daysSince(t('2026-10-01T00:00:00Z'), t('2026-10-09T12:00:00Z')), 8, 'whole days since');

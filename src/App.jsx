@@ -17,6 +17,7 @@ import { useIssues } from './hooks/useIssues';
 import { useAgentsRunDue } from './hooks/useAgentsRunDue';
 import { useOppsCallInDue } from './hooks/useOppsCallInDue';
 import { useProspectingTagDebt } from './hooks/useProspectingTagDebt';
+import { useContactCountRecorder } from './hooks/useContactCountRecorder';
 import { useProspectingLadder } from './hooks/useProspectingLadder';
 import { useDecisionMakerCoverage } from './hooks/useDecisionMakerCoverage';
 import { useGranolaAutoSync } from './hooks/useGranolaAutoSync';
@@ -127,6 +128,12 @@ function App() {
   // and handed to both readouts — the sidebar badge and the Prospecting
   // page's Tagged row — so the two can't report different numbers.
   const tagDebt = useProspectingTagDebt({ prospects, cdmName, settings, userId: user?.uid });
+  // The same roster counts, written down once a week for Contacts > History.
+  useContactCountRecorder({
+    coverage: tagDebt.coverage,
+    oppsReady: tagDebt.oppsReady,
+    prospectsReady: !dataLoading && (prospects || []).length > 0,
+  });
   const { issues, openCount: openIssuesCount, serviceGaps } = useIssues({ prospects, cdmName, user, marketingLeads: settings.marketingLeads, serviceOverrides: settings.serviceOverrides, settings });
   // The Prospecting page's renewal step counts these rows, and its Top PC
   // step reads the prospects directly. While the prospects are still

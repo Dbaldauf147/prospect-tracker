@@ -174,6 +174,27 @@ export function ownerVia(account, contactCompany) {
   return '';
 }
 
+// The window the Tiered Activity summary counts an account as touched in.
+export const ACTIVITY_SUMMARY_DAYS = 60;
+
+/**
+ * Per tier, how many accounts had any activity in the last `days` days:
+ * [{ tier, total, active, pct }] for Tier 1, 2 and 3 in order. `pct` is
+ * a whole percentage, null for a tier with no accounts. `activity` is the
+ * lastActivityByAccount map; an account missing from it had none.
+ */
+export function tierActivityCoverage(accounts, activity, { days = ACTIVITY_SUMMARY_DAYS, nowMs = Date.now() } = {}) {
+  return TIERS.map((tier) => {
+    const inTier = (accounts || []).filter(p => String(p?.tier || '').trim() === tier);
+    const active = inTier.filter((p) => {
+      const a = activity?.get(p.id || p.company);
+      const d = a ? daysSince(a.tsMs, nowMs) : null;
+      return d != null && d <= days;
+    }).length;
+    return { tier, total: inTier.length, active, pct: inTier.length ? Math.round((active / inTier.length) * 100) : null };
+  });
+}
+
 /** Whole days between an activity and now, never negative. */
 export function daysSince(tsMs, nowMs = Date.now()) {
   if (tsMs == null) return null;

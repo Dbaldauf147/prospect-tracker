@@ -14,7 +14,8 @@ import { formatDateDisplay } from '../../utils/isoDate';
 import { useAuth } from '../../contexts/AuthContext';
 import { hubspotContactUrl, loadHubspotAccount } from '../../utils/hubspotRecordLink';
 import {
-  ACTIVITY_COLD_DAYS, ACTIVITY_WARM_DAYS, daysSince, lastActivityByAccount, myTieredAccounts,
+  ACTIVITY_COLD_DAYS, ACTIVITY_SUMMARY_DAYS, ACTIVITY_WARM_DAYS, daysSince, lastActivityByAccount, myTieredAccounts,
+  tierActivityCoverage,
 } from '../../utils/tieredAccountActivity';
 
 // The same tier tints the Prospects subtab and the ladder's DM mapping use.
@@ -325,6 +326,15 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
 
   const noIndex = !outreachIndex?.emails && !outreachIndex?.phones;
 
+  // The tiles above the table: per tier, the share of accounts with any
+  // activity in the last 60 days. Over the accounts the status filter
+  // keeps, not the search box, which is for finding a row rather than
+  // choosing what counts.
+  const coverage = useMemo(
+    () => (activity ? tierActivityCoverage(shown, activity, { nowMs: now }) : null),
+    [shown, activity, now],
+  );
+
   return (
     <div style={{ padding: '0.25rem 1.25rem 1.25rem', maxWidth }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.6rem' }}>
@@ -379,12 +389,39 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
           </div>
         </details>
       </div>
+      {accounts.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginBottom: '0.6rem' }}>
+          {(coverage || TIERS.map(tier => ({ tier, total: null }))).map(({ tier, total, active, pct }) => {
+            const tint = TIER_TINTS[tier] || {};
+            const tone = pct == null ? '#64748B' : pct >= 75 ? '#166534' : pct >= 50 ? '#92400E' : '#991B1B';
+            return (
+              <div
+                key={tier}
+                title={total == null ? undefined : `${active} of ${total} ${tier} account${total === 1 ? '' : 's'} had a HubSpot email, call or contact in the last ${ACTIVITY_SUMMARY_DAYS} days.`}
+                style={{ flex: '1 1 180px', maxWidth: 260, border: '1px solid #E2E8F0', borderLeft: `4px solid ${tint.ink || '#94A3B8'}`, borderRadius: 8, padding: '0.45rem 0.75rem', background: '#fff' }}
+              >
+                <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                  {tier}: active in {ACTIVITY_SUMMARY_DAYS} days
+                </div>
+                {total == null ? (
+                  <div style={{ fontSize: '0.8rem', color: '#94A3B8', marginTop: 2 }}>Loading...</div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 2 }}>
+                    <span style={{ fontSize: '1.3rem', fontWeight: 700, color: tone, fontVariantNumeric: 'tabular-nums' }}>{pct == null ? '-' : `${pct}%`}</span>
+                    <span style={{ fontSize: '0.74rem', color: '#64748B', fontVariantNumeric: 'tabular-nums' }}>{active} of {total}</span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
       {accounts.length === 0 ? (
         <div style={{ padding: '1rem', border: '1px dashed #CBD5E1', borderRadius: 8, fontSize: '0.75rem', color: '#64748B' }}>
           No accounts with {cdmName || 'you'} as their CDM carry a Tier yet. Set one on the company card.
         </div>
       ) : (
-        <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 230px)', minHeight: 320 }}>
+        <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 300px)', minHeight: 320 }}>
           <DataTable
             tableId="prospecting-tiered"
             exportFileName="Prospecting Tiered Accounts"
