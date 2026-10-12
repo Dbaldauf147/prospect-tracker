@@ -71,6 +71,7 @@ import {
   scheduledServicesForCompany,
 } from '../../utils/scheduledOpps';
 import { loadOpps2Newest, bulkSetOppField } from '../../utils/opps2Store';
+import { OPPS2_EXTERNAL_UPDATE_EVENT } from '../../utils/serviceRenameRunner';
 import { companyOverrideUpdate, companyOverridesUpdate } from '../../utils/contactCompanyOverride';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites } from '../../utils/companyRenameCascade';
@@ -8014,7 +8015,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         } catch (err) { console.error('Company rename: Google Sheet update failed', err); }
       }
       if (plan.oppIds.length && uid) {
-        try { await bulkSetOppField(uid, plan.oppIds, 'Account', newName); }
+        try {
+          await bulkSetOppField(uid, plan.oppIds, 'Account', newName);
+          // The popup opens over the Opps page, which keeps its own copy of
+          // the opps: tell it to merge the new Account in, or New Opps (and
+          // every other subtab) shows the old name until a reload.
+          window.dispatchEvent(new CustomEvent(OPPS2_EXTERNAL_UPDATE_EVENT, { detail: { from: oldName, to: newName } }));
+        }
         catch (err) { console.error('Company rename: opps Account update failed', err); }
       }
       for (const u of plan.peOwnerUpdates) {
