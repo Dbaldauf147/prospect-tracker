@@ -9,6 +9,7 @@
 // what the user sees.
 
 import { withVerticalCoverage, OPP_VERTICAL_KEY, OPP_SALESPERSON_KEY } from '../../src/utils/oppVerticalCoverage.js';
+import { NEW_OPPS_ACTIVE_STAGES, NEW_OPPS_MAX_STAGE_AGE_DAYS, combinedActiveStageAge, qualifiesNewOpp } from '../../src/utils/newOppsFilter.js';
 
 // ---- Email column set (fixed) -------------------------------------------
 // The digest email always shows exactly these columns, in this order. The
@@ -20,7 +21,7 @@ export const NEW_OPPS_EMAIL_COLUMNS = [
   // Filled in by withVerticalCoverage (src/utils/oppVerticalCoverage.js):
   // the opp's vertical, else its company's, and who Coverage lists for it.
   { key: OPP_VERTICAL_KEY, label: 'Vertical' },
-  { key: OPP_SALESPERSON_KEY, label: 'Salesperson' },
+  { key: OPP_SALESPERSON_KEY, label: 'Vertical CDM' },
   { key: 'Stage', label: 'Stage' },
   { key: 'Scope', label: 'Scope' },
   { key: 'Source', label: 'Source' },
@@ -30,64 +31,17 @@ export const NEW_OPPS_EMAIL_COLUMNS = [
   { key: 'BFO Address', label: 'BFO Link' },
 ];
 
-// New-opps qualification rules (mirror NEW_OPPS_* in OppsView2): an opp shows
-// when it has a BFO Opportunity Name, its current Stage is one of these, and
-// its combined time across these stages is at most this many days.
-export const NEW_OPPS_ACTIVE_STAGES = ['Lead', 'Qualifying', 'Quoting'];
-const NEW_OPPS_ACTIVE_STAGES_SET = new Set(NEW_OPPS_ACTIVE_STAGES);
-export const NEW_OPPS_MAX_STAGE_AGE_DAYS = 7;
+// New-opps qualification rules live in src/utils/newOppsFilter.js so the
+// Issues tab reads the same list the subtab and this email do.
+export { NEW_OPPS_ACTIVE_STAGES, NEW_OPPS_MAX_STAGE_AGE_DAYS };
 
-// ---- Date helpers (mirror PEPortfolioView / Opps 2) ---------------------
+// Date parsing for the email's short-date cells (mirror PEPortfolioView /
+// Opps 2).
 function parseOppsDate(raw) {
   if (!raw) return null;
   const s = String(raw).trim();
   const t = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T00:00:00` : s);
   return Number.isNaN(t) ? null : new Date(t);
-}
-
-// Whole calendar days from an ISO/parseable date up to today (>= 0). Mirrors
-// OppsView2's daysFromToday negated + floored at zero.
-function daysSince(raw) {
-  const d = parseOppsDate(raw);
-  if (!d) return null;
-  d.setHours(0, 0, 0, 0);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return Math.max(0, Math.round((today - d) / 86400000));
-}
-
-// Combined days an opp has spent across the Lead + Qualifying + Quoting
-// stages: historical durations from `_stageHistory` plus the live days-so-far
-// when the current Stage is one of those three. Mirrors combinedActiveStageAge
-// in OppsView2 so the server filter matches the on-screen list.
-function combinedActiveStageAge(r) {
-  let total = 0;
-  for (const h of (Array.isArray(r && r._stageHistory) ? r._stageHistory : [])) {
-    const s = String(h && h.stage || '').trim();
-    if (!NEW_OPPS_ACTIVE_STAGES_SET.has(s)) continue;
-    const d = Number(h && h.days);
-    if (Number.isFinite(d) && d >= 0) total += d;
-  }
-  const stage = String(r && r['Stage'] || '').trim();
-  if (NEW_OPPS_ACTIVE_STAGES_SET.has(stage)) {
-    const since = daysSince((r && r._stageEnteredAt) || (r && r['Start Date']));
-    total += since == null ? 0 : since;
-  }
-  return total;
-}
-
-const bfoMissing = (v) => {
-  const s = String(v == null ? '' : v).trim().toLowerCase();
-  return s === '' || s === '-' || s === '#n/a' || s === 'n/a';
-};
-
-// True when an opp qualifies for the New Opps report.
-function qualifiesNewOpp(r) {
-  if (!r || typeof r !== 'object') return false;
-  const stage = String(r['Stage'] || '').trim();
-  if (!NEW_OPPS_ACTIVE_STAGES_SET.has(stage)) return false; // also excludes Not Started
-  if (bfoMissing(r['BFO Link'])) return false;
-  return combinedActiveStageAge(r) <= NEW_OPPS_MAX_STAGE_AGE_DAYS;
 }
 
 // Short date (M/D/YYYY) for display. Falls back to the raw value when it

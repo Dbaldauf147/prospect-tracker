@@ -94,6 +94,11 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   // same way so an unrelated settings edit doesn't re-run computeIssues.
   const ignoredKey = JSON.stringify(Array.isArray(settings?.ignoredScopeServices) ? settings.ignoredScopeServices : []);
   const ignoredScopeServices = useMemo(() => JSON.parse(ignoredKey), [ignoredKey]);
+  // The Opps > Coverage tab, for the New Opps "no Vertical CDM" check. Only
+  // that key is handed on, so another settings edit doesn't re-run
+  // computeIssues.
+  const salesCoverage = settings?.salesCoverage;
+  const coverageSettings = useMemo(() => ({ salesCoverage }), [salesCoverage]);
 
   // Re-read once the per-user localStorage scope is established (and on any
   // later account switch), since the initial reads above may have run
@@ -176,12 +181,12 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   }, []);
 
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings });
     return rows.map((r) => {
       const { snoozed, until } = issueSnoozeState(snoozedMap, r.id);
       return { ...r, snoozed, snoozeUntil: until };
     });
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings]);
 
   // Services the client base hasn't explored yet. Not issues — outreach —
   // so they're returned alongside rather than mixed in, and the snooze map
