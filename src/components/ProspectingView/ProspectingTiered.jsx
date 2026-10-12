@@ -38,6 +38,15 @@ function ageColors(days) {
 
 // Where the Hide statuses choice is saved.
 const HIDDEN_STATUSES_KEY = 'prospectingTieredHiddenStatuses';
+// The window the tiles count an account as active in, picked above them.
+// Saved like the status choice, with a browser copy for the first paint.
+const WINDOW_DAYS_KEY = 'prospectingTieredWindowDays';
+const WINDOW_DAYS_CACHE = 'prospecting-tiered-window-days';
+const WINDOW_DAY_OPTIONS = [7, 14, 30, 60, 90, 120, 180, 365];
+const validWindow = (n) => (WINDOW_DAY_OPTIONS.includes(Number(n)) ? Number(n) : null);
+function readWindowCache() {
+  try { return validWindow(localStorage.getItem(WINDOW_DAYS_CACHE)); } catch { return null; }
+}
 // The same choice cached in this browser, so a refresh shows it before the
 // settings document has loaded (and still has it if a save never landed).
 // Settings win once they arrive: they are what other devices see.
@@ -327,13 +336,24 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
 
   const noIndex = !outreachIndex?.emails && !outreachIndex?.phones;
 
+  // How many days back counts as active: this visit's pick, else the saved
+  // one, else this browser's copy, else the default.
+  const [localWindow, setLocalWindow] = useState(null);
+  const [cachedWindow] = useState(readWindowCache);
+  const windowDays = localWindow ?? validWindow(settings?.[WINDOW_DAYS_KEY]) ?? cachedWindow ?? ACTIVITY_SUMMARY_DAYS;
+  const setWindowDays = (n) => {
+    setLocalWindow(n);
+    try { localStorage.setItem(WINDOW_DAYS_CACHE, String(n)); } catch { /* noop */ }
+    if (typeof updateSettings === 'function') updateSettings({ [WINDOW_DAYS_KEY]: n });
+  };
+
   // The tiles above the table: per tier, the share of accounts with any
-  // activity in the last 60 days. Over the accounts the status filter
+  // activity in the chosen window. Over the accounts the status filter
   // keeps, not the search box, which is for finding a row rather than
   // choosing what counts.
   const coverage = useMemo(
-    () => (activity ? tierActivityCoverage(shown, activity, { nowMs: now }) : null),
-    [shown, activity, now],
+    () => (activity ? tierActivityCoverage(shown, activity, { days: windowDays, nowMs: now }) : null),
+    [shown, activity, now, windowDays],
   );
 
   // A tile opens a list of that tier's accounts with nothing in the window:
@@ -348,10 +368,10 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
         const a = activity.get(p.id || p.company) || null;
         return { p, a, days: a ? daysSince(a.tsMs, now) : null };
       })
-      .filter(r => r.days == null || r.days > ACTIVITY_SUMMARY_DAYS)
+      .filter(r => r.days == null || r.days > windowDays)
       .sort((x, y) => (y.days ?? Number.MAX_SAFE_INTEGER) - (x.days ?? Number.MAX_SAFE_INTEGER)
         || String(x.p.company).localeCompare(String(y.p.company)));
-  }, [unreachedTier, shown, activity, now]);
+  }, [unreachedTier, shown, activity, now, windowDays]);
   useEffect(() => {
     if (!unreachedTier) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') setUnreachedTier(null); };
@@ -414,7 +434,20 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
         </details>
       </div>
       {accounts.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginBottom: '0.6rem' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginBottom: '0.6rem', alignItems: 'stretch' }}>
+          <label
+            title="How far back an email, call or contact counts as active, for the tiles and their not-reached lists. Your choice is saved."
+            style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, border: '1px solid #E2E8F0', borderRadius: 8, padding: '0.45rem 0.75rem', background: '#fff' }}
+          >
+            <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Active within</span>
+            <select
+              value={windowDays}
+              onChange={e => setWindowDays(Number(e.target.value))}
+              style={{ fontSize: '0.8rem', fontFamily: 'inherit', fontWeight: 600, padding: '2px 4px', borderRadius: 4, border: '1px solid #CBD5E1', background: '#fff', color: '#1E293B' }}
+            >
+              {WINDOW_DAY_OPTIONS.map(n => <option key={n} value={n}>{n} days</option>)}
+            </select>
+          </label>
           {(coverage || TIERS.map(tier => ({ tier, total: null }))).map(({ tier, total, active, pct }) => {
             const tint = TIER_TINTS[tier] || {};
             const tone = pct == null ? '#64748B' : pct >= 75 ? '#166534' : pct >= 50 ? '#92400E' : '#991B1B';
@@ -424,11 +457,11 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
                 key={tier}
                 disabled={total == null}
                 onClick={() => setUnreachedTier(tier)}
-                title={total == null ? undefined : `${active} of ${total} ${tier} account${total === 1 ? '' : 's'} had a HubSpot email, call or contact in the last ${ACTIVITY_SUMMARY_DAYS} days. Click to see the ${total - active} that haven't.`}
+                title={total == null ? undefined : `${active} of ${total} ${tier} account${total === 1 ? '' : 's'} had a HubSpot email, call or contact in the last ${windowDays} days. Click to see the ${total - active} that haven't.`}
                 style={{ flex: '1 1 180px', maxWidth: 260, border: '1px solid #E2E8F0', borderLeft: `4px solid ${tint.ink || '#94A3B8'}`, borderRadius: 8, padding: '0.45rem 0.75rem', background: '#fff', textAlign: 'left', font: 'inherit', cursor: total == null ? 'default' : 'pointer' }}
               >
                 <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
-                  {tier}: active in {ACTIVITY_SUMMARY_DAYS} days
+                  {tier}: active in {windowDays} days
                 </div>
                 {total == null ? (
                   <div style={{ fontSize: '0.8rem', color: '#94A3B8', marginTop: 2 }}>Loading...</div>
@@ -454,15 +487,15 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
           <div
             role="dialog"
             aria-modal="true"
-            aria-label={`${unreachedTier} accounts not reached in ${ACTIVITY_SUMMARY_DAYS} days`}
+            aria-label={`${unreachedTier} accounts not reached in ${windowDays} days`}
             onClick={e => e.stopPropagation()}
             style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 50px rgba(15,23,42,0.25)', width: 'min(640px, 100%)', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
           >
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '0.85rem 1rem 0.6rem', borderBottom: '1px solid #E2E8F0' }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>{unreachedTier}: not reached in {ACTIVITY_SUMMARY_DAYS} days</div>
+                <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>{unreachedTier}: not reached in {windowDays} days</div>
                 <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
-                  {unreached.length} {unreached.length === 1 ? 'account has' : 'accounts have'} had no HubSpot email, call or contact in the last {ACTIVITY_SUMMARY_DAYS} days. Accounts with a hidden status are left out.
+                  {unreached.length} {unreached.length === 1 ? 'account has' : 'accounts have'} had no HubSpot email, call or contact in the last {windowDays} days. Accounts with a hidden status are left out.
                 </div>
               </div>
               <button
@@ -474,7 +507,7 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
             </div>
             <div style={{ overflowY: 'auto', padding: '0.25rem 0' }}>
               {unreached.length === 0 ? (
-                <div style={{ padding: '1rem', fontSize: '0.78rem', color: '#64748B' }}>Every {unreachedTier} account was reached in the last {ACTIVITY_SUMMARY_DAYS} days.</div>
+                <div style={{ padding: '1rem', fontSize: '0.78rem', color: '#64748B' }}>Every {unreachedTier} account was reached in the last {windowDays} days.</div>
               ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem' }}>
                   <thead>
