@@ -99,7 +99,7 @@ export function ProspectingHistory({ today, maxWidth }) {
   const [showTable, setShowTable] = useState(false);
 
   const rows = useMemo(
-    () => historyChartRows(history, workingDaysBack(today, range, history)),
+    () => historyChartRows(history, workingDaysBack(today, range)),
     [history, today, range],
   );
   const recorded = rows.filter(r => r.recorded);

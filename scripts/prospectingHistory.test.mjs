@@ -54,7 +54,8 @@ eq(Object.keys(trimHistory({ '2026-01-01': {}, '2026-01-02': {}, '2026-01-03': {
 // ---- the chart axis ------------------------------------------------------------
 // 2026-10-05 is a Monday.
 eq(workingDaysBack('2026-10-05', 3), ['2026-10-01', '2026-10-02', '2026-10-05'], 'weekends are skipped');
-eq(workingDaysBack('2026-10-05', 2, { '2026-10-04': { reached: 1 } }), ['2026-10-02', '2026-10-04', '2026-10-05'], 'a recorded weekend day is kept');
+eq(workingDaysBack('2026-10-05', 2), ['2026-10-02', '2026-10-05'], 'a recorded weekend day is left off too');
+eq(workingDaysBack('2026-10-11', 2), ['2026-10-08', '2026-10-09'], 'on a Sunday the axis ends on Friday');
 const rows = historyChartRows({ '2026-10-05': { reached: 2, total: 4, overdueStart: 3, overdueEnd: 1 } }, ['2026-10-02', '2026-10-05']);
 eq(rows.map(r => [r.recorded, r.reached, r.overdueStart, r.overdueEnd]), [[false, null, null, null], [true, 2, 3, 1]], 'unrecorded days are gaps, not zeros');
 
