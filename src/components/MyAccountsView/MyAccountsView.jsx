@@ -7,6 +7,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { Badge } from '../common/Badge';
 import { DataTable } from '../common/DataTable';
 import { statusColor, formatAum } from '../../utils/formatters';
+import { reportingStatus, ON_HOLD_STATUS } from '../../utils/reportingStatus';
 import { STATUSES, TYPES, TIER_OPTIONS, NOT_ON_TIER_LIST, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
 import { buildTypeOptions } from '../../utils/prospectOptions';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
@@ -209,6 +210,13 @@ function warningHeaderTitle(description, companies) {
   const more = names.length - shown.length;
   return `${description} · ${names.length} account${names.length === 1 ? '' : 's'}:\n• ${shown.join('\n• ')}`
     + (more > 0 ? `\n…and ${more} more` : '');
+}
+
+// What the filters, search and option lists read for a column. Status is
+// read as reported (reportingStatus): a company with a substatus filters
+// as On Hold, the way its cell reads.
+function filterValueOf(account, key) {
+  return key === 'status' ? reportingStatus(account) : account?.[key];
 }
 
 const ACCOUNT_COLUMNS = [
@@ -2584,7 +2592,8 @@ Fix that now?
       const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, feedingOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, mslSiteCount, _contactDebug, suggestedStatus, statusMismatch, suggestedType, typeMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
-      const s = p.status || 'Unknown';
+      // Counted as reported: a Client with a substatus is On Hold here.
+      const s = reportingStatus(p) || 'Unknown';
       counts[s] = (counts[s] || 0) + 1;
     }
 
@@ -2915,7 +2924,7 @@ Fix that now?
       let hasBlank = false;
       let tooMany = false;
       for (const a of allAccounts) {
-        let v = a[col.key];
+        let v = filterValueOf(a, col.key);
         if (v == null || v === '' || v === '-' || (typeof v === 'string' && !v.trim())) {
           hasBlank = true;
           continue;
@@ -3008,7 +3017,7 @@ Fix that now?
     // Bucket filter
     if (bucketFilter === 'tier1') result = result.filter(a => a.myTier === 'Tier 1');
     else if (bucketFilter === 'tier2') result = result.filter(a => a.myTier === 'Tier 2');
-    else if (bucketFilter === 'client') result = result.filter(a => a.status === 'Client');
+    else if (bucketFilter === 'client') result = result.filter(a => reportingStatus(a) === 'Client');
     else if (bucketFilter === 'pipeline') result = result.filter(a => a.myTier === 'Tier 3');
     else if (bucketFilter === 'noTarget') result = result.filter(a => !a.targetNames || a.targetNames.length === 0);
     for (const [key, values] of Object.entries(filters)) {
@@ -3016,7 +3025,7 @@ Fix that now?
         const wantsBlank = values.includes(BLANK_LABEL);
         const nonBlankValues = values.filter(v => v !== BLANK_LABEL);
         result = result.filter(a => {
-          const val = String(a[key] ?? '').trim();
+          const val = String(filterValueOf(a, key) ?? '').trim();
           const isEmpty = !val || val === '-';
           if (wantsBlank && isEmpty) return true;
           if (nonBlankValues.length > 0 && nonBlankValues.includes(val)) return true;
@@ -3027,7 +3036,7 @@ Fix that now?
     if (search.trim()) {
       const term = search.toLowerCase();
       result = result.filter(a =>
-        [a.company, a.status, a.type, a.geography, a.hqRegion, a.notes, a.cdm]
+        [a.company, reportingStatus(a), a.type, a.geography, a.hqRegion, a.notes, a.cdm]
           .filter(Boolean).join(' ').toLowerCase().includes(term)
       );
     }
@@ -3068,7 +3077,7 @@ Fix that now?
       type,
       type2: TYPE2_MAP[type] || '',
       count: accounts.length,
-      clients: accounts.filter(a => a.status === 'Client').length,
+      clients: accounts.filter(a => reportingStatus(a) === 'Client').length,
       accounts: accounts.slice().sort((a, b) => (a.company || '').localeCompare(b.company || '')),
     }));
     // Biggest bucket first, with the untyped accounts pinned last so they
@@ -3387,12 +3396,22 @@ Fix that now?
               what="Status differs from the opps-derived suggestion"
             />
           </span>
-        ), headerTitle: warningHeaderTitle('Status differs from opps-derived suggestion', mismatchAccounts), render: (row) => (
+        ), headerTitle: warningHeaderTitle('Status differs from opps-derived suggestion', mismatchAccounts),
+        getSortValue: (row) => reportingStatus(row).toLowerCase() || null,
+        getFilterValue: (row) => reportingStatus(row),
+        exportValue: (row) => reportingStatus(row),
+        render: (row) => (reportingStatus(row) === ON_HOLD_STATUS ? (
+          <span
+            title={`Read as On Hold because it has a substatus: ${row.substatus}. Its saved Status is still ${row.status || 'blank'}. Clear the substatus on the company popup to read as ${row.status || 'its status'} again.`}
+          >
+            <Badge label={ON_HOLD_STATUS} color={statusColor(ON_HOLD_STATUS)} />
+          </span>
+        ) : (
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <InlineCell row={row} field="status" value={row.status} onUpdate={onUpdate} options={STATUSES} />
             {row.statusMismatch && <StatusMismatchWarning row={row} onUpdate={onUpdate} />}
           </span>
-        )};
+        ))};
       }
       if (col.key === 'type') {
         const typeMismatchAccounts = matchingAccounts.filter(flagTests.type).map(a => a.company);
@@ -3769,7 +3788,7 @@ Fix that now?
                       onClick={() => onSelect(a)}
                     >
                       {a.company}
-                      {a.status === 'Client' && (
+                      {reportingStatus(a) === 'Client' && (
                         <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#059669' }}>CLIENT</span>
                       )}
                     </button>
