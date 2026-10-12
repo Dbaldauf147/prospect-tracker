@@ -45,6 +45,7 @@ import {
   clientRequiredCoaNotRequested, EMPTY_CLIENT_COA_INDEX,
 } from '../../utils/clientCoaFlags';
 import { KeithAgenda } from './KeithAgenda';
+import { KeithNotes } from './KeithNotes';
 import { buildPeOverlapDeals, oppStageNumber } from '../../utils/keithPeDeals';
 import { buildTargetTierResolver, buildTargetCdmResolver } from '../../utils/targetTier';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
@@ -18942,6 +18943,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         // wrapper's overflow: hidden that squeezed the table to nothing with
         // no way to scroll down to it.
         <div className={styles.keithScroll}>
+          {/* Free-text notes for the meeting, above the agenda's tick-off lines. */}
+          <KeithNotes settings={settings} updateSettings={updateSettings} />
           {/* What to raise with him, above what the data says is stuck on him. */}
           <KeithAgenda
             settings={settings}
