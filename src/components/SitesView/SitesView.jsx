@@ -4854,6 +4854,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride,
   ]);
 
+  // Only the two columns a row can't do without are locked on. Every
+  // other column is the user's to hide: the Master Analysis and the
+  // compliance screens read the site data itself, never what is on
+  // screen, so hiding one only tidies the table (and leaves it out of
+  // this table's own Download, which follows what you see).
   const alwaysVisible = useMemo(() => {
     if (!columns.length) return [];
     return [
@@ -4861,19 +4866,9 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       // otherwise offer to remove the only way to pick a row, from a
       // mode whose entire job is picking rows.
       '__select__',
+      // The site name: the sticky row label, and the only thing that
+      // says which site a row is.
       columns[0].key,
-      // Compliance screening can't place a site without it, so a list
-      // with no city has to be visible as exactly that.
-      'city',
-      'propertyType',
-      'segment',
-      'ownership',
-      'siteDescription',
-      'propertySize',
-      'electric', 'electric_market', 'electric_rate', 'electricCost',
-      'gas', 'gas_market', 'gas_rate', 'gasCost',
-      'totalCost',
-      'water',
     ];
   }, [columns]);
 
