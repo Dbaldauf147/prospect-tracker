@@ -181,6 +181,25 @@ function setEnv(vars) {
   eq(create.body.properties.hubspot_owner_id, '77', 'new contacts are created as the owner\'s');
 }
 
+// ── A contact HubSpot no longer has answers with its own code ───────────
+// (deleted or merged away), so the popup can re-create it rather than fail
+// every autosave on "Object not found".
+{
+  setEnv({});
+  const calls = stubPortal();
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    if (opts.method === 'PATCH' && String(url).endsWith('/crm/v3/objects/contacts/123')) {
+      calls.push({ method: 'PATCH', path: '/crm/v3/objects/contacts/123' });
+      return ok({ status: 'error', message: 'Object not found.  objectId are usually numeric.' }, 404);
+    }
+    return real(url, opts);
+  };
+  const res = fakeRes();
+  await handler({ query: { action: 'update-contact' }, method: 'POST', body: { contactId: '123', properties: { jobtitle: 'CEO' } } }, res);
+  eq([res.statusCode, res.body?.code], [404, 'contact_not_found'], 'an update to a contact gone from HubSpot says so by code');
+}
+
 // ── Unscoped: delete still works as before ───────────────────────────────
 {
   setEnv({});
