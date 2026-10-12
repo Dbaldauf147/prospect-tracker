@@ -1500,7 +1500,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
       </div>
 
       {subtab === 'history' ? (
-        <ProspectingHistory today={today} maxWidth={PAGE_MAX} />
+        <ProspectingHistory today={today} maxWidth={PAGE_MAX} prospects={prospects} settings={settings} cdmName={cdmName} />
       ) : subtab === 'tiered' ? (
         <ProspectingTiered
           prospects={prospects}
