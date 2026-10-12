@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { downloadSavedAnalysis } from '../../utils/savedAnalysisDownload';
-import { formatAnalysisDate } from '../../hooks/useSavedAnalyses';
+import { downloadSavedAnalysis } from '../utils/savedAnalysisDownload';
+import { formatAnalysisDate } from '../hooks/useSavedAnalyses';
 
 // The "✓ Aug 31" a saved Master Analysis shows in a table cell, as a link
 // that downloads the workbook. The click stays in the cell, so it never

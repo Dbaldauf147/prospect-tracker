@@ -148,7 +148,8 @@ import { isInactiveAgreement } from '../../utils/dealsFormat';
 import { isDecisionMakerContact } from '../../utils/decisionMakerCoverage';
 import { ListsMatchPanel } from './ListsMatchPanel';
 import { AnalysisMenu } from './AnalysisMenu';
-import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
+import { useSavedAnalyses } from '../../hooks/useSavedAnalyses';
+import SavedAnalysisLink from '../SavedAnalysisLink';
 import { isClientWedged, isClientWedgedError, wedgedClientMessage } from '../../utils/firestoreClientHealth';
 import styles from './ProspectModal.module.css';
 
@@ -12418,14 +12419,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                       </td>
                                       <td style={{ padding: '0.15rem 0.3rem' }}>
                                         {!linked ? dash(notTracked) : (analysis ? (
-                                          <span
-                                            title={[
-                                              `${linked.company} has a Master Analysis saved${analysis.savedAt ? ` on ${new Date(analysis.savedAt).toLocaleString()}` : ''}.`,
-                                              analysis.fileName || '',
-                                              analysis.sizeBytes ? `${(analysis.sizeBytes / (1024 * 1024)).toFixed(1)} MB` : '',
-                                            ].filter(Boolean).join('\n')}
-                                            style={savedStyle}
-                                          >✓ {formatAnalysisDate(analysis.savedAt)}</span>
+                                          // Click the date to download the saved workbook.
+                                          <SavedAnalysisLink prospectId={linked.id} meta={analysis} companyName={linked.company} style={{ fontSize: '0.68rem', whiteSpace: 'nowrap' }} />
                                         ) : dash(`No Master Analysis saved against ${linked.company} yet`))}
                                       </td>
                                       <td style={{ padding: '0.15rem 0.3rem', textAlign: 'right' }}>

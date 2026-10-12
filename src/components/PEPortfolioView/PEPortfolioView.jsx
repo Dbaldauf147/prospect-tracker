@@ -28,7 +28,7 @@ import {
 import { loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { useSavedAnalyses } from '../../hooks/useSavedAnalyses';
-import SavedAnalysisLink from './SavedAnalysisLink';
+import SavedAnalysisLink from '../SavedAnalysisLink';
 import { getServiceCategories, serviceBucketOf, UNGROUPED_SERVICES } from '../../utils/serviceCategoriesStore';
 import { classifyHqRegion, normalizeHqRegion, NORTH_AMERICA } from '../../utils/hqRegion';
 import { serviceStatusColor } from '../../utils/serviceStatusColors';
