@@ -85,7 +85,9 @@ export function outputSchema() {
 // A bullet as the cell shows it: trimmed, any leading marker the model
 // added despite the schema dropped, and em dashes swapped for hyphens so
 // the site rule holds however the model words it.
-function cleanBullet(s) {
+// Exported for the Scope summary (summarizeScope.js), which tidies its one
+// line the same way.
+export function cleanBullet(s) {
   return String(s ?? '')
     .replace(/^\s*(?:[-*•·]|\d+[.)])\s*/, '')
     .replace(/\s*\u2014\s*/g, ' - ') // em-dash-ok: strips em dashes out of the model's answer

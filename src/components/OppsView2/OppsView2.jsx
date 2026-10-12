@@ -146,7 +146,7 @@ import {
   StageDaysBoard,
 } from './daysInStage';
 import {
-  downloadNewOppsOutlookDraft, resolveNewOppsDraftTemplate, withNotesSummaries,
+  downloadNewOppsOutlookDraft, resolveNewOppsDraftTemplate, withNotesSummaries, withScopeSummaries,
   withTierAndAlignment, NEW_OPPS_TIER_KEY, NEW_OPPS_CDMS_ALIGNED_KEY,
 } from '../../utils/newOppsDigestEmail';
 import { NewOppsDraftEmailModal } from './NewOppsDraftEmailModal';
@@ -213,7 +213,7 @@ import { effectiveLineItemServices, servicesForCostLine, lineItemServicesOnOptio
 // saves, so the estimate table's columns are picked the same way.
 import { ColumnToggle } from '../common/ColumnToggle';
 import { useTableColumnPrefs } from '../../hooks/useTableColumnPrefs';
-import { useNotesSummaries } from '../../hooks/useNotesSummaries';
+import { useNotesSummaries, useScopeSummaries } from '../../hooks/useNotesSummaries';
 import NotesSummaryCell from '../NotesSummaryCell';
 import styles from './OppsView2.module.css';
 
@@ -16298,6 +16298,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                   <ScopeServicesCell
                     value={row[h]}
                     onChange={(v) => updateOppField(row._id, h, v)}
+                    summary={row._scopeSummary}
                     options={opts}
                     account={row['Account']}
                     prospects={prospects}
@@ -17113,8 +17114,13 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // notes stay on hover and in the Follow Up Notes popup. Only fetched
   // while the subtab is open.
   const newOppsNotes = useNotesSummaries(newOpps, { enabled: activeTab === 'newOpps' });
-  // The Outlook draft carries the same summaries the Notes column shows.
-  const newOppsForEmail = useMemo(() => withNotesSummaries(newOpps, newOppsNotes), [newOpps, newOppsNotes]);
+  // A long Scope shows as one summarised line, the full list on hover.
+  const newOppsScopes = useScopeSummaries(newOpps, { enabled: activeTab === 'newOpps' });
+  // The Outlook draft carries the same summaries the Notes and Scope columns show.
+  const newOppsForEmail = useMemo(
+    () => withScopeSummaries(withNotesSummaries(newOpps, newOppsNotes), newOppsScopes),
+    [newOpps, newOppsNotes, newOppsScopes],
+  );
 
   const newOppsColumns = useMemo(
     () => NEW_OPPS_REPORT_COLUMNS.map((key) => {
@@ -17130,6 +17136,20 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               onClick={(e) => { e.stopPropagation(); setFollowUpNotes({ id: row._id, prev: null }); }}
             />
           ),
+        };
+      }
+      if (key === 'Scope') {
+        const base = columns.find(c => c.key === key) || { key, label: headerLabel(key) };
+        if (!base.render) return base;
+        return {
+          ...base,
+          headerTitle: 'Long scopes are summarised into one line, here and in the email. Hover for the full list, click to edit it.',
+          // The cell edits the opp itself (by _id), so a copy carrying the
+          // summary renders the same picker with the line in it.
+          render: (row, ...rest) => {
+            const s = newOppsScopes.get(row);
+            return base.render(s.status === 'ready' && s.bullets?.[0] ? { ...row, _scopeSummary: s.bullets[0] } : row, ...rest);
+          },
         };
       }
       if (key === NEW_OPPS_TIER_KEY) {
@@ -17180,7 +17200,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         defaultWidth: key === 'BFO Address' ? 260 : 160,
       };
     }),
-    [columns, newOppsNotes]
+    [columns, newOppsNotes, newOppsScopes]
   );
 
   // SE-branded (Schneider green) Excel of the new opps shown, mirroring the
