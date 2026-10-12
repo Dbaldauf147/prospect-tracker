@@ -9,18 +9,19 @@ import { HQ_REGION_OPTIONS } from '../../utils/hqRegion';
 // the row doesn't resolve to anything on Table View by name.
 //
 // Creating asks for the three fields a new company is otherwise sent off to
-// get filled in later: CDM (you, by default), Vertical and HQ Region (that
-// one guessed from the row's HQ country). Each can be changed or blanked.
+// get filled in later: CDM (you, by default), Vertical (the PE firm's, by
+// default) and HQ Region (guessed from the row's HQ country). Each can be
+// changed or blanked.
 //
 // Rendered into document.body as a centred dialog: the portfolio table sits
 // in a horizontal scroller that would clip anything anchored to the cell.
 export function PortfolioCompanyLinkPicker({
   rowName = '', firmName = '', prospects = [], creating = false, error = '',
-  cdmOptions = [], verticalOptions = [], initialCdm = '', initialHqRegion = '',
+  cdmOptions = [], verticalOptions = [], initialCdm = '', initialVertical = '', initialHqRegion = '',
   onMap, onCreate, onClose,
 }) {
   const [query, setQuery] = useState(rowName);
-  const [details, setDetails] = useState({ cdm: initialCdm || '', vertical: '', hqRegion: initialHqRegion || '' });
+  const [details, setDetails] = useState({ cdm: initialCdm || '', vertical: initialVertical || '', hqRegion: initialHqRegion || '' });
   const setDetail = (key, value) => setDetails(d => ({ ...d, [key]: value }));
   const inputRef = useRef(null);
   useEffect(() => { inputRef.current?.focus(); inputRef.current?.select(); }, []);

@@ -11432,6 +11432,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               verticalOptions={dropdownVerticals}
               // You: the signed-in CDM, spelled the way the dropdown spells it.
               initialCdm={canonicalCdmOption(cdmName, cdmOptions) || String(cdmName || '').trim()}
+              // The PE firm's own vertical: this modal is the firm.
+              initialVertical={String(fields.vertical || '').trim()}
               initialHqRegion={classifyHqCountry((fields.portfolioCompanies || [])[portfolioLinkIdx].hqCountry) || ''}
               onCreate={onAddProspect ? (details) => createPortfolioProspect(portfolioLinkIdx, details) : null}
               // Closable mid-create: the row still links when the record
