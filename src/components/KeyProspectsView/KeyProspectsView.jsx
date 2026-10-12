@@ -14,6 +14,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { KeyContactsView, useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { reportingStatus } from '../../utils/reportingStatus';
 import { accountHasDecisionMaker, decisionMakerCompanies, makeAccountContactIndex } from '../../utils/decisionMakerCoverage';
 
 const SCHNEIDER_COMPANY_RE = /\bschneider\s*electric\b/i;
@@ -46,6 +47,9 @@ function companiesMatch(a, b) {
   if (sa && sb && (sa === sb || sa.includes(sb) || sb.includes(sa))) return true;
   return false;
 }
+
+// Statuses the no-Decision-Maker warning leaves out: Ex Clients and Hold Off.
+const MISSING_DM_SKIP_STATUSES = new Set(['Old Client', 'Hold Off']);
 
 export function KeyProspectsView({ prospects = [], onSelectProspect, settings, updateSettings, updateSettingsPath, cdmName = '' }) {
   const { user } = useAuth();
@@ -172,6 +176,10 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
     if (myTierAccounts.length === 0) return [];
     const out = [];
     for (const p of myTierAccounts) {
+      // Ex Clients and Hold Off accounts aren't being prospected, so a
+      // missing decision maker there isn't a gap worth a warning. A company
+      // with a Substatus reads as Hold Off here, as on My Accounts.
+      if (MISSING_DM_SKIP_STATUSES.has(reportingStatus(p))) continue;
       if (accountHasDm(p)) continue;
       const pLc = String(p.company || '').toLowerCase().trim();
       const status = tierAccountStatus.get(pLc);
@@ -223,7 +231,7 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
             type="button"
             onClick={() => setMissingDmOpen(o => !o)}
             style={{ background: 'transparent', border: 'none', padding: 0, fontFamily: 'inherit', fontSize: '0.72rem', color: '#991B1B', fontWeight: 700, cursor: 'pointer' }}
-            title="Tier 1 / Tier 2 accounts on your Table View where no contact at the company is tagged Decision Maker. Tag a decision maker in HubSpot to clear the row."
+            title="Tier 1 / Tier 2 accounts on your Table View where no contact at the company is tagged Decision Maker. Ex Clients (Old Client) and Hold Off accounts are left out. Tag a decision maker in HubSpot to clear the row."
           >
             {missingDmOpen ? '▾' : '▸'} {accountsMissingDm.length} Tier 1 / 2 account{accountsMissingDm.length === 1 ? '' : 's'} with no Decision Maker tagged
           </button>
