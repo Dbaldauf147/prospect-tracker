@@ -54,13 +54,11 @@ const STATUS = {
 };
 const statusOf = (s) => STATUS[s] || STATUS.none;
 
-// The two trend series' fills. `strong` is the accent the tab already gives
-// that metric and marks the period this report covers; the history behind
-// it is the de-emphasis grey, not a paler tint of the same hue - one bar
-// carries the eye, the rest are context, and a second shade of the accent
-// would read as a second thing being measured. Both greys and both accents
-// clear 3:1 on white, so every bar is visible and no bar competes.
-const TREND_HISTORY = '#7C8B9D';
+// The two trend series' fills: every week in the accent the tab already
+// gives that metric. The history weeks used to be drawn in a de-emphasis
+// grey, which read as a second thing being measured rather than as "older
+// weeks", so it went; the bold week label marks the period this report
+// covers.
 // A trend card's column chart, in pixels. Ten columns and the nine gaps
 // between them have to fit half the 800px content column less the card's
 // border and padding, with a little slack so Outlook never has to choose
@@ -68,8 +66,8 @@ const TREND_HISTORY = '#7C8B9D';
 const TREND_COL = 28;
 const TREND_GAP = 5;
 const TREND_CHART_H = 84;
-const TREND_BLUE = { strong: '#2a78d6', soft: TREND_HISTORY };
-const TREND_GREEN = { strong: '#0E9F6E', soft: TREND_HISTORY };
+const TREND_BLUE = { strong: '#2a78d6' };
+const TREND_GREEN = { strong: '#0E9F6E' };
 
 // The stage ramp the Pipeline funnel draws with, earliest stage darkest.
 const STAGE_FILL = ['#104281', '#1c5cab', '#2a78d6', '#6da7ec'];
@@ -215,15 +213,13 @@ function cardRow(cells) {
 // reads "-" with no column.
 const blankCell = 'font-size:0;line-height:0;mso-line-height-rule:exactly';
 
-function trendColumnHtml(point, max, accent, isLast) {
+function trendColumnHtml(point, max, accent) {
   const known = point.value != null;
   const value = known ? Number(point.value) || 0 : 0;
   // Scale to the tallest column in the series, never to a fixed axis.
   // A non-zero week always gets a visible sliver.
   const h = max > 0 && known && value > 0 ? Math.max(2, Math.round((value / max) * TREND_CHART_H)) : 0;
-  // The current period is the one the reader is being told about, so it
-  // carries the full accent and the rest recede.
-  const fill = isLast ? accent.strong : accent.soft;
+  const fill = accent.strong;
   const column = h > 0
     ? table(`width="${TREND_COL}" style="border-collapse:collapse;width:${TREND_COL}px"`, `<tr>
           <td width="${TREND_COL}" height="${h}" bgcolor="${fill}" style="width:${TREND_COL}px;height:${h}px;border-radius:2px 2px 0 0;${blankCell}">${FILL_CELL}</td>
@@ -253,7 +249,7 @@ function trendCardHtml({ title, note, points, accent, emptyNote }) {
   // same baseline rule as the columns so the axis reads as one line.
   const gap = (ruled) => `<td width="${TREND_GAP}" style="width:${TREND_GAP}px;${ruled ? `border-bottom:1px solid ${BORDER};` : ''}${blankCell}">&nbsp;</td>`;
   const join = (cells, ruled) => cells.map((c, i) => (i ? gap(ruled) : '') + c).join('');
-  const bars = join(points.map((p, i) => trendColumnHtml(p, max, accent, i === last)), true);
+  const bars = join(points.map((p) => trendColumnHtml(p, max, accent)), true);
   const labels = join(points.map((p, i) => trendLabelHtml(p, i === last)), false);
   // Say once, under the series, what the two things a column can't show
   // mean - rather than a per-column asterisk that has to be hunted for.
@@ -293,7 +289,7 @@ function coverageRatioRowHtml(point, max, isLast, trackBg) {
   const fillPx = known && max > 0 && point.value > 0
     ? Math.max(4, Math.round((point.value / max) * RATIO_TRACK))
     : 0;
-  const bar = barHtml({ fillPx, trackPx: RATIO_TRACK, color: isLast ? RATIO_ACCENT : TREND_HISTORY, trackBg });
+  const bar = barHtml({ fillPx, trackPx: RATIO_TRACK, color: RATIO_ACCENT, trackBg });
   // The bar column carries `cbar` so a phone drops it and keeps the week
   // and its figure, the same trade the coverage cards make.
   return `<tr>

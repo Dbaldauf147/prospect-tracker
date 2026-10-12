@@ -146,13 +146,13 @@ check('every table is a presentation table with no spacing',
 // axis that would render near-identical stubs. Every size is a pixel count
 // stated in an attribute as well as in CSS, which is what Word reads.
 check('a trend column is a bgcolor cell sized both ways',
-  /<td width="28" height="84" bgcolor="#7C8B9D"[^>]*width:28px;height:84px/.test(html), true);
+  /<td width="28" height="84" bgcolor="#2a78d6"[^>]*width:28px;height:84px/.test(html), true);
 check('columns scale to the series max, not to a fixed axis',
-  /<td width="28" height="34" bgcolor="#7C8B9D"/.test(html), true);
+  /<td width="28" height="34" bgcolor="#2a78d6"/.test(html), true);
 check('no column is sized as a share of the cell it sits in',
-  /width="\d+%"[^>]*bgcolor="(#7C8B9D|#2a78d6|#0E9F6E|#104281|#1c5cab)"/.test(html), false);
-// Emphasis: the period this report covers wears the accent, the history
-// behind it wears the de-emphasis grey.
+  /width="\d+%"[^>]*bgcolor="(#2a78d6|#0E9F6E|#104281|#1c5cab)"/.test(html), false);
+// Every week wears the series accent; no history week is drawn in grey.
+check('no column is grey', /bgcolor="#7C8B9D"/i.test(html), false);
 check('the current period carries the accent colour',
   /<td width="28" height="52" bgcolor="#2a78d6"/.test(html), true);
 // Weeks run across the bottom, oldest on the left.
