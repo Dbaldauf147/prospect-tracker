@@ -36,6 +36,16 @@ function ageColors(days) {
 
 // Where the Hide statuses choice is saved.
 const HIDDEN_STATUSES_KEY = 'prospectingTieredHiddenStatuses';
+// The same choice cached in this browser, so a refresh shows it before the
+// settings document has loaded (and still has it if a save never landed).
+// Settings win once they arrive: they are what other devices see.
+const HIDDEN_STATUSES_CACHE = 'prospecting-tiered-hidden-statuses';
+function readHiddenCache() {
+  try {
+    const v = JSON.parse(localStorage.getItem(HIDDEN_STATUSES_CACHE));
+    return Array.isArray(v) ? v : null;
+  } catch { return null; }
+}
 const statusOf = (p) => String(p?.status || '').trim();
 const statusLabel = (st) => st || 'No status';
 
@@ -101,10 +111,17 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
   // a page with no updateSettings still filters.
   const savedHidden = settings?.[HIDDEN_STATUSES_KEY];
   const [localHidden, setHiddenLocal] = useState(null);
+  const [cachedHidden] = useState(readHiddenCache);
   const hiddenStatuses = useMemo(
-    () => localHidden ?? (Array.isArray(savedHidden) ? savedHidden : []),
-    [localHidden, savedHidden],
+    () => localHidden ?? (Array.isArray(savedHidden) ? savedHidden : (cachedHidden || [])),
+    [localHidden, savedHidden, cachedHidden],
   );
+  // Keep the cache in step with whatever is showing, including a choice
+  // that arrived from another device.
+  useEffect(() => {
+    if (localHidden == null && !Array.isArray(savedHidden)) return;
+    try { localStorage.setItem(HIDDEN_STATUSES_CACHE, JSON.stringify(hiddenStatuses)); } catch { /* noop */ }
+  }, [hiddenStatuses, localHidden, savedHidden]);
   const setHiddenStatuses = (next) => {
     setHiddenLocal(next);
     if (typeof updateSettings === 'function') updateSettings({ [HIDDEN_STATUSES_KEY]: next });
