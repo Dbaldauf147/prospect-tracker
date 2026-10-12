@@ -43,6 +43,7 @@ import {
   emailsByWeek, newOppsByWeek, coverageByWeek,
   recentWeeks, TREND_WEEKS, COVERAGE_MONTHS,
   coverageReading, coverageRatioByWeek, withCoverageReading, weekKeyAt, COVERAGE_RATIO_WEEKS,
+  COVERAGE_FILL_GRACE_MS,
 } from '../../src/utils/weeklyReportTrends.js';
 import { withCoverageImages, withCoverageRatioImage } from '../../src/utils/coverageChartImage.js';
 import { excludeUntrackedFromWeeks } from '../../src/utils/progressUntracked.js';
@@ -60,12 +61,6 @@ import { zonedToUtc, localParts } from './weeklyReportSchedule.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// How long after a week closes a reading can still stand for it. The
-// ratio is a level, so what it reads at Monday 6am is where the week ended,
-// and a week the tab was never opened in gets that as its point. A send
-// later than this (a Friday schedule, a manual "send now" mid-week) is
-// measuring a different week and leaves the closed one alone.
-const COVERAGE_FILL_GRACE_MS = 2 * DAY_MS;
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const isoOf = ({ y, mo, d }) => `${y}-${pad2(mo + 1)}-${pad2(d)}`;
@@ -206,8 +201,8 @@ export function buildReportPayload(sources, period, opts) {
 
 /**
  * The payload plus the coverage-ratio reading this build took for the
- * week it reports, when that week had none (`coverageFill`, null
- * otherwise). Still pure: the caller decides whether to write the fill.
+ * week it reports, when it differs from the one logged (`coverageFill`,
+ * null otherwise). Still pure: the caller decides whether to write the fill.
  * `now` is when the reading is being taken; without one, nothing is filled.
  */
 export function buildReport(sources, period, { now = null } = {}) {
@@ -266,16 +261,19 @@ export function buildReport(sources, period, { now = null } = {}) {
 
   // The coverage ratio by week. The series reads the log the tab and
   // earlier sends wrote; the week this report covers gets today's reading
-  // when nobody took one while it ran and the week has only just closed
-  // (see COVERAGE_FILL_GRACE_MS). Only a weekly report fills: a daily one
-  // closes a day, not the week the log is kept in.
+  // when the week has only just closed (see COVERAGE_FILL_GRACE_MS). That
+  // reading replaces one the tab took while the week ran: it is later, so
+  // it is where the week closed, and it is the figure the KPI card above
+  // the chart prints, so the chart's last point can't disagree with it.
+  // Only a weekly report fills: a daily one closes a day, not the week the
+  // log is kept in.
   const reportWeekKey = weekKeyAt(start);
   const reading = kpisReady ? coverageReading(kpis) : null;
   const canFill = scope !== 'day' && reading && Number.isFinite(now)
     && now >= end && now - end <= COVERAGE_FILL_GRACE_MS;
   const log = s.coverageRatioLog || {};
   const filledLog = canFill
-    ? withCoverageReading(log, reportWeekKey, reading, { at: now, onlyIfMissing: true })
+    ? withCoverageReading(log, reportWeekKey, reading, { at: now })
     : log;
   const coverageFill = filledLog !== log ? { key: reportWeekKey, entry: filledLog[reportWeekKey] } : null;
   const coverageRatio = withCoverageRatioImage(coverageRatioByWeek({ log: filledLog, refMs: start, weeks: COVERAGE_RATIO_WEEKS }));
