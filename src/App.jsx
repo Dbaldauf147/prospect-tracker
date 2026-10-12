@@ -32,6 +32,7 @@ import { FilterBar } from './components/FilterBar/FilterBar';
 import { PrivacyPolicy } from './components/PrivacyPolicy';
 import { UpdateBanner } from './components/UpdateBanner';
 import { OtherTabBanner } from './components/OtherTabBanner';
+import { BackupHealthBanner } from './components/BackupHealthBanner';
 import { SyncPanel } from './components/SyncPanel';
 import { DailySuccessManager } from './components/DailySuccess/DailySuccessManager';
 import { DailySuccessLogModal } from './components/DailySuccess/DailySuccessLogModal';
@@ -791,6 +792,7 @@ function App() {
       {isAdmin && whatToDoTodayEnabled && <DailySuccessManager user={user} />}
       <UpdateBanner />
       <OtherTabBanner />
+      <BackupHealthBanner user={user} />
     </div>
   );
 }
