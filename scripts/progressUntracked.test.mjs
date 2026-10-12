@@ -143,6 +143,14 @@ const note = untrackedNoteFor(all);
 check('the note counts the clients', note.includes('1 client'), true);
 check('the note names the tab the tick lives on', note.includes('Clients tab'), true);
 check('the note carries no em dash', note.includes('—'), false);
+// On Hold companies (a substatus set) ride the same exclusion and are
+// named as such in the note.
+{
+  const held = excludeUntrackedFromWeeks(history, { 'quiet co': true });
+  const heldNote = untrackedNoteFor(held, { onHoldMap: { 'quiet co': true } });
+  check('an On Hold company is named as On Hold, not as Don\'t Track',
+    `${heldNote.includes('1 On Hold company')},${heldNote.includes("Don't Track")}`, 'true,false');
+}
 
 // A client ticked long after it left the book is not announced as missing
 // from a chart it was never on.

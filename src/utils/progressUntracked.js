@@ -201,12 +201,21 @@ export function excludeUntrackedFromWeeks(weeks, untrackedMap) {
  * The line the page prints above the charts, or '' when there is nothing
  * to say. Kept here so the wording and the arithmetic stay together.
  */
-export function untrackedNoteFor({ names = [], weeksAdjusted = 0 } = {}) {
+// `onHoldMap` (utils/reportingStatus onHoldNameMap) says which of the
+// names are left out for being On Hold rather than ticked "Don't Track",
+// so the line can name both reasons.
+export function untrackedNoteFor({ names = [], weeksAdjusted = 0 } = {}, { onHoldMap = null } = {}) {
   if (!names.length && !weeksAdjusted) return '';
   if (!names.length) {
-    return 'Clients ticked "Don\'t Track" on the Clients tab are left out of these charts.';
+    return 'Clients ticked "Don\'t Track" on the Clients tab, and On Hold companies, are left out of these charts.';
   }
+  const onHold = names.filter(n => onHoldMap?.[key(n)]).length;
+  const ticked = names.length - onHold;
+  const parts = [
+    ticked ? `${ticked} client${ticked === 1 ? '' : 's'} ticked "Don't Track" on the Clients tab` : '',
+    onHold ? `${onHold} On Hold compan${onHold === 1 ? 'y' : 'ies'} (a substatus is set)` : '',
+  ].filter(Boolean);
   const n = names.length;
-  return `Leaves out ${n} client${n === 1 ? '' : 's'} ticked "Don't Track" on the Clients tab`
+  return `Leaves out ${parts.join(' and ')}`
     + `${weeksAdjusted > 0 ? `, on every week that recorded ${n === 1 ? 'it' : 'them'}` : ''}.`;
 }

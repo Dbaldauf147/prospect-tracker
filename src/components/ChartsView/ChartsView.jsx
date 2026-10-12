@@ -61,7 +61,7 @@ export function ChartsView({ prospects, settings, updateSettings, cdmName, onSel
         {tab === 'pipeline' && <PipelineView prospects={prospects} cdmName={cdmName} settings={settings} onSelectProspect={onSelectProspect} />}
         {tab === 'weekly' && (
           <Suspense fallback={<div className="loading">Loading view…</div>}>
-            <WeeklyReportView settings={settings} updateSettings={updateSettings} cdmName={cdmName} />
+            <WeeklyReportView prospects={prospects} settings={settings} updateSettings={updateSettings} cdmName={cdmName} />
           </Suspense>
         )}
       </div>
