@@ -160,18 +160,16 @@ function toISO(dt) {
 }
 
 // The working days (Mon-Fri) ending at `today`, oldest first, `count` of
-// them - plus any weekend day inside that span that has a record, since a
-// Saturday the user did work belongs on the chart. A weekday with no row
-// stays in as a gap: a day the app wasn't opened is itself worth seeing.
-export function workingDaysBack(today, count, history = {}) {
+// them. Weekends never appear, even one with a record: the History page
+// reads working days only, so a Saturday spent on the ladder is not
+// charted or counted. A weekday with no row stays in as a gap: a day the
+// app wasn't opened is itself worth seeing.
+export function workingDaysBack(today, count) {
   const out = [];
   const dt = parseISO(today);
-  let weekdays = 0;
-  for (let guard = 0; weekdays < count && guard < count * 3 + 7; guard += 1) {
+  for (let guard = 0; out.length < count && guard < count * 3 + 7; guard += 1) {
     const dow = dt.getDay();
-    const iso = toISO(dt);
-    if (dow !== 0 && dow !== 6) { out.push(iso); weekdays += 1; }
-    else if (history[iso]) out.push(iso);
+    if (dow !== 0 && dow !== 6) out.push(toISO(dt));
     dt.setDate(dt.getDate() - 1);
   }
   return out.reverse();
