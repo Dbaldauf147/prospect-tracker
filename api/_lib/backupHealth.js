@@ -50,13 +50,39 @@ export function fixLinks(projectId, bucket) {
 // rather than make the reader decode a GCS status line.
 const isBillingError = (msg) => /billing/i.test(String(msg || ''));
 
+const ageText = (ms) => {
+  const hours = ms / 3600000;
+  const days = Math.floor(hours / 24);
+  return days >= 1 ? `${days} day${days === 1 ? '' : 's'}` : `${Math.max(1, Math.round(hours))} hours`;
+};
+
+// Why the nightly backup is missing, from the job's own records, appended
+// to the stale / none verdicts. `cron` is backupCron/latest (the last time
+// the scheduled job started, written by api/daily-backup.js); `run` is this
+// user's backupRuns doc. Either may be null: the run log only exists once
+// the fan-out version of the job has run, and says nothing until then.
+export function nightlyCause({ cron = null, run = null, newest = null, now = Date.now() } = {}) {
+  const cronAt = Date.parse(cron?.startedAt || '');
+  if (Number.isFinite(cronAt) && (now - cronAt) / 3600000 > STALE_HOURS) {
+    return ` The scheduled job itself last started ${ageText(now - cronAt)} ago, so Vercel is not running the cron.`;
+  }
+  const mine = (cron?.results || []).find(r => r && r.uid === run?.uid);
+  if (mine?.status === 'error' && mine.error) return ` Last night's run failed for this account: ${String(mine.error).slice(0, 200)}`;
+  if (run?.lastStatus === 'error' && run.lastError) return ` The last attempt failed: ${String(run.lastError).slice(0, 200)}`;
+  const attemptAt = Date.parse(run?.lastAttemptAt || '');
+  if (Number.isFinite(attemptAt) && (newest == null || attemptAt > newest + 3600000)) {
+    return ` The last attempt started ${ageText(now - attemptAt)} ago and never finished, most likely cut off at the time limit.`;
+  }
+  return '';
+}
+
 /**
  * The verdict: { ok, problem, detail, newestAt }.
  *   problem: '' | 'not-configured' | 'billing' | 'storage' | 'stale' | 'none'
  * `files` is the user's backups ({ name, createdTime }), `probeError` the
  * probe's failure message ('' when it passed), `listError` the listing's.
  */
-export function assessBackupHealth({ configured = true, files = [], probeError = '', listError = '', now = Date.now() } = {}) {
+export function assessBackupHealth({ configured = true, files = [], probeError = '', listError = '', cron = null, run = null, now = Date.now() } = {}) {
   if (!configured) {
     return { ok: false, problem: 'not-configured', detail: 'Cloud backups are not set up (BACKUP_GCS_BUCKET is missing).', newestAt: null };
   }
@@ -75,7 +101,7 @@ export function assessBackupHealth({ configured = true, files = [], probeError =
   const nightly = (files || []).filter(f => f && !/-manual-/.test(String(f.name || '')));
   const times = nightly.map(f => Date.parse(f.createdTime)).filter(Number.isFinite);
   if (!times.length) {
-    return { ok: false, problem: 'none', detail: 'No nightly cloud backup has been saved yet.', newestAt: null };
+    return { ok: false, problem: 'none', detail: `No nightly cloud backup has been saved yet.${nightlyCause({ cron, run, now })}`, newestAt: null };
   }
   const newest = Math.max(...times);
   const hours = (now - newest) / 3600000;
@@ -84,7 +110,7 @@ export function assessBackupHealth({ configured = true, files = [], probeError =
     return {
       ok: false,
       problem: 'stale',
-      detail: `The last nightly cloud backup was ${days >= 1 ? `${days} day${days === 1 ? '' : 's'}` : `${Math.round(hours)} hours`} ago, so the nightly backup has stopped running.`,
+      detail: `The last nightly cloud backup was ${days >= 1 ? `${days} day${days === 1 ? '' : 's'}` : `${Math.round(hours)} hours`} ago, so the nightly backup has stopped running.${nightlyCause({ cron, run, newest, now })}`,
       newestAt: new Date(newest).toISOString(),
     };
   }

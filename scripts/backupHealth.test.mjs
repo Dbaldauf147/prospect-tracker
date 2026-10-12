@@ -8,7 +8,7 @@
 // sits outside the backup prefix the list and the prune read.
 //
 // Run: node scripts/backupHealth.test.mjs
-import { assessBackupHealth, fixLinks, probeObjectName, projectIdFromKey, STALE_HOURS } from '../api/_lib/backupHealth.js';
+import { assessBackupHealth, fixLinks, nightlyCause, probeObjectName, projectIdFromKey, STALE_HOURS } from '../api/_lib/backupHealth.js';
 
 let passed = 0, failed = 0;
 function check(name, actual, expected) {
@@ -58,6 +58,25 @@ check('links point at the project billing and bucket', fixLinks('tracker-3161a',
   billing: 'https://console.cloud.google.com/billing/linkedaccount?project=tracker-3161a',
   storage: 'https://console.cloud.google.com/storage/browser/my-bucket?project=tracker-3161a',
 });
+
+// Why the nightly is missing, from the job's own run records.
+{
+  const old = [nightly('2026-07-21T11:00:00Z')];
+  const plain = assessBackupHealth({ files: old, now });
+  check('no run records: the verdict is unchanged', /stopped running\.$/.test(plain.detail), true);
+  const cronDead = assessBackupHealth({ files: old, cron: { startedAt: '2026-10-01T11:00:00Z' }, now });
+  check('a cron that has not started in days is named', /scheduled job itself last started 11 days ago/.test(cronDead.detail), true);
+  const failedForMe = assessBackupHealth({
+    files: old, now,
+    cron: { startedAt: '2026-10-12T11:00:00Z', results: [{ uid: 'u1', status: 'error', error: 'GCS upload 403: nope' }] },
+    run: { uid: 'u1' },
+  });
+  check("last night's failure for this account is quoted", /failed for this account: GCS upload 403: nope/.test(failedForMe.detail), true);
+  check('a recorded error is quoted', nightlyCause({ run: { uid: 'u1', lastStatus: 'error', lastError: 'boom' }, now }), ' The last attempt failed: boom');
+  const cutOff = nightlyCause({ run: { uid: 'u1', lastAttemptAt: '2026-10-12T11:00:00Z', lastStatus: 'ok' }, newest: Date.parse('2026-07-21T11:00:00Z'), now });
+  check('an attempt with no file after it reads as cut off', /never finished/.test(cutOff), true);
+  check('none of it has an em dash', [cronDead.detail, failedForMe.detail, cutOff].some(t => t.includes('\u2014')), false);
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
