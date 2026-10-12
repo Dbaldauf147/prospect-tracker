@@ -51,7 +51,7 @@ import {
   emailsWeekBreakdown, newOppsWeekBreakdown, coverageRatioWeekBreakdown,
   accountCoverageBreakdown, kpiBreakdown, funnelStageBreakdown,
 } from '../../utils/weeklyReportBreakdowns';
-import { COVERAGE_T1, COVERAGE_T2 } from '../../utils/progressCoverage';
+import { COVERAGE_T1, COVERAGE_T2, COVERAGE_T3 } from '../../utils/progressCoverage';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
 import { excludeUntrackedFromWeeks } from '../../utils/progressUntracked';
 
@@ -982,9 +982,10 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
                     series={[
                       { key: 't1', name: 'Tier 1', color: COVERAGE_T1 },
                       { key: 't2', name: 'Tier 2', color: COVERAGE_T2 },
+                      { key: 't3', name: 'Tier 3', color: COVERAGE_T3 },
                     ]}
                     breakdownFor={(point, s) => accountCoverageBreakdown({
-                      chart, point, tier: s.key === 't2' ? 2 : 1, progressWeeks: trackedProgressWeeks,
+                      chart, point, tier: Number(s.key.slice(1)), progressWeeks: trackedProgressWeeks,
                     })}
                   />
                   {chart.note && <div className={styles.chartNote}>{chart.note}</div>}

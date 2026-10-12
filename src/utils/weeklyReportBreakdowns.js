@@ -161,7 +161,7 @@ export function accountCoverageBreakdown({ chart, point, tier, progressWeeks }) 
   const snap = (Array.isArray(progressWeeks) ? progressWeeks : []).find(w => w?.week === point?.key) || null;
   const d = COVERAGE_DETAIL[chart?.id];
   const details = snap?.details || {};
-  const t = tier === 2 ? 't2' : 't1';
+  const t = `t${[1, 2, 3].includes(tier) ? tier : 1}`;
   const company = (v) => (typeof v === 'string' ? v : str(v?.company));
   const rows = [];
   if (d) {
@@ -169,7 +169,7 @@ export function accountCoverageBreakdown({ chart, point, tier, progressWeeks }) 
     for (const v of details[`${t}${d.no}`] || []) rows.push([company(v), 'No']);
   }
   const yes = rows.filter(r => r[1] === 'Yes').length;
-  const pct = tier === 2 ? point?.t2 : point?.t1;
+  const pct = point?.[t];
   return {
     title: `${chart?.title || 'Account coverage'}, Tier ${tier}, week of ${weekOf(point?.key)}`,
     value: pct == null ? 'No reading' : `${pct}%`,

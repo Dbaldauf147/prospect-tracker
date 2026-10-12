@@ -15,7 +15,7 @@ export const COVERAGE_T1 = '#DC2626';
 export const COVERAGE_T2 = '#3B82F6';
 // Tier 3 amber, the colour the Tier 3 counts already use on the Progress
 // tab. The Progress charts carry it as an optional line (hidden until
-// asked for); the Weekly Report email does not.
+// asked for); the Weekly Report email always draws it.
 export const COVERAGE_T3 = '#F59E0B';
 
 // `t1Key` / `t2Key` / `t3Key` are the fields ProgressView writes into each weekly

@@ -369,6 +369,7 @@ export function coverageRatioHtml(cr, src = '') {
 // along IS three quarters of Tier 2.
 const COVERAGE_T1 = '#DC2626';   // the Progress chart's Tier 1 red
 const COVERAGE_T2 = '#3B82F6';   // and its Tier 2 blue
+const COVERAGE_T3 = '#F59E0B';   // and its Tier 3 amber
 const COVERAGE_TRACK_BG = '#EDF1F6';
 // Half the content column, less the card's border and padding, the week
 // label and the two percentage columns, split between the two tracks.
@@ -405,6 +406,7 @@ const coverageHeadRow = () => `<tr>
       <td width="${COVERAGE_LABEL}" style="width:${COVERAGE_LABEL}px"></td>
       ${coverageHeadCell(COVERAGE_T1, 'Tier 1')}
       ${coverageHeadCell(COVERAGE_T2, 'Tier 2')}
+      ${coverageHeadCell(COVERAGE_T3, 'Tier 3')}
       ${COVERAGE_SLACK}
     </tr>`;
 
@@ -438,6 +440,7 @@ function coverageRowHtml(point, isLast) {
       <td width="${COVERAGE_LABEL}" valign="middle" style="width:${COVERAGE_LABEL}px;padding:3px 0;font-family:${FONT};font-size:12px;font-weight:${isLast ? 700 : 600};color:${isLast ? INK : MUTED};white-space:nowrap">${esc(point.label)}</td>
       ${tier(point.t1, COVERAGE_T1)}
       ${tier(point.t2, COVERAGE_T2)}
+      ${tier(point.t3, COVERAGE_T3)}
       ${COVERAGE_SLACK}
     </tr>`;
 }
@@ -450,13 +453,17 @@ const COVERAGE_TABLE_ROWS = 5;
 // Where a tier stands now, under the picture: the swatch that keys the
 // line, the tier's name, and its latest figure. This is what the bars
 // would have said, for a reader who has the chart above it.
-function coverageStandingHtml(points, isT1) {
-  const key = isT1 ? 't1' : 't2';
+const COVERAGE_TIERS = [
+  { key: 't1', name: 'Tier 1', colour: COVERAGE_T1 },
+  { key: 't2', name: 'Tier 2', colour: COVERAGE_T2 },
+  { key: 't3', name: 'Tier 3', colour: COVERAGE_T3 },
+];
+
+function coverageStandingHtml(points, { key, name, colour }) {
   const last = [...points].reverse().find(p => p[key] != null);
-  const colour = isT1 ? COVERAGE_T1 : COVERAGE_T2;
   return `<td valign="middle" style="padding:0 14px 0 0">${table(`style="border-collapse:collapse"`, `<tr>
         <td width="8" height="8" bgcolor="${colour}" style="width:8px;height:8px;border-radius:2px;font-size:0;line-height:0;mso-line-height-rule:exactly">${FILL_CELL}</td>
-        <td style="padding-left:5px;font-family:${FONT};font-size:11px;color:${MUTED};white-space:nowrap">${isT1 ? 'Tier 1' : 'Tier 2'}</td>
+        <td style="padding-left:5px;font-family:${FONT};font-size:11px;color:${MUTED};white-space:nowrap">${esc(name)}</td>
         <td style="padding-left:5px;font-family:${FONT};font-size:13px;font-weight:700;color:${INK};white-space:nowrap">${last ? `${last[key]}%` : '-'}</td>
       </tr>`)}</td>`;
 }
@@ -474,8 +481,7 @@ function coverageCardHtml(chart, src) {
   const body = img
     ? `<div style="margin-top:8px">${img}</div>
       ${table(`style="border-collapse:collapse;margin-top:9px"`, `<tr>
-        ${coverageStandingHtml(points, true)}
-        ${coverageStandingHtml(points, false)}
+        ${COVERAGE_TIERS.map(t => coverageStandingHtml(points, t)).join('')}
       </tr>`)}`
     : table(
       `width="100%" style="border-collapse:collapse;margin-top:8px"`,
