@@ -116,6 +116,11 @@ export function useUserSettings(user) {
   // still {} then, so one contact's entry set on that would replace the
   // whole map with just that entry.
   const loadedRef = useRef(false);
+  const markLoaded = () => {
+    if (loadedRef.current) return;
+    loadedRef.current = true;
+    setLoaded(true);
+  };
   const userIdRef = useRef(null);
   // Count of in-flight saves (multiple updateSettings calls can overlap).
   const writingRef = useRef(0);
@@ -164,8 +169,7 @@ export function useUserSettings(user) {
       if (writingRef.current > 0) { pendingRemoteRef.current = data || {}; return; }
       settingsRef.current = data || {};
       setSettings(data || {});
-      loadedRef.current = true;
-      setLoaded(true);
+      markLoaded();
     });
 
     return () => {
@@ -184,16 +188,20 @@ export function useUserSettings(user) {
   // spreads its own render-time copy of the map writes that copy back, and
   // anything saved since it rendered (the same contact, from a save that
   // was mid-flight, or any other contact) is overwritten with what it held.
+  //
+  // Resolves true once the change is saved, false when nothing was (skipped,
+  // refused, or the write failed), so a caller that reports success can
+  // tell which.
   const updateSettings = useCallback(async (updatesOrFn, opts = {}) => {
-    if (!userIdRef.current) return;
+    if (!userIdRef.current) return false;
     if (typeof updatesOrFn === 'function' && !loadedRef.current) {
       console.warn('Settings not loaded yet: a save built on them was skipped');
-      return;
+      return false;
     }
     const rawUpdates = typeof updatesOrFn === 'function'
       ? updatesOrFn(settingsRef.current || {})
       : updatesOrFn;
-    if (!rawUpdates || typeof rawUpdates !== 'object') return;
+    if (!rawUpdates || typeof rawUpdates !== 'object') return false;
     const clears = opts?.clearLeadLinks || [];
 
     // Snapshot the pre-save state for recovery.
@@ -205,10 +213,11 @@ export function useUserSettings(user) {
     const optimistic = { ...prev, ...updates };
     // Refuse before touching local state, so a save that can't be stored
     // doesn't leave this device showing data the server never took.
-    if (refuseIfOverBudget(optimistic)) return;
+    if (refuseIfOverBudget(optimistic)) return false;
     settingsRef.current = optimistic;
     setSettings(optimistic);
     writingRef.current += 1;
+    let saved = false;
 
     const updateKeys = Object.keys(updates);
     // What we ended up writing (the stale path swaps in merged values)
@@ -252,6 +261,7 @@ export function useUserSettings(user) {
         merged._lastWriteAt = forced.writtenAt;
         settingsRef.current = merged;
         setSettings(merged);
+        saved = true;
       } else {
         writtenAt = result.writtenAt;
         viaRest = !!result.viaRest;
@@ -264,6 +274,7 @@ export function useUserSettings(user) {
         settingsRef.current = next;
         setSettings(next);
         console.log('Settings saved to Firestore:', Object.keys(updates));
+        saved = true;
       }
       if (viaRest) reportWedgedSave(true);
     } catch (err) {
@@ -288,8 +299,14 @@ export function useUserSettings(user) {
         if (at) next._lastWriteAt = at;
         settingsRef.current = next;
         setSettings(next);
+        // The snapshot that landed mid-write may have been the first one: it
+        // counts as loaded once folded in, or a session that saved anything
+        // before its settings arrived never got there, and every save built
+        // on them was skipped for the rest of it.
+        markLoaded();
       }
     }
+    return saved;
   }, []);
 
   // Path-based update. Writes only the specific dotted keys to Firestore,
@@ -399,6 +416,11 @@ export function useUserSettings(user) {
         if (at) next._lastWriteAt = at;
         settingsRef.current = next;
         setSettings(next);
+        // The snapshot that landed mid-write may have been the first one: it
+        // counts as loaded once folded in, or a session that saved anything
+        // before its settings arrived never got there, and every save built
+        // on them was skipped for the rest of it.
+        markLoaded();
       }
     }
   }, []);
