@@ -10,6 +10,7 @@ import { statusColor, formatAum } from '../../utils/formatters';
 import { reportingStatus, hasSubstatus, SUBSTATUS_HOLD_STATUS } from '../../utils/reportingStatus';
 import { STATUSES, TYPES, TIER_OPTIONS, NOT_ON_TIER_LIST, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
 import { buildTypeOptions } from '../../utils/prospectOptions';
+import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { buildCompanyIndex, findMatchesInIndex, findStrictMatchesInIndex, hasMatchInIndex, containsWholeWords } from '../../utils/companyIndex';
 import { getHubspotCache, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
@@ -229,6 +230,7 @@ const ACCOUNT_COLUMNS = [
     const s = TYPE2_COLORS[val] || TYPE2_COLORS['Other'];
     return val ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: s.bg, color: s.color }}>{val}</span> : <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
   }},
+  { key: 'vertical', label: 'Vertical', defaultWidth: 110 },
   { key: 'geography', label: 'Geography', defaultWidth: 100 },
   { key: 'publicPrivate', label: 'Pub/Priv', defaultWidth: 80 },
   { key: 'reAum', label: 'RE AUM', defaultWidth: 90, render: (row) => formatAum(row.reAum) },
@@ -3437,6 +3439,15 @@ Fix that now?
             {row.typeMismatch && <TypeMismatchWarning row={row} onUpdate={onUpdate} />}
           </span>
         )};
+      }
+      if (col.key === 'vertical') {
+        // The Dropdowns › Vertical list, the same choices the company card's
+        // Classification offers, plus any vertical a company already
+        // carries that has since left the list, so picking doesn't hide it.
+        const listed = getEffectiveDropdownLists(settings).find(l => l.key === 'vertical')?.options || [];
+        const inUse = [...new Set((prospects || []).map(p => String(p?.vertical || '').trim()).filter(v => v && !listed.includes(v)))].sort();
+        const verticalOptions = [...listed, ...inUse];
+        return { ...col, render: (row) => <InlineCell row={row} field="vertical" value={row.vertical} onUpdate={onUpdate} options={verticalOptions} /> };
       }
       if (col.key === 'geography') {
         return { ...col, render: (row) => <InlineCell row={row} field="geography" value={row.geography} onUpdate={onUpdate} options={GEOGRAPHIES} /> };
