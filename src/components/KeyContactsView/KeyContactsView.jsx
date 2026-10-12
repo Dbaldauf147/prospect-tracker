@@ -31,7 +31,7 @@ import { latestCampaignReplies, campaignReplyForContact } from '../../utils/camp
 import { campaignSendDetailWithin } from '../../utils/campaignFollowUp';
 import { buildUnansweredIndex, unansweredFor, campaignSendsByAddress, UNANSWERED_VERSION } from '../../utils/unansweredOutreach';
 import { fetchAllActivityPages } from '../../utils/hubspotActivityPages';
-import { recipientMapSaver, recoverRecipientMaps } from '../../utils/recipientMaps';
+import { recipientMapSaver, recoverRecipientMaps, rekeyOrphanRecipients, describeRecipientSearch } from '../../utils/recipientMaps';
 import { findLostRecipients } from '../../utils/recipientRecovery';
 
 // Curated city names for the inline City autocomplete. Matches the
@@ -1386,32 +1386,56 @@ function KeyContactsViewInner({
 
   // "Recover To / CC": put back To Also / CC lists the backups hold for
   // contacts that have none now (see utils/recipientMaps for how they were
-  // lost). Contacts with recipients now are left as they are.
+  // lost), and move lists left under a contact's old email onto its current
+  // one. Contacts with recipients now are left as they are. When there is
+  // nothing to do it says what it saw, so "nothing found" can be told apart
+  // from "nothing was lost".
   const [recipientRecovery, setRecipientRecovery] = useState({ busy: false, note: '' });
   async function recoverRecipients() {
     if (recipientRecovery.busy) return;
     setRecipientRecovery({ busy: true, note: 'Searching backups...' });
     try {
-      const { found, sources } = await findLostRecipients(settings, {
+      const oldEmails = settings?.contactOldEmails || {};
+      const { moved } = rekeyOrphanRecipients(settings, flatContacts, oldEmails);
+      const { found, sources, read } = await findLostRecipients(settings, {
         onProgress: (note) => setRecipientRecovery({ busy: true, note }),
       });
-      if (!found.length) {
-        setRecipientRecovery({ busy: false, note: 'No backup holds To / CC for contacts missing it.' });
+      if (!found.length && !moved.length) {
+        const d = describeRecipientSearch(settings, sources, flatContacts);
+        const lines = [
+          `To Also: ${d.now.toAlsoMap.total} contact${d.now.toAlsoMap.total === 1 ? '' : 's'} have one now${d.now.toAlsoMap.unmatched ? `, ${d.now.toAlsoMap.unmatched} of them under an email no contact here has` : ''}.`,
+          `CC: ${d.now.ccMap.total} contact${d.now.ccMap.total === 1 ? '' : 's'} have one now${d.now.ccMap.unmatched ? `, ${d.now.ccMap.unmatched} of them under an email no contact here has` : ''}.`,
+          '',
+          `Searched ${read.browser} browser backup${read.browser === 1 ? '' : 's'} and ${read.cloud} cloud backup${read.cloud === 1 ? '' : 's'}${read.oldest ? `, back to ${read.oldest}` : ''}.`,
+          read.cloudFailed || read.cloudError ? `Cloud backups that could not be read: ${read.cloudFailed}${read.cloudError ? ` (${read.cloudError})` : ''}.` : '',
+          `Most any backup held: To Also for ${d.most.toAlsoMap.count}${d.most.toAlsoMap.label ? ` (${d.most.toAlsoMap.label})` : ''}, CC for ${d.most.ccMap.count}${d.most.ccMap.label ? ` (${d.most.ccMap.label})` : ''}.`,
+        ].filter((l, i, a) => l || (i > 0 && a[i - 1]));
+        window.alert(`Nothing to recover.\n\n${lines.join('\n')}`);
+        setRecipientRecovery({ busy: false, note: 'Nothing to recover. Click again to see what was searched.' });
         return;
       }
       const contacts = new Set(found.map(x => x.email.toLowerCase())).size;
-      const lines = found.slice(0, 15).map(x => `${x.key === 'ccMap' ? 'CC' : 'To'} for ${x.email}: ${x.list.join(', ')}`);
-      if (found.length > 15) lines.push(`and ${found.length - 15} more`);
+      const lines = [
+        ...moved.slice(0, 10).map(x => `${x.key === 'ccMap' ? 'CC' : 'To'}: move from old email ${x.from} to ${x.to}`),
+        ...found.slice(0, 15).map(x => `${x.key === 'ccMap' ? 'CC' : 'To'} for ${x.email}: ${x.list.join(', ')}`),
+      ];
+      const more = Math.max(0, moved.length - 10) + Math.max(0, found.length - 15);
+      if (more) lines.push(`and ${more} more`);
       const ok = window.confirm(
-        `Found To / CC for ${contacts} contact${contacts === 1 ? '' : 's'} in your backups:\n\n${lines.join('\n')}\n\nPut them back? Contacts that have To / CC now are not changed.`,
+        `${moved.length ? `${moved.length} To / CC list${moved.length === 1 ? ' is' : 's are'} saved under a contact's old email. ` : ''}${found.length ? `Found To / CC for ${contacts} contact${contacts === 1 ? '' : 's'} in your backups.` : ''}\n\n${lines.join('\n')}\n\nPut them back? Contacts that have To / CC now are not changed.`,
       );
       if (!ok) { setRecipientRecovery({ busy: false, note: '' }); return; }
-      // Applied to the settings as they are when it lands, not this render's.
+      // Applied to the settings as they are when it lands, not this render's:
+      // first the old-email lists onto current emails, then the backups.
       updateSettings((s) => {
-        const { patch } = recoverRecipientMaps(s, sources);
-        return Object.keys(patch).length ? patch : null;
+        const rekeyed = rekeyOrphanRecipients(s, flatContacts, s?.contactOldEmails || {}).patch;
+        const base = { ...s, ...rekeyed };
+        const { patch } = recoverRecipientMaps(base, sources);
+        const out = { ...rekeyed, ...patch };
+        return Object.keys(out).length ? out : null;
       });
-      setRecipientRecovery({ busy: false, note: `Recovered To / CC for ${contacts} contact${contacts === 1 ? '' : 's'}.` });
+      const total = moved.length + contacts;
+      setRecipientRecovery({ busy: false, note: `Recovered To / CC for ${total} contact${total === 1 ? '' : 's'}.` });
     } catch (err) {
       setRecipientRecovery({ busy: false, note: `Recovery failed: ${err?.message || err}` });
     }
