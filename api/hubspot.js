@@ -1220,6 +1220,15 @@ async function handler(req, res) {
                 + `${stillRejected.length ? stillRejected.map(t => `“${t}”`).join(', ') : 'the write'}. ${detail}`
               : `Update failed ${updateRes.status}: ${detail}`);
           }
+        } else if (updateRes.status === 404) {
+          // The id is not a contact in HubSpot any more: deleted there, or
+          // merged into another record. Said as its own code so the popup
+          // can re-create it (or attach to the record now holding its
+          // email) instead of failing every autosave.
+          return res.status(404).json({
+            error: `Update failed 404: ${describeHubSpotError(updateRes.status, text)}`,
+            code: 'contact_not_found',
+          });
         } else {
           throw new Error(`Update failed ${updateRes.status}: ${describeHubSpotError(updateRes.status, text)}`);
         }

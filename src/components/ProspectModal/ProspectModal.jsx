@@ -1699,6 +1699,24 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         body: JSON.stringify(body),
       });
       let json = await res.json();
+      // The id this contact carries is gone from HubSpot (deleted there, or
+      // merged into another record), so every update 404s. Save it the way a
+      // local-only contact is first pushed: create-contact either makes it
+      // again or, when a contact already has this email, hands back that
+      // one. Either way the contact moves to the id HubSpot gave back.
+      let replacedId = isLocalOnly ? existingId : null;
+      if (!isNew && res.status === 404 && json?.code === 'contact_not_found' && String(hsProps.email || snap.f.email || '').trim()) {
+        replacedId = existingId;
+        isNew = true;
+        action = 'create-contact';
+        body = { properties: { ...hsProps, email: String(hsProps.email || snap.f.email).trim() } };
+        res = await apiFetch(`/api/hubspot?action=${action}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        json = await res.json();
+      }
       // If create failed because the contact already exists, retry as an update using the existing HubSpot id
       if (isNew && !res.ok) {
         const msg = json?.message || json?.error || '';
@@ -1746,6 +1764,10 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       try {
         await updateHubspotCache(draft => {
           const cacheProps = { ...hsProps };
+          // The old id (local-only, or gone from HubSpot) never comes back.
+          if (replacedId) {
+            draft.contacts = draft.contacts.filter(c => String(c.id || c.vid) !== String(replacedId));
+          }
           if (isNew && alreadyExisted) {
             // The contact already lived in HubSpot — the server handed back the
             // existing record. Don't stamp a phantom _source:'manual' duplicate
@@ -1757,10 +1779,6 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
             const exists = draft.contacts.some(c => String(c.id || c.vid) === String(savedContact.id));
             if (!exists) draft.contacts.push({ id: savedContact.id, ...cacheProps });
           } else if (isNew) {
-            // If this was promoted from a local-only contact, remove the old local entry so we don't duplicate
-            if (isLocalOnly && existingId) {
-              draft.contacts = draft.contacts.filter(c => String(c.id || c.vid) !== String(existingId));
-            }
             draft.contacts.push({ id: savedContact.id, ...cacheProps, _source: 'manual' });
           } else {
             const idx = draft.contacts.findIndex(c => String(c.id || c.vid) === String(contact.id || contact.vid));
@@ -1852,7 +1870,13 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       setSavedSig(savedSigRef.current);
       // A non-silent onSave hands control back to the caller, which closes the
       // popup — right for an explicit "Save now", wrong for a background save.
-      onSave(savedContact, auto ? { silent: true } : undefined);
+      // `replacedId` lets the company roster drop the row under the old id
+      // rather than show the contact twice.
+      const saveOpts = {
+        ...(auto ? { silent: true } : {}),
+        ...(replacedId && String(replacedId) !== String(savedCid) ? { replacedId: String(replacedId) } : {}),
+      };
+      onSave(savedContact, Object.keys(saveOpts).length ? saveOpts : undefined);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -6771,10 +6795,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
   const handleContactSaved = useCallback((updated, options = {}) => {
     const updatedId = String(updated.id || updated.vid || '');
+    // A contact that moved to a new HubSpot id (re-created, or attached to
+    // the record holding its email) leaves its old row behind otherwise.
+    const replacedId = options.replacedId ? String(options.replacedId) : '';
     // A contact not already on this company's roster is a fresh
     // association - remember it so it sticks without a HubSpot refresh.
     const wasPresent = localContactsRef.current.some(c => String(c.id || c.vid) === updatedId);
-    setLocalContacts(prev => {
+    setLocalContacts(prev0 => {
+      const prev = replacedId ? prev0.filter(c => String(c.id || c.vid) !== replacedId) : prev0;
       const existing = prev.find(c => String(c.id || c.vid) === updatedId);
       if (existing) {
         return prev.map(c => (String(c.id || c.vid) === updatedId ? { ...c, ...updated } : c));

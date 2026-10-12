@@ -18,9 +18,14 @@
 // `lastRunAt`) already resolve ours-wins by falling through to the
 // bottom of autoMergeValue — `days` was the odd one out.
 //
+// `prospectingTieredHiddenStatuses` is the Hide statuses menu on
+// Prospecting > Tiered Activity. Unioning it brought back every status the
+// user had just un-ticked whenever the save raced another one, so the
+// selection didn't hold across a refresh.
+//
 // `tablePrefs.visible` is the same class of bug; it predates this and has
 // its own carve-out in mergeTablePrefs, which never reaches this path.
-const SNAPSHOT_ARRAY_KEYS = new Set(['days']);
+const SNAPSHOT_ARRAY_KEYS = new Set(['days', 'prospectingTieredHiddenStatuses']);
 
 // Best-effort merge for a single setting key when two devices both
 // touched it. The goal is to never lose data without being asked, so
