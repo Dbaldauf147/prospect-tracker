@@ -58,6 +58,14 @@ function eq(actual, expected, name) {
   eq(autoMergeValue([1, 3], [1, 2, 3], 'hiddenServices'), [1, 3, 2], 'other primitive arrays still union');
   eq(autoMergeValue([1, 3], [1, 2, 3]), [1, 3, 2], 'no key given falls back to union');
 }
+{
+  // Tiered Activity's Hide statuses menu: an un-ticked status stays
+  // un-ticked when the save races another device's.
+  eq(mergeSettingsKey('prospectingTieredHiddenStatuses', ['Hold Off'], ['Hold Off', 'Client']),
+    ['Hold Off'], 'un-ticked hidden status is not resurrected');
+  eq(mergeSettingsKey('prospectingTieredHiddenStatuses', [], ['Client']),
+    [], 'clearing every hidden status sticks');
+}
 
 // --- Existing behaviour that must not regress -------------------------
 eq(autoMergeValue(undefined, ['a'], 'k'), ['a'], 'undefined ours takes remote');
