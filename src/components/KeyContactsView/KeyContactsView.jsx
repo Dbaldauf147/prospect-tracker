@@ -34,6 +34,36 @@ import { fetchAllActivityPages } from '../../utils/hubspotActivityPages';
 import { recipientMapSaver, recoverRecipientMaps, rekeyOrphanRecipients, describeRecipientSearch } from '../../utils/recipientMaps';
 import { findLostRecipients } from '../../utils/recipientRecovery';
 
+// The By Company rollup's columns, in order. Company is always shown; the
+// rest are the user's to hide, star as their standard view, and resize.
+const COMPANY_COLUMNS = [
+  { key: 'company',     label: 'Company',         align: 'left',   tip: 'Sort by company name' },
+  { key: 'tier',        label: 'Tier',            align: 'left',   tip: 'The account Tier from its company card' },
+  { key: 'aum',         label: 'AUM',             align: 'right',  tip: 'PE AUM, falling back to RE AUM, from the prospect\'s Table View record' },
+  { key: 'type',        label: 'Type',            align: 'left',   tip: 'Prospect type: Private Equity, Real Estate, etc.' },
+  { key: 'status',      label: 'Status',          align: 'left',   tip: 'Prospect status: Client, Inside Sales, Qualifying, etc.' },
+  { key: 'keyContacts', label: 'Key Contacts',    align: 'center', tip: 'Number of HubSpot contacts at this company tagged "Dan Key Target"' },
+  { key: 'dm',          label: 'Decision Makers', align: 'center', tip: 'Number of HubSpot contacts at this company tagged "decision maker"' },
+  { key: 'met',         label: 'Met in Person',   align: 'left',   tip: 'Met-in-person count / total decision makers, plus how many of them list New York / NYC' },
+  { key: 'ratio',       label: 'Opps 2/4',        align: 'center', tip: 'Active / total opportunities for this company in the Opps tab' },
+];
+const COMPANY_ALWAYS_VISIBLE = ['company'];
+
+// "Tier 1" -> 99, "Tier 2" -> 98 ...; untiered (blank, "-", "Not on tier
+// list") -> 0, so a sort can put it last.
+function tierSortRank(tier) {
+  const m = String(tier || '').match(/^tier\s*(\d+)$/i);
+  return m ? 100 - Number(m[1]) : 0;
+}
+const TIER_CHIPS = {
+  'Tier 1': { background: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE' },
+  'Tier 2': { background: '#F5F3FF', color: '#6D28D9', border: '1px solid #DDD6FE' },
+  'Tier 3': { background: '#F8FAFC', color: '#475569', border: '1px solid #E2E8F0' },
+};
+function tierChipStyle(tier) {
+  return TIER_CHIPS[tier] || { background: '#F8FAFC', color: '#64748B', border: '1px solid #E2E8F0' };
+}
+
 // Curated city names for the inline City autocomplete. Matches the
 // predictive-text dropdown the Edit HubSpot Contact popup uses, so the
 // flat All Contacts table offers the same suggestions (alias-aware via
@@ -2523,7 +2553,7 @@ function KeyContactsViewInner({
     }
   }, [campaignRecipientOptions, campaignFilterId]);
 
-  const DEFAULT_COL_WIDTHS = { company: 260, aum: 100, type: 120, status: 130, keyContacts: 130, dm: 150, met: 130, ratio: 110 };
+  const DEFAULT_COL_WIDTHS = { company: 260, tier: 80, aum: 100, type: 120, status: 130, keyContacts: 130, dm: 150, met: 130, ratio: 110 };
   const [colWidths, setColWidths] = useSyncedTablePref({
     tableId: `${storagePrefix}:companies`, field: 'widths', settings, updateSettings,
     readLocal: () => {
@@ -2534,6 +2564,73 @@ function KeyContactsViewInner({
     writeLocal: (w) => { try { localStorage.setItem(lsKey('col-widths'), JSON.stringify(w)); } catch { /* storage blocked */ } },
     fromRemote: (w) => ({ ...DEFAULT_COL_WIDTHS, ...(w || {}) }),
   });
+  // Which By Company columns show, and which are starred as the user's own
+  // standard view, on the model the shared Columns picker uses everywhere
+  // (utils/tableColumnPrefs): the hidden keys are stored, so a column added
+  // later shows until hidden. Saved with the widths in settings.tablePrefs,
+  // per table, so the layout follows the user to another machine.
+  const [companyHidden, setCompanyHidden] = useSyncedTablePref({
+    tableId: `${storagePrefix}:companies`, field: 'hidden', settings, updateSettings,
+    readLocal: () => readStoredList('company-hidden-cols') || [],
+    writeLocal: (v) => writeStoredList('company-hidden-cols', v || []),
+    fromRemote: (v) => (Array.isArray(v) ? v : []),
+  });
+  const [companyStarred, setCompanyStarred] = useSyncedTablePref({
+    tableId: `${storagePrefix}:companies`, field: 'starred', settings, updateSettings,
+    readLocal: () => readStoredList('company-starred-cols') || [],
+    writeLocal: (v) => writeStoredList('company-starred-cols', v || []),
+    fromRemote: (v) => (Array.isArray(v) ? v : []),
+  });
+  // Columns deleted out of the table (the picker's ×), back through its
+  // Deleted list or Reset.
+  const [companyRemoved, setCompanyRemoved] = useSyncedTablePref({
+    tableId: `${storagePrefix}:companies`, field: 'removed', settings, updateSettings,
+    readLocal: () => readStoredList('company-removed-cols') || [],
+    writeLocal: (v) => writeStoredList('company-removed-cols', v || []),
+    fromRemote: (v) => (Array.isArray(v) ? v : []),
+  });
+  const companyHiddenSet = useMemo(() => new Set(companyHidden || []), [companyHidden]);
+  const companyStarredSet = useMemo(() => new Set(companyStarred || []), [companyStarred]);
+  const companyRemovedSet = useMemo(() => new Set(companyRemoved || []), [companyRemoved]);
+  const companyColumnsInPlay = useMemo(() => COMPANY_COLUMNS.filter(c => !companyRemovedSet.has(c.key)), [companyRemovedSet]);
+  const companyRemovedColumns = useMemo(() => COMPANY_COLUMNS.filter(c => companyRemovedSet.has(c.key)), [companyRemovedSet]);
+  const companyVisibleSet = useMemo(
+    () => new Set(COMPANY_COLUMNS
+      .filter(c => isColumnVisible(c.key, { hidden: companyHiddenSet, removed: companyRemovedSet, alwaysVisible: COMPANY_ALWAYS_VISIBLE }))
+      .map(c => c.key)),
+    [companyHiddenSet, companyRemovedSet],
+  );
+  function removeCompanyCol(key) {
+    if (COMPANY_ALWAYS_VISIBLE.includes(key)) return;
+    setCompanyRemoved([...new Set([...companyRemovedSet, key])]);
+  }
+  function restoreCompanyCol(key) {
+    setCompanyRemoved([...companyRemovedSet].filter(k => k !== key));
+  }
+  function toggleCompanyCol(key) {
+    if (COMPANY_ALWAYS_VISIBLE.includes(key)) return;
+    const next = new Set(companyHiddenSet);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    setCompanyHidden([...next]);
+  }
+  function starCompanyCol(key) {
+    const next = applyStar({ key, starred: companyStarredSet, hidden: companyHiddenSet, removed: companyRemovedSet, star: !companyStarredSet.has(key) });
+    setCompanyStarred([...next.starred]);
+    setCompanyHidden([...next.hidden]);
+    setCompanyRemoved([...next.removed]);
+  }
+  // Reset: deleted columns back, and the starred view, or every column
+  // when nothing is starred.
+  function resetCompanyCols() {
+    const { hidden, removed } = resetToStarred({
+      columnKeys: COMPANY_COLUMNS.map(c => c.key),
+      starred: companyStarredSet,
+      alwaysVisible: COMPANY_ALWAYS_VISIBLE,
+    });
+    setCompanyHidden([...hidden]);
+    setCompanyRemoved([...removed]);
+  }
+
   const [sortKey, setSortKey] = useState(() => localStorage.getItem(lsKey('sort-key')) || 'keyContacts');
   const [sortDir, setSortDir] = useState(() => localStorage.getItem(lsKey('sort-dir')) || 'desc');
   useEffect(() => { try { localStorage.setItem(lsKey('sort-key'), sortKey); } catch {} }, [sortKey]);
@@ -2938,6 +3035,7 @@ function KeyContactsViewInner({
         aum,
         type: p?.type || '',
         status: p?.status || '',
+        tier: String(p?.tier || '').trim(),
         decisionMakerEntries: dmEntries,
         metInPersonCount: dmEntries.filter(e => e.metInPerson).length,
         nycCount: dmEntries.filter(e => /(new york|nyc)/i.test(e.city || '')).length,
@@ -2963,6 +3061,15 @@ function KeyContactsViewInner({
         case 'type':
           cmp = (a.type || '').localeCompare(b.type || '');
           break;
+        case 'tier': {
+          // The first click (descending) puts Tier 1 on top, then Tier 2,
+          // then Tier 3; untiered last whichever way it is sorted.
+          const ra = tierSortRank(a.tier);
+          const rb = tierSortRank(b.tier);
+          if (!ra !== !rb) return ra ? -1 : 1;
+          cmp = ra - rb;
+          break;
+        }
         case 'status':
           cmp = (a.status || '').localeCompare(b.status || '');
           break;
@@ -3391,6 +3498,21 @@ function KeyContactsViewInner({
               <input type="checkbox" checked={showClosed} onChange={e => setShowClosed(e.target.checked)} />
               <span>Include closed (Sold / Not Sold / Lost)</span>
             </label>
+          )}
+          {viewMode === 'companies' && (
+            <ColumnToggle
+              columns={companyColumnsInPlay}
+              visibleCols={companyVisibleSet}
+              starredCols={companyStarredSet}
+              removedColumns={companyRemovedColumns}
+              alwaysVisible={COMPANY_ALWAYS_VISIBLE}
+              colNames={{}}
+              onToggle={toggleCompanyCol}
+              onStar={starCompanyCol}
+              onRemove={removeCompanyCol}
+              onRestore={restoreCompanyCol}
+              onResetColumns={resetCompanyCols}
+            />
           )}
           <button
             type="button"
@@ -4855,17 +4977,9 @@ function KeyContactsViewInner({
             <div style={{ fontSize: '0.78rem' }}>{emptyDetail}</div>
           </div>
         ) : (() => {
-          const GRID = `${colWidths.company}px ${colWidths.aum}px ${colWidths.type}px ${colWidths.status}px ${colWidths.keyContacts}px ${colWidths.dm}px ${colWidths.met}px ${colWidths.ratio}px 28px`;
-          const HEADER_COLUMNS = [
-            { key: 'company',     label: 'Company',         align: 'left',   tip: 'Sort by company name' },
-            { key: 'aum',         label: 'AUM',             align: 'right',  tip: 'PE AUM, falling back to RE AUM, from the prospect\'s Table View record' },
-            { key: 'type',        label: 'Type',            align: 'left',   tip: 'Prospect type: Private Equity, Real Estate, etc.' },
-            { key: 'status',      label: 'Status',          align: 'left',   tip: 'Prospect status: Client, Inside Sales, Qualifying, etc.' },
-            { key: 'keyContacts', label: 'Key Contacts',    align: 'center', tip: 'Number of HubSpot contacts at this company tagged "Dan Key Target"' },
-            { key: 'dm',          label: 'Decision Makers', align: 'center', tip: 'Number of HubSpot contacts at this company tagged "decision maker"' },
-            { key: 'met',         label: 'Met in Person',   align: 'left',   tip: 'Met-in-person count / total decision makers, plus how many of them list New York / NYC' },
-            { key: 'ratio',       label: 'Opps 2/4',        align: 'center', tip: 'Active / total opportunities for this company in the Opps tab' },
-          ];
+          const HEADER_COLUMNS = COMPANY_COLUMNS.filter(c => companyVisibleSet.has(c.key));
+          const show = (key) => companyVisibleSet.has(key);
+          const GRID = `${HEADER_COLUMNS.map(c => `${colWidths[c.key] || DEFAULT_COL_WIDTHS[c.key] || 100}px`).join(' ')} 28px`;
           const SORT_GLYPH = (key) => sortKey === key ? (sortDir === 'desc' ? ' ▼' : ' ▲') : '';
           const RESIZE_HANDLE = { position: 'absolute', top: 0, right: 0, bottom: 0, width: 6, cursor: 'col-resize', userSelect: 'none' };
           return (
@@ -4953,21 +5067,36 @@ function KeyContactsViewInner({
                         )}
                       </div>
 
+                      {show('tier') && (
+                        <div style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem' }}>
+                          {row.tier ? (
+                            <span style={{ padding: '1px 7px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap', ...tierChipStyle(row.tier) }}>{row.tier}</span>
+                          ) : <span style={{ color: '#CBD5E1' }}>-</span>}
+                        </div>
+                      )}
+
+                      {show('aum') && (
                       <div
                         style={{ padding: '0.55rem 0.6rem', textAlign: 'right', fontSize: '0.78rem', fontWeight: 600, color: row.aum ? '#1E293B' : '#CBD5E1' }}
                         title={row.aum ? `AUM: $${row.aum}B` : 'No AUM set on this prospect record'}
                       >
                         {formatAum(row.aum)}
                       </div>
+                      )}
 
+                      {show('type') && (
                       <div style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', color: row.type ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {row.type || '-'}
                       </div>
+                      )}
 
+                      {show('status') && (
                       <div style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', color: row.status ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {row.status || '-'}
                       </div>
+                      )}
 
+                      {show('keyContacts') && (
                       <div
                         style={{ padding: '0.55rem 0.6rem', textAlign: 'center' }}
                         title={row.contacts.map(c => c.name + (c.jobtitle ? ` (${c.jobtitle})` : '')).join('\n')}
@@ -4977,7 +5106,9 @@ function KeyContactsViewInner({
                           background: '#CFFAFE', color: '#0E7490', border: '1px solid #67E8F9',
                         }}>{row.contacts.length}</span>
                       </div>
+                      )}
 
+                      {show('dm') && (
                       <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center' }}>
                         {dmTotal > 0 ? (
                           <span
@@ -4988,8 +5119,9 @@ function KeyContactsViewInner({
                           <span style={{ padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}>✗ 0</span>
                         )}
                       </div>
+                      )}
 
-                      {(() => {
+                      {show('met') && ((() => {
                         if (dmTotal === 0) return <div style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', color: '#CBD5E1' }}>-</div>;
                         const nycList = row.decisionMakerEntries
                           .filter(e => /(new york|nyc)/i.test(e.city || ''))
@@ -5013,14 +5145,17 @@ function KeyContactsViewInner({
                             )}
                           </div>
                         );
-                      })()}
+                      })()
+                      )}
 
+                      {show('ratio') && (
                       <div
                         style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (row.activeOpps || 0) > 0 ? '#7C3AED' : (row.totalOpps || 0) > 0 ? '#64748B' : '#CBD5E1' }}
                         title="active / total opportunities for this company"
                       >
                         {(row.activeOpps || 0)}/{(row.totalOpps || 0)}
                       </div>
+                      )}
 
                       <div style={{ padding: '0.55rem 0.2rem', textAlign: 'center', color: '#94A3B8', fontSize: '0.8rem' }}>
                         {isExpanded ? '▾' : '▸'}
