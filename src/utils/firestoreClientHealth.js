@@ -70,6 +70,7 @@ export function noteClientWedged(err) {
   if (wedged) return false;
   wedged = true;
   firstError = err || null;
+  recordClientCrash(err);
   for (const fn of [...listeners]) {
     try { fn(firstError); } catch { /* a listener must not stop the others */ }
   }
@@ -148,13 +149,19 @@ export function subscribeToClientWedged(fn) {
 // Not for a read-modify-write that has no honest single-request form (a
 // transaction): there the right answer is to skip the fallback, not fake it.
 export async function viaSdkOrRest(sdk, rest) {
-  if (wedged) return rest();
+  // Counted, so the auto-reload below never lands mid-save.
+  markSaveStart();
   try {
-    return await sdk();
-  } catch (err) {
-    if (!isClientWedgedError(err)) throw err;
-    noteClientWedged(err);
-    return rest();
+    if (wedged) return await rest();
+    try {
+      return await sdk();
+    } catch (err) {
+      if (!isClientWedgedError(err)) throw err;
+      noteClientWedged(err);
+      return await rest();
+    }
+  } finally {
+    markSaveEnd();
   }
 }
 
@@ -237,6 +244,136 @@ export function claimWedgedReload(now = Date.now()) {
   }
 }
 
+// ---- Which assertion it was -------------------------------------------
+//
+// ca9 and b7de both have a fix in place (see the top of this file and
+// src/firebase.js), and the crash still turns up, so the next one has to
+// say what it was. The ids are the useful part: `(ID: b815)` is only ever
+// the aftermath, and whatever is quoted inside it is the cause.
+
+/** The assertion ids in an error, outermost first: ['b815', 'ca9']. */
+export function assertionIds(err) {
+  const msg = String(err?.message || err || '');
+  return [...msg.matchAll(/\(ID:\s*([0-9a-f]+)\)/gi)].map(m => m[1].toLowerCase());
+}
+
+/** The id that actually tripped: the first that isn't the b815 aftermath. */
+export function crashCauseId(err) {
+  const ids = assertionIds(err);
+  return ids.find(id => id !== 'b815') || ids[0] || '';
+}
+
+// The last few crashes, kept on this device so a cause survives the
+// reload that clears it. Plain localStorage, not the per-user wrapper: the
+// crash can land before sign-in has scoped storage, and nothing in it is
+// the user's data.
+const CRASH_LOG_KEY = 'firestore-crash-log';
+const CRASH_LOG_MAX = 10;
+
+function recordClientCrash(err) {
+  try {
+    const entry = {
+      at: new Date().toISOString(),
+      cause: crashCauseId(err),
+      ids: assertionIds(err),
+      message: String(err?.message || err || '').slice(0, 800),
+      page: typeof location !== 'undefined' ? `${location.pathname}${location.hash}` : '',
+      hidden: typeof document !== 'undefined' ? document.visibilityState === 'hidden' : null,
+      sdk: (String(err?.message || err || '').match(/FIRESTORE \(([\d.]+)\)/) || [])[1] || '',
+    };
+    const log = recentClientCrashes();
+    log.unshift(entry);
+    localStorage.setItem(CRASH_LOG_KEY, JSON.stringify(log.slice(0, CRASH_LOG_MAX)));
+  } catch { /* no storage: the console line above still has it */ }
+}
+
+/** The recorded crashes on this device, newest first. */
+export function recentClientCrashes() {
+  try {
+    const log = JSON.parse(localStorage.getItem(CRASH_LOG_KEY) || '[]');
+    return Array.isArray(log) ? log : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Plain text for the banner's Copy details button. */
+export function clientCrashReport() {
+  const log = recentClientCrashes();
+  const lines = log.map(e => `${e.at}  cause ${e.cause || '?'}  ids ${(e.ids || []).join(',')}  sdk ${e.sdk || '?'}  page ${e.page || '?'}${e.hidden ? '  (tab hidden)' : ''}\n  ${e.message}`);
+  return [`Firestore crashes on this device (${log.length}):`, ...lines].join('\n');
+}
+
+// ---- Reloading by itself, when nobody would lose anything ---------------
+//
+// A crashed client is cured by a reload and nothing else, and the banner
+// asking for one is easy to miss on a tab left open all day. So the tab
+// reloads itself, but only while it is out of sight and only once it is
+// plainly idle:
+//
+//   - hidden for RELOAD_HIDDEN_MS, so a quick glance at another tab
+//     doesn't pull the page out from under the user;
+//   - no typing anywhere in the page for RELOAD_IDLE_MS, and no text
+//     field holding the focus, so a half-typed cell or note survives;
+//   - no save running through viaSdkOrRest, and none in the last
+//     RELOAD_SAVE_QUIET_MS, so a debounced write has gone out first.
+//
+// claimWedgedReload's five-minute cooldown still applies, so a page that
+// crashes again straight after loading can't loop.
+const RELOAD_HIDDEN_MS = 30000;
+const RELOAD_IDLE_MS = 60000;
+const RELOAD_SAVE_QUIET_MS = 10000;
+const RELOAD_CHECK_MS = 5000;
+
+let savesInFlight = 0;
+let lastSaveAt = 0;
+const markSaveStart = () => { savesInFlight += 1; lastSaveAt = Date.now(); };
+const markSaveEnd = () => { savesInFlight = Math.max(0, savesInFlight - 1); lastSaveAt = Date.now(); };
+
+function isEditable(el) {
+  if (!el || el === document.body) return false;
+  if (el.isContentEditable) return true;
+  const tag = String(el.tagName || '').toLowerCase();
+  if (tag === 'textarea' || tag === 'select') return true;
+  if (tag !== 'input') return false;
+  const type = String(el.type || 'text').toLowerCase();
+  return !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color'].includes(type);
+}
+
+/** Whether a reload now would cost the user nothing. Pure, for the tests. */
+export function safeToAutoReload({ now, hiddenSince, lastInputAt, saving, lastSave, editableFocused }) {
+  if (hiddenSince == null || now - hiddenSince < RELOAD_HIDDEN_MS) return false;
+  if (now - (lastInputAt || 0) < RELOAD_IDLE_MS) return false;
+  if (saving > 0 || now - (lastSave || 0) < RELOAD_SAVE_QUIET_MS) return false;
+  return !editableFocused;
+}
+
+// Install once, at app level. Returns the teardown.
+export function autoReloadWhenWedged() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return () => {};
+  let hiddenSince = document.visibilityState === 'hidden' ? Date.now() : null;
+  let lastInputAt = 0;
+  const onVisibility = () => { hiddenSince = document.visibilityState === 'hidden' ? Date.now() : null; };
+  const onInput = () => { lastInputAt = Date.now(); };
+  const timer = setInterval(() => {
+    if (!wedged) return;
+    const ok = safeToAutoReload({
+      now: Date.now(), hiddenSince, lastInputAt, saving: savesInFlight, lastSave: lastSaveAt,
+      editableFocused: isEditable(document.activeElement),
+    });
+    if (ok && claimWedgedReload()) window.location.reload();
+  }, RELOAD_CHECK_MS);
+  document.addEventListener('visibilitychange', onVisibility);
+  document.addEventListener('input', onInput, true);
+  document.addEventListener('keydown', onInput, true);
+  return () => {
+    clearInterval(timer);
+    document.removeEventListener('visibilitychange', onVisibility);
+    document.removeEventListener('input', onInput, true);
+    document.removeEventListener('keydown', onInput, true);
+  };
+}
+
 // Test seam. Nothing in the app clears this — a crashed client stays
 // crashed until the tab reloads.
 export function __resetClientHealth() {
@@ -244,4 +381,6 @@ export function __resetClientHealth() {
   firstError = null;
   announced = false;
   listeners.clear();
+  savesInFlight = 0;
+  lastSaveAt = 0;
 }
