@@ -40,7 +40,6 @@ export const NEW_OPPS_DIGEST_COLUMNS = [
   // `_scopeSummary` by withScopeSummaries), else the scope as stored.
   { key: 'Scope', label: 'Scope', value: (r) => r?._scopeSummary || r?.['Scope'] || '' },
   { key: 'Source', label: 'Source' },
-  { key: 'Start Date', label: 'Start Date', nowrap: true, value: (r) => formatShortDate(r['Start Date']) },
   { key: 'Quoted Amount', label: 'Deal Size', align: 'right', nowrap: true },
   { key: 'Next Steps', label: 'Next Steps' },
   { key: 'BFO Address', label: 'BFO Link', nowrap: true },
@@ -91,16 +90,6 @@ function escapeHtml(s) {
 // (and "\n"); render both as <br> so the note stacks instead of running on.
 function escapeHtmlMultiline(s) {
   return escapeHtml(s).replace(/\u2028|\r?\n/g, '<br>');
-}
-
-// Short date (M/D/YYYY), falling back to the raw value when unparseable.
-function formatShortDate(raw) {
-  if (!raw) return '';
-  const s = String(raw).trim();
-  const t = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T00:00:00` : s);
-  if (Number.isNaN(t)) return s;
-  const d = new Date(t);
-  return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
 }
 
 // The Notes cell: the summary bullets the New Opps table shows (attached as
