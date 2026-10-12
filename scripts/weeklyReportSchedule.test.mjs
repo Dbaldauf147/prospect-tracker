@@ -482,8 +482,8 @@ const html = renderWeeklyReportHtml({
 
 check('renders the KPI value', html.includes('36.6%'), true);
 check('renders the chip', html.includes('Behind pace'), true);
-check('the current week draws in the accent, the one before it in grey',
-  html.includes('bgcolor="#2a78d6"') && html.includes('bgcolor="#7C8B9D"'), true);
+check('every week draws in the accent, none in grey',
+  html.includes('bgcolor="#2a78d6"') && !html.includes('bgcolor="#7C8B9D"'), true);
 check('the series carries the number the tab shows', html.includes('>27<'), true);
 // A week answered by the Activity tab's banked total rather than the live
 // feed says so once, under the series — the tile used to say it per number.
