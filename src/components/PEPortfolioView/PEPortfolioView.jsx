@@ -27,7 +27,8 @@ import {
 } from '../../utils/peFirmOpps';
 import { loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
-import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
+import { useSavedAnalyses } from '../../hooks/useSavedAnalyses';
+import SavedAnalysisLink from './SavedAnalysisLink';
 import { getServiceCategories, serviceBucketOf, UNGROUPED_SERVICES } from '../../utils/serviceCategoriesStore';
 import { classifyHqRegion, normalizeHqRegion, NORTH_AMERICA } from '../../utils/hqRegion';
 import { serviceStatusColor } from '../../utils/serviceStatusColors';
@@ -2114,15 +2115,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                         return (
                           <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.72rem', overflow: 'hidden' }}>
                             {meta ? (
-                              <span
-                                title={[
-                                  `${top.companyName} has a Master Analysis saved${meta.savedAt ? ` on ${new Date(meta.savedAt).toLocaleString()}` : ''}.`,
-                                  meta.fileName || '',
-                                  meta.sizeBytes ? `${(meta.sizeBytes / (1024 * 1024)).toFixed(1)} MB` : '',
-                                  'Download it from this company\'s popup, or pull it back onto the Utility Lookup page with Import Analysis.',
-                                ].filter(Boolean).join('\n')}
-                                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 700, color: '#166534' }}
-                              >✓ {formatAnalysisDate(meta.savedAt)}</span>
+                              <SavedAnalysisLink prospectId={match.id} meta={meta} companyName={top.companyName} />
                             ) : (
                               <span
                                 title={`No Master Analysis saved against ${top.companyName} yet - run it on the Utility Lookup page and use "Save to ${top.companyName}".`}
@@ -3535,16 +3528,9 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
         exportValue: (r) => (r._analysis
           ? (r._analysis.savedAt ? new Date(r._analysis.savedAt).toLocaleDateString() : 'Saved')
           : ''),
+        // Click the date to download the saved workbook.
         render: (r) => (r._analysis ? (
-          <span
-            title={[
-              `${r.company} has a Master Analysis saved${r._analysis.savedAt ? ` on ${new Date(r._analysis.savedAt).toLocaleString()}` : ''}.`,
-              r._analysis.fileName || '',
-              r._analysis.sizeBytes ? `${(r._analysis.sizeBytes / (1024 * 1024)).toFixed(1)} MB` : '',
-              'Download it from this company\'s popup, or pull it back onto the Utility Lookup page with Import Analysis.',
-            ].filter(Boolean).join('\n')}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700, color: '#166534' }}
-          >✓ {formatAnalysisDate(r._analysis.savedAt)}</span>
+          <SavedAnalysisLink prospectId={r.id} meta={r._analysis} companyName={r.company} />
         ) : (
           <span title="No Master Analysis saved against this company yet" style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>-</span>
         )),
