@@ -35,6 +35,14 @@ export const DROPDOWN_LISTS = [
     options: ['Industrial', 'Retail'],
   },
   {
+    // A finer read than Status, picked beside it on the company popup.
+    // Starts empty: the options are the user's to write on the Dropdowns
+    // page, and the popup reads whatever is there.
+    key: 'substatus',
+    label: 'Substatus',
+    options: [],
+  },
+  {
     key: 'chance',
     label: 'Chance?',
     options: ['Expected', 'OK', 'Weak'],
