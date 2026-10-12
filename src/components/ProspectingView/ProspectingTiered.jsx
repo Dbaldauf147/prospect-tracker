@@ -16,6 +16,7 @@ import { userLsGet } from '../../utils/userLs';
 import { formatDateDisplay } from '../../utils/isoDate';
 import { useAuth } from '../../contexts/AuthContext';
 import { hubspotContactUrl, loadHubspotAccount } from '../../utils/hubspotRecordLink';
+import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import {
   ACTIVITY_COLD_DAYS, ACTIVITY_SUMMARY_DAYS, ACTIVITY_WARM_DAYS, daysSince, lastActivityByAccount, myTieredAccounts,
   tierActivityCoverage,
@@ -68,6 +69,30 @@ const substatusOf = (p) => String(p?.substatus || '').trim();
 const statusOf = (p) => (substatusOf(p) ? SUBSTATUS_HOLD_STATUS : String(p?.status || '').trim());
 const statusLabel = (st) => st || 'No status';
 
+// The decision makers in the not-reached popup: a name each, linked to
+// its HubSpot record when the portal is known, and "None" in red when the
+// account has nobody tagged, which is the gap worth seeing beside "not
+// reached". Title on hover when it is a contact's only identifier.
+const dmName = (c) => [c?.firstname, c?.lastname].filter(Boolean).join(' ').trim() || String(c?.email || '');
+function DecisionMakerNames({ dms, hubspotAccount }) {
+  if (dms == null) return <span style={{ color: '#94A3B8' }}>Loading...</span>;
+  if (dms.length === 0) return <span style={{ color: '#B91C1C', fontWeight: 600 }} title="Nobody at this account is tagged Decision Maker">None</span>;
+  return (
+    <span style={{ display: 'flex', flexWrap: 'wrap', gap: '0 0.5rem' }}>
+      {dms.map((c) => {
+        const name = dmName(c);
+        const title = [c.jobtitle, c.email].filter(Boolean).join('\n') || undefined;
+        const url = hubspotContactUrl(hubspotAccount, c.id || c.vid);
+        return url ? (
+          <a key={c.id || c.vid || name} href={url} target="_blank" rel="noopener noreferrer" title={title ? `${title}\nOpen in HubSpot` : 'Open in HubSpot'} style={{ color: '#2563EB', textDecoration: 'underline', whiteSpace: 'nowrap' }}>{name}</a>
+        ) : (
+          <span key={c.id || c.vid || name} title={title} style={{ color: '#334155', whiteSpace: 'nowrap' }}>{name}</span>
+        );
+      })}
+    </span>
+  );
+}
+
 const toLocalDate = (tsMs) => {
   const d = new Date(tsMs);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -117,6 +142,12 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
   const localFields = settings?.contactLocalFields || null;
   const links = settings?.companyContactLinks || null;
   const exclusions = settings?.companyContactExclusions || null;
+  // Who the decision makers are at each account, for the not-reached popup:
+  // the same membership the ladder and My Accounts count from.
+  const dmLookup = useMemo(
+    () => (contacts ? makeDecisionMakerLookup(contacts, { localFields, links, exclusions }) : null),
+    [contacts, localFields, links, exclusions],
+  );
   const activity = useMemo(
     () => (contacts ? lastActivityByAccount({ accounts, contacts, outreachIndex, localFields, links, exclusions }) : null),
     [accounts, contacts, outreachIndex, localFields, links, exclusions],
@@ -513,7 +544,7 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
             aria-modal="true"
             aria-label={`${unreachedTier} accounts not reached in ${windowDays} days`}
             onClick={e => e.stopPropagation()}
-            style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 50px rgba(15,23,42,0.25)', width: 'min(640px, 100%)', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
+            style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 50px rgba(15,23,42,0.25)', width: 'min(820px, 100%)', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
           >
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '0.85rem 1rem 0.6rem', borderBottom: '1px solid #E2E8F0' }}>
               <div style={{ flex: 1 }}>
@@ -538,6 +569,7 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
                     <tr style={{ color: '#64748B', fontSize: '0.66rem', textTransform: 'uppercase', letterSpacing: '0.03em', textAlign: 'left' }}>
                       <th style={{ padding: '0.35rem 1rem', fontWeight: 700 }}>Company</th>
                       <th style={{ padding: '0.35rem 0.5rem', fontWeight: 700 }}>Status</th>
+                      <th style={{ padding: '0.35rem 0.5rem', fontWeight: 700 }} title="Contacts at the account tagged Decision Maker. Click a name to open it in HubSpot.">Decision Maker</th>
                       <th style={{ padding: '0.35rem 0.5rem', fontWeight: 700 }}>Last Activity</th>
                       <th style={{ padding: '0.35rem 1rem 0.35rem 0.5rem', fontWeight: 700, textAlign: 'right' }}>Days Since</th>
                     </tr>
@@ -558,6 +590,9 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
                             ) : <span style={{ fontWeight: 600 }}>{p.company}</span>}
                           </td>
                           <td style={{ padding: '0.35rem 0.5rem', color: '#475569' }}>{statusOf(p) || '-'}</td>
+                          <td style={{ padding: '0.35rem 0.5rem' }}>
+                            <DecisionMakerNames dms={dmLookup ? dmLookup.forAccount(p) : null} hubspotAccount={hubspotAccount} />
+                          </td>
                           <td style={{ padding: '0.35rem 0.5rem', color: a ? '#334155' : '#CBD5E1', fontVariantNumeric: 'tabular-nums' }}>
                             {a ? formatDateDisplay(toLocalDate(a.tsMs)) : 'None'}
                           </td>
