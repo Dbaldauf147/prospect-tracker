@@ -1,8 +1,8 @@
 // Prospecting > Tiered: your Tier 1-3 accounts and when anything last
 // happened on each one.
 //
-// "Activity" is read from every place the app already records it against
-// a company, and the newest of them wins:
+// "Activity" is outreach to a contact at the account, and the newest of
+// it wins:
 //
 //   - HubSpot emails and calls, from the compact email/phone index the
 //     Activity tab writes (`hubspot-outreach-index`), looked up for every
@@ -10,8 +10,10 @@
 //   - HubSpot's own Last Contacted date on those contacts
 //     (notes_last_contacted), which also catches meetings and logged
 //     activity the index doesn't carry.
-//   - The BFO Activity tab's Last Activity date, for any pasted row whose
-//     Account is this account (by its name or its BFO Company Name).
+//
+// BFO Activity rows are deliberately NOT read. They are matched on a fuzzy
+// account name, so one Brookfield opportunity dated every Brookfield
+// account, and they say nothing about who was reached.
 //
 // "Contacts at the account" is the same membership the company popup's
 // Contacts tab shows (name match, plus whoever it adds by email domain or by
@@ -23,6 +25,7 @@ import { TIERS } from '../data/enums.js';
 import { matchesCdm } from './cdmMatch.js';
 import { applyCompanyOverride, isSchneiderContact, rosterCompaniesMatch } from './contactRosters.js';
 import { makeAccountContactIndex } from './decisionMakerCoverage.js';
+import { splitPeOwners } from './peOwners.js';
 
 const MS_PER_DAY = 86400000;
 
@@ -40,8 +43,7 @@ function normalizePhone(p) {
   return digits.length >= 10 ? digits.slice(-10) : '';
 }
 
-// Pasted dates arrive in whatever shape BFO exported them (M/D/YYYY, ISO,
-// sometimes with a time). A bare ISO day is read as local midnight rather
+// Dates arrive as ISO strings or epoch-ish text, sometimes with a time. A bare ISO day is read as local midnight rather
 // than UTC, so it doesn't show as the day before west of Greenwich.
 function parseWhen(raw) {
   if (raw == null || raw === '') return null;
@@ -65,27 +67,32 @@ export function myTieredAccounts(prospects, cdmName) {
  * Returns Map(account id or company -> { tsMs, source, detail, contact })
  * holding only the accounts something was found for. `contact` is the
  * person at the account most recently emailed, called or contacted in
- * HubSpot ({ id, name, email, tsMs, source }), or null when none was: kept
- * apart from the newest activity, because a BFO row can be newer and that
- * names an opportunity, not who you reached out to. `outreachIndex` is the parsed
- * `hubspot-outreach-index` ({ emails, phones }); `bfoActivity` the BFO
- * Activity record ({ headers, rows }). Either may be null.
+ * HubSpot ({ id, name, email, company, owner, tsMs, source }). `owner` is
+ * the account's PE owner / parent company when that is the company the
+ * contact is actually at (see ownerVia), else ''. `outreachIndex` is the
+ * parsed `hubspot-outreach-index` ({ emails, phones }), or null.
  */
 export function lastActivityByAccount({
-  accounts, contacts, outreachIndex = null, bfoActivity = null,
+  accounts, contacts, outreachIndex = null,
   localFields = null, links = null, exclusions = null,
 } = {}) {
   const out = new Map();
   const keyOf = (p) => p.id || p.company;
-  const consider = (p, tsMs, source, detail, contact = null) => {
+  const consider = (p, tsMs, source, contact) => {
     if (tsMs == null) return;
     const k = keyOf(p);
     const prev = out.get(k);
-    const best = contact && (!prev?.contact || tsMs > prev.contact.tsMs)
-      ? { id: idOf(contact), name: nameOf(contact), email: String(contact.email || '').trim(), tsMs, source }
-      : (prev?.contact || null);
-    if (!prev || tsMs > prev.tsMs) out.set(k, { tsMs, source, detail, contact: best });
-    else if (best !== prev.contact) out.set(k, { ...prev, contact: best });
+    if (prev && tsMs <= prev.tsMs) return;
+    const company = String(contact.company || '').trim();
+    out.set(k, {
+      tsMs,
+      source,
+      detail: nameOf(contact),
+      contact: {
+        id: idOf(contact), name: nameOf(contact), email: String(contact.email || '').trim(),
+        company, owner: ownerVia(p, company), tsMs, source,
+      },
+    });
   };
 
   // Contacts grouped by company so the fuzzy compare runs once per distinct
@@ -126,40 +133,45 @@ export function lastActivityByAccount({
     for (const c of at) {
       const em = String(c.email || '').trim().toLowerCase();
       const hitE = em ? emails[em] : null;
-      if (hitE) consider(p, hitE.tsMs ?? parseWhen(hitE.ts), 'HubSpot email', nameOf(c), c);
+      if (hitE) consider(p, hitE.tsMs ?? parseWhen(hitE.ts), 'HubSpot email', c);
       for (const ph of [c.phone, c.mobilephone]) {
         const hitP = phones[normalizePhone(ph)];
-        if (hitP) consider(p, hitP.tsMs ?? parseWhen(hitP.ts), 'HubSpot call', nameOf(c), c);
+        if (hitP) consider(p, hitP.tsMs ?? parseWhen(hitP.ts), 'HubSpot call', c);
       }
-      consider(p, parseWhen(c.notes_last_contacted), 'HubSpot last contacted', nameOf(c), c);
-    }
-  }
-
-  // BFO Activity rows, matched on their Account column.
-  const headers = bfoActivity?.headers || [];
-  const actCol = headers.find(h => /last\s*activity/i.test(h));
-  const acctCol = headers.find(h => /^account(\s*name)?$/i.test(String(h).trim()))
-    || headers.find(h => /account/i.test(h));
-  const oppCol = headers.find(h => /opportunity\s*name/i.test(h));
-  if (actCol && acctCol) {
-    const latestByAccount = new Map();
-    for (const r of (bfoActivity?.rows || [])) {
-      const acct = String(r[acctCol] ?? '').trim();
-      const tsMs = parseWhen(r[actCol]);
-      if (!acct || tsMs == null) continue;
-      const lc = acct.toLowerCase();
-      const prev = latestByAccount.get(lc);
-      if (!prev || tsMs > prev.tsMs) latestByAccount.set(lc, { acct, tsMs, opp: oppCol ? String(r[oppCol] ?? '').trim() : '' });
-    }
-    const bfoAccounts = [...latestByAccount.values()];
-    for (const p of (accounts || [])) {
-      const names = [p.company, p.bfoCompanyName].map(s => String(s || '').trim()).filter(Boolean);
-      for (const b of bfoAccounts) {
-        if (names.some(n => rosterCompaniesMatch(n, b.acct))) consider(p, b.tsMs, 'BFO activity', b.opp || b.acct);
-      }
+      consider(p, parseWhen(c.notes_last_contacted), 'HubSpot last contacted', c);
     }
   }
   return out;
+}
+
+// A company name boiled down for comparing: lower case, corporate suffixes
+// and punctuation gone, so "Brookfield (Self Storage)" and "Brookfield Self
+// Storage, LLC" read the same.
+const plain = (s) => String(s || '').toLowerCase()
+  .replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/g, '')
+  .replace(/[^a-z0-9]+/g, ' ').trim();
+
+/**
+ * The account's PE owner / parent company (its PE Owner field) that a
+ * contact is really at, or '' when the contact is at the account itself.
+ *
+ * The contact is tied to the account by a loose name match, which is how a
+ * contact at "Brookfield" lands on "Brookfield (Self Storage)". When that
+ * contact's company is one of the account's owners and is not simply the
+ * account's own name, the activity came through the owner.
+ */
+export function ownerVia(account, contactCompany) {
+  const cc = plain(contactCompany);
+  if (!cc) return '';
+  const own = plain(account?.company);
+  if (cc === own) return '';
+  for (const o of splitPeOwners(account?.peOwner)) {
+    const po = plain(o);
+    if (!po) continue;
+    if (cc === po) return o;
+    if (!cc.includes(own) && rosterCompaniesMatch(o, contactCompany)) return o;
+  }
+  return '';
 }
 
 // The window the Tiered Activity summary counts an account as touched in.
