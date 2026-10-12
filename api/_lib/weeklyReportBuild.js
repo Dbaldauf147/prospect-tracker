@@ -14,7 +14,7 @@
 //   Weekly activity log   …/weekly-activity-log
 //   YOY pins              …/yoy-chart-overrides
 //   Don't Track clients   …/clients-untracked-map
-//   On Hold companies     the owner's prospects (company, substatus)
+//   Substatus (Hold Off)  the owner's prospects (company, substatus)
 //   Progress weeks        progressHistory/{uid}
 //   Coverage ratio log    coverageRatioHistory/{uid}
 //   Targets, work email   userSettings/{uid}
@@ -48,7 +48,7 @@ import {
 } from '../../src/utils/weeklyReportTrends.js';
 import { withCoverageImages, withCoverageRatioImage } from '../../src/utils/coverageChartImage.js';
 import { excludeUntrackedFromWeeks } from '../../src/utils/progressUntracked.js';
-import { withOnHoldLeftOut } from '../../src/utils/reportingStatus.js';
+import { withSubstatusLeftOut } from '../../src/utils/reportingStatus.js';
 
 // Whose prospects live in the shared collection (as api/_lib/newOpps.js).
 const ADMIN_EMAIL = 'baldaufdan@gmail.com';
@@ -175,7 +175,7 @@ export async function loadReportSources(db, uid, { token = '', start, end, histo
       // are fetched for the reported window only.
       settle('hubspotActivity', () => fetchActivityWindow(token, start, end, { ...fetchOpts, emailsFrom: historyStart }), null),
       settle('clientUntracked', () => loadMirror(db, uid, MIRROR.clientUntracked, {}), {}),
-      // Only the two fields that say whether a company is On Hold
+      // Only the two fields that say whether a company has a substatus
       // (utils/reportingStatus). Where the app keeps them: the admin's in
       // the shared collection, everyone else's under their own user.
       settle('prospects', async () => {
@@ -259,8 +259,8 @@ export function buildReport(sources, period, { now = null } = {}) {
   // Read with the "Don't Track" clients taken out, as the Progress tab
   // and the Weekly Report tab both plot it.
   const coverage = withCoverageImages(coverageByWeek({
-    // On Hold companies (a substatus set) are left out the same way.
-    progressWeeks: excludeUntrackedFromWeeks(s.progressWeeks, withOnHoldLeftOut(s.clientUntrackedMap, s.prospects)).weeks,
+    // Companies with a substatus (read as Hold Off) are left out the same way.
+    progressWeeks: excludeUntrackedFromWeeks(s.progressWeeks, withSubstatusLeftOut(s.clientUntrackedMap, s.prospects)).weeks,
     refMs: start,
     months: COVERAGE_MONTHS,
   }));

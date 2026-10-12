@@ -23,9 +23,6 @@ export const STATUS_COLORS = {
   'Lost - Not Sold': '#EF4444',
   'Old Client': '#6B7280',
   'Partnering w/Another CDM': '#06B6D4',
-  // Not a Status anyone picks: how a company with a Substatus reads
-  // (utils/reportingStatus).
-  'On Hold': '#A855F7',
 };
 
 export const TYPES = [
