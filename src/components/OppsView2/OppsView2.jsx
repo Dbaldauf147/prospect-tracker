@@ -145,7 +145,7 @@ import {
   groupStageDaysByStage,
   StageDaysBoard,
 } from './daysInStage';
-import { downloadNewOppsOutlookDraft, resolveNewOppsDraftTemplate } from '../../utils/newOppsDigestEmail';
+import { downloadNewOppsOutlookDraft, resolveNewOppsDraftTemplate, withNotesSummaries } from '../../utils/newOppsDigestEmail';
 import { NewOppsDraftEmailModal } from './NewOppsDraftEmailModal';
 import {
   peMonthlyRows, peMonthlyTierRank, PE_MONTHLY_COLUMNS, PE_MONTHLY_DRAFT_DEFAULTS, resolvePeMonthlyDraftTemplate,
@@ -17107,6 +17107,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // notes stay on hover and in the Follow Up Notes popup. Only fetched
   // while the subtab is open.
   const newOppsNotes = useNotesSummaries(newOpps, { enabled: activeTab === 'newOpps' });
+  // The Outlook draft carries the same summaries the Notes column shows.
+  const newOppsForEmail = useMemo(() => withNotesSummaries(newOpps, newOppsNotes), [newOpps, newOppsNotes]);
 
   const newOppsColumns = useMemo(
     () => NEW_OPPS_REPORT_COLUMNS.map((key) => {
@@ -18680,7 +18682,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             >Export to Excel</button>
             <button
               type="button"
-              onClick={() => downloadNewOppsOutlookDraft(newOpps, {
+              onClick={() => downloadNewOppsOutlookDraft(newOppsForEmail, {
                 // To / subject / greeting / intro come from the saved
                 // template ("Edit email text"), falling back to the built-in
                 // defaults. Signature is the same one the Draft Email tab
@@ -18922,7 +18924,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       <NewOppsDraftEmailModal
         open={newOppsDraftTextOpen}
         onClose={() => setNewOppsDraftTextOpen(false)}
-        records={newOpps}
+        records={newOppsForEmail}
         signature={settings?.emailSignature || (isAdmin ? DEFAULT_EMAIL_SIGNATURE : '')}
         template={settings?.newOppsDraftEmail}
         onSave={(next) => updateSettings?.({ newOppsDraftEmail: next })}
