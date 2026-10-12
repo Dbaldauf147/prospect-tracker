@@ -11429,6 +11429,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               onMap={(p) => mapPortfolioRow(portfolioLinkIdx, p)}
               cdmOptions={cdmOptions}
               verticalOptions={dropdownVerticals}
+              // You: the signed-in CDM, spelled the way the dropdown spells it.
+              initialCdm={canonicalCdmOption(cdmName, cdmOptions) || String(cdmName || '').trim()}
               initialHqRegion={classifyHqCountry((fields.portfolioCompanies || [])[portfolioLinkIdx].hqCountry) || ''}
               onCreate={onAddProspect ? (details) => createPortfolioProspect(portfolioLinkIdx, details) : null}
               // Closable mid-create: the row still links when the record
