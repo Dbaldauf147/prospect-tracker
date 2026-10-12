@@ -1097,6 +1097,9 @@ function isBulkSelectable(row) {
 // Statuses that take an account out of active rotation. Module-scoped so
 // both the filtered-view logic and the Issues-flag publisher share one set.
 const INACTIVE_STATUSES = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold']);
+// A company with a substatus reports as Hold Off (reportingStatus), so it
+// counts as inactive too: hidden by default, listed on the Inactive card.
+const isInactive = (a) => INACTIVE_STATUSES.has(reportingStatus(a));
 
 export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, onFindDuplicates, onDedupe, targetAccountsData, settings, updateSettings, cdmName, mode }) {
   const { user, isAdmin } = useAuth();
@@ -1971,8 +1974,8 @@ Fix that now?
       if (needsMapping) settingsPatch.targetMap = { ...targetMap, [existing.id]: [...mappedNames, company] };
       if (Object.keys(settingsPatch).length > 0) await updateSettings(settingsPatch);
 
-      const inactiveNote = INACTIVE_STATUSES.has(existing.status)
-        ? ` It's marked ${existing.status}, so switch the Inactive card above off "Inactive Hidden" to see the row.`
+      const inactiveNote = isInactive(existing)
+        ? ` It's marked ${reportingStatus(existing)}, so switch the Inactive card above off "Inactive Hidden" to see the row.`
         : '';
       setAddTargetNote({ tone: 'ok', text: `${existing.company} is now on My Accounts.${inactiveNote}` });
     } catch (err) {
@@ -2881,7 +2884,7 @@ Fix that now?
         if (!a.id || String(a.id).startsWith('opps-only:')) continue;
         if (a.tierMismatch) flags.push({ id: a.id, company: a.company || '', kind: 'tier', myTier: a.myTier || '', targetTier: a.targetTier || '' });
         if (a.statusMismatch) flags.push({ id: a.id, company: a.company || '', kind: 'status', status: a.status || '', suggestedStatus: a.suggestedStatus || '' });
-        if (!a.hqRegion && !INACTIVE_STATUSES.has(a.status)) flags.push({ id: a.id, company: a.company || '', kind: 'hqRegion', status: a.status || '' });
+        if (!a.hqRegion && !isInactive(a)) flags.push({ id: a.id, company: a.company || '', kind: 'hqRegion', status: a.status || '' });
       }
       saveMyAccountsFlags(flags);
     } catch {}
@@ -3000,7 +3003,7 @@ Fix that now?
     company: (a) => similarNamesByAccount.has((a.company || '').toLowerCase().trim()),
     status: (a) => !!a.statusMismatch,
     type: (a) => !!a.typeMismatch,
-    hqRegion: (a) => !a.hqRegion && !INACTIVE_STATUSES.has(a.status),
+    hqRegion: (a) => !a.hqRegion && !isInactive(a),
   }), [similarNamesByAccount]);
 
   // Everything the search box, the column filters and the summary cards
@@ -3012,8 +3015,8 @@ Fix that now?
   const matchingAccounts = useMemo(() => {
     let result = allAccounts;
     // Inactive status filter
-    if (inactiveMode === 'hide') result = result.filter(a => !INACTIVE_STATUSES.has(a.status));
-    else if (inactiveMode === 'only') result = result.filter(a => INACTIVE_STATUSES.has(a.status));
+    if (inactiveMode === 'hide') result = result.filter(a => !isInactive(a));
+    else if (inactiveMode === 'only') result = result.filter(a => isInactive(a));
     // Bucket filter
     if (bucketFilter === 'tier1') result = result.filter(a => a.myTier === 'Tier 1');
     else if (bucketFilter === 'tier2') result = result.filter(a => a.myTier === 'Tier 2');
@@ -3059,8 +3062,8 @@ Fix that now?
   // two filters this tab does honour.
   const typeGroups = useMemo(() => {
     let rows = allAccounts;
-    if (inactiveMode === 'hide') rows = rows.filter(a => !INACTIVE_STATUSES.has(a.status));
-    else if (inactiveMode === 'only') rows = rows.filter(a => INACTIVE_STATUSES.has(a.status));
+    if (inactiveMode === 'hide') rows = rows.filter(a => !isInactive(a));
+    else if (inactiveMode === 'only') rows = rows.filter(a => isInactive(a));
     if (search.trim()) {
       const term = search.toLowerCase();
       rows = rows.filter(a =>
@@ -3119,8 +3122,8 @@ Fix that now?
 
   const dmTagAccounts = useMemo(() => {
     let rows = allAccounts;
-    if (inactiveMode === 'hide') rows = rows.filter(a => !INACTIVE_STATUSES.has(a.status));
-    else if (inactiveMode === 'only') rows = rows.filter(a => INACTIVE_STATUSES.has(a.status));
+    if (inactiveMode === 'hide') rows = rows.filter(a => !isInactive(a));
+    else if (inactiveMode === 'only') rows = rows.filter(a => isInactive(a));
     if (search.trim()) {
       const term = search.toLowerCase();
       rows = rows.filter(a =>
@@ -3861,7 +3864,6 @@ Fix that now?
           const term = search.trim().toLowerCase();
           if (!term) return null;
           if (inactiveMode !== 'hide') return null;
-          const inactiveStatuses = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold']);
           const seen = new Set();
           const hidden = [];
           for (const p of (prospects || [])) {
@@ -3870,10 +3872,10 @@ Fix that now?
             const lower = name.toLowerCase();
             if (!lower.includes(term)) continue;
             if (seen.has(lower)) continue;
-            if (!inactiveStatuses.has(p.status)) continue;
+            if (!isInactive(p)) continue;
             if (!matchesCdm(p.cdm, cdmName)) continue;
             seen.add(lower);
-            hidden.push({ name, status: p.status });
+            hidden.push({ name, status: reportingStatus(p) });
             if (hidden.length >= 10) break;
           }
           if (hidden.length === 0) return null;
@@ -4120,7 +4122,7 @@ Fix that now?
           onClick={() => setInactiveMode(prev => prev === 'hide' ? 'only' : prev === 'only' ? 'show' : 'hide')}
         >
           <div className={styles.summaryLabel}>{inactiveMode === 'only' ? 'Inactive Only' : inactiveMode === 'show' ? 'Showing All' : 'Inactive Hidden'}</div>
-          <div className={styles.summaryValue}>{allAccounts.filter(a => INACTIVE_STATUSES.has(a.status)).length}</div>
+          <div className={styles.summaryValue}>{allAccounts.filter(a => isInactive(a)).length}</div>
         </button>
         <button className={`${styles.summaryCard} ${bucketFilter === 'client' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#10B981', cursor: 'pointer' }} onClick={() => setBucketFilter(bucketFilter === 'client' ? null : 'client')}>
           <div className={styles.summaryLabel}>Clients</div>
