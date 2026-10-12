@@ -27,6 +27,9 @@ import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { ContractsTab } from './ContractsTab';
 import { useCompanyContracts } from '../../hooks/useCompanyContracts';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
+import {
+  RA_CLIENTS_MAP_KEY, listMatchKey, readListField, mapListRow, unmapListRow, mapsToCompany,
+} from '../../utils/listAccountMapping';
 import { STATUSES, STATUS_COLORS, TIER_OPTIONS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { peStageOf } from '../../utils/peStages';
 import { getServiceCategories, buildServiceBoard, moveServiceToBucket, serviceBucketOf, UNGROUPED_SERVICES, addServiceBox, renameServiceBox } from '../../utils/serviceCategoriesStore';
@@ -5544,13 +5547,51 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // settings. Ignoring is per matched client, so a different RA Client
   // that starts matching later still raises the warning.
   const raIgnoreKey = (fields.company || '').toLowerCase().trim();
+  // Each match carries where the RA Clients mapping (the one "Search
+  // lists..." keeps, utils/listAccountMapping) points it: `mapped` when it
+  // is mapped to this company, `mappedElsewhere` naming the company it is
+  // mapped to otherwise. A client mapped here is always listed, even one
+  // whose name does not fuzzy-match, and an Ignore never hides it.
+  const raClientMapping = useMemo(
+    () => readListField(settings, RA_CLIENTS_MAP_KEY, 'mapping'),
+    [settings], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const visibleRaClientMatches = useMemo(() => {
+    const company = (fields.company || '').trim();
     const ignored = (settings?.ignoredRaClientMatches || {})[raIgnoreKey] || {};
-    return raClientMatches.filter(m => !ignored[m.name.toLowerCase()]);
-  }, [raClientMatches, settings?.ignoredRaClientMatches, raIgnoreKey]);
+    const withState = (m) => {
+      const mappedTo = raClientMapping[listMatchKey(m.name)] || '';
+      const mapped = mapsToCompany(mappedTo, company);
+      return { ...m, mapped, mappedElsewhere: mappedTo && !mapped ? mappedTo : '' };
+    };
+    const out = raClientMatches.map(withState).filter(m => m.mapped || !ignored[m.name.toLowerCase()]);
+    if (company) {
+      const seen = new Set(out.map(m => listMatchKey(m.name)));
+      for (const ra of loadEffectiveRaClients().data || []) {
+        const name = raClientName(ra);
+        const key = listMatchKey(name);
+        if (!key || seen.has(key) || !mapsToCompany(raClientMapping[key], company)) continue;
+        seen.add(key);
+        out.push({ name, cm: raClientCm(ra), score: 1, exact: false, mapped: true, mappedElsewhere: '' });
+      }
+    }
+    return out;
+  }, [raClientMatches, raClientMapping, fields.company, settings?.ignoredRaClientMatches, raIgnoreKey]);
+  const raAllMapped = visibleRaClientMatches.length > 0 && visibleRaClientMatches.every(m => m.mapped);
+  function mapRaClient(name) {
+    const company = (fields.company || '').trim();
+    const key = listMatchKey(name);
+    if (!company || !key) return;
+    mapListRow(settings, updateSettingsPath, RA_CLIENTS_MAP_KEY, key, company);
+  }
+  function unmapRaClient(name) {
+    const key = listMatchKey(name);
+    if (key) unmapListRow(settings, updateSettingsPath, RA_CLIENTS_MAP_KEY, key);
+  }
   function ignoreRaClientMatches() {
-    if (!raIgnoreKey || visibleRaClientMatches.length === 0) return;
-    const names = visibleRaClientMatches.map(m => m.name.toLowerCase());
+    const unmapped = visibleRaClientMatches.filter(m => !m.mapped);
+    if (!raIgnoreKey || unmapped.length === 0) return;
+    const names = unmapped.map(m => m.name.toLowerCase());
     updateSettings(prev => {
       const all = prev?.ignoredRaClientMatches || {};
       const forCompany = { ...(all[raIgnoreKey] || {}) };
@@ -8552,52 +8593,95 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                matched clients pushed to the right end. It used to stack those
                four onto their own lines, which cost three rows of the modal
                above the fold to say one thing. Wraps rather than squashes when
-               the modal is narrow. */
+               the modal is narrow.
+               Amber while any match is unconfirmed; green once every client
+               listed is mapped to this company. Each unconfirmed chip has a
+               Map button that writes the same mapping "Search lists..."
+               does; a mapped chip carries an x to unmap it. */
             <div style={{
               marginBottom: '0.8rem',
               padding: '0.4rem 0.8rem',
-              background: '#FFFBEB',
-              border: '1px solid #FDE68A',
+              background: raAllMapped ? '#F0FDF4' : '#FFFBEB',
+              border: `1px solid ${raAllMapped ? '#BBF7D0' : '#FDE68A'}`,
               borderRadius: 6,
               display: 'flex',
               alignItems: 'center',
               flexWrap: 'wrap',
               gap: '0.35rem 0.7rem',
             }}>
-              <span style={{ fontSize: '0.95rem', lineHeight: 1 }}>⚠️</span>
-              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
-                {visibleRaClientMatches.some(m => m.exact) ? 'Matches an RA Client' : 'Possible RA Client match'}
+              <span style={{ fontSize: '0.95rem', lineHeight: 1 }}>{raAllMapped ? '✅' : '⚠️'}</span>
+              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: raAllMapped ? '#166534' : '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
+                {raAllMapped
+                  ? 'Mapped to an RA Client'
+                  : visibleRaClientMatches.some(m => m.exact) ? 'Matches an RA Client' : 'Possible RA Client match'}
               </span>
-              <span style={{ fontSize: '0.75rem', color: '#78350F', minWidth: 0 }}>
-                This company looks like {visibleRaClientMatches.length === 1 ? 'an existing RA Client' : 'existing RA Clients'} on the Lists → RA Clients tab. Double-check before prospecting.
+              <span style={{ fontSize: '0.75rem', color: raAllMapped ? '#14532D' : '#78350F', minWidth: 0 }}>
+                {raAllMapped
+                  ? `This company is mapped to ${visibleRaClientMatches.length === 1 ? 'an RA Client' : 'RA Clients'} on the Lists → RA Clients tab.`
+                  : `This company looks like ${visibleRaClientMatches.length === 1 ? 'an existing RA Client' : 'existing RA Clients'} on the Lists → RA Clients tab. Map the client if it is this company, or double-check before prospecting.`}
               </span>
               <span style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.35rem', marginLeft: 'auto' }}>
                 {visibleRaClientMatches.map(m => (
                   <span
                     key={m.name}
-                    title={m.cm ? `Client Manager: ${m.cm}` : undefined}
+                    title={[
+                      m.cm ? `Client Manager: ${m.cm}` : '',
+                      m.mappedElsewhere ? `Mapped to ${m.mappedElsewhere}` : '',
+                    ].filter(Boolean).join('. ') || undefined}
                     style={{
                       display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
-                      padding: '0.15rem 0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A',
-                      borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, color: '#92400E',
+                      padding: '0.15rem 0.2rem 0.15rem 0.5rem',
+                      background: m.mapped ? '#DCFCE7' : '#FEF3C7',
+                      border: `1px solid ${m.mapped ? '#86EFAC' : '#FDE68A'}`,
+                      borderRadius: 999, fontSize: '0.7rem', fontWeight: 600,
+                      color: m.mapped ? '#166534' : '#92400E',
                       whiteSpace: 'nowrap',
                     }}
                   >
                     {m.name}
-                    <span style={{ fontWeight: 700, color: '#B45309' }}>{m.exact ? 'exact' : `${Math.round(m.score * 100)}%`}</span>
-                    {m.cm && <span style={{ fontWeight: 400, color: '#A16207' }}>· {m.cm}</span>}
+                    {m.mapped
+                      ? <span style={{ fontWeight: 700 }}>mapped</span>
+                      : <span style={{ fontWeight: 700, color: '#B45309' }}>{m.exact ? 'exact' : `${Math.round(m.score * 100)}%`}</span>}
+                    {m.cm && <span style={{ fontWeight: 400, color: m.mapped ? '#15803D' : '#A16207' }}>· {m.cm}</span>}
+                    {m.mapped ? (
+                      <button
+                        type="button"
+                        onClick={() => unmapRaClient(m.name)}
+                        title={`Unmap ${m.name} from ${fields.company}`}
+                        aria-label={`Unmap ${m.name}`}
+                        style={{
+                          border: 'none', background: 'transparent', color: '#166534', cursor: 'pointer',
+                          fontSize: '0.85rem', lineHeight: 1, padding: '0 0.25rem', fontFamily: 'inherit',
+                        }}
+                      >×</button>
+                    ) : m.mappedElsewhere ? (
+                      <span style={{ fontWeight: 400, color: '#A16207', paddingRight: '0.3rem' }}>· mapped to {m.mappedElsewhere}</span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => mapRaClient(m.name)}
+                        title={`Map the RA Client ${m.name} to ${fields.company}`}
+                        style={{
+                          padding: '0.05rem 0.45rem', background: '#DCFCE7', border: '1px solid #86EFAC',
+                          borderRadius: 999, fontSize: '0.66rem', fontWeight: 700, color: '#166534',
+                          cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+                        }}
+                      >Map</button>
+                    )}
                   </span>
                 ))}
-                <button
-                  type="button"
-                  onClick={ignoreRaClientMatches}
-                  title={`Stop flagging ${visibleRaClientMatches.map(m => m.name).join(', ')} as an RA Client match for this company`}
-                  style={{
-                    padding: '0.15rem 0.55rem', background: '#fff', border: '1px solid #FCD34D',
-                    borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, color: '#92400E',
-                    cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
-                  }}
-                >Ignore</button>
+                {!raAllMapped && (
+                  <button
+                    type="button"
+                    onClick={ignoreRaClientMatches}
+                    title={`Stop flagging ${visibleRaClientMatches.filter(m => !m.mapped).map(m => m.name).join(', ')} as an RA Client match for this company`}
+                    style={{
+                      padding: '0.15rem 0.55rem', background: '#fff', border: '1px solid #FCD34D',
+                      borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, color: '#92400E',
+                      cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+                    }}
+                  >Ignore</button>
+                )}
               </span>
             </div>
           )}

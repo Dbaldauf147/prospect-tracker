@@ -45,6 +45,9 @@ const INFRASTRUCTURE = new Set([
 // of the list is that the decision is written down, not that the file is
 // silenced. Keep these honest: if a reason stops being true, mirror it.
 const LOCAL_BY_DESIGN = {
+  // The real copy is synced settings (listMappings, written on every map);
+  // the localStorage one is the pre-sync fallback the Lists panels read.
+  'listAccountMapping.js': 'fallback - every write also lands in synced settings.listMappings',
   // Caches. The real copy is server-side; losing these costs a refetch.
   'callHistoryCache.js': 'cache - the call history itself is one document per call in Firestore',
   'hubspotContactsCache.js': 'cache - refetched from HubSpot',
