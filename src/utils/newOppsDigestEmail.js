@@ -1,35 +1,81 @@
 // Build a downloadable Outlook draft (.eml) of the New Opps digest email.
 //
-// This mirrors the *scheduled* New Opps email exactly — the fixed
-// 8-column black-and-white table from api/_lib/newOpps.js
-// (NEW_OPPS_EMAIL_COLUMNS + buildNewOppsTableHtml + the sendNewOppsEmail
-// body wrapper) — so a downloaded draft reads identically to what the
-// cron would send, just authored in the user's own Outlook instead of
-// going out from the Gmail account. Keep this in lock-step with
-// api/_lib/newOpps.js.
+// This mirrors the *scheduled* New Opps email exactly: api/_lib/newOpps.js
+// builds its table from NEW_OPPS_DIGEST_COLUMNS and buildDigestTableHtml
+// here, so a downloaded draft reads identically to what the cron would
+// send, just authored in the user's own Outlook instead of going out from
+// the Gmail account.
+//
+// The table is dressed the way the PE Monthly email is (the SE green header
+// band, green rows once the CDMs are aligned, grey rows when there is
+// nothing to align, sized to its contents) so the two read as a set, and
+// carries the same Tier and CDMs aligned columns.
 //
 // The .eml carries an `X-Unsent: 1` header, which Outlook (desktop)
 // honors by opening the file as an editable, unsent draft rather than a
 // received message — so the user can review, tweak, and send it themselves.
 
 import { OPP_VERTICAL_KEY, OPP_SALESPERSON_KEY } from './oppVerticalCoverage.js';
+import { accountTier, accountCdmAligned, cdmsAlignedLabel } from './keithPeDeals.js';
+import { matchesCdm } from './cdmMatch.js';
 
-// Fixed digest columns, in order. Mirrors NEW_OPPS_EMAIL_COLUMNS in
-// api/_lib/newOpps.js. The "BFO Address" column renders the literal text
+// The record keys withTierAndAlignment fills in. Not 'Tier': an opp row
+// may carry its own column by that name.
+export const NEW_OPPS_TIER_KEY = 'Account Tier';
+export const NEW_OPPS_CDMS_ALIGNED_KEY = 'CDMs Aligned';
+
+// Fixed digest columns, in order, for the downloaded draft and the
+// scheduled send alike. The "BFO Address" column renders the literal text
 // "BFO Link" hyperlinked to the row's BFO Address.
-const DIGEST_COLUMNS = [
+export const NEW_OPPS_DIGEST_COLUMNS = [
   { key: 'Account', label: 'Account' },
+  { key: NEW_OPPS_TIER_KEY, label: 'Tier', nowrap: true },
   // Filled in by withVerticalCoverage (utils/oppVerticalCoverage.js).
   { key: OPP_VERTICAL_KEY, label: 'Vertical' },
   { key: OPP_SALESPERSON_KEY, label: 'Vertical CDM' },
+  // Yes / No / N/A, read the way PE Monthly reads it (withTierAndAlignment).
+  { key: NEW_OPPS_CDMS_ALIGNED_KEY, label: 'CDMs aligned' },
   { key: 'Stage', label: 'Stage' },
   { key: 'Scope', label: 'Scope' },
   { key: 'Source', label: 'Source' },
-  { key: 'Start Date', label: 'Start Date', value: (r) => formatShortDate(r['Start Date']) },
-  { key: 'Quoted Amount', label: 'Deal Size', align: 'right' },
+  { key: 'Start Date', label: 'Start Date', nowrap: true, value: (r) => formatShortDate(r['Start Date']) },
+  { key: 'Quoted Amount', label: 'Deal Size', align: 'right', nowrap: true },
   { key: 'Next Steps', label: 'Next Steps' },
-  { key: 'BFO Address', label: 'BFO Link' },
+  { key: 'BFO Address', label: 'BFO Link', nowrap: true },
 ];
+const DIGEST_COLUMNS = NEW_OPPS_DIGEST_COLUMNS;
+
+// The SE header band (Schneider dark green, white type) and the row
+// colours keyed off CDMs aligned: green once aligned, grey when there is
+// nothing to align (N/A: not on the tier list, or the vertical is yours).
+// Shared by PE Monthly (tab and email) and the New Opps email.
+export const DIGEST_HEADER_STYLE = { background: '#009530', color: '#FFFFFF' };
+export function alignedRowStyle(row) {
+  if (row?.[NEW_OPPS_CDMS_ALIGNED_KEY] === 'Yes') return { background: '#DCFCE7', color: '#000000' };
+  if (row?.[NEW_OPPS_CDMS_ALIGNED_KEY] === 'N/A') return { background: '#F1F5F9', color: '#64748B' };
+  return null;
+}
+
+/**
+ * Copies of the opps with Tier and CDMs aligned filled in, read the way
+ * the PE Monthly list reads them: the account's tier (its company card's,
+ * or the Target Accounts list's), and the company popup's "aligned w/other
+ * CDM" box, N/A when the account is not on the tier list or you are one of
+ * the vertical's CDMs. Run after withVerticalCoverage, whose Vertical CDM
+ * names decide the second N/A.
+ */
+export function withTierAndAlignment(records, { prospects = [], targetTierFor = null, cdmName = '' } = {}) {
+  return (Array.isArray(records) ? records : []).map((r) => {
+    const tier = accountTier(r, prospects, targetTierFor);
+    const people = String(r?.[OPP_SALESPERSON_KEY] || '').split(',').map(n => n.trim()).filter(Boolean);
+    const ownVertical = !!cdmName && people.some(n => matchesCdm(n, cdmName));
+    return {
+      ...r,
+      [NEW_OPPS_TIER_KEY]: tier,
+      [NEW_OPPS_CDMS_ALIGNED_KEY]: cdmsAlignedLabel(tier, accountCdmAligned(r, prospects), { ownVertical }),
+    };
+  });
+}
 
 function escapeHtml(s) {
   return String(s ?? '')
@@ -79,13 +125,18 @@ export function withNotesSummaries(records, notes) {
 
 const cellValue = (r, c) => (c.value ? c.value(r) : (r[c.key] ?? ''));
 
-// The SE-free, black-and-white bordered digest table. Mirrors
-// buildNewOppsTableHtml in api/_lib/newOpps.js.
+// The New Opps digest table, in the PE Monthly colours. The scheduled send
+// (api/_lib/newOpps.js buildNewOppsTableHtml) builds the same one.
 export function buildNewOppsDigestTableHtml(records) {
-  return buildDigestTableHtml(records, DIGEST_COLUMNS, 'No new opportunities to report.');
+  return buildDigestTableHtml(records, DIGEST_COLUMNS, 'No new opportunities to report.', {
+    headStyle: DIGEST_HEADER_STYLE,
+    rowStyle: alignedRowStyle,
+    fit: true,
+  });
 }
 
-// The same table over any column set - { key, label, align?, value? } - so
+// The same table over any column set - { key, label, align?, value?,
+// nowrap? } (nowrap keeps a short value like "Tier 1" on one line) - so
 // another digest (PE Monthly) reads exactly like the New Opps one. A
 // 'BFO Address' column renders "BFO Link" and 'Next Steps' keeps its line
 // breaks, whichever list they appear in.
@@ -131,7 +182,7 @@ export function buildDigestTableHtml(records, columns, emptyText = 'Nothing to r
       } else {
         inner = escapeHtml(v);
       }
-      return `<td style="text-align:${thAlign(c)};padding:6px 10px;font:13px Arial,sans-serif;color:${color};${paint(st)}border:${BORDER};vertical-align:top">${inner}</td>`;
+      return `<td style="text-align:${thAlign(c)};padding:6px 10px;font:13px Arial,sans-serif;color:${color};${paint(st)}border:${BORDER};vertical-align:top${c.nowrap ? ';white-space:nowrap' : ''}">${inner}</td>`;
     }).join('');
     return `<tr>${cells}</tr>`;
   }).join('');

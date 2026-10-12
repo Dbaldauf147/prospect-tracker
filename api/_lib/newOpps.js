@@ -8,69 +8,46 @@
 // subtab of Opps 2 applies the same filter so the emailed table matches
 // what the user sees.
 
-import { withVerticalCoverage, OPP_VERTICAL_KEY, OPP_SALESPERSON_KEY } from '../../src/utils/oppVerticalCoverage.js';
+import { withVerticalCoverage, OPP_SALESPERSON_KEY } from '../../src/utils/oppVerticalCoverage.js';
+import {
+  NEW_OPPS_DIGEST_COLUMNS, NEW_OPPS_CDMS_ALIGNED_KEY, buildNewOppsDigestTableHtml, withTierAndAlignment,
+} from '../../src/utils/newOppsDigestEmail.js';
+import { buildTargetTierResolver } from '../../src/utils/targetTier.js';
+import { loadTargetAccounts } from './firestoreChunks.js';
 import { NEW_OPPS_ACTIVE_STAGES, NEW_OPPS_MAX_STAGE_AGE_DAYS, combinedActiveStageAge, qualifiesNewOpp } from '../../src/utils/newOppsFilter.js';
 import { chunk, needsSummary, oppNotesText } from '../../src/utils/notesSummary.js';
 import { MAX_ITEMS, summarizeBatch } from './summarizeNotes.js';
 
 // ---- Email column set (fixed) -------------------------------------------
-// The digest email always shows exactly these columns, in this order. The
-// "BFO Link" column renders a literal "BFO Link" hyperlink pointing at the
-// row's BFO Address (the live Salesforce URL); rows with no valid address
-// leave the cell blank.
-export const NEW_OPPS_EMAIL_COLUMNS = [
-  { key: 'Account', label: 'Account' },
-  // Filled in by withVerticalCoverage (src/utils/oppVerticalCoverage.js):
-  // the opp's vertical, else its company's, and who Coverage lists for it.
-  { key: OPP_VERTICAL_KEY, label: 'Vertical' },
-  { key: OPP_SALESPERSON_KEY, label: 'Vertical CDM' },
-  { key: 'Stage', label: 'Stage' },
-  { key: 'Scope', label: 'Scope' },
-  { key: 'Source', label: 'Source' },
-  { key: 'Start Date', label: 'Start Date', value: (r) => formatShortDate(r['Start Date']) },
-  { key: 'Quoted Amount', label: 'Deal Size', align: 'right' },
-  { key: 'Next Steps', label: 'Next Steps' },
-  { key: 'BFO Address', label: 'BFO Link' },
-];
+// The digest email always shows exactly these columns, in this order: the
+// Outlook draft's (src/utils/newOppsDigestEmail.js), so the two can't
+// drift. The "BFO Link" column renders a literal "BFO Link" hyperlink
+// pointing at the row's BFO Address (the live Salesforce URL); rows with no
+// valid address leave the cell blank.
+export const NEW_OPPS_EMAIL_COLUMNS = NEW_OPPS_DIGEST_COLUMNS;
 
 // New-opps qualification rules live in src/utils/newOppsFilter.js so the
 // Issues tab reads the same list the subtab and this email do.
 export { NEW_OPPS_ACTIVE_STAGES, NEW_OPPS_MAX_STAGE_AGE_DAYS };
 
-// Date parsing for the email's short-date cells (mirror PEPortfolioView /
-// Opps 2).
-function parseOppsDate(raw) {
-  if (!raw) return null;
-  const s = String(raw).trim();
-  const t = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T00:00:00` : s);
-  return Number.isNaN(t) ? null : new Date(t);
-}
-
-// Short date (M/D/YYYY) for display. Falls back to the raw value when it
-// isn't a parseable date so nothing gets blanked unexpectedly.
-function formatShortDate(raw) {
-  const d = parseOppsDate(raw);
-  if (!d) return raw == null ? '' : String(raw);
-  return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
-}
-
-const cellValue = (r, c) => (c.value ? c.value(r) : (r[c.key] ?? ''));
-
 // ---- Load + filter the user's new opps from Firestore -------------------
 // Reads `opps2Data/{uid}` (reassembling the chunked JSON when present) and
 // keeps only the opps that qualify for the New Opps report.
-// ---- Vertical + Salesperson ------------------------------------------------
-// The two columns the page fills from the Coverage tab and the company
-// cards. Rows the page posted already carry them; rows read here from the
-// cloud are filled the same way, from the owner's saved settings and their
-// prospects. A failed read leaves the cells blank rather than failing the
-// send.
+// ---- Vertical, Vertical CDM, Tier, CDMs aligned -----------------------------
+// The columns the page fills from the Coverage tab, the company cards and
+// the Target Accounts list. Rows the page posted already carry them; rows
+// read here from the cloud are filled the same way, from the owner's saved
+// settings, their prospects and their Target Accounts list. A failed read
+// leaves the cells blank (or N/A) rather than failing the send.
 const ADMIN_EMAIL = 'baldaufdan@gmail.com';
+// The company fields the columns read: vertical, tier, the aligned box.
+const PROSPECT_FIELDS = ['company', 'vertical', 'tier', 'tierSource', 'cdmAligned'];
 export async function addVerticalCoverage(db, uid, email, records) {
   const list = Array.isArray(records) ? records : [];
-  if (list.length === 0 || list.every((r) => OPP_SALESPERSON_KEY in (r || {}))) return list;
+  if (list.length === 0 || list.every((r) => OPP_SALESPERSON_KEY in (r || {}) && NEW_OPPS_CDMS_ALIGNED_KEY in (r || {}))) return list;
   let settings = null;
   let prospects = [];
+  let targetAccountsData = null;
   try {
     const snap = await db.collection('userSettings').doc(uid).get();
     settings = snap.exists ? (snap.data() || null) : null;
@@ -79,10 +56,19 @@ export async function addVerticalCoverage(db, uid, email, records) {
     const col = email === ADMIN_EMAIL
       ? db.collection('prospects')
       : db.collection('users').doc(uid).collection('prospects');
-    const snap = await col.select('company', 'vertical').get();
+    const snap = await col.select(...PROSPECT_FIELDS).get();
     prospects = snap.docs.map((d) => d.data() || {});
   } catch { /* opps' own verticals still apply */ }
-  return withVerticalCoverage(list, { settings, prospects });
+  try {
+    targetAccountsData = await loadTargetAccounts(db, uid);
+  } catch { /* Tier falls back to the company card */ }
+  // Mirrors App's cdmName, which scopes the Target Accounts tier lookup and
+  // decides when the vertical is yours (CDMs aligned reads N/A).
+  const cdmName = settings?.cdmName || (email === ADMIN_EMAIL ? 'Dan Baldauf' : '');
+  const targetTierFor = targetAccountsData
+    ? buildTargetTierResolver({ targetAccountsData, cdmName, settings, includeAllReps: true })
+    : null;
+  return withTierAndAlignment(withVerticalCoverage(list, { settings, prospects }), { prospects, targetTierFor, cdmName });
 }
 
 export async function loadNewOpps(db, uid) {
@@ -130,73 +116,12 @@ export function filterNewOpps(records) {
 }
 
 // ---- Build the inline HTML table (fixed email column set) ----------------
-// Renders the records as a plain black-and-white bordered HTML table so the
-// digest reads directly in the email body — no attachment to open. Always
-// uses NEW_OPPS_EMAIL_COLUMNS, regardless of what older saved schedules
-// stored, so every send shows the same agreed set.
+// Renders the records as a bordered HTML table in the PE Monthly colours so
+// the digest reads directly in the email body, no attachment to open. The
+// Outlook draft's own builder, so every send shows the same agreed set
+// regardless of what older saved schedules stored.
 export function buildNewOppsTableHtml(records) {
-  const columns = NEW_OPPS_EMAIL_COLUMNS;
-
-  if (!Array.isArray(records) || records.length === 0) {
-    return '<p style="color:#000000;font-size:13px;margin:0">No new opportunities to report.</p>';
-  }
-
-  // Plain black-and-white bordered table — no fills, no accent colour.
-  const BORDER = '1px solid #000000';
-  const thAlign = (c) => (c.align === 'right' ? 'right' : 'left');
-  const head = columns.map((c) =>
-    `<th style="text-align:${thAlign(c)};padding:6px 10px;font:700 13px Arial,sans-serif;color:#000000;border:${BORDER};white-space:nowrap">${escapeHtml(c.label)}</th>`
-  ).join('');
-
-  // The row's BFO Address, but only when it actually looks like a web URL —
-  // blanks and sentinel values ('-', '#N/A') never become hrefs.
-  const bfoUrl = (r) => {
-    const u = String(r['BFO Address'] || '').trim();
-    return /^https?:\/\//i.test(u) ? u : '';
-  };
-  const link = (href, text) =>
-    `<a href="${escapeHtml(href)}" style="color:#000000;text-decoration:underline">${escapeHtml(text)}</a>`;
-
-  // Steps inside a single Next Steps box are stored with U+2028 line
-  // separators (and "\n"); render both as <br> so a multi-line note reads
-  // as stacked lines instead of one run-on string.
-  const multiline = (v) => escapeHtml(v).replace(/\u2028|\r?\n/g, '<br>');
-  // The summary bullets (see addNotesSummaries) when the opp has them, so
-  // the email reads like the Notes column on the subtab; else the notes.
-  const notesHtml = (r, v) => {
-    const bullets = Array.isArray(r._notesSummary) ? r._notesSummary.filter(Boolean) : [];
-    if (bullets.length === 1) return escapeHtml(bullets[0]);
-    if (bullets.length > 1) {
-      return `<ul style="margin:0;padding-left:18px">${bullets.map((b) => `<li style="margin:0">${escapeHtml(b)}</li>`).join('')}</ul>`;
-    }
-    return multiline(v);
-  };
-
-  const rows = records.map((r) => {
-    const cells = columns.map((c) => {
-      const v = cellValue(r, c);
-      let inner;
-      if (c.key === 'BFO Address') {
-        // Literal "BFO Link" text hyperlinked to the opp's BFO Address;
-        // blank when there's no valid web address.
-        const url = bfoUrl(r);
-        inner = url ? link(url, 'BFO Link') : '';
-      } else if (c.key === 'Next Steps') {
-        inner = notesHtml(r, v);
-      } else {
-        inner = escapeHtml(v);
-      }
-      return `<td style="text-align:${thAlign(c)};padding:6px 10px;font:13px Arial,sans-serif;color:#000000;border:${BORDER};vertical-align:top">${inner}</td>`;
-    }).join('');
-    return `<tr>${cells}</tr>`;
-  }).join('');
-
-  return `
-    <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;margin:4px 0 8px;border:${BORDER}">
-      <thead><tr>${head}</tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
+  return buildNewOppsDigestTableHtml(records);
 }
 
 // ---- Notes summaries -------------------------------------------------------
