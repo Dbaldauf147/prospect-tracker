@@ -246,11 +246,18 @@ export function tierMismatch(cardTier, reading) {
 // Target Accounts page (settings.targetVerticalColumn).
 const VERTICAL_COLUMN_KEYWORDS = ['vertical', 'industry', 'sector', 'segment'];
 
-/** A Target Accounts row's vertical: the picked column, else the first header that reads like one. */
+/**
+ * A Target Accounts row's vertical: the picked column, else the first
+ * header that reads like one. The picked column is one header across the
+ * whole workbook, so a sheet that doesn't have it (a Tier 3 tab headed
+ * "Industry" beside a Tier 1/2 tab headed "Vertical") falls back to the
+ * guess rather than reading blank. Every record carries every header of
+ * its sheet (blank cells as ''), so a missing key means a missing column.
+ */
 export function resolveTargetAccountVertical(record, verticalColumn) {
   if (!record) return '';
   const col = String(verticalColumn || '').trim();
-  if (col) return Object.prototype.hasOwnProperty.call(record, col) ? String(record[col] ?? '').trim() : '';
+  if (col && Object.prototype.hasOwnProperty.call(record, col)) return String(record[col] ?? '').trim();
   // A header that IS one of the words ("Vertical") before one that only
   // contains it ("Sub Vertical").
   const keys = Object.keys(record);
@@ -289,15 +296,7 @@ export function targetVerticalFor({ targetAccountsData, settings, prospectId, op
   const data = targetAccountsData;
   for (const sheetName of data?.sheetNames || []) {
     for (const r of data?.sheets?.[sheetName]?.records || []) {
-      let company = '';
-      for (const key of Object.keys(r)) {
-        const lower = key.toLowerCase();
-        if (['account', 'company', 'account name', 'client', 'name'].some(kw => lower.includes(kw))) {
-          company = String(r[key] || '').trim();
-          if (company) break;
-        }
-      }
-      const k = company.toLowerCase();
+      const k = targetRowCompany(r).toLowerCase();
       if (!wanted.has(k) || found.has(k)) continue;
       const v = resolveTargetAccountVertical(r, col);
       if (v) found.set(k, v);
