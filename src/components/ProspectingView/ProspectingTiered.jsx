@@ -6,6 +6,7 @@
 // file loads the HubSpot contacts and outreach index and lays them out.
 
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { STATUSES, STATUS_COLORS, TIERS } from '../../data/enums.js';
 import { DataTable } from '../common/DataTable';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
@@ -335,6 +336,29 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
     [shown, activity, now],
   );
 
+  // A tile opens a list of that tier's accounts with nothing in the window:
+  // the ones the percentage is short by. Never-touched accounts first, then
+  // the longest since.
+  const [unreachedTier, setUnreachedTier] = useState(null);
+  const unreached = useMemo(() => {
+    if (!unreachedTier || !activity) return [];
+    return shown
+      .filter(p => String(p.tier || '').trim() === unreachedTier)
+      .map((p) => {
+        const a = activity.get(p.id || p.company) || null;
+        return { p, a, days: a ? daysSince(a.tsMs, now) : null };
+      })
+      .filter(r => r.days == null || r.days > ACTIVITY_SUMMARY_DAYS)
+      .sort((x, y) => (y.days ?? Number.MAX_SAFE_INTEGER) - (x.days ?? Number.MAX_SAFE_INTEGER)
+        || String(x.p.company).localeCompare(String(y.p.company)));
+  }, [unreachedTier, shown, activity, now]);
+  useEffect(() => {
+    if (!unreachedTier) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setUnreachedTier(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [unreachedTier]);
+
   return (
     <div style={{ padding: '0.25rem 1.25rem 1.25rem', maxWidth }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.6rem' }}>
@@ -395,10 +419,13 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
             const tint = TIER_TINTS[tier] || {};
             const tone = pct == null ? '#64748B' : pct >= 75 ? '#166534' : pct >= 50 ? '#92400E' : '#991B1B';
             return (
-              <div
+              <button
+                type="button"
                 key={tier}
-                title={total == null ? undefined : `${active} of ${total} ${tier} account${total === 1 ? '' : 's'} had a HubSpot email, call or contact in the last ${ACTIVITY_SUMMARY_DAYS} days.`}
-                style={{ flex: '1 1 180px', maxWidth: 260, border: '1px solid #E2E8F0', borderLeft: `4px solid ${tint.ink || '#94A3B8'}`, borderRadius: 8, padding: '0.45rem 0.75rem', background: '#fff' }}
+                disabled={total == null}
+                onClick={() => setUnreachedTier(tier)}
+                title={total == null ? undefined : `${active} of ${total} ${tier} account${total === 1 ? '' : 's'} had a HubSpot email, call or contact in the last ${ACTIVITY_SUMMARY_DAYS} days. Click to see the ${total - active} that haven't.`}
+                style={{ flex: '1 1 180px', maxWidth: 260, border: '1px solid #E2E8F0', borderLeft: `4px solid ${tint.ink || '#94A3B8'}`, borderRadius: 8, padding: '0.45rem 0.75rem', background: '#fff', textAlign: 'left', font: 'inherit', cursor: total == null ? 'default' : 'pointer' }}
               >
                 <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
                   {tier}: active in {ACTIVITY_SUMMARY_DAYS} days
@@ -409,12 +436,89 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 2 }}>
                     <span style={{ fontSize: '1.3rem', fontWeight: 700, color: tone, fontVariantNumeric: 'tabular-nums' }}>{pct == null ? '-' : `${pct}%`}</span>
                     <span style={{ fontSize: '0.74rem', color: '#64748B', fontVariantNumeric: 'tabular-nums' }}>{active} of {total}</span>
+                    {total - active > 0 && (
+                      <span style={{ marginLeft: 'auto', fontSize: '0.68rem', color: '#0A66C2', whiteSpace: 'nowrap' }}>{total - active} not reached ›</span>
+                    )}
                   </div>
                 )}
-              </div>
+              </button>
             );
           })}
         </div>
+      )}
+      {unreachedTier && createPortal(
+        <div
+          onClick={() => setUnreachedTier(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${unreachedTier} accounts not reached in ${ACTIVITY_SUMMARY_DAYS} days`}
+            onClick={e => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 50px rgba(15,23,42,0.25)', width: 'min(640px, 100%)', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '0.85rem 1rem 0.6rem', borderBottom: '1px solid #E2E8F0' }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>{unreachedTier}: not reached in {ACTIVITY_SUMMARY_DAYS} days</div>
+                <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
+                  {unreached.length} {unreached.length === 1 ? 'account has' : 'accounts have'} had no HubSpot email, call or contact in the last {ACTIVITY_SUMMARY_DAYS} days. Accounts with a hidden status are left out.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUnreachedTier(null)}
+                aria-label="Close"
+                style={{ border: 'none', background: 'none', fontSize: '1.2rem', lineHeight: 1, color: '#94A3B8', cursor: 'pointer', padding: 0 }}
+              >&times;</button>
+            </div>
+            <div style={{ overflowY: 'auto', padding: '0.25rem 0' }}>
+              {unreached.length === 0 ? (
+                <div style={{ padding: '1rem', fontSize: '0.78rem', color: '#64748B' }}>Every {unreachedTier} account was reached in the last {ACTIVITY_SUMMARY_DAYS} days.</div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem' }}>
+                  <thead>
+                    <tr style={{ color: '#64748B', fontSize: '0.66rem', textTransform: 'uppercase', letterSpacing: '0.03em', textAlign: 'left' }}>
+                      <th style={{ padding: '0.35rem 1rem', fontWeight: 700 }}>Company</th>
+                      <th style={{ padding: '0.35rem 0.5rem', fontWeight: 700 }}>Status</th>
+                      <th style={{ padding: '0.35rem 0.5rem', fontWeight: 700 }}>Last Activity</th>
+                      <th style={{ padding: '0.35rem 1rem 0.35rem 0.5rem', fontWeight: 700, textAlign: 'right' }}>Days Since</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {unreached.map(({ p, a, days }) => {
+                      const c = ageColors(days);
+                      return (
+                        <tr key={p.id || p.company} style={{ borderTop: '1px solid #F1F5F9' }}>
+                          <td style={{ padding: '0.35rem 1rem' }}>
+                            {onSelectProspect ? (
+                              <button
+                                type="button"
+                                onClick={() => { setUnreachedTier(null); onSelectProspect(p); }}
+                                title={`Open ${p.company}`}
+                                style={{ border: 'none', background: 'none', padding: 0, font: 'inherit', fontWeight: 600, color: '#0A66C2', cursor: 'pointer', textAlign: 'left' }}
+                              >{p.company}</button>
+                            ) : <span style={{ fontWeight: 600 }}>{p.company}</span>}
+                          </td>
+                          <td style={{ padding: '0.35rem 0.5rem', color: '#475569' }}>{statusOf(p) || '-'}</td>
+                          <td style={{ padding: '0.35rem 0.5rem', color: a ? '#334155' : '#CBD5E1', fontVariantNumeric: 'tabular-nums' }}>
+                            {a ? formatDateDisplay(toLocalDate(a.tsMs)) : 'None'}
+                          </td>
+                          <td style={{ padding: '0.35rem 1rem 0.35rem 0.5rem', textAlign: 'right' }}>
+                            <span style={{ ...c, fontSize: '0.7rem', fontWeight: 700, padding: '1px 8px', borderRadius: 999, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                              {days == null ? 'Never' : `${days}d`}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
       {accounts.length === 0 ? (
         <div style={{ padding: '1rem', border: '1px dashed #CBD5E1', borderRadius: 8, fontSize: '0.75rem', color: '#64748B' }}>
