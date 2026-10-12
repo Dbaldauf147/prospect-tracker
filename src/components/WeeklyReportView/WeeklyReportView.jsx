@@ -54,6 +54,7 @@ import {
 import { COVERAGE_T1, COVERAGE_T2, COVERAGE_T3 } from '../../utils/progressCoverage';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
 import { excludeUntrackedFromWeeks } from '../../utils/progressUntracked';
+import { withOnHoldLeftOut } from '../../utils/reportingStatus';
 
 const ACTIVITY_CACHE_KEY = 'hubspot-activity-cache';
 const PIPELINE_STORE = 'pipeline-dashboard';
@@ -230,7 +231,7 @@ function ChangeList({ title, items, suffix }) {
   );
 }
 
-export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
+export function WeeklyReportView({ prospects = [], settings, updateSettings, cdmName = '' }) {
   const { user } = useAuth();
   const senderEmail = String(settings?.workEmail || '').toLowerCase().trim();
 
@@ -646,9 +647,10 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   // exactly as the Progress tab does before it plots, so the two charts
   // and the accounts behind each point agree with it.
   const { clientUntrackedMap } = useClientFlagMaps();
+  // On Hold companies (a substatus set) are left out the same way.
   const trackedProgressWeeks = useMemo(
-    () => excludeUntrackedFromWeeks(progressWeeks, clientUntrackedMap).weeks,
-    [progressWeeks, clientUntrackedMap],
+    () => excludeUntrackedFromWeeks(progressWeeks, withOnHoldLeftOut(clientUntrackedMap, prospects)).weeks,
+    [progressWeeks, clientUntrackedMap, prospects],
   );
   const coverageSeries = useMemo(() => withCoverageImages(coverageByWeek({
     progressWeeks: trackedProgressWeeks, refMs: bounds.start, months: COVERAGE_MONTHS,

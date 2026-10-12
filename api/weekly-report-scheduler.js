@@ -71,6 +71,7 @@ export default async function handler(req, res) {
           now,
           timeZone: s.timeZone || '',
           scope: s.frequency === 'daily' ? 'day' : 'week',
+          ownerEmail: s.ownerEmail || '',
         });
         buildErrors = built.errors || [];
         if (built.usable) {

@@ -14,6 +14,7 @@
 //   Weekly activity log   …/weekly-activity-log
 //   YOY pins              …/yoy-chart-overrides
 //   Don't Track clients   …/clients-untracked-map
+//   On Hold companies     the owner's prospects (company, substatus)
 //   Progress weeks        progressHistory/{uid}
 //   Coverage ratio log    coverageRatioHistory/{uid}
 //   Targets, work email   userSettings/{uid}
@@ -47,6 +48,10 @@ import {
 } from '../../src/utils/weeklyReportTrends.js';
 import { withCoverageImages, withCoverageRatioImage } from '../../src/utils/coverageChartImage.js';
 import { excludeUntrackedFromWeeks } from '../../src/utils/progressUntracked.js';
+import { withOnHoldLeftOut } from '../../src/utils/reportingStatus.js';
+
+// Whose prospects live in the shared collection (as api/_lib/newOpps.js).
+const ADMIN_EMAIL = 'baldaufdan@gmail.com';
 import { funnelChartImage } from '../../src/utils/funnelChartImage.js';
 import {
   buildFunnelStages, closeRateTrendByStage, closeRatesByStage, emailCloseRateTrend,
@@ -123,7 +128,7 @@ export function trendHistoryStart(periodStart) {
  * than thrown: a missing pipeline dashboard should cost the KPI cards, not
  * the whole email. `errors` is what the caller logs.
  */
-export async function loadReportSources(db, uid, { token = '', start, end, historyStart, fetchOpts } = {}) {
+export async function loadReportSources(db, uid, { token = '', start, end, historyStart, fetchOpts, ownerEmail = '' } = {}) {
   const errors = [];
   const settle = async (name, fn, fallback) => {
     try { return await fn(); } catch (err) {
@@ -132,7 +137,7 @@ export async function loadReportSources(db, uid, { token = '', start, end, histo
     }
   };
 
-  const [opps2, pipeline, bfo, goals, activityLog, yoyOverrides, progress, coverageRatioLog, settings, activityCache, clientUntracked] =
+  const [opps2, pipeline, bfo, goals, activityLog, yoyOverrides, progress, coverageRatioLog, settings, activityCache, clientUntracked, prospects] =
     await Promise.all([
       settle('opps2', () => loadOpps2(db, uid), null),
       settle('pipeline', () => loadMirror(db, uid, MIRROR.pipeline), null),
@@ -170,6 +175,16 @@ export async function loadReportSources(db, uid, { token = '', start, end, histo
       // are fetched for the reported window only.
       settle('hubspotActivity', () => fetchActivityWindow(token, start, end, { ...fetchOpts, emailsFrom: historyStart }), null),
       settle('clientUntracked', () => loadMirror(db, uid, MIRROR.clientUntracked, {}), {}),
+      // Only the two fields that say whether a company is On Hold
+      // (utils/reportingStatus). Where the app keeps them: the admin's in
+      // the shared collection, everyone else's under their own user.
+      settle('prospects', async () => {
+        const col = String(ownerEmail || '').toLowerCase() === ADMIN_EMAIL
+          ? db.collection('prospects')
+          : db.collection('users').doc(uid).collection('prospects');
+        const snap = await col.select('company', 'substatus').get();
+        return snap.docs.map(d => d.data() || {});
+      }, []),
     ]);
 
   return {
@@ -184,6 +199,7 @@ export async function loadReportSources(db, uid, { token = '', start, end, histo
     yoyOverrides: (yoyOverrides && typeof yoyOverrides === 'object') ? yoyOverrides : {},
     progressWeeks: progress,
     clientUntrackedMap: (clientUntracked && typeof clientUntracked === 'object') ? clientUntracked : {},
+    prospects: Array.isArray(prospects) ? prospects : [],
     coverageRatioLog: coverageRatioLog || {},
     settings: settings || {},
     activityCache,
@@ -243,7 +259,8 @@ export function buildReport(sources, period, { now = null } = {}) {
   // Read with the "Don't Track" clients taken out, as the Progress tab
   // and the Weekly Report tab both plot it.
   const coverage = withCoverageImages(coverageByWeek({
-    progressWeeks: excludeUntrackedFromWeeks(s.progressWeeks, s.clientUntrackedMap).weeks,
+    // On Hold companies (a substatus set) are left out the same way.
+    progressWeeks: excludeUntrackedFromWeeks(s.progressWeeks, withOnHoldLeftOut(s.clientUntrackedMap, s.prospects)).weeks,
     refMs: start,
     months: COVERAGE_MONTHS,
   }));
@@ -335,6 +352,7 @@ export function payloadHasFigures(payload) {
  */
 export async function buildWeeklyReport(db, uid, {
   now = Date.now(), scope = 'week', timeZone = '', token = process.env.HUBSPOT_ACCESS_TOKEN || '', fetchOpts,
+  ownerEmail = '',
 } = {}) {
   const period = completedPeriodBounds(now, { scope, timeZone });
   const sources = await loadReportSources(db, uid, {
@@ -345,6 +363,7 @@ export async function buildWeeklyReport(db, uid, {
     // series, not just the reported week.
     historyStart: trendHistoryStart(period.start),
     fetchOpts,
+    ownerEmail,
   });
   const { payload, coverageFill } = buildReport(sources, period, { now });
   const errors = [...sources.errors];

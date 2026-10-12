@@ -62,10 +62,23 @@ function fakeDb(seed) {
           .map(k => ({ id: k.slice(prefix.length), data: () => docs[k] }));
         return { forEach: (cb) => entries.forEach(cb) };
       },
+      // A field-limited read (the prospects' company + substatus).
+      select: () => ({ get: async () => listAt(`${path}/${sub}/`) }),
       doc: (id) => makeRef(`${path}/${sub}/${id}`),
     }),
   });
-  return { docs, collection: (name) => ({ doc: (id) => makeRef(`${name}/${id}`) }) };
+  const listAt = (prefix) => ({
+    docs: Object.keys(docs)
+      .filter(k => k.startsWith(prefix) && !k.slice(prefix.length).includes('/'))
+      .map(k => ({ id: k.slice(prefix.length), data: () => docs[k] })),
+  });
+  return {
+    docs,
+    collection: (name) => ({
+      doc: (id) => makeRef(`${name}/${id}`),
+      select: () => ({ get: async () => listAt(`${name}/`) }),
+    }),
+  };
 }
 
 // ---- fixtures -----------------------------------------------------------
@@ -326,6 +339,30 @@ function fakeFetch(emails) {
     contacts.points.map(p => p.t1).join(','), '67,67');
   check('a tier with nobody ticked reads as saved', contacts.points.map(p => p.t2).join(','), '50,50');
   check('and the ticks are read without an error', built.errors.some(e => e.startsWith('clientUntracked')), false);
+}
+
+// ---- account coverage, less the On Hold companies -------------------------
+// A company with a substatus reads as On Hold and is left out the same way,
+// read from the owner's own prospects.
+{
+  const week = (key) => ({
+    week: key,
+    t1Total: 4, t1WithContacts: 2, t1ContactPct: 50,
+    details: { t1WithContacts: ['Acme', 'Beta'], t1NoContacts: ['Gamma', 'Delta'] },
+  });
+  const seeded = {
+    ...docs,
+    'progressHistory/u1': { weeks: [week('2026-08-31'), week('2026-09-07')] },
+    'users/u1/prospects/p1': { company: 'Acme', substatus: 'Budget freeze' },
+    'users/u1/prospects/p2': { company: 'Gamma', substatus: '' },
+  };
+  const built = await buildWeeklyReport(fakeDb(seeded), UID, {
+    now: NOW, token: 'tok', fetchOpts: { fetchImpl: fakeFetch(hubspotEmails) },
+  });
+  const contacts = built.payload.coverage.charts.find(c => c.id === 'contactPct');
+  check('an On Hold company leaves numerator and denominator: 1 of 3, not 2 of 4',
+    contacts.points.map(p => p.t1).join(','), '33,33');
+  check('and the prospects are read without an error', built.errors.some(e => e.startsWith('prospects')), false);
 }
 
 // ---- the coverage ratio by week -----------------------------------------

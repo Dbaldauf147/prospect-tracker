@@ -15,7 +15,7 @@ import { readWorkKey, writeWorkKey } from '../../utils/mirroredWorkKeys';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
 import { excludeUntrackedFromWeeks, untrackedNoteFor } from '../../utils/progressUntracked';
 import { COVERAGE_CHARTS, COVERAGE_T1, COVERAGE_T2, COVERAGE_T3 } from '../../utils/progressCoverage';
-import { reportingStatus, ON_HOLD_STATUS } from '../../utils/reportingStatus';
+import { reportingStatus, ON_HOLD_STATUS, onHoldNameMap } from '../../utils/reportingStatus';
 import { apiFetch } from '../../utils/apiFetch';
 import { weeksFromBackupValue, missingWeeksFromBackups, mergeRecoveredWeeks } from '../../utils/progressHistoryRecovery';
 
@@ -1349,11 +1349,14 @@ export function ProgressView({ prospects, settings, cdmName }) {
   // over every week rather than only today's, so ticking a client moves
   // the whole line instead of putting a step in it. Nothing is rewritten
   // in Firestore, so unticking puts the client back.
+  // On Hold companies (a substatus set) are left out the same way, so the
+  // charts and the Weekly Report's copies of them ignore them too.
+  const onHoldMap = useMemo(() => onHoldNameMap(prospects), [prospects]);
   const untracked = useMemo(
-    () => excludeUntrackedFromWeeks(recordedData, clientUntrackedMap),
-    [recordedData, clientUntrackedMap],
+    () => excludeUntrackedFromWeeks(recordedData, { ...(clientUntrackedMap || {}), ...onHoldMap }),
+    [recordedData, clientUntrackedMap, onHoldMap],
   );
-  const untrackedNote = untrackedNoteFor(untracked);
+  const untrackedNote = untrackedNoteFor(untracked, { onHoldMap });
 
   const chartData = useMemo(() => decorateWeeks(untracked.weeks), [untracked]);
   const historyRows = useMemo(() => decorateWeeks(recordedData), [recordedData]);
@@ -1650,7 +1653,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
                   untracked.names.length
                     ? `Left out: ${untracked.names.join(', ')}.`
                     : '',
-                  'Ticked on the Clients tab. Every week that recorded them is re-answered without them, so the trend stays comparable, and nothing is rewritten: unticking a client puts it back on every point.',
+                  'Ticked "Don\'t Track" on the Clients tab, or On Hold (a substatus set on the company). Every week that recorded them is re-answered without them, so the trend stays comparable, and nothing is rewritten: unticking a client, or clearing a substatus, puts it back on every point.',
                   'Two numbers keep what they were saved with, because the week stored no account list behind them: the Tier 3 total and the No-Opps Activity chart.',
                 ].filter(Boolean).join('\n\n')}
               >
