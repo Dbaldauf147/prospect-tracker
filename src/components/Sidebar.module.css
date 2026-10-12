@@ -1,7 +1,7 @@
 .sidebar {
   position: fixed;
   left: 0;
-  top: 0;
+  top: var(--top-banner-h, 0px);
   bottom: 0;
   width: var(--sidebar-width);
   background: var(--color-sidebar);
