@@ -12,8 +12,10 @@
 // Pure apart from the download, so the rows and columns can be asserted
 // without a browser: scripts/peMonthlyEmail.test.mjs.
 
-import { buildDigestTableHtml, buildDigestEmailHtml, downloadEml } from './newOppsDigestEmail.js';
-import { buildPeOverlapDeals } from './keithPeDeals.js';
+import {
+  buildDigestTableHtml, buildDigestEmailHtml, downloadEml, DIGEST_HEADER_STYLE, alignedRowStyle,
+} from './newOppsDigestEmail.js';
+import { buildPeOverlapDeals, tierRank, cdmsAlignedLabel } from './keithPeDeals.js';
 import { buildTargetTierResolver, buildTargetCdmResolver } from './targetTier.js';
 import { coverageFromSettings, salespeopleForVertical } from './salesCoverage.js';
 import { parseMoney } from './oppsMetrics.js';
@@ -46,37 +48,21 @@ export const PE_MONTHLY_COLUMNS = [
 const PE_MONTHLY_EMAIL_HIDDEN = new Set(['CDM', 'Scope', 'Next Steps']);
 export const PE_MONTHLY_EMAIL_COLUMNS = PE_MONTHLY_COLUMNS.filter(c => !PE_MONTHLY_EMAIL_HIDDEN.has(c.key));
 
-/**
- * The CDMs aligned cell: 'N/A' for an account not on the tier list (blank,
- * "-" or "Not on tier list", the ones that sort last) or when you are the
- * Vertical CDM (nobody else to align with), else 'Yes' when the company
- * popup's "aligned w/other CDM" box is ticked and 'No' when not.
- */
-export function peMonthlyCdmsAligned(tier, aligned, { ownVertical = false } = {}) {
-  if (!Number.isFinite(peMonthlyTierRank(tier))) return 'N/A';
-  if (ownVertical) return 'N/A';
-  return aligned === true ? 'Yes' : 'No';
-}
+// The CDMs aligned cell (keithPeDeals.cdmsAlignedLabel): shared with the
+// New Opps email, which carries the same column.
+export const peMonthlyCdmsAligned = cdmsAlignedLabel;
 
 // The PE Monthly colours, shared by the tab and the email so the draft
 // looks like the table it came from: the SE header band (Schneider dark
 // green, white type), green rows once the CDMs are aligned, grey rows when
 // there is nothing to align (CDMs aligned reads N/A: not on the tier list,
-// or the vertical is yours).
-export const PE_MONTHLY_HEADER_STYLE = { background: '#009530', color: '#FFFFFF' };
-export function peMonthlyRowStyle(row) {
-  if (row?.['CDMs Aligned'] === 'Yes') return { background: '#DCFCE7', color: '#000000' };
-  if (row?.['CDMs Aligned'] === 'N/A') return { background: '#F1F5F9', color: '#64748B' };
-  return null;
-}
+// or the vertical is yours). The New Opps email wears the same ones
+// (newOppsDigestEmail.js, where they live).
+export const PE_MONTHLY_HEADER_STYLE = DIGEST_HEADER_STYLE;
+export const peMonthlyRowStyle = alignedRowStyle;
 
-// Where a tier sorts: Tier 1 first, then Tier 2, Tier 3 and any higher
-// number, then everything not on the tier list (blank, "-", "Not on tier
-// list") last.
-export function peMonthlyTierRank(tier) {
-  const m = String(tier || '').trim().match(/^(?:tier\s*)?(\d+)$/i);
-  return m ? Number(m[1]) : Number.POSITIVE_INFINITY;
-}
+// Where a tier sorts (keithPeDeals.tierRank).
+export const peMonthlyTierRank = tierRank;
 
 /**
  * One flat row per deal, keyed by PE_MONTHLY_COLUMNS, for the table on the

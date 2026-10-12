@@ -134,6 +134,32 @@ export function accountTier(row, prospects = [], targetTierFor = null) {
   return tierPreferringTargetsList({ tier, targetTier, tierSource: company?.tierSource }) || targetTier || '';
 }
 
+// Where a tier sorts: Tier 1 first, then Tier 2, Tier 3 and any higher
+// number, then everything not on the tier list (blank, "-", "Not on tier
+// list") last.
+export function tierRank(tier) {
+  const m = String(tier || '').trim().match(/^(?:tier\s*)?(\d+)$/i);
+  return m ? Number(m[1]) : Number.POSITIVE_INFINITY;
+}
+
+/**
+ * The CDMs aligned cell: 'N/A' for an account not on the tier list (blank,
+ * "-" or "Not on tier list", the ones that sort last) or when you are the
+ * Vertical CDM (nobody else to align with), else 'Yes' when the company
+ * popup's "aligned w/other CDM" box is ticked and 'No' when not.
+ */
+export function cdmsAlignedLabel(tier, aligned, { ownVertical = false } = {}) {
+  if (!Number.isFinite(tierRank(tier))) return 'N/A';
+  if (ownVertical) return 'N/A';
+  return aligned === true ? 'Yes' : 'No';
+}
+
+/** Whether the company popup's "aligned w/other CDM" box is ticked for the account behind an opp. */
+export function accountCdmAligned(row, prospects = []) {
+  const company = findCompany(text(row?.['Account']), Array.isArray(prospects) ? prospects : []);
+  return company?.cdmAligned === true;
+}
+
 /** The CDM the Target Accounts list names for the account behind an opp, or ''. */
 export function accountTargetCdm(row, prospects = [], targetCdmFor = null) {
   if (typeof targetCdmFor !== 'function') return '';

@@ -45,7 +45,7 @@ import {
   clientRequiredCoaNotRequested, EMPTY_CLIENT_COA_INDEX,
 } from '../../utils/clientCoaFlags';
 import { KeithAgenda } from './KeithAgenda';
-import { buildPeOverlapDeals, oppStageNumber, accountTier } from '../../utils/keithPeDeals';
+import { buildPeOverlapDeals, oppStageNumber } from '../../utils/keithPeDeals';
 import { buildTargetTierResolver, buildTargetCdmResolver } from '../../utils/targetTier';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { getEffectiveServiceMetadata, formatRolloutWeeks } from '../../data/serviceCatalog';
@@ -145,7 +145,10 @@ import {
   groupStageDaysByStage,
   StageDaysBoard,
 } from './daysInStage';
-import { downloadNewOppsOutlookDraft, resolveNewOppsDraftTemplate, withNotesSummaries } from '../../utils/newOppsDigestEmail';
+import {
+  downloadNewOppsOutlookDraft, resolveNewOppsDraftTemplate, withNotesSummaries,
+  withTierAndAlignment, NEW_OPPS_TIER_KEY, NEW_OPPS_CDMS_ALIGNED_KEY,
+} from '../../utils/newOppsDigestEmail';
 import { NewOppsDraftEmailModal } from './NewOppsDraftEmailModal';
 import {
   peMonthlyRows, peMonthlyTierRank, PE_MONTHLY_COLUMNS, PE_MONTHLY_DRAFT_DEFAULTS, resolvePeMonthlyDraftTemplate,
@@ -552,10 +555,10 @@ const NEW_OPPS_ACTIVE_STAGES_SET = new Set(NEW_OPPS_ACTIVE_STAGES);
 // The Vertical and Vertical CDM columns are worked out per row (see
 // utils/oppVerticalCoverage): the opp's vertical, else its company's, and
 // whoever Opps > Coverage lists for it. Tier is the account's, read the
-// way PE Monthly reads it (keithPeDeals.accountTier).
-const NEW_OPPS_TIER_KEY = 'Account Tier';
+// way PE Monthly reads it, and so is CDMs aligned
+// (newOppsDigestEmail.withTierAndAlignment).
 const NEW_OPPS_REPORT_COLUMNS = [
-  'Account', NEW_OPPS_TIER_KEY, OPP_VERTICAL_KEY, OPP_SALESPERSON_KEY, 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
+  'Account', NEW_OPPS_TIER_KEY, OPP_VERTICAL_KEY, OPP_SALESPERSON_KEY, NEW_OPPS_CDMS_ALIGNED_KEY, 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
   'Sales Partner', 'Status', 'Quoted Amount', 'Sites', 'Next Steps',
   'BFO Link', 'BFO Address',
 ];
@@ -17055,10 +17058,10 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         a.age - b.age || String(a.r['Account'] || '').localeCompare(String(b.r['Account'] || '')))
       .map(({ r }) => r);
     // Copies carrying the Vertical and Vertical CDM columns, which the
-    // table, the Excel export and both emails all read, plus the Tier.
-    return withVerticalCoverage(list, { settings, prospects })
-      .map(r => ({ ...r, [NEW_OPPS_TIER_KEY]: accountTier(r, prospects, targetTierFor) }));
-  }, [records, settings?.salesCoverage, prospects, targetTierFor]); // eslint-disable-line react-hooks/exhaustive-deps
+    // table, the Excel export and both emails all read, plus the Tier and
+    // CDMs aligned (read as PE Monthly reads them).
+    return withTierAndAlignment(withVerticalCoverage(list, { settings, prospects }), { prospects, targetTierFor, cdmName });
+  }, [records, settings?.salesCoverage, prospects, targetTierFor, cdmName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The other half of the same week: the opps that finished in it. Sold and
   // Not Sold both — a loss this week is as much news as a win, and a table
@@ -17140,6 +17143,18 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           getFilterValue: (row) => String(row[key] || ''),
           exportValue: (row) => String(row[key] || ''),
           render: (row) => (row[key] ? <span>{row[key]}</span> : <span style={{ color: '#CBD5E1' }}>-</span>),
+        };
+      }
+      if (key === NEW_OPPS_CDMS_ALIGNED_KEY) {
+        return {
+          key,
+          label: 'CDMs aligned',
+          defaultWidth: 110,
+          headerTitle: 'Yes when the company popup\'s "aligned w/other CDM" box is ticked. N/A when the account is not on the tier list or the vertical is yours.',
+          getSortValue: (row) => String(row[key] || '').toLowerCase() || null,
+          getFilterValue: (row) => String(row[key] || ''),
+          exportValue: (row) => String(row[key] || ''),
+          render: (row) => <span>{row[key] || ''}</span>,
         };
       }
       if (key === OPP_VERTICAL_KEY || key === OPP_SALESPERSON_KEY) {
@@ -18753,6 +18768,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               alwaysVisible={['Account']}
               enableColumnFilters
               variableRowHeight
+              rowStyle={peMonthlyRowStyleOrNone}
               emptyMessage={`No active opps within ${NEW_OPPS_MAX_STAGE_AGE_DAYS} days in Lead/Qualifying/Quoting.`}
               settings={settings}
               updateSettings={updateSettings}

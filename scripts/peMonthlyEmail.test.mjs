@@ -77,9 +77,9 @@ check('email columns are the tab columns minus CDM, Scope and Next Steps',
   PE_MONTHLY_EMAIL_COLUMNS.map(c => c.key), PE_MONTHLY_COLUMNS.map(c => c.key).filter(k => !['CDM', 'Scope', 'Next Steps'].includes(k)));
 check('empty list says so', buildPeMonthlyTableHtml([]).includes('No PE or portfolio company deals'), true);
 // Columns fit their text: the table is sized to its contents rather than
-// stretched to the email's width (New Opps still stretches).
+// stretched to the email's width. New Opps is formatted the same way.
 check('table is not stretched to full width', /<table[^>]*width:100%/.test(table), false);
-check('New Opps table still full width', /<table[^>]*width:100%/.test(buildNewOppsDigestTableHtml([{ Account: 'X' }])), true);
+check('New Opps table fits its contents too', /<table[^>]*width:100%/.test(buildNewOppsDigestTableHtml([{ Account: 'X' }])), false);
 
 // Same look as the New Opps email: identical cell styling and body wrapper.
 const style = (html) => (html.match(/<th style="[^"]*"/) || [''])[0];
@@ -208,7 +208,8 @@ check('scheduled body: intro then table, nothing else', [sched.includes('Monthly
   check('email: aligned row green', rowOf('Green Co').includes('background:#DCFCE7'), true);
   check('email: N/A row grey', [rowOf('Grey Co').includes('background:#F1F5F9'), rowOf('Grey Co').includes('color:#64748B')], [true, true]);
   check('email: No row plain', rowOf('Plain Co').includes('background:'), false);
-  check('New Opps email stays black and white', buildNewOppsDigestTableHtml([{ Account: 'X' }]).includes('background:'), false);
+  check('New Opps email wears the same header band',
+    /<th style="[^"]*color:#FFFFFF;background:#009530;/.test(buildNewOppsDigestTableHtml([{ Account: 'X' }])), true);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
