@@ -137,3 +137,15 @@ export function buildRequest(items) {
     messages: [{ role: 'user', content: buildUserPrompt(items) }],
   };
 }
+
+/**
+ * Ask Claude for one batch (at most MAX_ITEMS) and read the answer back:
+ * { [id]: bullets[] }, or null when it declined or the answer can't be
+ * read. Shared by /api/summarize-notes and the scheduled New Opps email.
+ */
+export async function summarizeBatch(client, items) {
+  const response = await client.beta.messages.create(buildRequest(items));
+  if (response.stop_reason === 'refusal') return null;
+  const text = response.content.filter(b => b.type === 'text').map(b => b.text).join('');
+  return readSummaries(text, items);
+}
