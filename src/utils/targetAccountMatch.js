@@ -43,8 +43,10 @@ export function targetAccountRows(targetAccountsData, settings) {
         vertical: resolveTargetAccountVertical(r, settings?.targetVerticalColumn),
         sheet: sheetName,
       };
-      if (at.has(k)) out[at.get(k)] = row;
-      else { at.set(k, out.length); out.push(row); }
+      if (at.has(k)) {
+        // The tiered row wins, but keeps a vertical only the earlier row had.
+        out[at.get(k)] = { ...row, vertical: row.vertical || out[at.get(k)].vertical };
+      } else { at.set(k, out.length); out.push(row); }
     }
   }
   return out;

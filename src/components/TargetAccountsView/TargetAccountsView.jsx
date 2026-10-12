@@ -864,7 +864,7 @@ function ListSection({
               </select>
             </label>
             <label
-              title="Pick which column holds each account's vertical. A company mapped to a row here (on My Accounts) can import it into its Vertical field from its popup. Leave on Auto to use the first column headed Vertical, Industry, Sector or Segment."
+              title="Pick which column holds each account's vertical. A company mapped to a row here (on My Accounts) can import it into its Vertical field from its popup. Leave on Auto to use the first column headed Vertical, Industry, Sector or Segment. A sheet without the picked column (a Tier 3 tab with its own headers) uses that guess too."
               style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
             >
               Vertical column

@@ -34,7 +34,17 @@ check('auto prefers a header that is exactly Vertical over Sub Vertical',
   run({ p1: ['Zed Inc'] }), { name: 'Zed Inc', vertical: 'Hospitality', onList: false });
 check('a picked column wins over the guess',
   run({ p1: ['Zed Inc'] }, 'p1', { targetVerticalColumn: 'Sub Vertical' }), { name: 'Zed Inc', vertical: 'Hotels', onList: true });
-check('a picked column the row lacks reads blank', resolveTargetAccountVertical({ Industry: 'X' }, 'Vertical'), '');
+check('a picked column the row\'s sheet lacks falls back to the guess (Tier 3 tab)', resolveTargetAccountVertical({ Industry: 'X' }, 'Vertical'), 'X');
+check('a picked column that is blank on the row stays blank', resolveTargetAccountVertical({ Vertical: '', Industry: 'X' }, 'Vertical'), '');
+{
+  const tiered = { sheetNames: ['Tier 1-2', 'Tier 3'], sheets: {
+    'Tier 1-2': { records: [{ 'Account Name': 'Acme Holdings', Vertical: 'Grocery', Tier: '2' }] },
+    'Tier 3': { records: [{ Company: 'Tri Corp', Industry: 'hotels', 'Account Tier': 'Tier 3' }] },
+  } };
+  check('picked column on the Tier 1/2 tab still imports from the Tier 3 tab',
+    targetVerticalFor({ targetAccountsData: tiered, settings: { targetMap: { p1: ['Tri Corp'] }, targetVerticalColumn: 'Vertical' }, prospectId: 'p1', options }),
+    { name: 'Tri Corp', vertical: 'Hotels', onList: true });
+}
 check('no record, no vertical', resolveTargetAccountVertical(null), '');
 
 console.log(`\n${passed} passed, ${failed} failed`);
