@@ -32,7 +32,7 @@ import {
 } from '../../utils/listAccountMapping';
 import { STATUSES, STATUS_COLORS, TIER_OPTIONS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { peStageOf } from '../../utils/peStages';
-import { getServiceCategories, buildServiceBoard, moveServiceToBucket, serviceBucketOf, UNGROUPED_SERVICES, addServiceBox, renameServiceBox } from '../../utils/serviceCategoriesStore';
+import { getServiceCategories, buildServiceBoard, exploredCountTest, isUncountedBucket, moveServiceToBucket, serviceBucketOf, UNGROUPED_SERVICES, addServiceBox, renameServiceBox } from '../../utils/serviceCategoriesStore';
 import { isCoverageTracked } from '../../utils/pipelineDashboardStore';
 import { coverageRowStyle } from '../../utils/coverageMark';
 import { useCoverageServices } from '../../hooks/useCoverageServices';
@@ -6432,25 +6432,35 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // Lifted out of the heading it used to be computed inside so the tab can
   // say it too. Two copies of this arithmetic is two answers to "how far
   // through are we", and they would not stay the same for long.
+  //
+  // Broader SE, Renewables and graveyard services are left out of both
+  // sides (exploredCountTest): they are still on the board, but exploring
+  // them isn't what the percentage measures.
   const servicesExploredCount = useMemo(() => {
     const svc = fields.servicesExplored || {};
     const hidden = new Set(settings.hiddenServices || []);
-    const total = new Set(
-      serviceBoard.flatMap(cat => cat.items.filter(i => !hidden.has(i)))
-    ).size;
+    const counts = exploredCountTest(settings);
+    const uncountedBoxed = new Set(
+      serviceBoard.filter(cat => isUncountedBucket(cat.name)).flatMap(cat => cat.items || []),
+    );
+    const inScope = (i) => !hidden.has(i) && !uncountedBoxed.has(i) && counts(i);
+    const universe = new Set(
+      serviceBoard.flatMap(cat => (isUncountedBucket(cat.name) ? [] : cat.items.filter(inScope)))
+    );
+    const total = universe.size;
     const explored = new Set();
     for (const [item, val] of Object.entries(svc)) {
-      if (val && val !== '-' && !hidden.has(item)) explored.add(item);
+      if (val && val !== '-' && universe.has(item)) explored.add(item);
     }
     for (const item of scopeMatchedServices.keys()) {
-      if (!hidden.has(item)) explored.add(item);
+      if (universe.has(item)) explored.add(item);
     }
     return {
       explored: explored.size,
       total,
       pct: total > 0 ? Math.round((explored.size / total) * 100) : 0,
     };
-  }, [fields.servicesExplored, settings.hiddenServices, serviceBoard, scopeMatchedServices]);
+  }, [fields.servicesExplored, settings, serviceBoard, scopeMatchedServices]);
 
   // What each tab carries, for the pill beside its name. Empty string where
   // there is nothing to count, because the bar reads the counts as "there is
