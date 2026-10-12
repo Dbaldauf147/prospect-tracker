@@ -81,14 +81,17 @@ function NamedForm({ onAdd }) {
 // What Claude found for one question: each person with the page that names
 // them. Already on the Contacts tab reads as such; already saved under
 // "Named by the company" reads Saved; otherwise "Save name" adds them there.
-function ResearchFindings({ found, named, onSaveNamed, companyContacts, onOpenContact }) {
-  if (found == null) return null;
+function ResearchFindings({ found, failed, named, onSaveNamed, companyContacts, onOpenContact }) {
+  if (found == null && !failed) return null;
   const isSaved = (p) => named.some(n => String(n.name || '').trim().toLowerCase() === p.name.toLowerCase());
   return (
     <>
       <div style={{ ...small, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', marginTop: '0.5rem', color: '#6D28D9' }}>Found by Claude</div>
-      {found.length === 0 ? (
-        <div style={{ ...small, fontStyle: 'italic' }}>Nobody found on the public web.</div>
+      {failed && (
+        <div style={{ ...small, fontStyle: 'italic', color: '#B91C1C' }}>The search for this question failed. Click Research again to retry it.</div>
+      )}
+      {found == null ? null : found.length === 0 ? (
+        !failed && <div style={{ ...small, fontStyle: 'italic' }}>Nobody found on the public web.</div>
       ) : found.map(p => {
         const onTab = namedOnTab({ name: p.name }, companyContacts);
         const saved = isSaved(p);
@@ -128,7 +131,7 @@ function ResearchFindings({ found, named, onSaveNamed, companyContacts, onOpenCo
   );
 }
 
-function QuestionCard({ question, named, onSaveNamed, found, company, companyContacts, allContacts, domains, excludedIds, onLinkContact, onAddNamed, onOpenContact }) {
+function QuestionCard({ question, named, onSaveNamed, found, failed, company, companyContacts, allContacts, domains, excludedIds, onLinkContact, onAddNamed, onOpenContact }) {
   const { onTab, toAdd } = useMemo(
     () => titleSuggestions({ question, company, companyContacts, allContacts, domains, excludedIds }),
     [question, company, companyContacts, allContacts, domains, excludedIds],
@@ -162,7 +165,7 @@ function QuestionCard({ question, named, onSaveNamed, found, company, companyCon
         </div>
       )}
 
-      <ResearchFindings found={found} named={named} onSaveNamed={onSaveNamed} companyContacts={companyContacts} onOpenContact={onOpenContact} />
+      <ResearchFindings found={found} failed={failed} named={named} onSaveNamed={onSaveNamed} companyContacts={companyContacts} onOpenContact={onOpenContact} />
 
       <div style={{ ...small, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', marginTop: '0.5rem' }}>Named by the company</div>
       {named.length === 0 && <div style={{ ...small, fontStyle: 'italic' }}>Nobody yet. Type who they told you below.</div>}
@@ -219,7 +222,7 @@ export function WhoDoesSection({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           company: { company: companyName, website: website || '', domains },
-          questions: questions.map(q => ({ id: q.id, question: q.question })),
+          questions: questions.map(q => ({ id: q.id, question: q.question, keywords: q.keywords || '' })),
         }),
       });
       const txt = await r.text();
@@ -229,7 +232,14 @@ export function WhoDoesSection({
         setResearchError(data?.error || txt.slice(0, 200) || `HTTP ${r.status}`);
         return;
       }
-      onSaveResearch({ company: companyName, at: new Date().toISOString(), answers: data.answers });
+      // A question whose search failed keeps what an earlier run found for
+      // it, and is marked so its card says the search failed.
+      const failed = Array.isArray(data.failed) ? data.failed : [];
+      const answers = { ...data.answers };
+      for (const id of failed) {
+        if (findings && Array.isArray(findings.answers[id])) answers[id] = findings.answers[id];
+      }
+      onSaveResearch({ company: companyName, at: new Date().toISOString(), answers, failed });
     } catch (err) {
       setResearchError(err?.message || 'Research failed');
     } finally {
@@ -278,6 +288,7 @@ export function WhoDoesSection({
               named={Array.isArray(namedByQuestion[q.id]) ? namedByQuestion[q.id] : []}
               onSaveNamed={(list) => onSaveNamedByQuestion({ ...namedByQuestion, [q.id]: list })}
               found={findings && Array.isArray(findings.answers[q.id]) ? findings.answers[q.id] : null}
+              failed={!!findings && Array.isArray(findings.failed) && findings.failed.includes(q.id)}
               company={company}
               companyContacts={companyContacts}
               allContacts={allContacts}
