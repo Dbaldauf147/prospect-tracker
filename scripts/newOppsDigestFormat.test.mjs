@@ -42,6 +42,23 @@ check('input rows not mutated', NEW_OPPS_CDMS_ALIGNED_KEY in { Account: 'x' }, f
 check('it reads the Vertical CDM withVerticalCoverage fills',
   withTierAndAlignment(withVerticalCoverage([{ Account: 'Mine Co', Vertical: 'Nope' }]), { prospects, cdmName: 'Dan Baldauf' })[0][NEW_OPPS_CDMS_ALIGNED_KEY], 'No');
 
+{
+  // The account's own CDM (Target Accounts list) beats the vertical's in
+  // the Vertical CDM column; CDMs aligned keeps reading the vertical's.
+  const targetCdmFor = (p) => (p?.company === 'Aligned Co' ? 'Sam Owner' : p?.company === 'Mine Co' ? 'Dan Baldauf' : '');
+  const out = withTierAndAlignment([
+    { Account: 'Aligned Co', [OPP_SALESPERSON_KEY]: 'Jane Doe' },
+    { Account: 'Unaligned Co', [OPP_SALESPERSON_KEY]: 'Jane Doe' },
+    { Account: 'Mine Co', [OPP_SALESPERSON_KEY]: 'Jane Doe' },
+  ], { prospects, targetCdmFor, cdmName: 'Dan Baldauf' });
+  check('account CDM replaces the vertical CDM; none falls back to Coverage',
+    out.map(r => r[OPP_SALESPERSON_KEY]), ['Sam Owner', 'Jane Doe', 'Dan Baldauf']);
+  check('CDMs aligned still reads the vertical\'s Coverage names',
+    out.map(r => r[NEW_OPPS_CDMS_ALIGNED_KEY]),
+    rows.filter(r => r.Account !== 'Untiered Co').slice(0, 2).map(r => r[NEW_OPPS_CDMS_ALIGNED_KEY]).concat(
+      withTierAndAlignment([{ Account: 'Mine Co', [OPP_SALESPERSON_KEY]: 'Jane Doe' }], { prospects, cdmName: 'Dan Baldauf' })[0][NEW_OPPS_CDMS_ALIGNED_KEY]));
+}
+
 check('columns carry Tier and CDMs aligned after Vertical CDM',
   NEW_OPPS_DIGEST_COLUMNS.map(c => c.label).slice(0, 6),
   ['Account', 'Tier', 'Vertical', 'Vertical CDM', 'CDMs aligned', 'Stage']);

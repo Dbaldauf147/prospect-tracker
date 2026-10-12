@@ -17061,8 +17061,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     // Copies carrying the Vertical and Vertical CDM columns, which the
     // table, the Excel export and both emails all read, plus the Tier and
     // CDMs aligned (read as PE Monthly reads them).
-    return withTierAndAlignment(withVerticalCoverage(list, { settings, prospects }), { prospects, targetTierFor, cdmName });
-  }, [records, settings?.salesCoverage, prospects, targetTierFor, cdmName]); // eslint-disable-line react-hooks/exhaustive-deps
+    return withTierAndAlignment(withVerticalCoverage(list, { settings, prospects }), { prospects, targetTierFor, targetCdmFor, cdmName });
+  }, [records, settings?.salesCoverage, prospects, targetTierFor, targetCdmFor, cdmName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The other half of the same week: the opps that finished in it. Sold and
   // Not Sold both — a loss this week is as much news as a win, and a table
@@ -17185,13 +17185,13 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           defaultWidth: isVertical ? 170 : 170,
           headerTitle: isVertical
             ? "The opp's own Vertical, or its company card's when the opp has none."
-            : 'Who Opps > Coverage lists against this vertical.',
+            : "The account's CDM on the Target Accounts list when it has one, else who Opps > Coverage lists against this vertical.",
           getSortValue: (row) => String(row[key] || '').toLowerCase() || null,
           getFilterValue: (row) => String(row[key] || ''),
           exportValue: (row) => String(row[key] || ''),
           render: (row) => (row[key]
             ? <span>{row[key]}</span>
-            : <span style={{ color: '#CBD5E1' }} title={isVertical ? 'No vertical on the opp or its company card. Listed on the Issues tab.' : 'Nobody on the Coverage tab covers this vertical. Listed on the Issues tab.'}>-</span>),
+            : <span style={{ color: '#CBD5E1' }} title={isVertical ? 'No vertical on the opp or its company card. Listed on the Issues tab.' : 'No CDM for this account on the Target Accounts list, and nobody on the Coverage tab covers this vertical. Listed on the Issues tab.'}>-</span>),
         };
       }
       return columns.find(c => c.key === key) || {
@@ -18894,7 +18894,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           </div>
           <div style={{ padding: '0 0 0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
             The PE overlap deals from the Keith agenda: every Private Equity or Portfolio Company opp at Stage 3 (Lead) or later that is still open, furthest along first.
-            CDM is who the Target Accounts list names for the company (click Map on a blank one to map the company to its Targets list row). Vertical CDM is who Opps &gt; Coverage lists against the deal's vertical, so you can see where another pod is already in Green rows are aligned with the other CDM; grey rows have nothing to align (CDMs aligned is N/A: not on the tier list, or your own vertical). The Outlook draft carries this table with the same colours.
+            CDM is who the Target Accounts list names for the company (click Map on a blank one to map the company to its Targets list row). Vertical CDM is that same account CDM when the Targets list names one, else who Opps &gt; Coverage lists against the deal's vertical, so you can see where another pod is already in. Green rows are aligned with the other CDM; grey rows have nothing to align (CDMs aligned is N/A: not on the tier list, or your own vertical). The Outlook draft carries this table with the same colours.
           </div>
           {loading && !data ? (
             <div className={styles.loading}>Loading...</div>
