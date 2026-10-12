@@ -638,7 +638,7 @@ const EMPTY = {
   // them has been worked out until an analysis says so, and a zero would
   // read as an answer.
   deregulatedSites: null, indicativeAnnualSavings: null, maxYearlyExposure: null,
-  rank: '', tier: 'Tier 3',
+  rank: '', tier: 'Tier 3', substatus: '',
   hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [], portfolioTransactions: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', contractingEntityAddress: '', strategies: [], revenue: '',
   // Opts this company into the weekly acquisition-news digest
@@ -5189,6 +5189,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return current && !opts.includes(current) ? [...opts, current] : opts;
   }, [settings, fields.vertical]);
 
+  // Substatus's choices are the Dropdowns › Substatus list, kept the same
+  // way as Vertical: a value since removed there stays on the company that
+  // carries it rather than blanking when the card opens.
+  const substatusOptions = useMemo(() => {
+    const opts = getEffectiveDropdownLists(settings).find(l => l.key === 'substatus')?.options || [];
+    const current = String(fields.substatus || '').trim();
+    return current && !opts.includes(current) ? [...opts, current] : opts;
+  }, [settings, fields.substatus]);
+
   // The vertical the Target Accounts list gives this company, offered for
   // import under the Vertical field - only once the company is mapped to a
   // target account on My Accounts, never off a name guess. Null while the
@@ -9457,6 +9466,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <label className={styles.label}>Status</label>
               <select className={styles.select} value={fields.status} onChange={e => set('status', e.target.value)}>
                 {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className={styles.label}>Substatus</label>
+              <select
+                className={styles.select}
+                value={fields.substatus || ''}
+                onChange={e => set('substatus', e.target.value)}
+                title={substatusOptions.length
+                  ? 'Options come from Dropdowns › Substatus, where you can add, rename or remove them'
+                  : 'No options yet: add them on the Dropdowns page under Substatus'}
+              >
+                <option value="">{substatusOptions.length ? '-' : '- (add options on Dropdowns)'}</option>
+                {substatusOptions.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
 
