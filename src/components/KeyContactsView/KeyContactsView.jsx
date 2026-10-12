@@ -1427,13 +1427,20 @@ function KeyContactsViewInner({
       if (!ok) { setRecipientRecovery({ busy: false, note: '' }); return; }
       // Applied to the settings as they are when it lands, not this render's:
       // first the old-email lists onto current emails, then the backups.
-      updateSettings((s) => {
+      const saved = await updateSettings((s) => {
         const rekeyed = rekeyOrphanRecipients(s, flatContacts, s?.contactOldEmails || {}).patch;
         const base = { ...s, ...rekeyed };
         const { patch } = recoverRecipientMaps(base, sources);
         const out = { ...rekeyed, ...patch };
         return Object.keys(out).length ? out : null;
       });
+      // Said only once it is stored: a save that didn't land used to report
+      // success here and leave the lists exactly as they were.
+      if (saved === false) {
+        setRecipientRecovery({ busy: false, note: 'Found them, but the save did not go through. Reload the page and click Recover To / CC again.' });
+        window.alert('Found the To / CC lists, but saving them did not go through. Reload the page and click Recover To / CC again.');
+        return;
+      }
       const total = moved.length + contacts;
       setRecipientRecovery({ busy: false, note: `Recovered To / CC for ${total} contact${total === 1 ? '' : 's'}.` });
     } catch (err) {
