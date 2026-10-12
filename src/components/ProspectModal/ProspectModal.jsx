@@ -5696,6 +5696,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [portfolioStarredCols, updateSettingsPath]);
   const isPortfolioColShown = (key) => key === 'company' || portfolioStarredCols.has(key) || portfolioColsVisible[key] !== false;
   const colVis = (key) => (isPortfolioColShown(key) ? 'visible' : 'collapse');
+  // A hidden column also gives up its width: the table is 100% wide, and a
+  // collapsed column still counted in the sum would leave that much blank
+  // on the right.
+  const colWidth = (key) => (isPortfolioColShown(key) ? `${portfolioColWidths[key]}px` : '0px');
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(true);
   // Rows added by hand in this sitting, keyed by their `addedManuallyAt`
   // stamp. They pin to the top of the table so "+ Add Row" lands somewhere
@@ -12014,34 +12018,38 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         )}
                       </div>
                       <div style={{ border: '1px solid var(--color-border)', borderRadius: '6px', overflow: 'auto' }}>
-                        <table style={{ borderCollapse: 'collapse', fontSize: '0.7rem', tableLayout: 'fixed', width: 'auto' }}>
+                        {/* Full width: a fixed-layout table is never narrower than its
+                            columns, so a portfolio wider than the card still scrolls,
+                            and a narrower one shares the spare width out across its
+                            columns instead of leaving a blank strip on the right. */}
+                        <table style={{ borderCollapse: 'collapse', fontSize: '0.7rem', tableLayout: 'fixed', width: '100%' }}>
                           <colgroup>
                             <col style={{ width: '24px' }} />
-                            <col style={{ width: portfolioColWidths.rank + 'px',             visibility: colVis('rank') }} />
-                            <col style={{ width: portfolioColWidths.company + 'px',          visibility: colVis('company') }} />
-                            <col style={{ width: portfolioColWidths.status + 'px',           visibility: colVis('status') }} />
-                            <col style={{ width: portfolioColWidths.siteListSaved + 'px',    visibility: colVis('siteListSaved') }} />
-                            <col style={{ width: portfolioColWidths.analysisSaved + 'px',    visibility: colVis('analysisSaved') }} />
-                            <col style={{ width: portfolioColWidths.analysisSavings + 'px',  visibility: colVis('analysisSavings') }} />
-                            <col style={{ width: portfolioColWidths.hqCity + 'px',           visibility: colVis('hqCity') }} />
-                            <col style={{ width: portfolioColWidths.hqCountry + 'px',        visibility: colVis('hqCountry') }} />
-                            <col style={{ width: portfolioColWidths.energy + 'px',           visibility: colVis('energy') }} />
-                            <col style={{ width: portfolioColWidths.estElectricity + 'px',   visibility: colVis('estElectricity') }} />
-                            <col style={{ width: portfolioColWidths.estNaturalGas + 'px',    visibility: colVis('estNaturalGas') }} />
-                            <col style={{ width: portfolioColWidths.siteCount + 'px',        visibility: colVis('siteCount') }} />
-                            <col style={{ width: portfolioColWidths.sector + 'px',           visibility: colVis('sector') }} />
-                            <col style={{ width: portfolioColWidths.subsector + 'px',        visibility: colVis('subsector') }} />
-                            <col style={{ width: portfolioColWidths.subsectorScore + 'px',   visibility: colVis('subsectorScore') }} />
-                            <col style={{ width: portfolioColWidths.strategy + 'px',         visibility: colVis('strategy') }} />
-                            <col style={{ width: portfolioColWidths.acquisitionYear + 'px',  visibility: colVis('acquisitionYear') }} />
-                            <col style={{ width: portfolioColWidths.pcDescription + 'px',    visibility: colVis('pcDescription') }} />
-                            <col style={{ width: portfolioColWidths.notes + 'px',            visibility: colVis('notes') }} />
-                            <col style={{ width: portfolioColWidths.raClient + 'px',         visibility: colVis('raClient') }} />
-                            <col style={{ width: portfolioColWidths.clientManager + 'px',    visibility: colVis('clientManager') }} />
-                            <col style={{ width: portfolioColWidths.targetAccount + 'px',    visibility: colVis('targetAccount') }} />
-                            <col style={{ width: portfolioColWidths.tier + 'px',             visibility: colVis('tier') }} />
-                            <col style={{ width: portfolioColWidths.salesRep + 'px',         visibility: colVis('salesRep') }} />
-                            <col style={{ width: portfolioColWidths.listFlags + 'px',        visibility: colVis('listFlags') }} />
+                            <col style={{ width: colWidth('rank'),             visibility: colVis('rank') }} />
+                            <col style={{ width: colWidth('company'),          visibility: colVis('company') }} />
+                            <col style={{ width: colWidth('status'),           visibility: colVis('status') }} />
+                            <col style={{ width: colWidth('siteListSaved'),    visibility: colVis('siteListSaved') }} />
+                            <col style={{ width: colWidth('analysisSaved'),    visibility: colVis('analysisSaved') }} />
+                            <col style={{ width: colWidth('analysisSavings'),  visibility: colVis('analysisSavings') }} />
+                            <col style={{ width: colWidth('hqCity'),           visibility: colVis('hqCity') }} />
+                            <col style={{ width: colWidth('hqCountry'),        visibility: colVis('hqCountry') }} />
+                            <col style={{ width: colWidth('energy'),           visibility: colVis('energy') }} />
+                            <col style={{ width: colWidth('estElectricity'),   visibility: colVis('estElectricity') }} />
+                            <col style={{ width: colWidth('estNaturalGas'),    visibility: colVis('estNaturalGas') }} />
+                            <col style={{ width: colWidth('siteCount'),        visibility: colVis('siteCount') }} />
+                            <col style={{ width: colWidth('sector'),           visibility: colVis('sector') }} />
+                            <col style={{ width: colWidth('subsector'),        visibility: colVis('subsector') }} />
+                            <col style={{ width: colWidth('subsectorScore'),   visibility: colVis('subsectorScore') }} />
+                            <col style={{ width: colWidth('strategy'),         visibility: colVis('strategy') }} />
+                            <col style={{ width: colWidth('acquisitionYear'),  visibility: colVis('acquisitionYear') }} />
+                            <col style={{ width: colWidth('pcDescription'),    visibility: colVis('pcDescription') }} />
+                            <col style={{ width: colWidth('notes'),            visibility: colVis('notes') }} />
+                            <col style={{ width: colWidth('raClient'),         visibility: colVis('raClient') }} />
+                            <col style={{ width: colWidth('clientManager'),    visibility: colVis('clientManager') }} />
+                            <col style={{ width: colWidth('targetAccount'),    visibility: colVis('targetAccount') }} />
+                            <col style={{ width: colWidth('tier'),             visibility: colVis('tier') }} />
+                            <col style={{ width: colWidth('salesRep'),         visibility: colVis('salesRep') }} />
+                            <col style={{ width: colWidth('listFlags'),        visibility: colVis('listFlags') }} />
                             <col style={{ width: '28px' }} />
                           </colgroup>
                           <thead>
