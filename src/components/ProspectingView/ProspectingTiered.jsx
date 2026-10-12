@@ -69,12 +69,13 @@ const substatusOf = (p) => String(p?.substatus || '').trim();
 const statusOf = (p) => (substatusOf(p) ? SUBSTATUS_HOLD_STATUS : String(p?.status || '').trim());
 const statusLabel = (st) => st || 'No status';
 
-// The decision makers in the not-reached popup: a name each, linked to
-// its HubSpot record when the portal is known, and "None" in red when the
-// account has nobody tagged, which is the gap worth seeing beside "not
-// reached". Title on hover when it is a contact's only identifier.
+// The decision makers in the not-reached popup: a name each, opening the
+// app's contact popup (on top of this list, which stays open underneath),
+// and "None" in red when the account has nobody tagged, which is the gap
+// worth seeing beside "not reached". Without a contact popup to open the
+// name falls back to the HubSpot record, when the portal is known.
 const dmName = (c) => [c?.firstname, c?.lastname].filter(Boolean).join(' ').trim() || String(c?.email || '');
-function DecisionMakerNames({ dms, hubspotAccount }) {
+function DecisionMakerNames({ dms, hubspotAccount, onOpenContact }) {
   if (dms == null) return <span style={{ color: '#94A3B8' }}>Loading...</span>;
   if (dms.length === 0) return <span style={{ color: '#B91C1C', fontWeight: 600 }} title="Nobody at this account is tagged Decision Maker">None</span>;
   return (
@@ -82,6 +83,17 @@ function DecisionMakerNames({ dms, hubspotAccount }) {
       {dms.map((c) => {
         const name = dmName(c);
         const title = [c.jobtitle, c.email].filter(Boolean).join('\n') || undefined;
+        if (onOpenContact) {
+          return (
+            <button
+              key={c.id || c.vid || name}
+              type="button"
+              onClick={() => onOpenContact(c)}
+              title={title ? `${title}\nOpen contact` : 'Open contact'}
+              style={{ border: 'none', background: 'none', padding: 0, font: 'inherit', color: '#2563EB', textDecoration: 'underline', cursor: 'pointer', whiteSpace: 'nowrap' }}
+            >{name}</button>
+          );
+        }
         const url = hubspotContactUrl(hubspotAccount, c.id || c.vid);
         return url ? (
           <a key={c.id || c.vid || name} href={url} target="_blank" rel="noopener noreferrer" title={title ? `${title}\nOpen in HubSpot` : 'Open in HubSpot'} style={{ color: '#2563EB', textDecoration: 'underline', whiteSpace: 'nowrap' }}>{name}</a>
@@ -590,7 +602,7 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
                     <tr style={{ color: '#64748B', fontSize: '0.66rem', textTransform: 'uppercase', letterSpacing: '0.03em', textAlign: 'left' }}>
                       <th style={{ padding: '0.35rem 1rem', fontWeight: 700 }}>Company</th>
                       <th style={{ padding: '0.35rem 0.5rem', fontWeight: 700 }}>Status</th>
-                      <th style={{ padding: '0.35rem 0.5rem', fontWeight: 700 }} title="Contacts at the account tagged Decision Maker. Click a name to open it in HubSpot.">Decision Maker</th>
+                      <th style={{ padding: '0.35rem 0.5rem', fontWeight: 700 }} title="Contacts at the account tagged Decision Maker. Click a name to open the contact.">Decision Maker</th>
                       <th style={{ padding: '0.35rem 0.5rem', fontWeight: 700 }}>Last Activity</th>
                       <th style={{ padding: '0.35rem 1rem 0.35rem 0.5rem', fontWeight: 700, textAlign: 'right' }}>Days Since</th>
                     </tr>
@@ -612,7 +624,7 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
                           </td>
                           <td style={{ padding: '0.35rem 0.5rem', color: '#475569' }}>{statusOf(p) || '-'}</td>
                           <td style={{ padding: '0.35rem 0.5rem' }}>
-                            <DecisionMakerNames dms={dmLookup ? dmLookup.forAccount(p) : null} hubspotAccount={hubspotAccount} />
+                            <DecisionMakerNames dms={dmLookup ? dmLookup.forAccount(p) : null} hubspotAccount={hubspotAccount} onOpenContact={onOpenContact} />
                           </td>
                           <td style={{ padding: '0.35rem 0.5rem', color: a ? '#334155' : '#CBD5E1', fontVariantNumeric: 'tabular-nums' }}>
                             {a ? formatDateDisplay(toLocalDate(a.tsMs)) : 'None'}
