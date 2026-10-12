@@ -15,6 +15,7 @@ import { readWorkKey, writeWorkKey } from '../../utils/mirroredWorkKeys';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
 import { excludeUntrackedFromWeeks, untrackedNoteFor } from '../../utils/progressUntracked';
 import { COVERAGE_CHARTS, COVERAGE_T1, COVERAGE_T2, COVERAGE_T3 } from '../../utils/progressCoverage';
+import { reportingStatus, ON_HOLD_STATUS } from '../../utils/reportingStatus';
 import { apiFetch } from '../../utils/apiFetch';
 import { weeksFromBackupValue, missingWeeksFromBackups, mergeRecoveredWeeks } from '../../utils/progressHistoryRecovery';
 
@@ -460,7 +461,7 @@ const PROGRESS_CHART_DEFS = [
   })),
   { id: 'connectedPct', label: '% of Accounts Connected (Had Opportunity)', isPct: true,
     series: [{ key: 't1ConnectedPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ConnectedPct', name: 'Tier 2', color: '#3B82F6' }, { key: 't3ConnectedPct', name: 'Tier 3', color: COVERAGE_T3, tier3: true }] },
-  { id: 'inactivePct',  label: '% of Accounts Inactive (Lost / Hold Off / Old Client)', isPct: true,
+  { id: 'inactivePct',  label: '% of Accounts Inactive (Lost / Hold Off / On Hold / Old Client)', isPct: true,
     series: [{ key: 't1InactivePct', name: 'Tier 1', color: '#DC2626' }, { key: 't2InactivePct', name: 'Tier 2', color: '#3B82F6' }, { key: 't3InactivePct', name: 'Tier 3', color: COVERAGE_T3, tier3: true }] },
   { id: 'tierTotals',   label: 'My Accounts by Tier',
     series: [
@@ -1009,7 +1010,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
       return pinnedContactsFor(company).some(isDecisionMaker);
     }
 
-    const inactiveStatuses = new Set(['Lost - Not Sold', 'Hold Off', 'Old Client']);
+    const inactiveStatuses = new Set(['Lost - Not Sold', 'Hold Off', 'Old Client', ON_HOLD_STATUS]);
 
     const t1Total = t1.length;
     const t2Total = t2.length;
@@ -1019,8 +1020,11 @@ export function ProgressView({ prospects, settings, cdmName }) {
     const t2WithDMList = t2.filter(p => hasDM(p.company));
     const t1ConnectedList = t1.filter(p => hasOpp(p.company));
     const t2ConnectedList = t2.filter(p => hasOpp(p.company));
-    const t1InactiveList = t1.filter(p => inactiveStatuses.has(p.status));
-    const t2InactiveList = t2.filter(p => inactiveStatuses.has(p.status));
+    // Read as reported: a company with a Substatus is On Hold, and On Hold
+    // is inactive here alongside Hold Off (utils/reportingStatus).
+    const isInactive = (p) => inactiveStatuses.has(reportingStatus(p));
+    const t1InactiveList = t1.filter(isInactive);
+    const t2InactiveList = t2.filter(isInactive);
     const t1WithContacts = t1WithContactsList.length;
     const t2WithContacts = t2WithContactsList.length;
     const t1WithDM = t1WithDMList.length;
@@ -1035,7 +1039,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
     const t3WithContactsList = t3.filter(p => hasContact(p));
     const t3WithDMList = t3.filter(p => hasDM(p.company));
     const t3ConnectedList = t3.filter(p => hasOpp(p.company));
-    const t3InactiveList = t3.filter(p => inactiveStatuses.has(p.status));
+    const t3InactiveList = t3.filter(isInactive);
     const t3WithContacts = t3WithContactsList.length;
     const t3WithDM = t3WithDMList.length;
     const t3Connected = t3ConnectedList.length;
@@ -1132,15 +1136,15 @@ export function ProgressView({ prospects, settings, cdmName }) {
         t1NotConnected: t1NotConnected.map(p => p.company),
         t2Connected: t2ConnectedList.map(p => p.company),
         t2NotConnected: t2NotConnected.map(p => p.company),
-        t1Inactive: t1InactiveList.map(p => ({ company: p.company, status: p.status })),
-        t2Inactive: t2InactiveList.map(p => ({ company: p.company, status: p.status })),
+        t1Inactive: t1InactiveList.map(p => ({ company: p.company, status: reportingStatus(p) })),
+        t2Inactive: t2InactiveList.map(p => ({ company: p.company, status: reportingStatus(p) })),
         t3WithContacts: t3WithContactsList.map(p => p.company),
         t3NoContacts: t3NoContacts.map(p => p.company),
         t3WithDM: t3WithDMList.map(p => p.company),
         t3NoDM: t3NoDM.map(p => p.company),
         t3Connected: t3ConnectedList.map(p => p.company),
         t3NotConnected: t3NotConnected.map(p => p.company),
-        t3Inactive: t3InactiveList.map(p => ({ company: p.company, status: p.status })),
+        t3Inactive: t3InactiveList.map(p => ({ company: p.company, status: reportingStatus(p) })),
         ...peStageDetails,
         peWithDM: peWithDMList.map(p => p.company),
         peNoDM: peNoDMList.map(p => p.company),
