@@ -98,7 +98,7 @@ const toLocalDate = (tsMs) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-export function ProspectingTiered({ prospects, settings, updateSettings = null, updateProspect = null, cdmName = '', onSelectProspect, maxWidth }) {
+export function ProspectingTiered({ prospects, settings, updateSettings = null, updateProspect = null, cdmName = '', onSelectProspect, onOpenContact = null, maxWidth }) {
   const { user } = useAuth() || {};
   const uid = user?.uid || '';
 
@@ -139,6 +139,16 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
   }, []);
 
   const accounts = useMemo(() => myTieredAccounts(prospects, cdmName), [prospects, cdmName]);
+  // The full HubSpot record behind each activity row's contact, by id, so the
+  // Contact column can open the contact popup rather than HubSpot.
+  const contactById = useMemo(() => {
+    const m = new Map();
+    for (const c of (contacts || [])) {
+      const id = String(c?.id || c?.vid || '');
+      if (id) m.set(id, c);
+    }
+    return m;
+  }, [contacts]);
   const localFields = settings?.contactLocalFields || null;
   const links = settings?.companyContactLinks || null;
   const exclusions = settings?.companyContactExclusions || null;
@@ -342,6 +352,17 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
           `${c.source.replace(/^HubSpot /, '')} ${formatDateDisplay(toLocalDate(c.tsMs))}`,
           c.email,
         ].filter(Boolean).join('\n');
+        const full = onOpenContact ? contactById.get(String(c.id || '')) : null;
+        if (full) {
+          return (
+            <button
+              type="button"
+              title={`${how}\nOpen contact`}
+              onClick={(e) => { e.stopPropagation(); onOpenContact(full); }}
+              style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', cursor: 'pointer', color: '#2563EB', textDecoration: 'underline', textAlign: 'left' }}
+            >{c.name}</button>
+          );
+        }
         const url = hubspotContactUrl(hubspotAccount, c.id);
         if (!url) return <span style={{ color: '#334155' }} title={how}>{c.name}</span>;
         return (
@@ -376,7 +397,7 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
         );
       },
     },
-  ], [canSetStatus, updateProspect, onSelectProspect, hubspotAccount]);
+  ], [canSetStatus, updateProspect, onSelectProspect, hubspotAccount, onOpenContact, contactById]);
 
   const counts = useMemo(() => {
     const c = { total: rows.length, warm: 0, cooling: 0, cold: 0 };

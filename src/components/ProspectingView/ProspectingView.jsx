@@ -1509,6 +1509,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
           updateProspect={updateProspect}
           cdmName={cdmName}
           onSelectProspect={onSelectProspect}
+          onOpenContact={openContact}
         />
       ) : subtab === 'prospects' || subtab === 'pcs' ? (
         <ProspectingCompanies
