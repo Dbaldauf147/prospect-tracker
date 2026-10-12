@@ -1,7 +1,8 @@
 // Prospecting > Tiered Activity: every Tier 1, 2 and 3 account with you as
 // its CDM, when anything last happened on it, and its Status (settable from
 // the row). Statuses ticked in the Hide statuses menu are left off the list;
-// the choice is saved in settings so it applies on every visit.
+// the choice is saved in settings so it applies on every visit. A company
+// with a Substatus counts as Hold Off here, whatever its Status says.
 // Where the activity date comes from is utils/tieredAccountActivity.js; this
 // file loads the HubSpot contacts and outreach index and lays them out.
 
@@ -48,7 +49,13 @@ function readHiddenCache() {
     return Array.isArray(v) ? v : null;
   } catch { return null; }
 }
-const statusOf = (p) => String(p?.status || '').trim();
+// A company with a Substatus is on hold, whatever its Status says: the
+// substatus is the reason it's parked. On this page it reads, filters and
+// counts as Hold Off. Only the reading changes; the record's Status is left
+// as it is.
+const SUBSTATUS_HOLD_STATUS = 'Hold Off';
+const substatusOf = (p) => String(p?.substatus || '').trim();
+const statusOf = (p) => (substatusOf(p) ? SUBSTATUS_HOLD_STATUS : String(p?.status || '').trim());
 const statusLabel = (st) => st || 'No status';
 
 const toLocalDate = (tsMs) => {
@@ -155,6 +162,8 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
           company: String(p.company).trim(),
           tier: String(p.tier).trim(),
           status: statusOf(p),
+          // Set when the row reads Hold Off because of its Substatus.
+          substatus: substatusOf(p),
           prospect: p,
           activity: a,
           days: a ? daysSince(a.tsMs, now) : null,
@@ -190,12 +199,26 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
     },
     {
       key: 'status', label: 'Status', defaultWidth: 170,
-      headerTitle: 'The account Status, as set on the company card. Pick one here to change it there. Picking a status you hide takes the row off the list.',
+      headerTitle: 'The account Status, as set on the company card. Pick one here to change it there. Picking a status you hide takes the row off the list. A company with a Substatus counts as Hold Off.',
       getSortValue: r => (r.status ? r.status.toLowerCase() : null),
-      getFilterValue: r => r.status || '',
-      exportValue: r => r.status || '',
+      getFilterValue: r => [r.status, r.substatus].filter(Boolean).join(' '),
+      exportValue: r => (r.substatus ? `${r.status} (${r.substatus})` : r.status || ''),
       render: (r) => {
         const color = STATUS_COLORS[r.status] || '#64748B';
+        // On hold through its Substatus: a pick in a Status dropdown here
+        // wouldn't take it off hold, so the cell says why instead.
+        if (r.substatus) {
+          const actual = String(r.prospect?.status || '').trim();
+          return (
+            <span
+              title={`Counts as ${SUBSTATUS_HOLD_STATUS} because its Substatus is "${r.substatus}"${actual && actual !== SUBSTATUS_HOLD_STATUS ? ` (its Status is ${actual})` : ''}. Clear the Substatus on the company card to take it off hold.`}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0, maxWidth: '100%' }}
+            >
+              <span style={{ fontSize: '0.68rem', fontWeight: 700, color, background: `${color}1A`, padding: '1px 7px', borderRadius: 999, whiteSpace: 'nowrap' }}>{r.status}</span>
+              <span style={{ fontSize: '0.66rem', color: '#64748B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.substatus}</span>
+            </span>
+          );
+        }
         if (!canSetStatus) {
           if (!r.status) return <span style={{ color: '#CBD5E1' }}>-</span>;
           return <span style={{ fontSize: '0.68rem', fontWeight: 700, color, background: `${color}1A`, padding: '1px 7px', borderRadius: 999, whiteSpace: 'nowrap' }}>{r.status}</span>;
