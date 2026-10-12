@@ -644,6 +644,9 @@ const EMPTY = {
   // People the company named for each "Who does it here?" question on the
   // Contacts tab, by question id (utils/whoDoes).
   whoDoesNamed: {},
+  // The last "Research with Claude" run for those questions:
+  // { company, at, answers: { [questionId]: person[] } } (api/who-does-research).
+  whoDoesResearch: null,
   hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [], portfolioTransactions: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', contractingEntityAddress: '', strategies: [], revenue: '',
   // Opts this company into the weekly acquisition-news digest
@@ -13480,6 +13483,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               onSaveQuestions={(next) => updateSettings({ whoDoesQuestions: next })}
               namedByQuestion={(fields.whoDoesNamed && typeof fields.whoDoesNamed === 'object') ? fields.whoDoesNamed : {}}
               onSaveNamedByQuestion={(next) => set('whoDoesNamed', next)}
+              research={(fields.whoDoesResearch && typeof fields.whoDoesResearch === 'object') ? fields.whoDoesResearch : null}
+              onSaveResearch={(next) => set('whoDoesResearch', next)}
+              website={fields.website || ''}
               company={fields.company}
               companyContacts={localContacts}
               allContacts={hubspotContacts}
