@@ -3,9 +3,14 @@
 // written by useProspectingLadder as the day goes on (see
 // utils/prospectingHistory.js for what a row holds and why); this page only
 // reads them back.
+//
+// Below them, the Tiered Activity tiles day by day: per tier, the share of
+// accounts reached in the window. Those rows are written whenever this page
+// or Tiered Activity is open (hooks/useTieredActivity.js), so this page loads
+// the same counts and records today's reading too.
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
-import { Bar, BarChart, CartesianGrid, Cell, Legend, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
   historyChartRows,
   historySnapshot,
@@ -13,6 +18,13 @@ import {
   subscribeHistory,
   workingDaysBack,
 } from '../../utils/prospectingHistory';
+import { TIERS } from '../../data/enums.js';
+import { ACTIVITY_SUMMARY_DAYS, tierActivityCoverage } from '../../utils/tieredAccountActivity';
+import { coverageChartRows, coverageHistorySnapshot, parseCoverageHistory, subscribeCoverageHistory } from '../../utils/tieredCoverageHistory';
+import {
+  HIDDEN_STATUSES_KEY, WINDOW_DAYS_KEY, readHiddenCache, readWindowCache, statusOf, useRecordTieredCoverage,
+  useTieredActivity, validWindow,
+} from '../../hooks/useTieredActivity';
 
 const RANGES = [
   { days: 10, label: '2 weeks' },
@@ -27,6 +39,10 @@ const OVERDUE_START_COLOR = '#94A3B8';
 const OVERDUE_END_COLOR = '#0A66C2';
 
 const AXIS_TICK = { fontSize: 11, fill: '#64748B' };
+
+// One hue per tier, checked for colour-blind separation as a set. Every
+// line also has a dot per day and a legend, so colour is never the only cue.
+const TIER_LINE_COLORS = { 'Tier 1': '#2563EB', 'Tier 2': '#D97706', 'Tier 3': '#0D9488' };
 
 const CARD = {
   border: '1px solid #E2E8F0', borderRadius: 10, background: '#fff',
@@ -82,6 +98,32 @@ function OverdueTooltip({ active, payload }) {
   );
 }
 
+function CoverageTooltip({ active, payload }) {
+  const row = active && payload?.[0]?.payload;
+  if (!row) return null;
+  return (
+    <TooltipBox>
+      <div style={{ fontWeight: 700 }}>{row.weekday}, {row.label}</div>
+      {!row.recorded ? (
+        <div style={{ color: '#64748B' }}>Not recorded (Tiered Activity and History weren&apos;t opened)</div>
+      ) : (
+        <>
+          {TIERS.map(tier => {
+            const c = row[`${tier} counts`];
+            return (
+              <div key={tier} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: TIER_LINE_COLORS[tier], flexShrink: 0 }} />
+                <span>{tier}: {row[tier] == null ? '-' : `${row[tier]}%`}{c ? ` (${c.active} of ${c.total})` : ''}</span>
+              </div>
+            );
+          })}
+          {row.windowDays != null && <div style={{ color: '#475569', marginTop: 2 }}>Reached within {row.windowDays} days</div>}
+        </>
+      )}
+    </TooltipBox>
+  );
+}
+
 function Stat({ label, value, sub }) {
   return (
     <div style={{ ...CARD, padding: '0.6rem 0.9rem', minWidth: 150, flex: '1 1 150px' }}>
@@ -92,7 +134,7 @@ function Stat({ label, value, sub }) {
   );
 }
 
-export function ProspectingHistory({ today, maxWidth }) {
+export function ProspectingHistory({ today, maxWidth, prospects = null, settings = null, cdmName = '' }) {
   const raw = useSyncExternalStore(subscribeHistory, historySnapshot);
   const history = useMemo(() => parseHistory(raw), [raw]);
   const [range, setRange] = useState(RANGES[1].days);
@@ -102,6 +144,33 @@ export function ProspectingHistory({ today, maxWidth }) {
     () => historyChartRows(history, workingDaysBack(today, range)),
     [history, today, range],
   );
+
+  // Today's Tiered Activity reading, worked out the way that subtab's tiles
+  // are (its saved Hide statuses and Active within window), so opening
+  // History alone still adds today's point.
+  const { contacts, noIndex, accounts, activity } = useTieredActivity({ prospects, settings, cdmName });
+  const [cachedHidden] = useState(readHiddenCache);
+  const [cachedWindow] = useState(readWindowCache);
+  const savedHidden = settings?.[HIDDEN_STATUSES_KEY];
+  const hiddenStatuses = Array.isArray(savedHidden) ? savedHidden : (cachedHidden || []);
+  const hiddenKey = hiddenStatuses.join('\u0000');
+  const windowDays = validWindow(settings?.[WINDOW_DAYS_KEY]) ?? cachedWindow ?? ACTIVITY_SUMMARY_DAYS;
+  const coverage = useMemo(() => {
+    if (!activity) return null;
+    const hidden = new Set(hiddenKey ? hiddenKey.split('\u0000') : []);
+    return tierActivityCoverage(accounts.filter(p => !hidden.has(statusOf(p))), activity, { days: windowDays });
+  }, [accounts, activity, hiddenKey, windowDays]);
+  useRecordTieredCoverage({ coverage, windowDays, contacts, noIndex, accounts });
+
+  const rawCoverage = useSyncExternalStore(subscribeCoverageHistory, coverageHistorySnapshot);
+  const coverageHistory = useMemo(() => parseCoverageHistory(rawCoverage), [rawCoverage]);
+  const coverageData = useMemo(() => {
+    const byIso = new Map(rows.map(r => [r.iso, r]));
+    return coverageChartRows(coverageHistory, rows.map(r => r.iso))
+      .map(c => ({ ...c, label: byIso.get(c.iso)?.label, weekday: byIso.get(c.iso)?.weekday }));
+  }, [coverageHistory, rows]);
+  const coverageRecorded = coverageData.filter(r => r.recorded).length;
+  const coverageWindows = [...new Set(coverageData.map(r => r.windowDays).filter(n => n != null))];
   const recorded = rows.filter(r => r.recorded);
   const maxSteps = Math.max(1, ...rows.map(r => r.total || 0));
   const maxOverdue = Math.max(1, ...rows.map(r => Math.max(r.overdueStart || 0, r.overdueEnd || 0)));
@@ -207,6 +276,42 @@ export function ProspectingHistory({ today, maxWidth }) {
         </ResponsiveContainer>
       </div>
 
+      <div style={CARD}>
+        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Tiered accounts reached</div>
+        <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: 6 }}>
+          The Tiered Activity tiles each day: per tier, the % of your accounts with a HubSpot email, call or contact
+          in the {coverageWindows.length === 1 ? `last ${coverageWindows[0]} days` : 'Active within window'}. A day is recorded
+          whenever Tiered Activity or this page is open{coverageRecorded === 0 ? ', starting today' : ''}; a day with no dot is one neither was.
+          {coverageWindows.length > 1 ? ' The window was changed during this range, so hover a day to see the one it used.' : ''}
+        </div>
+        <ResponsiveContainer width="100%" height={240}>
+          <LineChart data={coverageData} margin={{ top: 8, right: 12, left: -18, bottom: 0 }}>
+            <CartesianGrid vertical={false} stroke="#EEF2F6" />
+            <XAxis dataKey="label" tick={AXIS_TICK} tickLine={false} axisLine={{ stroke: '#CBD5E1' }} interval="preserveStartEnd" minTickGap={12} />
+            <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={v => `${v}%`} tick={AXIS_TICK} tickLine={false} axisLine={false} />
+            <Tooltip content={<CoverageTooltip />} cursor={{ stroke: '#CBD5E1', strokeWidth: 1 }} />
+            <Legend
+              iconType="circle" iconSize={8} wrapperStyle={{ fontSize: '0.7rem', color: '#475569' }}
+              itemSorter={null}
+            />
+            {TIERS.map(tier => (
+              <Line
+                key={tier}
+                type="linear"
+                dataKey={tier}
+                name={tier}
+                stroke={TIER_LINE_COLORS[tier]}
+                strokeWidth={2}
+                dot={{ r: 3, strokeWidth: 0, fill: TIER_LINE_COLORS[tier] }}
+                activeDot={{ r: 5, stroke: '#fff', strokeWidth: 2 }}
+                connectNulls
+                isAnimationActive={false}
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
       <div>
         <button
           type="button"
@@ -220,21 +325,29 @@ export function ProspectingHistory({ today, maxWidth }) {
           <table style={{ marginTop: 8, borderCollapse: 'collapse', fontSize: '0.72rem', width: '100%', background: '#fff' }}>
             <thead>
               <tr style={{ textAlign: 'left', color: '#64748B' }}>
-                {['Day', 'Steps clear', 'Stopped at', 'Overdue at start', 'Overdue at end'].map(h => (
+                {['Day', 'Steps clear', 'Stopped at', 'Overdue at start', 'Overdue at end', ...TIERS.map(t => `${t} reached`)].map(h => (
                   <th key={h} style={{ padding: '4px 8px', borderBottom: '1px solid #E2E8F0', fontWeight: 700 }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {[...rows].reverse().map(r => (
+              {[...rows].reverse().map(r => {
+                const c = coverageData.find(x => x.iso === r.iso);
+                return (
                 <tr key={r.iso} style={{ color: r.recorded ? '#1E293B' : '#94A3B8' }}>
                   <td style={{ padding: '4px 8px', borderBottom: '1px solid #F1F5F9' }}>{r.weekday}, {r.label}</td>
                   <td style={{ padding: '4px 8px', borderBottom: '1px solid #F1F5F9' }}>{r.reached != null ? `${r.reached} of ${r.total}` : '-'}</td>
                   <td style={{ padding: '4px 8px', borderBottom: '1px solid #F1F5F9' }}>{r.reached == null ? '-' : (r.nextTitle || 'All clear')}</td>
                   <td style={{ padding: '4px 8px', borderBottom: '1px solid #F1F5F9' }}>{r.overdueStart ?? '-'}</td>
                   <td style={{ padding: '4px 8px', borderBottom: '1px solid #F1F5F9' }}>{r.overdueEnd ?? '-'}</td>
+                  {TIERS.map(t => (
+                    <td key={t} style={{ padding: '4px 8px', borderBottom: '1px solid #F1F5F9', color: c?.recorded ? '#1E293B' : '#94A3B8' }}>
+                      {c?.[t] == null ? '-' : `${c[t]}%`}
+                    </td>
+                  ))}
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}
