@@ -10,6 +10,8 @@
 
 import { withVerticalCoverage, OPP_VERTICAL_KEY, OPP_SALESPERSON_KEY } from '../../src/utils/oppVerticalCoverage.js';
 import { NEW_OPPS_ACTIVE_STAGES, NEW_OPPS_MAX_STAGE_AGE_DAYS, combinedActiveStageAge, qualifiesNewOpp } from '../../src/utils/newOppsFilter.js';
+import { chunk, needsSummary, oppNotesText } from '../../src/utils/notesSummary.js';
+import { MAX_ITEMS, summarizeBatch } from './summarizeNotes.js';
 
 // ---- Email column set (fixed) -------------------------------------------
 // The digest email always shows exactly these columns, in this order. The
@@ -159,6 +161,16 @@ export function buildNewOppsTableHtml(records) {
   // separators (and "\n"); render both as <br> so a multi-line note reads
   // as stacked lines instead of one run-on string.
   const multiline = (v) => escapeHtml(v).replace(/\u2028|\r?\n/g, '<br>');
+  // The summary bullets (see addNotesSummaries) when the opp has them, so
+  // the email reads like the Notes column on the subtab; else the notes.
+  const notesHtml = (r, v) => {
+    const bullets = Array.isArray(r._notesSummary) ? r._notesSummary.filter(Boolean) : [];
+    if (bullets.length === 1) return escapeHtml(bullets[0]);
+    if (bullets.length > 1) {
+      return `<ul style="margin:0;padding-left:18px">${bullets.map((b) => `<li style="margin:0">${escapeHtml(b)}</li>`).join('')}</ul>`;
+    }
+    return multiline(v);
+  };
 
   const rows = records.map((r) => {
     const cells = columns.map((c) => {
@@ -170,7 +182,7 @@ export function buildNewOppsTableHtml(records) {
         const url = bfoUrl(r);
         inner = url ? link(url, 'BFO Link') : '';
       } else if (c.key === 'Next Steps') {
-        inner = multiline(v);
+        inner = notesHtml(r, v);
       } else {
         inner = escapeHtml(v);
       }
@@ -187,12 +199,54 @@ export function buildNewOppsTableHtml(records) {
   `;
 }
 
+// ---- Notes summaries -------------------------------------------------------
+// Each opp with its notes summarised into a few bullets as `_notesSummary`,
+// the same summaries the Notes column on the New Opps subtab shows (same
+// text in, same prompt: api/_lib/summarizeNotes.js). Short notes are left
+// as written. Best effort: with no API key, or when a batch fails, those
+// opps keep their full notes and the email still goes out.
+export async function addNotesSummaries(records, { client } = {}) {
+  if (!Array.isArray(records) || records.length === 0) return records;
+  const items = [];
+  const idFor = new Map(); // notes text -> id, so identical notes share one
+  const textOf = records.map((r) => {
+    const text = oppNotesText(r);
+    if (needsSummary(text) && !idFor.has(text)) {
+      idFor.set(text, String(items.length));
+      items.push({ id: String(items.length), text });
+    }
+    return text;
+  });
+  if (items.length === 0) return records;
+
+  if (!client) {
+    if (!process.env.ANTHROPIC_API_KEY) return records;
+    const mod = await import('@anthropic-ai/sdk');
+    const Anthropic = mod.default || mod;
+    client = new Anthropic();
+  }
+
+  const got = {};
+  for (const batch of chunk(items, MAX_ITEMS)) {
+    try {
+      Object.assign(got, (await summarizeBatch(client, batch)) || {});
+    } catch (err) {
+      console.error('new-opps notes summary failed:', err?.message || err);
+    }
+  }
+  return records.map((r, i) => {
+    const bullets = got[idFor.get(textOf[i])];
+    return bullets?.length ? { ...r, _notesSummary: bullets } : r;
+  });
+}
+
 // ---- Send via Gmail (SMTP + App Password) with the table inline ----------
 // The new opportunities are rendered as an HTML table in the email body (no
 // attachment). `records` are pre-filtered by the caller. The body is
 // intentionally minimal — just the optional intro message and the table, with
 // no heading, summary line, or footer.
 export async function sendNewOppsEmail({ to, subject, message, records, replyTo }) {
+  records = await addNotesSummaries(records);
   const intro = message
     ? `<p style="color:#334155;font-size:14px;white-space:pre-wrap;margin:0 0 16px">${escapeHtml(message)}</p>`
     : '';

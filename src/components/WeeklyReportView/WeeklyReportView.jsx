@@ -30,6 +30,7 @@ import {
   emailsByWeek, newOppsByWeek, coverageByWeek,
   TREND_WEEKS, COVERAGE_MONTHS,
   coverageReading, coverageRatioByWeek, withCoverageReading, sameReading, weekKeyAt,
+  COVERAGE_FILL_GRACE_MS,
 } from '../../utils/weeklyReportTrends';
 import { loadCoverageRatioLog, saveCoverageRatioReading } from '../../utils/coverageRatioStore';
 import { withCoverageImages, withCoverageRatioImage } from '../../utils/coverageChartImage';
@@ -655,13 +656,24 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
 
   // The coverage ratio by week, with today's reading standing in for this
   // week before the write above has landed, so the last bar in the email
-  // is the figure on the KPI card.
+  // is the figure on the KPI card. A week that has only just closed gets
+  // today's reading too, as the scheduled send records it (see
+  // COVERAGE_FILL_GRACE_MS): previewing last week on a Monday otherwise
+  // drew a mid-week reading under a KPI card printing today's.
   // Drawn as a line chart here too, so the preview and the cron's rebuild
   // carry the same picture.
+  const coverageRatioLog = useMemo(() => {
+    const now = Date.now();
+    let log = withCoverageReading(coverageLog || {}, weekKeyAt(now), liveCoverage);
+    if (mode !== 'day' && now >= bounds.end && now - bounds.end <= COVERAGE_FILL_GRACE_MS) {
+      log = withCoverageReading(log, weekKeyAt(bounds.start), liveCoverage);
+    }
+    return log;
+  }, [coverageLog, liveCoverage, mode, bounds]);
   const coverageRatioSeries = useMemo(() => withCoverageRatioImage(coverageRatioByWeek({
-    log: withCoverageReading(coverageLog || {}, weekKeyAt(Date.now()), liveCoverage),
+    log: coverageRatioLog,
     refMs: bounds.start,
-  })), [coverageLog, liveCoverage, bounds]);
+  })), [coverageRatioLog, bounds]);
 
   // ---- Click-through breakdowns -----------------------------------------
   // Every figure the email carries is on this tab too, and a click on any
@@ -669,10 +681,6 @@ export function WeeklyReportView({ settings, updateSettings, cdmName = '' }) {
   // (utils/weeklyReportBreakdowns). Built once per data change rather than
   // per render: the email and new-opp ones each re-scan a week of records.
   const bfoMetrics = useMemo(() => bfoStageMetrics(bfo), [bfo]);
-  const coverageRatioLog = useMemo(
-    () => withCoverageReading(coverageLog || {}, weekKeyAt(Date.now()), liveCoverage),
-    [coverageLog, liveCoverage],
-  );
   const kpiBreakdowns = useMemo(() => Object.fromEntries(kpiCards.map(card => [
     card.key, kpiBreakdown({ key: card.key, card, kpis, records: oppsRecords, bfoMetrics }),
   ])), [kpiCards, kpis, oppsRecords, bfoMetrics]);

@@ -233,6 +233,13 @@ export const COVERAGE_RATIO_WEEKS = 8;
 // How long the log is kept. A reading is ~80 bytes, so three years of them
 // is still a rounding error against a Firestore document.
 const MAX_COVERAGE_READINGS = 156;
+// How long after a week closes a reading can still stand for it. The
+// ratio is a level, so what it reads at Monday 6am is where the week ended.
+// The scheduled send records that as the closed week's point, and the tab
+// previewing that week draws it the same way. Later than this (a Friday
+// schedule, a manual "send now" mid-week) is measuring a different week
+// and leaves the closed one alone.
+export const COVERAGE_FILL_GRACE_MS = 2 * DAY_MS;
 
 // The Monday key of the week containing `ms`, in the same local terms the
 // series windows are built in. The one function both writers key a reading
