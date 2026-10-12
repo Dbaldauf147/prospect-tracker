@@ -9,6 +9,16 @@
 // `Authorization: Bearer <CRON_SECRET>`; a `?secret=` query param also
 // works for a manual trigger.
 //
+// One user per invocation. The cron's own call lists the users and calls
+// this endpoint again with `?uid=` for each, so every user gets the
+// function's full maxDuration. It used to walk every user inside the one
+// call, and once the data grew the run was killed at the time limit before
+// it reached some users: their nightly backups stopped (for 83 days, in
+// one case) with no error recorded anywhere, because a killed function
+// never reaches its catch. Each run is also logged to backupCron/latest,
+// so the backup-health banner can tell "the cron didn't fire" from "it ran
+// and failed for you".
+//
 // Required env:
 //   FIREBASE_SERVICE_ACCOUNT_KEY  — already set (Firestore admin)
 //   GOOGLE_SERVICE_ACCOUNT_KEY    — already set (GCS, via JWT)
@@ -74,6 +84,128 @@ function summaryHtml({ fileName, summary, alerts, prevCounts }) {
     </div>`;
 }
 
+// How long the fan-out waits on each user's call. Under the function's
+// own 300s, so the parent can still write its log; a child it stops
+// waiting for keeps running in its own invocation regardless.
+const CHILD_WAIT_MS = 280000;
+
+// This deployment's own address, as the cron reached it.
+function selfUrl(req, uid) {
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  const proto = req.headers['x-forwarded-proto'] || 'https';
+  return `${proto}://${host}/api/daily-backup?uid=${encodeURIComponent(uid)}`;
+}
+
+// The cron's own call: list the users and hand each to its own invocation.
+async function fanOut(req, res, db) {
+  const startedAt = new Date().toISOString();
+  const log = db.collection('backupCron').doc('latest');
+  await log.set({ startedAt, finishedAt: null, users: null, results: null }).catch(() => {});
+
+  let userDocs;
+  try { userDocs = (await db.collection('users').get()).docs; }
+  catch (err) {
+    const error = `Failed to list users: ${String(err.message || err)}`;
+    await log.set({ finishedAt: new Date().toISOString(), error }, { merge: true }).catch(() => {});
+    return res.status(500).json({ error });
+  }
+
+  const secret = process.env.CRON_SECRET;
+  const results = await Promise.all(userDocs.map(async (u) => {
+    const uid = u.id;
+    try {
+      const r = await fetch(selfUrl(req, uid), {
+        headers: secret ? { Authorization: `Bearer ${secret}` } : {},
+        signal: AbortSignal.timeout(CHILD_WAIT_MS),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) return { uid, status: 'error', error: body?.error || `HTTP ${r.status}` };
+      return { uid, status: body?.status || 'ok' };
+    } catch (err) {
+      return { uid, status: 'error', error: String(err?.message || err).slice(0, 300) };
+    }
+  }));
+
+  await log.set({ finishedAt: new Date().toISOString(), users: userDocs.length, results }, { merge: true }).catch(() => {});
+  return res.status(200).json({ ran: results.length, results, startedAt, at: new Date().toISOString() });
+}
+
+// One user's nightly backup: snapshot, upload, prune, compare, email.
+async function backupOneUser(db, bucket, uid) {
+  const date = new Date().toISOString().slice(0, 10);
+  let email = null;
+  try { email = (await db.collection('users').doc(uid).get()).data()?.email || null; } catch { /* fall through */ }
+  if (!email) {
+    try { email = (await adminAuth().getUser(uid)).email || null; } catch { /* no auth record */ }
+  }
+
+  // Marked before the slow part, so a run killed mid-backup still leaves
+  // a trace the banner can read.
+  await db.collection('backupRuns').doc(uid).set({
+    lastAttemptAt: new Date().toISOString(),
+  }, { merge: true }).catch(() => {});
+
+  try {
+    const { backup, summary } = await collectUserBackup(db, uid, email);
+
+    // Skip users with nothing to protect.
+    const totalCaptured = summary.captured.length;
+    if (totalCaptured === 0) return { uid, status: 'skipped-empty' };
+
+    const fileName = `prospect-tracker-backup-${uid}-${date}.json`;
+    await uploadJsonToGcs({ bucket, name: fileName, content: JSON.stringify(backup) });
+
+    // Retention: keep the newest RETAIN, delete the rest. Best-effort.
+    try {
+      const files = await listBackupObjects({ bucket, prefix: `prospect-tracker-backup-${uid}-` });
+      for (const f of files.slice(RETAIN)) await deleteGcsObject({ bucket, name: f.name });
+    } catch (e) { console.warn('backup retention prune failed', e); }
+
+    // Anomaly check vs the previous run.
+    let prevCounts = null;
+    try {
+      const prev = await db.collection('backupRuns').doc(uid).get();
+      if (prev.exists) prevCounts = prev.data()?.counts || null;
+    } catch { /* first run */ }
+    const alerts = detectAnomalies(prevCounts, summary.counts);
+
+    // Email the summary (best-effort — the bucket copy is the real save).
+    const to = process.env.BACKUP_NOTIFY_EMAIL || email;
+    let emailed = false;
+    if (to) {
+      try {
+        await sendEmail({
+          to,
+          subject: `${alerts.length ? '⚠ ' : ''}Prospect Tracker daily backup: ${date}`,
+          html: summaryHtml({ fileName, summary, alerts, prevCounts }),
+        });
+        emailed = true;
+      } catch (e) { console.warn('backup summary email failed', e); }
+    }
+
+    await db.collection('backupRuns').doc(uid).set({
+      counts: summary.counts,
+      captured: summary.captured,
+      errors: summary.errors,
+      generatedAt: summary.generatedAt,
+      lastFile: fileName,
+      lastStatus: 'ok',
+      lastError: null,
+      alerts,
+      emailed,
+    }, { merge: true });
+
+    return { uid, status: 'ok', counts: summary.counts, alerts, emailed };
+  } catch (err) {
+    await db.collection('backupRuns').doc(uid).set({
+      lastStatus: 'error',
+      lastError: String(err.message || err).slice(0, 500),
+      generatedAt: new Date().toISOString(),
+    }, { merge: true }).catch(() => {});
+    return { uid, status: 'error', error: String(err.message || err) };
+  }
+}
+
 export default async function handler(req, res) {
   const secret = process.env.CRON_SECRET;
   if (secret) {
@@ -89,79 +221,9 @@ export default async function handler(req, res) {
   try { db = adminDb(); }
   catch (err) { return res.status(500).json({ error: String(err.message || err) }); }
 
-  let userDocs;
-  try { userDocs = (await db.collection('users').get()).docs; }
-  catch (err) { return res.status(500).json({ error: `Failed to list users: ${String(err.message || err)}` }); }
+  const uid = String(req.query?.uid || '').trim();
+  if (!uid) return fanOut(req, res, db);
 
-  const date = new Date().toISOString().slice(0, 10);
-  const results = [];
-
-  for (const u of userDocs) {
-    const uid = u.id;
-    let email = u.data()?.email || null;
-    if (!email) {
-      try { email = (await adminAuth().getUser(uid)).email || null; } catch { /* no auth record */ }
-    }
-
-    try {
-      const { backup, summary } = await collectUserBackup(db, uid, email);
-
-      // Skip users with nothing to protect.
-      const totalCaptured = summary.captured.length;
-      if (totalCaptured === 0) { results.push({ uid, status: 'skipped-empty' }); continue; }
-
-      const fileName = `prospect-tracker-backup-${uid}-${date}.json`;
-      await uploadJsonToGcs({ bucket, name: fileName, content: JSON.stringify(backup) });
-
-      // Retention: keep the newest RETAIN, delete the rest. Best-effort.
-      try {
-        const files = await listBackupObjects({ bucket, prefix: `prospect-tracker-backup-${uid}-` });
-        for (const f of files.slice(RETAIN)) await deleteGcsObject({ bucket, name: f.name });
-      } catch (e) { console.warn('backup retention prune failed', e); }
-
-      // Anomaly check vs the previous run.
-      let prevCounts = null;
-      try {
-        const prev = await db.collection('backupRuns').doc(uid).get();
-        if (prev.exists) prevCounts = prev.data()?.counts || null;
-      } catch { /* first run */ }
-      const alerts = detectAnomalies(prevCounts, summary.counts);
-
-      // Email the summary (best-effort — the bucket copy is the real save).
-      const to = process.env.BACKUP_NOTIFY_EMAIL || email;
-      let emailed = false;
-      if (to) {
-        try {
-          await sendEmail({
-            to,
-            subject: `${alerts.length ? '⚠ ' : ''}Prospect Tracker daily backup: ${date}`,
-            html: summaryHtml({ fileName, summary, alerts, prevCounts }),
-          });
-          emailed = true;
-        } catch (e) { console.warn('backup summary email failed', e); }
-      }
-
-      await db.collection('backupRuns').doc(uid).set({
-        counts: summary.counts,
-        captured: summary.captured,
-        errors: summary.errors,
-        generatedAt: summary.generatedAt,
-        lastFile: fileName,
-        lastStatus: 'ok',
-        alerts,
-        emailed,
-      }, { merge: true });
-
-      results.push({ uid, status: 'ok', counts: summary.counts, alerts, emailed });
-    } catch (err) {
-      await db.collection('backupRuns').doc(uid).set({
-        lastStatus: 'error',
-        lastError: String(err.message || err).slice(0, 500),
-        generatedAt: new Date().toISOString(),
-      }, { merge: true }).catch(() => {});
-      results.push({ uid, status: 'error', error: String(err.message || err) });
-    }
-  }
-
-  return res.status(200).json({ ran: results.length, results, at: new Date().toISOString() });
+  const result = await backupOneUser(db, bucket, uid);
+  return res.status(result.status === 'error' ? 500 : 200).json(result);
 }

@@ -3,6 +3,7 @@
 // checks and why they exist). Read-mostly: the only write is the tiny probe
 // object, overwritten in place each time.
 import { withAuth } from './_lib/http.js';
+import { adminDb } from './_lib/firebaseAdmin.js';
 import { listBackupObjects, uploadJsonToGcs, downloadGcsObject } from './_lib/gcs.js';
 import { assessBackupHealth, fixLinks, probeObjectName, projectIdFromKey } from './_lib/backupHealth.js';
 
@@ -32,7 +33,21 @@ async function handler(req, res, auth) {
     listError = String(err?.message || err);
   }
 
-  return res.status(200).json({ ...assessBackupHealth({ files, probeError, listError }), links });
+  // The nightly job's own records, so a missing backup can say why. Best
+  // effort: the verdict stands without them.
+  let cron = null;
+  let run = null;
+  try {
+    const db = adminDb();
+    const [c, r] = await Promise.all([
+      db.collection('backupCron').doc('latest').get(),
+      db.collection('backupRuns').doc(auth.uid).get(),
+    ]);
+    cron = c.exists ? c.data() : null;
+    run = r.exists ? { uid: auth.uid, ...r.data() } : null;
+  } catch { /* leave them out */ }
+
+  return res.status(200).json({ ...assessBackupHealth({ files, probeError, listError, cron, run }), links });
 }
 
 export default withAuth(handler);
