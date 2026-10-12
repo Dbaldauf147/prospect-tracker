@@ -15,6 +15,8 @@ export function statusColor(status) {
     'Inside Sales': '#3B82F6',
     'Qualifying': '#F59E0B',
     'Hold Off': '#8B5CF6',
+    // A company with a substatus (utils/reportingStatus).
+    'On Hold': '#A855F7',
     'Lost - Not Sold': '#EF4444',
     'Old Client': '#6B7280',
     'Partnering w/Another CDM': '#06B6D4',
