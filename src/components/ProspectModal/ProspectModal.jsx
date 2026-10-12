@@ -8287,7 +8287,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prospects, portfolioPendingCreate]);
 
-  function createPortfolioProspect(idx) {
+  // `details` are the dialog's CDM / Vertical / HQ Region picks; a blank
+  // HQ Region still falls back to the row's HQ country.
+  function createPortfolioProspect(idx, details = {}) {
     const row = (fields.portfolioCompanies || [])[idx];
     const name = String(row?.companyName || '').trim();
     if (!row || !name || !onAddProspect || portfolioLinkBusy) return;
@@ -8298,8 +8300,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     Promise.resolve(onAddProspect({
       company: name,
       peOwner: withThisFirmAsOwner(''),
-      hqRegion: classifyHqCountry(row.hqCountry) || '',
+      hqRegion: String(details.hqRegion || '').trim() || classifyHqCountry(row.hqCountry) || '',
       status: String(row.status || '').trim(),
+      ...(String(details.cdm || '').trim() ? { cdm: String(details.cdm).trim() } : {}),
+      ...(String(details.vertical || '').trim() ? { vertical: String(details.vertical).trim() } : {}),
     })).then((id) => {
       if (!id) throw new Error('The company was not created.');
       finishPortfolioCreate(pending, id);
@@ -11423,7 +11427,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               creating={portfolioLinkBusy}
               error={portfolioLinkError}
               onMap={(p) => mapPortfolioRow(portfolioLinkIdx, p)}
-              onCreate={onAddProspect ? () => createPortfolioProspect(portfolioLinkIdx) : null}
+              cdmOptions={cdmOptions}
+              verticalOptions={dropdownVerticals}
+              initialHqRegion={classifyHqCountry((fields.portfolioCompanies || [])[portfolioLinkIdx].hqCountry) || ''}
+              onCreate={onAddProspect ? (details) => createPortfolioProspect(portfolioLinkIdx, details) : null}
               // Closable mid-create: the row still links when the record
               // arrives (see createPortfolioProspect).
               onClose={() => setPortfolioLinkIdx(null)}

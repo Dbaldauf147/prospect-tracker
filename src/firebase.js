@@ -2,7 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import {
   initializeFirestore, getFirestore,
-  persistentLocalCache, persistentSingleTabManager,
+  persistentLocalCache, persistentSingleTabManager, memoryLocalCache,
 } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -64,12 +64,44 @@ export const auth = getAuth(app);
 // the cache. The first tab keeps the savings, and a reload when it's the
 // only tab gets them back.
 //
+// Which tab that is gets settled HERE, with a browser lock, not by the SDK.
+// The SDK's own lease is a timestamp the owner refreshes every few seconds,
+// and a backgrounded tab's timers are throttled well past the 5 s the lease
+// lives for. So a second tab opened while the owner sat in the background
+// found the lease stale and took it, and the owner's next refresh threw
+//   Failed to obtain exclusive access to the persistence layer
+// which the SDK treats as fatal mid-session: the async queue stops and
+// every write after it is INTERNAL ASSERTION FAILED (b815) until a reload.
+// That is what broke "+ Create" on the portfolio link dialog.
+//
+// A Web Lock is held for as long as the page is open, however throttled,
+// and released by the browser when the page goes. The tab that gets it
+// owns the cache; any other tab goes straight to the in-memory cache and
+// never touches the lease, so the owner can't lose it. Without Web Locks
+// (old browsers) it is the SDK's lease alone, as before.
+const CACHE_LOCK = 'prospect-tracker:firestore-cache-owner';
+function claimCacheOwnership() {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : null;
+  if (!locks?.request) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    locks.request(CACHE_LOCK, { ifAvailable: true }, (lock) => {
+      resolve(!!lock);
+      // Held until the page unloads.
+      return lock ? new Promise(() => {}) : undefined;
+    }).catch(() => resolve(true));
+  });
+}
+const ownsCache = await claimCacheOwnership();
+
 // 100 MB rather than the 40 MB default: the roster alone is a few thousand
 // documents, and the Opps 2 chunk blobs are large enough to evict it at the
 // default threshold — which would quietly put the reads back.
 const CACHE_BYTES = 100 * 1024 * 1024;
 
 function openFirestore() {
+  if (!ownsCache) {
+    return initializeFirestore(app, { localCache: memoryLocalCache() });
+  }
   try {
     return initializeFirestore(app, {
       localCache: persistentLocalCache({

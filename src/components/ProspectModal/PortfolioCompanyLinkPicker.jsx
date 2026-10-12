@@ -1,16 +1,27 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { companiesMatch } from '../../utils/listFlags';
+import { HQ_REGION_OPTIONS } from '../../utils/hqRegion';
 
 // Ties one Portfolio Companies row to a Table View company: either an
 // existing record (picked from a search over the whole roster) or a new one
 // created from the row. Opened from the link button beside a row's name when
 // the row doesn't resolve to anything on Table View by name.
 //
+// Creating asks for the three fields a new company is otherwise sent off to
+// get filled in later: CDM, Vertical and HQ Region (that one guessed from
+// the row's HQ country). Each can be left blank.
+//
 // Rendered into document.body as a centred dialog: the portfolio table sits
 // in a horizontal scroller that would clip anything anchored to the cell.
-export function PortfolioCompanyLinkPicker({ rowName = '', firmName = '', prospects = [], creating = false, error = '', onMap, onCreate, onClose }) {
+export function PortfolioCompanyLinkPicker({
+  rowName = '', firmName = '', prospects = [], creating = false, error = '',
+  cdmOptions = [], verticalOptions = [], initialHqRegion = '',
+  onMap, onCreate, onClose,
+}) {
   const [query, setQuery] = useState(rowName);
+  const [details, setDetails] = useState({ cdm: '', vertical: '', hqRegion: initialHqRegion || '' });
+  const setDetail = (key, value) => setDetails(d => ({ ...d, [key]: value }));
   const inputRef = useRef(null);
   useEffect(() => { inputRef.current?.focus(); inputRef.current?.select(); }, []);
   useEffect(() => {
@@ -95,15 +106,44 @@ export function PortfolioCompanyLinkPicker({ rowName = '', firmName = '', prospe
           ))}
         </div>
 
+        <div style={{ padding: '0.6rem 1rem 0.3rem', borderTop: '1px solid var(--color-border-light, #E2E8F0)' }}>
+          <div style={{ fontSize: '0.68rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>
+            If creating
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}>
+            {[
+              { key: 'cdm', label: 'CDM', options: cdmOptions },
+              { key: 'vertical', label: 'Vertical', options: verticalOptions },
+              { key: 'hqRegion', label: 'HQ Region', options: HQ_REGION_OPTIONS },
+            ].map(f => (
+              <label key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, fontSize: '0.66rem', fontWeight: 600, color: '#475569' }}>
+                {f.label}
+                <select
+                  value={details[f.key]}
+                  disabled={creating}
+                  onChange={e => setDetail(f.key, e.target.value)}
+                  style={{ width: '100%', minWidth: 0, padding: '0.3rem 0.35rem', border: '1px solid var(--color-border, #CBD5E1)', borderRadius: 6, fontSize: '0.76rem', fontFamily: 'inherit', background: '#fff' }}
+                >
+                  <option value="">-</option>
+                  {f.options.map(o => <option key={o} value={o}>{o}</option>)}
+                  {details[f.key] && !f.options.includes(details[f.key]) && (
+                    <option value={details[f.key]}>{details[f.key]}</option>
+                  )}
+                </select>
+              </label>
+            ))}
+          </div>
+        </div>
+
         {error && (
           <div style={{ padding: '0 1rem 0.4rem', fontSize: '0.72rem', color: '#B91C1C', fontWeight: 600 }}>{error}</div>
         )}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.7rem 1rem', borderTop: '1px solid var(--color-border-light, #E2E8F0)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.7rem 1rem' }}>
           <button
             type="button"
             disabled={!name || creating}
-            onClick={() => onCreate?.()}
+            onClick={() => onCreate?.(details)}
             title={name
               ? `Add "${name}" to Table View${firmName ? ` with ${firmName} as its PE Owner` : ''}, and link this row to it.`
               : 'Give the row a company name first.'}
