@@ -152,6 +152,7 @@ import { useSavedAnalyses } from '../../hooks/useSavedAnalyses';
 import SavedAnalysisLink from '../SavedAnalysisLink';
 import { isClientWedged, isClientWedgedError, wedgedClientMessage } from '../../utils/firestoreClientHealth';
 import styles from './ProspectModal.module.css';
+import { recipientMapSaver } from '../../utils/recipientMaps';
 
 // The notes editor is fetched the first time an opportunity's notes open,
 // not with the card (see QuillEditor.js).
@@ -1267,24 +1268,34 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     return () => document.removeEventListener('mousedown', h);
   }, [showToAlsoSuggestions]);
 
+  // Whether the user has touched To Also / CC in this popup. Untouched,
+  // they follow what is stored (see the re-seed below) and a save leaves
+  // them alone: saving a tag used to write back the lists the popup opened
+  // with, and a popup opened before they loaded opened with none, so the
+  // tag click deleted the contact's To / CC (utils/recipientMaps).
+  const recipientsEditedRef = useRef({ cc: false, toAlso: false });
   function addCc(email) {
     const t = String(email || '').trim();
     if (!t || ccEmails.includes(t)) return;
+    recipientsEditedRef.current.cc = true;
     setCcEmails([...ccEmails, t]);
     setCcInput('');
     setShowCcSuggestions(false);
   }
   function removeCc(email) {
+    recipientsEditedRef.current.cc = true;
     setCcEmails(ccEmails.filter(e => e !== email));
   }
   function addToAlso(email) {
     const t = String(email || '').trim();
     if (!t || toAlsoEmails.includes(t)) return;
+    recipientsEditedRef.current.toAlso = true;
     setToAlsoEmails([...toAlsoEmails, t]);
     setToAlsoInput('');
     setShowToAlsoSuggestions(false);
   }
   function removeToAlso(email) {
+    recipientsEditedRef.current.toAlso = true;
     setToAlsoEmails(toAlsoEmails.filter(e => e !== email));
   }
   const ccSuggestions = ccInput.trim()
@@ -1825,18 +1836,14 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       // Persist CC / To Also maps keyed by the contact's primary
       // email — Draft Emails reads these on every campaign preview to
       // auto-add the linked recipients.
+      // Only the lists the user edited, and only this contact's entry, set
+      // on the latest settings by the saver (utils/recipientMaps).
       const primaryEmail = (savedContact.email || '').trim();
-      if (primaryEmail && onSaveCcMap) {
-        const next = { ...(ccMap || {}) };
-        if (snap.ccEmails.length > 0) next[primaryEmail] = snap.ccEmails;
-        else delete next[primaryEmail];
-        onSaveCcMap(next);
+      if (primaryEmail && onSaveCcMap && recipientsEditedRef.current.cc) {
+        onSaveCcMap(primaryEmail, snap.ccEmails);
       }
-      if (primaryEmail && onSaveToAlsoMap) {
-        const next = { ...(toAlsoMap || {}) };
-        if (snap.toAlsoEmails.length > 0) next[primaryEmail] = snap.toAlsoEmails;
-        else delete next[primaryEmail];
-        onSaveToAlsoMap(next);
+      if (primaryEmail && onSaveToAlsoMap && recipientsEditedRef.current.toAlso) {
+        onSaveToAlsoMap(primaryEmail, snap.toAlsoEmails);
       }
       // Mark exactly what went to HubSpot as clean, so edits made *during*
       // the request still register as unsaved and get their own pass.
@@ -1922,6 +1929,33 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // just hammer a broken request, so we wait for the next edit (or a click).
   const failedSigRef = useRef(null);
   const inFlightRef = useRef(null);
+  // To Also / CC the user hasn't touched follow what is stored, so lists
+  // that load (or change elsewhere) after the popup opened show up here
+  // instead of the empty ones it opened with. Not an edit, so when nothing
+  // else is unsaved the saved signature moves with them and no save fires.
+  const storedEmailKey = (contact?.email || '').trim();
+  const storedCc = Array.isArray(ccMap?.[storedEmailKey]) ? ccMap[storedEmailKey] : [];
+  const storedToAlso = Array.isArray(toAlsoMap?.[storedEmailKey]) ? toAlsoMap[storedEmailKey] : [];
+  const storedCcKey = JSON.stringify(storedCc);
+  const storedToAlsoKey = JSON.stringify(storedToAlso);
+  useEffect(() => {
+    const cur = stateRef.current;
+    const clean = savedSigRef.current === signatureOf(cur);
+    let next = cur;
+    if (!recipientsEditedRef.current.cc && JSON.stringify(cur.ccEmails) !== storedCcKey) {
+      setCcEmails(storedCc);
+      next = { ...next, ccEmails: storedCc };
+    }
+    if (!recipientsEditedRef.current.toAlso && JSON.stringify(cur.toAlsoEmails) !== storedToAlsoKey) {
+      setToAlsoEmails(storedToAlso);
+      next = { ...next, toAlsoEmails: storedToAlso };
+    }
+    if (next !== cur && clean) {
+      savedSigRef.current = signatureOf(next);
+      setSavedSig(savedSigRef.current);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storedCcKey, storedToAlsoKey]);
   const dirty = currentSig !== savedSig;
   // A contact with no HubSpot record yet always has something to push, even
   // when nothing has been typed since the form opened — a new-contact form
@@ -13587,9 +13621,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           contactReportsTo={settings.contactReportsTo || {}}
           onSaveReportsTo={handleSaveContactReportsTo}
           ccMap={settings.ccMap || {}}
-          onSaveCcMap={m => updateSettings({ ccMap: m })}
+          onSaveCcMap={recipientMapSaver(updateSettings, 'ccMap')}
           toAlsoMap={settings.toAlsoMap || {}}
-          onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
+          onSaveToAlsoMap={recipientMapSaver(updateSettings, 'toAlsoMap')}
           /* Both maps are rebuilt from the props above rather than from a
              closure, so the comparator's check on them is what keeps these
              two honest. */

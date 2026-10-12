@@ -26,6 +26,7 @@ import {
   planLeadImport,
   summariseLeadNames,
 } from '../../utils/marketingLeadsImport';
+import { recipientMapSaver } from '../../utils/recipientMaps';
 
 // Marketing Leads subtab on the Contacts page. The user pastes a block
 // copied from a Salesforce Leads list view; a column-mapping modal pops
@@ -2735,9 +2736,9 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
             updateSettings({ contactReportsTo: next });
           }}
           ccMap={settings?.ccMap || {}}
-          onSaveCcMap={m => updateSettings({ ccMap: m })}
+          onSaveCcMap={recipientMapSaver(updateSettings, 'ccMap')}
           toAlsoMap={settings?.toAlsoMap || {}}
-          onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
+          onSaveToAlsoMap={recipientMapSaver(updateSettings, 'toAlsoMap')}
           contactFamilies={settings?.contactFamilies || {}}
           onSaveFamily={(cid, info) => {
             if (cid == null) return;

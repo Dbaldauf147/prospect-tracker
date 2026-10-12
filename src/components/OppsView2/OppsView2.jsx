@@ -216,6 +216,7 @@ import { useTableColumnPrefs } from '../../hooks/useTableColumnPrefs';
 import { useNotesSummaries, useScopeSummaries } from '../../hooks/useNotesSummaries';
 import NotesSummaryCell from '../NotesSummaryCell';
 import styles from './OppsView2.module.css';
+import { recipientMapSaver } from '../../utils/recipientMaps';
 
 // Second Opps tab — user-entered opps stored in Firestore
 // (`opps2Data/{uid}`) with an IndexedDB cache (`opps2-cache`, key
@@ -18543,9 +18544,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           contactReportsTo={settings?.contactReportsTo || {}}
           onSaveReportsTo={saveContactReportsTo}
           ccMap={settings?.ccMap || {}}
-          onSaveCcMap={(m) => updateSettings({ ccMap: m })}
+          onSaveCcMap={recipientMapSaver(updateSettings, 'ccMap')}
           toAlsoMap={settings?.toAlsoMap || {}}
-          onSaveToAlsoMap={(m) => updateSettings({ toAlsoMap: m })}
+          onSaveToAlsoMap={recipientMapSaver(updateSettings, 'toAlsoMap')}
           contactFamilies={settings?.contactFamilies || {}}
           onSaveFamily={saveContactFamily}
           contactMetInPerson={settings?.contactMetInPerson || {}}
