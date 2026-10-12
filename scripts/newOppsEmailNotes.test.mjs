@@ -35,7 +35,9 @@ check('short notes untouched', out[1]._notesSummary, undefined);
 check('input records not mutated', a._notesSummary, undefined);
 
 const html = buildNewOppsTableHtml(out);
-check('table shows bullets, not the full notes', [html.includes('<li style="margin:0">Proposal with CFO</li>'), html.includes('Follow up on pricing')], [true, false]);
+check('table shows bullets, not the full notes', [html.includes('>Proposal with CFO</li>'), html.includes('Follow up on pricing')], [true, false]);
+check('bullets sit near the cell edge, as a margin Outlook honours',
+  html.includes('<ul style="margin:0 0 0 16px;padding:0">'), true);
 check('short notes shown as written', html.includes('>Short note<'), true);
 
 const broken = { beta: { messages: { create: async () => { throw new Error('boom'); } } } };
