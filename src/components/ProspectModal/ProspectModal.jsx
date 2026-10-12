@@ -56,6 +56,7 @@ import { companyDedupeKey } from '../../utils/companyKey';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { serviceStatusColor, serviceStatusBucket, serviceBucket } from '../../utils/serviceStatusColors';
 import { pricedServiceRows } from '../../utils/serviceRows';
+import { ServiceDetailPopup } from '../common/ServiceDetailPopup';
 import { AccountPotentialTab } from '../DropdownsView/AccountPotentialTab';
 import { loadPricingEstimate } from '../../utils/pricingEstimateStore';
 import { accountPotential } from '../../utils/accountPotential';
@@ -4714,6 +4715,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [showHiddenContacts, setShowHiddenContacts] = useState(false);
   // Which service row has its SME editor open (service key, or null).
   const [expandedServiceSME, setExpandedServiceSME] = useState(null);
+  // The service whose popup (what it covers, who owns it, what it pulls
+  // in) is open from the Services tab, by name; null when none is.
+  const [serviceDetailName, setServiceDetailName] = useState(null);
 
   // Indicative Savings analysis saved against this prospect from the
   // Utility Lookup page. Stored in a /analyses/main subcollection so
@@ -8519,6 +8523,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
   return (
     <div className={styles.overlay} onClick={onClose}>
+      {/* The service popup, from a name on the Services tab. It portals to
+          the page, but React still bubbles its clicks up through here, so
+          they stop at this wrapper rather than reaching the overlay's
+          close. Above this popup's own overlay (200). */}
+      {serviceDetailName && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <ServiceDetailPopup
+            name={serviceDetailName}
+            settings={settings}
+            updateSettings={updateSettings}
+            zIndex={9600}
+            onClose={() => setServiceDetailName(null)}
+          />
+        </div>
+      )}
       <div className={styles.modal} onClick={e => e.stopPropagation()}>
         <div className={styles.header}>
           <h2 className={styles.title}>{isNew ? 'Add Prospect' : fields.company}</h2>
@@ -11052,7 +11071,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     title={hasNote ? noteVal : 'Add note'}
                                   >{hasNote ? '\u270E' : '\u270E'}</span>
                                   {tracked && <CoverageMark title={item} />}
-                                  <span style={{ flex: 1, minWidth: '3.5rem', fontSize: '0.68rem', color: retry ? TRYING_AGAIN_COLORS.color : (colors.color || 'var(--color-text)'), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item}>
+                                  <span
+                                    role="button"
+                                    tabIndex={0}
+                                    onClick={() => setServiceDetailName(item)}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setServiceDetailName(item); } }}
+                                    style={{ flex: 1, minWidth: '3.5rem', fontSize: '0.68rem', color: retry ? TRYING_AGAIN_COLORS.color : (colors.color || 'var(--color-text)'), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                                    title={`${item}: click to open the service`}
+                                  >
                                     {getDisplayName(item)}
                                   </span>
                                   {/* SME - the Schneider contact who owns this
