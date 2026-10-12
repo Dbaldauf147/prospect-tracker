@@ -65,7 +65,7 @@ export function myTieredAccounts(prospects, cdmName) {
  * Returns Map(account id or company -> { tsMs, source, detail, contact })
  * holding only the accounts something was found for. `contact` is the
  * person at the account most recently emailed, called or contacted in
- * HubSpot ({ name, email, tsMs, source }), or null when none was: kept
+ * HubSpot ({ id, name, email, tsMs, source }), or null when none was: kept
  * apart from the newest activity, because a BFO row can be newer and that
  * names an opportunity, not who you reached out to. `outreachIndex` is the parsed
  * `hubspot-outreach-index` ({ emails, phones }); `bfoActivity` the BFO
@@ -82,7 +82,7 @@ export function lastActivityByAccount({
     const k = keyOf(p);
     const prev = out.get(k);
     const best = contact && (!prev?.contact || tsMs > prev.contact.tsMs)
-      ? { name: nameOf(contact), email: String(contact.email || '').trim(), tsMs, source }
+      ? { id: idOf(contact), name: nameOf(contact), email: String(contact.email || '').trim(), tsMs, source }
       : (prev?.contact || null);
     if (!prev || tsMs > prev.tsMs) out.set(k, { tsMs, source, detail, contact: best });
     else if (best !== prev.contact) out.set(k, { ...prev, contact: best });
