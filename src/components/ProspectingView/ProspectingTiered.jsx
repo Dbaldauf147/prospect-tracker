@@ -3,14 +3,13 @@
 // the row). Statuses ticked in the Hide statuses menu are left off the list;
 // the choice is saved in settings so it applies on every visit.
 // Where the activity date comes from is utils/tieredAccountActivity.js; this
-// file loads the three sources and lays them out.
+// file loads the HubSpot contacts and outreach index and lays them out.
 
 import { useEffect, useMemo, useState } from 'react';
 import { STATUSES, STATUS_COLORS, TIERS } from '../../data/enums.js';
 import { DataTable } from '../common/DataTable';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { userLsGet } from '../../utils/userLs';
-import { loadBfoActivity, BFO_ACTIVITY_EVENT } from '../../utils/bfoActivityStore';
 import { formatDateDisplay } from '../../utils/isoDate';
 import { useAuth } from '../../contexts/AuthContext';
 import { hubspotContactUrl, loadHubspotAccount } from '../../utils/hubspotRecordLink';
@@ -95,23 +94,13 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
     return () => { cancelled = true; };
   }, []);
 
-  // The BFO Activity tab's pasted rows.
-  const [bfoActivity, setBfoActivity] = useState(null);
-  useEffect(() => {
-    let cancelled = false;
-    const refresh = () => { loadBfoActivity().then(d => { if (!cancelled) setBfoActivity(d); }); };
-    refresh();
-    window.addEventListener(BFO_ACTIVITY_EVENT, refresh);
-    return () => { cancelled = true; window.removeEventListener(BFO_ACTIVITY_EVENT, refresh); };
-  }, [uid]);
-
   const accounts = useMemo(() => myTieredAccounts(prospects, cdmName), [prospects, cdmName]);
   const localFields = settings?.contactLocalFields || null;
   const links = settings?.companyContactLinks || null;
   const exclusions = settings?.companyContactExclusions || null;
   const activity = useMemo(
-    () => (contacts ? lastActivityByAccount({ accounts, contacts, outreachIndex, bfoActivity, localFields, links, exclusions }) : null),
-    [accounts, contacts, outreachIndex, bfoActivity, localFields, links, exclusions],
+    () => (contacts ? lastActivityByAccount({ accounts, contacts, outreachIndex, localFields, links, exclusions }) : null),
+    [accounts, contacts, outreachIndex, localFields, links, exclusions],
   );
 
   // Statuses to leave off the list, '' standing for "no status". Saved to
@@ -232,13 +221,13 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
     },
     {
       key: 'lastActivity', label: 'Last Activity', defaultWidth: 120,
-      headerTitle: 'The newest of: HubSpot emails and calls with a contact at the account, HubSpot Last Contacted on those contacts, and the BFO Activity tab Last Activity for the account.',
+      headerTitle: 'The newest of: HubSpot emails and calls with a contact at the account, and HubSpot Last Contacted on those contacts. BFO activity is not counted.',
       getSortValue: r => r.activity?.tsMs ?? null,
       getFilterValue: r => (r.activity ? formatDateDisplay(toLocalDate(r.activity.tsMs)) : 'None'),
       exportValue: r => (r.activity ? toLocalDate(r.activity.tsMs) : ''),
       render: (r) => {
         if (r.activity === undefined) return <span style={{ color: '#94A3B8' }}>Loading…</span>;
-        if (!r.activity) return <span style={{ color: '#CBD5E1' }} title="No activity found in HubSpot or BFO Activity">None</span>;
+        if (!r.activity) return <span style={{ color: '#CBD5E1' }} title="No HubSpot email, call or contact found with anyone at this account">None</span>;
         return <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatDateDisplay(toLocalDate(r.activity.tsMs))}</span>;
       },
     },
@@ -261,7 +250,7 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
     },
     {
       key: 'source', label: 'Activity', defaultWidth: 240,
-      headerTitle: 'Where the last activity came from, and who or which opportunity it was with.',
+      headerTitle: 'Where the last activity came from, and who it was with.',
       getSortValue: r => (r.activity ? r.activity.source.toLowerCase() : null),
       getFilterValue: r => (r.activity ? `${r.activity.source} ${r.activity.detail || ''}` : ''),
       exportValue: r => (r.activity ? [r.activity.source, r.activity.detail].filter(Boolean).join(': ') : ''),
@@ -276,7 +265,7 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
     },
     {
       key: 'contact', label: 'Contact', defaultWidth: 200,
-      headerTitle: 'The contact at the account you most recently emailed, called or contacted in HubSpot, whatever the newest activity was. Hover for how and when.',
+      headerTitle: 'The contact at the account you most recently emailed, called or contacted in HubSpot. Hover for how and when.',
       getSortValue: r => (r.activity?.contact ? r.activity.contact.name.toLowerCase() : null),
       getFilterValue: r => (r.activity?.contact ? `${r.activity.contact.name} ${r.activity.contact.email}` : ''),
       exportValue: r => r.activity?.contact?.name || '',
@@ -301,6 +290,26 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
         );
       },
     },
+    {
+      key: 'owner', label: 'Owner', defaultWidth: 170,
+      headerTitle: "Filled in when the contact is at the account's PE owner / parent company (its PE Owner field) rather than at the account itself, so the activity is tied to this account through its owner. Blank when the contact is at the account.",
+      getSortValue: r => (r.activity?.contact ? (r.activity.contact.owner || '').toLowerCase() || null : null),
+      getFilterValue: r => r.activity?.contact?.owner || '',
+      exportValue: r => r.activity?.contact?.owner || '',
+      render: (r) => {
+        const c = r.activity?.contact;
+        if (!c) return null;
+        if (!c.owner) {
+          return <span style={{ color: '#CBD5E1' }} title={`${c.name} is at ${c.company || r.company}, the account itself`}>-</span>;
+        }
+        return (
+          <span
+            title={`${c.name} is at ${c.company}, the PE owner / parent of ${r.company}. The activity is tied to ${r.company} through its owner.`}
+            style={{ fontSize: '0.68rem', fontWeight: 700, color: '#92400E', background: '#FEF3C7', border: '1px solid #FDE68A', padding: '0 7px', borderRadius: 999, whiteSpace: 'nowrap' }}
+          >{c.owner}</span>
+        );
+      },
+    },
   ], [canSetStatus, updateProspect, onSelectProspect, hubspotAccount]);
 
   const counts = useMemo(() => {
@@ -320,7 +329,7 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
     <div style={{ padding: '0.25rem 1.25rem 1.25rem', maxWidth }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.6rem' }}>
         <div style={{ fontSize: '0.72rem', color: '#64748B', flex: '1 1 320px' }}>
-          Every Tier 1, 2 and 3 account with {cdmName || 'you'} as its CDM. Last Activity is the newest HubSpot email or call with a contact at the account, HubSpot Last Contacted on those contacts, or the BFO Activity tab Last Activity for the account.
+          Every Tier 1, 2 and 3 account with {cdmName || 'you'} as its CDM. Last Activity is the newest HubSpot email or call with a contact at the account, or HubSpot Last Contacted on those contacts. BFO activity is not counted. Owner shows when that contact is at the account's PE owner / parent rather than the account itself.
           {noIndex ? ' HubSpot emails and calls show once the Activity tab has loaded its feed.' : ''}
         </div>
         <input
