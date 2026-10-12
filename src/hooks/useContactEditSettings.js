@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { companyOverrideUpdate } from '../utils/contactCompanyOverride';
 import { metInPersonUpdate } from '../utils/metInPerson';
+import { recipientMapSaver } from '../utils/recipientMaps';
 
 // The settings-backed half of ContactEditModal's props, in one place.
 //
@@ -63,9 +64,9 @@ export function useContactEditSettings({ settings, updateSettings }) {
       // cc / to-also are whole-map settings rather than per-contact strings:
       // the popup hands back the map it wants stored.
       ccMap: settings?.ccMap || {},
-      onSaveCcMap: m => updateSettings?.({ ccMap: m }),
+      onSaveCcMap: recipientMapSaver(updateSettings, 'ccMap'),
       toAlsoMap: settings?.toAlsoMap || {},
-      onSaveToAlsoMap: m => updateSettings?.({ toAlsoMap: m }),
+      onSaveToAlsoMap: recipientMapSaver(updateSettings, 'toAlsoMap'),
       contactFamilies: settings?.contactFamilies || {},
       onSaveFamily: (cid, info) => {
         if (cid == null) return;

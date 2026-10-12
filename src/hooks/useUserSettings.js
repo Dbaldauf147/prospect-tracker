@@ -111,6 +111,11 @@ function protectLeadLinks(updates, base, clears) {
 export function useUserSettings(user) {
   const [settings, setSettings] = useState({});
   const [loaded, setLoaded] = useState(false);
+  // Whether the first snapshot has arrived. A save written as a function of
+  // the current settings is refused before it: "the current settings" are
+  // still {} then, so one contact's entry set on that would replace the
+  // whole map with just that entry.
+  const loadedRef = useRef(false);
   const userIdRef = useRef(null);
   // Count of in-flight saves (multiple updateSettings calls can overlap).
   const writingRef = useRef(0);
@@ -146,7 +151,7 @@ export function useUserSettings(user) {
   useEffect(() => autoReloadWhenWedged(), []);
 
   useEffect(() => {
-    if (!user) { setSettings({}); setLoaded(false); return; }
+    if (!user) { setSettings({}); setLoaded(false); loadedRef.current = false; return; }
     userIdRef.current = user.uid;
     pendingRemoteRef.current = null;
 
@@ -159,6 +164,7 @@ export function useUserSettings(user) {
       if (writingRef.current > 0) { pendingRemoteRef.current = data || {}; return; }
       settingsRef.current = data || {};
       setSettings(data || {});
+      loadedRef.current = true;
       setLoaded(true);
     });
 
@@ -180,6 +186,10 @@ export function useUserSettings(user) {
   // was mid-flight, or any other contact) is overwritten with what it held.
   const updateSettings = useCallback(async (updatesOrFn, opts = {}) => {
     if (!userIdRef.current) return;
+    if (typeof updatesOrFn === 'function' && !loadedRef.current) {
+      console.warn('Settings not loaded yet: a save built on them was skipped');
+      return;
+    }
     const rawUpdates = typeof updatesOrFn === 'function'
       ? updatesOrFn(settingsRef.current || {})
       : updatesOrFn;

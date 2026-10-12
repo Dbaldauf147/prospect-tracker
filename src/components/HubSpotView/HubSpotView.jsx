@@ -14,6 +14,7 @@ import { mergeTagEdit } from '../../utils/contactTagReview';
 import { createTagWriter } from '../../utils/tagWriteQueue';
 import { HubSpotMoveTab } from './HubSpotMoveTab';
 import styles from './HubSpotView.module.css';
+import { recipientMapSaver } from '../../utils/recipientMaps';
 
 function HubSpotFilterDrop({ label, options, selected, onToggle, onBulkSet, draft = '', onDraftChange }) {
   const [open, setOpen] = useState(false);
@@ -772,6 +773,11 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
   const [toAlsoInput, setToAlsoInput] = useState('');
   const [showToAlsoSuggestions, setShowToAlsoSuggestions] = useState(false);
   const toAlsoRef = useRef(null);
+  // What the popup opened with, so Save writes To Also / CC only when they
+  // were changed here: written back unchanged, a popup opened before the
+  // lists loaded deleted them (utils/recipientMaps).
+  const openedCcRef = useRef(JSON.stringify(ccEmails));
+  const openedToAlsoRef = useRef(JSON.stringify(toAlsoEmails));
   const [showCompanySuggestions, setShowCompanySuggestions] = useState(false);
   const companyRef = useRef(null);
   const [tagsDropdownOpen, setTagsDropdownOpen] = useState(false);
@@ -1280,14 +1286,8 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
           <button className={styles.modalSaveBtn} onClick={() => {
             const email = fields.email.trim();
             if (email) {
-              const nextCcMap = { ...(ccMap || {}) };
-              if (ccEmails.length > 0) nextCcMap[email] = ccEmails;
-              else delete nextCcMap[email];
-              onSaveCcMap(nextCcMap);
-              const nextToAlsoMap = { ...(toAlsoMap || {}) };
-              if (toAlsoEmails.length > 0) nextToAlsoMap[email] = toAlsoEmails;
-              else delete nextToAlsoMap[email];
-              onSaveToAlsoMap(nextToAlsoMap);
+              if (JSON.stringify(ccEmails) !== openedCcRef.current) onSaveCcMap(email, ccEmails);
+              if (JSON.stringify(toAlsoEmails) !== openedToAlsoRef.current) onSaveToAlsoMap(email, toAlsoEmails);
             }
             // Save Old Emails and Nickname to Firestore settings
             if (cid && onSaveOldEmails) {
@@ -3425,8 +3425,8 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
           tagOptions={dansTagOptions}
           ccMap={settings?.ccMap || {}}
           toAlsoMap={settings?.toAlsoMap || {}}
-          onSaveCcMap={m => updateSettings({ ccMap: m })}
-          onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
+          onSaveCcMap={recipientMapSaver(updateSettings, 'ccMap')}
+          onSaveToAlsoMap={recipientMapSaver(updateSettings, 'toAlsoMap')}
           contactOldEmails={settings?.contactOldEmails || {}}
           onSaveOldEmails={(contactId, oldEmails) => {
             const current = settings?.contactOldEmails || {};

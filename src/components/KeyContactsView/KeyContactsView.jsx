@@ -31,6 +31,8 @@ import { latestCampaignReplies, campaignReplyForContact } from '../../utils/camp
 import { campaignSendDetailWithin } from '../../utils/campaignFollowUp';
 import { buildUnansweredIndex, unansweredFor, campaignSendsByAddress, UNANSWERED_VERSION } from '../../utils/unansweredOutreach';
 import { fetchAllActivityPages } from '../../utils/hubspotActivityPages';
+import { recipientMapSaver, recoverRecipientMaps } from '../../utils/recipientMaps';
+import { findLostRecipients } from '../../utils/recipientRecovery';
 
 // Curated city names for the inline City autocomplete. Matches the
 // predictive-text dropdown the Edit HubSpot Contact popup uses, so the
@@ -1380,6 +1382,39 @@ function KeyContactsViewInner({
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  // "Recover To / CC": put back To Also / CC lists the backups hold for
+  // contacts that have none now (see utils/recipientMaps for how they were
+  // lost). Contacts with recipients now are left as they are.
+  const [recipientRecovery, setRecipientRecovery] = useState({ busy: false, note: '' });
+  async function recoverRecipients() {
+    if (recipientRecovery.busy) return;
+    setRecipientRecovery({ busy: true, note: 'Searching backups...' });
+    try {
+      const { found, sources } = await findLostRecipients(settings, {
+        onProgress: (note) => setRecipientRecovery({ busy: true, note }),
+      });
+      if (!found.length) {
+        setRecipientRecovery({ busy: false, note: 'No backup holds To / CC for contacts missing it.' });
+        return;
+      }
+      const contacts = new Set(found.map(x => x.email.toLowerCase())).size;
+      const lines = found.slice(0, 15).map(x => `${x.key === 'ccMap' ? 'CC' : 'To'} for ${x.email}: ${x.list.join(', ')}`);
+      if (found.length > 15) lines.push(`and ${found.length - 15} more`);
+      const ok = window.confirm(
+        `Found To / CC for ${contacts} contact${contacts === 1 ? '' : 's'} in your backups:\n\n${lines.join('\n')}\n\nPut them back? Contacts that have To / CC now are not changed.`,
+      );
+      if (!ok) { setRecipientRecovery({ busy: false, note: '' }); return; }
+      // Applied to the settings as they are when it lands, not this render's.
+      updateSettings((s) => {
+        const { patch } = recoverRecipientMaps(s, sources);
+        return Object.keys(patch).length ? patch : null;
+      });
+      setRecipientRecovery({ busy: false, note: `Recovered To / CC for ${contacts} contact${contacts === 1 ? '' : 's'}.` });
+    } catch (err) {
+      setRecipientRecovery({ busy: false, note: `Recovery failed: ${err?.message || err}` });
+    }
   }
 
   function downloadContactsCsv() {
@@ -3342,6 +3377,28 @@ function KeyContactsViewInner({
               fontFamily: 'inherit',
             }}
           >Download CSV</button>
+          {hasFullTable(storagePrefix) && (
+            <button
+              type="button"
+              onClick={recoverRecipients}
+              disabled={recipientRecovery.busy}
+              title={recipientRecovery.note || 'Search your backups for To / CC lists that contacts have lost, and put them back. Contacts that have To / CC now are not changed.'}
+              style={{
+                padding: '0.35rem 0.75rem',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                border: '1px solid #CBD5E1',
+                borderRadius: 6,
+                background: '#fff',
+                color: '#334155',
+                cursor: recipientRecovery.busy ? 'wait' : 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >{recipientRecovery.busy ? (recipientRecovery.note || 'Searching...') : 'Recover To / CC'}</button>
+          )}
+          {!recipientRecovery.busy && recipientRecovery.note && (
+            <span style={{ fontSize: '0.7rem', color: '#475569', maxWidth: 220 }}>{recipientRecovery.note}</span>
+          )}
           <button
             type="button"
             onClick={downloadCombinedContactsCsv}
@@ -5119,9 +5176,9 @@ function KeyContactsViewInner({
             contactReportsTo={settings?.contactReportsTo || {}}
             onSaveReportsTo={handleSaveContactReportsTo}
             ccMap={settings?.ccMap || {}}
-            onSaveCcMap={m => updateSettings({ ccMap: m })}
+            onSaveCcMap={recipientMapSaver(updateSettings, 'ccMap')}
             toAlsoMap={settings?.toAlsoMap || {}}
-            onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
+            onSaveToAlsoMap={recipientMapSaver(updateSettings, 'toAlsoMap')}
             contactFamilies={settings?.contactFamilies || {}}
             onSaveFamily={(contactId, info) => {
               const current = settings?.contactFamilies || {};

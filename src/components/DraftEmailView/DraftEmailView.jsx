@@ -32,6 +32,7 @@ import { campaignsByRecency, campaignPickerDetail } from '../../utils/campaignPi
 import { CampaignPicker } from '../common/CampaignPicker';
 import { primarySubject, withSubjects } from '../../utils/campaignSubjects';
 import { responseRateOf } from '../../utils/campaignContactHold';
+import { recipientMapSaver } from '../../utils/recipientMaps';
 
 // Register an <hr> divider blot once so the editor can hold a horizontal
 // page-break line (inserted from the Insert menu). Quill drops any tag that
@@ -3145,9 +3146,9 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
             updateSettings({ contactReportsTo: next });
           }}
           ccMap={settings?.ccMap || {}}
-          onSaveCcMap={m => updateSettings({ ccMap: m })}
+          onSaveCcMap={recipientMapSaver(updateSettings, 'ccMap')}
           toAlsoMap={settings?.toAlsoMap || {}}
-          onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
+          onSaveToAlsoMap={recipientMapSaver(updateSettings, 'toAlsoMap')}
           contactFamilies={settings?.contactFamilies || {}}
           onSaveFamily={(cid, info) => {
             if (cid == null) return;
