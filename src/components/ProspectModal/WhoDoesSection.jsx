@@ -1,13 +1,24 @@
 // "Who does ___ at this company?" on the company popup's Contacts tab.
 // The questions are one standard list (settings.whoDoesQuestions); each
 // company keeps its own answers. The rules live in utils/whoDoes.js.
+// "Research with Claude" asks the questions of the public web
+// (/api/who-does-research); its findings are kept on the company
+// (prospect.whoDoesResearch) and show under each question until the user
+// saves the names they trust.
 import { useMemo, useState } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import { titleSuggestions, namedOnTab, namedToDraft, newQuestionId, nameOf } from '../../utils/whoDoes';
 
 const box = { border: '1px solid var(--color-border)', borderRadius: 8, background: '#fff', padding: '0.6rem 0.75rem' };
 const small = { fontSize: '0.68rem', color: '#64748B' };
 const input = { padding: '0.25rem 0.45rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.74rem', fontFamily: 'inherit' };
 const addBtn = { padding: '0.1rem 0.5rem', border: '1px solid #0891B2', borderRadius: 4, background: '#ECFEFF', color: '#0E7490', fontSize: '0.66rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' };
+const researchBtn = { padding: '0.2rem 0.6rem', border: '1px solid #7C3AED', borderRadius: 4, background: '#F5F3FF', color: '#6D28D9', fontSize: '0.68rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' };
+const CONFIDENCE_COLORS = {
+  high: { background: '#DCFCE7', color: '#166534' },
+  medium: { background: '#FEF3C7', color: '#92400E' },
+  low: { background: '#F1F5F9', color: '#475569' },
+};
 const linkBtn = { border: 'none', background: 'none', padding: 0, font: 'inherit', color: '#1D4ED8', textDecoration: 'underline', cursor: 'pointer' };
 
 function QuestionEditor({ questions, onSave }) {
@@ -67,7 +78,57 @@ function NamedForm({ onAdd }) {
   );
 }
 
-function QuestionCard({ question, named, onSaveNamed, company, companyContacts, allContacts, domains, excludedIds, onLinkContact, onAddNamed, onOpenContact }) {
+// What Claude found for one question: each person with the page that names
+// them. Already on the Contacts tab reads as such; already saved under
+// "Named by the company" reads Saved; otherwise "Save name" adds them there.
+function ResearchFindings({ found, named, onSaveNamed, companyContacts, onOpenContact }) {
+  if (found == null) return null;
+  const isSaved = (p) => named.some(n => String(n.name || '').trim().toLowerCase() === p.name.toLowerCase());
+  return (
+    <>
+      <div style={{ ...small, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', marginTop: '0.5rem', color: '#6D28D9' }}>Found by Claude</div>
+      {found.length === 0 ? (
+        <div style={{ ...small, fontStyle: 'italic' }}>Nobody found on the public web.</div>
+      ) : found.map(p => {
+        const onTab = namedOnTab({ name: p.name }, companyContacts);
+        const saved = isSaved(p);
+        return (
+          <div key={p.name} style={{ fontSize: '0.74rem', marginTop: '0.25rem' }}>
+            <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              {onTab ? (
+                <>
+                  <span style={{ color: '#16A34A', fontWeight: 700 }} title="On this company's contacts">✓</span>
+                  <button type="button" onClick={() => onOpenContact(onTab)} style={linkBtn}>{p.name}</button>
+                </>
+              ) : <span style={{ fontWeight: 600 }}>{p.name}</span>}
+              {p.title && <span style={{ color: '#64748B' }}>{p.title}</span>}
+              <span
+                style={{ ...CONFIDENCE_COLORS[p.confidence], fontSize: '0.6rem', fontWeight: 700, padding: '0 6px', borderRadius: 999, textTransform: 'uppercase' }}
+                title="How sure Claude is that this person answers the question"
+              >{p.confidence}</span>
+              {saved ? (
+                <span style={{ ...small, marginLeft: 'auto' }}>Saved</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onSaveNamed([...named, { name: p.name, email: '', title: p.title }])}
+                  style={{ ...addBtn, marginLeft: 'auto', background: '#fff' }}
+                  title="Save under Named by the company"
+                >Save name</button>
+              )}
+            </div>
+            <div style={{ ...small, marginTop: 1 }}>
+              {p.note}{p.note ? ' ' : ''}
+              <a href={p.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2563EB' }} title={p.sourceUrl}>{p.sourceTitle}</a>
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+function QuestionCard({ question, named, onSaveNamed, found, company, companyContacts, allContacts, domains, excludedIds, onLinkContact, onAddNamed, onOpenContact }) {
   const { onTab, toAdd } = useMemo(
     () => titleSuggestions({ question, company, companyContacts, allContacts, domains, excludedIds }),
     [question, company, companyContacts, allContacts, domains, excludedIds],
@@ -100,6 +161,8 @@ function QuestionCard({ question, named, onSaveNamed, company, companyContacts, 
           ))}
         </div>
       )}
+
+      <ResearchFindings found={found} named={named} onSaveNamed={onSaveNamed} companyContacts={companyContacts} onOpenContact={onOpenContact} />
 
       <div style={{ ...small, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', marginTop: '0.5rem' }}>Named by the company</div>
       {named.length === 0 && <div style={{ ...small, fontStyle: 'italic' }}>Nobody yet. Type who they told you below.</div>}
@@ -135,21 +198,73 @@ function QuestionCard({ question, named, onSaveNamed, company, companyContacts, 
 
 export function WhoDoesSection({
   questions = [], onSaveQuestions, namedByQuestion = {}, onSaveNamedByQuestion,
+  research = null, onSaveResearch, website = '',
   company, companyContacts = [], allContacts = [], domains = [], excludedIds = [],
   onLinkContact, onAddNamed, onOpenContact,
 }) {
   const [editing, setEditing] = useState(false);
+  const [researching, setResearching] = useState(false);
+  const [researchError, setResearchError] = useState('');
+  // Findings only count for the company they were researched for, so a
+  // renamed card doesn't show another company's people.
+  const companyName = String(company || '').trim();
+  const findings = research && research.company === companyName && research.answers && typeof research.answers === 'object' ? research : null;
+  const runResearch = async () => {
+    if (!companyName || researching) return;
+    setResearching(true);
+    setResearchError('');
+    try {
+      const r = await apiFetch('/api/who-does-research', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company: { company: companyName, website: website || '', domains },
+          questions: questions.map(q => ({ id: q.id, question: q.question })),
+        }),
+      });
+      const txt = await r.text();
+      let data = null;
+      try { data = JSON.parse(txt); } catch { data = null; }
+      if (!r.ok || !data?.answers) {
+        setResearchError(data?.error || txt.slice(0, 200) || `HTTP ${r.status}`);
+        return;
+      }
+      onSaveResearch({ company: companyName, at: new Date().toISOString(), answers: data.answers });
+    } catch (err) {
+      setResearchError(err?.message || 'Research failed');
+    } finally {
+      setResearching(false);
+    }
+  };
+  const canResearch = !!companyName && questions.some(q => String(q.question || '').trim()) && typeof onSaveResearch === 'function';
   return (
     <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.5rem' }}>
         <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text)' }}>Who does it here?</span>
         <span style={small}>Standard questions, the people HubSpot suggests by title, and the people the company named.</span>
+        {canResearch && !editing && (
+          <button
+            type="button"
+            onClick={runResearch}
+            disabled={researching}
+            style={{ ...researchBtn, marginLeft: 'auto', opacity: researching ? 0.6 : 1, cursor: researching ? 'wait' : 'pointer' }}
+            title={findings
+              ? `Last researched ${new Date(findings.at).toLocaleString()}. Click to search the public web again.`
+              : 'Search the public web for who answers each question here. Takes up to a minute or two.'}
+          >{researching ? 'Researching...' : findings ? 'Research again' : 'Research with Claude'}</button>
+        )}
         <button
           type="button"
           onClick={() => setEditing(e => !e)}
-          style={{ marginLeft: 'auto', padding: '0.2rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, background: editing ? '#1E293B' : '#fff', color: editing ? '#fff' : '#334155', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+          style={{ marginLeft: canResearch && !editing ? 0 : 'auto', padding: '0.2rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, background: editing ? '#1E293B' : '#fff', color: editing ? '#fff' : '#334155', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
         >{editing ? 'Done editing' : 'Edit questions'}</button>
       </div>
+      {researchError && (
+        <div style={{ ...small, color: '#B91C1C', marginBottom: '0.4rem' }}>Research failed: {researchError}</div>
+      )}
+      {researching && (
+        <div style={{ ...small, marginBottom: '0.4rem' }}>Claude is searching the web for each question. This can take a minute or two.</div>
+      )}
       {editing ? (
         <QuestionEditor questions={questions} onSave={onSaveQuestions} />
       ) : questions.length === 0 ? (
@@ -162,6 +277,7 @@ export function WhoDoesSection({
               question={q}
               named={Array.isArray(namedByQuestion[q.id]) ? namedByQuestion[q.id] : []}
               onSaveNamed={(list) => onSaveNamedByQuestion({ ...namedByQuestion, [q.id]: list })}
+              found={findings && Array.isArray(findings.answers[q.id]) ? findings.answers[q.id] : null}
               company={company}
               companyContacts={companyContacts}
               allContacts={allContacts}
