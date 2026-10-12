@@ -2,14 +2,14 @@
 // its CDM, when anything last happened on it, and its Status (settable from
 // the row). Statuses ticked in the Hide statuses menu are left off the list;
 // the choice is saved in settings so it applies on every visit. A company
-// with a Substatus counts as On Hold here, whatever its Status says.
+// with a Substatus counts as Hold Off here, whatever its Status says.
 // Where the activity date comes from is utils/tieredAccountActivity.js; this
 // file loads the HubSpot contacts and outreach index and lays them out.
 
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { STATUSES, STATUS_COLORS, TIERS } from '../../data/enums.js';
-import { ON_HOLD_STATUS } from '../../utils/reportingStatus';
+import { SUBSTATUS_HOLD_STATUS } from '../../utils/reportingStatus';
 import { DataTable } from '../common/DataTable';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { userLsGet } from '../../utils/userLs';
@@ -61,10 +61,9 @@ function readHiddenCache() {
 }
 // A company with a Substatus is on hold, whatever its Status says: the
 // substatus is the reason it's parked. On this page it reads, filters and
-// counts as On Hold, the same rule My Accounts and the Progress charts use
-// (utils/reportingStatus). Only the reading changes; the record's Status
-// is left as it is.
-const SUBSTATUS_HOLD_STATUS = ON_HOLD_STATUS;
+// counts as Hold Off, the same rule My Accounts and the Progress charts
+// use (utils/reportingStatus). Only the reading changes; the record's
+// Status is left as it is.
 const substatusOf = (p) => String(p?.substatus || '').trim();
 const statusOf = (p) => (substatusOf(p) ? SUBSTATUS_HOLD_STATUS : String(p?.status || '').trim());
 const statusLabel = (st) => st || 'No status';
@@ -173,7 +172,7 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
           company: String(p.company).trim(),
           tier: String(p.tier).trim(),
           status: statusOf(p),
-          // Set when the row reads On Hold because of its Substatus.
+          // Set when the row reads Hold Off because of its Substatus.
           substatus: substatusOf(p),
           prospect: p,
           activity: a,
@@ -210,7 +209,7 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
     },
     {
       key: 'status', label: 'Status', defaultWidth: 170,
-      headerTitle: 'The account Status, as set on the company card. Pick one here to change it there. Picking a status you hide takes the row off the list. A company with a Substatus counts as On Hold.',
+      headerTitle: 'The account Status, as set on the company card. Pick one here to change it there. Picking a status you hide takes the row off the list. A company with a Substatus counts as Hold Off.',
       getSortValue: r => (r.status ? r.status.toLowerCase() : null),
       getFilterValue: r => [r.status, r.substatus].filter(Boolean).join(' '),
       exportValue: r => (r.substatus ? `${r.status} (${r.substatus})` : r.status || ''),

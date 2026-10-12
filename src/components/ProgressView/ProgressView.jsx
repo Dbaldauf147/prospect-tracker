@@ -15,7 +15,7 @@ import { readWorkKey, writeWorkKey } from '../../utils/mirroredWorkKeys';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
 import { excludeUntrackedFromWeeks, untrackedNoteFor } from '../../utils/progressUntracked';
 import { COVERAGE_CHARTS, COVERAGE_T1, COVERAGE_T2, COVERAGE_T3 } from '../../utils/progressCoverage';
-import { reportingStatus, ON_HOLD_STATUS, onHoldNameMap } from '../../utils/reportingStatus';
+import { reportingStatus, substatusNameMap } from '../../utils/reportingStatus';
 import { apiFetch } from '../../utils/apiFetch';
 import { weeksFromBackupValue, missingWeeksFromBackups, mergeRecoveredWeeks } from '../../utils/progressHistoryRecovery';
 
@@ -461,7 +461,7 @@ const PROGRESS_CHART_DEFS = [
   })),
   { id: 'connectedPct', label: '% of Accounts Connected (Had Opportunity)', isPct: true,
     series: [{ key: 't1ConnectedPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ConnectedPct', name: 'Tier 2', color: '#3B82F6' }, { key: 't3ConnectedPct', name: 'Tier 3', color: COVERAGE_T3, tier3: true }] },
-  { id: 'inactivePct',  label: '% of Accounts Inactive (Lost / Hold Off / On Hold / Old Client)', isPct: true,
+  { id: 'inactivePct',  label: '% of Accounts Inactive (Lost / Hold Off / Old Client)', isPct: true,
     series: [{ key: 't1InactivePct', name: 'Tier 1', color: '#DC2626' }, { key: 't2InactivePct', name: 'Tier 2', color: '#3B82F6' }, { key: 't3InactivePct', name: 'Tier 3', color: COVERAGE_T3, tier3: true }] },
   { id: 'tierTotals',   label: 'My Accounts by Tier',
     series: [
@@ -1010,7 +1010,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
       return pinnedContactsFor(company).some(isDecisionMaker);
     }
 
-    const inactiveStatuses = new Set(['Lost - Not Sold', 'Hold Off', 'Old Client', ON_HOLD_STATUS]);
+    const inactiveStatuses = new Set(['Lost - Not Sold', 'Hold Off', 'Old Client']);
 
     const t1Total = t1.length;
     const t2Total = t2.length;
@@ -1020,8 +1020,9 @@ export function ProgressView({ prospects, settings, cdmName }) {
     const t2WithDMList = t2.filter(p => hasDM(p.company));
     const t1ConnectedList = t1.filter(p => hasOpp(p.company));
     const t2ConnectedList = t2.filter(p => hasOpp(p.company));
-    // Read as reported: a company with a Substatus is On Hold, and On Hold
-    // is inactive here alongside Hold Off (utils/reportingStatus).
+    // Read as reported: a company with a Substatus is Hold Off, so it is
+    // inactive here (utils/reportingStatus). It is also left out of every
+    // chart below (substatusNameMap), so this only shows on the raw week.
     const isInactive = (p) => inactiveStatuses.has(reportingStatus(p));
     const t1InactiveList = t1.filter(isInactive);
     const t2InactiveList = t2.filter(isInactive);
@@ -1349,14 +1350,15 @@ export function ProgressView({ prospects, settings, cdmName }) {
   // over every week rather than only today's, so ticking a client moves
   // the whole line instead of putting a step in it. Nothing is rewritten
   // in Firestore, so unticking puts the client back.
-  // On Hold companies (a substatus set) are left out the same way, so the
-  // charts and the Weekly Report's copies of them ignore them too.
-  const onHoldMap = useMemo(() => onHoldNameMap(prospects), [prospects]);
+  // Companies with a substatus (read as Hold Off) are left out the same
+  // way, so the charts and the Weekly Report's copies of them ignore them
+  // too.
+  const heldMap = useMemo(() => substatusNameMap(prospects), [prospects]);
   const untracked = useMemo(
-    () => excludeUntrackedFromWeeks(recordedData, { ...(clientUntrackedMap || {}), ...onHoldMap }),
-    [recordedData, clientUntrackedMap, onHoldMap],
+    () => excludeUntrackedFromWeeks(recordedData, { ...(clientUntrackedMap || {}), ...heldMap }),
+    [recordedData, clientUntrackedMap, heldMap],
   );
-  const untrackedNote = untrackedNoteFor(untracked, { onHoldMap });
+  const untrackedNote = untrackedNoteFor(untracked, { heldMap });
 
   const chartData = useMemo(() => decorateWeeks(untracked.weeks), [untracked]);
   const historyRows = useMemo(() => decorateWeeks(recordedData), [recordedData]);
@@ -1653,7 +1655,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
                   untracked.names.length
                     ? `Left out: ${untracked.names.join(', ')}.`
                     : '',
-                  'Ticked "Don\'t Track" on the Clients tab, or On Hold (a substatus set on the company). Every week that recorded them is re-answered without them, so the trend stays comparable, and nothing is rewritten: unticking a client, or clearing a substatus, puts it back on every point.',
+                  'Ticked "Don\'t Track" on the Clients tab, or Hold Off because a substatus is set on the company. Every week that recorded them is re-answered without them, so the trend stays comparable, and nothing is rewritten: unticking a client, or clearing a substatus, puts it back on every point.',
                   'Two numbers keep what they were saved with, because the week stored no account list behind them: the Tier 3 total and the No-Opps Activity chart.',
                 ].filter(Boolean).join('\n\n')}
               >

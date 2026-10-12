@@ -7,7 +7,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { Badge } from '../common/Badge';
 import { DataTable } from '../common/DataTable';
 import { statusColor, formatAum } from '../../utils/formatters';
-import { reportingStatus, ON_HOLD_STATUS } from '../../utils/reportingStatus';
+import { reportingStatus, hasSubstatus, SUBSTATUS_HOLD_STATUS } from '../../utils/reportingStatus';
 import { STATUSES, TYPES, TIER_OPTIONS, NOT_ON_TIER_LIST, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
 import { buildTypeOptions } from '../../utils/prospectOptions';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
@@ -214,7 +214,7 @@ function warningHeaderTitle(description, companies) {
 
 // What the filters, search and option lists read for a column. Status is
 // read as reported (reportingStatus): a company with a substatus filters
-// as On Hold, the way its cell reads.
+// as Hold Off, the way its cell reads.
 function filterValueOf(account, key) {
   return key === 'status' ? reportingStatus(account) : account?.[key];
 }
@@ -2592,7 +2592,7 @@ Fix that now?
       const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, feedingOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, mslSiteCount, _contactDebug, suggestedStatus, statusMismatch, suggestedType, typeMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
-      // Counted as reported: a Client with a substatus is On Hold here.
+      // Counted as reported: a Client with a substatus is Hold Off here.
       const s = reportingStatus(p) || 'Unknown';
       counts[s] = (counts[s] || 0) + 1;
     }
@@ -3400,11 +3400,11 @@ Fix that now?
         getSortValue: (row) => reportingStatus(row).toLowerCase() || null,
         getFilterValue: (row) => reportingStatus(row),
         exportValue: (row) => reportingStatus(row),
-        render: (row) => (reportingStatus(row) === ON_HOLD_STATUS ? (
+        render: (row) => (hasSubstatus(row) ? (
           <span
-            title={`Read as On Hold because it has a substatus: ${row.substatus}. Its saved Status is still ${row.status || 'blank'}. Clear the substatus on the company popup to read as ${row.status || 'its status'} again.`}
+            title={`Read as Hold Off because it has a substatus: ${row.substatus}. Its saved Status is still ${row.status || 'blank'}. Clear the substatus on the company popup to read as ${row.status || 'its status'} again.`}
           >
-            <Badge label={ON_HOLD_STATUS} color={statusColor(ON_HOLD_STATUS)} />
+            <Badge label={SUBSTATUS_HOLD_STATUS} color={statusColor(SUBSTATUS_HOLD_STATUS)} />
           </span>
         ) : (
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>

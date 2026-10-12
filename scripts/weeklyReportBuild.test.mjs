@@ -341,8 +341,8 @@ function fakeFetch(emails) {
   check('and the ticks are read without an error', built.errors.some(e => e.startsWith('clientUntracked')), false);
 }
 
-// ---- account coverage, less the On Hold companies -------------------------
-// A company with a substatus reads as On Hold and is left out the same way,
+// ---- account coverage, less the companies with a substatus ---------------
+// A company with a substatus reads as Hold Off and is left out the same way,
 // read from the owner's own prospects.
 {
   const week = (key) => ({
@@ -360,7 +360,7 @@ function fakeFetch(emails) {
     now: NOW, token: 'tok', fetchOpts: { fetchImpl: fakeFetch(hubspotEmails) },
   });
   const contacts = built.payload.coverage.charts.find(c => c.id === 'contactPct');
-  check('an On Hold company leaves numerator and denominator: 1 of 3, not 2 of 4',
+  check('a substatus company leaves numerator and denominator: 1 of 3, not 2 of 4',
     contacts.points.map(p => p.t1).join(','), '33,33');
   check('and the prospects are read without an error', built.errors.some(e => e.startsWith('prospects')), false);
 }
