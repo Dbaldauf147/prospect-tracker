@@ -62,8 +62,12 @@ export function myTieredAccounts(prospects, cdmName) {
 /**
  * The newest activity on each account.
  *
- * Returns Map(account id or company -> { tsMs, source, detail }) holding
- * only the accounts something was found for. `outreachIndex` is the parsed
+ * Returns Map(account id or company -> { tsMs, source, detail, contact })
+ * holding only the accounts something was found for. `contact` is the
+ * person at the account most recently emailed, called or contacted in
+ * HubSpot ({ name, email, tsMs, source }), or null when none was: kept
+ * apart from the newest activity, because a BFO row can be newer and that
+ * names an opportunity, not who you reached out to. `outreachIndex` is the parsed
  * `hubspot-outreach-index` ({ emails, phones }); `bfoActivity` the BFO
  * Activity record ({ headers, rows }). Either may be null.
  */
@@ -73,11 +77,15 @@ export function lastActivityByAccount({
 } = {}) {
   const out = new Map();
   const keyOf = (p) => p.id || p.company;
-  const consider = (p, tsMs, source, detail) => {
+  const consider = (p, tsMs, source, detail, contact = null) => {
     if (tsMs == null) return;
     const k = keyOf(p);
     const prev = out.get(k);
-    if (!prev || tsMs > prev.tsMs) out.set(k, { tsMs, source, detail });
+    const best = contact && (!prev?.contact || tsMs > prev.contact.tsMs)
+      ? { name: nameOf(contact), email: String(contact.email || '').trim(), tsMs, source }
+      : (prev?.contact || null);
+    if (!prev || tsMs > prev.tsMs) out.set(k, { tsMs, source, detail, contact: best });
+    else if (best !== prev.contact) out.set(k, { ...prev, contact: best });
   };
 
   // Contacts grouped by company so the fuzzy compare runs once per distinct
@@ -118,12 +126,12 @@ export function lastActivityByAccount({
     for (const c of at) {
       const em = String(c.email || '').trim().toLowerCase();
       const hitE = em ? emails[em] : null;
-      if (hitE) consider(p, hitE.tsMs ?? parseWhen(hitE.ts), 'HubSpot email', nameOf(c));
+      if (hitE) consider(p, hitE.tsMs ?? parseWhen(hitE.ts), 'HubSpot email', nameOf(c), c);
       for (const ph of [c.phone, c.mobilephone]) {
         const hitP = phones[normalizePhone(ph)];
-        if (hitP) consider(p, hitP.tsMs ?? parseWhen(hitP.ts), 'HubSpot call', nameOf(c));
+        if (hitP) consider(p, hitP.tsMs ?? parseWhen(hitP.ts), 'HubSpot call', nameOf(c), c);
       }
-      consider(p, parseWhen(c.notes_last_contacted), 'HubSpot last contacted', nameOf(c));
+      consider(p, parseWhen(c.notes_last_contacted), 'HubSpot last contacted', nameOf(c), c);
     }
   }
 
