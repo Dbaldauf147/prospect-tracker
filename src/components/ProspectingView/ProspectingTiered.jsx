@@ -3,24 +3,26 @@
 // the row). Statuses ticked in the Hide statuses menu are left off the list;
 // the choice is saved in settings so it applies on every visit. A company
 // with a Substatus counts as Hold Off here, whatever its Status says.
-// Where the activity date comes from is utils/tieredAccountActivity.js; this
-// file loads the HubSpot contacts and outreach index and lays them out.
+// Where the activity date comes from is utils/tieredAccountActivity.js; the
+// HubSpot contacts and outreach index load in hooks/useTieredActivity.js,
+// which also records each day's tile percentages for the History subtab.
+// This file lays them out.
 
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { STATUSES, STATUS_COLORS, TIERS } from '../../data/enums.js';
 import { SUBSTATUS_HOLD_STATUS } from '../../utils/reportingStatus';
 import { DataTable } from '../common/DataTable';
-import { getHubspotCache } from '../../utils/hubspotContactsCache';
-import { userLsGet } from '../../utils/userLs';
 import { formatDateDisplay } from '../../utils/isoDate';
-import { useAuth } from '../../contexts/AuthContext';
 import { hubspotContactUrl, loadHubspotAccount } from '../../utils/hubspotRecordLink';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import {
-  ACTIVITY_COLD_DAYS, ACTIVITY_SUMMARY_DAYS, ACTIVITY_WARM_DAYS, daysSince, lastActivityByAccount, myTieredAccounts,
-  tierActivityCoverage,
+  ACTIVITY_COLD_DAYS, ACTIVITY_SUMMARY_DAYS, ACTIVITY_WARM_DAYS, daysSince, tierActivityCoverage,
 } from '../../utils/tieredAccountActivity';
+import {
+  HIDDEN_STATUSES_CACHE, HIDDEN_STATUSES_KEY, WINDOW_DAYS_CACHE, WINDOW_DAYS_KEY, WINDOW_DAY_OPTIONS,
+  readHiddenCache, readWindowCache, statusOf, substatusOf, useRecordTieredCoverage, useTieredActivity, validWindow,
+} from '../../hooks/useTieredActivity';
 
 // The same tier tints the Prospects subtab and the ladder's DM mapping use.
 const TIER_TINTS = {
@@ -29,44 +31,12 @@ const TIER_TINTS = {
   'Tier 3': { bg: '#F8FAFC', border: '#E2E8F0', ink: '#475569' },
 };
 
-function readOutreachIndex() {
-  try { return JSON.parse(userLsGet('hubspot-outreach-index') || 'null'); } catch { return null; }
-}
-
 function ageColors(days) {
   if (days == null || days > ACTIVITY_COLD_DAYS) return { color: '#991B1B', background: '#FEE2E2' };
   if (days > ACTIVITY_WARM_DAYS) return { color: '#92400E', background: '#FEF3C7' };
   return { color: '#166534', background: '#DCFCE7' };
 }
 
-// Where the Hide statuses choice is saved.
-const HIDDEN_STATUSES_KEY = 'prospectingTieredHiddenStatuses';
-// The window the tiles count an account as active in, picked above them.
-// Saved like the status choice, with a browser copy for the first paint.
-const WINDOW_DAYS_KEY = 'prospectingTieredWindowDays';
-const WINDOW_DAYS_CACHE = 'prospecting-tiered-window-days';
-const WINDOW_DAY_OPTIONS = [7, 14, 30, 60, 90, 120, 180, 365];
-const validWindow = (n) => (WINDOW_DAY_OPTIONS.includes(Number(n)) ? Number(n) : null);
-function readWindowCache() {
-  try { return validWindow(localStorage.getItem(WINDOW_DAYS_CACHE)); } catch { return null; }
-}
-// The same choice cached in this browser, so a refresh shows it before the
-// settings document has loaded (and still has it if a save never landed).
-// Settings win once they arrive: they are what other devices see.
-const HIDDEN_STATUSES_CACHE = 'prospecting-tiered-hidden-statuses';
-function readHiddenCache() {
-  try {
-    const v = JSON.parse(localStorage.getItem(HIDDEN_STATUSES_CACHE));
-    return Array.isArray(v) ? v : null;
-  } catch { return null; }
-}
-// A company with a Substatus is on hold, whatever its Status says: the
-// substatus is the reason it's parked. On this page it reads, filters and
-// counts as Hold Off, the same rule My Accounts and the Progress charts
-// use (utils/reportingStatus). Only the reading changes; the record's
-// Status is left as it is.
-const substatusOf = (p) => String(p?.substatus || '').trim();
-const statusOf = (p) => (substatusOf(p) ? SUBSTATUS_HOLD_STATUS : String(p?.status || '').trim());
 const statusLabel = (st) => st || 'No status';
 
 // The decision makers in the not-reached popup: a name each, opening the
@@ -111,37 +81,6 @@ const toLocalDate = (tsMs) => {
 };
 
 export function ProspectingTiered({ prospects, settings, updateSettings = null, updateProspect = null, cdmName = '', onSelectProspect, onOpenContact = null, maxWidth }) {
-  const { user } = useAuth() || {};
-  const uid = user?.uid || '';
-
-  // HubSpot contacts, re-read when a sync lands.
-  const [contacts, setContacts] = useState(null);
-  useEffect(() => {
-    let cancelled = false;
-    const refresh = () => {
-      getHubspotCache()
-        .then(c => { if (!cancelled) setContacts(c?.contacts || []); })
-        .catch(() => { if (!cancelled) setContacts([]); });
-    };
-    refresh();
-    window.addEventListener('hubspot-cache-updated', refresh);
-    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
-  }, [uid]);
-
-  // The email/call index the Activity tab writes, re-read when it rewrites it.
-  const [outreachIndex, setOutreachIndex] = useState(readOutreachIndex);
-  useEffect(() => {
-    const reload = () => setOutreachIndex(readOutreachIndex());
-    const onStorage = (e) => { if (e.key && e.key.endsWith(':hubspot-outreach-index')) reload(); };
-    reload();
-    window.addEventListener('hubspot-activity-cache-updated', reload);
-    window.addEventListener('storage', onStorage);
-    return () => {
-      window.removeEventListener('hubspot-activity-cache-updated', reload);
-      window.removeEventListener('storage', onStorage);
-    };
-  }, [uid]);
-
   // The HubSpot portal, so a contact name links to its record.
   const [hubspotAccount, setHubspotAccount] = useState(null);
   useEffect(() => {
@@ -150,21 +89,13 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
     return () => { cancelled = true; };
   }, []);
 
-  const accounts = useMemo(() => myTieredAccounts(prospects, cdmName), [prospects, cdmName]);
-  const localFields = settings?.contactLocalFields || null;
-  const links = settings?.companyContactLinks || null;
-  const exclusions = settings?.companyContactExclusions || null;
+  const { contacts, noIndex, accounts, activity, localFields, links, exclusions } = useTieredActivity({ prospects, settings, cdmName });
   // Who the decision makers are at each account, for the not-reached popup:
   // the same membership the ladder and My Accounts count from.
   const dmLookup = useMemo(
     () => (contacts ? makeDecisionMakerLookup(contacts, { localFields, links, exclusions }) : null),
     [contacts, localFields, links, exclusions],
   );
-  const activity = useMemo(
-    () => (contacts ? lastActivityByAccount({ accounts, contacts, outreachIndex, localFields, links, exclusions }) : null),
-    [accounts, contacts, outreachIndex, localFields, links, exclusions],
-  );
-
   // Statuses to leave off the list, '' standing for "no status". Saved to
   // settings so the choice sticks across visits and devices; this visit's
   // own pick is held locally too, so the list answers the click at once and
@@ -401,8 +332,6 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
     return c;
   }, [rows]);
 
-  const noIndex = !outreachIndex?.emails && !outreachIndex?.phones;
-
   // How many days back counts as active: this visit's pick, else the saved
   // one, else this browser's copy, else the default.
   const [localWindow, setLocalWindow] = useState(null);
@@ -422,6 +351,8 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
     () => (activity ? tierActivityCoverage(shown, activity, { days: windowDays, nowMs: now }) : null),
     [shown, activity, now, windowDays],
   );
+  // Each day's reading feeds the History subtab's line chart.
+  useRecordTieredCoverage({ coverage, windowDays, contacts, noIndex, accounts });
 
   // A tile opens a list of that tier's accounts with nothing in the window:
   // the ones the percentage is short by. Never-touched accounts first, then
