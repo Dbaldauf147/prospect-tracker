@@ -96,6 +96,27 @@
   background: #96590d;
 }
 
+.staleBannerActions {
+  flex: none;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.staleBannerCopy {
+  padding: 0.35rem 0.75rem;
+  background: transparent;
+  color: #7a4f10;
+  border: 1px solid #d9a95a;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.staleBannerCopy:hover {
+  background: #f8e6c6;
+}
+
 .title {
   font-size: var(--font-size-xl);
   font-weight: 700;

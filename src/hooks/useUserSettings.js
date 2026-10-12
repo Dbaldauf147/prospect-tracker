@@ -5,7 +5,7 @@ import { autoMergeValue, mergeSettingsKey, foldWriteResult } from '../utils/sett
 import { guardLeadLinks, recordLeadLinks, LEAD_LINK_LEDGER_KEY } from '../utils/leadLinks';
 import { SETTINGS_SIZE_BUDGET, overBudgetMessage, settingsDocReport } from '../utils/settingsDocSize';
 import {
-  isClientWedged, isClientWedgedError, shouldAnnounceWedgedClient, wedgedClientMessage, watchForClientCrash,
+  isClientWedged, isClientWedgedError, shouldAnnounceWedgedClient, wedgedClientMessage, watchForClientCrash, autoReloadWhenWedged,
 } from '../utils/firestoreClientHealth';
 
 // Set (or delete, when value is null/undefined) one dotted path on a
@@ -141,6 +141,9 @@ export function useUserSettings(user) {
   // of ours. Noticing it there means the next save goes straight to the
   // HTTPS fallback instead of spending a round-trip finding out.
   useEffect(() => watchForClientCrash(), []);
+  // And reload the tab by itself once it is out of sight and idle, so a
+  // crash on a tab left open doesn't go on serving stale data all day.
+  useEffect(() => autoReloadWhenWedged(), []);
 
   useEffect(() => {
     if (!user) { setSettings({}); setLoaded(false); return; }

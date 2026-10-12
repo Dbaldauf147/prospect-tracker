@@ -63,7 +63,7 @@ import {
 } from '../../utils/opps2Store';
 import { OPPS2_EXTERNAL_UPDATE_EVENT } from '../../utils/serviceRenameRunner';
 import { pushOpps2Backup } from '../../utils/opps2Backup';
-import { isClientWedged, subscribeToClientWedged } from '../../utils/firestoreClientHealth';
+import { isClientWedged, subscribeToClientWedged, wedgedClientError, crashCauseId, clientCrashReport } from '../../utils/firestoreClientHealth';
 import { remoteChangesCallInOrder, callInSortKey } from '../../utils/oppsCallIn';
 import { loadOptionLinks, setOppOptionLink, optionLinkName, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
 import { suggestedFinalMargin } from '../../utils/closeOutMargin';
@@ -17771,14 +17771,29 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             The database connection crashed (a Firebase SDK bug, not your data).
             Your edits are still being saved over a direct connection, but
             changes made on other devices won't appear here until you reload.
+            If you switch away, the tab reloads itself shortly after, as long
+            as nothing is mid-save and you aren't partway through typing.
+            {crashCauseId(wedgedClientError()) && (
+              <> Error code: <code>{crashCauseId(wedgedClientError())}</code>.</>
+            )}
           </span>
-          <button
-            type="button"
-            className={styles.staleBannerReload}
-            onClick={() => window.location.reload()}
-          >
-            Reload
-          </button>
+          <span className={styles.staleBannerActions}>
+            <button
+              type="button"
+              className={styles.staleBannerCopy}
+              title="Copy what crashed, to send for a fix"
+              onClick={() => { navigator.clipboard?.writeText(clientCrashReport()).catch(() => {}); }}
+            >
+              Copy details
+            </button>
+            <button
+              type="button"
+              className={styles.staleBannerReload}
+              onClick={() => window.location.reload()}
+            >
+              Reload
+            </button>
+          </span>
         </div>
       )}
       {syncError && (
