@@ -15,7 +15,7 @@ import { SUBSTATUS_HOLD_STATUS } from '../../utils/reportingStatus';
 import { DataTable } from '../common/DataTable';
 import { formatDateDisplay } from '../../utils/isoDate';
 import { hubspotContactUrl, loadHubspotAccount } from '../../utils/hubspotRecordLink';
-import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
+import { isKeyContact, makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import {
   ACTIVITY_COLD_DAYS, ACTIVITY_SUMMARY_DAYS, ACTIVITY_WARM_DAYS, daysSince, tierActivityCoverage,
 } from '../../utils/tieredAccountActivity';
@@ -45,9 +45,10 @@ const statusLabel = (st) => st || 'No status';
 // worth seeing beside "not reached". Without a contact popup to open the
 // name falls back to the HubSpot record, when the portal is known.
 const dmName = (c) => [c?.firstname, c?.lastname].filter(Boolean).join(' ').trim() || String(c?.email || '');
-function DecisionMakerNames({ dms, hubspotAccount, onOpenContact }) {
+// The Key Contact column reads the same way, for the Dan Key Target tag.
+function DecisionMakerNames({ dms, hubspotAccount, onOpenContact, tagName = 'Decision Maker' }) {
   if (dms == null) return <span style={{ color: '#94A3B8' }}>Loading...</span>;
-  if (dms.length === 0) return <span style={{ color: '#B91C1C', fontWeight: 600 }} title="Nobody at this account is tagged Decision Maker">None</span>;
+  if (dms.length === 0) return <span style={{ color: '#B91C1C', fontWeight: 600 }} title={`Nobody at this account is tagged ${tagName}`}>None</span>;
   return (
     <span style={{ display: 'flex', flexWrap: 'wrap', gap: '0 0.5rem' }}>
       {dms.map((c) => {
@@ -94,6 +95,11 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
   // the same membership the ladder and My Accounts count from.
   const dmLookup = useMemo(
     () => (contacts ? makeDecisionMakerLookup(contacts, { localFields, links, exclusions }) : null),
+    [contacts, localFields, links, exclusions],
+  );
+  // And the key contacts (tagged Dan Key Target), matched the same way.
+  const keyLookup = useMemo(
+    () => (contacts ? makeDecisionMakerLookup(contacts, { localFields, links, exclusions, gate: isKeyContact }) : null),
     [contacts, localFields, links, exclusions],
   );
   // Statuses to leave off the list, '' standing for "no status". Saved to
@@ -487,7 +493,7 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
             aria-modal="true"
             aria-label={`${unreachedTier} accounts not reached in ${windowDays} days`}
             onClick={e => e.stopPropagation()}
-            style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 50px rgba(15,23,42,0.25)', width: 'min(820px, 100%)', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
+            style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 50px rgba(15,23,42,0.25)', width: 'min(960px, 100%)', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
           >
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '0.85rem 1rem 0.6rem', borderBottom: '1px solid #E2E8F0' }}>
               <div style={{ flex: 1 }}>
@@ -513,6 +519,7 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
                       <th style={{ padding: '0.35rem 1rem', fontWeight: 700 }}>Company</th>
                       <th style={{ padding: '0.35rem 0.5rem', fontWeight: 700 }}>Status</th>
                       <th style={{ padding: '0.35rem 0.5rem', fontWeight: 700 }} title="Contacts at the account tagged Decision Maker. Click a name to open the contact.">Decision Maker</th>
+                      <th style={{ padding: '0.35rem 0.5rem', fontWeight: 700 }} title="Contacts at the account tagged Dan Key Target, the Key Contacts roster. Click a name to open the contact.">Key Contact</th>
                       <th style={{ padding: '0.35rem 0.5rem', fontWeight: 700 }}>Last Activity</th>
                       <th style={{ padding: '0.35rem 1rem 0.35rem 0.5rem', fontWeight: 700, textAlign: 'right' }}>Days Since</th>
                     </tr>
@@ -535,6 +542,9 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
                           <td style={{ padding: '0.35rem 0.5rem', color: '#475569' }}>{statusOf(p) || '-'}</td>
                           <td style={{ padding: '0.35rem 0.5rem' }}>
                             <DecisionMakerNames dms={dmLookup ? dmLookup.forAccount(p) : null} hubspotAccount={hubspotAccount} onOpenContact={onOpenContact} />
+                          </td>
+                          <td style={{ padding: '0.35rem 0.5rem' }}>
+                            <DecisionMakerNames dms={keyLookup ? keyLookup.forAccount(p) : null} hubspotAccount={hubspotAccount} onOpenContact={onOpenContact} tagName="Dan Key Target" />
                           </td>
                           <td style={{ padding: '0.35rem 0.5rem', color: a ? '#334155' : '#CBD5E1', fontVariantNumeric: 'tabular-nums' }}>
                             {a ? formatDateDisplay(toLocalDate(a.tsMs)) : 'None'}

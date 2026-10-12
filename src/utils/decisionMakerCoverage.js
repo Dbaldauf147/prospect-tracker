@@ -67,6 +67,16 @@ export function makeDecisionMakerGate({ showHidden = false } = {}) {
 const VISIBLE_DECISION_MAKER = makeDecisionMakerGate();
 
 /**
+ * Is this contact on the Key roster (tagged Dan Key Target, the tag the Key
+ * Contacts page lists), and still someone to ring? The same Hide / Left /
+ * Schneider exclusions as the Decision Maker gate. Pass it as `gate` to
+ * makeDecisionMakerLookup to name an account's key contacts instead.
+ */
+export function isKeyContact(c) {
+  return isMappableContact(c) && tagsOf(c).includes('dan key target');
+}
+
+/**
  * Is this contact tagged Decision Maker, and still someone to ring?
  *
  * The plain case of the gate above, and the one every caller but the DMs
@@ -213,13 +223,14 @@ export function accountHasDecisionMaker(prospect, dmCompanies, index = null) {
  * account the ladder counts as unmapped. Built once for the book; `forAccount`
  * then takes anything with a `company` (a prospect record, or a portfolio
  * company with no record yet, which matches on its name alone) and returns
- * the contacts, de-duplicated, in name order.
+ * the contacts, de-duplicated, in name order. `gate` picks who counts
+ * (isKeyContact for the Key roster); it defaults to the Decision Maker tag.
  */
-export function makeDecisionMakerLookup(contacts, { localFields = null, links = null, exclusions = null } = {}) {
+export function makeDecisionMakerLookup(contacts, { localFields = null, links = null, exclusions = null, gate = isDecisionMakerContact } = {}) {
   const groups = new Map();
   for (const raw of (contacts || [])) {
     const c = applyCompanyOverride(raw, localFields);
-    if (!isDecisionMakerContact(c)) continue;
+    if (!gate(c)) continue;
     const company = String(c.company || '').trim();
     if (!company) continue;
     const lc = company.toLowerCase();
@@ -248,7 +259,7 @@ export function makeDecisionMakerLookup(contacts, { localFields = null, links = 
       for (const g of list) {
         if (g.lc === lc || rosterCompaniesMatch(company, g.company)) g.contacts.forEach(add);
       }
-      for (const c of index.extraFor(account)) if (isDecisionMakerContact(c)) add(c);
+      for (const c of index.extraFor(account)) if (gate(c)) add(c);
       return out.sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
     },
   };
