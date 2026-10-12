@@ -110,7 +110,10 @@ function notesHtml(r, raw) {
   const bullets = Array.isArray(r?._notesSummary) ? r._notesSummary.filter(Boolean) : [];
   if (bullets.length === 1) return escapeHtml(bullets[0]);
   if (bullets.length > 1) {
-    return `<ul style="margin:0;padding-left:18px">${bullets.map((b) => `<li style="margin:0">${escapeHtml(b)}</li>`).join('')}</ul>`;
+    // Outlook ignores padding on a list and falls back to its own half-inch
+    // indent, so the indent is set as a margin it does honour, kept small
+    // so the bullets sit near the left edge of the cell.
+    return `<ul style="margin:0 0 0 16px;padding:0">${bullets.map((b) => `<li style="margin:0;padding:0 0 0 2px">${escapeHtml(b)}</li>`).join('')}</ul>`;
   }
   return escapeHtmlMultiline(raw);
 }
