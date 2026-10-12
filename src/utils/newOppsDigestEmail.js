@@ -36,7 +36,9 @@ export const NEW_OPPS_DIGEST_COLUMNS = [
   // Yes / No / N/A, read the way PE Monthly reads it (withTierAndAlignment).
   { key: NEW_OPPS_CDMS_ALIGNED_KEY, label: 'CDMs aligned' },
   { key: 'Stage', label: 'Stage' },
-  { key: 'Scope', label: 'Scope' },
+  // The one-line summary the New Opps Scope column shows (attached as
+  // `_scopeSummary` by withScopeSummaries), else the scope as stored.
+  { key: 'Scope', label: 'Scope', value: (r) => r?._scopeSummary || r?.['Scope'] || '' },
   { key: 'Source', label: 'Source' },
   { key: 'Start Date', label: 'Start Date', nowrap: true, value: (r) => formatShortDate(r['Start Date']) },
   { key: 'Quoted Amount', label: 'Deal Size', align: 'right', nowrap: true },
@@ -120,6 +122,16 @@ export function withNotesSummaries(records, notes) {
   return records.map((r) => {
     const s = notes.get(r);
     return s?.status === 'ready' && s.bullets?.length ? { ...r, _notesSummary: s.bullets } : r;
+  });
+}
+
+// Each opp with its ready Scope summary attached as `_scopeSummary`, given
+// the useScopeSummaries lookup the New Opps table renders from.
+export function withScopeSummaries(records, scopes) {
+  if (!Array.isArray(records) || !scopes?.get) return records;
+  return records.map((r) => {
+    const s = scopes.get(r);
+    return s?.status === 'ready' && s.bullets?.[0] ? { ...r, _scopeSummary: s.bullets[0] } : r;
   });
 }
 

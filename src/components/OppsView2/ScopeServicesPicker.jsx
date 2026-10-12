@@ -934,6 +934,9 @@ export function ScopeServicesCell({
   // answer gets the commodity row; one that can't omits them and the row
   // doesn't render, same rule as the modal's own.
   commodities, onCommoditiesChange, updateSettings,
+  // A one-line summary of the scope (New Opps), shown in place of the full
+  // list, which stays on hover. Clicking still opens the board.
+  summary,
 }) {
   const [open, setOpen] = useState(false);
   const selected = useMemo(() => parseMulti(value), [value]);
@@ -954,9 +957,9 @@ export function ScopeServicesCell({
           overflow: nowrap ? 'hidden' : undefined,
           textOverflow: nowrap ? 'ellipsis' : undefined,
         }}
-        title={showPlaceholder ? `${placeholder} (placeholder: no service selected)` : isEmpty ? 'Click to pick services' : selected.join(', ')}
+        title={showPlaceholder ? `${placeholder} (placeholder: no service selected)` : isEmpty ? 'Click to pick services' : summary ? `Summary of: ${selected.join(', ')}` : selected.join(', ')}
       >
-        {showPlaceholder ? placeholder : isEmpty ? '-' : selected.join(', ')}
+        {showPlaceholder ? placeholder : isEmpty ? '-' : (summary || selected.join(', '))}
       </span>
       {open && (
         <ScopeServicesModal

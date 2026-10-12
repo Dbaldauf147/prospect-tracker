@@ -16,7 +16,9 @@ import { buildTargetTierResolver } from '../../src/utils/targetTier.js';
 import { loadTargetAccounts } from './firestoreChunks.js';
 import { NEW_OPPS_ACTIVE_STAGES, NEW_OPPS_MAX_STAGE_AGE_DAYS, combinedActiveStageAge, qualifiesNewOpp } from '../../src/utils/newOppsFilter.js';
 import { chunk, needsSummary, oppNotesText } from '../../src/utils/notesSummary.js';
+import { needsScopeSummary, oppScopeText } from '../../src/utils/scopeSummary.js';
 import { MAX_ITEMS, summarizeBatch } from './summarizeNotes.js';
+import { summarizeScopeBatch } from './summarizeScope.js';
 
 // ---- Email column set (fixed) -------------------------------------------
 // The digest email always shows exactly these columns, in this order: the
@@ -131,12 +133,31 @@ export function buildNewOppsTableHtml(records) {
 // as written. Best effort: with no API key, or when a batch fails, those
 // opps keep their full notes and the email still goes out.
 export async function addNotesSummaries(records, { client } = {}) {
+  return addSummaries(records, {
+    client, textOf: oppNotesText, needs: needsSummary, batchFn: summarizeBatch, what: 'notes',
+    attach: (r, bullets) => ({ ...r, _notesSummary: bullets }),
+  });
+}
+
+// ---- Scope summaries -------------------------------------------------------
+// Each opp with a long Scope summarised into one line as `_scopeSummary`,
+// the same line the Scope column on the New Opps subtab shows (same text
+// in, same prompt: api/_lib/summarizeScope.js). Best effort, like notes: a
+// failed batch leaves those opps with their full Scope.
+export async function addScopeSummaries(records, { client } = {}) {
+  return addSummaries(records, {
+    client, textOf: oppScopeText, needs: needsScopeSummary, batchFn: summarizeScopeBatch, what: 'scope',
+    attach: (r, lines) => ({ ...r, _scopeSummary: lines[0] }),
+  });
+}
+
+async function addSummaries(records, { client, textOf, needs, batchFn, attach, what }) {
   if (!Array.isArray(records) || records.length === 0) return records;
   const items = [];
-  const idFor = new Map(); // notes text -> id, so identical notes share one
-  const textOf = records.map((r) => {
-    const text = oppNotesText(r);
-    if (needsSummary(text) && !idFor.has(text)) {
+  const idFor = new Map(); // text -> id, so identical text shares one
+  const texts = records.map((r) => {
+    const text = textOf(r);
+    if (needs(text) && !idFor.has(text)) {
       idFor.set(text, String(items.length));
       items.push({ id: String(items.length), text });
     }
@@ -154,14 +175,14 @@ export async function addNotesSummaries(records, { client } = {}) {
   const got = {};
   for (const batch of chunk(items, MAX_ITEMS)) {
     try {
-      Object.assign(got, (await summarizeBatch(client, batch)) || {});
+      Object.assign(got, (await batchFn(client, batch)) || {});
     } catch (err) {
-      console.error('new-opps notes summary failed:', err?.message || err);
+      console.error(`new-opps ${what} summary failed:`, err?.message || err);
     }
   }
   return records.map((r, i) => {
-    const bullets = got[idFor.get(textOf[i])];
-    return bullets?.length ? { ...r, _notesSummary: bullets } : r;
+    const out = got[idFor.get(texts[i])];
+    return out?.length ? attach(r, out) : r;
   });
 }
 
@@ -171,7 +192,7 @@ export async function addNotesSummaries(records, { client } = {}) {
 // intentionally minimal — just the optional intro message and the table, with
 // no heading, summary line, or footer.
 export async function sendNewOppsEmail({ to, subject, message, records, replyTo }) {
-  records = await addNotesSummaries(records);
+  records = await addScopeSummaries(await addNotesSummaries(records));
   const intro = message
     ? `<p style="color:#334155;font-size:14px;white-space:pre-wrap;margin:0 0 16px">${escapeHtml(message)}</p>`
     : '';
