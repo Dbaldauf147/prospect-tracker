@@ -154,7 +154,7 @@ export function emailSnapshotPayload({
       }
       : null,
     // The two account-coverage charts off the Progress tab: how much of
-    // Tier 1 and Tier 2 has a HubSpot contact, and how much has a decision
+    // Tier 1, 2 and 3 has a HubSpot contact, and how much has a decision
     // maker named. They answer the question the pipeline figures above
     // cannot - whether there is anybody to call at the accounts the year
     // depends on - and they move week to week, so the email carries the

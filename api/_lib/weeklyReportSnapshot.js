@@ -185,6 +185,7 @@ function coverageDoc(c) {
           label: str(p?.label, 16),
           t1: covPct(p?.t1),
           t2: covPct(p?.t2),
+          t3: covPct(p?.t3),
         }))
         .filter(p => p.label),
       note: str(ch?.note, 200),

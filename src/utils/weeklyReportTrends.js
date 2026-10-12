@@ -146,7 +146,7 @@ export function newOppsByWeek({ records, refMs = Date.now(), weeks = TREND_WEEKS
 }
 
 // Account coverage per week, for the two Progress-tab charts the email
-// carries: the share of Tier 1 and Tier 2 accounts with a HubSpot contact,
+// carries: the share of Tier 1, 2 and 3 accounts with a HubSpot contact,
 // and the share with a decision maker identified.
 //
 // Unlike the two series above, this is not a count of what happened in the
@@ -182,10 +182,11 @@ export function coverageByWeek({ progressWeeks = [], refMs = Date.now(), weeks =
         label: weekLabel(start),
         t1: coveragePct(snap?.[c.t1Key]),
         t2: coveragePct(snap?.[c.t2Key]),
+        t3: coveragePct(snap?.[c.t3Key]),
       };
     });
     return { id: c.id, title: c.label, points, note: coverageNote(points) };
-  }).filter(c => c.points.some(p => p.t1 != null || p.t2 != null));
+  }).filter(c => c.points.some(p => p.t1 != null || p.t2 != null || p.t3 != null));
 
   if (!charts.length) return null;
   return months ? { weeks: windows.length, months, charts } : { weeks: windows.length, charts };
@@ -204,7 +205,7 @@ function coveragePct(v) {
 // far it has moved across the window. Five bars show the shape; this says
 // what the shape amounts to, which is the sentence a reader repeats.
 function coverageNote(points) {
-  const known = (p) => p.t1 != null || p.t2 != null;
+  const known = (p) => p.t1 != null || p.t2 != null || p.t3 != null;
   const base = points.find(known);
   const last = [...points].reverse().find(known);
   if (!base || !last || base === last) return '';
@@ -214,7 +215,7 @@ function coverageNote(points) {
     if (d === 0) return `${name} flat at ${last[key]}%`;
     return `${name} ${d > 0 ? '+' : ''}${d} ${Math.abs(d) === 1 ? 'pt' : 'pts'} to ${last[key]}%`;
   };
-  const parts = [phrase('Tier 1', 't1'), phrase('Tier 2', 't2')].filter(Boolean);
+  const parts = [phrase('Tier 1', 't1'), phrase('Tier 2', 't2'), phrase('Tier 3', 't3')].filter(Boolean);
   return parts.length ? `${parts.join(', ')} since ${base.label}.` : '';
 }
 

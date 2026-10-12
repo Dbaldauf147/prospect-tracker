@@ -19,7 +19,7 @@ import {
   rasterToPngDataUrl,
 } from './chartRaster.js';
 import { monotonePolyline, numberRuns } from './monotoneCurve.js';
-import { COVERAGE_T1, COVERAGE_T2 } from './progressCoverage.js';
+import { COVERAGE_T1, COVERAGE_T2, COVERAGE_T3 } from './progressCoverage.js';
 
 export const SCALE = 2;
 // Laid-out size, in CSS pixels: the email's full 800px column, less the
@@ -228,7 +228,7 @@ function visibleLabels(points, xAt, size) {
 export function coverageChartImage(chart) {
   const points = Array.isArray(chart?.points) ? chart.points : [];
   if (points.length < 2) return null;
-  if (!points.some(p => p.t1 != null || p.t2 != null)) return null;
+  if (!points.some(p => p.t1 != null || p.t2 != null || p.t3 != null)) return null;
 
   const W = CHART_W * SCALE;
   const H = CHART_H * SCALE;
@@ -265,9 +265,13 @@ export function coverageChartImage(chart) {
     drawText(r, p.label, at, plotB + (TICK + 2) * SCALE + 0.71 * size, size, INK.label, 'center');
   });
 
-  // The lines: Tier 1, then Tier 2 over it, each broken where a week has
+  // The lines: Tier 1, then Tier 2 and Tier 3 over it, each broken where a week has
   // no reading, then the green stretches over both.
-  const series = [{ key: 't1', colour: COVERAGE_T1 }, { key: 't2', colour: COVERAGE_T2 }];
+  const series = [
+    { key: 't1', colour: COVERAGE_T1 },
+    { key: 't2', colour: COVERAGE_T2 },
+    { key: 't3', colour: COVERAGE_T3 },
+  ];
   const curve = (values, width, colour) => {
     for (const run of numberRuns(values)) {
       const line = monotonePolyline(run.map(i => ({ x: xAt(i), y: yAt(values[i]) })));
@@ -292,7 +296,7 @@ export function coverageChartImage(chart) {
     src: rasterToPngDataUrl(r),
     width: CHART_W,
     height: CHART_H,
-    alt: `${chart.title || 'Account coverage'}: Tier 1 and Tier 2 by week`,
+    alt: `${chart.title || 'Account coverage'}: Tier 1, Tier 2 and Tier 3 by week`,
   };
 }
 
