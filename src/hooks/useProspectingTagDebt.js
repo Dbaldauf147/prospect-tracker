@@ -35,6 +35,10 @@ export function useProspectingTagDebt({ prospects, cdmName, settings, userId }) 
     // waited for the steps above would go quiet exactly when the page stops
     // saying anything else.
     const missing = missingTagRosters(coverage);
-    return { coverage, missing, count: missing.length > 0 ? missing.length : null };
-  }, [coverage]);
+    // oppsReady: whether the coverage was taken with the opps records in
+    // hand. Before they land, every Tier 1/2 account reads as having no
+    // opps, so the Key Prospect roster is overcounted; a caller that writes
+    // the counts down (useContactCountRecorder) waits for this.
+    return { coverage, missing, count: missing.length > 0 ? missing.length : null, oppsReady: oppsRecords != null };
+  }, [coverage, oppsRecords]);
 }
