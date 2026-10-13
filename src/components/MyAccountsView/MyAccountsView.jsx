@@ -34,6 +34,7 @@ import {
 } from '../../utils/divisions';
 import { DecisionMakerTagsTable } from './DecisionMakerTagsTable';
 import { DmTagHistoryView } from './DmTagHistoryView';
+import { CompanyDataTab } from './CompanyDataTab';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { tagMatrixColumns } from '../../utils/decisionMakerTagMatrix';
 import { dmTagReading, recordDmTagDay } from '../../utils/dmTagHistory';
@@ -3667,6 +3668,50 @@ Fix that now?
   // inactive toggle and the search box, like the Company Type subtab.
   // DM Tags History subtab - the starred DM tag columns, % mapped per tier
   // day by day, from the readings recorded above.
+  // Company Data subtab - the same accounts, with whether each has its
+  // size numbers (sites, utility accounts, meters, equipment, MWh), an
+  // export of the gaps and a paste that writes them back. Honours the
+  // inactive toggle and the search box, like the Company Type subtab.
+  if (mode === 'companyData') {
+    let rows = allAccounts;
+    if (inactiveMode === 'hide') rows = rows.filter(a => !isInactive(a));
+    else if (inactiveMode === 'only') rows = rows.filter(a => isInactive(a));
+    if (search.trim()) {
+      const term = search.toLowerCase();
+      rows = rows.filter(a => [a.company, a.type, a.status, a.myTier].filter(Boolean).join(' ').toLowerCase().includes(term));
+    }
+    return (
+      <div className={styles.wrapper}>
+        <CompanyDataTab
+          accounts={rows}
+          prospects={prospects}
+          onUpdate={onUpdate}
+          onSelect={onSelect}
+          settings={settings}
+          updateSettings={updateSettings}
+          filterBar={(
+            <>
+              <input
+                className={styles.searchInput}
+                type="text"
+                placeholder="Search accounts..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+              <button
+                onClick={() => setInactiveMode(prev => prev === 'hide' ? 'only' : prev === 'only' ? 'show' : 'hide')}
+                title="Cycle how inactive accounts (Old Client / Hold Off / Lost - Not Sold) are shown: hidden → only → all"
+                style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
+              >
+                {inactiveMode === 'only' ? 'Inactive only' : inactiveMode === 'show' ? 'Showing all' : 'Inactive hidden'}
+              </button>
+            </>
+          )}
+        />
+      </div>
+    );
+  }
+
   if (mode === 'dmTagsHistory') {
     return (
       <div className={styles.wrapper}>
