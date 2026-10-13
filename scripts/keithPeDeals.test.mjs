@@ -16,6 +16,18 @@ check('Private Equity type is PE', isPeOpp({ Type: 'Private Equity' }), true);
 check('Portfolio Company type is PE', isPeOpp({ Type: ' portfolio company ' }), true);
 check('a PE Owner makes it a portfolio company deal', isPeOpp({ Type: 'Owner Operator', 'PE Owner': 'Blackstone' }), true);
 check('anything else is not', isPeOpp({ Type: 'Owner Operator', 'PE Owner': '' }), false);
+check('a "(a ... Co.)" note in the account name makes it PE',
+  isPeOpp({ Account: 'Rehlko (a Platinum Equity Co.)', Type: 'Owner Operator' }), true);
+check('so does the company popup\'s PE Owner',
+  isPeOpp({ Account: 'Rehlko', Type: 'Owner Operator' }, [{ company: 'Rehlko', peOwner: 'Platinum Equity' }]), true);
+check('or its Type',
+  isPeOpp({ Account: 'Rehlko', Type: '' }, [{ company: 'Rehlko', type: 'Portfolio Company' }]), true);
+check('a company with neither is not',
+  isPeOpp({ Account: 'Rehlko', Type: 'Owner Operator' }, [{ company: 'Rehlko', type: 'Owner Operator', peOwner: '' }]), false);
+check('the company-level PE reaches the deal list',
+  buildPeOverlapDeals([{ _id: 'r1', Account: 'Rehlko', Type: 'Owner Operator', Stage: 'Quoted' }],
+    { prospects: [{ company: 'Rehlko', peOwner: 'Platinum Equity' }] }).map(d => [d.name, d.peOwner]),
+  [['Rehlko', 'Platinum Equity']]);
 
 check('Lead is Stage 3', oppStageNumber({ Stage: 'Lead' }), 3);
 check('Quoting is Stage 4', oppStageNumber({ Stage: 'Quoting' }), 4);
