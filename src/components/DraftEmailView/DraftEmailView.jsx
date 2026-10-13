@@ -24,6 +24,7 @@ import {
 import { htmlSectionLines } from '../../utils/inlineImages.js';
 import { downscaleInlineImage, needsDownscale } from '../../utils/downscaleInlineImage.js';
 import { companyOverrideUpdate } from '../../utils/contactCompanyOverride';
+import { applyCompanyOverride } from '../../utils/contactRosters';
 import { makeRosterGates, ROSTER_CATEGORIES } from '../../utils/contactRosters';
 import { useOppsRecords, useClientFlagMaps } from '../../utils/rosterHooks';
 import { companyPopupTarget } from '../../utils/companyLookup';
@@ -1398,33 +1399,65 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   // (rawContacts) - the contact popup (ContactEditModal) edits raw HubSpot
   // fields (firstname / lastname / jobtitle / tags…), so clicking a
   // recipient name resolves back to its raw record here.
-  const [allContacts, setAllContacts] = useState([]);
   const [rawContacts, setRawContacts] = useState([]);
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
       getHubspotContacts().then(contacts => {
-        if (cancelled) return;
-        setRawContacts(contacts);
-        setAllContacts(contacts.filter(c => c.email).map(c => ({
-          id: c.id,
-          name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email,
-          firstName: c.firstname || '',
-          lastName: c.lastname || '',
-          email: c.email,
-          company: c.company || '',
-          title: c.jobtitle || '',
-          phone: c.phone || '',
-          city: c.city || '',
-          state: c.state || '',
-          linkedinUrl: c.hs_linkedin_url || c.linkedin_url || '',
-        })));
+        if (!cancelled) setRawContacts(contacts);
       }).catch(() => {});
     };
     refresh();
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
+  // The Company typed in the contact popup is pinned locally (see
+  // utils/contactCompanyOverride.js) because HubSpot's sync can rewrite it,
+  // so it wins over the cached text here as it does on every contacts page.
+  const localFields = settings?.contactLocalFields || null;
+  const allContacts = useMemo(() => rawContacts.filter(c => c.email).map(c => {
+    const { company } = applyCompanyOverride(c, localFields);
+    return {
+      id: c.id,
+      name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email,
+      firstName: c.firstname || '',
+      lastName: c.lastname || '',
+      email: c.email,
+      company: company || '',
+      title: c.jobtitle || '',
+      phone: c.phone || '',
+      city: c.city || '',
+      state: c.state || '',
+      linkedinUrl: c.hs_linkedin_url || c.linkedin_url || '',
+    };
+  }), [rawContacts, localFields]);
+
+  // A recipient carries the company it had when it was added to the To
+  // line (and the built-in self recipient starts with none), so a Company
+  // saved afterwards never reached {company}. Keep each recipient's company
+  // in step with the contact it stands for: by id, or by email for the
+  // self recipient and anyone else whose id the cache doesn't hold. A
+  // recipient with no live company keeps its own (a Marketing Lead's).
+  useEffect(() => {
+    if (allContacts.length === 0) return;
+    const byId = new Map();
+    const byEmail = new Map();
+    for (const c of allContacts) {
+      if (c.id != null) byId.set(String(c.id), c);
+      const e = String(c.email || '').toLowerCase().trim();
+      if (e && !byEmail.has(e)) byEmail.set(e, c);
+    }
+    setSelectedContacts(prev => {
+      let changed = false;
+      const next = prev.map(r => {
+        const live = (r.id != null && byId.get(String(r.id))) || byEmail.get(String(r.email || '').toLowerCase().trim());
+        if (!live || !live.company || live.company === r.company) return r;
+        changed = true;
+        return { ...r, company: live.company };
+      });
+      return changed ? next : prev;
+    });
+  }, [allContacts]);
 
   // Contact popup (same ContactEditModal used on the Contacts pages),
   // opened by clicking a recipient's name. Holds the RAW HubSpot record -
@@ -1445,6 +1478,14 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
     for (const c of rawContacts) {
       const id = c?.id ?? c?.vid;
       if (id != null) m.set(String(id), c);
+    }
+    return m;
+  }, [rawContacts]);
+  const rawByEmail = useMemo(() => {
+    const m = new Map();
+    for (const c of rawContacts) {
+      const e = String(c?.email || '').toLowerCase().trim();
+      if (e && !m.has(e)) m.set(e, c);
     }
     return m;
   }, [rawContacts]);
@@ -1483,7 +1524,11 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   // the contact in HubSpot on save (mirrors MarketingLeadsView.buildLeadContact).
   function openContact(flat) {
     if (!flat) return;
-    const raw = flat.id != null ? rawById.get(String(flat.id)) : null;
+    // By id, else by email: the self recipient's id is not a HubSpot one,
+    // and opening a made-up record for an address HubSpot already holds
+    // would save the edit through a create-then-update detour.
+    const raw = (flat.id != null ? rawById.get(String(flat.id)) : null)
+      || rawByEmail.get(String(flat.email || '').toLowerCase().trim());
     if (raw) { setEditingContact(raw); return; }
     const parts = String(flat.name || '').trim().split(/\s+/).filter(Boolean);
     setEditingContact({
@@ -1503,7 +1548,29 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   // Per-contact metadata handlers for the popup — thin settings-map updaters,
   // identical in shape to the Key Contacts / Marketing Leads pages so notes,
   // nicknames, tags, etc. written from here land in the same Firestore settings.
-  const handleContactSaved = (_updated, opts) => { if (!opts?.silent) setEditingContact(null); };
+  // A save also lands on the matching recipient straight away, so {company}
+  // fills without waiting for the cache to come back round.
+  const handleContactSaved = (updated, opts) => {
+    const company = String(updated?.company || '').trim();
+    if (company) {
+      const id = updated?.id ?? updated?.vid;
+      const email = String(updated?.email || '').toLowerCase().trim();
+      const editedId = editingContact?.id ?? editingContact?.vid;
+      setSelectedContacts(prev => {
+        let changed = false;
+        const next = prev.map(r => {
+          const hit = (id != null && String(r.id) === String(id))
+            || (editedId != null && String(r.id) === String(editedId))
+            || (email && String(r.email || '').toLowerCase().trim() === email);
+          if (!hit || r.company === company) return r;
+          changed = true;
+          return { ...r, company };
+        });
+        return changed ? next : prev;
+      });
+    }
+    if (!opts?.silent) setEditingContact(null);
+  };
   const saveSettingsMap = (mapKey, cid, value) => {
     if (cid == null) return;
     const cur = settings?.[mapKey] || {};
