@@ -12,6 +12,7 @@ import { buildEmailFromPattern, estimateEmailDomain } from '../../utils/emailDom
 import { FREE_MAIL_DOMAINS } from '../../utils/companyGuess';
 import { companyTextEquals, pendingSuggestionActions, summarizeSuggestionActions } from '../../utils/bulkSuggestionActions';
 import { ColumnToggle } from '../common/ColumnToggle';
+import { orderColumns, mergeColumnOrder } from '../../utils/tableColumnPrefs';
 import { classifyHqCountry, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
 import styles from './AgendaView.module.css';
 
@@ -262,6 +263,7 @@ const BULK_COL_WIDTHS_KEY = 'bulk-contacts-col-widths';
 const BULK_COL_VISIBLE_KEY = 'bulk-contacts-col-visible';
 const BULK_COL_STARRED_KEY = 'bulk-contacts-col-starred';
 const BULK_COL_REMOVED_KEY = 'bulk-contacts-col-removed';
+const BULK_COL_ORDER_KEY = 'bulk-contacts-col-order';
 
 // Column catalog for the Bulk Add Contacts table. order drives the
 // layout; key is the single source of truth for width state, toggle
@@ -308,6 +310,24 @@ function loadBulkColVisible() {
 }
 function persistBulkColVisible(set) {
   try { localStorage.setItem(BULK_COL_VISIBLE_KEY, JSON.stringify([...set])); } catch {}
+}
+function loadBulkColOrder() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(BULK_COL_ORDER_KEY));
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+function persistBulkColOrder(arr) {
+  try { localStorage.setItem(BULK_COL_ORDER_KEY, JSON.stringify(arr)); } catch { /* storage blocked */ }
+}
+// BULK_COLS in the user's saved order. The row-remove x isn't in the
+// picker, so it never has a place in the saved order: it stays at the
+// left edge rather than drifting to the end.
+function orderBulkCols(order) {
+  return [
+    ...BULK_COLS.filter(c => c.fixed),
+    ...orderColumns(BULK_COLS.filter(c => !c.fixed), order),
+  ];
 }
 function loadBulkKeySet(lsKey) {
   try {
@@ -587,15 +607,28 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     toRemote: SET_PREF.toRemote,
     fromRemote: SET_PREF.fromRemote,
   });
+  // The column order, dragged in the picker. Empty means BULK_COLS order.
+  const [bulkColOrder, setBulkColOrder] = useSyncedTablePref({
+    tableId: BULK_PREFS_TABLE_ID, field: 'order', settings, updateSettings,
+    readLocal: loadBulkColOrder,
+    writeLocal: persistBulkColOrder,
+    fromRemote: (a) => (Array.isArray(a) ? a : []),
+  });
+  const orderedBulkCols = useMemo(() => orderBulkCols(bulkColOrder), [bulkColOrder]);
+  // The picker only lists the columns it shows, so the drag is merged into
+  // the full order: a deleted column keeps its place for when it's restored.
+  const reorderBulkCols = useCallback((keys) => {
+    setBulkColOrder(mergeColumnOrder(orderedBulkCols.filter(c => !c.fixed).map(c => c.key), keys));
+  }, [orderedBulkCols, setBulkColOrder]);
   // The picker lists every column but the row-remove ×, which isn't one
   // the user can hide.
   const bulkPickerColumns = useMemo(
-    () => BULK_COLS.filter(c => c.toggleable !== false && !bulkColRemoved.has(c.key)),
-    [bulkColRemoved],
+    () => orderedBulkCols.filter(c => c.toggleable !== false && !bulkColRemoved.has(c.key)),
+    [orderedBulkCols, bulkColRemoved],
   );
   const bulkRemovedColumns = useMemo(
-    () => BULK_COLS.filter(c => c.toggleable !== false && bulkColRemoved.has(c.key)),
-    [bulkColRemoved],
+    () => orderedBulkCols.filter(c => c.toggleable !== false && bulkColRemoved.has(c.key)),
+    [orderedBulkCols, bulkColRemoved],
   );
   const bulkPickerVisible = useMemo(
     () => new Set(bulkPickerColumns.filter(c => bulkColVisible.has(c.key)).map(c => c.key)),
@@ -631,14 +664,15 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     });
     setBulkColVisible(prev => (prev.has(key) ? prev : new Set([...prev, key])));
   }, [setBulkColRemoved, setBulkColVisible]);
-  // Reset: every deleted column back, then the starred view, or every
-  // column when nothing is starred.
+  // Reset: every deleted column back, the default order, then the starred
+  // view, or every column when nothing is starred.
   const resetBulkCols = useCallback(() => {
     setBulkColRemoved(new Set());
+    setBulkColOrder([]);
     setBulkColVisible(new Set(BULK_COLS
       .filter(c => c.toggleable === false || bulkColStarred.size === 0 || bulkColStarred.has(c.key))
       .map(c => c.key)));
-  }, [bulkColStarred, setBulkColRemoved, setBulkColVisible]);
+  }, [bulkColStarred, setBulkColRemoved, setBulkColVisible, setBulkColOrder]);
   // What actually draws: switched on in the picker and not deleted.
   const bulkColShown = useMemo(
     () => new Set([...bulkColVisible].filter(k => !bulkColRemoved.has(k))),
@@ -647,12 +681,12 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   // BULK_COLS filtered by visibility, with a dynamically-injected
   // _select checkbox column at the left edge when mass-edit mode is on.
   const effectiveBulkCols = useMemo(() => {
-    const base = BULK_COLS.filter(c => c.toggleable === false || bulkColShown.has(c.key));
+    const base = orderedBulkCols.filter(c => c.toggleable === false || bulkColShown.has(c.key));
     if (bulkMassMode) {
       base.unshift({ key: '_select', label: '', w: 32, fixed: true, toggleable: false });
     }
     return base;
-  }, [bulkMassMode, bulkColShown]);
+  }, [bulkMassMode, bulkColShown, orderedBulkCols]);
   const getBulkColWidth = (key) => bulkColWidths[key] || BULK_COLS.find(c => c.key === key)?.w || 120;
   const toggleBulkColVisible = useCallback((key) => {
     setBulkColVisible(prev => {
@@ -1357,7 +1391,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       notes:            { label: 'Notes',             w: 36, get: (r) => r.notes || '' },
     };
     const exportCols = [];
-    for (const c of BULK_COLS) {
+    for (const c of orderedBulkCols) {
       if (c.key === '_remove' || c.key === '_select') continue;
       if (!bulkColShown.has(c.key)) continue;
       if (COLS[c.key]) exportCols.push(COLS[c.key]);
@@ -1488,7 +1522,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-  }, [rows, bulkColShown, hubspotByEmail, results, lookupMatch, prospects, dismissedSuggestedCompanies, otherRepsByProspect, cdmName]);
+  }, [rows, bulkColShown, orderedBulkCols, hubspotByEmail, results, lookupMatch, prospects, dismissedSuggestedCompanies, otherRepsByProspect, cdmName]);
 
   // The best company name we can put on the wire for this row. Priority:
   //   1. The explicit row.company the user typed in the cell.
@@ -2878,6 +2912,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                 onStar={starBulkCol}
                 onRemove={removeBulkCol}
                 onRestore={restoreBulkCol}
+                onReorder={reorderBulkCols}
                 onResetColumns={resetBulkCols}
               />
               <button
@@ -3230,20 +3265,24 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                       </span>
                     );
                   };
-                  return (
-                    <tr key={r.email}>
-                      {bulkMassMode && (
-                        <td>
-                          <input
-                            type="checkbox"
-                            checked={bulkSelected.has(r.email)}
-                            onChange={() => toggleBulkSelect(r.email)}
-                            style={{ accentColor: 'var(--color-accent)' }}
-                          />
-                        </td>
-                      )}
-                      {bulkColShown.has('_remove') && <td><button className={styles.rowRemove} onClick={() => removeRow(r.email)} title="Remove row">×</button></td>}
-                      {bulkColShown.has('email') && (() => {
+                  // One cell per column key, drawn in effectiveBulkCols order so the
+                  // body follows the header when columns are reordered in the picker.
+                  const bulkCells = {
+                    _select: () => (
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={bulkSelected.has(r.email)}
+                          onChange={() => toggleBulkSelect(r.email)}
+                          style={{ accentColor: 'var(--color-accent)' }}
+                        />
+                      </td>
+                    ),
+                    _remove: () => (
+                      <td><button className={styles.rowRemove} onClick={() => removeRow(r.email)} title="Remove row">×</button></td>
+                    ),
+                    email: () => (
+                      (() => {
                         // Placeholder keys (__noemail__…) stand in for an unknown
                         // address — show them as blank so the user can type one.
                         // An in-progress entry (not yet a valid email) is still
@@ -3278,8 +3317,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                             {missing && <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#B91C1C', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Needs email</span>}
                           </td>
                         );
-                      })()}
-                      {bulkColShown.has('status') && <td>
+                      })()
+                    ),
+                    status: () => (
+                      <td>
                         <span
                           className={`${styles.statusPill} ${statusClass}`}
                           title={statusLabel === 'Ignored, exists'
@@ -3297,17 +3338,27 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                             ))}
                           </ul>
                         )}
-                      </td>}
-                      {bulkColShown.has('fullName') && <td><input
+                      </td>
+                    ),
+                    fullName: () => (
+                      <td><input
                         className={styles.cellInput}
                         value={composeFullName(r)}
                         onChange={e => updateRow(r.email, splitFullName(e.target.value))}
                         title='Editing splits on the first space ("Last, First" also supported) and updates the First / Last cells.'
-                      /></td>}
-                      {bulkColShown.has('firstname') && <td><input className={styles.cellInput} value={r.firstname} onChange={e => updateRow(r.email, { firstname: e.target.value })} /></td>}
-                      {bulkColShown.has('lastname') && <td><input className={styles.cellInput} value={r.lastname} onChange={e => updateRow(r.email, { lastname: e.target.value })} /></td>}
-                      {bulkColShown.has('jobtitle') && <td><input className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} /></td>}
-                      {bulkColShown.has('company') && <td>
+                      /></td>
+                    ),
+                    firstname: () => (
+                      <td><input className={styles.cellInput} value={r.firstname} onChange={e => updateRow(r.email, { firstname: e.target.value })} /></td>
+                    ),
+                    lastname: () => (
+                      <td><input className={styles.cellInput} value={r.lastname} onChange={e => updateRow(r.email, { lastname: e.target.value })} /></td>
+                    ),
+                    jobtitle: () => (
+                      <td><input className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} /></td>
+                    ),
+                    company: () => (
+                      <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                           {/* The company name is the way into that company's
                               card. It is the thing on the row people point
@@ -3412,8 +3463,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                             );
                           })()
                         )}
-                      </td>}
-                      {bulkColShown.has('tier') && <td>{(() => {
+                      </td>
+                    ),
+                    tier: () => (
+                      <td>{(() => {
                         // Dismissing the suggested company means "I don't
                         // trust this match" — so the Tier badge that
                         // came from the matched prospect should hide
@@ -3436,8 +3489,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                           : t === 'Tier 2' ? { bg: '#FEF3C7', color: '#92400E' }
                           : { bg: '#F3F4F6', color: '#6B7280' };
                         return <span style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 600, background: colors.bg, color: colors.color }}>{t}</span>;
-                      })()}</td>}
-                      {bulkColShown.has('cdmReps') && <td>{(() => {
+                      })()}</td>
+                    ),
+                    cdmReps: () => (
+                      <td>{(() => {
                         // Mirror the My Accounts CDM + Other Reps
                         // columns so the bulk page tells the user up
                         // front who's tied to this Tier 1 / Tier 2
@@ -3495,8 +3550,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                             ))}
                           </span>
                         );
-                      })()}</td>}
-                      {bulkColShown.has('suggestedCompany') && <td className={styles.suggestCell}>
+                      })()}</td>
+                    ),
+                    suggestedCompany: () => (
+                      <td className={styles.suggestCell}>
                         {(() => {
                           const sc = live.suggestedCompany;
                           if (!sc) return <span className={styles.metaText}>-</span>;
@@ -3563,24 +3620,53 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                             </span>
                           );
                         })()}
-                      </td>}
-                      {bulkColShown.has('website') && <td>{renderTv('website')}</td>}
-                      {bulkColShown.has('zoomCompanyId') && <td>{renderTv('zoomCompanyId')}</td>}
-                      {bulkColShown.has('zoomCompanyName') && <td>{renderTv('zoomCompanyName')}</td>}
-                      {bulkColShown.has('emailDomain') && <td>{renderTv('emailDomain')}</td>}
-                      {bulkColShown.has('dans_tags') && <td><input className={styles.cellInput} value={r.dans_tags || ''} onChange={e => updateRow(r.email, { dans_tags: e.target.value })} placeholder="Tag1, Tag2" /></td>}
-                      {bulkColShown.has('phone') && <td><input className={styles.cellInput} value={r.phone} onChange={e => updateRow(r.email, { phone: e.target.value })} /></td>}
-                      {bulkColShown.has('mobilePhone') && <td><input className={styles.cellInput} value={r.mobilePhone || ''} onChange={e => updateRow(r.email, { mobilePhone: e.target.value })} /></td>}
-                      {bulkColShown.has('linkedinUrl') && <td style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      </td>
+                    ),
+                    website: () => (
+                      <td>{renderTv('website')}</td>
+                    ),
+                    zoomCompanyId: () => (
+                      <td>{renderTv('zoomCompanyId')}</td>
+                    ),
+                    zoomCompanyName: () => (
+                      <td>{renderTv('zoomCompanyName')}</td>
+                    ),
+                    emailDomain: () => (
+                      <td>{renderTv('emailDomain')}</td>
+                    ),
+                    dans_tags: () => (
+                      <td><input className={styles.cellInput} value={r.dans_tags || ''} onChange={e => updateRow(r.email, { dans_tags: e.target.value })} placeholder="Tag1, Tag2" /></td>
+                    ),
+                    phone: () => (
+                      <td><input className={styles.cellInput} value={r.phone} onChange={e => updateRow(r.email, { phone: e.target.value })} /></td>
+                    ),
+                    mobilePhone: () => (
+                      <td><input className={styles.cellInput} value={r.mobilePhone || ''} onChange={e => updateRow(r.email, { mobilePhone: e.target.value })} /></td>
+                    ),
+                    linkedinUrl: () => (
+                      <td style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <input className={styles.cellInput} value={r.linkedinUrl || ''} onChange={e => updateRow(r.email, { linkedinUrl: e.target.value })} placeholder="linkedin.com/in/…" />
                         {r.linkedinUrl && (
                           <a href={ensureProtocol(r.linkedinUrl)} target="_blank" rel="noopener noreferrer" title={r.linkedinUrl} style={{ fontSize: '0.72rem', color: 'var(--color-accent)', textDecoration: 'none' }}>↗</a>
                         )}
-                      </td>}
-                      {bulkColShown.has('city') && <td><input className={styles.cellInput} value={r.city || ''} onChange={e => updateRow(r.email, { city: e.target.value })} /></td>}
-                      {bulkColShown.has('state') && <td><input className={styles.cellInput} value={r.state || ''} onChange={e => updateRow(r.email, { state: e.target.value })} /></td>}
-                      {bulkColShown.has('country') && <td><input className={styles.cellInput} value={r.country || ''} onChange={e => updateRow(r.email, { country: e.target.value })} /></td>}
-                      {bulkColShown.has('notes') && <td><input className={styles.cellInput} value={r.notes || ''} onChange={e => updateRow(r.email, { notes: e.target.value })} placeholder="Free-form note" /></td>}
+                      </td>
+                    ),
+                    city: () => (
+                      <td><input className={styles.cellInput} value={r.city || ''} onChange={e => updateRow(r.email, { city: e.target.value })} /></td>
+                    ),
+                    state: () => (
+                      <td><input className={styles.cellInput} value={r.state || ''} onChange={e => updateRow(r.email, { state: e.target.value })} /></td>
+                    ),
+                    country: () => (
+                      <td><input className={styles.cellInput} value={r.country || ''} onChange={e => updateRow(r.email, { country: e.target.value })} /></td>
+                    ),
+                    notes: () => (
+                      <td><input className={styles.cellInput} value={r.notes || ''} onChange={e => updateRow(r.email, { notes: e.target.value })} placeholder="Free-form note" /></td>
+                    ),
+                  };
+                  return (
+                    <tr key={r.email}>
+                      {effectiveBulkCols.map(c => (bulkCells[c.key] ? <Fragment key={c.key}>{bulkCells[c.key]()}</Fragment> : null))}
                     </tr>
                   );
                   })];
