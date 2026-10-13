@@ -18,18 +18,22 @@ const contacts = [
   { id: 5, firstname: 'Dee', lastname: 'D', jobtitle: 'Director', company: 'E', dans_tags: 'Decision Maker;Hide' },
   { id: 6, firstname: 'Eve', lastname: 'E', jobtitle: 'Director', company: 'F', dans_tags: 'Decision Maker;Left' },
   { id: 7, firstname: 'Fay', lastname: 'F', jobtitle: '', company: 'G', dans_tags: 'Decision Maker' },
+  { id: 9, firstname: 'Hal', lastname: 'H', jobtitle: 'Chief\uFFFDFinancial\uFFFDOfficer', company: 'I', dans_tags: 'Decision Maker' },
   { id: 8, firstname: 'Gus', lastname: 'G', jobtitle: 'Energy Manager', company: 'H', dans_tags: 'decision maker' },
 ];
 
 const { titles, tags, untitled } = decisionMakerTitles(contacts);
 
 check('only Decision Maker contacts, Hide and Left left out',
-  titles.reduce((n, t) => n + t.count, 0) === 4);
+  titles.reduce((n, t) => n + t.count, 0) === 5);
 check('alphabetical order',
   JSON.stringify(titles.map(t => t.title)) === JSON.stringify(['Chief Financial Officer', 'Energy Manager', 'VP Sustainability']));
 check('case and spacing variants share one row', titles[2].count === 2);
 check('people under a title sorted by name',
   titles[2].contacts.map(c => c.name).join(',') === 'Amy A,Zed Z');
+check('undecodable characters read as spaces and fold into the clean title',
+  titles[0].title === 'Chief Financial Officer' && titles[0].count === 2
+  && !titles.some(t => t.title.includes('\uFFFD')));
 check('blank titles counted, not listed', untitled === 1);
 check('tag columns: every tag but Decision Maker, commonest first',
   JSON.stringify(tags.map(t => [t.label, t.count])) === JSON.stringify([['ESG', 2], ['Met In Person', 1]]));

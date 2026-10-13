@@ -23,12 +23,20 @@ const DM_TAG = tagKey('Decision Maker');
 function tagsOf(c) {
   const seen = new Map();
   for (const raw of String(c?.dans_tags || c?.dan_s_tags || c?.dans_tag || '').split(';')) {
-    const t = raw.trim();
+    const t = clean(raw);
     const k = tagKey(t);
     if (t && k !== DM_TAG && !seen.has(k)) seen.set(k, t);
   }
   return seen;
 }
+
+// Text as it should read. Some HubSpot job titles arrive with U+FFFD, the
+// "?" in a black diamond a browser draws for a character it couldn't
+// decode. In every one seen so far it stood where a space was (a
+// non-breaking space mangled on import: "Managing\uFFFDDirector,\uFFFDHead"),
+// so it is read as a space, which also lets that title fold into the row
+// of the same title typed cleanly.
+const clean = (s) => String(s || '').replace(/\uFFFD/g, ' ').replace(/\s+/g, ' ').trim();
 
 const titleKey = (t) => t.replace(/\s+/g, ' ').trim().toLowerCase();
 
@@ -39,7 +47,7 @@ const commonest = (spellings) => [...spellings.entries()]
   .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))[0][0];
 
 const contactName = (c) =>
-  [c?.firstname, c?.lastname].map(s => String(s || '').trim()).filter(Boolean).join(' ')
+  [c?.firstname, c?.lastname].map(clean).filter(Boolean).join(' ')
   || String(c?.email || '').trim()
   || 'Unnamed contact';
 
@@ -61,7 +69,7 @@ export function decisionMakerTitles(contacts, isDm = isDecisionMakerContact) {
   let untitled = 0;
   for (const c of contacts || []) {
     if (!isDm(c)) continue;
-    const raw = String(c?.jobtitle || '').replace(/\s+/g, ' ').trim();
+    const raw = clean(c?.jobtitle);
     if (!raw) { untitled += 1; continue; }
     // Counted over the titled ones only, so a column's total is the sum
     // of the rows under it.
@@ -80,7 +88,7 @@ export function decisionMakerTitles(contacts, isDm = isDecisionMakerContact) {
     if (!row) { row = { spellings: new Map(), contacts: [], tagCounts: {} }; byKey.set(key, row); }
     row.spellings.set(raw, (row.spellings.get(raw) || 0) + 1);
     for (const k of tags.keys()) row.tagCounts[k] = (row.tagCounts[k] || 0) + 1;
-    row.contacts.push({ name: contactName(c), company: String(c?.company || '').trim(), tags: [...tags.keys()] });
+    row.contacts.push({ name: contactName(c), company: clean(c?.company), tags: [...tags.keys()] });
   }
   const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
   const titles = [...byKey.values()].map(row => {
