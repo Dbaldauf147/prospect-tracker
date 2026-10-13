@@ -3178,6 +3178,8 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
           }}
           contactTagReview={settings?.contactTagReview || {}}
           onSaveTagReview={(cid, map) => saveTagReview({ cid, map, settings, updateSettings, updateSettingsPath })}
+          tagPresets={settings?.tagPresets || []}
+          onSaveTagPresets={(list) => updateSettings({ tagPresets: list })}
           companyContacts={editCompanyContacts}
           emailDomains={editEmailDomains}
           companyNames={editCompanyNames}

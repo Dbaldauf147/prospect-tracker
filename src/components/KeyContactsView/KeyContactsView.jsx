@@ -5511,6 +5511,8 @@ function KeyContactsViewInner({
             }}
             contactTagReview={settings?.contactTagReview || {}}
             onSaveTagReview={(cid, map) => saveTagReview({ cid, map, settings, updateSettings, updateSettingsPath })}
+            tagPresets={settings?.tagPresets || []}
+            onSaveTagPresets={(list) => updateSettings({ tagPresets: list })}
             events={settings?.events || []}
             onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings?.events || [], eventId, c) })}
             companyContacts={sameCompanyContacts}
