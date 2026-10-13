@@ -357,6 +357,7 @@ const INSERT_VARIABLES = [
   { token: '{fullName}', label: 'Full Name', example: 'John Smith' },
   { token: '{email}', label: 'Email', example: 'john@company.com' },
   { token: '{company}', label: 'Company', example: 'Acme Corp' },
+  { token: '{companyGoesBy}', label: 'Company Goes By', example: 'Acme' },
   { token: '{companyType}', label: 'Company Type', example: 'Private Equity' },
   { token: '{title}', label: 'Job Title', example: 'VP of Sales' },
   { token: '{phone}', label: 'Phone', example: '555-0100' },
@@ -370,7 +371,7 @@ const INSERT_VARIABLES = [
 // the update-contact endpoint (with the matching property name and the
 // local key on the flattened contact object); `custom` is the app-side
 // {custom} value persisted in settings.customField. Tokens not listed
-// here (fullName, company, companyType) stay read-only — they're either
+// here (fullName, company, companyGoesBy, companyType) stay read-only — they're either
 // composite or derived from other fields.
 const COVERAGE_EDITABLE = {
   '{firstName}': { kind: 'hubspot', prop: 'firstname', local: 'firstName' },
@@ -1690,24 +1691,43 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
       .replace(/[.,]/g, '')
       .replace(/\b(inc|llc|ltd|corp|co|lp|gmbh|plc|sa|ag)\b/g, '')
       .replace(/\s+/g, ' ').trim();
+    // One map per field, each holding only the prospects that fill it in,
+    // so a same-named record with the field blank can't shadow one with it.
     const map = new Map();
-    for (const p of (prospects || [])) {
-      const t = (p?.type || '').trim();
-      if (!t) continue;
+    const goesBy = new Map();
+    const put = (m, p, v) => {
       const k1 = String(p.company || '').toLowerCase().trim();
-      if (k1 && !map.has(k1)) map.set(k1, t);
+      if (k1 && !m.has(k1)) m.set(k1, v);
       const k2 = strip(p.company);
-      if (k2 && !map.has(k2)) map.set(k2, t);
+      if (k2 && !m.has(k2)) m.set(k2, v);
+    };
+    for (const p of (prospects || [])) {
+      if (!p) continue;
+      const t = (p.type || '').trim();
+      if (t) put(map, p, t);
+      const g = String(p.goesBy || '').trim();
+      if (g) put(goesBy, p, g);
     }
-    return { map, strip };
+    return { map, goesBy, strip };
   }, [prospects]);
 
-  function companyTypeFor(company) {
+  function lookupCompany(m, company) {
     if (!company) return '';
-    const direct = companyTypeIndex.map.get(String(company).toLowerCase().trim());
+    const direct = m.get(String(company).toLowerCase().trim());
     if (direct) return direct;
     const norm = companyTypeIndex.strip(company);
-    return norm ? (companyTypeIndex.map.get(norm) || '') : '';
+    return norm ? (m.get(norm) || '') : '';
+  }
+
+  function companyTypeFor(company) {
+    return lookupCompany(companyTypeIndex.map, company);
+  }
+
+  // {companyGoesBy}: the Goes By on the company's card ("Brookfield" for
+  // "Brookfield (Scion Group)"), falling back to the company name so the
+  // sentence it sits in never reads with a hole in it.
+  function companyGoesByFor(company) {
+    return lookupCompany(companyTypeIndex.goesBy, company) || company || '';
   }
 
   // What personalizeForContact would substitute for `token` on this
@@ -1725,6 +1745,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
       case '{email}':     return c.email || '';
       case '{company}':   return c.company || '';
       case '{companyType}': return companyTypeFor(c.company);
+      case '{companyGoesBy}': return companyGoesByFor(c.company);
       case '{title}':     return c.title || '';
       case '{phone}':     return c.phone || '';
       case '{city}':      return c.city || '';
@@ -1732,7 +1753,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
       case '{custom}':    return (settings?.customField || {})[c.id] || '';
       default:            return '';
     }
-    // companyTypeFor is redeclared each render but only reads
+    // companyTypeFor / companyGoesByFor are redeclared each render but only read
     // companyTypeIndex, so that memo is the real dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings?.contactNicknames, settings?.customField, companyTypeIndex]);
@@ -2163,6 +2184,7 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
       .replace(/\{email\}/gi, c.email || '')
       .replace(/\{company\}/gi, c.company || '')
       .replace(/\{companyType\}/gi, companyTypeFor(c.company))
+      .replace(/\{companyGoesBy\}/gi, companyGoesByFor(c.company))
       .replace(/\{title\}/gi, c.title || '')
       .replace(/\{phone\}/gi, c.phone || '')
       .replace(/\{city\}/gi, c.city || '')

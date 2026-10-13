@@ -656,7 +656,7 @@ const EMPTY = {
   // read as an answer.
   deregulatedSites: null, indicativeAnnualSavings: null, maxYearlyExposure: null,
   rank: '', tier: 'Tier 3', substatus: '',
-  hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [], portfolioTransactions: [],
+  hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', goesBy: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [], portfolioTransactions: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', contractingEntityAddress: '', strategies: [], revenue: '',
   // Opts this company into the weekly acquisition-news digest
   // (api/company-news-scheduler). Off unless explicitly ticked.
@@ -9067,6 +9067,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 }}
                 placeholder="Company name"
               />
+            </div>
+
+            {/* What the company is called in conversation, for the
+                {companyGoesBy} variable in Draft Emails. Blank falls back
+                to the Company name there. */}
+            <div>
+              <label className={styles.label}>Goes By <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}>(opt., for emails)</span></label>
+              <CommitOnBlurInput className={styles.input} value={fields.goesBy ?? ''} onCommit={v => set('goesBy', (v || '').trim())} placeholder="e.g. Brookfield" />
             </div>
 
             <div>
