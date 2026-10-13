@@ -2,6 +2,11 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import styles from './Sidebar.module.css';
 import { KeepAwake } from './KeepAwake';
 import { AGENTS_RUN_INTERVAL_BUSINESS_DAYS } from '../utils/agentsRunReminder';
+import { companyDedupeKey } from '../utils/companyKey';
+
+// Lowercased with punctuation folded to spaces, so "St. John" finds "St
+// John Properties" and the other way round.
+const looseName = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 // Predictive company + contact search shown in the sidebar header (replaces
 // the old "Sales Pipeline" subtitle). Type a company name, or a contact's
@@ -34,12 +39,14 @@ function CompanySearch({ prospects = [], contacts = [], onSelectProspect, onSele
   const companyMatches = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return [];
+    const lq = looseName(q);
     const starts = [];
     const includes = [];
     for (const p of companies) {
       const name = String(p.company).toLowerCase();
-      if (name.startsWith(q)) starts.push(p);
-      else if (name.includes(q)) includes.push(p);
+      const loose = looseName(name);
+      if (name.startsWith(q) || (lq && loose.startsWith(lq))) starts.push(p);
+      else if (name.includes(q) || (lq && loose.includes(lq))) includes.push(p);
     }
     const byName = (a, b) => String(a.company).localeCompare(String(b.company));
     starts.sort(byName);
@@ -80,11 +87,17 @@ function CompanySearch({ prospects = [], contacts = [], onSelectProspect, onSele
   // Whether the typed name already exists as a company. Compared against the
   // full roster, not just the capped match list, so a name that exists but
   // ranked past the cap doesn't offer a duplicate-creating "Create" row.
+  // Same identity rule the add itself uses (companyDedupeKey): offering
+  // Create for "St. John Properties" when "St John Properties" is there
+  // led to a save that quietly landed on the existing company.
+  const companyKeys = useMemo(() => new Set(companies.map(p => companyDedupeKey(p.company)).filter(Boolean)), [companies]);
   const exactCompanyExists = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
     if (!q) return false;
-    return companies.some(p => String(p.company).trim().toLowerCase() === q);
-  }, [companies, query]);
+    const key = companyDedupeKey(q);
+    const lower = q.toLowerCase();
+    return (key && companyKeys.has(key)) || companies.some(p => String(p.company).trim().toLowerCase() === lower);
+  }, [companies, companyKeys, query]);
 
   // Flat, keyboard-navigable list: companies first, then contacts, then the
   // "create this company" row. Each item carries its type so Enter / click
