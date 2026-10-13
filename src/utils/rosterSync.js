@@ -242,6 +242,23 @@ export function createRosterSync({
     return true;
   }
 
+  // Documents a cached snapshot delivered, written to the copy without
+  // moving the sync point. The SDK answers from its cache whenever the
+  // listener isn't confirmed current, and that includes the moment this
+  // tab's own write is acknowledged: a company outside the change
+  // listener's range enters it then, before the server has confirmed it
+  // for that listener. Its later server snapshot carries no change, so
+  // this is the only time the edit is seen. Dropping it left the copy on
+  // the old values, and once a later change moved the sync point past it a
+  // reload never asked for it again: the edit was undone on every refresh
+  // (a Status mismatch resolved on the Issues tab coming straight back).
+  // upsert has already turned away anything older than the copy.
+  function keepCached(docs) {
+    if (!docs.length) return;
+    const m = meta();
+    persist(() => store.apply(docs, [], m));
+  }
+
   function stopListening() {
     if (unsub) { try { unsub(); } catch { /* already gone */ } unsub = null; }
   }
@@ -258,7 +275,12 @@ export function createRosterSync({
       for (const d of snap.docs) base.set(d.id, d);
       for (const c of snap.changes) if (!c.pending && c.type !== 'removed') serverSaw(c.doc.id);
       emit();
-      if (snap.fromCache) return;
+      if (snap.fromCache) {
+        // Not yet confirmed by the server, so the sync point stays where it
+        // is; but a settled version is still kept (see keepCached).
+        if (saved) keepCached(snap.changes.filter(c => !c.pending && c.type !== 'removed').map(c => c.doc));
+        return;
+      }
       // A document with a write still in flight is shown, but not kept:
       // its server version will follow.
       const pendingIds = new Set(snap.changes.filter(c => c.pending).map(c => c.doc.id));
@@ -307,7 +329,7 @@ export function createRosterSync({
         serverSaw(c.doc.id);
       }
       emit();
-      if (snap.fromCache) return;
+      if (snap.fromCache) { keepCached(up); return; }
       if (up.length) {
         syncedThroughMs = maxUpdated(up, syncedThroughMs);
         const m = meta();
@@ -431,9 +453,12 @@ export function createRosterSync({
           const keep = cur.filter(l => l !== entry);
           // Fold the acknowledged edit into the copy so it doesn't flicker
           // back if the server's version never comes through the listener.
-          base.set(id, applyPatch(base.get(id) || { id }, entry.patch));
+          const folded = applyPatch(base.get(id) || { id }, entry.patch);
+          base.set(id, folded);
           if (keep.length) overlays.set(id, keep); else overlays.delete(id);
           emit();
+          // And into the device's copy, or a reload brings the old values back.
+          keepCached([folded]);
         });
       };
     },
