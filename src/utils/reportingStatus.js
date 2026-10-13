@@ -46,3 +46,27 @@ export function withSubstatusLeftOut(untrackedMap, prospects) {
   const held = substatusNameMap(prospects);
   return Object.keys(held).length ? { ...(untrackedMap || {}), ...held } : (untrackedMap || {});
 }
+
+// The statuses the two account-coverage charts (% with HubSpot Contacts,
+// % with Decision Maker Identified) leave out: an account on hold or a
+// client that has left is not one anybody is mapping, and counting it
+// pulled the coverage down for accounts nobody meant to work. Read as
+// reported, so a company with a substatus (Hold Off) is out as well.
+// Only those two charts: % Inactive counts exactly these accounts.
+export const COVERAGE_LEFT_OUT_STATUSES = new Set(['Hold Off', 'Old Client']);
+
+/** The Hold Off / Old Client companies as a { [lower-cased company]: true } map. */
+export function coverageLeftOutNameMap(prospects) {
+  const out = {};
+  for (const p of (Array.isArray(prospects) ? prospects : [])) {
+    const name = String(p?.company || '').trim().toLowerCase();
+    if (name && COVERAGE_LEFT_OUT_STATUSES.has(String(reportingStatus(p)).trim())) out[name] = true;
+  }
+  return out;
+}
+
+/** The "Don't Track" map with every Hold Off and Old Client company added, for the coverage charts. */
+export function withCoverageLeftOut(untrackedMap, prospects) {
+  const out = coverageLeftOutNameMap(prospects);
+  return Object.keys(out).length ? { ...(untrackedMap || {}), ...out } : (untrackedMap || {});
+}

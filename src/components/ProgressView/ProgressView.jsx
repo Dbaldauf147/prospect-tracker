@@ -15,7 +15,7 @@ import { readWorkKey, writeWorkKey } from '../../utils/mirroredWorkKeys';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
 import { excludeUntrackedFromWeeks, untrackedNoteFor } from '../../utils/progressUntracked';
 import { COVERAGE_CHARTS, COVERAGE_T1, COVERAGE_T2, COVERAGE_T3 } from '../../utils/progressCoverage';
-import { reportingStatus, substatusNameMap } from '../../utils/reportingStatus';
+import { reportingStatus, substatusNameMap, withCoverageLeftOut } from '../../utils/reportingStatus';
 import { apiFetch } from '../../utils/apiFetch';
 import { weeksFromBackupValue, missingWeeksFromBackups, mergeRecoveredWeeks } from '../../utils/progressHistoryRecovery';
 
@@ -444,6 +444,11 @@ const PE_STAGE_SERIES = [
 // (the book is worked Tier 1 and 2 first, and a third line crowds the two
 // that matter) and each chart's "Tier 3" button shows them; the choice is
 // remembered per chart. PE Firms by PE Stage has no tiers, so no button.
+// The coverage charts' ids and the snapshot fields they plot, which read
+// the Hold Off / Old Client-free weeks (coverageData) rather than chartData.
+const COVERAGE_CHART_IDS = new Set(COVERAGE_CHARTS.map(c => c.id));
+const COVERAGE_KEYS = new Set(COVERAGE_CHARTS.flatMap(c => [c.t1Key, c.t2Key, c.t3Key]));
+
 const PROGRESS_CHART_DEFS = [
   // The first two come from the shared definition in utils/progressCoverage:
   // the Weekly Report email draws the same two series, and a label or a
@@ -1361,11 +1366,24 @@ export function ProgressView({ prospects, settings, cdmName }) {
   const untrackedNote = untrackedNoteFor(untracked, { heldMap });
 
   const chartData = useMemo(() => decorateWeeks(untracked.weeks), [untracked]);
+  // The two account-coverage charts also leave out every Hold Off and Old
+  // Client account (utils/reportingStatus), the way the Weekly Report's
+  // copies of them do: nobody is mapping contacts at those. Only those two
+  // charts and their cards: % Inactive counts exactly these accounts.
+  const coverageData = useMemo(
+    () => decorateWeeks(excludeUntrackedFromWeeks(recordedData, withCoverageLeftOut(clientUntrackedMap, prospects)).weeks),
+    [recordedData, clientUntrackedMap, prospects],
+  );
+  const dataFor = (defId) => (COVERAGE_CHART_IDS.has(defId) ? coverageData : chartData);
   const historyRows = useMemo(() => decorateWeeks(recordedData), [recordedData]);
   // The cards read the same adjusted row the charts plot for this week.
   const cardSnapshot = useMemo(
     () => chartData.find(d => d.week === currentSnapshot.week) || currentSnapshot,
     [chartData, currentSnapshot],
+  );
+  const coverageCard = useMemo(
+    () => coverageData.find(d => d.week === currentSnapshot.week) || cardSnapshot,
+    [coverageData, currentSnapshot, cardSnapshot],
   );
 
   function fmtWeek(w) {
@@ -1386,7 +1404,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
     const appendChartSheet = (def, headerNames) => {
       const cols = [...def.series, ...(def.secondarySeries || [])];
       const aoa = [['Week', 'Week Start', ...cols.map((s, i) => (headerNames ? headerNames[i] : s.name))]];
-      for (const row of chartData) {
+      for (const row of dataFor(def.id)) {
         aoa.push([row.weekLabel, row.week, ...cols.map(s => (row[s.key] == null ? '' : row[s.key]))]);
       }
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), uniqueSheetName(titleFor(def.id, def.label), def.id));
@@ -1407,8 +1425,13 @@ export function ProgressView({ prospects, settings, cdmName }) {
         }
       }
       const combined = [['Week', 'Week Start', ...combinedCols.map(s => s.header)]];
+      const coverageByWeek = new Map(coverageData.map(r => [r.week, r]));
       for (const row of chartData) {
-        combined.push([row.weekLabel, row.week, ...combinedCols.map(s => (row[s.key] == null ? '' : row[s.key]))]);
+        const cov = coverageByWeek.get(row.week) || row;
+        combined.push([row.weekLabel, row.week, ...combinedCols.map(s => {
+          const v = (COVERAGE_KEYS.has(s.key) ? cov : row)[s.key];
+          return v == null ? '' : v;
+        })]);
       }
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(combined), uniqueSheetName('All Data'));
     }
@@ -1426,7 +1449,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
   // left in chronological order — same rule the callout under each chart uses.
   function pinnedRowsFor(def) {
     const set = new Set(chartPins[def.id] || []);
-    return chartData.filter(d => set.has(d.week));
+    return dataFor(def.id).filter(d => set.has(d.week));
   }
 
   // Export every pinned point at once: one chart's pins when passed a chart
@@ -1493,7 +1516,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
   // plotted values and, when the chart stores per-account drill-down, an
   // Accounts sheet listing the exact accounts that produced the point.
   async function downloadPointData(def, weekKey) {
-    const row = chartData.find(d => d.week === weekKey);
+    const row = def ? dataFor(def.id).find(d => d.week === weekKey) : null;
     if (!def || !row) return;
     const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
@@ -1551,12 +1574,13 @@ export function ProgressView({ prospects, settings, cdmName }) {
       {/* Current stats */}
       {(() => {
         const cards = [
-          { key: 'contacts', label: 'Accounts with Contacts', color: '#3B82F6', t1: cardSnapshot.t1WithContacts, t2: cardSnapshot.t2WithContacts, t1Pct: cardSnapshot.t1ContactPct, t2Pct: cardSnapshot.t2ContactPct,
-            t1Yes: cardSnapshot.details?.t1WithContacts || [], t1No: cardSnapshot.details?.t1NoContacts || [],
-            t2Yes: cardSnapshot.details?.t2WithContacts || [], t2No: cardSnapshot.details?.t2NoContacts || [] },
-          { key: 'dm', label: 'Decision Maker Identified', color: '#7C3AED', t1: cardSnapshot.t1WithDM || 0, t2: cardSnapshot.t2WithDM || 0, t1Pct: cardSnapshot.t1DMPct || 0, t2Pct: cardSnapshot.t2DMPct || 0,
-            t1Yes: cardSnapshot.details?.t1WithDM || [], t1No: cardSnapshot.details?.t1NoDM || [],
-            t2Yes: cardSnapshot.details?.t2WithDM || [], t2No: cardSnapshot.details?.t2NoDM || [] },
+          // These two read the coverage weeks: Hold Off and Old Client left out.
+          { key: 'contacts', label: 'Accounts with Contacts', color: '#3B82F6', t1: coverageCard.t1WithContacts, t2: coverageCard.t2WithContacts, t1Pct: coverageCard.t1ContactPct, t2Pct: coverageCard.t2ContactPct,
+            t1Yes: coverageCard.details?.t1WithContacts || [], t1No: coverageCard.details?.t1NoContacts || [],
+            t2Yes: coverageCard.details?.t2WithContacts || [], t2No: coverageCard.details?.t2NoContacts || [] },
+          { key: 'dm', label: 'Decision Maker Identified', color: '#7C3AED', t1: coverageCard.t1WithDM || 0, t2: coverageCard.t2WithDM || 0, t1Pct: coverageCard.t1DMPct || 0, t2Pct: coverageCard.t2DMPct || 0,
+            t1Yes: coverageCard.details?.t1WithDM || [], t1No: coverageCard.details?.t1NoDM || [],
+            t2Yes: coverageCard.details?.t2WithDM || [], t2No: coverageCard.details?.t2NoDM || [] },
           { key: 'connected', label: 'Connected (Had Opp)', color: '#10B981', t1: cardSnapshot.t1Connected, t2: cardSnapshot.t2Connected, t1Pct: cardSnapshot.t1ConnectedPct, t2Pct: cardSnapshot.t2ConnectedPct,
             t1Yes: cardSnapshot.details?.t1Connected || [], t1No: cardSnapshot.details?.t1NotConnected || [],
             t2Yes: cardSnapshot.details?.t2Connected || [], t2No: cardSnapshot.details?.t2NotConnected || [] },
@@ -1656,6 +1680,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
                     ? `Left out: ${untracked.names.join(', ')}.`
                     : '',
                   'Ticked "Don\'t Track" on the Clients tab, or Hold Off because a substatus is set on the company. Every week that recorded them is re-answered without them, so the trend stays comparable, and nothing is rewritten: unticking a client, or clearing a substatus, puts it back on every point.',
+                  'The two account-coverage charts (HubSpot Contacts, Decision Maker Identified) and their cards also leave out every Hold Off and Old Client account.',
                   'Two numbers keep what they were saved with, because the week stored no account list behind them: the Tier 3 total and the No-Opps Activity chart.',
                 ].filter(Boolean).join('\n\n')}
               >
@@ -1707,7 +1732,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
               <ProgressChart
                 key={c.id}
                 title={titleFor(c.id, c.label)}
-                data={chartData}
+                data={dataFor(c.id)}
                 series={c.series}
                 secondarySeries={c.secondarySeries}
                 showTier3={tier3Shown.has(c.id)}

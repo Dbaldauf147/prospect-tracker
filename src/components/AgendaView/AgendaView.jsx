@@ -2070,6 +2070,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   // already somebody having narrowed it down.
   const [applyAllBusy, setApplyAllBusy] = useState(false);
   const [applyAllStatus, setApplyAllStatus] = useState(null);
+  // { done, total } while a run is going, for the % on the button. Counted
+  // over the actions the run started with: the pending list shrinks as each
+  // one lands, so it cannot be the denominator.
+  const [applyAllProgress, setApplyAllProgress] = useState(null);
 
   const suggestionScopeSelected = bulkMassMode && bulkSelected.size > 0;
   const suggestionScopeRows = useMemo(() => (
@@ -2091,6 +2095,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     [pendingSuggestions],
   );
 
+  const applyAllPct = applyAllProgress && applyAllProgress.total > 0
+    ? Math.floor((applyAllProgress.done / applyAllProgress.total) * 100)
+    : 0;
+
   async function applyAllSuggestions() {
     if (applyAllBusy || pendingSuggestions.length === 0) return;
     const { total, companies, prospectFields, prospects: prospectCount } = suggestionSummary;
@@ -2108,21 +2116,29 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     if (!confirm(lines.join('\n'))) return;
 
     setApplyAllBusy(true);
+    const actions = [...pendingSuggestions];
+    setApplyAllProgress({ done: 0, total: actions.length });
     let done = 0;
     let failed = 0;
-    for (const action of pendingSuggestions) {
+    for (let i = 0; i < actions.length; i += 1) {
+      const action = actions[i];
       if (action.kind === 'company') {
         // The same pair the cell's ✓ runs: save the mapping (which fixes
         // every other row with that raw company) and set this row.
         saveCompanyRule(action.from, action.to);
         updateRow(action.email, { company: action.to });
         done += 1;
-        continue;
+      } else {
+        const ok = await applySingleSuggestion(action.prospect, action.field, action.value);
+        if (ok) done += 1; else failed += 1;
       }
-      const ok = await applySingleSuggestion(action.prospect, action.field, action.value);
-      if (ok) done += 1; else failed += 1;
+      setApplyAllProgress({ done: i + 1, total: actions.length });
+      // Company actions are synchronous, so a run of them would never let
+      // the button repaint; yield now and then so the % moves.
+      if (action.kind === 'company' && i % 10 === 9) await new Promise(r => setTimeout(r, 0));
     }
     setApplyAllBusy(false);
+    setApplyAllProgress(null);
     setApplyAllStatus({
       type: failed > 0 ? 'partial' : 'success',
       message: `Applied ${done} suggestion${done === 1 ? '' : 's'}${failed > 0 ? ` - ${failed} failed` : ''}.`,
@@ -2543,7 +2559,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                   only when there is something to apply, because a button
                   that says "0" is a button asking to be clicked to find
                   that out. */}
-              {pendingSuggestions.length > 0 && (
+              {(pendingSuggestions.length > 0 || applyAllBusy) && (
                 <button
                   type="button"
                   onClick={applyAllSuggestions}
@@ -2553,10 +2569,18 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                       ? `the ${suggestionScopeRows.length} selected row${suggestionScopeRows.length === 1 ? '' : 's'}`
                       : `all ${suggestionScopeRows.length} row${suggestionScopeRows.length === 1 ? '' : 's'} shown`
                   }: ${suggestionSummary.companies} Suggested Company, ${suggestionSummary.prospectFields} Table View field${suggestionSummary.prospectFields === 1 ? '' : 's'} across ${suggestionSummary.prospects} prospect${suggestionSummary.prospects === 1 ? '' : 's'}. Same as clicking each ✓. Dismissed suggestions stay dismissed.`}
-                  style={{ padding: '0.3rem 0.7rem', border: '1px solid #16A34A', borderRadius: 6, background: applyAllBusy ? '#86EFAC' : '#16A34A', color: '#fff', fontSize: '0.72rem', fontWeight: 700, cursor: applyAllBusy ? 'wait' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                  style={{
+                    padding: '0.3rem 0.7rem', border: '1px solid #16A34A', borderRadius: 6, color: '#fff', fontSize: '0.72rem', fontWeight: 700,
+                    cursor: applyAllBusy ? 'wait' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+                    // While running, the button fills left to right with the
+                    // share applied: dark green done, light green still to go.
+                    background: applyAllBusy
+                      ? `linear-gradient(to right, #16A34A ${applyAllPct}%, #86EFAC ${applyAllPct}%)`
+                      : '#16A34A',
+                  }}
                 >
                   {applyAllBusy
-                    ? 'Applying…'
+                    ? `Applying… ${applyAllPct}% (${applyAllProgress?.done || 0}/${applyAllProgress?.total || 0})`
                     : `✓ Apply ${pendingSuggestions.length} suggestion${pendingSuggestions.length === 1 ? '' : 's'}${suggestionScopeSelected ? ' (selected)' : ''}`}
                 </button>
               )}
