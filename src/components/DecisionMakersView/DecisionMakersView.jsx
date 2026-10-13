@@ -96,7 +96,12 @@ export function DecisionMakersView({ prospects = [], onSelectProspect, settings,
   }, [showAbout]);
 
   const [categoryFilter, setCategoryFilter] = useState(() => new Set());
+  // The "on no roster" pill as a filter. It cannot combine with the roster
+  // pills (a contact on no roster matches none of them, so the list would
+  // always be empty), so lighting one clears the other.
+  const [offRosterOnly, setOffRosterOnly] = useState(false);
   const toggleCategory = useCallback((cat) => {
+    setOffRosterOnly(false);
     if (cat === null) { setCategoryFilter(new Set()); return; }
     setCategoryFilter((prev) => {
       const next = new Set(prev);
@@ -260,10 +265,11 @@ export function DecisionMakersView({ prospects = [], onSelectProspect, settings,
   // rollup, Travel and every column filter all see the same narrowed set.
   const combinedSelector = useCallback((c) => {
     if (!dmSelector(c)) return false;
+    if (offRosterOnly && gates.categorize(c).length > 0) return false;
     if (!activeTag) return true;
     if (statusGateOn) return activeStatuses.has(contactTagStatus(c, activeTag, tagReviewMap));
     return contactTagList(c).some(t => tagKey(t) === tagKey(activeTag));
-  }, [dmSelector, activeTag, statusGateOn, activeStatuses, tagReviewMap]);
+  }, [dmSelector, offRosterOnly, gates, activeTag, statusGateOn, activeStatuses, tagReviewMap]);
 
   // The Totals pills. All is this page's own count; the other four are how
   // many of those decision makers also sit on each roster, so they say
@@ -310,13 +316,13 @@ export function DecisionMakersView({ prospects = [], onSelectProspect, settings,
       </button>
       {showAbout && (
         <div style={{ marginTop: 4 }}>
-          Every HubSpot contact tagged <strong>Decision Maker</strong>, on the same table the <strong>All</strong> tab uses. Unlike that page this one is not gated on the rosters: a decision maker at an account on none of Key, Active, Client or Key Prospect still belongs here, which is what makes this the list of everyone who can sign. The <strong>Totals</strong> pills are how many of them also sit on each roster, and they double as filters: click as many as you want and the list shows contacts on <em>any</em> of the lit ones, click a lit pill to turn it off, or hit <strong>All</strong> to clear them. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account, or <strong>Travel</strong> to pick a state/city and see who is nearby. Contacts tagged <strong>Hide</strong> or <strong>Left</strong> are out, as are coworkers and accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong> or that are ticked <strong>Don't Track</strong> there. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong>) to retag several at once - including taking the Decision Maker tag off somebody who should not have it, which drops them off this page. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through.
+          Every HubSpot contact tagged <strong>Decision Maker</strong>, on the same table the <strong>All</strong> tab uses. Unlike that page this one is not gated on the rosters: a decision maker at an account on none of Key, Active, Client or Key Prospect still belongs here, which is what makes this the list of everyone who can sign. The <strong>Totals</strong> pills are how many of them also sit on each roster, and they double as filters: click as many as you want and the list shows contacts on <em>any</em> of the lit ones, click a lit pill to turn it off, or hit <strong>All</strong> to clear them. Click <strong>on no roster</strong> to list just the decision makers on none of the four, ready to tag in bulk. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account, or <strong>Travel</strong> to pick a state/city and see who is nearby. Contacts tagged <strong>Hide</strong> or <strong>Left</strong> are out, as are coworkers and accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong> or that are ticked <strong>Don't Track</strong> there. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong>) to retag several at once - including taking the Decision Maker tag off somebody who should not have it, which drops them off this page. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through.
         </div>
       )}
       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 700 }}>Totals:</span>
         {categoryPills.map(({ cat, label, count, bg, border, color, tip }) => {
-          const selected = cat === null ? categoryFilter.size === 0 : categoryFilter.has(cat);
+          const selected = cat === null ? categoryFilter.size === 0 && !offRosterOnly : categoryFilter.has(cat);
           return (
             <button
               key={label}
@@ -341,18 +347,31 @@ export function DecisionMakersView({ prospects = [], onSelectProspect, settings,
             </button>
           );
         })}
-        {offRoster > 0 && (
-          <span
+        {(offRoster > 0 || offRosterOnly) && (
+          <button
+            type="button"
             data-off-roster-note
-            title="Decision makers who land on none of the four rosters - nobody is working their account today. They are on this page and on no other."
+            data-selected={offRosterOnly ? '1' : '0'}
+            aria-pressed={offRosterOnly}
+            onClick={() => {
+              setCategoryFilter(new Set());
+              setOffRosterOnly(v => !v);
+            }}
+            title={offRosterOnly
+              ? 'Showing only the decision makers on none of the four rosters. Click again to show everyone.'
+              : 'Decision makers who land on none of the four rosters - nobody is working their account today. Click to list only them, then tick Select all and hit Edit Tags to tag them in bulk.'}
             style={{
               padding: '1px 8px', borderRadius: 999,
-              background: '#FFF7ED', border: '1px dashed #FED7AA', color: '#9A3412',
+              background: offRosterOnly ? '#9A3412' : '#FFF7ED',
+              border: `1px ${offRosterOnly ? 'solid #9A3412' : 'dashed #FED7AA'}`,
+              color: offRosterOnly ? '#fff' : '#9A3412',
               fontSize: '0.68rem', fontWeight: 700,
+              fontFamily: 'inherit', cursor: 'pointer',
+              boxShadow: offRosterOnly ? '0 0 0 2px #FED7AA' : 'none',
             }}
           >
             {offRoster} on no roster
-          </span>
+          </button>
         )}
         {[
           { attr: 'cancelling', count: categoryCounts.cancelling, label: 'at cancelling clients, left out',
