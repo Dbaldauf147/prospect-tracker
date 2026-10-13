@@ -26,9 +26,10 @@ const LINKEDIN_RE = /(?:https?:\/\/)?(?:[a-z]{2,3}\.)?linkedin\.com\/(?:in|pub|s
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 
 // Hyphen, en dash and em dash, each only with space on both sides, so
-// "Mary-Jane" and "Vice-President" stay whole. — is spelled as an
-// escape so the em dash this reads out of pasted text never sits in source.
-const STRONG_SEP_RE = /\t|\s+\|\s+|\s+[•·]\s+|\s+[-–—]\s+/;
+// "Mary-Jane" and "Vice-President" stay whole. The dashes are spelled as
+// escapes, and the line is marked, because this reads them out of pasted
+// text rather than showing them.
+const STRONG_SEP_RE = /\t|\s+\|\s+|\s+[•·]\s+|\s+[-\u2013\u2014]\s+/; // em-dash-ok: reads pasted text
 
 // Lines LinkedIn (and Sales Navigator) put between the bits worth reading.
 const NOISE_RES = [
@@ -200,12 +201,17 @@ export function nameFromLinkedinUrl(url) {
   return parts.map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' ');
 }
 
+// Where a title stops and prose about the person starts: "VP of FP&A. He
+// manages the 17-member team..." Narrow on purpose - "Sr. Director" has a
+// full stop too.
+const TITLE_PROSE_RE = /\.\s+(?:He|She|They|His|Her|Their|Leads|Oversees|Manages|Runs|Owns|Responsible)\b.*$/;
+
 // "Director of Sustainability at Acme Corp" -> "Director of Sustainability"
 // when Acme Corp is the company being added to. Left whole otherwise: the
 // "at" half is the only clue the person is somewhere else.
 function cleanTitle(s, companyNorm) {
   let t = clean(s).replace(/^(current|title|headline|role|position)\s*:\s*/i, '');
-  t = t.replace(/[\s,;|]+$/, '');
+  t = t.replace(TITLE_PROSE_RE, '').replace(/[\s,;|]+$/, '').replace(/(?<!\b(?:Sr|Jr|Inc|Co|Corp|Ltd))\.$/, '');
   if (companyNorm) {
     const m = t.match(/^(.*?)\s+(?:at|@)\s+(.+)$/i);
     if (m && sameCompany(m[2], companyNorm)) t = m[1].trim();
@@ -305,6 +311,20 @@ function parseTable(lines, companyNorm) {
 
 // ---- free text -------------------------------------------------------------
 
+// List markers in front of a line: bullets, a dash or star, "1." / "2)".
+const LIST_MARKER_RE = /^(?:[\u2022\u2023\u25E6\u2043\u2219\u00B7*>]+|-(?=\s)|\d{1,3}[.)](?=\s))\s*/;
+
+// "Timothy J. Lobner (Executive Vice President & COO). He leads the field
+// teams..." - the way an account plan or a research summary lists people.
+// Read as "name - title" and the sentence about them dropped. A parenthesis
+// that only holds pronouns or credentials ("(She/Her)", "(CFA)") is left
+// for stripNameExtras, which already knows those aren't titles.
+function readNameParen(s) {
+  const m = s.match(/^([^()]{3,60}?)\s*\(([^()]{2,160})\)/);
+  if (!m || !isLikelyName(m[1]) || isCredentialRun(m[2]) || isCredentialRun(m[2].replace(/,/g, ' '))) return s;
+  return `${m[1].trim()} - ${m[2].trim()}`;
+}
+
 function parseFreeText(lines, companyNorm) {
   const out = [];
   let cur = null;
@@ -313,7 +333,9 @@ function parseFreeText(lines, companyNorm) {
   for (const rawLine of lines) {
     const line = clean(rawLine);
     if (!line || isNoise(line)) continue;
-    const { urls, emails, rest } = extractLinks(line);
+    const links = extractLinks(line);
+    const { urls, emails } = links;
+    const rest = readNameParen(links.rest.replace(LIST_MARKER_RE, ''));
 
     // Split what's left into pieces: strong separators first, then a comma
     // after a name ("Jane Doe, VP Energy").

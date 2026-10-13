@@ -116,6 +116,32 @@ check('duplicates collapse', parseContactPaste('Jane Doe - CFO\nJane Doe - CFO')
 check('nothing', parseContactPaste('   \n\n'), []);
 check('noise only', parseContactPaste('Connect\nMessage\n500+ connections'), []);
 
+// An account plan: bullets of "Name (Title). A sentence about them.", under
+// section headings and "Focus:" lines that aren't anybody.
+check('account plan: bulleted name (title) with prose', parseContactPaste(`. The Operations & Asset Management Track
+
+Focus: Property management efficiency, procurement logistics, utility/fleet management, and physical property rehabilitation.
+• Timothy J. Lobner (Executive Vice President & Chief Operating Officer). He leads the field teams and directly oversees strategic initiatives for procurement, utility management, and vehicle fleet programs across their portfolio of over 110,000 single-family rental homes.
+• Peter DiLello (Executive Vice President, Investment Management Group). He manages disciplined capital allocation, portfolio optimization, and transaction metrics to ensure property assets meet long-term performance standards.
+
+2. The Corporate Finance & FP&A Track
+
+Focus: Budget approvals, capital expenditure (CapEx) ROI modeling, enterprise financial tech (like Anaplan), and corporate development.
+• Jonathan S. Olsen (Executive Vice President & Chief Financial Officer). He holds the ultimate sign-off on the macro-level corporate budget and financing structure.
+• Chris Story (Vice President of FP&A and Corporate Development). He manages the 17-member team that handles day-to-day annual budgeting and the complex corporate strategy models.`), [
+  row('Timothy', 'Lobner', 'Executive Vice President & Chief Operating Officer'),
+  row('Peter', 'DiLello', 'Executive Vice President, Investment Management Group'),
+  row('Jonathan', 'Olsen', 'Executive Vice President & Chief Financial Officer'),
+  row('Chris', 'Story', 'Vice President of FP&A and Corporate Development'),
+]);
+check('numbered and dashed list markers', parseContactPaste('1. Jane Doe - CFO\n- John Smith (COO) linkedin.com/in/johnsmith'), [
+  row('Jane', 'Doe', 'CFO'),
+  row('John', 'Smith', 'COO', 'https://www.linkedin.com/in/johnsmith'),
+]);
+check('dash title followed by prose', parseContactPaste('Chris Story - VP of FP&A. He manages the budget team.'), [row('Chris', 'Story', 'VP of FP&A')]);
+check('pronouns in parens are not a title', parseContactPaste('Jane Doe (She/Her)\nDirector of Sustainability'), [row('Jane', 'Doe', 'Director of Sustainability')]);
+check('Sr. keeps its full stop mid-title', parseContactPaste('Jane Doe - Sr. Director, Energy'), [row('Jane', 'Doe', 'Sr. Director, Energy')]);
+
 // --- spreadsheet ---------------------------------------------------------
 check('table with header', parseContactPaste(
   'Name\tTitle\tLinkedIn\nJane Doe\tCFO\thttps://www.linkedin.com/in/janedoe\nJohn Smith\tCOO\t',

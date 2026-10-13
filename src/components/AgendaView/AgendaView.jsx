@@ -14,7 +14,7 @@ import { companyTextEquals, pendingSuggestionActions, summarizeSuggestionActions
 import { ColumnToggle } from '../common/ColumnToggle';
 import { orderColumns, mergeColumnOrder } from '../../utils/tableColumnPrefs';
 import { classifyHqCountry, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
-import { parseProseContacts } from '../../utils/proseContacts';
+import { parseContactPaste } from '../../utils/contactPaste';
 import styles from './AgendaView.module.css';
 
 const STORAGE_KEY = 'bulk-contacts-cache';
@@ -239,13 +239,20 @@ function parseEmailHeaders(text) {
 
 // Everything a pasted or dropped block of text names: the "Name <email>"
 // pairs, plus the people it lists by name and title without an address (an
-// account plan, a LinkedIn search). Name-only rows get an estimated email
-// from the company's pattern once a company is set, same as a sheet row.
+// account plan, a LinkedIn search), read by the same parser as the company
+// popup's Paste Contacts so the two can't disagree about a paste. Name-only
+// rows get an estimated email from the company's pattern once a company is
+// set, same as a sheet row.
 function parsePastedText(text) {
   const withEmail = parseEmailHeaders(text);
   const named = new Set(withEmail.map(r => `${r.firstname} ${r.lastname}`.trim().toLowerCase()).filter(Boolean));
-  const byName = parseProseContacts(text)
-    .filter(r => !named.has(`${r.firstname} ${r.lastname}`.toLowerCase()));
+  const byName = parseContactPaste(text)
+    .filter(r => !r.email && !named.has(`${r.firstname} ${r.lastname}`.toLowerCase()))
+    .map(r => ({
+      email: '', firstname: r.firstname, lastname: r.lastname, company: '',
+      phone: '', mobilePhone: '', jobtitle: r.jobtitle, linkedinUrl: r.linkedin,
+      city: '', state: '', country: '', dans_tags: '',
+    }));
   return [...withEmail, ...byName];
 }
 
