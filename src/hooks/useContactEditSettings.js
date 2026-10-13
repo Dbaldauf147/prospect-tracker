@@ -96,6 +96,10 @@ export function useContactEditSettings({ settings, updateSettings }) {
         if (cid == null) return;
         updateSettings?.({ contactTagReview: { ...(settings?.contactTagReview || {}), [cid]: map } });
       },
+      // Named sets of tag answers, applied from the tag table in one click.
+      // See utils/tagPresets.js.
+      tagPresets: settings?.tagPresets || [],
+      onSaveTagPresets: (list) => updateSettings?.({ tagPresets: list }),
     };
   }, [settings, updateSettings]);
 }
