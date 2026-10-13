@@ -9,7 +9,10 @@ import { getHubspotCache } from '../utils/hubspotContactsCache';
 import { userLsGet } from '../utils/userLs';
 import { useAuth } from '../contexts/AuthContext';
 import { SUBSTATUS_HOLD_STATUS } from '../utils/reportingStatus';
-import { lastActivityByAccount, myTieredAccounts } from '../utils/tieredAccountActivity';
+import {
+  ACTIVE_FIRMS_DAYS, activeFirmsByBucket, lastActivityByAccount, myAccounts, myTieredAccounts,
+} from '../utils/tieredAccountActivity';
+import { recordActiveFirms } from '../utils/activeFirmsHistory';
 import { recordTieredCoverage } from '../utils/tieredCoverageHistory';
 import { todayISO } from '../utils/prospectingStatus';
 
@@ -101,4 +104,19 @@ export function useRecordTieredCoverage({ coverage, windowDays, contacts, noInde
     if (!coverage || noIndex || !contacts?.length || !accounts?.length) return;
     recordTieredCoverage(todayISO(), coverage, windowDays);
   }, [coverage, windowDays, contacts, noIndex, accounts]);
+}
+
+// Today's count of firms with activity in the last 120 days, per tier and
+// untiered, recorded for History's bar chart under the same conditions as
+// the coverage reading above. Returns the counts (null until they're real).
+export function useRecordActiveFirms({ prospects, cdmName = '', contacts, outreachIndex, noIndex, localFields, links, exclusions }) {
+  const firms = useMemo(() => myAccounts(prospects, cdmName), [prospects, cdmName]);
+  const buckets = useMemo(() => {
+    if (!contacts?.length || noIndex || !firms.length) return null;
+    return activeFirmsByBucket({ accounts: firms, contacts, outreachIndex, localFields, links, exclusions });
+  }, [firms, contacts, outreachIndex, noIndex, localFields, links, exclusions]);
+  useEffect(() => {
+    if (buckets) recordActiveFirms(todayISO(), buckets, ACTIVE_FIRMS_DAYS);
+  }, [buckets]);
+  return buckets;
 }

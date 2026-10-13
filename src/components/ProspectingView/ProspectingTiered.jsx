@@ -21,7 +21,7 @@ import {
 } from '../../utils/tieredAccountActivity';
 import {
   HIDDEN_STATUSES_CACHE, HIDDEN_STATUSES_KEY, WINDOW_DAYS_CACHE, WINDOW_DAYS_KEY, WINDOW_DAY_OPTIONS,
-  readHiddenCache, readWindowCache, statusOf, substatusOf, useRecordTieredCoverage, useTieredActivity, validWindow,
+  readHiddenCache, readWindowCache, statusOf, substatusOf, useRecordActiveFirms, useRecordTieredCoverage, useTieredActivity, validWindow,
 } from '../../hooks/useTieredActivity';
 
 // The same tier tints the Prospects subtab and the ladder's DM mapping use.
@@ -90,7 +90,9 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
     return () => { cancelled = true; };
   }, []);
 
-  const { contacts, noIndex, accounts, activity, localFields, links, exclusions } = useTieredActivity({ prospects, settings, cdmName });
+  const { contacts, outreachIndex, noIndex, accounts, activity, localFields, links, exclusions } = useTieredActivity({ prospects, settings, cdmName });
+  // Feeds History's firms-active chart; this page doesn't show it.
+  useRecordActiveFirms({ prospects, cdmName, contacts, outreachIndex, noIndex, localFields, links, exclusions });
   // The full HubSpot record behind each activity row's contact, by id, so the
   // Contact column can open the contact popup rather than HubSpot.
   const contactById = useMemo(() => {
