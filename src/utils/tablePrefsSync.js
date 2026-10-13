@@ -7,6 +7,11 @@
 // layout entirely. (`visible` is the pre-hidden-list model, still read so an
 // old layout is honoured once and converted.)
 //
+// Two more kinds ride along for tables that keep their own local copy and
+// sync through useSyncedTablePref: the SORT ({ dir, key }) and the per-column
+// FILTERS (a map keyed by column, like widths). They have no default
+// localStorage keys here because no shared table persists them yet.
+//
 // Two copies, deliberately:
 //
 //   localStorage — synchronous, so a table draws its saved layout on the
@@ -149,7 +154,12 @@ export function decodeRemoteMap(m) {
 export function readRemoteTablePrefs(settings, tableId) {
   const raw = settings?.tablePrefs?.[tableId];
   if (!raw) return raw;
-  return { ...raw, widths: decodeRemoteMap(raw.widths), names: decodeRemoteMap(raw.names) };
+  return {
+    ...raw,
+    widths: decodeRemoteMap(raw.widths),
+    names: decodeRemoteMap(raw.names),
+    filters: decodeRemoteMap(raw.filters),
+  };
 }
 
 // settings._lastWriteAt is stamped by every settings save, so it doubles as
@@ -214,6 +224,10 @@ function encodeEntry(current, patch) {
   if (patch.hidden !== undefined) next.hidden = [...patch.hidden];
   if (patch.starred !== undefined) next.starred = [...patch.starred];
   if (patch.visible !== undefined) next.visible = [...patch.visible];
+  // Sort is a small plain object; filters are keyed by column, so they get
+  // the same key encoding as widths.
+  if (patch.sort !== undefined) next.sort = patch.sort;
+  if (patch.filters !== undefined) next.filters = encodeRemoteMap(patch.filters);
   return next;
 }
 

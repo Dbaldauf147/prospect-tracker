@@ -160,5 +160,31 @@ eq(sameStoredValue('[]', new Set(['x']), SET_PREF.toRemote), false,
 eq(SET_PREF.fromRemote(['a', 'b']) instanceof Set, true, 'a stored list reads back as a Set');
 eq([...SET_PREF.fromRemote(null)], [], 'and a missing one as an empty Set');
 
+// ── sort and filters travel too ──────────────────────────────────────────
+//
+// The PE Portfolio table keeps its own local copy of both and syncs them
+// through useSyncedTablePref, so all this module has to do is carry them.
+const s6 = fakeSettings({ 'pe-portfolio': { hidden: ['x'] } });
+persistTablePrefs(null, 'pe-portfolio', s6.settings, s6.updateSettings, { sort: { dir: 'asc', key: 'company' } });
+persistTablePrefs(null, 'pe-portfolio', s6.settings, s6.updateSettings, {
+  filters: { status: ['Prospect'], __flag__: { picks: [], draft: 'bl' } },
+});
+flushTablePrefs();
+const entry6 = s6.calls[0].tablePrefs['pe-portfolio'];
+eq(entry6.sort, { dir: 'asc', key: 'company' }, 'a sort reaches the settings write');
+eq(entry6.filters, { status: ['Prospect'], _x___flag__: { picks: [], draft: 'bl' } },
+  'and so do the filters, with column keys encoded like widths');
+eq(entry6.hidden, ['x'], 'leaving the rest of the entry alone');
+eq(readRemoteTablePrefs(s6.settings, 'pe-portfolio').filters,
+  { status: ['Prospect'], __flag__: { picks: [], draft: 'bl' } },
+  'filters read back with their column keys decoded');
+eq(readRemoteTablePrefs(s6.settings, 'pe-portfolio').sort, { dir: 'asc', key: 'company' },
+  'and the sort reads back as saved');
+const s7 = fakeSettings({ 'pe-portfolio': { filters: { status: ['Prospect'] } } });
+persistTablePrefs(null, 'pe-portfolio', s7.settings, s7.updateSettings, { filters: {} });
+flushTablePrefs();
+eq(s7.calls[0].tablePrefs['pe-portfolio'].filters, {},
+  'clearing every filter is written as an empty map, so the other machine clears too');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
