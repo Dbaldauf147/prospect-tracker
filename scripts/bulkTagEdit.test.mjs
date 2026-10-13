@@ -261,7 +261,7 @@ function eq(actual, expected, name) {
 // only" AND "NAM Only" as separate rows, so the tag could be answered twice
 // and the Tagged % was out of a total that counted it twice.
 {
-  const fromContacts = ['NAM only', 'Efficiency/Renewables', 'ESG', 'Climate Risk', ''];
+  const fromContacts = ['NAM only', 'Efficiency/Renewables', 'ESG', 'Water Rights', ''];
   const vocab = tagVocabulary(fromContacts);
   eq(vocab.filter(t => tagKey(t) === tagKey('NAM Only')).length, 1,
     'the two spellings of NAM Only are one option');
@@ -269,7 +269,7 @@ function eq(actual, expected, name) {
     'and it is the vocabulary\'s spelling that is offered');
   eq(vocab.filter(t => tagKey(t) === tagKey('Efficiency / Renewables')).length, 1,
     'same for the spaced and unspaced Efficiency / Renewables');
-  eq(vocab.includes('Climate Risk'), true,
+  eq(vocab.includes('Water Rights'), true,
     'a tag only the contacts know about is still offered');
   eq(vocab.length, TAG_OPTIONS.length + 1,
     'nothing else is added: the vocabulary plus the one unknown tag');

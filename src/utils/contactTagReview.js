@@ -23,11 +23,16 @@
 // tag like EU, so answering it is part of working a contact out — which does
 // mean every Tagged % is now out of one more question than before.
 //
+// Utilities and Climate Risk are org-chart buckets (ProspectModal/contactTags
+// BUCKETS) and were missing here, so the chip only showed once some contact
+// already carried it. Scored like the rest: two more questions on every
+// Tagged %.
+//
 // A value HubSpot's dans_tags enumeration doesn't have yet isn't a problem:
 // the first contact saved with it gets a 400, and api/hubspot.js registers
 // the option on the property and retries (see ensureDansTagsOptions).
 export const TAG_OPTIONS = [
-  'ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning',
+  'ESG', 'Procurement', 'Utilities', 'Climate Risk', 'Private Equity', 'Real Estate', 'Capital Planning',
   'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker',
   'Primary Point of Contact', 'Test', 'NAM Only', 'EU', 'Hide', 'Left',
 ];
