@@ -263,19 +263,23 @@
   color: var(--color-text-muted);
 }
 
-/* ── Edit mode ────────────────────────────────────────────────────────
-   Every editable field keeps the size and weight of the text it replaces,
-   so turning Edit on doesn't reflow the page into a different shape. The
-   boxes read as the same words with a line under them. */
+/* ── Editing in place ─────────────────────────────────────────────────
+   The page is always editable, so every field is styled as the text it
+   holds: no visible box until the pointer is over it (a dashed line says
+   "you can type here") or it has focus. */
 
 .fieldInput {
   border: none;
-  border-bottom: 1px dashed var(--color-border);
+  border-bottom: 1px dashed transparent;
   border-radius: 0;
   background: transparent;
   padding: 0 1px 1px;
   font-family: inherit;
   color: inherit;
+}
+
+.fieldInput:hover {
+  border-bottom-color: var(--color-border);
 }
 
 .fieldInput:focus {
@@ -303,9 +307,19 @@
   color: #1E40AF;
 }
 
+.scopeInput:placeholder-shown:not(:focus) {
+  /* An empty scope stays out of the way until the card is hovered. */
+  opacity: 0;
+}
+
+.card:hover .scopeInput:placeholder-shown {
+  opacity: 1;
+}
+
 .labelInput {
   composes: fieldInput;
-  width: 22ch;
+  flex: 1;
+  min-width: 6ch;
   font-size: 0.62rem;
   font-weight: 800;
   letter-spacing: 0.05em;
@@ -316,6 +330,44 @@
 .labelInputExclude {
   composes: labelInput;
   color: #B91C1C;
+}
+
+.labelInput::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
+}
+
+/* The search highlight on an editable chip. */
+.termEdit.termHit,
+.termEditExclude.termHit {
+  background: #FEF9C3;
+  border-color: #FDE047;
+}
+
+.termEdit.termHit .termInput {
+  color: #713F12;
+  font-weight: 700;
+}
+
+/* Delete / Remove / the chip x / the add-group buttons are there on every
+   card, but only drawn while the card is hovered or being typed in, so the
+   page still reads as a list rather than a form. */
+.deleteBtn,
+.termX,
+.cardFoot,
+.addTermInput:placeholder-shown:not(:focus) {
+  visibility: hidden;
+}
+
+.card:hover .deleteBtn,
+.card:hover .termX,
+.card:hover .cardFoot,
+.card:focus-within .deleteBtn,
+.card:focus-within .termX,
+.card:focus-within .cardFoot,
+.card:hover .addTermInput,
+.card:focus-within .addTermInput {
+  visibility: visible;
 }
 
 /* A term chip that can be typed in: the chip is the wrapper, the input
@@ -342,6 +394,10 @@
 }
 
 .termInput {
+  /* Exactly as wide as the term where the browser can do it (Chrome,
+     Edge); the size attribute is the fallback elsewhere. */
+  field-sizing: content;
+  min-width: 2ch;
   border: none;
   background: transparent;
   padding: 0;
