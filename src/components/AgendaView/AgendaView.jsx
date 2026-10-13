@@ -265,7 +265,7 @@ const BULK_COL_VISIBLE_KEY = 'bulk-contacts-col-visible';
 const BULK_COLS = [
   { key: '_remove',          label: '',                    w: 36,  fixed: true, toggleable: false },
   { key: 'email',            label: 'Email',               w: 230 },
-  { key: 'status',           label: 'HubSpot Status',      w: 120 },
+  { key: 'status',           label: 'HubSpot Status',      w: 170 },
   { key: 'fullName',         label: 'Full Name',           w: 180 },
   { key: 'firstname',        label: 'First',               w: 110 },
   { key: 'lastname',         label: 'Last',                w: 130 },
@@ -305,6 +305,15 @@ function loadBulkColVisible() {
 function persistBulkColVisible(set) {
   try { localStorage.setItem(BULK_COL_VISIBLE_KEY, JSON.stringify([...set])); } catch {}
 }
+
+// The three groups the Bulk Add Contacts table splits its rows into, in
+// display order. See rowBucket for how a row is placed.
+const BULK_BUCKETS = [
+  { key: 'new',     label: 'New',            color: '#1D4ED8', hint: 'Not in HubSpot yet. Adding to HubSpot creates these contacts.' },
+  { key: 'update',  label: 'Update pending', color: '#92400E', hint: 'Already in HubSpot. Adding to HubSpot fills the blank fields listed under each status, and never overwrites a value HubSpot has.' },
+  { key: 'hubspot', label: 'In HubSpot',     color: '#475569', hint: 'Already in HubSpot with nothing new to add, so these are ignored.' },
+];
+const BULK_BUCKETS_COLLAPSED_KEY = 'bulk-contacts-collapsed-buckets';
 
 // What the Bulk Add Contacts table's layout is called in settings.tablePrefs.
 const BULK_PREFS_TABLE_ID = 'agenda-bulk-contacts';
@@ -454,6 +463,19 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   // updateRow takes), because editing ends the moment the input blurs.
   const [companyEditKey, setCompanyEditKey] = useState(null);
   const [showRulesPanel, setShowRulesPanel] = useState(false);
+  // Bucket groups (New / Update pending / In HubSpot) folded shut on the
+  // table. Remembered per browser.
+  const [collapsedBuckets, setCollapsedBuckets] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(BULK_BUCKETS_COLLAPSED_KEY)) || []); } catch { return new Set(); }
+  });
+  const toggleBucketCollapsed = useCallback((key) => {
+    setCollapsedBuckets(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      try { localStorage.setItem(BULK_BUCKETS_COLLAPSED_KEY, JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
   // Column-resize + visibility state for the Bulk Add Contacts table.
   const [bulkColWidths, setBulkColWidths] = useSyncedTablePref({
     tableId: BULK_PREFS_TABLE_ID, field: 'widths', settings, updateSettings,
@@ -1428,6 +1450,35 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     return !existingNotes.includes(text);
   }
 
+  // Human-readable list of what an "Update pending" push would change on
+  // the existing HubSpot contact: one entry per blank field it fills, plus
+  // the note when one is queued. Mirrors missingFieldUpdates exactly so the
+  // preview never promises a field the push leaves alone.
+  const PATCH_FIELD_LABELS = {
+    company: 'Company', firstname: 'First', lastname: 'Last', jobtitle: 'Job title',
+    phone: 'Work phone', mobilephone: 'Cell phone', hs_linkedin_url: 'LinkedIn',
+    city: 'City', state: 'State', country: 'Country', dans_tags: "Dan's Tags",
+  };
+  function pendingUpdateChanges(row, existing) {
+    const patch = missingFieldUpdates(row, existing) || {};
+    const out = Object.entries(patch).map(([k, v]) => ({ label: PATCH_FIELD_LABELS[k] || k, value: String(v) }));
+    if (hasPendingNote(row, existing)) out.push({ label: 'Note', value: String(row.notes || '').trim() });
+    return out;
+  }
+
+  // Which bucket a row sits in on the table: 'new' (not in HubSpot yet, so
+  // the push creates it), 'update' (in HubSpot with blanks the push fills or
+  // a note to attach), 'hubspot' (in HubSpot with nothing new, so the push
+  // skips it). Rows pushed this session land in 'hubspot'.
+  function rowBucket(r) {
+    const outcome = results[r.email];
+    if (outcome === 'added' || outcome === 'updated') return 'hubspot';
+    const existing = hubspotByEmail.get(r.email);
+    if (!existing) return 'new';
+    if (missingFieldUpdates(r, existing) || hasPendingNote(r, existing)) return 'update';
+    return 'hubspot';
+  }
+
   // Engagement note attached to a contact. Returns 'ok' on success or
   // a 'error: …' string the caller can roll into its own outcome.
   // On success we also mirror the note text into settings.contactNotes
@@ -1845,7 +1896,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       const valueFor = (r, key) => {
         switch (key) {
           case 'email':            return r.email || '';
-          case 'status':           return hubspotByEmail.has(r.email) ? 'in hubspot' : 'new';
+          case 'status':           return ({ new: 'new', update: 'update pending', hubspot: 'in hubspot ignored' })[rowBucket(r)];
           case 'fullName':         return composeFullName(r);
           case 'firstname':        return r.firstname || '';
           case 'lastname':         return r.lastname || '';
@@ -1889,7 +1940,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       const sortValue = (r) => {
         switch (sortKey) {
           case 'email':            return r.email || '';
-          case 'status':           return hubspotByEmail.has(r.email) ? 'In HubSpot' : 'New';
+          case 'status':           return ({ new: 'New', update: 'Update pending', hubspot: 'In HubSpot' })[rowBucket(r)];
           case 'fullName':         return composeFullName(r);
           case 'firstname':        return r.firstname || '';
           case 'lastname':         return r.lastname || '';
@@ -1922,7 +1973,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       out = [...out].sort((a, b) => String(sortValue(a)).localeCompare(String(sortValue(b))) * dir);
     }
     return out;
-  }, [rows, tvMissingOnly, columnFilters, sortKey, sortDir, rowTableViewState, lookupMatch, suggestionFor, dismissedSuggestedCompanies, hubspotByEmail, prospects, bulkColTextFilters]);
+  }, [rows, tvMissingOnly, columnFilters, sortKey, sortDir, rowTableViewState, lookupMatch, suggestionFor, dismissedSuggestedCompanies, hubspotByEmail, results, prospects, bulkColTextFilters]);
 
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState(null);
@@ -2805,7 +2856,29 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                 </tr>
               </thead>
               <tbody>
-                {visibleRows.map(r => {
+                {BULK_BUCKETS.flatMap(bucket => {
+                  const bucketRows = visibleRows.filter(r => rowBucket(r) === bucket.key);
+                  if (bucketRows.length === 0) return [];
+                  const collapsed = collapsedBuckets.has(bucket.key);
+                  const header = (
+                    <tr key={`__bucket_${bucket.key}`} className={styles.bucketRow}>
+                      <td colSpan={effectiveBulkCols.length} style={{ borderLeftColor: bucket.color }}>
+                        <button
+                          type="button"
+                          className={styles.bucketToggle}
+                          onClick={() => toggleBucketCollapsed(bucket.key)}
+                          aria-expanded={!collapsed}
+                        >
+                          <span className={styles.bucketCaret}>{collapsed ? '▸' : '▾'}</span>
+                          <span className={styles.bucketTitle} style={{ color: bucket.color }}>{bucket.label}</span>
+                          <span className={styles.bucketCount}>{bucketRows.length}</span>
+                          <span className={styles.bucketHint}>{bucket.hint}</span>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                  if (collapsed) return [header];
+                  return [header, ...bucketRows.map(r => {
                   const hubspotContact = hubspotByEmail.get(r.email);
                   const exists = !!hubspotContact;
                   const outcome = results[r.email];
@@ -2816,9 +2889,12 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                   else if (outcome === 'updated') { statusLabel = 'Updated ✓'; statusClass = styles.statusAdded; }
                   else if (typeof outcome === 'string' && outcome.startsWith('error')) { statusLabel = outcome.replace(/^error: /, ''); statusClass = styles.statusErr; }
                   // If this existing contact has pending field fill-ins, flag as updatable.
-                  if (exists && outcome !== 'updated' && (missingFieldUpdates(r, hubspotContact) || hasPendingNote(r, hubspotContact))) {
+                  const updateChanges = exists && outcome !== 'updated' ? pendingUpdateChanges(r, hubspotContact) : [];
+                  if (updateChanges.length > 0) {
                     statusLabel = 'Update pending';
                     statusClass = styles.statusUpdatePending;
+                  } else if (exists && !outcome) {
+                    statusLabel = 'Ignored, exists';
                   }
                   const live = lookupMatch(r.email, r);
                   const currentHsCompany = hubspotContact?.company?.trim() || '';
@@ -3030,7 +3106,25 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                           </td>
                         );
                       })()}
-                      {bulkColVisible.has('status') && <td><span className={`${styles.statusPill} ${statusClass}`}>{statusLabel}</span></td>}
+                      {bulkColVisible.has('status') && <td>
+                        <span
+                          className={`${styles.statusPill} ${statusClass}`}
+                          title={statusLabel === 'Ignored, exists'
+                            ? 'Already in HubSpot with nothing new to fill in. Adding to HubSpot skips this contact.'
+                            : updateChanges.length > 0
+                              ? 'Adding to HubSpot fills these blank fields on the existing contact. Values HubSpot already has are never overwritten.'
+                              : undefined}
+                        >{statusLabel}</span>
+                        {updateChanges.length > 0 && (
+                          <ul className={styles.updateList}>
+                            {updateChanges.map(c => (
+                              <li key={c.label} title={`${c.label}: ${c.value}`}>
+                                <span className={styles.updateField}>{c.label}</span> {c.value}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </td>}
                       {bulkColVisible.has('fullName') && <td><input
                         className={styles.cellInput}
                         value={composeFullName(r)}
@@ -3316,6 +3410,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                       {bulkColVisible.has('notes') && <td><input className={styles.cellInput} value={r.notes || ''} onChange={e => updateRow(r.email, { notes: e.target.value })} placeholder="Free-form note" /></td>}
                     </tr>
                   );
+                  })];
                 })}
               </tbody>
             </table>
