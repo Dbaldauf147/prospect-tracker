@@ -2,8 +2,10 @@
 // Private Equity or Portfolio Company opp that has reached Stage 3 (Lead) or
 // later and is still open.
 //
-// "PE or Portfolio Company" is read off the opp itself: its Type, or a PE
+// "PE or Portfolio Company" is read off the opp first: its Type, or a PE
 // Owner filled in (which is only ever set on a portfolio company's deal).
+// Failing those, the matched company's Type / PE Owner, or a "(a SVP co.)"
+// note in the account name, count too (isPeOpp).
 // Sold and Not Sold are past the numbered stages, so they drop out; so do
 // Not Started and anything that never reached Lead.
 //
@@ -48,10 +50,22 @@ const STAGE_NUMBER = new Map(
     .flatMap(b => b.stages.map(s => [s, Number(b.label.slice(6))])),
 );
 
-export function isPeOpp(row) {
+// Whether an opp is a PE or portfolio company deal. The opp's own Type or
+// PE Owner decide first; failing those, the company behind it can (its
+// popup's Type or PE Owner, when `prospects` is passed), and so can a
+// "(a Platinum Equity Co.)" note in the account name. Before the company
+// and the name counted, "Rehlko (a Platinum Equity Co.)" never reached
+// PE Monthly unless its opp was tagged by hand, though the PE Owner column
+// already read Platinum Equity off that same name.
+export function isPeOpp(row, prospects = []) {
   const type = String(row?.['Type'] || '').trim().toLowerCase();
   if (PE_TYPES.has(type)) return true;
-  return splitPeOwners(row?.['PE Owner']).length > 0;
+  if (splitPeOwners(row?.['PE Owner']).length > 0) return true;
+  const account = text(row?.['Account']);
+  if (ownerFromAccountName(account)) return true;
+  const company = findCompany(account, Array.isArray(prospects) ? prospects : []);
+  if (!company) return false;
+  return PE_TYPES.has(text(company.type).toLowerCase()) || splitPeOwners(company.peOwner).length > 0;
 }
 
 // The numbered stage (3-6) an opp is at, or null before Stage 3 / once closed.
@@ -184,7 +198,7 @@ export function accountTargetCdm(row, prospects = [], targetCdmFor = null) {
  */
 export function buildPeOverlapDeals(records, { parseAmount = () => null, fmtAmount = String, prospects = [], targetTierFor = null, targetCdmFor = null } = {}) {
   return (Array.isArray(records) ? records : [])
-    .filter(row => isPeOpp(row) && oppStageNumber(row) != null)
+    .filter(row => oppStageNumber(row) != null && isPeOpp(row, prospects))
     .map(row => {
       const stage = oppStageNumber(row);
       const amount = parseAmount(row?.['Quoted Amount']);
