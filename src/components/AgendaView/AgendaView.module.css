@@ -362,6 +362,10 @@
   position: sticky;
   left: 0;
 }
+/* A contact outside the US, Canada and Mexico: the whole row tinted so
+   it reads at a glance, wherever the row sits. */
+.table tbody tr.intlRow td { background: #FEF9C3; }
+.table tbody tr.intlRow .cellInput:hover { background: #FEF08A; }
 .subBucketTitle { font-size: 0.72rem; font-weight: 700; color: #334155; }
 .bucketCaret { font-size: 0.7rem; color: #64748B; width: 10px; }
 .bucketTitle { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
