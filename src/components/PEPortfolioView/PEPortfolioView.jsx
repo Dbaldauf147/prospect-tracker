@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { sanitizeExcelWorkbook } from '../../utils/exportSanitize.js';
 import { useAuth } from '../../contexts/AuthContext';
+import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOpps2Cache, loadOpps2FromFirestore, setOppField } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
@@ -343,6 +344,27 @@ const ALL_CDMS = '__all__';
 const MY_CDM = '__mine__';
 const NO_CDM = '__none__';
 
+// What the main portfolio table's sort and column filters are called in
+// settings.tablePrefs.
+const PE_PORTFOLIO_PREFS_TABLE_ID = 'pe-portfolio';
+
+// A saved sort, from either copy, made safe to use. A table sorted by one of
+// the retired per-stage tick columns now sorts by the combined one, rather
+// than falling through to the default comparator with no sort arrow to
+// explain it.
+const RETIRED_PE_SORT_KEYS = ['discovery', 'piloting', 'existingPartnership', 'notSold'];
+function asPeSort(v) {
+  const key = (v && typeof v.key === 'string' && v.key) || 'ratio';
+  return {
+    dir: v?.dir === 'asc' ? 'asc' : 'desc',
+    key: RETIRED_PE_SORT_KEYS.includes(key) ? 'peStage' : key,
+  };
+}
+
+function asFilterMap(v) {
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+}
+
 export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonMap = {}, onUpdateProspect, onAddProspect, settings, updateSettings, cdmName = '' }) {
   const { user } = useAuth();
   const [subtab, setSubtab] = useState('portfolio');
@@ -375,16 +397,19 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
   const [query, setQuery] = useState('');
   // Per-column filters under the header, keyed by column. Each value is
   // what ColumnFilterCell hands back: picked chips, plus whatever is still
-  // being typed. Kept across visits like the sort and the widths are.
-  const [colFilters, setColFilters] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-filters') || '{}');
-      return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
-    } catch { return {}; }
+  // being typed. Kept across visits like the sort is, and synced through
+  // settings.tablePrefs so the same filters are on the user's other machine.
+  // localStorage still draws the first paint.
+  const [colFilters, setColFilters] = useSyncedTablePref({
+    tableId: PE_PORTFOLIO_PREFS_TABLE_ID, field: 'filters', settings, updateSettings,
+    readLocal: () => {
+      try {
+        return asFilterMap(JSON.parse(localStorage.getItem('pe-portfolio:col-filters') || '{}'));
+      } catch { return {}; }
+    },
+    writeLocal: (f) => localStorage.setItem('pe-portfolio:col-filters', JSON.stringify(f)),
+    fromRemote: asFilterMap,
   });
-  useEffect(() => {
-    try { localStorage.setItem('pe-portfolio:col-filters', JSON.stringify(colFilters)); } catch { /* storage full or blocked: the filters just won't persist */ }
-  }, [colFilters]);
   const [hubspotCache, setHubspotCacheState] = useState(null);
   useEffect(() => {
     let cancelled = false;
@@ -406,14 +431,26 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       return { ...DEFAULT_COL_WIDTHS, ...saved };
     } catch { return DEFAULT_COL_WIDTHS; }
   });
-  const [sortKey, setSortKey] = useState(() => {
-    const saved = localStorage.getItem('pe-portfolio:sort-key') || 'ratio';
-    // A table sorted by one of the retired per-stage tick columns now
-    // sorts by the combined one, rather than falling through to the
-    // default comparator with no sort arrow to explain it.
-    return ['discovery', 'piloting', 'existingPartnership', 'notSold'].includes(saved) ? 'peStage' : saved;
+  // Column and direction travel as one { dir, key } so a click that changes
+  // both is one synced change, not two that can land out of step.
+  const [sort, setSort] = useSyncedTablePref({
+    tableId: PE_PORTFOLIO_PREFS_TABLE_ID, field: 'sort', settings, updateSettings,
+    readLocal: () => {
+      try {
+        return asPeSort({
+          dir: localStorage.getItem('pe-portfolio:sort-dir'),
+          key: localStorage.getItem('pe-portfolio:sort-key'),
+        });
+      } catch { return asPeSort(null); }
+    },
+    writeLocal: (v) => {
+      localStorage.setItem('pe-portfolio:sort-key', v.key);
+      localStorage.setItem('pe-portfolio:sort-dir', v.dir);
+    },
+    fromRemote: asPeSort,
   });
-  const [sortDir, setSortDir] = useState(() => localStorage.getItem('pe-portfolio:sort-dir') || 'desc');
+  const sortKey = sort.key;
+  const sortDir = sort.dir;
   // The columns this user has starred: the ones that should be on the table
   // whatever else is hidden.
   //
@@ -556,12 +593,6 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     try { localStorage.setItem('pe-portfolio:col-widths', JSON.stringify(colWidths)); } catch {}
   }, [colWidths]);
   useEffect(() => {
-    try { localStorage.setItem('pe-portfolio:sort-key', sortKey); } catch {}
-  }, [sortKey]);
-  useEffect(() => {
-    try { localStorage.setItem('pe-portfolio:sort-dir', sortDir); } catch {}
-  }, [sortDir]);
-  useEffect(() => {
     try { localStorage.setItem('pe-portfolio:visible-cols', JSON.stringify([...visibleCols])); } catch {}
   }, [visibleCols]);
   useEffect(() => {
@@ -587,8 +618,10 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     window.addEventListener('mouseup', onUp);
   }
   function toggleSort(key) {
-    setSortDir(prev => (sortKey === key ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
-    setSortKey(key);
+    setSort(prev => ({
+      dir: prev.key === key ? (prev.dir === 'asc' ? 'desc' : 'asc') : 'desc',
+      key,
+    }));
   }
   const [oppsRecords, setOppsRecords, oppsRead] = useOppsRecords(user?.uid);
 

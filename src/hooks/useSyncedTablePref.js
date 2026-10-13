@@ -23,8 +23,8 @@ export { SET_PREF } from '../utils/tablePrefsSync';
 //   });
 //
 // `field` is one of the canonical layout kinds — widths, hidden, starred,
-// names, order, removed, visible — so a table's entry has the same shape
-// whichever component wrote it. Sets go through `toRemote` / `fromRemote`,
+// names, order, removed, visible, sort, filters — so a table's entry has the
+// same shape whichever component wrote it. Sets go through `toRemote` / `fromRemote`,
 // since what's stored has to be JSON.
 export function useSyncedTablePref({
   tableId,
