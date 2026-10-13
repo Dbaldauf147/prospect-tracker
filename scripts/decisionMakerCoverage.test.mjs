@@ -29,6 +29,7 @@ import {
   makeAccountContactIndex,
   makeDecisionMakerLookup,
   decisionMakersWithTags,
+  decisionMakerTagAnswer,
 } from '../src/utils/decisionMakerCoverage.js';
 
 let passed = 0, failed = 0;
@@ -318,6 +319,25 @@ check('and neither are prospects that haven\'t loaded',
   check('a service with no tags narrows nothing',
     decisionMakersWithTags(all, []).map(c => c.id), ['a', 'b', 'c', 'd']);
   check('nobody tagged for it lists no one', decisionMakersWithTags(all, ['Procurement']), []);
+
+  // Not sure lives in the tag review (it takes the HubSpot tag off), so the
+  // review map is what puts those contacts back on the list.
+  const review = {
+    b: { 'Capital Planning': { answer: 'unsure', status: '' } },
+    d: { capitalplanning: 'unsure' },
+    c: { 'Capital Planning': { answer: 'no', status: '' } },
+  };
+  check('Not sure on the service tag is listed too, after the Yeses',
+    decisionMakersWithTags(all, ['Capital Planning'], review).map(c => c.id), ['a', 'b', 'd']);
+  check('without the review map only the tagged are listed',
+    decisionMakersWithTags(all, ['Capital Planning']).map(c => c.id), ['a']);
+  check('a No is not listed', decisionMakerTagAnswer(esg, ['Capital Planning'], review), '');
+  check('a Not sure on another tag does not count',
+    decisionMakersWithTags(all, ['ESG'], review).map(c => c.id), ['c']);
+  check('Not sold is a hold-off, not a Not sure',
+    decisionMakerTagAnswer(plain, ['Capital Planning'], { d: { 'Capital Planning': { answer: 'unsure', status: 'notsold' } } }), '');
+  check('carrying the tag reads Yes whatever is recorded',
+    decisionMakerTagAnswer(cap, ['Capital Planning'], { a: { 'Capital Planning': 'unsure' } }), 'yes');
 }
 
 console.log(`${passed} passed, ${failed} failed`);
