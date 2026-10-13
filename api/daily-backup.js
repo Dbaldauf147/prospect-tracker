@@ -33,6 +33,7 @@ import { adminDb, adminAuth } from './_lib/firebaseAdmin.js';
 import { collectUserBackup, detectAnomalies } from './_lib/dataBackup.js';
 import { uploadJsonToGcs, listBackupObjects, deleteGcsObject } from './_lib/gcs.js';
 import { sendEmail } from './_lib/mailer.js';
+import { selfBaseUrl, selfCallHeaders, readChildAnswer } from './_lib/backupFanout.js';
 
 const RETAIN = 30;
 
@@ -89,12 +90,9 @@ function summaryHtml({ fileName, summary, alerts, prevCounts }) {
 // waiting for keeps running in its own invocation regardless.
 const CHILD_WAIT_MS = 280000;
 
-// This deployment's own address, as the cron reached it.
-function selfUrl(req, uid) {
-  const host = req.headers['x-forwarded-host'] || req.headers.host;
-  const proto = req.headers['x-forwarded-proto'] || 'https';
-  return `${proto}://${host}/api/daily-backup?uid=${encodeURIComponent(uid)}`;
-}
+// Leave the parent this long after the child calls to back up, in-process,
+// any user whose call never reached the backup function.
+const FALLBACK_BUDGET_MS = 240000;
 
 // The cron's own call: list the users and hand each to its own invocation.
 async function fanOut(req, res, db) {
@@ -110,21 +108,39 @@ async function fanOut(req, res, db) {
     return res.status(500).json({ error });
   }
 
-  const secret = process.env.CRON_SECRET;
+  // The production domain rather than whichever host the cron used, no
+  // redirects followed, and the protection bypass when the project has one:
+  // a call deployment protection turns away must fail, not read as "ok".
+  const base = selfBaseUrl({ env: process.env, headers: req.headers });
+  const headers = selfCallHeaders(process.env);
+  const started = Date.now();
   const results = await Promise.all(userDocs.map(async (u) => {
     const uid = u.id;
     try {
-      const r = await fetch(selfUrl(req, uid), {
-        headers: secret ? { Authorization: `Bearer ${secret}` } : {},
+      const r = await fetch(`${base}/api/daily-backup?uid=${encodeURIComponent(uid)}`, {
+        headers,
+        redirect: 'manual',
         signal: AbortSignal.timeout(CHILD_WAIT_MS),
       });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) return { uid, status: 'error', error: body?.error || `HTTP ${r.status}` };
-      return { uid, status: body?.status || 'ok' };
+      const text = await r.text().catch(() => '');
+      return readChildAnswer(uid, { status: r.status, location: r.headers.get('location') || '', text });
     } catch (err) {
-      return { uid, status: 'error', error: String(err?.message || err).slice(0, 300) };
+      // A timeout means the child is still running in its own invocation;
+      // it is not retried here.
+      return { uid, status: 'error', reachedFunction: true, error: String(err?.message || err).slice(0, 300) };
     }
   }));
+
+  // Anyone whose call never reached the function is backed up here, one at
+  // a time, while there is time left. Slower than a call each, but a backup
+  // that happens beats a log that says it did.
+  for (let i = 0; i < results.length; i += 1) {
+    const r = results[i];
+    if (r.status !== 'error' || r.reachedFunction) continue;
+    if (Date.now() - started > FALLBACK_BUDGET_MS) break;
+    const direct = await backupOneUser(db, process.env.BACKUP_GCS_BUCKET, r.uid);
+    results[i] = { ...direct, via: 'in-process', selfCallError: r.error };
+  }
 
   await log.set({ finishedAt: new Date().toISOString(), users: userDocs.length, results }, { merge: true }).catch(() => {});
   return res.status(200).json({ ran: results.length, results, startedAt, at: new Date().toISOString() });
