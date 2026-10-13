@@ -14,6 +14,7 @@ import { companyTextEquals, pendingSuggestionActions, summarizeSuggestionActions
 import { ColumnToggle } from '../common/ColumnToggle';
 import { orderColumns, mergeColumnOrder } from '../../utils/tableColumnPrefs';
 import { classifyHqCountry, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
+import { parseContactPaste } from '../../utils/contactPaste';
 import styles from './AgendaView.module.css';
 
 const STORAGE_KEY = 'bulk-contacts-cache';
@@ -234,6 +235,25 @@ function parseEmailHeaders(text) {
     if (m) blocks.push(m[2]);
   }
   return blocks.length ? parseDroppedText(blocks.join('; ')) : parseDroppedText(text);
+}
+
+// Everything a pasted or dropped block of text names: the "Name <email>"
+// pairs, plus the people it lists by name and title without an address (an
+// account plan, a LinkedIn search), read by the same parser as the company
+// popup's Paste Contacts so the two can't disagree about a paste. Name-only
+// rows get an estimated email from the company's pattern once a company is
+// set, same as a sheet row.
+function parsePastedText(text) {
+  const withEmail = parseEmailHeaders(text);
+  const named = new Set(withEmail.map(r => `${r.firstname} ${r.lastname}`.trim().toLowerCase()).filter(Boolean));
+  const byName = parseContactPaste(text)
+    .filter(r => !r.email && !named.has(`${r.firstname} ${r.lastname}`.toLowerCase()))
+    .map(r => ({
+      email: '', firstname: r.firstname, lastname: r.lastname, company: '',
+      phone: '', mobilePhone: '', jobtitle: r.jobtitle, linkedinUrl: r.linkedin,
+      city: '', state: '', country: '', dans_tags: '',
+    }));
+  return [...withEmail, ...byName];
 }
 
 // Compose a row's full name from its firstname + lastname halves, and
@@ -1222,7 +1242,9 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
 
     // 1. Try plain text first — covers Outlook web drag, address-book drag, and most pastes.
     const text = dt.getData('text/plain') || dt.getData('text/html') || '';
-    if (text) collected.push(...parseEmailHeaders(text));
+    // Names-without-emails are only read from plain text: in HTML the tags
+    // would read as text, and the email pairs are all that markup offers.
+    if (text) collected.push(...(dt.getData('text/plain') ? parsePastedText(text) : parseEmailHeaders(text)));
 
     // 2. If files were dropped, branch on type: .xlsx / .xls / .csv / .tsv
     //    opens a column-mapping preview modal; anything else we read as
@@ -1266,7 +1288,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       const reader = new FileReader();
       reader.onload = () => {
         const raw = String(reader.result || '');
-        const matches = parseDroppedText(raw);
+        const matches = parsePastedText(raw);
         pending -= 1;
         if (matches.length > 0) mergeNewRows(matches);
       };
@@ -1300,7 +1322,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       && trimmedLines.slice(1).some(l => l.includes('\t'));
     if (!looksTabular) {
       e.preventDefault();
-      mergeNewRows(parseEmailHeaders(text));
+      mergeNewRows(parsePastedText(text));
       return;
     }
     e.preventDefault();
@@ -1321,14 +1343,14 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
         return obj;
       }).filter(o => Object.values(o).some(v => v !== ''));
       if (raw.length === 0) {
-        mergeNewRows(parseEmailHeaders(text));
+        mergeNewRows(parsePastedText(text));
         return;
       }
       const mapping = autoMapHeaders(headers);
       setPendingUpload({ fileName: '(pasted from clipboard)', headers, rows: raw, mapping });
     } catch (err) {
       console.warn('Failed to parse pasted tabular data, falling back to email extraction', err);
-      mergeNewRows(parseEmailHeaders(text));
+      mergeNewRows(parsePastedText(text));
     }
   }
 
@@ -2413,7 +2435,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           <span className={styles.dropIcon}>&#8681;</span>
           <span className={styles.dropTitle}>Drop emails, Excel, CSV, or TSV here</span>
           <span className={styles.dropHint}>
-            Sheet drops <em>and</em> tab-separated pastes (⌘V / Ctrl+V) show a column-mapping preview. Plain-text drops / pastes fall back to email-address extraction.
+            Sheet drops <em>and</em> tab-separated pastes (⌘V / Ctrl+V) show a column-mapping preview. Plain-text drops / pastes pick out email addresses, plus people listed by name and title ("Jane Doe (CFO)", "Jane Doe - CFO", or a name line over a title line) with any LinkedIn URL beside them.
           </span>
         </div>
 
