@@ -31,6 +31,7 @@ import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { isLocalTagVerdict, tagAnswerFrom, tagKey, findTagRecord } from '../../utils/contactTagReview';
 import { makeRosterGates, rosterTagCoverage } from '../../utils/contactRosters';
 import { isDecisionMakerContact, makeDecisionMakerGate } from '../../utils/decisionMakerCoverage';
+import { makeMyCdmContactGate } from '../../utils/myCdmContacts';
 
 // A contact's Dan's Tags as individual values. Same reading the All Contacts
 // page does: they are stored as one ';'-joined string, so the Tags column's
@@ -133,19 +134,28 @@ export function DecisionMakersView({ prospects = [], onSelectProspect, settings,
   );
   const categorizeContact = useCallback((c) => gates.categorize(c), [gates]);
 
-  // The page's own gate: tagged Decision Maker, minus the people every
-  // contacts page leaves out, minus the accounts the Clients tab flags.
+  // Only decision makers at my accounts: a Table View company whose CDM is
+  // me, paired the same way the CDM column pairs them, so no row on this
+  // page reads another CDM's name or "-" there.
+  const myCdmGate = useMemo(
+    () => makeMyCdmContactGate({ prospects, cdmName, localFields: settings?.contactLocalFields || null }),
+    [prospects, cdmName, settings?.contactLocalFields],
+  );
+
+  // The page's own gate: tagged Decision Maker at one of my accounts, minus
+  // the people every contacts page leaves out, minus the accounts the
+  // Clients tab flags.
   const dmGate = useMemo(() => makeDecisionMakerGate({ showHidden }), [showHidden]);
   const hiddenDmGate = useMemo(() => makeDecisionMakerGate({ showHidden: true }), []);
   const dmSelector = useCallback(
-    (c) => dmGate(c) && !gates.clientExclusionOf(c),
-    [dmGate, gates],
+    (c) => dmGate(c) && myCdmGate(c) && !gates.clientExclusionOf(c),
+    [dmGate, myCdmGate, gates],
   );
   // Visible-mode gate for the counts, so the pills say what the page holds
   // when it is not in hidden-review mode.
   const visibleDmSelector = useCallback(
-    (c) => isDecisionMakerContact(c) && !visibleGates.clientExclusionOf(c),
-    [visibleGates],
+    (c) => isDecisionMakerContact(c) && myCdmGate(c) && !visibleGates.clientExclusionOf(c),
+    [myCdmGate, visibleGates],
   );
 
   const [hubspotContacts, setHubspotContacts] = useState([]);
@@ -164,10 +174,10 @@ export function DecisionMakersView({ prospects = [], onSelectProspect, settings,
     if (!hubspotContacts.length) return 0;
     let n = 0;
     for (const c of hubspotContacts) {
-      if (hiddenDmGate(c) && !visibleGates.clientExclusionOf(c)) n += 1;
+      if (hiddenDmGate(c) && myCdmGate(c) && !visibleGates.clientExclusionOf(c)) n += 1;
     }
     return n;
-  }, [hubspotContacts, hiddenDmGate, visibleGates]);
+  }, [hubspotContacts, hiddenDmGate, myCdmGate, visibleGates]);
 
   const tagReviewMap = useMemo(() => settings?.contactTagReview || {}, [settings?.contactTagReview]);
 
@@ -177,8 +187,8 @@ export function DecisionMakersView({ prospects = [], onSelectProspect, settings,
   // that also lands on a roster. The four roster buckets still mean what they
   // mean everywhere else - a decision maker who is also on Key, and so on.
   const decisionMakers = useMemo(
-    () => hubspotContacts.filter(isDecisionMakerContact),
-    [hubspotContacts],
+    () => hubspotContacts.filter(c => isDecisionMakerContact(c) && myCdmGate(c)),
+    [hubspotContacts, myCdmGate],
   );
   const coverage = useMemo(
     () => rosterTagCoverage({
@@ -276,7 +286,7 @@ export function DecisionMakersView({ prospects = [], onSelectProspect, settings,
   // something this page could not otherwise tell you - how many of the people
   // who can sign are on an account anybody is working.
   const categoryPills = [
-    { cat: null,     bucket: 'total',       label: 'All',    count: categoryCounts.total,  bg: '#F1F5F9', border: '#CBD5E1', color: '#334155', tip: 'Show every contact tagged Decision Maker (clear every category pill)' },
+    { cat: null,     bucket: 'total',       label: 'All',    count: categoryCounts.total,  bg: '#F1F5F9', border: '#CBD5E1', color: '#334155', tip: 'Show every decision maker at your accounts (clear every category pill)' },
     { cat: 'Key',    bucket: 'key',         label: 'Key',    count: categoryCounts.key,    bg: '#FEF3C7', border: '#FCD34D', color: '#92400E', tip: 'Show the decision makers who are also tagged Dan Key Target. Click again to turn it off; light more than one pill to see contacts on any of them.' },
     { cat: 'Active', bucket: 'active',      label: 'Active', count: categoryCounts.active, bg: '#DCFCE7', border: '#86EFAC', color: '#166534', tip: 'Show the decision makers in the active window with an open opp (mirrors the Active Contacts page). Click again to turn it off; light more than one pill to see contacts on any of them.' },
     { cat: 'Client', bucket: 'client',      label: 'Client', count: categoryCounts.client, bg: '#DBEAFE', border: '#93C5FD', color: '#1E3A8A', tip: 'Show the decision makers whose company is a current Client on your CDM (mirrors the Client Contacts page). Click again to turn it off; light more than one pill to see contacts on any of them.' },
@@ -316,7 +326,7 @@ export function DecisionMakersView({ prospects = [], onSelectProspect, settings,
       </button>
       {showAbout && (
         <div style={{ marginTop: 4 }}>
-          Every HubSpot contact tagged <strong>Decision Maker</strong>, on the same table the <strong>All</strong> tab uses. Unlike that page this one is not gated on the rosters: a decision maker at an account on none of Key, Active, Client or Key Prospect still belongs here, which is what makes this the list of everyone who can sign. The <strong>Totals</strong> pills are how many of them also sit on each roster, and they double as filters: click as many as you want and the list shows contacts on <em>any</em> of the lit ones, click a lit pill to turn it off, or hit <strong>All</strong> to clear them. Click <strong>on no roster</strong> to list just the decision makers on none of the four, ready to tag in bulk. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account, or <strong>Travel</strong> to pick a state/city and see who is nearby. Contacts tagged <strong>Hide</strong> or <strong>Left</strong> are out, as are coworkers and accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong> or that are ticked <strong>Don't Track</strong> there. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong>) to retag several at once - including taking the Decision Maker tag off somebody who should not have it, which drops them off this page. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through.
+          Every HubSpot contact tagged <strong>Decision Maker</strong> at a company on your Table View whose CDM is <strong>{cdmName || '(set your CDM in Settings)'}</strong>, on the same table the <strong>All</strong> tab uses. Unlike that page this one is not gated on the rosters: a decision maker at an account on none of Key, Active, Client or Key Prospect still belongs here, which is what makes this the list of everyone who can sign. The <strong>Totals</strong> pills are how many of them also sit on each roster, and they double as filters: click as many as you want and the list shows contacts on <em>any</em> of the lit ones, click a lit pill to turn it off, or hit <strong>All</strong> to clear them. Click <strong>on no roster</strong> to list just the decision makers on none of the four, ready to tag in bulk. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account, or <strong>Travel</strong> to pick a state/city and see who is nearby. Contacts tagged <strong>Hide</strong> or <strong>Left</strong> are out, as are coworkers and accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong> or that are ticked <strong>Don't Track</strong> there. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong>) to retag several at once - including taking the Decision Maker tag off somebody who should not have it, which drops them off this page. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through.
         </div>
       )}
       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -524,7 +534,7 @@ export function DecisionMakersView({ prospects = [], onSelectProspect, settings,
       pageSubtitle={subtitle}
       emptyTitle="No decision makers found"
       emptyDetail={
-        <>Nothing matched. A contact appears here when it carries the Decision Maker tag and isn't tagged Hide or Left. Tag somebody from the contact popup, or from another contacts tab with Edit Tags, and they'll show up here.</>
+        <>Nothing matched. A contact appears here when it carries the Decision Maker tag, isn't tagged Hide or Left, and works at a company on your Table View whose CDM is you. Tag somebody from the contact popup, or from another contacts tab with Edit Tags, and they'll show up here.</>
       }
       contactSelector={combinedSelector}
       categorizeContact={categorizeContact}
