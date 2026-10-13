@@ -2196,6 +2196,53 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     [pendingSuggestions],
   );
 
+  // Rows with no address yet whose company now has an email format on
+  // record: the guess the import would have made had the format been saved
+  // (or the Company filled in) when the row came in. Same scope as Apply
+  // suggestions (ticked rows, else the visible ones). The company is read
+  // the way the row's Table View match is - typed Company first, then the
+  // prospect the row was matched to - and a guess that collides with an
+  // address already in the list is left out rather than merging two people.
+  const emailGuesses = useMemo(() => {
+    const taken = new Set(rows.map(r => r.email));
+    const out = [];
+    for (const r of suggestionScopeRows) {
+      if (isRealEmail(r.email)) continue;
+      if (!r.firstname && !r.lastname) continue;
+      const prospect = lookupMatch(r.email, r).matched
+        || (r._matchedProspectId ? prospects.find(p => p.id === r._matchedProspectId) : null);
+      if (!prospect) continue;
+      const guess = buildEmailFromPattern(prospect.emailDomain, r.firstname, r.lastname).toLowerCase();
+      if (!guess || taken.has(guess)) continue;
+      taken.add(guess);
+      out.push({ from: r.email, email: guess, prospectId: prospect.id });
+    }
+    return out;
+  }, [rows, suggestionScopeRows, lookupMatch, prospects]);
+
+  function applyEmailGuesses() {
+    if (emailGuesses.length === 0) return;
+    const byKey = new Map(emailGuesses.map(g => [g.from, g]));
+    setRows(prev => {
+      const next = prev.map(r => {
+        const g = byKey.get(r.email);
+        return g ? { ...r, email: g.email, _emailStatus: 'estimated', _matchedProspectId: r._matchedProspectId || g.prospectId } : r;
+      });
+      saveCache(next);
+      return next;
+    });
+    // Selection is keyed by email, so carry ticked rows over to their new key.
+    setBulkSelected(prev => {
+      if (!emailGuesses.some(g => prev.has(g.from))) return prev;
+      const next = new Set(prev);
+      for (const g of emailGuesses) if (next.delete(g.from)) next.add(g.email);
+      return next;
+    });
+    const n = emailGuesses.length;
+    setApplyAllStatus({ type: 'success', message: `Guessed ${n} email${n === 1 ? '' : 's'} from the company email format. They show as Estimated: check them before adding to HubSpot.` });
+    setTimeout(() => setApplyAllStatus(null), 5000);
+  }
+
   const applyAllPct = applyAllProgress && applyAllProgress.total > 0
     ? Math.floor((applyAllProgress.done / applyAllProgress.total) * 100)
     : 0;
@@ -2619,8 +2666,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           <>
           {missingEmailCount > 0 && (
             <div style={{ margin: '0.75rem 0 0', padding: '0.5rem 0.7rem', background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B', borderRadius: 6, fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              <strong>{missingEmailCount}</strong> contact{missingEmailCount === 1 ? '' : 's'} {missingEmailCount === 1 ? 'has' : 'have'} no email: no address could be estimated from the company’s pattern.
-              Add an email in the <strong>Email</strong> column or remove {missingEmailCount === 1 ? 'it' : 'them'} before importing to HubSpot.
+              <strong>{missingEmailCount}</strong> contact{missingEmailCount === 1 ? '' : 's'} {missingEmailCount === 1 ? 'has' : 'have'} no email{emailGuesses.length > 0
+                ? <>. <strong>{emailGuesses.length}</strong> of them can be guessed from a saved company email format: hit <strong>✉ Guess {emailGuesses.length === 1 ? 'email' : 'emails'}</strong> below.</>
+                : ': no address could be estimated from the company’s pattern.'}
+              {' '}Add an email in the <strong>Email</strong> column or remove {missingEmailCount === 1 ? 'it' : 'them'} before importing to HubSpot.
             </div>
           )}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', margin: '0.75rem 0 0.25rem', flexWrap: 'wrap' }}>
@@ -2660,6 +2709,17 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                   only when there is something to apply, because a button
                   that says "0" is a button asking to be clicked to find
                   that out. */}
+              {emailGuesses.length > 0 && (
+                <button
+                  type="button"
+                  onClick={applyEmailGuesses}
+                  disabled={applyAllBusy}
+                  title={`Fill the blank Email on ${emailGuesses.length} ${suggestionScopeSelected ? 'selected ' : ''}row${emailGuesses.length === 1 ? '' : 's'} from each company's saved email format (Email Domains on the company card). Guesses are marked Estimated and can be edited.`}
+                  style={{ padding: '0.3rem 0.7rem', border: '1px solid #D97706', borderRadius: 6, background: '#FFFBEB', color: '#92400E', fontSize: '0.72rem', fontWeight: 700, cursor: applyAllBusy ? 'wait' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                >
+                  {`✉ Guess ${emailGuesses.length} email${emailGuesses.length === 1 ? '' : 's'}${suggestionScopeSelected ? ' (selected)' : ''}`}
+                </button>
+              )}
               {(pendingSuggestions.length > 0 || applyAllBusy) && (
                 <button
                   type="button"
