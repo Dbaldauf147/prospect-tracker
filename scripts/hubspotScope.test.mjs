@@ -200,6 +200,33 @@ function setEnv(vars) {
   eq([res.statusCode, res.body?.code], [404, 'contact_not_found'], 'an update to a contact gone from HubSpot says so by code');
 }
 
+// ── Unscoped: a relink moves the contact rather than renaming its company ─
+// (the company popup's Bulk Edit), while a plain company edit still renames.
+{
+  setEnv({});
+  const linked = () => {
+    const calls = stubPortal();
+    const stub = globalThis.fetch;
+    globalThis.fetch = async (url, opts = {}) => {
+      if ((opts.method || 'GET') === 'GET' && String(url).includes('/crm/v3/objects/contacts/5?properties=associatedcompanyid')) {
+        calls.push({ method: 'GET', path: '/crm/v3/objects/contacts/5' });
+        return ok({ id: '5', properties: { associatedcompanyid: '42' } });
+      }
+      return stub(url, opts);
+    };
+    return calls;
+  };
+  const renamed = calls => calls.some(c => c.method === 'PATCH' && c.path.startsWith('/crm/v3/objects/companies/'));
+
+  let calls = linked();
+  await handler({ query: { action: 'update-contact' }, method: 'POST', body: { contactId: '5', properties: { company: 'Acme' } } }, fakeRes());
+  eq(renamed(calls), true, 'a plain company edit still renames the linked record');
+
+  calls = linked();
+  await handler({ query: { action: 'update-contact' }, method: 'POST', body: { contactId: '5', properties: { company: 'Acme' }, companyMode: 'relink' } }, fakeRes());
+  eq(renamed(calls), false, 'a relink never renames the Company record');
+}
+
 // ── Unscoped: delete still works as before ───────────────────────────────
 {
   setEnv({});
