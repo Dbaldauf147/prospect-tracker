@@ -3585,7 +3585,7 @@ function DivisionContactPicker({ boxId, contacts, assigned, actions }) {
 // and pointer-transparent so it can't come between the cursor and the
 // chip it belongs to. A long note is clipped here — the click that opens
 // the contact popup is where the whole of it lives.
-function DivisionContactCard({ rect, contact, info, managers, gone, mark, openable }) {
+function DivisionContactCard({ rect, contact, info, managers, left: isLeft, hidden, mark, openable }) {
   const WIDTH = 300;
   const GAP = 6;
   const left = Math.max(8, Math.min(rect.left, window.innerWidth - WIDTH - 8));
@@ -3613,9 +3613,14 @@ function DivisionContactCard({ rect, contact, info, managers, gone, mark, openab
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
         <span style={{ fontSize: '0.74rem', fontWeight: 700, color: '#1E293B' }}>{contact.name}</span>
-        {gone && (
+        {isLeft && (
           <span style={{ fontSize: '0.55rem', fontWeight: 700, color: '#64748B', background: '#F1F5F9', border: '1px solid #E2E8F0', borderRadius: 999, padding: '0 5px' }}>
             Left
+          </span>
+        )}
+        {hidden && (
+          <span style={{ fontSize: '0.55rem', fontWeight: 700, color: '#64748B', background: '#F1F5F9', border: '1px solid #E2E8F0', borderRadius: 999, padding: '0 5px' }}>
+            Hidden
           </span>
         )}
         {/* Says in words what the chip's symbol means, so nobody has to
@@ -3661,9 +3666,12 @@ function DivisionContactCard({ rect, contact, info, managers, gone, mark, openab
 // once they're tagged Left. A leaver is never dropped from the chart —
 // who used to cover a division is worth knowing, and quietly removing
 // them would look like the mapping was never made.
-function DivisionContactRow({ node, boxId, boxName, hasLeft, infoOf, sentimentOf, actions }) {
+function DivisionContactRow({ node, boxId, boxName, hasLeft, isHidden, infoOf, sentimentOf, actions }) {
   const c = node.contact;
-  const gone = hasLeft(c);
+  // Hidden draws the same grey a leaver does; the hover card says which.
+  const left = hasLeft(c);
+  const hidden = isHidden ? isHidden(c) : false;
+  const gone = left || hidden;
   // Champion or detractor, from the contact popup. Neutral draws nothing —
   // most people are neutral, so marking them would drown the two that
   // aren't.
@@ -3749,7 +3757,8 @@ function DivisionContactRow({ node, boxId, boxName, hasLeft, infoOf, sentimentOf
           contact={c}
           info={info}
           managers={managers}
-          gone={gone}
+          left={left}
+          hidden={hidden}
           mark={mark}
           openable={openable}
         />
@@ -3779,6 +3788,7 @@ function DivisionContactRow({ node, boxId, boxName, hasLeft, infoOf, sentimentOf
               boxId={boxId}
               boxName={boxName}
               hasLeft={hasLeft}
+              isHidden={isHidden}
               infoOf={infoOf}
               sentimentOf={sentimentOf}
               actions={actions}
@@ -3808,14 +3818,21 @@ function DivisionContactRow({ node, boxId, boxName, hasLeft, infoOf, sentimentOf
 // who reports to whom (settings.contactReportsTo), who's tagged Left,
 // and the Team Name each contact carries.
 function DivisionContacts({ boxId, boxName, contacts, assigned, contactBook, picking, actions }) {
+  // Someone tagged Hide sinks to the bottom of whatever list they're in.
+  // The sort is stable, so everyone else keeps the order they were added.
+  const isHidden = useCallback(
+    (c) => contactBook.hiddenIds.has(String(c?.id || '')), [contactBook]);
   const groups = useMemo(
-    () => groupDivisionContactsByTeam(assigned, contactBook.teamOf)
+    () => groupDivisionContactsByTeam(
+      [...(assigned || [])].sort((a, b) => Number(isHidden(a)) - Number(isHidden(b))),
+      contactBook.teamOf,
+    )
       .map(g => ({
         ...g,
         nodes: buildDivisionContactTree(g.contacts, contactBook.reportsTo, contactBook.nameById),
       }))
       .filter(g => g.nodes.length > 0),
-    [assigned, contactBook],
+    [assigned, contactBook, isHidden],
   );
   // One unlabelled bucket means nobody here has a Team Name: draw the
   // flat list rather than putting a "No team" header over the whole box.
@@ -3852,6 +3869,7 @@ function DivisionContacts({ boxId, boxName, contacts, assigned, contactBook, pic
                     boxId={boxId}
                     boxName={boxName}
                     hasLeft={hasLeft}
+                    isHidden={isHidden}
                     infoOf={contactBook.infoOf}
                     sentimentOf={contactBook.sentimentOf}
                     actions={actions}
@@ -4354,6 +4372,9 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
     jobtitle: c.jobtitle || '',
     email: c.email || '',
     left: contactHasTag(c, 'left'),
+    // The Hide tag: a hidden contact still shows on a division box, but
+    // greyed and sunk to the bottom of its list.
+    hidden: contactIsHidden(c),
     // Keyed on id||vid, the same key the contact editor saves under.
     team: String(teamNames[String(c.id || c.vid || '')] || '').trim(),
     sentiment: sentimentFor(sentimentMap, c.id || c.vid),
@@ -4389,6 +4410,7 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
   // be named.
   const contactBook = useMemo(() => {
     const leftIds = new Set();
+    const hiddenIds = new Set();
     const contactNames = new Map();
     // Team by normalized name, for the fallback below.
     const teamByName = new Map();
@@ -4400,6 +4422,7 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
       if (!c.id) continue;
       contactNames.set(c.id, c.name);
       if (c.left) leftIds.add(c.id);
+      if (c.hidden) hiddenIds.add(c.id);
     }
     // A manager can be someone this company's list no longer carries —
     // they were mapped onto a box back when it did — so the names stored
@@ -4413,6 +4436,7 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
     return {
       reportsTo: settings?.contactReportsTo || {},
       leftIds,
+      hiddenIds,
       nameById: contactNames,
       // The team a division contact is bucketed under. Someone assigned
       // from the picker carries the id they were found under, so the team
@@ -4618,7 +4642,7 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
               <p style={{ fontSize: '0.66rem', color: '#94A3B8', margin: '0 0 0.5rem', textAlign: 'center' }}>
                 Contacts bucket by their Team Name and sit under whoever they report to
                 (both set on the contact) · <span style={{ color: '#065F46' }}>green</span> is
-                still at the company · <span style={{ color: '#64748B' }}>grey</span> is tagged Left ·
+                still at the company · <span style={{ color: '#64748B' }}>grey</span> is tagged Left or Hide (Hide sinks to the bottom) ·
                 ↑ names a manager outside their bucket · hover a name to read their notes,
                 click it to open the contact
               </p>
