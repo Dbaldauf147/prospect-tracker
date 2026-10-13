@@ -57,7 +57,6 @@ import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } fr
 import { serviceStatusColor, serviceStatusBucket, serviceBucket } from '../../utils/serviceStatusColors';
 import { pricedServiceRows } from '../../utils/serviceRows';
 import { ServiceDetailPopup } from '../common/ServiceDetailPopup';
-import { WhoDoesSection } from './WhoDoesSection';
 import { AccountPotentialTab } from '../DropdownsView/AccountPotentialTab';
 import { loadPricingEstimate } from '../../utils/pricingEstimateStore';
 import { accountPotential } from '../../utils/accountPotential';
@@ -641,12 +640,6 @@ const EMPTY = {
   // read as an answer.
   deregulatedSites: null, indicativeAnnualSavings: null, maxYearlyExposure: null,
   rank: '', tier: 'Tier 3', substatus: '',
-  // People the company named for each "Who does it here?" question on the
-  // Contacts tab, by question id (utils/whoDoes).
-  whoDoesNamed: {},
-  // The last "Research with Claude" run for those questions:
-  // { company, at, answers: { [questionId]: person[] } } (api/who-does-research).
-  whoDoesResearch: null,
   hqRegion: '', frameworks: [], frameworkSources: {}, notes: '', website: '', emailDomain: '', aliases: '', servicesExplored: {}, serviceNotes: {}, serviceSMEs: {}, competitors: {}, portfolioCompanies: [], portfolioTransactions: [],
   peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '', contractingEntity: '', contractingEntityAddress: '', strategies: [], revenue: '',
   // Opts this company into the weekly acquisition-news digest
@@ -6772,21 +6765,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     updateSettings({ companyContactLinks: { ...cur, [key]: [...list, id] } });
   }, [fields.company, settings.companyContactLinks, updateSettings]);
 
-  // The company's email domains (its Email Domain field and website), for
-  // the "Who does it here?" suggestions: a HubSpot contact on one of them
-  // whose title fits is offered with + Add.
-  const whoDoesDomains = useMemo(() => {
-    const out = [];
-    for (const entry of String(fields.emailDomain || '').split(/[\n;,]+/).map(x => x.trim()).filter(Boolean)) {
-      const at = entry.lastIndexOf('@');
-      const d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
-      if (d) out.push(d);
-    }
-    const w = String(fields.website || '').replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase().trim();
-    if (w) out.push(w);
-    return out;
-  }, [fields.emailDomain, fields.website]);
-
   // Ids the user removed from THIS company's popup without deleting them
   // from HubSpot (settings.companyContactExclusions, keyed by company
   // name). baseContacts drops these; the row render uses the set to show
@@ -6795,8 +6773,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const key = String(fields.company || '').trim().toLowerCase();
     return new Set(((settings.companyContactExclusions || {})[key] || []).map(String));
   }, [fields.company, settings.companyContactExclusions]);
-
-  const excludedContactIdList = useMemo(() => [...excludedContactIds], [excludedContactIds]);
 
   // Remove a contact from this company's roster only. Non-destructive -
   // the contact stays in HubSpot and on every other company it matches.
@@ -13471,30 +13447,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               })()}
               </div>
             </div>
-          )}
-
-          {/* "Who does it here?": the standard questions (one list for every
-              company, settings.whoDoesQuestions), each with the contacts
-              HubSpot suggests by title and the people this company named.
-              utils/whoDoes.js has the rules. */}
-          {!isNew && activeTab === 'contacts' && (
-            <WhoDoesSection
-              questions={Array.isArray(settings.whoDoesQuestions) ? settings.whoDoesQuestions : []}
-              onSaveQuestions={(next) => updateSettings({ whoDoesQuestions: next })}
-              namedByQuestion={(fields.whoDoesNamed && typeof fields.whoDoesNamed === 'object') ? fields.whoDoesNamed : {}}
-              onSaveNamedByQuestion={(next) => set('whoDoesNamed', next)}
-              research={(fields.whoDoesResearch && typeof fields.whoDoesResearch === 'object') ? fields.whoDoesResearch : null}
-              onSaveResearch={(next) => set('whoDoesResearch', next)}
-              website={fields.website || ''}
-              company={fields.company}
-              companyContacts={localContacts}
-              allContacts={hubspotContacts}
-              domains={whoDoesDomains}
-              excludedIds={excludedContactIdList}
-              onLinkContact={linkContactToCompany}
-              onAddNamed={(draft) => { setAddingContact(true); setEditingContact(draft); }}
-              onOpenContact={setEditingContact}
-            />
           )}
 
           {/* Divisions - other tracker companies that roll up under this
