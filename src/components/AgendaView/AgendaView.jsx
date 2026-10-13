@@ -12,6 +12,7 @@ import { buildEmailFromPattern, estimateEmailDomain } from '../../utils/emailDom
 import { FREE_MAIL_DOMAINS } from '../../utils/companyGuess';
 import { companyTextEquals, pendingSuggestionActions, summarizeSuggestionActions } from '../../utils/bulkSuggestionActions';
 import { ColumnToggle } from '../common/ColumnToggle';
+import { classifyHqCountry, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
 import styles from './AgendaView.module.css';
 
 const STORAGE_KEY = 'bulk-contacts-cache';
@@ -326,6 +327,21 @@ const BULK_BUCKETS = [
   { key: 'hubspot', label: 'In HubSpot',     color: '#475569', hint: 'Already in HubSpot with nothing new to add, so these are ignored.' },
 ];
 const BULK_BUCKETS_COLLAPSED_KEY = 'bulk-contacts-collapsed-buckets';
+// Stands in the bucket's row list where the "Outside US, Canada, Mexico"
+// sub-header draws.
+const INTL_SUBGROUP = { __intlSubgroup: true };
+
+// True when a contact's Country places them outside the US, Canada and
+// Mexico (and the US territories hqRegion counts with them). A blank or
+// unreadable Country stays with the rest: never guess foreign from nothing.
+// Two-letter codes are read here because classifyHqCountry only knows the
+// three-letter ones, and would call "CA" or "MX" foreign.
+function contactOutsideNorthAmerica(country) {
+  const raw = String(country || '').trim();
+  if (!raw) return false;
+  if (/^(us|ca|mx|pr)$/i.test(raw)) return false;
+  return classifyHqCountry(raw) === OUTSIDE_NORTH_AMERICA;
+}
 
 // What the Bulk Add Contacts table's layout is called in settings.tablePrefs.
 const BULK_PREFS_TABLE_ID = 'agenda-bulk-contacts';
@@ -2945,7 +2961,37 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                     </tr>
                   );
                   if (collapsed) return [header];
-                  return [header, ...bucketRows.map(r => {
+                  // Contacts placed outside the US, Canada and Mexico sit in
+                  // their own sub-group at the bottom of the bucket.
+                  const isIntl = r => contactOutsideNorthAmerica(r.country || hubspotByEmail.get(r.email)?.country);
+                  const intlRows = bucketRows.filter(isIntl);
+                  const intlKey = `${bucket.key}:intl`;
+                  const intlCollapsed = collapsedBuckets.has(intlKey);
+                  const sequence = [
+                    ...bucketRows.filter(r => !isIntl(r)),
+                    ...(intlRows.length ? [INTL_SUBGROUP] : []),
+                    ...(intlCollapsed ? [] : intlRows),
+                  ];
+                  return [header, ...sequence.map(r => {
+                  if (r === INTL_SUBGROUP) {
+                    return (
+                      <tr key={`__bucket_${intlKey}`} className={styles.subBucketRow}>
+                        <td colSpan={effectiveBulkCols.length} style={{ borderLeftColor: bucket.color }}>
+                          <button
+                            type="button"
+                            className={styles.bucketToggle}
+                            onClick={() => toggleBucketCollapsed(intlKey)}
+                            aria-expanded={!intlCollapsed}
+                          >
+                            <span className={styles.bucketCaret}>{intlCollapsed ? '▸' : '▾'}</span>
+                            <span className={styles.subBucketTitle}>Outside US, Canada, Mexico</span>
+                            <span className={styles.bucketCount}>{intlRows.length}</span>
+                            <span className={styles.bucketHint}>From the contact's Country, or HubSpot's when the row has none.</span>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  }
                   const hubspotContact = hubspotByEmail.get(r.email);
                   const exists = !!hubspotContact;
                   const outcome = results[r.email];
