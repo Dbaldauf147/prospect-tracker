@@ -390,13 +390,13 @@ export function makeRosterGates({
 
   // ---- Key Prospect gate (mirror of KeyProspectsView) ---------------
   // A contact is a "Key Prospect" when it's tagged Decision Maker at a
-  // Tier 1 / Tier 2 account on this CDM whose company has no opps yet.
+  // Tier 1 / Tier 2 / Tier 3 account on this CDM whose company has no opps yet.
   const myTierAccounts = rows.filter(p => {
     if (!matchesCdm(p.cdm, cdmName)) return false;
     // Clients aren't prospects — keep them out of the Key Prospect bucket.
     if (p.status === 'Client') return false;
     const t = String(p.tier || '').toLowerCase();
-    return t === 'tier 1' || t === 'tier 2';
+    return t === 'tier 1' || t === 'tier 2' || t === 'tier 3';
   });
   const allOppAccounts = new Set();
   for (const r of (oppsRecords || [])) {
@@ -404,7 +404,7 @@ export function makeRosterGates({
     if (acct) allOppAccounts.add(acct);
   }
   const allOppAccountsArr = [...allOppAccounts];
-  // Map<lowercase company, { tier, hasOpp }> for the Tier 1/2 accounts.
+  // Map<lowercase company, { tier, hasOpp }> for the Tier 1/2/3 accounts.
   const tierAccountStatus = new Map();
   for (const p of myTierAccounts) {
     const lc = String(p.company || '').toLowerCase().trim();
