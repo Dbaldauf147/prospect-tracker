@@ -499,19 +499,124 @@
   color: #fff;
 }
 
-/* Decision maker titles: one line per title, columns so a few hundred
-   short titles do not run down a single narrow strip. */
-.dmList {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  column-width: 300px;
-  column-gap: 1.2rem;
+/* Decision maker titles: a title per row and a column per tag. The title
+   column stays put while the tag columns scroll sideways, since there can
+   be more tags than fit across. */
+.dmTableWrap {
+  overflow: auto;
+  max-height: 75vh;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-surface, #fff);
 }
 
-.dmRow {
-  break-inside: avoid;
+.dmTable {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.78rem;
+  min-width: 100%;
+}
+
+.dmTable th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #F8FAFC;
+  border-bottom: 1px solid var(--color-border);
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.dmThTitle {
+  left: 0;
+  z-index: 3 !important;
+  min-width: 240px;
+}
+
+.dmThNum,
+.dmThTag {
+  text-align: center !important;
+}
+
+.dmSort,
+.dmSortActive {
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.dmSort:hover {
+  color: #009530;
+}
+
+.dmSortActive {
+  color: #009530;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.dmThNum {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+
+.dmTable td {
   border-bottom: 1px solid var(--color-border-light);
+  padding: 0.25rem 0.5rem;
+}
+
+.dmTdTitle,
+.dmTdPerson {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--color-surface, #fff);
+  min-width: 240px;
+  max-width: 360px;
+}
+
+.dmTdNum {
+  text-align: center;
+  font-weight: 700;
+  color: #1E293B;
+  font-variant-numeric: tabular-nums;
+}
+
+.dmTdTag {
+  text-align: center;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.dmTdTagHit {
+  composes: dmTdTag;
+  color: #166534;
+  font-weight: 700;
+  background: #F0FDF4;
+}
+
+.dmPersonRow td {
+  background: #FAFAF9;
+}
+
+.dmTdPerson {
+  padding-left: 1.6rem !important;
+  font-size: 0.74rem;
+  color: #334155;
+  background: #FAFAF9 !important;
+}
+
+.dmTick {
+  color: #166534;
+  font-weight: 700;
 }
 
 .dmTitleBtn {
@@ -519,7 +624,7 @@
   align-items: baseline;
   gap: 0.4rem;
   width: 100%;
-  padding: 0.3rem 0.2rem;
+  padding: 0.1rem 0;
   border: none;
   background: none;
   font-family: inherit;
@@ -541,22 +646,6 @@
   flex: 1;
   font-size: 0.8rem;
   color: #1E293B;
-}
-
-.dmCount {
-  font-size: 0.7rem;
-  font-weight: 700;
-  color: var(--color-text-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.dmPeople {
-  margin: 0 0 0.4rem 1.3rem;
-  padding: 0;
-  list-style: none;
-  font-size: 0.74rem;
-  line-height: 1.6;
-  color: #334155;
 }
 
 .dmCompany {
