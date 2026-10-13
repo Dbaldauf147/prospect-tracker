@@ -15,6 +15,7 @@ import { useOppsRecords } from '../../utils/rosterHooks';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import { resolveMetInPerson as resolveMetInPersonWith, metInPersonUpdate } from '../../utils/metInPerson';
 import { formatAum, statusColor } from '../../utils/formatters';
+import { STATUSES } from '../../data/enums';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { tagReviewScore, tagVocabulary, saveTagReview, recordForVerdict, sameTagRecord, recordKeepsTag, dedupeTags, planTagEdit, groupTagWrites, findTagRecord, tagRecordKeyFor } from '../../utils/contactTagReview';
 import { toggleContactInEvents } from '../../utils/eventsStore';
@@ -483,7 +484,7 @@ class ContactsErrorBoundary extends Component {
     try {
       const prefix = this.props.storagePrefix || 'key-contacts';
       const drop = [
-        'visible-cols', 'contact-col-widths', 'contact-col-filters', 'contact-col-value-filters',
+        'visible-cols', 'contact-col-widths', 'contact-col-filters', 'contact-col-value-filters', 'company-status-filter',
         'contact-sort-key', 'contact-sort-dir', 'view-mode',
         'col-widths', 'sort-key', 'sort-dir',
       ];
@@ -695,6 +696,11 @@ function KeyContactsViewInner({
   // the user can see how many rows the filter would expose before
   // flipping it.
   onUnmappedPast30CountChange,
+  // Adds a row of Company Status pills under the header (Client, Inside
+  // Sales, ... and No status) narrowing every view mode to contacts whose
+  // company's prospect carries one of the lit statuses. Saved per page, so
+  // it is still set after a refresh. Used by Decision Makers.
+  companyStatusFilterEnabled = false,
 }) {
   const lsKey = (suffix) => `${storagePrefix}:${suffix}`;
   const { user } = useAuth();
@@ -2108,6 +2114,26 @@ function KeyContactsViewInner({
     try { return JSON.parse(localStorage.getItem(lsKey('contact-col-value-filters'))) || {}; } catch { return {}; }
   });
   useEffect(() => { try { localStorage.setItem(lsKey('contact-col-value-filters'), JSON.stringify(contactColValueFilters)); } catch {} }, [contactColValueFilters]);
+  // Company Status pills (companyStatusFilterEnabled). The statuses lit, as
+  // the prospect spells them; '' is "No status", which covers a company
+  // with a blank Status and one mapped to no prospect at all, the same two
+  // cases the column shows as a dash. Empty = no filter.
+  const [companyStatusFilter, setCompanyStatusFilter] = useState(() => {
+    if (!companyStatusFilterEnabled) return [];
+    try {
+      const saved = JSON.parse(localStorage.getItem(lsKey('company-status-filter')));
+      return Array.isArray(saved) ? saved.filter(v => typeof v === 'string') : [];
+    } catch { return []; }
+  });
+  useEffect(() => {
+    if (!companyStatusFilterEnabled) return;
+    try { localStorage.setItem(lsKey('company-status-filter'), JSON.stringify(companyStatusFilter)); } catch { /* not remembered, still filters */ }
+  }, [companyStatusFilter, companyStatusFilterEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
+  const companyStatusSet = companyStatusFilterEnabled && companyStatusFilter.length > 0 ? new Set(companyStatusFilter) : null;
+  const toggleCompanyStatus = (st) => {
+    if (st === null) { setCompanyStatusFilter([]); return; }
+    setCompanyStatusFilter(prev => (prev.includes(st) ? prev.filter(v => v !== st) : [...prev, st]));
+  };
   // Which column's filter dropdown is currently open, plus the working
   // (uncommitted) set of checked values and the in-dropdown search text.
   const [openFilterCol, setOpenFilterCol] = useState(null);
@@ -3101,9 +3127,11 @@ function KeyContactsViewInner({
   }, [rows, sortKey, sortDir]);
 
   const q = query.trim().toLowerCase();
-  const filteredRows = q
-    ? sortedRows.filter(r => (r.companyName || '').toLowerCase().includes(q))
-    : sortedRows;
+  const filteredRows = sortedRows.filter(r => {
+    if (q && !(r.companyName || '').toLowerCase().includes(q)) return false;
+    if (companyStatusSet && !companyStatusSet.has(r.prospect?.status || '')) return false;
+    return true;
+  });
 
   // Flat list of every Dan Key Target contact, paired with the matched
   // prospect (when one) so we can route the open-prospect arrow.
@@ -3362,6 +3390,8 @@ function KeyContactsViewInner({
       if (travelCity && String(c.city || '').trim().toLowerCase() !== travelCity.trim().toLowerCase()) return false;
     }
     if (onlyLocationFlagged && !checkCity(c.city) && !stateFlagOf(c)) return false;
+    // skipCompanyStatus lets the pills count against everything else.
+    if (companyStatusSet && !opts?.skipCompanyStatus && !companyStatusSet.has(c.prospect?.status || '')) return false;
     // Campaign membership gate — 'in' keeps contacts already emailed in
     // the picked campaign, 'out' keeps everyone else. skipCampaign lets
     // the In/Not-in counts measure against the pre-gate roster.
@@ -3407,6 +3437,26 @@ function KeyContactsViewInner({
     });
   };
   const filteredContacts = sortedContacts.filter(c => passesNonColumnFilters(c) && passesColumnFilters(c, null));
+  // Pill counts: contacts per company status under every other filter, so
+  // each pill says how many rows lighting it would add.
+  const companyStatusCounts = (() => {
+    if (!companyStatusFilterEnabled) return null;
+    const counts = new Map();
+    for (const c of sortedContacts) {
+      if (!passesNonColumnFilters(c, { skipCompanyStatus: true })) continue;
+      if (!passesColumnFilters(c, null)) continue;
+      const st = c.prospect?.status || '';
+      counts.set(st, (counts.get(st) || 0) + 1);
+    }
+    return counts;
+  })();
+  const companyStatusOptions = companyStatusCounts
+    ? [
+        ...STATUSES,
+        ...[...companyStatusCounts.keys()].filter(st => st && !STATUSES.includes(st)).sort(),
+        '',
+      ]
+    : [];
 
   // In / Not-in tallies for the campaign membership pills, measured over
   // the roster the OTHER filters (category, search, columns) leave — so
@@ -3627,6 +3677,54 @@ function KeyContactsViewInner({
           )}
         </div>
       </div>
+
+      {companyStatusFilterEnabled && (
+        <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 700 }}>Company Status:</span>
+          <button
+            type="button"
+            data-company-status-pill="all"
+            onClick={() => toggleCompanyStatus(null)}
+            title="Show contacts at companies of every status (clear the status pills)"
+            style={{
+              padding: '2px 10px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+              background: companyStatusSet ? '#fff' : '#F1F5F9',
+              border: '1px solid ' + (companyStatusSet ? '#E2E8F0' : '#94A3B8'),
+              color: '#334155',
+              boxShadow: companyStatusSet ? 'none' : '0 0 0 2px #CBD5E1',
+            }}
+          >All</button>
+          {companyStatusOptions.map(st => {
+            const on = !!companyStatusSet?.has(st);
+            const count = companyStatusCounts.get(st) || 0;
+            const color = st ? statusColor(st) : '#94A3B8';
+            return (
+              <button
+                key={st || '(none)'}
+                type="button"
+                data-company-status-pill={st || 'none'}
+                data-selected={on ? '1' : '0'}
+                onClick={() => toggleCompanyStatus(st)}
+                title={st
+                  ? `Show contacts whose company's Status is ${st}. Light more than one to see any of them; click again to turn it off.`
+                  : 'Show contacts whose company has no Status, or is not mapped to a Table View prospect.'}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  padding: '2px 10px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                  background: on ? color + '22' : '#fff',
+                  border: '1px solid ' + (on ? color : '#E2E8F0'),
+                  color: on ? '#1E293B' : (count ? '#475569' : '#94A3B8'),
+                  boxShadow: on ? `0 0 0 2px ${color}55` : 'none',
+                }}
+              >
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: color, flexShrink: 0 }} />
+                {st || 'No status'}
+                <span style={{ fontWeight: 800 }}>{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {isContactList && massMode && (
         <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
