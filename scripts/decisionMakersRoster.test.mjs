@@ -77,9 +77,10 @@ for (const c of [contact(16, 'Decision Maker'), contact(17, 'Decision Maker;Hide
 
 // ── the count over it ────────────────────────────────────────────────────
 // One decision maker on a roster (tagged Dan Key Target), one on none at
-// all, and one at a Don't Track account.
+// all, and one at a Don't Track account. Acme is off the tier list, so it
+// is not a Key Prospect account.
 const prospects = [
-  { company: 'Acme Corp', status: 'Prospect', cdm: CDM, tier: 'Tier 3' },
+  { company: 'Acme Corp', status: 'Prospect', cdm: CDM, tier: '' },
   { company: 'Untracked Inc', status: 'Client', cdm: CDM, emailDomain: 'untracked.com' },
 ];
 const gates = makeRosterGates({
@@ -119,6 +120,20 @@ const offRosterCount = decisionMakers
   .filter(c => isDecisionMakerContact(c) && !gates.clientExclusionOf(c))
   .filter(c => gates.categorize(c).length === 0).length;
 check('one of these decision makers is on no roster', offRosterCount, 1);
+
+// Tier 3 accounts with no opps are Key Prospect accounts too, alongside
+// Tier 1 and Tier 2.
+const tier3Gates = makeRosterGates({
+  prospects: [{ company: 'Acme Corp', status: 'Prospect', cdm: CDM, tier: 'Tier 3' }],
+  cdmName: CDM,
+  oppsRecords: [],
+  clientStatusMap: {},
+  clientUntrackedMap: {},
+  showHidden: false,
+});
+const tier3Counted = rosterTagCoverage({ contacts: [offRoster], gates: tier3Gates, countAll: true });
+check('a decision maker at an untouched Tier 3 account is a Key Prospect',
+  tier3Counted.keyProspect.contacts, 1);
 
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
