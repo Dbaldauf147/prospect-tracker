@@ -258,6 +258,66 @@ const N = 3000;
   b.sync.stop();
 }
 
+// ── an edit acknowledged in a cached snapshot survives a reload ─────────
+// The real SDK: a company outside the change listener's range enters it the
+// moment this tab's write is acknowledged, before the server has confirmed
+// it for that listener, so the snapshot carrying it says fromCache. The
+// copy has to keep it anyway: once anything later moves the sync point on,
+// a reload no longer asks for it, and the old status came back (Issues tab:
+// a resolved Status mismatch reappearing after every refresh).
+{
+  const server = fakeServer();
+  server.seed(20);
+  const store = memoryStore();
+  await boot(server, store, manualTimers()).sync.start();
+  server.advance(3600 * 1000);
+  const b = boot(server, store, manualTimers(), {
+    api: { ...server.api, listenSince(ms, onSnap, onErr) {
+      const u = server.api.listenSince(ms, onSnap, onErr);
+      b.push = onSnap;
+      return u;
+    } },
+  });
+  await b.sync.start();
+  await settle();
+
+  const done = b.sync.localWrite('c0001', { status: 'Qualifying' });
+  done(true);
+  const acked = { id: 'c0001', company: 'Co 1', status: 'Qualifying', updatedAt: new Ts(server.now()) };
+  b.push({ fromCache: true, docs: [acked], changes: [{ type: 'added', doc: acked, pending: false }] });
+  await settle();
+  check('the acknowledged edit shows', b.last().find(d => d.id === 'c0001').status, 'Qualifying');
+  check('and is kept on the device though the snapshot was cached', store.saved.docs.get('c0001').status, 'Qualifying');
+  check('without moving the sync point on a cached answer', store.saved.meta.syncedThroughMs < acked.updatedAt.toMillis(), true);
+
+  // Later, another company changes on the server and moves the sync point on.
+  server.advance(DELTA_MARGIN_MS * 2);
+  server.put('c0002', { tier: 'Tier 1' });
+  await settle();
+  b.sync.stop();
+
+  const c = boot(server, store, manualTimers());
+  await c.sync.start();
+  await settle();
+  check('a reload still shows the edit', c.last().find(d => d.id === 'c0001').status, 'Qualifying');
+  c.sync.stop();
+}
+
+// ── an acknowledged edit the listener never echoes is kept on the device ─
+{
+  const server = fakeServer();
+  server.seed(5);
+  const store = memoryStore();
+  const t = manualTimers();
+  const a = boot(server, store, t);
+  await a.sync.start();
+  const done = a.sync.localWrite('c0002', { status: 'Client' });
+  done(true);
+  await t.run(x => x.ms === OVERLAY_TTL_MS);
+  check('the folded edit reaches the copy', store.saved.docs.get('c0002').status, 'Client');
+  a.sync.stop();
+}
+
 // ── an older copy never overwrites a newer one ──────────────────────────
 {
   const server = fakeServer();
