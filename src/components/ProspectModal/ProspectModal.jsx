@@ -5,6 +5,7 @@ import { contactDisplayName } from '../../utils/contactRosters';
 import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagRecordKeyFor, recordForVerdict, sameTagRecord, planTagEdit, tagVocabulary, saveTagReview, mergeTagEdit, tagListSignature, isStaleTagEcho, TAG_ECHO_WINDOW_MS } from '../../utils/contactTagReview';
 import { contactEditPropsEqual, contactTagString } from '../../utils/contactEditProps';
 import { createTagWriter } from '../../utils/tagWriteQueue';
+import { applyTagPreset, presetTagsFrom, savePreset, deletePreset, presetSummary } from '../../utils/tagPresets';
 
 // Header cells for the tag table's two column groups (Answer / Status) and
 // for the choices under them. Hoisted out of the render so the two header
@@ -915,7 +916,7 @@ function findPortfolioProspect(row, byName, byId) {
 // can share the exact same auto-fill behavior as this modal.
 
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactSentiment = {}, onSaveSentiment, contactTagReview = {}, onSaveTagReview, events = [], onToggleContactEvent, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactSentiment = {}, onSaveSentiment, contactTagReview = {}, onSaveTagReview, tagPresets = [], onSaveTagPresets, events = [], onToggleContactEvent, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null }) {
   const rawTags = contactTagString(contact);
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -1610,6 +1611,45 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
 
   function setTagStatus(tag, status) {
     updateTagRecord(tag, (cur) => withTagStatus(cur, cur.status === status ? '' : status));
+  }
+
+  // Tag presets (utils/tagPresets.js): every answer a preset names, set in
+  // one go. The same two writes a single click makes, once each - the tag
+  // list to HubSpot (rolled back if refused) and the record map to settings.
+  function applyPreset(preset) {
+    const { checked, verdicts } = applyTagPreset({
+      checked: checkedTagsRef.current, verdicts: tagVerdictsRef.current, tags: visibleTagOptions, preset,
+    });
+    const before = checkedTagsRef.current;
+    const tagsChanged = checked.size !== before.size || [...checked].some(t => !before.has(t));
+    if (tagsChanged) {
+      applyCheckedTags(checked);
+      queueDansTags(buildTagsStringFrom(checked)).then(ok => {
+        if (ok) return;
+        applyCheckedTags(checkedTagsFrom(savedTagsRef.current));
+        editorBaseRef.current = editorViewOf(savedTagsRef.current);
+      });
+    }
+    applyTagVerdicts(verdicts);
+    void tagReviewWriterRef.current.push(verdicts);
+  }
+
+  function saveCurrentAsPreset() {
+    if (!onSaveTagPresets) return;
+    const tags = presetTagsFrom({ checked: checkedTagsRef.current, verdicts: tagVerdictsRef.current, tags: visibleTagOptions });
+    if (Object.keys(tags).length === 0) {
+      alert('Answer some tags first. A preset saves the answers in this table so you can apply them to another contact in one click.');
+      return;
+    }
+    const name = window.prompt('Name this tag preset (an existing name is overwritten):', '');
+    if (!name || !name.trim()) return;
+    onSaveTagPresets(savePreset(tagPresets, name, tags));
+  }
+
+  function removePreset(preset) {
+    if (!onSaveTagPresets) return;
+    if (!window.confirm(`Delete the tag preset "${preset.name}"? Contacts already tagged with it keep their tags.`)) return;
+    onSaveTagPresets(deletePreset(tagPresets, preset.id));
   }
 
   function chooseMetInPerson(next) {
@@ -2839,6 +2879,39 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                     </span>
                     <span style={{ fontWeight: 500, color: '#94A3B8' }}>“Yes” and “Sold” put the tag in HubSpot - “Not sold” holds it off</span>
                   </div>
+                  {onSaveTagPresets && (
+                    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, padding: '0.4rem 0.7rem', borderBottom: '1px solid #E2E8F0', background: '#FAF5FF' }}>
+                      <span
+                        style={{ fontSize: '0.64rem', fontWeight: 700, color: '#6D28D9', textTransform: 'uppercase', letterSpacing: '0.03em' }}
+                        title="Click a preset to set every answer it saved on this contact at once. Tags the preset doesn't mention are left as they are."
+                      >Presets</span>
+                      {(tagPresets || []).map(p => (
+                        <span key={p.id} style={{ display: 'inline-flex', alignItems: 'center', border: '1px solid #C4B5FD', borderRadius: 999, background: '#fff', overflow: 'hidden' }}>
+                          <button
+                            type="button"
+                            onClick={() => applyPreset(p)}
+                            title={`Apply "${p.name}". ${presetSummary(p)}`}
+                            style={{ padding: '0.12rem 0.55rem', border: 'none', background: 'transparent', color: '#5B21B6', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                          >{p.name}</button>
+                          <button
+                            type="button"
+                            onClick={() => removePreset(p)}
+                            title={`Delete the "${p.name}" preset`}
+                            style={{ padding: '0.12rem 0.4rem', border: 'none', borderLeft: '1px solid #EDE9FE', background: 'transparent', color: '#A78BFA', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit' }}
+                          >×</button>
+                        </span>
+                      ))}
+                      {(tagPresets || []).length === 0 && (
+                        <span style={{ fontSize: '0.66rem', color: '#94A3B8' }}>None yet. Tag this contact, then save it as one.</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={saveCurrentAsPreset}
+                        title="Save this contact's answers as a preset you can apply to other contacts in one click. Saving under an existing name updates that preset."
+                        style={{ marginLeft: 'auto', padding: '0.12rem 0.55rem', border: '1px dashed #A78BFA', borderRadius: 999, background: '#fff', color: '#6D28D9', fontSize: '0.66rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                      >+ Save as preset</button>
+                    </div>
+                  )}
                   {/* Tall enough for the whole vocabulary at once — the point
                       of the table is reading a contact's answers in one look,
                       and a cap that cut it off mid-list made you scroll a
@@ -13842,6 +13915,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSaveSentiment={handleSaveContactSentiment}
           contactTagReview={settings.contactTagReview || {}}
           onSaveTagReview={(cid, map) => saveTagReview({ cid, map, settings: settingsRef.current, updateSettings, updateSettingsPath })}
+          tagPresets={settings?.tagPresets || []}
+          onSaveTagPresets={(list) => updateSettings({ tagPresets: list })}
           events={settings.events || []}
           onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settingsRef.current.events || [], eventId, c) })}
           companyContacts={companyContacts}
