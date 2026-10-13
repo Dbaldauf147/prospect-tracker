@@ -20,6 +20,8 @@ import { CompanyNewsScheduleModal } from './CompanyNewsScheduleModal';
 import { PEServicesReportModal } from './PEServicesReportModal';
 import { DataTable } from '../common/DataTable';
 import { buildZoomCsv, downloadZoomCsv } from '../../utils/zoomCsv';
+import { buildZoomExcludedMatcher } from '../../utils/zoomExportExclude';
+import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { PasteAddModal } from '../TableView/PasteAddModal';
 import { splitPeOwners } from '../../utils/peOwners';
 import {
@@ -1022,6 +1024,20 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     [prospectByPcKey],
   );
 
+  // The decision makers the rest of the app sees at an account: the
+  // Decision Makers page, the company popup's Contacts tab and the
+  // Prospecting ladder all read this lookup, which follows a company the
+  // user corrected by hand on the contact (settings.contactLocalFields),
+  // contacts linked to or removed from an account by hand, and leaves out
+  // Hide / Left contacts. The firm-name match below never saw the first two,
+  // so a firm whose decision maker the Decision Makers page lists under it
+  // could still read Not found here and land on the no-DM Zoom Export.
+  const dmLookup = useMemo(() => makeDecisionMakerLookup(hubspotCache?.contacts || [], {
+    localFields: settings?.contactLocalFields || null,
+    links: settings?.companyContactLinks || null,
+    exclusions: settings?.companyContactExclusions || null,
+  }), [hubspotCache, settings?.contactLocalFields, settings?.companyContactLinks, settings?.companyContactExclusions]);
+
   const stageStatsByFirm = useMemo(() => {
     const out = new Map();
     for (const pe of peFirms) {
@@ -1045,6 +1061,21 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         if (dmSeen.has(dm.name)) continue;
         dmSeen.add(dm.name);
         dmEntries.push(dm);
+      }
+      // Then whoever the shared lookup puts on the firm or one of its
+      // portfolio companies that the match above missed.
+      for (const account of [pe, ...portfolio]) {
+        for (const c of dmLookup.forAccount(account)) {
+          const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown';
+          if (dmSeen.has(name)) continue;
+          dmSeen.add(name);
+          const tags = String(c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+          const cmId = String(c.id || c.vid || '');
+          const metInPerson = (cmId && Object.prototype.hasOwnProperty.call(metInPersonMap, cmId))
+            ? !!metInPersonMap[cmId]
+            : tags.includes('met in person');
+          dmEntries.push({ name, company: String(c.company || '').toLowerCase().trim(), metInPerson, city: String(c.city || '').trim() });
+        }
       }
       const dmNames = dmEntries.map(e => e.name);
       const metInPersonCount = dmEntries.filter(e => e.metInPerson).length;
@@ -1147,7 +1178,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       });
     }
     return out;
-  }, [peFirms, portfolioByPe, prospects, decisionMakers, keyContacts, oppsRecords, statusByCompany]);
+  }, [peFirms, portfolioByPe, prospects, decisionMakers, dmLookup, metInPersonMap, keyContacts, oppsRecords, statusByCompany]);
 
   // Has the Top PC had its Master Analysis saved? The question the Top PC
   // column raises next — that company is the one to work, so whether the
@@ -1314,14 +1345,19 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
 
   // The firms on screen (CDM filter and search box applied) that the
   // Decision Maker Found? column marks Not found, for the Zoom Export: the
-  // list to take into ZoomInfo to find someone to talk to at each.
+  // list to take into ZoomInfo to find someone to talk to at each. Firms
+  // excluded from ZoomInfo on their popup are left out here already, so the
+  // count on the button is the number of rows the file will hold.
+  const isZoomExcluded = useMemo(() => buildZoomExcludedMatcher(prospects), [prospects]);
   const noDmFirms = useMemo(
-    () => filteredFirms.filter(pe => !(stageStatsByFirm.get(pe.id)?.decisionMakerNames || []).length),
-    [filteredFirms, stageStatsByFirm],
+    () => filteredFirms.filter(pe =>
+      !(stageStatsByFirm.get(pe.id)?.decisionMakerNames || []).length
+      && !isZoomExcluded({ id: pe.id, company: pe.company, zoomId: pe.zoomCompanyId })),
+    [filteredFirms, stageStatsByFirm, isZoomExcluded],
   );
   function downloadNoDmZoomExport() {
     if (noDmFirms.length === 0) {
-      alert('Every firm shown here already has a decision maker found.');
+      alert('Every firm shown here already has a decision maker found or is excluded from ZoomInfo exports.');
       return;
     }
     const { csv, kept } = buildZoomCsv(noDmFirms, prospects);
