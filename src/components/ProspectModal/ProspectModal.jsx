@@ -9670,7 +9670,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div>
               <label className={styles.label}>Status</label>
-              <select className={styles.select} value={fields.status} onChange={e => set('status', e.target.value)}>
+              <select className={styles.select} value={fields.status || ''} onChange={e => set('status', e.target.value)}>
+                {/* A select whose value matches no option shows its FIRST
+                    option, and the first status is Client - so a company
+                    with no Status read as Client here while every table
+                    (rightly) showed it blank. Give the blank, and any
+                    status that has since left the list, an option of its
+                    own so the card shows what is actually saved. */}
+                {!fields.status && <option value="">No status</option>}
+                {fields.status && !STATUSES.includes(fields.status) && <option value={fields.status}>{fields.status}</option>}
                 {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
