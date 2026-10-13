@@ -355,6 +355,14 @@
   font-family: inherit;
   text-align: left;
 }
+.subBucketRow td {
+  background: var(--color-surface);
+  border-left: 3px solid transparent;
+  padding: 4px 8px 4px 26px !important;
+  position: sticky;
+  left: 0;
+}
+.subBucketTitle { font-size: 0.72rem; font-weight: 700; color: #334155; }
 .bucketCaret { font-size: 0.7rem; color: #64748B; width: 10px; }
 .bucketTitle { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
 .bucketCount {
