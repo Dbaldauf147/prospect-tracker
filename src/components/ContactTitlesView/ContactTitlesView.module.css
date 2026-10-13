@@ -651,3 +651,118 @@
 .dmCompany {
   color: var(--color-text-muted);
 }
+
+/* Tag filter, column picker and per-tag stars on the Decision Makers tab. */
+.dmTagSelect {
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: #fff;
+  font-family: inherit;
+  font-size: 0.74rem;
+  color: #1E293B;
+}
+
+.dmTagSelectActive {
+  composes: dmTagSelect;
+  border-color: #009530;
+  color: #166534;
+  font-weight: 700;
+}
+
+.dmStarOnly {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  color: #334155;
+  cursor: pointer;
+}
+
+.dmPickerWrap {
+  position: relative;
+}
+
+.dmPicker {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 10;
+  min-width: 220px;
+  max-height: 340px;
+  overflow: auto;
+  padding: 0.35rem 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+}
+
+.dmPickerHead {
+  display: flex;
+  gap: 0.8rem;
+  padding: 0.15rem 0.7rem 0.35rem;
+  border-bottom: 1px solid var(--color-border-light);
+  margin-bottom: 0.2rem;
+}
+
+.dmPickerLink {
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #009530;
+  cursor: pointer;
+}
+
+.dmPickerItem {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.2rem 0.7rem;
+  font-size: 0.76rem;
+  color: #1E293B;
+  cursor: pointer;
+}
+
+.dmPickerItem:hover {
+  background: #F8FAFC;
+}
+
+.dmPickerCount {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.dmTitleCell {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+}
+
+.dmStar,
+.dmStarOn {
+  padding: 0 0.1rem;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 0.95rem;
+  line-height: 1;
+  color: #CBD5E1;
+  cursor: pointer;
+}
+
+.dmStar:hover {
+  color: #D97706;
+}
+
+.dmStarOn {
+  color: #D97706;
+}
+
+.dmStarredRow .dmTdTitle {
+  background: #FFFBEB;
+}

@@ -78,7 +78,7 @@ export function ContactTitlesView({ settings, updateSettings }) {
         ))}
       </div>
       {view === 'dms'
-        ? <DecisionMakerTitles />
+        ? <DecisionMakerTitles settings={settings} updateSettings={updateSettings} />
         : <TitleSearches settings={settings} updateSettings={updateSettings} />}
     </div>
   );
@@ -447,11 +447,29 @@ function TitleSearches({ settings, updateSettings }) {
 // Every distinct job title held by a contact tagged Decision Maker, A to Z,
 // with how many hold it. Click a title to see who. Read from the same
 // HubSpot cache the contacts tabs use, and refreshed when it is.
-function DecisionMakerTitles() {
+//
+// Picking a tag (its column heading or the Tag box) narrows the table to
+// the titles somebody with that tag holds, most holders first, and puts a
+// star by each title: the titles worth flagging for that tag, starred ones
+// on top. Stars are kept per tag, in settings.dmTitleStars as
+// { tag key: [title, ...] }, and a starred title stays listed under its tag
+// even once nobody holding it carries the tag any more, so a flag is never
+// lost to a contact being retagged.
+//
+// Which tag columns show is the user's too, in settings.dmTitlesHiddenTags.
+// Stored as the hidden ones rather than the shown ones so a tag that turns
+// up later gets a column without anybody having to switch it on.
+const STAR_KEY = 'dmTitleStars';
+const HIDDEN_TAGS_KEY = 'dmTitlesHiddenTags';
+
+function DecisionMakerTitles({ settings, updateSettings }) {
   const [contacts, setContacts] = useState(null);
   const [term, setTerm] = useState('');
   const [open, setOpen] = useState(() => new Set());
   const [copied, setCopied] = useState(false);
+  const [starredOnly, setStarredOnly] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerRef = useRef(null);
   const needle = term.trim().toLowerCase();
 
   useEffect(() => {
@@ -466,24 +484,81 @@ function DecisionMakerTitles() {
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
 
+  // The column picker closes on a click anywhere else, like a menu.
+  useEffect(() => {
+    if (!pickerOpen) return undefined;
+    const onDown = (e) => { if (!pickerRef.current?.contains(e.target)) setPickerOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setPickerOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [pickerOpen]);
+
   const { titles, tags, untitled } = useMemo(() => decisionMakerTitles(contacts || []), [contacts]);
-  // A to Z by default. Clicking a tag's column heading ranks the titles by
-  // how many of their holders carry it instead; clicking it again goes back.
-  const [sortTag, setSortTag] = useState('');
+
+  const savedStars = settings?.[STAR_KEY];
+  const stars = useMemo(() => {
+    const out = {};
+    if (savedStars && typeof savedStars === 'object' && !Array.isArray(savedStars)) {
+      for (const [k, v] of Object.entries(savedStars)) if (Array.isArray(v)) out[k] = new Set(v);
+    }
+    return out;
+  }, [savedStars]);
+  const savedHidden = settings?.[HIDDEN_TAGS_KEY];
+  const hidden = useMemo(() => new Set(Array.isArray(savedHidden) ? savedHidden : []), [savedHidden]);
+  const visibleTags = useMemo(() => tags.filter(t => !hidden.has(t.key)), [tags, hidden]);
+
+  // A to Z with no tag picked. With one, only the titles held by somebody
+  // carrying it (or starred for it), starred first, then most holders.
+  const [filterTag, setFilterTag] = useState('');
+  const activeTag = tags.some(t => t.key === filterTag) ? filterTag : '';
+  const tagStars = useMemo(() => (activeTag ? (stars[activeTag] || new Set()) : null), [stars, activeTag]);
   const shown = useMemo(() => {
-    const list = needle ? titles.filter(t => t.title.toLowerCase().includes(needle)) : titles;
-    if (!sortTag) return list;
+    let list = needle ? titles.filter(t => t.title.toLowerCase().includes(needle)) : titles;
+    if (!activeTag) return list;
+    list = list.filter(t => (t.tagCounts[activeTag] || 0) > 0 || tagStars.has(t.title));
+    if (starredOnly) list = list.filter(t => tagStars.has(t.title));
     // Array sort is stable, so ties stay A to Z.
-    return [...list].sort((a, b) => (b.tagCounts[sortTag] || 0) - (a.tagCounts[sortTag] || 0));
-  }, [titles, needle, sortTag]);
+    return [...list].sort((a, b) =>
+      (tagStars.has(b.title) - tagStars.has(a.title))
+      || ((b.tagCounts[activeTag] || 0) - (a.tagCounts[activeTag] || 0)));
+  }, [titles, needle, activeTag, tagStars, starredOnly]);
   const tagLabel = useMemo(() => new Map(tags.map(t => [t.key, t.label])), [tags]);
   const people = useMemo(() => titles.reduce((n, t) => n + t.count, 0), [titles]);
+  const activeLabel = activeTag ? tagLabel.get(activeTag) : '';
+  const starCount = tagStars ? tagStars.size : 0;
+
+  const pickTag = (key) => {
+    setFilterTag(key);
+    if (!key) setStarredOnly(false);
+  };
 
   const toggle = (title) => setOpen(prev => {
     const next = new Set(prev);
     if (next.has(title)) next.delete(title); else next.add(title);
     return next;
   });
+
+  function toggleStar(title) {
+    if (!activeTag) return;
+    const next = new Set(stars[activeTag] || []);
+    if (next.has(title)) next.delete(title); else next.add(title);
+    const all = {};
+    for (const [k, v] of Object.entries(stars)) all[k] = [...v];
+    if (next.size) all[activeTag] = [...next].sort((a, b) => a.localeCompare(b));
+    else delete all[activeTag];
+    updateSettings?.({ [STAR_KEY]: all });
+  }
+
+  function setHidden(next) {
+    updateSettings?.({ [HIDDEN_TAGS_KEY]: [...next] });
+  }
+
+  function toggleColumn(key) {
+    const next = new Set(hidden);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    setHidden(next);
+  }
 
   async function copyAll() {
     try {
@@ -502,9 +577,10 @@ function DecisionMakerTitles() {
       </div>
       <div className={styles.blurb}>
         Every job title held by a contact tagged Decision Maker, A to Z, with how many hold it and,
-        in a column per tag, how many of them also carry that tag. Click a title to see who, or a
-        tag heading to rank the titles by it. Hidden and Left contacts are left out, the same as
-        the DMs tab.
+        in a column per tag, how many of them also carry that tag. Click a title to see who. Pick a
+        tag, or click its heading, to see only the titles held by people with it, and star the ones
+        to flag for that tag. Columns chooses which tags the table shows. Hidden and Left contacts
+        are left out, the same as the DMs tab.
       </div>
 
       <div className={styles.searchRow}>
@@ -515,13 +591,54 @@ function DecisionMakerTitles() {
           value={term}
           onChange={e => setTerm(e.target.value)}
         />
+        <select
+          className={activeTag ? styles.dmTagSelectActive : styles.dmTagSelect}
+          value={activeTag}
+          onChange={e => pickTag(e.target.value)}
+          aria-label="Show only the titles for a tag"
+        >
+          <option value="">All tags</option>
+          {tags.map(t => <option key={t.key} value={t.key}>{t.label} ({t.count})</option>)}
+        </select>
+        {activeTag && (
+          <label className={styles.dmStarOnly}>
+            <input type="checkbox" checked={starredOnly} onChange={e => setStarredOnly(e.target.checked)} />
+            Starred only ({starCount})
+          </label>
+        )}
+        <div className={styles.dmPickerWrap} ref={pickerRef}>
+          <button
+            type="button"
+            className={styles.editBtn}
+            onClick={() => setPickerOpen(v => !v)}
+            aria-expanded={pickerOpen}
+            title="Choose which tag columns the table shows"
+          >Columns ({visibleTags.length} of {tags.length})</button>
+          {pickerOpen && (
+            <div className={styles.dmPicker}>
+              <div className={styles.dmPickerHead}>
+                <button type="button" className={styles.dmPickerLink} onClick={() => setHidden(new Set())}>Show all</button>
+                <button type="button" className={styles.dmPickerLink} onClick={() => setHidden(new Set(tags.map(t => t.key)))}>Hide all</button>
+              </div>
+              {tags.map(t => (
+                <label key={t.key} className={styles.dmPickerItem}>
+                  <input type="checkbox" checked={!hidden.has(t.key)} onChange={() => toggleColumn(t.key)} />
+                  <span>{t.label}</span>
+                  <span className={styles.dmPickerCount}>{t.count}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
         <span className={styles.count}>
           {contacts == null
             ? 'Loading contacts…'
-            : needle
-              ? `${shown.length} of ${titles.length} titles match “${term.trim()}”`
-              : `${titles.length} titles across ${people} decision makers`
-                + (untitled ? `, ${untitled} with no title on file` : '')}
+            : activeTag
+              ? `${shown.length} title${shown.length === 1 ? '' : 's'} for ${activeLabel}, ${starCount} starred`
+              : needle
+                ? `${shown.length} of ${titles.length} titles match “${term.trim()}”`
+                : `${titles.length} titles across ${people} decision makers`
+                  + (untitled ? `, ${untitled} with no title on file` : '')}
         </span>
         {shown.length > 0 && (
           <button
@@ -537,7 +654,11 @@ function DecisionMakerTitles() {
         <div className={styles.empty}>
           {titles.length === 0
             ? 'No contacts tagged Decision Maker have a job title on file yet.'
-            : `No decision maker title matches “${term.trim()}”.`}
+            : activeTag && starredOnly
+              ? `No titles starred for ${activeLabel} yet. Untick Starred only and click a star to flag one.`
+              : activeTag
+                ? `No decision maker title ${needle ? `matching “${term.trim()}” ` : ''}is held by anybody tagged ${activeLabel}.`
+                : `No decision maker title matches “${term.trim()}”.`}
         </div>
       ) : (
         <div className={styles.dmTableWrap}>
@@ -547,21 +668,21 @@ function DecisionMakerTitles() {
                 <th className={styles.dmThTitle}>
                   <button
                     type="button"
-                    className={!sortTag ? styles.dmSortActive : styles.dmSort}
-                    onClick={() => setSortTag('')}
-                    title="Sort the titles A to Z"
+                    className={!activeTag ? styles.dmSortActive : styles.dmSort}
+                    onClick={() => pickTag('')}
+                    title="All titles, A to Z"
                   >Title</button>
                 </th>
                 <th className={styles.dmThNum}>DMs</th>
-                {tags.map(t => (
+                {visibleTags.map(t => (
                   <th key={t.key} className={styles.dmThTag}>
                     <button
                       type="button"
-                      className={sortTag === t.key ? styles.dmSortActive : styles.dmSort}
-                      onClick={() => setSortTag(sortTag === t.key ? '' : t.key)}
-                      title={sortTag === t.key
-                        ? 'Back to A to Z'
-                        : `Rank titles by how many of their holders are tagged ${t.label} (${t.count} in all)`}
+                      className={activeTag === t.key ? styles.dmSortActive : styles.dmSort}
+                      onClick={() => pickTag(activeTag === t.key ? '' : t.key)}
+                      title={activeTag === t.key
+                        ? 'Back to every title, A to Z'
+                        : `Only the titles held by somebody tagged ${t.label} (${t.count} in all)`}
                     >{t.label}</button>
                   </th>
                 ))}
@@ -570,22 +691,34 @@ function DecisionMakerTitles() {
             <tbody>
               {shown.map(t => {
                 const isOpen = open.has(t.title);
+                const starred = !!tagStars?.has(t.title);
                 return (
                   <Fragment key={t.title}>
-                    <tr>
+                    <tr className={starred ? styles.dmStarredRow : undefined}>
                       <td className={styles.dmTdTitle}>
-                        <button
-                          type="button"
-                          className={styles.dmTitleBtn}
-                          onClick={() => toggle(t.title)}
-                          aria-expanded={isOpen}
-                        >
-                          <span className={styles.dmCaret}>{isOpen ? '▾' : '▸'}</span>
-                          <span className={styles.dmTitle}>{t.title}</span>
-                        </button>
+                        <div className={styles.dmTitleCell}>
+                          {activeTag && (
+                            <button
+                              type="button"
+                              className={starred ? styles.dmStarOn : styles.dmStar}
+                              onClick={() => toggleStar(t.title)}
+                              aria-pressed={starred}
+                              title={starred ? `Unstar for ${activeLabel}` : `Star ${t.title} for ${activeLabel}`}
+                            >{starred ? '★' : '☆'}</button>
+                          )}
+                          <button
+                            type="button"
+                            className={styles.dmTitleBtn}
+                            onClick={() => toggle(t.title)}
+                            aria-expanded={isOpen}
+                          >
+                            <span className={styles.dmCaret}>{isOpen ? '▾' : '▸'}</span>
+                            <span className={styles.dmTitle}>{t.title}</span>
+                          </button>
+                        </div>
                       </td>
                       <td className={styles.dmTdNum}>{t.count}</td>
-                      {tags.map(tag => {
+                      {visibleTags.map(tag => {
                         const n = t.tagCounts[tag.key] || 0;
                         return (
                           <td
@@ -603,7 +736,7 @@ function DecisionMakerTitles() {
                           {p.company && <span className={styles.dmCompany}>, {p.company}</span>}
                         </td>
                         <td className={styles.dmTdNum} />
-                        {tags.map(tag => (
+                        {visibleTags.map(tag => (
                           <td key={tag.key} className={styles.dmTdTag}>
                             {p.tags.includes(tag.key) && (
                               <span className={styles.dmTick} title={`${p.name} is tagged ${tagLabel.get(tag.key)}`}>✓</span>
