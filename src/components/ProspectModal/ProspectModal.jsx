@@ -7935,11 +7935,22 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       }
     }
 
+    // Company moves the selected contacts to another company. Each one is
+    // re-linked to the HubSpot Company of that name (found, or created)
+    // rather than renaming the record it is linked to now, which would
+    // rename it for every other contact still there too. The new name is
+    // also pinned locally, as the single-contact editor does, so the next
+    // sync can't put the old one back.
+    const isCompany = bulkField === 'company';
+    const companyValue = isCompany ? (bulkValue || '').trim() : '';
+    if (isCompany && !companyValue) { setBulkApplying(false); return; }
+    const movedIds = [];
+
     const errors = [];
     for (const c of targets) {
       const cid = c.id || c.vid;
       if (!cid) continue;
-      let nextVal = bulkValue;
+      let nextVal = isCompany ? companyValue : bulkValue;
       if (bulkField === 'dans_tags') {
         // planTagEdit matches on tagKey, so a remove aimed at one spelling
         // also drops the other, and a contact with nothing to change is
@@ -7966,6 +7977,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             const i = draft.contacts.findIndex(x => String(x.id || x.vid) === String(cid));
             if (i !== -1) draft.contacts[i] = { ...draft.contacts[i], ...properties };
           });
+          if (isCompany) movedIds.push(String(cid));
         } catch (err) { errors.push(`${cid}: ${err.message || err}`); }
         continue;
       }
@@ -7973,10 +7985,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         const res = await apiFetch('/api/hubspot?action=update-contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contactId: cid, properties }),
+          body: JSON.stringify({ contactId: cid, properties, ...(isCompany ? { companyMode: 'relink' } : {}) }),
         });
         const json = await res.json();
         if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
+        if (isCompany) movedIds.push(String(cid));
         try {
           await updateHubspotCache(draft => {
             const i = draft.contacts.findIndex(x => String(x.id || x.vid) === String(cid));
@@ -7987,6 +8000,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         errors.push(`${cid}: ${err.message || err}`);
       }
     }
+    if (movedIds.length > 0) updateSettings(companyOverridesUpdate(movedIds, companyValue));
     setBulkApplying(false);
     setBulkEditOpen(false);
     setBulkSelected(new Set());
@@ -13710,6 +13724,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         (() => {
           const FIELD_OPTIONS = [
             { key: 'jobtitle', label: 'Title', mode: 'single' },
+            { key: 'company', label: 'Company', mode: 'single' },
             { key: 'dans_tags', label: 'Tags / Categories', mode: 'tags' },
             { key: 'city', label: 'City', mode: 'single' },
             { key: 'country', label: 'Country', mode: 'single' },
@@ -13847,8 +13862,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         onChange={e => setBulkValue(e.target.value)}
                         disabled={bulkApplying}
                         placeholder={`New ${def.label.toLowerCase()} for all selected contacts`}
+                        list={bulkField === 'company' ? 'bulk-edit-company-names' : undefined}
                         style={{ padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.85rem', fontFamily: 'inherit' }}
                       />
+                      {bulkField === 'company' && (
+                        <>
+                          <datalist id="bulk-edit-company-names">
+                            {[...new Set((prospects || []).map(p => String(p.company || '').trim()).filter(Boolean))]
+                              .sort((a, b) => a.localeCompare(b))
+                              .map(n => <option key={n} value={n} />)}
+                          </datalist>
+                          <span style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 400 }}>
+                            Moves each selected contact to this company in HubSpot, creating the company there if it doesn't exist yet. The company they're on now keeps its name and its other contacts. Moved contacts leave this list once they're saved.
+                          </span>
+                        </>
+                      )}
                     </label>
                   )}
                 </div>

@@ -1169,7 +1169,7 @@ async function handler(req, res) {
     }
 
     if (action === 'update-contact' && req.method === 'POST') {
-      const { contactId, properties } = req.body;
+      const { contactId, properties, companyMode } = req.body;
       if (!contactId) {
         return res.status(400).json({ error: 'contactId is required' });
       }
@@ -1189,7 +1189,12 @@ async function handler(req, res) {
         // to it. In a shared portal that record is often a colleague's
         // account, so the contact is re-linked to a company by that name
         // instead, and the Company record itself is left as it is.
-        companyAssignment = scope.scoped
+        //
+        // companyMode 'relink' asks for that re-link everywhere. The company
+        // popup's Bulk Edit sends it: moving a few of a company's contacts
+        // to another company must not rename the record the rest of them
+        // are still linked to.
+        companyAssignment = (scope.scoped || companyMode === 'relink')
           ? await assignContactPrimaryCompanyByName(token, contactId, cleanProps.company, ownerId)
           : await renameContactCompany(token, contactId, cleanProps.company);
       }
