@@ -340,6 +340,18 @@ function oppStageColors(stage) {
   return { bg: bucket?.bg || '#F1F5F9', color: bucket?.color || '#475569' };
 }
 
+// A company name for an exact comparison: accents, case, punctuation and
+// spacing don't count, the words (brackets included) do. "Brookfield
+// (Maymont Homes)" equals "brookfield maymont homes" and not "Brookfield".
+function exactCompanyKey(s) {
+  return String(s || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
 function companiesMatch(a, b) {
   const fullA = (a || '').toLowerCase().trim();
   const fullB = (b || '').toLowerCase().trim();
@@ -649,6 +661,12 @@ const EMPTY = {
   // Opts this company into the weekly acquisition-news digest
   // (api/company-news-scheduler). Off unless explicitly ticked.
   trackAcquisitionNews: false,
+  // Contacts tab reads only people whose HubSpot Company is this name
+  // exactly (case, spacing and punctuation aside), with no fuzzy or
+  // email-domain matches. For a business unit named after its parent,
+  // "Brookfield (Maymont Homes)", whose loose match is every Brookfield
+  // contact there is. Off unless ticked.
+  exactContactMatch: false,
   // Ticked once this user has squared the account with the other CDM who
   // also covers it (the Coverage CDM checkbox). Off unless ticked.
   cdmAligned: false,
@@ -4948,12 +4966,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       const d = email.slice(at + 1).toLowerCase().trim();
       return (d && !FREE.has(d)) ? d : '';
     };
+    const exactKey = fields.exactContactMatch === true ? exactCompanyKey(fields.company) : '';
     const matched = hubspotContacts
       .filter(c => {
         // The "Show hidden" toggle on the contacts panel below
         // flips this gate off so hide-tagged people resurface - the
         // user can then click into them to clear the tag.
         if (!showHiddenContacts && contactIsHidden(c)) return false;
+        // Exact-name mode: the Company text has to be this name, and
+        // nothing else (fuzzy name, shared domain) gets a contact in.
+        // Linked contacts below still come through: a link is the user
+        // saying so directly.
+        if (exactKey) return exactCompanyKey(c.company) === exactKey;
         if (companiesMatch(c.company, fields.company)) return true;
         const d = contactDomain(c.email);
         if (d && domains.has(d)) {
@@ -5004,7 +5028,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       }
     }
     return matched;
-  }, [fields.company, fields.emailDomain, fields.website, hubspotContacts, isNew, settings.companyContactLinks, settings.companyContactExclusions]);
+  }, [fields.company, fields.emailDomain, fields.website, fields.exactContactMatch, hubspotContacts, isNew, settings.companyContactLinks, settings.companyContactExclusions]);
   const contactsWithHidden = useMemo(() => buildCompanyContacts(true), [buildCompanyContacts]);
   const contactsWithoutHidden = useMemo(() => buildCompanyContacts(false), [buildCompanyContacts]);
   // Local contact state - updated optimistically after HubSpot saves
@@ -13319,6 +13343,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     style={{ padding: '0.2rem 0.6rem', border: 'none', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: contactView === 'orgchart' ? '#fff' : 'transparent', color: contactView === 'orgchart' ? '#1E293B' : '#94A3B8', boxShadow: contactView === 'orgchart' ? '0 1px 2px rgba(0,0,0,0.08)' : 'none' }}
                   >By Category</button>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => set('exactContactMatch', fields.exactContactMatch !== true)}
+                  aria-pressed={fields.exactContactMatch === true}
+                  title={fields.exactContactMatch === true
+                    ? `Only contacts whose Company is exactly "${fields.company}" (plus any you linked) are shown. Click to go back to the usual matching, which also takes similar names and contacts on this company's email domains.`
+                    : `Show only contacts whose Company is exactly "${fields.company}". Similar names (for example the parent company without the part in brackets) and email-domain matches stop counting. Linked contacts stay.`}
+                  style={{
+                    padding: '0.25rem 0.6rem',
+                    border: '1px solid ' + (fields.exactContactMatch === true ? '#2563EB' : 'var(--color-border)'),
+                    borderRadius: '4px',
+                    background: fields.exactContactMatch === true ? '#DBEAFE' : '#fff',
+                    color: fields.exactContactMatch === true ? '#1E3A8A' : 'var(--color-text-secondary)',
+                    fontSize: '0.68rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                  }}
+                >{fields.exactContactMatch === true ? '✓ Exact name only' : 'Exact name only'}</button>
                 <button
                   type="button"
                   onClick={() => setShowHiddenContacts(v => !v)}
