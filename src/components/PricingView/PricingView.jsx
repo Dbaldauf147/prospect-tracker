@@ -27,6 +27,7 @@ import { CompareTab } from './CompareTab';
 import { BrokerFeesTab } from './BrokerFeesTab';
 import { S2CTab } from './S2CTab';
 import { migrateS2cTags } from '../../utils/s2cTags';
+import { PRICING_MIRRORED_KEYS, PRICING_MIRROR_EVENT, queuePricingMirrorPush } from '../../utils/pricingMirroredKeys';
 import { CalculatorTab } from './CalculatorTab';
 import { ServicesTab } from './ServicesTab';
 import { SERVICE_RENAMED_EVENT } from '../../utils/serviceRenameRunner';
@@ -2408,6 +2409,24 @@ function parsePctInput(s) {
   return n > 1 ? n / 100 : n;
 }
 
+// The mirrored keys (utils/pricingMirroredKeys), read off IndexedDB into the
+// shape this page holds them in. Shared by the mount load's baseline and the
+// reload a cloud sync triggers, so both compare against what the save
+// effects will write. Null when the stored value isn't usable.
+const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+function mirroredStateFrom(key, v) {
+  if (key === 'servicesCompleted') return Array.isArray(v) ? v : null;
+  if (!isPlainObject(v)) return null;
+  if (key === 'lineItemServices') return sharedLineItemServices(v);
+  if (key === 's2cLineItemTags') return migrateS2cTags(v);
+  if (key === 'linkedToOptionsList') {
+    return { custom: Array.isArray(v.custom) ? v.custom : [], hidden: Array.isArray(v.hidden) ? v.hidden : [] };
+  }
+  return v;
+}
+const isEmptyMirrorValue = (v) => v == null
+  || (Array.isArray(v) ? v.length === 0 : (typeof v === 'object' && Object.values(v).every(x => Array.isArray(x) ? x.length === 0 : x == null)));
+
 export function PricingView({ settings } = {}) {
   const { user, isAdmin } = useAuth();
   const solutionsOptions = useMemo(() => {
@@ -2530,12 +2549,31 @@ export function PricingView({ settings } = {}) {
   // The saved Fee Builder settings as last written, for handleFile to read
   // without waiting on a render.
   const feeBuilderSavedRef = useRef({});
+  // What each cloud-mirrored key last held as loaded or synced, as JSON. A
+  // save effect sends a key to the cloud only when it differs: opening the
+  // page re-saves every key with what it just read, and pushing that would
+  // stamp a stale copy as newest and let it replace a newer one.
+  const mirrorBaselineRef = useRef({});
+  const saveMirrored = (key, value, what) => {
+    dbPut(STORE, value, key).catch(err => console.warn(`Failed to save ${what}:`, err));
+    const json = JSON.stringify(value ?? null);
+    const prev = mirrorBaselineRef.current[key];
+    mirrorBaselineRef.current[key] = json;
+    if (prev === json) return;
+    // A first save of nothing is the page's empty default, not an edit.
+    if (prev === undefined && isEmptyMirrorValue(value)) return;
+    queuePricingMirrorPush(key);
+  };
 
   // Hydrate from IndexedDB on first mount.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
+        for (const key of PRICING_MIRRORED_KEYS) {
+          const v = mirroredStateFrom(key, await dbGet(STORE, key));
+          if (v != null) mirrorBaselineRef.current[key] = JSON.stringify(v);
+        }
         // Linked-To defaults are loaded first from their own key so
         // they survive even if the main cache is wiped (parser bump).
         // Fall back to the legacy field on the main cache for users
@@ -2740,38 +2778,70 @@ export function PricingView({ settings } = {}) {
     setAltFees(prev => repriceLinkedFees(prev, globalGmPct, { feeEscalator: annualEscalator, costEscalator, termMonths }));
   }, [globalGmPct, annualEscalator, costEscalator, termMonths]);
 
+  // A sync from the cloud (utils/pricingMirroredKeys) rewrote one or more
+  // of the mirrored keys: read them back in. The baseline is set first, so
+  // the save effects this sets off see nothing new and push nothing back.
+  useEffect(() => {
+    const setters = {
+      lineItemServices: setLineItemServices,
+      lineItemPriority: setLineItemPriority,
+      lineItemIgnored: setLineItemIgnored,
+      lineItemSharedOk: setLineItemSharedOk,
+      linkedToDefaults: setLinkedToDefaults,
+      linkedToUnitDefaults: setLinkedToUnitDefaults,
+      linkedToStartMonthDefaults: setLinkedToStartMonthDefaults,
+      linkedToPassThroughDefaults: setLinkedToPassThroughDefaults,
+      feeDefaults: setFeeDefaults,
+      linkedToOptionsList: setLinkedToOptionsList,
+      s2cLineItemTags: setS2cLineItemTags,
+      serviceFeeStructures: setServiceFeeStructures,
+      servicesCompleted: setServicesCompleted,
+    };
+    const reload = async () => {
+      for (const key of PRICING_MIRRORED_KEYS) {
+        let v = null;
+        try { v = mirroredStateFrom(key, await dbGet(STORE, key)); } catch { /* keep what's on screen */ }
+        if (v == null) continue;
+        mirrorBaselineRef.current[key] = JSON.stringify(v);
+        setters[key]?.(v);
+      }
+    };
+    window.addEventListener(PRICING_MIRROR_EVENT, reload);
+    return () => window.removeEventListener(PRICING_MIRROR_EVENT, reload);
+  }, []);
+
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
   // file removal). The main-cache copy above is kept for in-app
   // state-snapshot exports.
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, linkedToDefaults, LINKED_TO_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to defaults:', err));
+    saveMirrored(LINKED_TO_DEFAULTS_KEY, linkedToDefaults, 'linked-to defaults');
   }, [linkedToDefaults]);
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, linkedToUnitDefaults, LINKED_TO_UNIT_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to unit defaults:', err));
+    saveMirrored(LINKED_TO_UNIT_DEFAULTS_KEY, linkedToUnitDefaults, 'linked-to unit defaults');
   }, [linkedToUnitDefaults]);
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, linkedToOptionsList, LINKED_TO_OPTIONS_KEY).catch(err => console.warn('Failed to save linked-to options list:', err));
+    saveMirrored(LINKED_TO_OPTIONS_KEY, linkedToOptionsList, 'linked-to options list');
   }, [linkedToOptionsList]);
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, linkedToStartMonthDefaults, LINKED_TO_START_MONTH_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to start-month defaults:', err));
+    saveMirrored(LINKED_TO_START_MONTH_DEFAULTS_KEY, linkedToStartMonthDefaults, 'linked-to start-month defaults');
   }, [linkedToStartMonthDefaults]);
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, linkedToPassThroughDefaults, LINKED_TO_PASS_THROUGH_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to pass-through defaults:', err));
+    saveMirrored(LINKED_TO_PASS_THROUGH_DEFAULTS_KEY, linkedToPassThroughDefaults, 'linked-to pass-through defaults');
   }, [linkedToPassThroughDefaults]);
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, s2cLineItemTags, S2C_LINE_ITEM_TAGS_KEY).catch(err => console.warn('Failed to save S2C line item tags:', err));
+    saveMirrored(S2C_LINE_ITEM_TAGS_KEY, s2cLineItemTags, 'S2C line item tags');
   }, [s2cLineItemTags]);
 
   useEffect(() => {
@@ -2781,7 +2851,7 @@ export function PricingView({ settings } = {}) {
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, feeDefaults, FEE_DEFAULTS_KEY).catch(err => console.warn('Failed to save fee defaults:', err));
+    saveMirrored(FEE_DEFAULTS_KEY, feeDefaults, 'fee defaults');
   }, [feeDefaults]);
 
   // Line items on the active option that still need a service, for the
@@ -2805,7 +2875,7 @@ export function PricingView({ settings } = {}) {
   // their cached copy without waiting for a remount.
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, lineItemServices, LINE_ITEM_SERVICES_KEY).catch(err => console.warn('Failed to save line-item services:', err));
+    saveMirrored(LINE_ITEM_SERVICES_KEY, lineItemServices, 'line-item services');
     try {
       window.dispatchEvent(new CustomEvent(LINE_ITEM_SERVICES_EVENT, { detail: lineItemServices }));
     } catch { /* CustomEvent unavailable */ }
@@ -2816,12 +2886,12 @@ export function PricingView({ settings } = {}) {
   // ignore flag is only consumed inside this view's mapping table.
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, lineItemIgnored, LINE_ITEM_IGNORED_KEY).catch(err => console.warn('Failed to save ignored line items:', err));
+    saveMirrored(LINE_ITEM_IGNORED_KEY, lineItemIgnored, 'ignored line items');
   }, [lineItemIgnored]);
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, lineItemPriority, LINE_ITEM_PRIORITY_KEY).catch(err => console.warn('Failed to save line-item priority:', err));
+    saveMirrored(LINE_ITEM_PRIORITY_KEY, lineItemPriority, 'line-item priority');
     try {
       window.dispatchEvent(new CustomEvent(LINE_ITEM_PRIORITY_EVENT, { detail: lineItemPriority }));
     } catch { /* CustomEvent unavailable */ }
@@ -2829,7 +2899,7 @@ export function PricingView({ settings } = {}) {
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, lineItemSharedOk, LINE_ITEM_SHARED_OK_KEY).catch(err => console.warn('Failed to save kept-shared line items:', err));
+    saveMirrored(LINE_ITEM_SHARED_OK_KEY, lineItemSharedOk, 'kept-shared line items');
   }, [lineItemSharedOk]);
 
   // Line items on the active option tied to several services with no
@@ -2900,12 +2970,12 @@ export function PricingView({ settings } = {}) {
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, serviceFeeStructures, SERVICE_FEE_STRUCTURES_KEY).catch(err => console.warn('Failed to save service fee structures:', err));
+    saveMirrored(SERVICE_FEE_STRUCTURES_KEY, serviceFeeStructures, 'service fee structures');
   }, [serviceFeeStructures]);
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, servicesCompleted, SERVICES_COMPLETED_KEY).catch(err => console.warn('Failed to save completed services:', err));
+    saveMirrored(SERVICES_COMPLETED_KEY, servicesCompleted, 'completed services');
   }, [servicesCompleted]);
 
   useEffect(() => {

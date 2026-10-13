@@ -84,8 +84,44 @@ export function dbMirrorId(store, dbKey) {
 
 // Mirror an IndexedDB record. Same newest-wins rules as a localStorage key;
 // the value is JSON on the way to Firestore and back.
-export function registerMirroredDbKey(store, dbKey, eventName) {
-  registry.set(dbMirrorId(store, dbKey), { kind: 'idb', eventName, store, dbKey });
+//
+// `merge(local, remote)` (optional) is used once, the first time a browser
+// holding data from before the key was mirrored meets a cloud copy. Without
+// it that unstamped local value is adopted whole and pushed, which is right
+// for a roster but wrong for a map built up a row at a time on more than
+// one machine: whichever machine signs in last would erase the rows the
+// other had added. With it, both sides' rows survive.
+export function registerMirroredDbKey(store, dbKey, eventName, { merge = null } = {}) {
+  registry.set(dbMirrorId(store, dbKey), { kind: 'idb', eventName, store, dbKey, merge });
+}
+
+// A merge for registerMirroredDbKey: two lists are unioned; two maps keep
+// every key either side has, the cloud's value winning where both have one
+// unless the cloud's is empty. Anything else takes the cloud copy.
+const isEmptyValue = (v) => v == null || v === ''
+  || (Array.isArray(v) && v.length === 0)
+  || (typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0);
+export function mergeMirroredMaps(local, remote) {
+  if (Array.isArray(local) && Array.isArray(remote)) {
+    const seen = new Set();
+    const out = [];
+    for (const v of [...remote, ...local]) {
+      const k = JSON.stringify(v);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(v);
+    }
+    return out;
+  }
+  const isMap = (v) => v && typeof v === 'object' && !Array.isArray(v);
+  if (isMap(local) && isMap(remote)) {
+    const out = { ...local };
+    for (const [k, v] of Object.entries(remote)) {
+      if (!isEmptyValue(v) || !(k in out)) out[k] = v;
+    }
+    return out;
+  }
+  return remote;
 }
 
 // dbPut + "remember to sync it". Call sites that write a mirrored record go
@@ -320,6 +356,17 @@ async function hydrateKey(userId, key, entry) {
   // The restore case is untouched — a cleared browser has no local value at
   // all, so it falls through to the cloud copy below.
   if (localAt === 0 && localRaw != null) {
+    if (entry.merge && remote.json) {
+      let merged = null;
+      try { merged = JSON.stringify(entry.merge(JSON.parse(localRaw), JSON.parse(remote.json))); }
+      catch (err) { console.warn(`localMirror: merge failed for "${key}", keeping this browser's copy`, err); }
+      if (merged != null && merged !== localRaw) {
+        await writeLocal(key, entry, merged);
+        await pushNow(key);
+        fire(eventName);
+        return true;
+      }
+    }
     await pushNow(key);   // stamps as it goes, so this happens once
     return false;
   }
@@ -375,6 +422,7 @@ async function loadMirroredStores() {
     import('./soldWarningIgnore.js'),
     import('./fillerIgnoreStore.js'),
     import('./pricingOptionLinks.js'),
+    import('./pricingMirroredKeys.js'),
     import('./weeklyActivityLog.js'),
     import('./mirroredWorkKeys.js'),
     import('../components/DailySuccess/goalsStore.js'),

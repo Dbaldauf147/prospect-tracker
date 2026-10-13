@@ -34,6 +34,7 @@ import {
   renameWorkbookServices, renameClientScopeMap, renameEstimate, renamePipeline, renameHiddenBands,
 } from './serviceRenamePlans';
 import { renameInLowerList, renameInLowerKeyMap } from './serviceNameMerges';
+import { queuePricingMirrorPush } from './pricingMirroredKeys.js';
 
 // Fired with { from, to } once a rename has been written, so a view holding
 // its own copy (Pricing, Opps) can apply it to what it has on screen rather
@@ -109,7 +110,9 @@ export async function renameServiceLocal(uid, { from, to }) {
   const out = {};
   await step('pricing', out, async () => {
     let n = 0;
-    const put = async (key, value) => { await dbPut(PRICING_STORE, value, key); n += 1; };
+    // Mirrored keys (utils/pricingMirroredKeys) go up to the cloud as well,
+    // or the rename would be undone by the next sync from another machine.
+    const put = async (key, value) => { await dbPut(PRICING_STORE, value, key); queuePricingMirrorPush(key); n += 1; };
     const lis = renameLineItemServices(await dbGet(PRICING_STORE, 'lineItemServices'), from, to);
     if (lis) await put('lineItemServices', lis);
     const pos = renamePricingOptionServices(await dbGet(PRICING_STORE, 'pricingOptionServices'), from, to);
