@@ -5,7 +5,7 @@ import { contactDisplayName } from '../../utils/contactRosters';
 import { TAG_OPTIONS, TAG_SCORE_EXCLUDED, MET_IN_PERSON_TAG, recordKeepsTag, tagStateFrom, withTagAnswer, withTagStatus, tagKey, findTagRecord, tagRecordKeyFor, recordForVerdict, sameTagRecord, planTagEdit, tagVocabulary, saveTagReview, mergeTagEdit, tagListSignature, isStaleTagEcho, TAG_ECHO_WINDOW_MS } from '../../utils/contactTagReview';
 import { contactEditPropsEqual, contactTagString } from '../../utils/contactEditProps';
 import { createTagWriter } from '../../utils/tagWriteQueue';
-import { applyTagPreset, presetTagsFrom, savePreset, deletePreset, presetSummary } from '../../utils/tagPresets';
+import { applyTagPreset, presetTagsFrom, savePreset, deletePreset, presetSummary, applyTagPresetToContact } from '../../utils/tagPresets';
 
 // Header cells for the tag table's two column groups (Answer / Status) and
 // for the choices under them. Hoisted out of the render so the two header
@@ -4788,6 +4788,10 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
 // the Tags field so a group of contacts can be answered for a tag in one go.
 // `tagModes` is which Mode each answer sits under: Yes keeps the tag on, so
 // it goes with Replace; No and Not sure take it off, so they go with Remove.
+// The Bulk Edit field that applies a saved tag preset (utils/tagPresets).
+// Not a contact property: it writes dans_tags and the tag review records.
+const TAG_PRESET_FIELD = '_tagPreset';
+
 const BULK_TAG_ANSWERS = [
   { mode: 'yes', label: 'Yes', tagModes: ['replace'], help: 'Also records Yes for each tag above on every selected contact.' },
   { mode: 'no', label: 'No', tagModes: ['remove'], help: 'Also records No for each tag above on every selected contact.' },
@@ -7912,6 +7916,39 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       return;
     }
 
+    // A saved tag preset, applied to every selected contact: the records go
+    // to contactTagReview in one settings write (per-contact paths, so a
+    // burst can't drop answers), then each contact's HubSpot tag list is
+    // pushed only where the preset changed it.
+    const preset = bulkField === TAG_PRESET_FIELD
+      ? (settingsRef.current?.tagPresets || []).find(p => p.id === bulkValue)
+      : null;
+    const presetTags = new Map();
+    if (bulkField === TAG_PRESET_FIELD) {
+      if (!preset) { setBulkApplying(false); return; }
+      const review = settingsRef.current?.contactTagReview || {};
+      const paths = {};
+      for (const c of targets) {
+        const cid = c.id || c.vid;
+        if (!cid) continue;
+        const out = applyTagPresetToContact({
+          dansTags: c.dans_tags || c.dan_s_tags || c.dans_tag || '',
+          records: review[String(cid)] || {},
+          preset,
+          tags: allTagOptions,
+        });
+        if (out.recordsChanged) paths[String(cid)] = out.records;
+        if (out.tagsChanged) presetTags.set(String(cid), out.dansTags);
+      }
+      if (Object.keys(paths).length > 0) {
+        if (updateSettingsPath) {
+          updateSettingsPath(Object.fromEntries(Object.entries(paths).map(([cid, map]) => [`contactTagReview.${cid}`, map])));
+        } else {
+          updateSettings({ contactTagReview: { ...review, ...paths } });
+        }
+      }
+    }
+
     // Tag answers - the contact popup's Yes / No / Not sure, set for every
     // selected contact at once. The answer goes to contactTagReview (one
     // settings write for the whole batch, so a burst can't drop answers),
@@ -7975,7 +8012,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       const cid = c.id || c.vid;
       if (!cid) continue;
       let nextVal = isCompany ? companyValue : bulkValue;
-      if (bulkField === 'dans_tags') {
+      if (preset) {
+        if (!presetTags.has(String(cid))) continue;
+        nextVal = presetTags.get(String(cid));
+      } else if (bulkField === 'dans_tags') {
         // planTagEdit matches on tagKey, so a remove aimed at one spelling
         // also drops the other, and a contact with nothing to change is
         // left alone rather than rewritten.
@@ -7994,7 +8034,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         if (!dirty || cur === before) continue;
         nextVal = cur;
       }
-      const properties = { [bulkField]: nextVal };
+      const properties = { [preset ? 'dans_tags' : bulkField]: nextVal };
       if (c._localOnly) {
         try {
           await updateHubspotCache(draft => {
@@ -13769,11 +13809,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             { key: 'jobtitle', label: 'Title', mode: 'single' },
             { key: 'company', label: 'Company', mode: 'single' },
             { key: 'dans_tags', label: 'Tags / Categories', mode: 'tags' },
+            { key: TAG_PRESET_FIELD, label: 'Tag preset', mode: 'preset' },
             { key: 'city', label: 'City', mode: 'single' },
             { key: 'country', label: 'Country', mode: 'single' },
             { key: 'notes', label: 'Notes (per-user)', mode: 'multi' },
           ];
           const def = FIELD_OPTIONS.find(f => f.key === bulkField) || FIELD_OPTIONS[0];
+          const tagPresetList = settings?.tagPresets || [];
           const supportsMode = bulkField === 'dans_tags' || bulkField === 'notes';
           const onCancel = () => { if (!bulkApplying) { setBulkEditOpen(false); setBulkValue(''); } };
           const answerChoices = bulkField === 'dans_tags' ? BULK_TAG_ANSWERS.filter(a => a.tagModes.includes(bulkMode)) : [];
@@ -13864,6 +13906,43 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         style={{ padding: '0.45rem 0.55rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.85rem', fontFamily: 'inherit', resize: 'vertical' }}
                       />
                     </label>
+                  ) : def.mode === 'preset' ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                      <div style={{ fontSize: '0.75rem', color: '#334155', fontWeight: 600 }}>Preset</div>
+                      {tagPresetList.length === 0 ? (
+                        <div style={{ fontSize: '0.75rem', color: '#64748B', lineHeight: 1.45 }}>
+                          No tag presets yet. Open a contact, answer its tags, and click <strong>+ Save as preset</strong> above its tag table. It shows up here to apply to everyone you've selected.
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                          {tagPresetList.map(p => {
+                            const active = bulkValue === p.id;
+                            return (
+                              <label
+                                key={p.id}
+                                style={{ display: 'flex', alignItems: 'flex-start', gap: '0.45rem', padding: '0.4rem 0.55rem', border: `1px solid ${active ? '#7C3AED' : '#E2E8F0'}`, borderRadius: 6, background: active ? '#F5F3FF' : '#fff', cursor: bulkApplying ? 'wait' : 'pointer' }}
+                              >
+                                <input
+                                  type="radio"
+                                  name="bulk-tag-preset"
+                                  checked={active}
+                                  disabled={bulkApplying}
+                                  onChange={() => setBulkValue(p.id)}
+                                  style={{ marginTop: 2 }}
+                                />
+                                <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#4C1D95' }}>{p.name}</span>
+                                  <span style={{ fontSize: '0.7rem', color: '#64748B' }}>{presetSummary(p)}</span>
+                                </span>
+                              </label>
+                            );
+                          })}
+                          <div style={{ fontSize: '0.68rem', color: '#64748B', lineHeight: 1.45 }}>
+                            Sets every answer the preset saved on each selected contact, the same as clicking it on one contact. Yes and Sold put the tag on in HubSpot; No, Not sure and Not sold take it off. Tags the preset doesn't mention are left alone.
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   ) : def.mode === 'tags' ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                       <div style={{ fontSize: '0.75rem', color: '#334155', fontWeight: 600 }}>Tags</div>
