@@ -19,6 +19,7 @@ import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 import { CompanyNewsScheduleModal } from './CompanyNewsScheduleModal';
 import { PEServicesReportModal } from './PEServicesReportModal';
 import { DataTable } from '../common/DataTable';
+import { buildZoomCsv, downloadZoomCsv } from '../../utils/zoomCsv';
 import { PasteAddModal } from '../TableView/PasteAddModal';
 import { splitPeOwners } from '../../utils/peOwners';
 import {
@@ -1311,6 +1312,26 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     ? sortedPeFirms.filter(p => (p.company || '').toLowerCase().includes(q))
     : sortedPeFirms;
 
+  // The firms on screen (CDM filter and search box applied) that the
+  // Decision Maker Found? column marks Not found, for the Zoom Export: the
+  // list to take into ZoomInfo to find someone to talk to at each.
+  const noDmFirms = useMemo(
+    () => filteredFirms.filter(pe => !(stageStatsByFirm.get(pe.id)?.decisionMakerNames || []).length),
+    [filteredFirms, stageStatsByFirm],
+  );
+  function downloadNoDmZoomExport() {
+    if (noDmFirms.length === 0) {
+      alert('Every firm shown here already has a decision maker found.');
+      return;
+    }
+    const { csv, kept } = buildZoomCsv(noDmFirms, prospects);
+    if (kept === 0) {
+      alert('Every firm shown here without a decision maker is excluded from ZoomInfo exports, so there is nothing to download.');
+      return;
+    }
+    downloadZoomCsv(csv, `pe-portfolio-no-decision-maker-${new Date().toISOString().slice(0, 10)}.csv`);
+  }
+
   // Firms written off on their company record whose PE Stage still reads as
   // a live relationship (see utils/peStages). Off the rows on screen rather
   // than the whole roster, so the banner's count is a count of rows the user
@@ -1643,6 +1664,12 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             );
           })()}
         </div>
+        <button
+          type="button"
+          onClick={downloadNoDmZoomExport}
+          title={`Download a ZoomInfo CSV (Company, Zoom Company ID, Zoom Company Name, Company URL) of the ${noDmFirms.length} firm${noDmFirms.length === 1 ? '' : 's'} shown here with no decision maker found`}
+          style={{ padding: '0.4rem 0.7rem', border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff', fontSize: '0.72rem', fontWeight: 600, color: '#334155', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+        >Zoom Export: no DM ({noDmFirms.length})</button>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
