@@ -1,4 +1,4 @@
-import { tagKey, findTagRecord, tagStateFrom, recordKeepsTag } from './contactTagReview.js';
+import { tagKey, findTagRecord, tagStateFrom, recordKeepsTag, sameTagRecord, planTagEdit } from './contactTagReview.js';
 
 // Tag presets: a named set of answers for the contact popup's tag table,
 // applied in one click.
@@ -78,4 +78,45 @@ export function presetSummary(preset) {
   if (on.length) parts.push(`Tags on: ${on.join(', ')}`);
   if (rest) parts.push(`${rest} other answer${rest === 1 ? '' : 's'} (No / Not sure / Not sold)`);
   return parts.join('. ') || 'No answers saved';
+}
+
+// One contact under a preset applied in bulk (the company popup's Bulk Edit):
+// the same result applyTagPreset gives the popup's table, worked from what a
+// bulk edit has in hand - the contact's dans_tags string and its record map.
+//
+// Every tag the preset names gets the preset's record, under the spelling
+// the map already uses for it (a twin under the other spelling is dropped),
+// and the HubSpot tag follows that record: on for a Yes or a Sold, off for
+// a No, a Not sure or a Not sold. Tags the preset doesn't name are left as
+// they are. With `tags` (the tag vocabulary) a preset tag is written under
+// the vocabulary's spelling, and one the vocabulary no longer has is
+// skipped, as applyTagPreset does.
+//
+// Returns { records, recordsChanged, dansTags, tagsChanged }.
+export function applyTagPresetToContact({ dansTags = '', records = {}, preset, tags = null }) {
+  const byKey = tags ? new Map(tags.map(t => [tagKey(t), t])) : null;
+  const nextRecords = { ...(records || {}) };
+  let recordsChanged = false;
+  const on = [];
+  const off = [];
+  for (const [rawTag, raw] of Object.entries(preset?.tags || {})) {
+    const tag = byKey ? byKey.get(tagKey(rawTag)) : rawTag;
+    if (!tag) continue;
+    const record = { answer: raw?.answer || '', status: raw?.status || '' };
+    (recordKeepsTag(record) ? on : off).push(tag);
+    const keys = Object.keys(nextRecords).filter(k => tagKey(k) === tagKey(tag));
+    const key = keys[0] || tag;
+    if (!(keys.length === 1 && sameTagRecord(nextRecords[key], record))) {
+      for (const k of keys) delete nextRecords[k];
+      if (record.answer || record.status) nextRecords[key] = record;
+      recordsChanged = true;
+    }
+  }
+  let cur = String(dansTags || '');
+  for (const [mode, list] of [['remove', off], ['add', on]]) {
+    if (list.length === 0) continue;
+    const step = planTagEdit(mode, list, cur);
+    if (step.action === 'write') cur = step.tags;
+  }
+  return { records: nextRecords, recordsChanged, dansTags: cur, tagsChanged: cur !== String(dansTags || '') };
 }
