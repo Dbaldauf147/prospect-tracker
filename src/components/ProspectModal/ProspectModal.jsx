@@ -135,6 +135,7 @@ import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { SENTIMENT_OPTIONS, sentimentFor, sentimentMark } from '../../utils/contactSentiment';
 import { BUCKETS, contactHasTag, contactIsHidden, getContactTags } from './contactTags.js';
 import { ContactsTable } from './ContactsTable.jsx';
+import { ContactPasteModal } from './ContactPasteModal.jsx';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 import { slimHubspotContact, withoutUnknownBlanks } from '../../utils/hubspotContactFields';
 import { hubspotFailureDetail } from '../../utils/hubspotFailureDetail';
@@ -5882,6 +5883,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const contactsImportRef = useRef(null);
   const [contactsDragging, setContactsDragging] = useState(false);
   const [contactsUploadPreview, setContactsUploadPreview] = useState(null); // { fileName, headers, rows, mapping }
+  const [pasteContactsOpen, setPasteContactsOpen] = useState(false);
   const [contactsImporting, setContactsImporting] = useState(false);
   const [refreshingHubspot, setRefreshingHubspot] = useState(false);
   const [refreshHubspotError, setRefreshHubspotError] = useState('');
@@ -7089,6 +7091,24 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     );
   }, [contactsUploadPreview, fields.company, companyContacts, handleSaveContactTeamName, handleSaveContactNote]);
 
+
+  // Contacts added from the Paste Contacts popup. Shown straight away and
+  // pinned to this company in ONE settings write: linkContactToCompany
+  // reads the links map from its closure, so calling it once per contact
+  // in a loop would keep only the last one.
+  const handlePastedContactsAdded = useCallback((records) => {
+    const ids = records.map(r => String(r.id || r.vid || '')).filter(Boolean);
+    setLocalContacts(prev => {
+      const have = new Set(prev.map(c => String(c.id || c.vid)));
+      return [...prev, ...records.filter(r => !have.has(String(r.id || r.vid)))];
+    });
+    const key = String(fields.company || '').trim().toLowerCase();
+    if (!key || ids.length === 0) return;
+    const cur = settings.companyContactLinks || {};
+    const list = (Array.isArray(cur[key]) ? cur[key] : []).map(String);
+    const fresh = ids.filter(id => !list.includes(id));
+    if (fresh.length) updateSettings({ companyContactLinks: { ...cur, [key]: [...list, ...fresh] } });
+  }, [fields.company, settings.companyContactLinks, updateSettings]);
 
   const handleCloseContactEdit = useCallback(() => {
     setEditingContact(null);
@@ -13447,6 +13467,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   </>
                 )}
                 <button
+                  onClick={() => setPasteContactsOpen(true)}
+                  title="Paste text about several people (a LinkedIn search, spreadsheet columns, a typed list) and add them all at once"
+                  style={{ marginLeft: '0.4rem', padding: '0.2rem 0.6rem', border: '1px solid var(--color-accent)', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: '#fff', color: 'var(--color-accent)' }}
+                >Paste Contacts</button>
+                <button
                   onClick={() => { setAddingContact(true); setEditingContact({ company: fields.company, firstname: '', lastname: '', email: '', phone: '', mobilephone: '', jobtitle: '', hs_linkedin_url: '', dans_tags: '' }); }}
                   style={{ marginLeft: '0.4rem', padding: '0.2rem 0.6rem', border: 'none', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: 'var(--color-accent)', color: '#fff' }}
                 >+ Add Contact</button>
@@ -13822,6 +13847,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           companyContacts={companyContacts}
           emailDomains={(fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)}
           companyNames={(prospects || []).map(p => p.company).filter(Boolean)}
+        />
+      )}
+      {pasteContactsOpen && (
+        <ContactPasteModal
+          company={fields.company}
+          emailDomain={fields.emailDomain || ''}
+          existingContacts={companyContacts}
+          onClose={() => setPasteContactsOpen(false)}
+          onAdded={handlePastedContactsAdded}
         />
       )}
       {contactsUploadPreview && createPortal(
