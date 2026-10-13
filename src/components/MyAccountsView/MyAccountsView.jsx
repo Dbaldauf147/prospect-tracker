@@ -685,30 +685,32 @@ function StatusMismatchWarning({ row, onUpdate }) {
             boxShadow: '0 4px 12px rgba(0,0,0,0.15)', padding: '0.6rem 0.8rem', minWidth: '220px',
           }}
         >
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)', marginBottom: '0.3rem' }}>Status Suggestion</div>
-          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}>
-            Current: <strong>{row.status}</strong><br/>
-            Opps suggests: <strong>{row.suggestedStatus}</strong>
-          </div>
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)', marginBottom: '0.5rem' }}>Which status should this account have?</div>
           <div style={{ display: 'flex', gap: '0.4rem', flexDirection: 'column' }}>
             <button
               onClick={() => { onUpdate(row.id, { status: row.suggestedStatus }); setOpen(false); }}
-              title="Take the opps-derived My Accounts status and write it into the Table View row"
+              title="Write the opps-derived status into the Table View row"
               style={{
-                padding: '0.4rem 0.6rem', border: 'none', borderRadius: '6px',
-                background: 'var(--color-accent)', color: '#fff', fontSize: '0.72rem', fontWeight: 600,
+                padding: '0.45rem 0.6rem', border: 'none', borderRadius: '6px',
+                background: 'var(--color-accent)', color: '#fff', textAlign: 'left',
                 cursor: 'pointer', fontFamily: 'inherit',
               }}
-            >Import Table View Status</button>
+            >
+              <div style={{ fontSize: '0.62rem', fontWeight: 500, opacity: 0.85 }}>Change to (from Opps)</div>
+              <div style={{ fontSize: '0.78rem', fontWeight: 700 }}>{row.suggestedStatus}</div>
+            </button>
             <button
               onClick={() => { onUpdate(row.id, { hideStatusSuggestion: true }); setOpen(false); }}
               title="Keep the Table View status as-is and stop suggesting changes for this company"
               style={{
-                padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
-                background: '#fff', color: 'var(--color-text)', fontSize: '0.72rem', fontWeight: 600,
+                padding: '0.45rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                background: '#fff', color: 'var(--color-text)', textAlign: 'left',
                 cursor: 'pointer', fontFamily: 'inherit',
               }}
-            >Update Table View Status</button>
+            >
+              <div style={{ fontSize: '0.62rem', fontWeight: 500, color: 'var(--color-text-secondary)' }}>Keep current (stop suggesting)</div>
+              <div style={{ fontSize: '0.78rem', fontWeight: 700 }}>{row.status || 'No status'}</div>
+            </button>
             <button
               onClick={() => { onUpdate(row.id, { dismissedSuggestedStatus: row.suggestedStatus }); setOpen(false); }}
               title="Dismiss this specific suggestion for now. It will reappear if the suggested status changes."
@@ -717,7 +719,7 @@ function StatusMismatchWarning({ row, onUpdate }) {
                 background: 'var(--color-surface)', color: 'var(--color-text-secondary)', fontSize: '0.72rem', fontWeight: 600,
                 cursor: 'pointer', fontFamily: 'inherit',
               }}
-            >Ignore</button>
+            >Decide later (hide for now)</button>
           </div>
         </div>,
         document.body
