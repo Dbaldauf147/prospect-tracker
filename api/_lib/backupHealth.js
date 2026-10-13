@@ -61,19 +61,35 @@ const ageText = (ms) => {
 // the scheduled job started, written by api/daily-backup.js); `run` is this
 // user's backupRuns doc. Either may be null: the run log only exists once
 // the fan-out version of the job has run, and says nothing until then.
-export function nightlyCause({ cron = null, run = null, newest = null, now = Date.now() } = {}) {
+//
+// Never returns '' for a stale backup: a banner that says the nightly
+// stopped and gives no reason leaves nobody able to tell "it hasn't run
+// yet" from "it ran and skipped you" from "Vercel isn't calling it". `uid`
+// is the account asking, for the cases where its run record doesn't exist.
+export function nightlyCause({ cron = null, run = null, newest = null, uid = '', now = Date.now() } = {}) {
+  const who = String(run?.uid || uid || '');
   const cronAt = Date.parse(cron?.startedAt || '');
   if (Number.isFinite(cronAt) && (now - cronAt) / 3600000 > STALE_HOURS) {
     return ` The scheduled job itself last started ${ageText(now - cronAt)} ago, so Vercel is not running the cron.`;
   }
-  const mine = (cron?.results || []).find(r => r && r.uid === run?.uid);
+  const mine = (cron?.results || []).find(r => r && who && r.uid === who);
   if (mine?.status === 'error' && mine.error) return ` Last night's run failed for this account: ${String(mine.error).slice(0, 200)}`;
   if (run?.lastStatus === 'error' && run.lastError) return ` The last attempt failed: ${String(run.lastError).slice(0, 200)}`;
   const attemptAt = Date.parse(run?.lastAttemptAt || '');
   if (Number.isFinite(attemptAt) && (newest == null || attemptAt > newest + 3600000)) {
     return ` The last attempt started ${ageText(now - attemptAt)} ago and never finished, most likely cut off at the time limit.`;
   }
-  return '';
+  if (!Number.isFinite(cronAt)) {
+    return ' The nightly job has not recorded a run yet. It runs each day at 11:00 UTC; use Check again after that.';
+  }
+  if (mine?.status === 'skipped-empty') return " Last night's run found nothing to back up for this account.";
+  if (!cron?.finishedAt) {
+    return ` The nightly job started ${ageText(now - cronAt)} ago and has not finished.`;
+  }
+  if (Array.isArray(cron?.results) && !mine) {
+    return ` The nightly job ran ${ageText(now - cronAt)} ago but did not include this account (it backed up ${cron.results.length} other${cron.results.length === 1 ? '' : 's'}).`;
+  }
+  return ` The nightly job last ran ${ageText(now - cronAt)} ago without saving a nightly file for this account.`;
 }
 
 /**
@@ -82,7 +98,7 @@ export function nightlyCause({ cron = null, run = null, newest = null, now = Dat
  * `files` is the user's backups ({ name, createdTime }), `probeError` the
  * probe's failure message ('' when it passed), `listError` the listing's.
  */
-export function assessBackupHealth({ configured = true, files = [], probeError = '', listError = '', cron = null, run = null, now = Date.now() } = {}) {
+export function assessBackupHealth({ configured = true, files = [], probeError = '', listError = '', cron = null, run = null, uid = '', now = Date.now() } = {}) {
   if (!configured) {
     return { ok: false, problem: 'not-configured', detail: 'Cloud backups are not set up (BACKUP_GCS_BUCKET is missing).', newestAt: null };
   }
@@ -101,7 +117,7 @@ export function assessBackupHealth({ configured = true, files = [], probeError =
   const nightly = (files || []).filter(f => f && !/-manual-/.test(String(f.name || '')));
   const times = nightly.map(f => Date.parse(f.createdTime)).filter(Number.isFinite);
   if (!times.length) {
-    return { ok: false, problem: 'none', detail: `No nightly cloud backup has been saved yet.${nightlyCause({ cron, run, now })}`, newestAt: null };
+    return { ok: false, problem: 'none', detail: `No nightly cloud backup has been saved yet.${nightlyCause({ cron, run, uid, now })}`, newestAt: null };
   }
   const newest = Math.max(...times);
   const hours = (now - newest) / 3600000;
@@ -110,7 +126,7 @@ export function assessBackupHealth({ configured = true, files = [], probeError =
     return {
       ok: false,
       problem: 'stale',
-      detail: `The last nightly cloud backup was ${days >= 1 ? `${days} day${days === 1 ? '' : 's'}` : `${Math.round(hours)} hours`} ago, so the nightly backup has stopped running.${nightlyCause({ cron, run, newest, now })}`,
+      detail: `The last nightly cloud backup was ${days >= 1 ? `${days} day${days === 1 ? '' : 's'}` : `${Math.round(hours)} hours`} ago, so the nightly backup has stopped running.${nightlyCause({ cron, run, newest, uid, now })}`,
       newestAt: new Date(newest).toISOString(),
     };
   }

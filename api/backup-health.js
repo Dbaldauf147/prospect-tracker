@@ -47,7 +47,7 @@ async function handler(req, res, auth) {
     run = r.exists ? { uid: auth.uid, ...r.data() } : null;
   } catch { /* leave them out */ }
 
-  return res.status(200).json({ ...assessBackupHealth({ files, probeError, listError, cron, run }), links });
+  return res.status(200).json({ ...assessBackupHealth({ files, probeError, listError, cron, run, uid: auth.uid }), links });
 }
 
 export default withAuth(handler);

@@ -63,7 +63,7 @@ check('links point at the project billing and bucket', fixLinks('tracker-3161a',
 {
   const old = [nightly('2026-07-21T11:00:00Z')];
   const plain = assessBackupHealth({ files: old, now });
-  check('no run records: the verdict is unchanged', /stopped running\.$/.test(plain.detail), true);
+  check('no run records: it says the job has not run yet, not nothing', /has not recorded a run yet/.test(plain.detail), true);
   const cronDead = assessBackupHealth({ files: old, cron: { startedAt: '2026-10-01T11:00:00Z' }, now });
   check('a cron that has not started in days is named', /scheduled job itself last started 11 days ago/.test(cronDead.detail), true);
   const failedForMe = assessBackupHealth({
@@ -75,7 +75,24 @@ check('links point at the project billing and bucket', fixLinks('tracker-3161a',
   check('a recorded error is quoted', nightlyCause({ run: { uid: 'u1', lastStatus: 'error', lastError: 'boom' }, now }), ' The last attempt failed: boom');
   const cutOff = nightlyCause({ run: { uid: 'u1', lastAttemptAt: '2026-10-12T11:00:00Z', lastStatus: 'ok' }, newest: Date.parse('2026-07-21T11:00:00Z'), now });
   check('an attempt with no file after it reads as cut off', /never finished/.test(cutOff), true);
-  check('none of it has an em dash', [cronDead.detail, failedForMe.detail, cutOff].some(t => t.includes('\u2014')), false);
+  const ranWithoutMe = assessBackupHealth({
+    files: old, now, uid: 'u1',
+    cron: { startedAt: '2026-10-12T11:00:00Z', finishedAt: '2026-10-12T11:03:00Z', results: [{ uid: 'u2', status: 'ok' }] },
+  });
+  check('a run that left this account out says so', /did not include this account \(it backed up 1 other\)/.test(ranWithoutMe.detail), true);
+  const unfinished = assessBackupHealth({ files: old, now, uid: 'u1', cron: { startedAt: '2026-10-12T11:00:00Z', finishedAt: null } });
+  check('a run still going (or killed) says so', /started .* ago and has not finished/.test(unfinished.detail), true);
+  const skipped = assessBackupHealth({
+    files: old, now, uid: 'u1',
+    cron: { startedAt: '2026-10-12T11:00:00Z', finishedAt: '2026-10-12T11:03:00Z', results: [{ uid: 'u1', status: 'skipped-empty' }] },
+  });
+  check('a skipped account says so', /found nothing to back up/.test(skipped.detail), true);
+  const quiet = assessBackupHealth({
+    files: old, now, uid: 'u1',
+    cron: { startedAt: '2026-10-12T11:00:00Z', finishedAt: '2026-10-12T11:03:00Z', results: [{ uid: 'u1', status: 'ok' }] },
+  });
+  check('a stale verdict never ends without a reason', /stopped running\.$/.test(quiet.detail), false);
+  check('none of it has an em dash', [cronDead.detail, failedForMe.detail, cutOff, plain.detail, ranWithoutMe.detail, unfinished.detail, skipped.detail, quiet.detail].some(t => t.includes('\u2014')), false);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
