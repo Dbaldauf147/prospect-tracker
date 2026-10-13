@@ -114,6 +114,13 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
     () => (contacts ? makeDecisionMakerLookup(contacts, { localFields, links, exclusions, gate: isKeyContact }) : null),
     [contacts, localFields, links, exclusions],
   );
+  // Everyone at the account, for the Contacts count: the same matching as
+  // the two lookups above (company overrides, pinned links, exclusions),
+  // with every contact let through.
+  const allLookup = useMemo(
+    () => (contacts ? makeDecisionMakerLookup(contacts, { localFields, links, exclusions, gate: () => true }) : null),
+    [contacts, localFields, links, exclusions],
+  );
   // Statuses to leave off the list, '' standing for "no status". Saved to
   // settings so the choice sticks across visits and devices; this visit's
   // own pick is held locally too, so the list answers the click at once and
@@ -169,9 +176,11 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
           prospect: p,
           activity: a,
           days: a ? daysSince(a.tsMs, now) : null,
+          // null while HubSpot contacts are still loading.
+          contactCount: allLookup ? allLookup.forAccount(p).length : null,
         };
       });
-  }, [shown, activity, query, now]);
+  }, [shown, activity, query, now, allLookup]);
 
   const canSetStatus = typeof updateProspect === 'function';
   const columns = useMemo(() => [
@@ -197,6 +206,18 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
       render: (r) => {
         const tint = TIER_TINTS[r.tier];
         return <span style={{ fontSize: '0.68rem', fontWeight: 700, color: tint.ink, background: tint.bg, border: `1px solid ${tint.border}`, padding: '0 7px', borderRadius: 999, whiteSpace: 'nowrap' }}>{r.tier}</span>;
+      },
+    },
+    {
+      key: 'contactCount', label: 'Contacts', defaultWidth: 90,
+      headerTitle: 'How many HubSpot contacts are at the account, counted the way the company popup lists them.',
+      getSortValue: r => r.contactCount,
+      getFilterValue: r => (r.contactCount == null ? '' : String(r.contactCount)),
+      exportValue: r => (r.contactCount == null ? '' : r.contactCount),
+      render: (r) => {
+        if (r.contactCount == null) return <span style={{ color: '#94A3B8' }}>Loading…</span>;
+        if (r.contactCount === 0) return <span style={{ color: '#CBD5E1' }} title="No contacts found at this account">0</span>;
+        return <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: '#334155' }}>{r.contactCount}</span>;
       },
     },
     {
