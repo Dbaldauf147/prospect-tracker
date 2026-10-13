@@ -15,6 +15,8 @@ import { ColumnToggle } from '../common/ColumnToggle';
 import { orderColumns, mergeColumnOrder } from '../../utils/tableColumnPrefs';
 import { classifyHqCountry, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
 import { parseContactPaste } from '../../utils/contactPaste';
+import { applyTagPresetToContact, presetSummary } from '../../utils/tagPresets';
+import { tagVocabulary } from '../../utils/contactTagReview';
 import styles from './AgendaView.module.css';
 
 const STORAGE_KEY = 'bulk-contacts-cache';
@@ -492,7 +494,7 @@ function ensureProtocol(url) {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
-export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect, cdmName, settings, updateSettings, targetAccountsData }) {
+export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect, cdmName, settings, updateSettings, updateSettingsPath, targetAccountsData }) {
   const { user } = useAuth();
   const [rows, setRows] = useState(() => loadCache());
   // Latest-rows ref so callbacks (e.g. toggleSuggestedCompanyDismiss)
@@ -1682,6 +1684,26 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     }
   }
 
+  // A saved tag preset (utils/tagPresets) to give every contact this page
+  // CREATES in HubSpot: its tags go on the new contact, and its answers
+  // (No / Not sure / Not sold included) are recorded against the new id, as
+  // if it had been clicked on that contact's popup. Contacts already in
+  // HubSpot are left alone: this page only ever fills their blanks.
+  const [tagPresetId, setTagPresetId] = useState('');
+  // Settings as they are now, for the whole-map fallback write below: the
+  // push loop outlives the render that started it.
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const tagPresets = settings?.tagPresets || [];
+  const activeTagPreset = tagPresets.find(p => p.id === tagPresetId) || null;
+  const tagPresetVocab = useMemo(() => {
+    const fromContacts = [];
+    for (const c of hubspotByEmail.values()) {
+      for (const t of String(c?.dans_tags || '').split(';')) fromContacts.push(t);
+    }
+    return tagVocabulary(fromContacts);
+  }, [hubspotByEmail]);
+
   async function addOne(row) {
     // Defensive: never POST a row without a real address (placeholder keys for
     // contacts whose email couldn't be estimated must be resolved first).
@@ -1706,6 +1728,21 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       if (row.state && row.state.trim()) properties.state = row.state.trim();
       if (row.country && row.country.trim()) properties.country = row.country.trim();
       if (row.dans_tags && row.dans_tags.trim()) properties.dans_tags = row.dans_tags.trim();
+      // The row's own tags (typed comma- or semicolon-separated) plus the
+      // preset's, under the preset's rules: a No in the preset beats a tag
+      // typed on the row, the same as applying it on the popup would.
+      const presetOut = activeTagPreset
+        ? applyTagPresetToContact({
+          dansTags: String(row.dans_tags || '').split(/[;,]/).map(t => t.trim()).filter(Boolean).join(';'),
+          records: {},
+          preset: activeTagPreset,
+          tags: tagPresetVocab,
+        })
+        : null;
+      if (presetOut) {
+        if (presetOut.dansTags) properties.dans_tags = presetOut.dansTags;
+        else delete properties.dans_tags;
+      }
       const res = await apiFetch('/api/hubspot?action=create-contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1721,6 +1758,14 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
         try {
           await updateHubspotCache(draft => { draft.contacts.push({ ...data.contact, _source: 'bulk' }); });
         } catch { /* ignore */ }
+        // The preset's answers, against the id HubSpot just gave the
+        // contact. One path per contact, so a run of creates can't drop
+        // each other's records.
+        const newId = data.contact?.id;
+        if (presetOut && newId && Object.keys(presetOut.records).length > 0) {
+          if (updateSettingsPath) updateSettingsPath({ [`contactTagReview.${newId}`]: presetOut.records });
+          else updateSettings?.({ contactTagReview: { ...(settingsRef.current?.contactTagReview || {}), [newId]: presetOut.records } });
+        }
         // After the contact lands, attach any note the user typed for
         // this row as a HubSpot engagement on that contact. Failures
         // here don't roll back the contact create — surface them as
@@ -2737,6 +2782,26 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           )}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', margin: '0.75rem 0 0.25rem', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              {tagPresets.length > 0 && (
+                <select
+                  value={tagPresetId}
+                  onChange={e => setTagPresetId(e.target.value)}
+                  disabled={busy}
+                  title={activeTagPreset
+                    ? `New contacts are created with the "${activeTagPreset.name}" preset. ${presetSummary(activeTagPreset)}. Contacts already in HubSpot are not changed.`
+                    : 'Pick a tag preset to give every contact this creates in HubSpot. Contacts already in HubSpot are not changed.'}
+                  style={{
+                    padding: '0.35rem 0.5rem', borderRadius: 6, fontSize: '0.75rem', fontFamily: 'inherit', maxWidth: 220,
+                    border: `1px solid ${activeTagPreset ? '#7C3AED' : '#CBD5E1'}`,
+                    background: activeTagPreset ? '#F5F3FF' : '#fff',
+                    color: activeTagPreset ? '#5B21B6' : '#334155',
+                    fontWeight: activeTagPreset ? 700 : 500,
+                  }}
+                >
+                  <option value="">No tag preset</option>
+                  {tagPresets.map(p => <option key={p.id} value={p.id}>{`Tag preset: ${p.name}`}</option>)}
+                </select>
+              )}
               <button
                 type="button"
                 className={styles.primaryBtn}
