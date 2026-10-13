@@ -444,8 +444,23 @@ function App() {
   const handleModalSave = useCallback(async (data, { close = true } = {}) => {
     try {
       if (modal?.isNew) {
-        await addProspect(data);
-        setModal(null);
+        const id = await addProspect(data);
+        // addProspect hands back the company already on the roster when the
+        // name matches one (punctuation, spacing and suffixes aside: "St.
+        // John Properties" is "St John Properties"). Closing as if it had
+        // been created read as the save doing nothing, so say so and open
+        // the one that's there.
+        const existing = id ? prospects.find(p => p.id === id) : null;
+        if (existing) {
+          const typed = String(data?.company || '').trim();
+          const stored = String(existing.company || '').trim();
+          window.alert(typed && typed !== stored
+            ? `"${typed}" is already on Table View as "${stored}". Opening it instead.`
+            : `"${stored}" is already on Table View. Opening it instead.`);
+          setModal({ prospect: existing, isNew: false });
+        } else {
+          setModal(null);
+        }
       } else if (modal) {
         await updateProspect(modal.prospect.id, data);
         if (close) setModal(null);
@@ -454,7 +469,7 @@ function App() {
       console.error('Prospect save failed:', err);
       alert(`Save failed: ${err?.message || err}. Changes are not yet persisted.`);
     }
-  }, [modal, addProspect, updateProspect]);
+  }, [modal, prospects, addProspect, updateProspect]);
 
   const handleModalClose = useCallback(() => setModal(null), []);
   const handleDeleteContactPropagate = useCallback(() => {
