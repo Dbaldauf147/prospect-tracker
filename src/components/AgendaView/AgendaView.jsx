@@ -346,7 +346,11 @@ const BULK_BUCKETS = [
   { key: 'update',  label: 'Update pending', color: '#92400E', hint: 'Already in HubSpot. Adding to HubSpot fills the blank fields listed under each status, and never overwrites a value HubSpot has.' },
   { key: 'hubspot', label: 'In HubSpot',     color: '#475569', hint: 'Already in HubSpot with nothing new to add, so these are ignored.' },
 ];
-const BULK_BUCKETS_COLLAPSED_KEY = 'bulk-contacts-collapsed-buckets';
+// v2: In HubSpot now starts folded shut (those rows are ignored by the
+// push, so they're the least useful to look at). A new key, so the default
+// reaches browsers that already saved a choice under the first one.
+const BULK_BUCKETS_COLLAPSED_KEY = 'bulk-contacts-collapsed-buckets-v2';
+const BULK_BUCKETS_COLLAPSED_DEFAULT = ['hubspot'];
 // Stands in the bucket's row list where the "Outside US, Canada, Mexico"
 // sub-header draws.
 const INTL_SUBGROUP = { __intlSubgroup: true };
@@ -514,7 +518,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   // Bucket groups (New / Update pending / In HubSpot) folded shut on the
   // table. Remembered per browser.
   const [collapsedBuckets, setCollapsedBuckets] = useState(() => {
-    try { return new Set(JSON.parse(localStorage.getItem(BULK_BUCKETS_COLLAPSED_KEY)) || []); } catch { return new Set(); }
+    try {
+      const saved = JSON.parse(localStorage.getItem(BULK_BUCKETS_COLLAPSED_KEY));
+      return new Set(Array.isArray(saved) ? saved : BULK_BUCKETS_COLLAPSED_DEFAULT);
+    } catch { return new Set(BULK_BUCKETS_COLLAPSED_DEFAULT); }
   });
   const toggleBucketCollapsed = useCallback((key) => {
     setCollapsedBuckets(prev => {
