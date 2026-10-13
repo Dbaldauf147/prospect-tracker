@@ -26,6 +26,7 @@
 
 import { applyCompanyOverride, collectClientDomains, isSchneiderContact, rosterCompaniesMatch } from './contactRosters.js';
 import { matchesCdm } from './cdmMatch.js';
+import { findTagRecord, isLocalTagVerdict, tagAnswerFrom } from './contactTagReview.js';
 import { TIERS } from '../data/enums.js';
 
 const tagsOf = (c) => String(c?.dans_tags || c?.dan_s_tags || c?.dans_tag || '').toLowerCase();
@@ -266,19 +267,50 @@ export function makeDecisionMakerLookup(contacts, { localFields = null, links = 
 }
 
 /**
+ * How a decision maker stands on a service's contact tags: 'yes' when they
+ * carry one of them, 'unsure' when they don't but one of them is answered
+ * Not sure in the contact popup (settings.contactTagReview, which is where a
+ * Not sure lives - it takes the HubSpot tag off), '' otherwise.
+ *
+ * Whole tags, any casing: a contact tagged "Decision Maker; Capital
+ * Planning" carries "capital planning", and "ESG Lead" is not "ESG". A Not
+ * sold hold-off is not a Not sure, so it doesn't count.
+ */
+export function decisionMakerTagAnswer(c, tags, reviewMap = null) {
+  const want = (tags || []).map(t => String(t || '').trim()).filter(Boolean);
+  if (want.length === 0) return '';
+  const lower = new Set(want.map(t => t.toLowerCase()));
+  if (tagsOf(c).split(';').some(t => lower.has(t.trim()))) return 'yes';
+  const cid = c?.id ?? c?.vid;
+  const answers = cid == null ? null : reviewMap?.[cid];
+  if (!answers) return '';
+  for (const tag of want) {
+    const stored = findTagRecord(answers, tag);
+    if (isLocalTagVerdict(stored) && tagAnswerFrom(false, stored) === 'unsure') return 'unsure';
+  }
+  return '';
+}
+
+/**
  * The decision makers among `dms` who also carry one of a service's contact
  * tags (the Contact Tags set on the service in the Services popup, e.g.
  * "Capital Planning"), for a column that names who to sell THAT service to.
  *
- * Whole tags, any casing: a contact tagged "Decision Maker; Capital
- * Planning" matches the tag "capital planning", and "ESG Lead" does not
- * match "ESG". Any one of the service's tags is enough. No tags on the
- * service means no narrowing, so the full list comes back.
+ * With `reviewMap` (settings.contactTagReview), anyone whose answer on one
+ * of those tags is Not sure is listed too, after the ones who carry it: a
+ * maybe is still somebody to ask. No tags on the service means no
+ * narrowing, so the full list comes back.
  */
-export function decisionMakersWithTags(dms, tags) {
-  const want = new Set((tags || []).map(t => String(t || '').trim().toLowerCase()).filter(Boolean));
-  if (want.size === 0) return dms || [];
-  return (dms || []).filter(c => tagsOf(c).split(';').some(t => want.has(t.trim())));
+export function decisionMakersWithTags(dms, tags, reviewMap = null) {
+  const want = (tags || []).map(t => String(t || '').trim()).filter(Boolean);
+  if (want.length === 0) return dms || [];
+  const yes = [], unsure = [];
+  for (const c of dms || []) {
+    const a = decisionMakerTagAnswer(c, want, reviewMap);
+    if (a === 'yes') yes.push(c);
+    else if (a === 'unsure') unsure.push(c);
+  }
+  return [...yes, ...unsure];
 }
 
 /**

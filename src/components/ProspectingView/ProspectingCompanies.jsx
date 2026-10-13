@@ -14,7 +14,8 @@
 // Decision Maker at each company, matched the way the ladder's DM mapping
 // matches them (utils/decisionMakerCoverage.js), narrowed to the ones who
 // also carry one of the Biggest Deal service's contact tags (set in the
-// Services popup). A service with no contact tags narrows nothing.
+// Services popup), or are answered Not sure on one in the contact popup.
+// A service with no contact tags narrows nothing.
 //
 // And where that service stands, settable from the row: the Service Status
 // column writes the company card's Services Explored map, the same field
@@ -50,7 +51,7 @@ import { loadOpps2Newest } from '../../utils/opps2Store';
 import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
-import { decisionMakersWithTags, makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
+import { decisionMakerTagAnswer, decisionMakersWithTags, makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { getEffectiveServiceMetadata, parseServiceContactTags } from '../../data/serviceCatalog';
 
 
@@ -72,6 +73,8 @@ const TIER_TINTS = {
 
 // A decision maker as the cell names them.
 const dmLabel = (c) => [c?.firstname, c?.lastname].filter(Boolean).join(' ').trim() || String(c?.email || '');
+// The same, marked when they're on the list for a Not sure rather than the tag.
+const dmRowLabel = (r, c) => (r.dmUnsure?.has(c) ? `${dmLabel(c)} (Not sure)` : dmLabel(c));
 
 function Figure({ value, from, unit = '' }) {
   if (value == null) return <span style={{ color: '#CBD5E1' }}>-</span>;
@@ -324,6 +327,7 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
   }, [tracked, dealCtx, oppRecords]);
 
   const serviceOverrides = settings?.serviceOverrides || null;
+  const tagReview = settings?.contactTagReview || null;
   const rows = useMemo(() => baseRows.map(r => {
     const deal = r.prospect?.id ? (dealById.get(r.prospect.id) || null) : null;
     // Null while the contacts load, so the cell can say so rather than
@@ -332,15 +336,20 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
     // The contact tags of the service the biggest deal is for: the
     // decision makers shown are the ones that service is sold to.
     const dmTags = deal?.name ? parseServiceContactTags(getEffectiveServiceMetadata(deal.name, serviceOverrides).contactTags) : [];
+    // Anyone answered Not sure on one of those tags is listed too, after
+    // the ones who carry it, and marked as such.
+    const dms = dmsAll ? decisionMakersWithTags(dmsAll, dmTags, tagReview) : null;
+    const dmUnsure = new Set((dms || []).filter(c => decisionMakerTagAnswer(c, dmTags, tagReview) === 'unsure'));
     return {
       ...r,
       analysis: r.prospect?.id ? (savedAnalyses.get(r.prospect.id) || null) : null,
       deal,
       dmsAll,
       dmTags,
-      dms: dmsAll ? decisionMakersWithTags(dmsAll, dmTags) : null,
+      dms,
+      dmUnsure,
     };
-  }), [baseRows, savedAnalyses, dealById, dmLookup, serviceOverrides]);
+  }), [baseRows, savedAnalyses, dealById, dmLookup, serviceOverrides, tagReview]);
 
   // Rows whose biggest deal already has a status are left out (see the
   // header). Counted so the page can say how many.
@@ -556,10 +565,10 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
       }] : []),
       {
         key: 'dms', label: 'Decision Makers', defaultWidth: 190,
-        headerTitle: 'Contacts at the company tagged Decision Maker in HubSpot who also carry one of the Biggest Deal service\'s contact tags (set in the Services popup), so the people that deal is sold to. A service with no contact tags shows every decision maker. Hide, Left and Schneider contacts are left out, and contacts are matched the way the ladder maps decision makers: by company name, plus anyone the company popup links by email domain or by hand.',
+        headerTitle: 'Contacts at the company tagged Decision Maker in HubSpot who also carry one of the Biggest Deal service\'s contact tags (set in the Services popup), so the people that deal is sold to. Contacts answered Not sure on one of those tags in the contact popup are listed too, after them, marked (Not sure). A service with no contact tags shows every decision maker. Hide, Left and Schneider contacts are left out, and contacts are matched the way the ladder maps decision makers: by company name, plus anyone the company popup links by email domain or by hand.',
         getSortValue: r => (r.dms ? r.dms.length : null),
-        getFilterValue: r => (r.dms ? r.dms.map(dmLabel).join(', ') : ''),
-        exportValue: r => (r.dms ? r.dms.map(dmLabel).join(', ') : ''),
+        getFilterValue: r => (r.dms ? r.dms.map(c => dmRowLabel(r, c)).join(', ') : ''),
+        exportValue: r => (r.dms ? r.dms.map(c => dmRowLabel(r, c)).join(', ') : ''),
         render: (r) => {
           if (!r.dms) return <span title="Loading contacts" style={{ color: '#CBD5E1' }}>…</span>;
           const tagNote = r.dmTags.length ? `Decision Maker and ${r.dmTags.join(' or ')}, for ${r.deal.name}` : '';
@@ -571,11 +580,12 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
           }
           const tip = [
             tagNote ? `Tagged ${tagNote}:` : '',
-            ...r.dms.map(c => [dmLabel(c), c.jobtitle].filter(Boolean).join(' - ')),
+            ...r.dms.map(c => [dmRowLabel(r, c), c.jobtitle].filter(Boolean).join(' - ')),
           ].filter(Boolean).join('\n');
           return (
             <span title={tip} style={{ color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
               {dmLabel(r.dms[0])}
+              {r.dmUnsure.has(r.dms[0]) && <span style={{ color: '#B45309', fontSize: '0.68rem' }}> (Not sure)</span>}
               {r.dms.length > 1 && <span style={{ color: '#94A3B8', fontSize: '0.68rem' }}> +{r.dms.length - 1}</span>}
             </span>
           );
@@ -683,7 +693,7 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
     <div style={{ padding: '0.25rem 1.25rem 1.25rem', maxWidth }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.6rem' }}>
         <div style={{ fontSize: '0.72rem', color: '#64748B', flex: '1 1 320px' }}>
-          {intro} Sites, accounts and energy come from each company Master Analysis save, Biggest Deal is the same figure as on the company card, and Decision Makers lists who is tagged Decision Maker there and also carries a contact tag of the Biggest Deal service (hover for titles). Service Status is that service's status on the company card: only services with no status yet are listed, so picking one here takes the row off the list{hiddenWorked > 0 ? ` (${hiddenWorked.toLocaleString()} ${hiddenWorked === 1 ? 'company is' : 'companies are'} hidden now for having one)` : ''}. Grey italic figures are stand-ins until one is saved: hover them for where they came from. Drag a header edge to resize a column, type under a header to filter it, and star your standard columns in the Columns menu.
+          {intro} Sites, accounts and energy come from each company Master Analysis save, Biggest Deal is the same figure as on the company card, and Decision Makers lists who is tagged Decision Maker there and also carries a contact tag of the Biggest Deal service, or is answered Not sure on one, marked (Not sure) (hover for titles). Service Status is that service's status on the company card: only services with no status yet are listed, so picking one here takes the row off the list{hiddenWorked > 0 ? ` (${hiddenWorked.toLocaleString()} ${hiddenWorked === 1 ? 'company is' : 'companies are'} hidden now for having one)` : ''}. Grey italic figures are stand-ins until one is saved: hover them for where they came from. Drag a header edge to resize a column, type under a header to filter it, and star your standard columns in the Columns menu.
         </div>
         <ExcludedServicesPicker
           names={serviceRows.map(r => r.name)}
