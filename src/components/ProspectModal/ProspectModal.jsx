@@ -30,6 +30,8 @@ import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/ra
 import {
   RA_CLIENTS_MAP_KEY, listMatchKey, readListField, mapListRow, unmapListRow, mapsToCompany,
 } from '../../utils/listAccountMapping';
+import { loadList as loadUploadedList } from '../../utils/uploadedListStore';
+import { STRATEGIC_STORAGE_KEY, strategicMatches } from '../../utils/strategicAccounts';
 import { STATUSES, STATUS_COLORS, TIER_OPTIONS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { peStageOf } from '../../utils/peStages';
 import { getServiceCategories, buildServiceBoard, exploredCountTest, isUncountedBucket, moveServiceToBucket, serviceBucketOf, UNGROUPED_SERVICES, addServiceBox, renameServiceBox } from '../../utils/serviceCategoriesStore';
@@ -5655,6 +5657,35 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       return { ignoredRaClientMatches: { ...all, [raIgnoreKey]: forCompany } };
     });
   }
+  // Strategic Accounts (Lists → Strategic Accounts): a red strip naming the
+  // account owners when this company is on that list, so nobody prospects
+  // someone else's strategic account. The rows live in IndexedDB (with a
+  // Firestore fallback), so they load once per modal open; the matching
+  // reads the same Table View mapping the list page writes.
+  const [strategicRows, setStrategicRows] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    loadUploadedList(STRATEGIC_STORAGE_KEY)
+      .then(rows => { if (!cancelled) setStrategicRows(Array.isArray(rows) ? rows : []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+  const strategicMatchList = useMemo(
+    () => strategicMatches(
+      strategicRows,
+      (fields.company || '').trim(),
+      readListField(settings, STRATEGIC_STORAGE_KEY, 'mapping'),
+      readListField(settings, STRATEGIC_STORAGE_KEY, 'dismissed'),
+    ),
+    [strategicRows, fields.company, settings],
+  );
+  const strategicOwners = useMemo(() => {
+    const out = [];
+    for (const m of strategicMatchList) for (const o of m.owners) {
+      if (!out.some(x => x.toLowerCase() === o.toLowerCase())) out.push(o);
+    }
+    return out;
+  }, [strategicMatchList]);
   const [pastePortfolio, setPastePortfolio] = useState('');
   // Slug used as the Firestore path segment for persisted research
   // results - same shape as companySlug below; declared earlier here
@@ -8678,6 +8709,51 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           </div>
         )}
         <div className={styles.body}>
+          {strategicMatchList.length > 0 && (
+            /* Same one-line strip as the RA Client warning below, in red:
+               a strategic account belongs to someone, so this is a stop
+               and check with the owner rather than a maybe. */
+            <div style={{
+              marginBottom: '0.8rem',
+              padding: '0.4rem 0.8rem',
+              background: '#FEF2F2',
+              border: '1px solid #FECACA',
+              borderRadius: 6,
+              display: 'flex',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '0.35rem 0.7rem',
+            }}>
+              <span style={{ fontSize: '0.95rem', lineHeight: 1 }}>⚠️</span>
+              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#991B1B', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
+                Strategic Account
+              </span>
+              <span style={{ fontSize: '0.75rem', color: '#7F1D1D', minWidth: 0 }}>
+                {strategicOwners.length > 0
+                  ? `This company is on the Strategic Accounts list. Check with the account ${strategicOwners.length === 1 ? 'owner' : 'owners'} before reaching out.`
+                  : 'This company is on the Strategic Accounts list. No account owner is listed for it.'}
+              </span>
+              {strategicOwners.length > 0 && (
+                <span style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.35rem', marginLeft: 'auto' }}>
+                  <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#991B1B', whiteSpace: 'nowrap' }}>
+                    {strategicOwners.length === 1 ? 'Owner:' : 'Owners:'}
+                  </span>
+                  {strategicOwners.map(o => (
+                    <span
+                      key={o}
+                      title={`Listed as ${strategicMatchList.map(m => m.name).join(', ')}`}
+                      style={{
+                        padding: '0.15rem 0.5rem',
+                        background: '#FEE2E2', border: '1px solid #FCA5A5',
+                        borderRadius: 999, fontSize: '0.7rem', fontWeight: 600,
+                        color: '#991B1B', whiteSpace: 'nowrap',
+                      }}
+                    >{o}</span>
+                  ))}
+                </span>
+              )}
+            </div>
+          )}
           {visibleRaClientMatches.length > 0 && (
             /* One horizontal strip: warning, headline, explanation, then the
                matched clients pushed to the right end. It used to stack those
