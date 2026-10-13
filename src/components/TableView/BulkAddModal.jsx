@@ -1,4 +1,6 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { useSyncedTablePref, SET_PREF } from '../../hooks/useSyncedTablePref';
+import { userLsGet, userLsSet } from '../../utils/userLs';
 import { companyDedupeKey } from '../../utils/firestoreSync';
 import { STATUSES, TIER_OPTIONS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS } from '../../data/enums';
 import { buildTypeOptions, buildCdmOptions, buildAssetTypeOptions, buildStrategyOptions } from '../../utils/prospectOptions';
@@ -18,6 +20,29 @@ const BULK_DEFAULTS = {
   geography: '',
   publicPrivate: '',
 };
+
+// The preview table's layout: column widths, and the starred fields that
+// are always shown whether or not the paste maps a column to them. Kept per
+// user and synced through settings.tablePrefs like the other tables.
+const PREFS_TABLE_ID = 'bulk-add-companies';
+const WIDTHS_LS_KEY = 'bulk-add-companies:col-widths';
+const STARRED_LS_KEY = 'bulk-add-companies:starred-cols';
+const MIN_COL_WIDTH = 40;
+const DEFAULT_WIDTHS = { _state: 60, company: 200, _note: 200 };
+
+function colWidthOf(widths, key) {
+  const w = widths?.[key];
+  return Number.isFinite(w) ? w : (DEFAULT_WIDTHS[key] || 140);
+}
+
+function readJsonLs(key, fallback) {
+  try {
+    const raw = userLsGet(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 // Fields the shared-values row always offers, as dropdowns. Whatever is
 // picked here is stamped on every company in the list that doesn't bring
@@ -173,7 +198,7 @@ function looksLikeHeader(row) {
 // header row is detected and dropped rather than being read as a
 // company. Either way, companies already on the roster and repeats
 // inside the paste are listed as skipped rather than duplicated.
-export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings, cdmName = '' }) {
+export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings, updateSettings, cdmName = '' }) {
   const [text, setText] = useState('');
   // The shared CDM starts as this user's, like the + New popup's does.
   const [shared, setShared] = useState(() => withDefaultCdm(BULK_DEFAULTS, cdmName));
@@ -188,6 +213,54 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings,
   const [mapOverrides, setMapOverrides] = useState({});
   const [headerOverride, setHeaderOverride] = useState(null); // null = auto-detect
   const textareaRef = useRef(null);
+  const [colWidths, setColWidths] = useSyncedTablePref({
+    tableId: PREFS_TABLE_ID, field: 'widths', settings, updateSettings,
+    readLocal: () => readJsonLs(WIDTHS_LS_KEY, {}),
+    writeLocal: (w) => userLsSet(WIDTHS_LS_KEY, JSON.stringify(w)),
+  });
+  const [starredCols, setStarredCols] = useSyncedTablePref({
+    tableId: PREFS_TABLE_ID, field: 'starred', settings, updateSettings,
+    readLocal: () => new Set(readJsonLs(STARRED_LS_KEY, [])),
+    writeLocal: (set) => userLsSet(STARRED_LS_KEY, JSON.stringify([...set])),
+    ...SET_PREF,
+  });
+  const resizeRef = useRef(null);
+
+  // Column-resize drag. Listeners live on document so the drag keeps
+  // working when the pointer leaves the header cell.
+  useEffect(() => {
+    function onMove(e) {
+      const r = resizeRef.current;
+      if (!r) return;
+      const next = Math.max(MIN_COL_WIDTH, r.startW + (e.clientX - r.startX));
+      setColWidths(prev => ({ ...prev, [r.key]: next }));
+    }
+    function onUp() {
+      if (!resizeRef.current) return;
+      resizeRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+  }, [setColWidths]);
+
+  const startResize = useCallback((key, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizeRef.current = { key, startX: e.clientX, startW: colWidthOf(colWidths, key) };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [colWidths]);
+
+  const toggleStar = useCallback((key) => {
+    setStarredCols(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, [setStarredCols]);
 
   useEffect(() => { textareaRef.current?.focus(); }, []);
 
@@ -261,11 +334,18 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings,
   }, [table, mapOverrides]);
 
   const companyMapped = mapping.includes('company');
-  // The mapped fields other than Company, in FIELDS order, for the preview.
+  // The preview's columns beyond Company, in FIELDS order: every starred
+  // field (shown on every paste, name lists included) plus whatever else
+  // the paste maps a column to.
   const extraFields = useMemo(() => {
-    const keys = new Set(mapping.filter(k => k && k !== 'company'));
-    return FIELDS.filter(f => keys.has(f.key));
-  }, [mapping]);
+    const keys = new Set([...starredCols, ...mapping.filter(k => k && k !== 'company')]);
+    return FIELDS.filter(f => f.key !== 'company' && keys.has(f.key));
+  }, [mapping, starredCols]);
+  // Fields that could still be starred into the preview.
+  const unshownFields = useMemo(
+    () => FIELDS.filter(f => f.key !== 'company' && !extraFields.some(x => x.key === f.key)),
+    [extraFields]
+  );
 
   const availableExtras = useMemo(
     () => EXTRA_FIELDS.filter(f => !extras.some(e => e.key === f.key)),
@@ -393,7 +473,33 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings,
     repeat: { color: '#92400E', background: '#FFFBEB', label: 'Skip' },
     skip: { color: '#991B1B', background: '#FEF2F2', label: 'Skip' },
   };
-  const cell = { padding: '0.3rem 0.5rem', borderBottom: '1px solid #E2E8F0' };
+  const cell = { padding: '0.3rem 0.5rem', border: '1px solid #E2E8F0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+  const headCell = { ...cell, textAlign: 'left', color: '#475569', position: 'relative', borderColor: '#CBD5E1' };
+  // The trailing note column has no set width: it takes whatever room is
+  // left, so a dragged column follows the pointer exactly instead of the
+  // table spreading the slack across every column.
+  const previewCols = ['_state', 'company', ...extraFields.map(f => f.key)];
+  const previewWidth = previewCols.reduce((sum, k) => sum + colWidthOf(colWidths, k), 0) + DEFAULT_WIDTHS._note;
+  // Grab strip on the right edge of a header cell.
+  const resizer = (key) => (
+    <span
+      onMouseDown={e => startResize(key, e)}
+      title="Drag to resize"
+      style={{ position: 'absolute', top: 0, right: -3, width: 7, height: '100%', cursor: 'col-resize', userSelect: 'none', touchAction: 'none', zIndex: 2 }}
+    />
+  );
+  const starButton = (key, label) => {
+    const on = starredCols.has(key);
+    return (
+      <button
+        type="button"
+        onClick={() => toggleStar(key)}
+        aria-pressed={on}
+        title={on ? `Unstar ${label}: show it only when the paste maps a column to it` : `Star ${label}: always show this column`}
+        style={{ background: 'transparent', border: 'none', padding: '0 3px 0 0', cursor: 'pointer', color: on ? '#F59E0B' : '#CBD5E1', fontSize: '0.8rem', lineHeight: 1, fontFamily: 'inherit' }}
+      >{on ? '\u2605' : '\u2606'}</button>
+    );
+  };
   // Every company about to be created needs an HQ Region, the same rule the
   // single-company popup applies. One pick on the shared row answers it for
   // the whole batch, so this is a field to fill rather than a wall.
@@ -538,28 +644,46 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings,
                 {plan.existing > 0 && <> · <span style={{ color: '#92400E' }}>{plan.existing} already in Table View</span></>}
                 {plan.repeats > 0 && <> · <span style={{ color: '#92400E' }}>{plan.repeats} repeated in the list</span></>}
                 {plan.skipped > 0 && <> · <span style={{ color: '#991B1B' }}>{plan.skipped} unusable</span></>}
+                {unshownFields.length > 0 && (
+                  <select
+                    value=""
+                    onChange={e => { if (e.target.value) toggleStar(e.target.value); }}
+                    aria-label="Star a column to always show it"
+                    title="Starred columns are always shown in this table"
+                    style={{ float: 'right', padding: '0.1rem 0.3rem', border: '1px dashed #94A3B8', borderRadius: 4, fontSize: '0.7rem', fontFamily: 'inherit', background: '#F8FAFC', color: '#475569', cursor: 'pointer' }}
+                  >
+                    <option value="">{'\u2606'} Star a column…</option>
+                    {unshownFields.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+                  </select>
+                )}
               </div>
               <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, maxHeight: 260, overflow: 'auto' }}>
-                <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem' }}>
-                  {extraFields.length > 0 && (
-                    <thead style={{ background: '#F1F5F9', position: 'sticky', top: 0, zIndex: 1 }}>
-                      <tr>
-                        <th style={{ ...cell, textAlign: 'left', color: '#475569', width: 52 }}></th>
-                        <th style={{ ...cell, textAlign: 'left', color: '#475569' }}>Company</th>
-                        {extraFields.map(f => <th key={f.key} style={{ ...cell, textAlign: 'left', color: '#475569', whiteSpace: 'nowrap' }}>{f.label}</th>)}
-                        <th style={{ ...cell, textAlign: 'left', color: '#475569' }}></th>
-                      </tr>
-                    </thead>
-                  )}
+                <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', width: previewWidth, minWidth: '100%', fontSize: '0.72rem' }}>
+                  <colgroup>
+                    {previewCols.map(k => <col key={k} style={{ width: colWidthOf(colWidths, k) }} />)}
+                    <col />
+                  </colgroup>
+                  <thead style={{ background: '#F1F5F9', position: 'sticky', top: 0, zIndex: 1 }}>
+                    <tr>
+                      <th style={headCell}>{resizer('_state')}</th>
+                      <th style={headCell}>Company{resizer('company')}</th>
+                      {extraFields.map(f => (
+                        <th key={f.key} style={headCell}>
+                          {starButton(f.key, f.label)}{f.label}{resizer(f.key)}
+                        </th>
+                      ))}
+                      <th style={headCell}></th>
+                    </tr>
+                  </thead>
                   <tbody>
                     {plan.rows.map((r, i) => {
                       const s = stateStyles[r.state];
                       return (
                         <tr key={i} style={{ background: r.state === 'new' ? '#fff' : s.background }}>
-                          <td style={{ ...cell, width: 52 }}>
+                          <td style={cell}>
                             <span style={{ color: s.color, fontWeight: 700, fontSize: '0.66rem', textTransform: 'uppercase' }}>{s.label}</span>
                           </td>
-                          <td style={{ ...cell, fontWeight: 600, color: '#1E293B' }}>{r.name || <span style={{ color: '#CBD5E1' }}>-</span>}</td>
+                          <td style={{ ...cell, fontWeight: 600, color: '#1E293B' }} title={r.name}>{r.name || <span style={{ color: '#CBD5E1' }}>-</span>}</td>
                           {extraFields.map(f => {
                             // HQ Region shows what will actually be stored:
                             // a pasted location is read as the region it
@@ -568,15 +692,21 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings,
                             // the field never holds. The raw cell stays on
                             // the hover, so a row that was read differently
                             // than expected can still be checked.
+                            // A starred column the paste doesn't map shows the
+                            // shared value the row will be given, in grey
+                            // italics so it reads as inherited rather than
+                            // pasted.
                             const raw = r.record[f.key];
-                            const v = f.key === 'hqRegion' ? r.effective.hqRegion : raw;
+                            const fromShared = raw == null || raw === '' || (Array.isArray(raw) && raw.length === 0);
+                            const v = f.key === 'hqRegion' ? r.effective.hqRegion : fromShared ? r.effective[f.key] : raw;
                             const shown = Array.isArray(v) ? v.join(', ') : v == null ? '' : String(v);
                             const rawShown = raw == null ? '' : String(raw);
+                            const inherited = fromShared && !!shown;
                             return (
                               <td
                                 key={f.key}
-                                style={{ ...cell, color: '#475569', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                                title={rawShown && rawShown !== shown ? `${shown || '(not placed)'} - read from "${rawShown}"` : shown}
+                                style={{ ...cell, color: inherited ? '#94A3B8' : '#475569', fontStyle: inherited ? 'italic' : 'normal' }}
+                                title={rawShown && rawShown !== shown ? `${shown || '(not placed)'} - read from "${rawShown}"` : inherited ? `${shown} (shared value)` : shown}
                               >{shown || <span style={{ color: '#CBD5E1' }}>-</span>}</td>
                             );
                           })}
@@ -584,7 +714,7 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings,
                               its own line: when a mapped column answers for
                               some rows and not others, the count in the
                               footer cannot say which ones. */}
-                          <td style={{ ...cell, color: r.needsHq ? '#991B1B' : '#64748B' }}>
+                          <td style={{ ...cell, color: r.needsHq ? '#991B1B' : '#64748B' }} title={r.needsHq ? 'needs an HQ Region' : r.note}>
                             {r.needsHq ? 'needs an HQ Region' : r.note}
                           </td>
                         </tr>
