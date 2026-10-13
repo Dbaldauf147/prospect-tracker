@@ -54,7 +54,7 @@ import {
 import { COVERAGE_T1, COVERAGE_T2, COVERAGE_T3 } from '../../utils/progressCoverage';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
 import { excludeUntrackedFromWeeks } from '../../utils/progressUntracked';
-import { withSubstatusLeftOut } from '../../utils/reportingStatus';
+import { withCoverageLeftOut } from '../../utils/reportingStatus';
 
 const ACTIVITY_CACHE_KEY = 'hubspot-activity-cache';
 const PIPELINE_STORE = 'pipeline-dashboard';
@@ -647,9 +647,10 @@ export function WeeklyReportView({ prospects = [], settings, updateSettings, cdm
   // exactly as the Progress tab does before it plots, so the two charts
   // and the accounts behind each point agree with it.
   const { clientUntrackedMap } = useClientFlagMaps();
-  // Companies with a substatus (read as Hold Off) are left out the same way.
+  // Hold Off (substatus or status) and Old Client accounts are left out
+  // the same way: nobody is mapping contacts at them.
   const trackedProgressWeeks = useMemo(
-    () => excludeUntrackedFromWeeks(progressWeeks, withSubstatusLeftOut(clientUntrackedMap, prospects)).weeks,
+    () => excludeUntrackedFromWeeks(progressWeeks, withCoverageLeftOut(clientUntrackedMap, prospects)).weeks,
     [progressWeeks, clientUntrackedMap, prospects],
   );
   const coverageSeries = useMemo(() => withCoverageImages(coverageByWeek({
@@ -969,7 +970,7 @@ export function WeeklyReportView({ prospects = [], settings, updateSettings, cdm
           <div className={styles.kpiHead}>
             <h2 className={styles.sectionHead}>Account coverage</h2>
             <span className={styles.kpiHeadNote}>
-              From the Progress tab, last {COVERAGE_MONTHS} months. Click a point for the accounts.
+              From the Progress tab, last {COVERAGE_MONTHS} months, Hold Off and Old Client accounts left out. Click a point for the accounts.
             </span>
           </div>
           {coverageSeries ? (
