@@ -6,6 +6,8 @@ import {
   termCount,
   uniqueKey,
 } from '../../data/contactTitleSearches';
+import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { decisionMakerTitles } from '../../utils/decisionMakerTitles';
 import styles from './ContactTitlesView.module.css';
 
 // The title searches behind each contact persona, on the page instead of in
@@ -42,7 +44,47 @@ const inputSize = (value) => Math.min(Math.max(String(value || '').length + 1, 4
 
 const EMPTY_GROUP_LABEL = 'Titles (unheaded in the source)';
 
+// The page's own tabs. Searches is the reference this page started as; the
+// Decision Makers tab is the other half of the same question, the titles
+// the people tagged Decision Maker actually hold.
+const VIEWS = [
+  { key: 'searches', label: 'Searches' },
+  { key: 'dms',      label: 'Decision Makers' },
+];
+const VIEW_KEY = 'contact-titles:view';
+
 export function ContactTitlesView({ settings, updateSettings }) {
+  const [view, setView] = useState(() => {
+    try {
+      const saved = localStorage.getItem(VIEW_KEY);
+      if (VIEWS.some(v => v.key === saved)) return saved;
+    } catch { /* storage blocked: start on Searches */ }
+    return 'searches';
+  });
+  useEffect(() => {
+    try { localStorage.setItem(VIEW_KEY, view); } catch { /* not remembered, still works */ }
+  }, [view]);
+
+  return (
+    <div className={styles.wrapper}>
+      <div className={styles.viewTabs}>
+        {VIEWS.map(v => (
+          <button
+            key={v.key}
+            type="button"
+            className={view === v.key ? styles.viewTabActive : styles.viewTab}
+            onClick={() => setView(v.key)}
+          >{v.label}</button>
+        ))}
+      </div>
+      {view === 'dms'
+        ? <DecisionMakerTitles />
+        : <TitleSearches settings={settings} updateSettings={updateSettings} />}
+    </div>
+  );
+}
+
+function TitleSearches({ settings, updateSettings }) {
   const [term, setTerm] = useState('');
   const [copied, setCopied] = useState('');
   const needle = term.trim().toLowerCase();
@@ -201,7 +243,7 @@ export function ContactTitlesView({ settings, updateSettings }) {
   }
 
   return (
-    <div className={styles.wrapper}>
+    <div>
       <div className={styles.head}>
         <h2 className={styles.title}>Titles</h2>
         {editing ? (
@@ -398,6 +440,128 @@ export function ContactTitlesView({ settings, updateSettings }) {
         whoever it used to. Four of the seven built-in searches were written as a plain list of
         titles with no include heading over them, and they say so rather than borrowing one.
       </div>
+    </div>
+  );
+}
+
+// Every distinct job title held by a contact tagged Decision Maker, A to Z,
+// with how many hold it. Click a title to see who. Read from the same
+// HubSpot cache the contacts tabs use, and refreshed when it is.
+function DecisionMakerTitles() {
+  const [contacts, setContacts] = useState(null);
+  const [term, setTerm] = useState('');
+  const [open, setOpen] = useState(() => new Set());
+  const [copied, setCopied] = useState(false);
+  const needle = term.trim().toLowerCase();
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      getHubspotCache()
+        .then(c => { if (!cancelled) setContacts(c?.contacts || []); })
+        .catch(() => { if (!cancelled) setContacts([]); });
+    };
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
+
+  const { titles, untitled } = useMemo(() => decisionMakerTitles(contacts || []), [contacts]);
+  const shown = useMemo(
+    () => (needle ? titles.filter(t => t.title.toLowerCase().includes(needle)) : titles),
+    [titles, needle],
+  );
+  const people = useMemo(() => titles.reduce((n, t) => n + t.count, 0), [titles]);
+
+  const toggle = (title) => setOpen(prev => {
+    const next = new Set(prev);
+    if (next.has(title)) next.delete(title); else next.add(title);
+    return next;
+  });
+
+  async function copyAll() {
+    try {
+      await navigator.clipboard?.writeText(shown.map(t => t.title).join(', '));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      // Same as the search cards: the list is on screen to select by hand.
+    }
+  }
+
+  return (
+    <div>
+      <div className={styles.head}>
+        <h2 className={styles.title}>Decision Maker titles</h2>
+      </div>
+      <div className={styles.blurb}>
+        Every job title held by a contact tagged Decision Maker, A to Z, with how many hold it.
+        Click a title to see who. Hidden and Left contacts are left out, the same as the DMs tab.
+      </div>
+
+      <div className={styles.searchRow}>
+        <input
+          type="text"
+          className={styles.search}
+          placeholder="Find a title: director, energy, finance…"
+          value={term}
+          onChange={e => setTerm(e.target.value)}
+        />
+        <span className={styles.count}>
+          {contacts == null
+            ? 'Loading contacts…'
+            : needle
+              ? `${shown.length} of ${titles.length} titles match “${term.trim()}”`
+              : `${titles.length} titles across ${people} decision makers`
+                + (untitled ? `, ${untitled} with no title on file` : '')}
+        </span>
+        {shown.length > 0 && (
+          <button
+            type="button"
+            className={styles.editBtn}
+            onClick={copyAll}
+            title={`Copy these ${shown.length} titles, comma separated`}
+          >{copied ? 'Copied' : 'Copy titles'}</button>
+        )}
+      </div>
+
+      {contacts == null ? null : shown.length === 0 ? (
+        <div className={styles.empty}>
+          {titles.length === 0
+            ? 'No contacts tagged Decision Maker have a job title on file yet.'
+            : `No decision maker title matches “${term.trim()}”.`}
+        </div>
+      ) : (
+        <ul className={styles.dmList}>
+          {shown.map(t => {
+            const isOpen = open.has(t.title);
+            return (
+              <li key={t.title} className={styles.dmRow}>
+                <button
+                  type="button"
+                  className={styles.dmTitleBtn}
+                  onClick={() => toggle(t.title)}
+                  aria-expanded={isOpen}
+                >
+                  <span className={styles.dmCaret}>{isOpen ? '▾' : '▸'}</span>
+                  <span className={styles.dmTitle}>{t.title}</span>
+                  <span className={styles.dmCount}>{t.count}</span>
+                </button>
+                {isOpen && (
+                  <ul className={styles.dmPeople}>
+                    {t.contacts.map((p, i) => (
+                      <li key={i}>
+                        {p.name}
+                        {p.company && <span className={styles.dmCompany}>, {p.company}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }
