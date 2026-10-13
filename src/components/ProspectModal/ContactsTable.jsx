@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { sentimentFor, sentimentMark } from '../../utils/contactSentiment';
 import { BUCKETS, contactHasTag, getContactTags } from './contactTags.js';
+import { tagReviewScore } from '../../utils/contactTagReview';
 
 // The company card's contact roster.
 //
@@ -65,6 +66,7 @@ const notesOf = (c, settings) => (settings?.contactNotes || {})[c.id || c.vid] |
 const linkedinOf = (c) => c.hs_linkedin_url || c.linkedin_url || c.hs_linkedinid || '';
 const cellPhoneOf = (c) => c.mobilephone || c.mobile_phone || '';
 const bucketsOf = (c) => BUCKETS.filter(b => getContactTags(c).includes(b.tag));
+const tagScoreOf = (c, settings) => tagReviewScore(c, (settings?.contactTagReview || {})[String(c.id || c.vid || '')]);
 
 export function ContactsTable({
   contacts,
@@ -223,6 +225,34 @@ export function ContactsTable({
       render: (c) => {
         const raw = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
         return raw ? <span style={{ fontSize: '0.68rem', color: '#475569' }} title={raw}>{raw}</span> : dash;
+      },
+    },
+    {
+      // How far through the contact popup's Yes / No / Not sure tag table
+      // this contact is: the same score, bands and tooltip as the All
+      // Contacts page's Tagged % column, so the two never disagree.
+      key: 'taggedPct',
+      label: 'Tagged %',
+      defaultWidth: 90,
+      getSortValue: (c) => tagScoreOf(c, settings).pct,
+      getFilterValue: (c) => `${tagScoreOf(c, settings).pct}%`,
+      exportValue: (c) => `${tagScoreOf(c, settings).pct}%`,
+      render: (c) => {
+        const { answered, total, pct, done } = tagScoreOf(c, settings);
+        const band = done
+          ? { bg: '#DCFCE7', color: '#166534' }
+          : pct >= 50 ? { bg: '#FEF3C7', color: '#92400E' }
+          : pct > 0 ? { bg: '#FFEDD5', color: '#9A3412' }
+          : { bg: '#F1F5F9', color: '#94A3B8' };
+        return (
+          <span
+            title={`${answered} of ${total} tags mapped. Hide, Left and Test aren't counted. Open the contact to answer the rest.`}
+            style={{
+              display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.68rem',
+              background: band.bg, color: band.color, fontWeight: 700,
+            }}
+          >{pct}%</span>
+        );
       },
     },
     {
