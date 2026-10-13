@@ -11,7 +11,7 @@
 // the same counts and records today's reading too.
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
-import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
   historyChartRows,
   historySnapshot,
@@ -49,6 +49,9 @@ const TIER_LINE_COLORS = { 'Tier 1': '#2563EB', 'Tier 2': '#D97706', 'Tier 3': '
 // than a gray: a gray sat too close to Tier 3's teal to tell apart (checked
 // with the palette validator, normal and colour-blind vision).
 const FIRM_BAR_COLORS = { ...TIER_LINE_COLORS, 'Not tiered': '#7C3AED' };
+// The total line over the firms-active bars: dark slate, so it reads as the
+// sum of the stack rather than one more tier.
+const FIRM_TOTAL_COLOR = '#1E293B';
 
 const CARD = {
   border: '1px solid #E2E8F0', borderRadius: 10, background: '#fff',
@@ -204,7 +207,14 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
     return activeFirmsChartRows(firmsHistory, rows.map(r => r.iso))
       .map(c => ({ ...c, label: byIso.get(c.iso)?.label, weekday: byIso.get(c.iso)?.weekday }));
   }, [firmsHistory, rows]);
+  const firmsRecordedRows = firmsData.filter(r => r.recorded && r.active != null);
   const firmsRecorded = firmsData.filter(r => r.recorded).length;
+  const firmsLatest = firmsRecordedRows[firmsRecordedRows.length - 1] || null;
+  const firmsFirst = firmsRecordedRows[0] || null;
+  const firmsChange = firmsLatest && firmsFirst && firmsLatest !== firmsFirst ? firmsLatest.active - firmsFirst.active : null;
+  // Each total is printed above its point while there's room for it; on the
+  // longer ranges only the latest one is, so the numbers don't overlap.
+  const labelEveryFirmsPoint = firmsData.length <= 22;
 
   const rawCoverage = useSyncExternalStore(subscribeCoverageHistory, coverageHistorySnapshot);
   const coverageHistory = useMemo(() => parseCoverageHistory(rawCoverage), [rawCoverage]);
@@ -357,14 +367,29 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
       </div>
 
       <div style={CARD}>
-        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Firms with activity in the last {ACTIVE_FIRMS_DAYS} days</div>
-        <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: 6 }}>
-          How many of your firms had a HubSpot email, call or contact in the {ACTIVE_FIRMS_DAYS} days up to each day, stacked by
-          tier, with your accounts that have no tier as Not tiered. A day is recorded whenever Tiered Activity or this page is
-          open{firmsRecorded === 0 ? ', starting today' : ''}; a day with no bar is one neither was.
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 300px' }}>
+            <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Firms with activity in the last {ACTIVE_FIRMS_DAYS} days</div>
+            <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: 6 }}>
+              How many of your firms had a HubSpot email, call or contact in the {ACTIVE_FIRMS_DAYS} days up to each day, stacked by
+              tier, with your accounts that have no tier as Not tiered. The line is the total. A day is recorded whenever Tiered
+              Activity or this page is open{firmsRecorded === 0 ? ', starting today' : ''}; a day with no bar is one neither was.
+            </div>
+          </div>
+          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+            <div style={{ fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#94A3B8' }}>
+              {firmsLatest && firmsLatest.iso !== today ? `Firms active, ${firmsLatest.label}` : 'Firms active now'}
+            </div>
+            <div style={{ fontSize: '1.6rem', fontWeight: 700, color: '#1E293B', lineHeight: 1.2 }}>{firmsLatest ? firmsLatest.active : '-'}</div>
+            <div style={{ fontSize: '0.68rem', color: firmsChange > 0 ? '#166534' : firmsChange < 0 ? '#B91C1C' : '#64748B' }}>
+              {firmsChange == null
+                ? (firmsLatest ? 'First day recorded' : 'Not recorded yet')
+                : `${firmsChange > 0 ? '+' : ''}${firmsChange} since ${firmsFirst.label}`}
+            </div>
+          </div>
         </div>
         <ResponsiveContainer width="100%" height={260}>
-          <BarChart data={firmsData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }} barCategoryGap="20%">
+          <ComposedChart data={firmsData} margin={{ top: 20, right: 12, left: -18, bottom: 0 }} barCategoryGap="20%">
             <CartesianGrid vertical={false} stroke="#EEF2F6" />
             <XAxis dataKey="label" tick={AXIS_TICK} tickLine={false} axisLine={{ stroke: '#CBD5E1' }} interval="preserveStartEnd" minTickGap={12} />
             <YAxis allowDecimals={false} tick={AXIS_TICK} tickLine={false} axisLine={false} />
@@ -386,7 +411,29 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
                 isAnimationActive={false}
               />
             ))}
-          </BarChart>
+            <Line
+              type="linear"
+              dataKey="active"
+              name="Total"
+              stroke={FIRM_TOTAL_COLOR}
+              strokeWidth={2}
+              dot={{ r: 3, strokeWidth: 0, fill: FIRM_TOTAL_COLOR }}
+              activeDot={{ r: 5, stroke: '#fff', strokeWidth: 2 }}
+              connectNulls
+              isAnimationActive={false}
+            >
+              <LabelList
+                dataKey="active"
+                content={({ x, y, value, index }) => {
+                  if (value == null || x == null || y == null) return null;
+                  if (!labelEveryFirmsPoint && firmsData[index]?.iso !== firmsLatest?.iso) return null;
+                  return (
+                    <text x={x} y={y - 8} textAnchor="middle" fontSize={11} fontWeight={700} fill={FIRM_TOTAL_COLOR}>{value}</text>
+                  );
+                }}
+              />
+            </Line>
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
 
