@@ -18,7 +18,7 @@ import { activeStageRank } from '../../utils/oppStages';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 import { CompanyNewsScheduleModal } from './CompanyNewsScheduleModal';
 import { PEServicesReportModal } from './PEServicesReportModal';
-import { DataTable } from '../common/DataTable';
+import { DataTable, ColumnFilterCell } from '../common/DataTable';
 import { buildZoomCsv, downloadZoomCsv } from '../../utils/zoomCsv';
 import { buildZoomExcludedMatcher } from '../../utils/zoomExportExclude';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
@@ -373,6 +373,18 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
   }, [oppsFirm]);
   const [expanded, setExpanded] = useState(() => new Set());
   const [query, setQuery] = useState('');
+  // Per-column filters under the header, keyed by column. Each value is
+  // what ColumnFilterCell hands back: picked chips, plus whatever is still
+  // being typed. Kept across visits like the sort and the widths are.
+  const [colFilters, setColFilters] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-filters') || '{}');
+      return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+    } catch { return {}; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('pe-portfolio:col-filters', JSON.stringify(colFilters)); } catch { /* storage full or blocked: the filters just won't persist */ }
+  }, [colFilters]);
   const [hubspotCache, setHubspotCacheState] = useState(null);
   useEffect(() => {
     let cancelled = false;
@@ -1338,10 +1350,95 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     return arr;
   }, [visibleFirms, stageStatsByFirm, sortKey, sortDir, analysisForTopPc]);
 
+  // What a column's filter matches a row against: the words the cell shows,
+  // so a filter reads the same as the table does. Blank where the cell is a
+  // plain dash, which the filter offers as (Blanks).
+  const filterValueOf = useCallback((key, pe) => {
+    const st = stageStatsByFirm.get(pe.id) || {};
+    const dmTotal = (st.decisionMakerNames || []).length;
+    const top = st.topPc;
+    switch (key) {
+      case 'company': return pe.company || '';
+      case 'cdm': return String(pe.cdm || '').trim();
+      case 'status': return String(pe.status || '').trim() || 'No status';
+      case 'peAum': return pe.peAum ? formatAum(pe.peAum) : '';
+      case 'geography': return String(pe.geography || '').trim();
+      case 'dm': return dmTotal > 0 ? 'Found' : 'Not found';
+      case 'met': return dmTotal > 0 ? `${st.metInPersonCount || 0}/${dmTotal}` : '';
+      case 'mapping': return st.pcMapped ? 'Yes' : 'No';
+      case 'ratio': return `${st.activeOpps || 0}/${st.totalOpps || 0}`;
+      case 'topPc': return top?.companyName || '';
+      case 'topPcAnalysis': {
+        if (!top || !prospectForPc(top.companyName)) return '';
+        return analysisForTopPc(st) ? 'Saved' : 'Not saved';
+      }
+      case 'topPcStatus': return top ? (top.status || 'Not tracked') : '';
+      case 'clients': return String(st.pcClientCount || 0);
+      case 'keyContacts': return String(st.keyContactCount || 0);
+      case 'caseStudy': return st.caseStudyState === 'yes' ? 'Yes' : st.caseStudyState === 'in-progress' ? 'In Progress' : 'No';
+      case 'peStage': return peStageOf(pe.peStage);
+      case 'newsFeed': return pe.trackAcquisitionNews === true ? 'Yes' : 'No';
+      default: return '';
+    }
+  }, [stageStatsByFirm, prospectForPc, analysisForTopPc]);
+
+  // Only the filters on columns that are showing count: hiding a column
+  // shouldn't leave rows missing for a reason nothing on screen names.
+  const activeColFilters = useMemo(() => {
+    const out = [];
+    for (const [key, raw] of Object.entries(colFilters)) {
+      if (!visibleCols.has(key) || key === 'pcDownload') continue;
+      // ColumnFilterCell's value: an array of picks, or { picks, draft }
+      // while something is still being typed.
+      const picks = Array.isArray(raw) ? raw : (Array.isArray(raw?.picks) ? raw.picks : []);
+      const draft = typeof raw?.draft === 'string' ? raw.draft : '';
+      const cleanPicks = picks.map(p => String(p || '').trim()).filter(Boolean);
+      const cleanDraft = draft.trim().toLowerCase();
+      if (cleanPicks.length || cleanDraft) out.push({ key, picks: cleanPicks, draft: cleanDraft });
+    }
+    return out;
+  }, [colFilters, visibleCols]);
+
+  // A picked value matches its cell exactly, so picking "Sold" doesn't also
+  // keep the "Not Sold" firms; what's still being typed narrows by substring.
+  const passesColFilter = useCallback((pe, { key, picks, draft }) => {
+    const v = String(filterValueOf(key, pe) ?? '').trim();
+    const lower = v.toLowerCase();
+    if (picks.some(p => (p.toLowerCase() === '(blanks)' ? v === '' : lower === p.toLowerCase()))) return true;
+    return !!draft && lower.includes(draft);
+  }, [filterValueOf]);
+
   const q = query.trim().toLowerCase();
-  const filteredFirms = q
+  const searchedFirms = q
     ? sortedPeFirms.filter(p => (p.company || '').toLowerCase().includes(q))
     : sortedPeFirms;
+  const filteredFirms = useMemo(
+    () => (activeColFilters.length === 0
+      ? searchedFirms
+      : searchedFirms.filter(pe => activeColFilters.every(f => passesColFilter(pe, f)))),
+    [searchedFirms, activeColFilters, passesColFilter],
+  );
+
+  // What each column's filter offers: the values in that column among the
+  // rows every OTHER filter lets through, the way Excel narrows its lists,
+  // so a choice is never one that empties the table.
+  const filterOptionsFor = (key) => {
+    const others = activeColFilters.filter(f => f.key !== key);
+    const values = new Map();
+    let hasBlanks = false;
+    for (const pe of searchedFirms) {
+      if (!others.every(f => passesColFilter(pe, f))) continue;
+      const v = String(filterValueOf(key, pe) ?? '').trim();
+      if (!v) { hasBlanks = true; continue; }
+      if (!values.has(v.toLowerCase())) values.set(v.toLowerCase(), v);
+    }
+    const list = [...values.values()];
+    const numeric = list.every(v => /^\d+(\/\d+)?$/.test(v));
+    list.sort(numeric
+      ? (a, b) => parseFloat(a) - parseFloat(b) || a.localeCompare(b, undefined, { numeric: true })
+      : (a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    return { suggestions: list, hasBlanks };
+  };
 
   // The firms on screen (CDM filter and search box applied) that the
   // Decision Maker Found? column marks Not found, for the Zoom Export: the
@@ -1706,6 +1803,19 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           title={`Download a ZoomInfo CSV (Company, Zoom Company ID, Zoom Company Name, Company URL) of the ${noDmFirms.length} firm${noDmFirms.length === 1 ? '' : 's'} shown here with no decision maker found`}
           style={{ padding: '0.4rem 0.7rem', border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff', fontSize: '0.72rem', fontWeight: 600, color: '#334155', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
         >Zoom Export: no DM ({noDmFirms.length})</button>
+        {(q || activeColFilters.length > 0) && (
+          <span style={{ fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>
+            {filteredFirms.length} of {visibleFirms.length}
+          </span>
+        )}
+        {activeColFilters.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setColFilters({})}
+            title="Clear every column filter on the table"
+            style={{ padding: '0.4rem 0.7rem', border: '1px solid #7C3AED', borderRadius: 6, background: '#F5F3FF', fontSize: '0.72rem', fontWeight: 600, color: '#6D28D9', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+          >Clear filters ({activeColFilters.length})</button>
+        )}
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
@@ -1745,7 +1855,10 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
               && `, and ${stageConflicts.length - CONFLICTS_NAMED} more flagged in the table below`}
           </div>
         )}
-        {filteredFirms.length === 0 ? (
+        {/* With a column filter on, the table stays up even when nothing
+            passes: the filters live in its header, and the empty state below
+            would take away the only place to undo them. */}
+        {filteredFirms.length === 0 && activeColFilters.length === 0 ? (
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>
               {peFirms.length === 0
@@ -1820,7 +1933,47 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                   </div>
                 ))}
                 <div style={{ padding: '0.35rem 0.6rem' }}></div>
+                {HEADER_COLUMNS.map(c => {
+                  if (c.key === 'pcDownload') return <div key={`f-${c.key}`} style={{ borderTop: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', background: '#fff' }} />;
+                  const { suggestions, hasBlanks } = filterOptionsFor(c.key);
+                  return (
+                    <div key={`f-${c.key}`} style={{ padding: '2px 4px', borderTop: '1px solid #E2E8F0', borderRight: '1px solid #E2E8F0', background: '#fff', minWidth: 0, textTransform: 'none' }}>
+                      <ColumnFilterCell
+                        value={colFilters[c.key]}
+                        onChange={(next) => setColFilters(prev => {
+                          const out = { ...prev };
+                          if (Array.isArray(next) && next.length === 0) delete out[c.key];
+                          else out[c.key] = next;
+                          return out;
+                        })}
+                        suggestions={suggestions}
+                        hasBlanks={hasBlanks}
+                      />
+                    </div>
+                  );
+                })}
+                <div style={{ borderTop: '1px solid #E2E8F0', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {activeColFilters.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setColFilters({})}
+                      title="Clear every column filter"
+                      style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: '#64748B', fontSize: '0.85rem', lineHeight: 1, fontFamily: 'inherit' }}
+                    >×</button>
+                  )}
+                </div>
               </div>
+
+              {filteredFirms.length === 0 && (
+                <div style={{ padding: '1rem', textAlign: 'center', fontSize: '0.78rem', color: '#64748B' }}>
+                  No PE firms match your filters.{' '}
+                  <button
+                    type="button"
+                    onClick={() => setColFilters({})}
+                    style={{ padding: 0, border: 'none', background: 'none', color: '#7C3AED', fontWeight: 600, fontSize: 'inherit', fontFamily: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}
+                  >Clear column filters</button>
+                </div>
+              )}
 
               {filteredFirms.map((pe, rowIdx) => {
                 const portfolio = portfolioByPe.get((pe.company || '').trim().toLowerCase()) || [];

@@ -111,7 +111,7 @@ const FILTER_DROPDOWN_CAP = 500;
 const BLANKS_TOKEN = '(Blanks)';
 const isBlanksToken = (p) => String(p ?? '').trim().toLowerCase() === BLANKS_TOKEN.toLowerCase();
 
-function ColumnFilterCell({ value, onChange, suggestions, hasBlanks = false }) {
+export function ColumnFilterCell({ value, onChange, suggestions, hasBlanks = false }) {
   const { picks, draft: incomingDraft } = readFilterValue(value);
   // We mirror the parent-controlled draft so typing feels instant
   // even when the parent re-render is async (e.g. inside a useMemo
