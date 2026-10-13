@@ -200,3 +200,66 @@ export function daysSince(tsMs, nowMs = Date.now()) {
   if (tsMs == null) return null;
   return Math.max(0, Math.floor((nowMs - tsMs) / MS_PER_DAY));
 }
+
+// --- firms active in the last 120 days, tiered or not -------------------------
+//
+// The Prospecting History chart of how many of your firms had any activity
+// in a fixed 120 days, per tier with the untiered ones as a fourth bucket.
+// Same "activity" as everything above. A fixed window rather than the
+// tiles' Active within choice, so the bars stay comparable day to day.
+
+export const ACTIVE_FIRMS_DAYS = 120;
+export const NOT_TIERED = 'Not tiered';
+export const ACTIVE_FIRM_BUCKETS = [...TIERS, NOT_TIERED];
+
+/** Which ACTIVE_FIRM_BUCKETS entry an account counts under. */
+export function firmBucket(p) {
+  const t = String(p?.tier || '').trim();
+  return TIERS.includes(t) ? t : NOT_TIERED;
+}
+
+/** Every account on this CDM, tiered or not. */
+export function myAccounts(prospects, cdmName) {
+  return (prospects || []).filter(p => p?.company && matchesCdm(p.cdm, cdmName));
+}
+
+/**
+ * Per bucket, how many of `accounts` had activity in the last `days` days:
+ * { 'Tier 1': { active, total }, ..., 'Not tiered': { active, total } }.
+ *
+ * Only contacts with something inside the window are matched to accounts.
+ * The answer is the same (an account's newest activity inside the window
+ * came from one of them) and it keeps the fuzzy company match off the
+ * thousands of contacts nobody has written to lately, which matters once
+ * every untiered account is in the list too.
+ */
+export function activeFirmsByBucket({
+  accounts, contacts, outreachIndex = null, localFields = null, links = null, exclusions = null,
+  days = ACTIVE_FIRMS_DAYS, nowMs = Date.now(),
+} = {}) {
+  const emails = outreachIndex?.emails || {};
+  const phones = outreachIndex?.phones || {};
+  const inWindow = (ts) => {
+    const d = daysSince(ts, nowMs);
+    return d != null && d <= days;
+  };
+  const recent = (contacts || []).filter((c) => {
+    const em = String(c?.email || '').trim().toLowerCase();
+    const hitE = em ? emails[em] : null;
+    if (hitE && inWindow(hitE.tsMs ?? parseWhen(hitE.ts))) return true;
+    for (const ph of [c?.phone, c?.mobilephone]) {
+      const hitP = phones[normalizePhone(ph)];
+      if (hitP && inWindow(hitP.tsMs ?? parseWhen(hitP.ts))) return true;
+    }
+    return inWindow(parseWhen(c?.notes_last_contacted));
+  });
+  const activity = lastActivityByAccount({ accounts, contacts: recent, outreachIndex, localFields, links, exclusions });
+  const out = Object.fromEntries(ACTIVE_FIRM_BUCKETS.map(b => [b, { active: 0, total: 0 }]));
+  for (const p of (accounts || [])) {
+    const slot = out[firmBucket(p)];
+    slot.total += 1;
+    const a = activity.get(p.id || p.company);
+    if (a && inWindow(a.tsMs)) slot.active += 1;
+  }
+  return out;
+}

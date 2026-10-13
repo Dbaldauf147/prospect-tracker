@@ -5,7 +5,8 @@
 // reads them back.
 //
 // Below them, the Tiered Activity tiles day by day: per tier, the share of
-// accounts reached in the window. Those rows are written whenever this page
+// accounts reached in the window, and how many firms (tiered or not) had any
+// activity in the last 120 days. Those rows are written whenever this page
 // or Tiered Activity is open (hooks/useTieredActivity.js), so this page loads
 // the same counts and records today's reading too.
 
@@ -19,10 +20,11 @@ import {
   workingDaysBack,
 } from '../../utils/prospectingHistory';
 import { TIERS } from '../../data/enums.js';
-import { ACTIVITY_SUMMARY_DAYS, tierActivityCoverage } from '../../utils/tieredAccountActivity';
+import { ACTIVE_FIRMS_DAYS, ACTIVE_FIRM_BUCKETS, ACTIVITY_SUMMARY_DAYS, tierActivityCoverage } from '../../utils/tieredAccountActivity';
+import { activeFirmsChartRows, activeFirmsHistorySnapshot, parseActiveFirmsHistory, subscribeActiveFirmsHistory } from '../../utils/activeFirmsHistory';
 import { coverageChartRows, coverageHistorySnapshot, parseCoverageHistory, subscribeCoverageHistory } from '../../utils/tieredCoverageHistory';
 import {
-  HIDDEN_STATUSES_KEY, WINDOW_DAYS_KEY, readHiddenCache, readWindowCache, statusOf, useRecordTieredCoverage,
+  HIDDEN_STATUSES_KEY, WINDOW_DAYS_KEY, readHiddenCache, readWindowCache, statusOf, useRecordActiveFirms, useRecordTieredCoverage,
   useTieredActivity, validWindow,
 } from '../../hooks/useTieredActivity';
 
@@ -43,6 +45,10 @@ const AXIS_TICK = { fontSize: 11, fill: '#64748B' };
 // One hue per tier, checked for colour-blind separation as a set. Every
 // line also has a dot per day and a legend, so colour is never the only cue.
 const TIER_LINE_COLORS = { 'Tier 1': '#2563EB', 'Tier 2': '#D97706', 'Tier 3': '#0D9488' };
+// The same three plus Not tiered for the firms-active bars. Purple rather
+// than a gray: a gray sat too close to Tier 3's teal to tell apart (checked
+// with the palette validator, normal and colour-blind vision).
+const FIRM_BAR_COLORS = { ...TIER_LINE_COLORS, 'Not tiered': '#7C3AED' };
 
 const CARD = {
   border: '1px solid #E2E8F0', borderRadius: 10, background: '#fff',
@@ -124,6 +130,34 @@ function CoverageTooltip({ active, payload }) {
   );
 }
 
+function ActiveFirmsTooltip({ active, payload }) {
+  const row = active && payload?.[0]?.payload;
+  if (!row) return null;
+  return (
+    <TooltipBox>
+      <div style={{ fontWeight: 700 }}>{row.weekday}, {row.label}</div>
+      {!row.recorded ? (
+        <div style={{ color: '#64748B' }}>Not recorded (Tiered Activity and History weren&apos;t opened)</div>
+      ) : (
+        <>
+          {/* Top of the stack first, so the list reads in the order the bar does. */}
+          {[...ACTIVE_FIRM_BUCKETS].reverse().map(b => (
+            <div key={b} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ width: 8, height: 8, borderRadius: 2, background: FIRM_BAR_COLORS[b], flexShrink: 0 }} />
+              <span style={{ color: '#475569' }}>{b}</span>
+              <span style={{ marginLeft: 'auto', paddingLeft: 12, fontWeight: 700 }}>{row[b] ?? '-'}</span>
+              <span style={{ color: '#64748B' }}>of {row[`${b} total`] ?? '-'}</span>
+            </div>
+          ))}
+          <div style={{ borderTop: '1px solid #E2E8F0', marginTop: 4, paddingTop: 3, fontWeight: 700 }}>
+            {row.active} firm{row.active === 1 ? '' : 's'} active in the last {row.windowDays ?? ACTIVE_FIRMS_DAYS} days
+          </div>
+        </>
+      )}
+    </TooltipBox>
+  );
+}
+
 function Stat({ label, value, sub }) {
   return (
     <div style={{ ...CARD, padding: '0.6rem 0.9rem', minWidth: 150, flex: '1 1 150px' }}>
@@ -148,7 +182,7 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
   // Today's Tiered Activity reading, worked out the way that subtab's tiles
   // are (its saved Hide statuses and Active within window), so opening
   // History alone still adds today's point.
-  const { contacts, noIndex, accounts, activity } = useTieredActivity({ prospects, settings, cdmName });
+  const { contacts, outreachIndex, noIndex, accounts, activity, localFields, links, exclusions } = useTieredActivity({ prospects, settings, cdmName });
   const [cachedHidden] = useState(readHiddenCache);
   const [cachedWindow] = useState(readWindowCache);
   const savedHidden = settings?.[HIDDEN_STATUSES_KEY];
@@ -161,6 +195,16 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
     return tierActivityCoverage(accounts.filter(p => !hidden.has(statusOf(p))), activity, { days: windowDays });
   }, [accounts, activity, hiddenKey, windowDays]);
   useRecordTieredCoverage({ coverage, windowDays, contacts, noIndex, accounts });
+  useRecordActiveFirms({ prospects, cdmName, contacts, outreachIndex, noIndex, localFields, links, exclusions });
+
+  const rawFirms = useSyncExternalStore(subscribeActiveFirmsHistory, activeFirmsHistorySnapshot);
+  const firmsHistory = useMemo(() => parseActiveFirmsHistory(rawFirms), [rawFirms]);
+  const firmsData = useMemo(() => {
+    const byIso = new Map(rows.map(r => [r.iso, r]));
+    return activeFirmsChartRows(firmsHistory, rows.map(r => r.iso))
+      .map(c => ({ ...c, label: byIso.get(c.iso)?.label, weekday: byIso.get(c.iso)?.weekday }));
+  }, [firmsHistory, rows]);
+  const firmsRecorded = firmsData.filter(r => r.recorded).length;
 
   const rawCoverage = useSyncExternalStore(subscribeCoverageHistory, coverageHistorySnapshot);
   const coverageHistory = useMemo(() => parseCoverageHistory(rawCoverage), [rawCoverage]);
@@ -312,6 +356,40 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
         </ResponsiveContainer>
       </div>
 
+      <div style={CARD}>
+        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Firms with activity in the last {ACTIVE_FIRMS_DAYS} days</div>
+        <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: 6 }}>
+          How many of your firms had a HubSpot email, call or contact in the {ACTIVE_FIRMS_DAYS} days up to each day, stacked by
+          tier, with your accounts that have no tier as Not tiered. A day is recorded whenever Tiered Activity or this page is
+          open{firmsRecorded === 0 ? ', starting today' : ''}; a day with no bar is one neither was.
+        </div>
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={firmsData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }} barCategoryGap="20%">
+            <CartesianGrid vertical={false} stroke="#EEF2F6" />
+            <XAxis dataKey="label" tick={AXIS_TICK} tickLine={false} axisLine={{ stroke: '#CBD5E1' }} interval="preserveStartEnd" minTickGap={12} />
+            <YAxis allowDecimals={false} tick={AXIS_TICK} tickLine={false} axisLine={false} />
+            <Tooltip content={<ActiveFirmsTooltip />} cursor={{ fill: 'rgba(148, 163, 184, 0.12)' }} />
+            <Legend iconType="square" iconSize={10} wrapperStyle={{ fontSize: '0.7rem', color: '#475569' }} itemSorter={null} />
+            {ACTIVE_FIRM_BUCKETS.map((b, i) => (
+              <Bar
+                key={b}
+                dataKey={b}
+                name={b}
+                stackId="firms"
+                fill={FIRM_BAR_COLORS[b]}
+                // A thin white edge between segments so neighbouring tiers
+                // don't run together; only the top segment is rounded.
+                stroke="#fff"
+                strokeWidth={1}
+                radius={i === ACTIVE_FIRM_BUCKETS.length - 1 ? [4, 4, 0, 0] : 0}
+                maxBarSize={36}
+                isAnimationActive={false}
+              />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
       <div>
         <button
           type="button"
@@ -325,7 +403,7 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
           <table style={{ marginTop: 8, borderCollapse: 'collapse', fontSize: '0.72rem', width: '100%', background: '#fff' }}>
             <thead>
               <tr style={{ textAlign: 'left', color: '#64748B' }}>
-                {['Day', 'Steps clear', 'Stopped at', 'Overdue at start', 'Overdue at end', ...TIERS.map(t => `${t} reached`)].map(h => (
+                {['Day', 'Steps clear', 'Stopped at', 'Overdue at start', 'Overdue at end', ...TIERS.map(t => `${t} reached`), ...ACTIVE_FIRM_BUCKETS.map(b => `${b} active ${ACTIVE_FIRMS_DAYS}d`)].map(h => (
                   <th key={h} style={{ padding: '4px 8px', borderBottom: '1px solid #E2E8F0', fontWeight: 700 }}>{h}</th>
                 ))}
               </tr>
@@ -333,6 +411,7 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
             <tbody>
               {[...rows].reverse().map(r => {
                 const c = coverageData.find(x => x.iso === r.iso);
+                const f = firmsData.find(x => x.iso === r.iso);
                 return (
                 <tr key={r.iso} style={{ color: r.recorded ? '#1E293B' : '#94A3B8' }}>
                   <td style={{ padding: '4px 8px', borderBottom: '1px solid #F1F5F9' }}>{r.weekday}, {r.label}</td>
@@ -343,6 +422,11 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
                   {TIERS.map(t => (
                     <td key={t} style={{ padding: '4px 8px', borderBottom: '1px solid #F1F5F9', color: c?.recorded ? '#1E293B' : '#94A3B8' }}>
                       {c?.[t] == null ? '-' : `${c[t]}%`}
+                    </td>
+                  ))}
+                  {ACTIVE_FIRM_BUCKETS.map(b => (
+                    <td key={b} style={{ padding: '4px 8px', borderBottom: '1px solid #F1F5F9', color: f?.recorded ? '#1E293B' : '#94A3B8' }}>
+                      {f?.[b] == null ? '-' : `${f[b]} of ${f[`${b} total`]}`}
                     </td>
                   ))}
                 </tr>
