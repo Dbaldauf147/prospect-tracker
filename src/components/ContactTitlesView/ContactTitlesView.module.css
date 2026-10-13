@@ -466,3 +466,99 @@
   border-color: #009530;
   color: #009530;
 }
+
+/* The page's own tabs, a level under the Contacts subtab bar, so smaller
+   and pill-shaped rather than a second underlined bar. */
+.viewTabs {
+  display: flex;
+  gap: 0.35rem;
+  margin-bottom: 0.9rem;
+}
+
+.viewTab,
+.viewTabActive {
+  padding: 3px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.viewTab:hover {
+  border-color: #009530;
+  color: #009530;
+}
+
+.viewTabActive {
+  border-color: #009530;
+  background: #009530;
+  color: #fff;
+}
+
+/* Decision maker titles: one line per title, columns so a few hundred
+   short titles do not run down a single narrow strip. */
+.dmList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  column-width: 300px;
+  column-gap: 1.2rem;
+}
+
+.dmRow {
+  break-inside: avoid;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.dmTitleBtn {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.3rem 0.2rem;
+  border: none;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dmTitleBtn:hover .dmTitle {
+  color: #009530;
+}
+
+.dmCaret {
+  width: 0.7rem;
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
+}
+
+.dmTitle {
+  flex: 1;
+  font-size: 0.8rem;
+  color: #1E293B;
+}
+
+.dmCount {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.dmPeople {
+  margin: 0 0 0.4rem 1.3rem;
+  padding: 0;
+  list-style: none;
+  font-size: 0.74rem;
+  line-height: 1.6;
+  color: #334155;
+}
+
+.dmCompany {
+  color: var(--color-text-muted);
+}
