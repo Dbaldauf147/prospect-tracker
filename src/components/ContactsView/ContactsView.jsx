@@ -175,6 +175,7 @@ export function ContactsView({
             cdmName={cdmName}
             settings={settings}
             updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
             targetAccountsData={targetAccountsData}
           />
         )}
