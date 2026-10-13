@@ -762,6 +762,7 @@ function App() {
           onAdd={addProspect}
           onClose={() => setBulkAddOpen(false)}
           settings={settings}
+          updateSettings={updateSettings}
           cdmName={cdmName}
         />
         </Suspense>
