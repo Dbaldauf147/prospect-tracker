@@ -3665,7 +3665,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                     ),
                   };
                   return (
-                    <tr key={r.email}>
+                    <tr key={r.email} className={isIntl(r) ? styles.intlRow : undefined}>
                       {effectiveBulkCols.map(c => (bulkCells[c.key] ? <Fragment key={c.key}>{bulkCells[c.key]()}</Fragment> : null))}
                     </tr>
                   );
