@@ -593,6 +593,9 @@ function buildContactColumns({ categorizeContact, showSuggestedCompany, showNewC
     // The Status on the prospect the contact's company maps to (Client,
     // Inside Sales, Qualifying...), blank when it maps to none.
     { key: 'companyStatus', label: 'Company Status' },
+    // The CDM on that same prospect, blank when it maps to none or has no
+    // CDM set.
+    { key: 'companyCdm', label: 'CDM' },
     ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
     ...(showNewCompanyEmail ? [{ key: 'newCompany', label: 'New Company' }, { key: 'expectedEmail', label: 'Expected Email', sortable: false }] : []),
     ...(showReachedOut ? [{ key: 'reachedOut', label: 'Reached Out' }] : []),
@@ -1866,7 +1869,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, companyStatus: 140, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, lastOutreach: 160, noReply: 100, campaignReply: 200, emailCampaigns: 240, campaignSends60: 120,
+    name: 180, category: 160, title: 200, company: 200, companyStatus: 140, companyCdm: 140, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, lastOutreach: 160, noReply: 100, campaignReply: 200, emailCampaigns: 240, campaignSends60: 120,
   };
   // Column visibility - every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -1886,7 +1889,7 @@ function KeyContactsViewInner({
   // keys removes the guess: anything not on the list shows, so the next
   // column to ship here needs none of this. They stay only to convert a
   // layout saved under the old model, once.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'companyStatus', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(hasFullTable(storagePrefix) ? ['custom', 'toCc'] : []), 'tags', ...(hasFullTable(storagePrefix) ? ['taggedPct'] : []), 'lastOutreach', ...(hasFullTable(storagePrefix) ? ['noReply', 'campaignReply', 'emailCampaigns', 'campaignSends60'] : [])];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'companyStatus', 'companyCdm', ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(hasFullTable(storagePrefix) ? ['custom', 'toCc'] : []), 'tags', ...(hasFullTable(storagePrefix) ? ['taggedPct'] : []), 'lastOutreach', ...(hasFullTable(storagePrefix) ? ['noReply', 'campaignReply', 'emailCampaigns', 'campaignSends60'] : [])];
   function loadLegacyVisibleCols() {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -3192,6 +3195,7 @@ function KeyContactsViewInner({
         case 'title':   cmp = (a.jobtitle || '').localeCompare(b.jobtitle || ''); break;
         case 'company': cmp = (a.companyName || '').localeCompare(b.companyName || ''); break;
         case 'companyStatus': cmp = (a.prospect?.status || '').localeCompare(b.prospect?.status || ''); break;
+        case 'companyCdm': cmp = String(a.prospect?.cdm || '').trim().localeCompare(String(b.prospect?.cdm || '').trim()); break;
         case 'suggestedCompany': cmp = (a.suggestedCompany || '').localeCompare(b.suggestedCompany || ''); break;
         case 'newCompany': cmp = (a.newCompany || '').localeCompare(b.newCompany || ''); break;
         case 'reachedOut': cmp = Number(!!a.reachedOut) - Number(!!b.reachedOut); break;
@@ -3338,6 +3342,7 @@ function KeyContactsViewInner({
     title:    c => c.jobtitle || '',
     company:  c => c.companyName || '',
     companyStatus: c => c.prospect?.status || '',
+    companyCdm: c => String(c.prospect?.cdm || '').trim(),
     suggestedCompany: c => c.suggestedCompany || '',
     newCompany: c => c.newCompany || '',
     reachedOut: c => c.reachedOut ? 'Reached out' : 'Not yet',
@@ -4518,6 +4523,17 @@ function KeyContactsViewInner({
                           <span style={{ width: 8, height: 8, borderRadius: 999, background: color, flexShrink: 0 }} />
                           <span style={{ color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{st}</span>
                         </div>
+                      );
+                    })(),
+                    companyCdm: (() => {
+                      const cdm = String(c.prospect?.cdm || '').trim();
+                      return (
+                        <div
+                          style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', color: cdm ? '#334155' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          title={cdm
+                            ? `${c.prospect.company || c.companyName}: CDM ${cdm}`
+                            : (c.prospect ? `${c.prospect.company || c.companyName} has no CDM on its company card` : 'Company not mapped to a Table View prospect')}
+                        >{cdm || '-'}</div>
                       );
                     })(),
                     suggestedCompany: (
