@@ -91,12 +91,15 @@ function TitleSearches({ settings, updateSettings }) {
 
   const saved = useMemo(() => resolveTitleSearches(settings), [settings]);
 
-  // While editing, the draft is authoritative: `saved` is rebuilt from
-  // settings on every write, and reading through it mid-edit would snap a
-  // half-typed name back to the version that just round-tripped.
+  // The page is always editable. Once something has been typed the draft
+  // is authoritative: `saved` is rebuilt from settings on every write, and
+  // reading through it mid-edit would snap a half-typed name back to the
+  // version that just round-tripped (normalised, trailing space trimmed).
+  // The draft is dropped again once the save has landed and nothing on the
+  // page has focus, so a change made on another device still shows up.
   const [draft, setDraft] = useState(null);
-  const editing = draft != null;
-  const searches = editing ? draft : saved;
+  const searches = draft ?? saved;
+  const pageRef = useRef(null);
 
   // Autosave, debounced. A settings write per keystroke would be a
   // Firestore round trip per letter of "Chief Sustainability Officer";
@@ -125,13 +128,10 @@ function TitleSearches({ settings, updateSettings }) {
     timerRef.current = setTimeout(flush, 800);
   }, [flush]);
 
-  function startEditing() {
-    // Deep enough copy that editing a term can't mutate the module-level
-    // defaults, which are shared by every later Reset.
-    setDraft(searches.map(e => ({ ...e, groups: e.groups.map(g => ({ ...g, terms: [...g.terms] })) })));
-  }
-
-  function stopEditing() {
+  // Let go of the draft when the user leaves the page's fields: save what
+  // is pending and read from settings again.
+  function releaseDraft(e) {
+    if (pageRef.current?.contains(e.relatedTarget)) return;
     flush();
     setDraft(null);
   }
@@ -215,15 +215,16 @@ function TitleSearches({ settings, updateSettings }) {
   // reads as a shorter list than the one that is actually being run, and
   // the reason to look a title up here is to see the company it keeps.
   //
-  // Not applied while editing. A card that vanishes on the keystroke that
-  // takes its name past the filter is a card the user was in the middle of
-  // renaming, so the find box is put away for the duration instead.
-  const shown = useMemo(() => {
-    if (editing || !needle) return searches;
-    return searches.filter(entry =>
+  // Filtered against what is saved rather than the draft, so a card can't
+  // vanish on the keystroke that takes its name past the filter while the
+  // user is in the middle of renaming it.
+  const shownKeys = useMemo(() => {
+    if (!needle) return null;
+    return new Set(saved.filter(entry =>
       entry.name.toLowerCase().includes(needle)
-      || entry.groups.some(g => g.terms.some(t => hits(t, needle))));
-  }, [editing, needle, searches]);
+      || entry.groups.some(g => g.terms.some(t => hits(t, needle)))).map(e => e.key));
+  }, [needle, saved]);
+  const shown = shownKeys ? searches.filter(e => shownKeys.has(e.key)) : searches;
 
   const total = useMemo(
     () => searches.reduce((n, e) => n + termCount(e), 0),
@@ -243,56 +244,40 @@ function TitleSearches({ settings, updateSettings }) {
   }
 
   return (
-    <div>
+    <div ref={pageRef} onBlur={releaseDraft}>
       <div className={styles.head}>
         <h2 className={styles.title}>Titles</h2>
-        {editing ? (
-          <>
-            <button type="button" className={styles.doneBtn} onClick={stopEditing}>Done</button>
-            <button type="button" className={styles.resetBtn} onClick={resetToDefaults}>
-              Reset to the built-in seven
-            </button>
-          </>
-        ) : (
-          <button type="button" className={styles.editBtn} onClick={startEditing}>Edit</button>
-        )}
+        <button type="button" className={styles.resetBtn} onClick={resetToDefaults}>
+          Reset to the built-in seven
+        </button>
       </div>
       <div className={styles.blurb}>
         What each persona is searched by: the scope the search runs against, the title terms to
         look for, and, where one was worked out, the terms that rule a hit back out. A reference
         for running the search in HubSpot or ZoomInfo - nothing here reads or changes a contact.
+        Click any name, scope, heading or term to change it; changes save as you type.
       </div>
 
-      {editing ? (
-        <div className={styles.editNote}>
-          Editing. Names, scopes, headings and terms are all text boxes, and changes save as you
-          type. A term is what gets pasted into a search box, so it is stored exactly as typed:
-          nothing is spell-checked or tidied on the way in.
-        </div>
-      ) : (
-        <div className={styles.searchRow}>
-          <input
-            type="text"
-            className={styles.search}
-            placeholder="Find a title: energy, risk, portfolio…"
-            value={term}
-            onChange={e => setTerm(e.target.value)}
-          />
-          <span className={styles.count}>
-            {needle
-              ? `${shown.length} of ${searches.length} searches carry “${term.trim()}”`
-              : `${searches.length} searches, ${total} terms`}
-          </span>
-        </div>
-      )}
+      <div className={styles.searchRow}>
+        <input
+          type="text"
+          className={styles.search}
+          placeholder="Find a title: energy, risk, portfolio…"
+          value={term}
+          onChange={e => setTerm(e.target.value)}
+        />
+        <span className={styles.count}>
+          {needle
+            ? `${shown.length} of ${searches.length} searches carry “${term.trim()}”`
+            : `${searches.length} searches, ${total} terms`}
+        </span>
+      </div>
 
       {shown.length === 0 ? (
         <div className={styles.empty}>
-          {editing
-            ? 'No searches. Add one below.'
-            : searches.length === 0
-              ? 'No searches on this page yet. Edit to add one, or reset to the built-in seven.'
-              : `No search carries “${term.trim()}”. That is an answer as well: nobody has put this title on a persona yet.`}
+          {searches.length === 0
+            ? 'No searches on this page yet. Add one below, or reset to the built-in seven.'
+            : `No search carries “${term.trim()}”. That is an answer as well: nobody has put this title on a persona yet.`}
         </div>
       ) : (
         <div className={styles.cards}>
@@ -301,41 +286,31 @@ function TitleSearches({ settings, updateSettings }) {
             return (
               <div key={entry.key} className={styles.card}>
                 <div className={styles.cardHead}>
-                  {editing ? (
-                    <input
-                      type="text"
-                      className={styles.nameInput}
-                      value={entry.name}
-                      placeholder="Persona name"
-                      aria-label="Persona name"
-                      onChange={e => patchSearch(si, { name: e.target.value })}
-                    />
-                  ) : (
-                    <span className={styles.cardName}>{entry.name || 'Untitled search'}</span>
-                  )}
-                  <span className={styles.cardCount}>{termCount(entry)} terms</span>
-                  {editing && (
-                    <button
-                      type="button"
-                      className={styles.deleteBtn}
-                      onClick={() => removeSearch(si)}
-                      title="Delete this search"
-                    >Delete</button>
-                  )}
-                </div>
-
-                {editing ? (
                   <input
                     type="text"
-                    className={styles.scopeInput}
-                    value={entry.scope}
-                    placeholder="Scope (who the search runs against)"
-                    aria-label="Scope"
-                    onChange={e => patchSearch(si, { scope: e.target.value })}
+                    className={styles.nameInput}
+                    value={entry.name}
+                    placeholder="Persona name"
+                    aria-label="Persona name"
+                    onChange={e => patchSearch(si, { name: e.target.value })}
                   />
-                ) : entry.scope ? (
-                  <span className={styles.scope}>{entry.scope}</span>
-                ) : null}
+                  <span className={styles.cardCount}>{termCount(entry)} terms</span>
+                  <button
+                    type="button"
+                    className={styles.deleteBtn}
+                    onClick={() => removeSearch(si)}
+                    title="Delete this search"
+                  >Delete</button>
+                </div>
+
+                <input
+                  type="text"
+                  className={styles.scopeInput}
+                  value={entry.scope}
+                  placeholder="Scope (who the search runs against)"
+                  aria-label="Scope"
+                  onChange={e => patchSearch(si, { scope: e.target.value })}
+                />
 
                 {entry.groups.map((group, gi) => {
                   const exclude = group.kind === 'exclude';
@@ -343,96 +318,76 @@ function TitleSearches({ settings, updateSettings }) {
                   return (
                     <div key={id} className={styles.group}>
                       <div className={styles.groupHead}>
-                        {editing ? (
-                          <input
-                            type="text"
-                            className={exclude ? styles.labelInputExclude : styles.labelInput}
-                            value={group.label}
-                            placeholder="Heading (optional)"
-                            aria-label="Group heading"
-                            onChange={e => patchGroup(si, gi, { label: e.target.value })}
-                          />
-                        ) : (
-                          <span className={exclude
-                            ? styles.groupLabelExclude
-                            : (group.label ? styles.groupLabel : styles.groupLabelPlain)}
-                          >
-                            {group.label || EMPTY_GROUP_LABEL}
-                          </span>
-                        )}
-                        {editing ? (
-                          <button
-                            type="button"
-                            className={styles.removeGroupBtn}
-                            onClick={() => removeGroup(si, gi)}
-                            title="Remove this group of terms"
-                          >Remove</button>
-                        ) : (
-                          <button
-                            type="button"
-                            className={styles.copyBtn}
-                            onClick={() => copy(entry, group, gi)}
-                            title={`Copy these ${group.terms.length} terms, comma separated, to paste into a search`}
-                          >{copied === id ? 'Copied' : 'Copy'}</button>
-                        )}
+                        <input
+                          type="text"
+                          className={exclude ? styles.labelInputExclude : styles.labelInput}
+                          value={group.label}
+                          placeholder={EMPTY_GROUP_LABEL}
+                          aria-label="Group heading"
+                          onChange={e => patchGroup(si, gi, { label: e.target.value })}
+                        />
+                        <button
+                          type="button"
+                          className={styles.removeGroupBtn}
+                          onClick={() => removeGroup(si, gi)}
+                          title="Remove this group of terms"
+                        >Remove</button>
+                        <button
+                          type="button"
+                          className={styles.copyBtn}
+                          onClick={() => copy(entry, group, gi)}
+                          title={`Copy these ${group.terms.length} terms, comma separated, to paste into a search`}
+                        >{copied === id ? 'Copied' : 'Copy'}</button>
                       </div>
                       <div className={styles.terms}>
                         {group.terms.map((t, ti) => (
-                          editing ? (
-                            <span key={ti} className={exclude ? styles.termEditExclude : styles.termEdit}>
-                              <input
-                                type="text"
-                                className={styles.termInput}
-                                value={t}
-                                size={inputSize(t)}
-                                aria-label="Search term"
-                                onChange={e => setTermAt(si, gi, ti, e.target.value)}
-                                onBlur={() => { if (!t.trim()) removeTerm(si, gi, ti); }}
-                              />
-                              <button
-                                type="button"
-                                className={styles.termX}
-                                onClick={() => removeTerm(si, gi, ti)}
-                                title={`Remove “${t}”`}
-                              >×</button>
-                            </span>
-                          ) : (
-                            <span
-                              key={ti}
-                              className={[
-                                exclude ? styles.termExclude : styles.term,
-                                hits(t, needle) ? styles.termHit : '',
-                              ].filter(Boolean).join(' ')}
-                            >{t}</span>
-                          )
+                          <span
+                            key={ti}
+                            className={[
+                              exclude ? styles.termEditExclude : styles.termEdit,
+                              hits(t, needle) ? styles.termHit : '',
+                            ].filter(Boolean).join(' ')}
+                          >
+                            <input
+                              type="text"
+                              className={styles.termInput}
+                              value={t}
+                              size={inputSize(t)}
+                              aria-label="Search term"
+                              onChange={e => setTermAt(si, gi, ti, e.target.value)}
+                              onBlur={() => { if (!t.trim()) removeTerm(si, gi, ti); }}
+                            />
+                            <button
+                              type="button"
+                              className={styles.termX}
+                              onClick={() => removeTerm(si, gi, ti)}
+                              title={`Remove “${t}”`}
+                            >×</button>
+                          </span>
                         ))}
-                        {editing && <AddTerm onAdd={v => addTerm(si, gi, v)} />}
+                        <AddTerm onAdd={v => addTerm(si, gi, v)} />
                       </div>
                     </div>
                   );
                 })}
 
-                {editing && (
-                  <div className={styles.cardFoot}>
-                    <button type="button" className={styles.addGroupBtn} onClick={() => addGroup(si, 'include')}>
-                      + Include group
-                    </button>
-                    <button type="button" className={styles.addGroupBtnExclude} onClick={() => addGroup(si, 'exclude')}>
-                      + Exclude group
-                    </button>
-                  </div>
-                )}
+                <div className={styles.cardFoot}>
+                  <button type="button" className={styles.addGroupBtn} onClick={() => addGroup(si, 'include')}>
+                    + Include group
+                  </button>
+                  <button type="button" className={styles.addGroupBtnExclude} onClick={() => addGroup(si, 'exclude')}>
+                    + Exclude group
+                  </button>
+                </div>
               </div>
             );
           })}
         </div>
       )}
 
-      {editing && (
-        <button type="button" className={styles.addSearchBtn} onClick={addSearch}>
-          + New search
-        </button>
-      )}
+      <button type="button" className={styles.addSearchBtn} onClick={addSearch}>
+        + New search
+      </button>
 
       <div className={styles.foot}>
         Terms are stored exactly as they are typed, typos included, because these are the strings
