@@ -11,9 +11,9 @@ function check(name, cond) {
 }
 
 const contacts = [
-  { id: 1, firstname: 'Zed', lastname: 'Z', jobtitle: 'VP Sustainability', company: 'A', dans_tags: 'Decision Maker' },
+  { id: 1, firstname: 'Zed', lastname: 'Z', jobtitle: 'VP Sustainability', company: 'A', dans_tags: 'Decision Maker;esg' },
   { id: 2, firstname: 'Amy', lastname: 'A', jobtitle: 'vp  sustainability ', company: 'B', dans_tags: 'ESG;Decision Maker' },
-  { id: 3, firstname: 'Bob', lastname: 'B', jobtitle: 'Chief Financial Officer', company: 'C', dans_tags: 'Decision Maker' },
+  { id: 3, firstname: 'Bob', lastname: 'B', jobtitle: 'Chief Financial Officer', company: 'C', dans_tags: 'Decision Maker; Met In Person' },
   { id: 4, firstname: 'Cat', lastname: 'C', jobtitle: 'Analyst', company: 'D', dans_tags: 'ESG' },
   { id: 5, firstname: 'Dee', lastname: 'D', jobtitle: 'Director', company: 'E', dans_tags: 'Decision Maker;Hide' },
   { id: 6, firstname: 'Eve', lastname: 'E', jobtitle: 'Director', company: 'F', dans_tags: 'Decision Maker;Left' },
@@ -21,7 +21,7 @@ const contacts = [
   { id: 8, firstname: 'Gus', lastname: 'G', jobtitle: 'Energy Manager', company: 'H', dans_tags: 'decision maker' },
 ];
 
-const { titles, untitled } = decisionMakerTitles(contacts);
+const { titles, tags, untitled } = decisionMakerTitles(contacts);
 
 check('only Decision Maker contacts, Hide and Left left out',
   titles.reduce((n, t) => n + t.count, 0) === 4);
@@ -31,6 +31,11 @@ check('case and spacing variants share one row', titles[2].count === 2);
 check('people under a title sorted by name',
   titles[2].contacts.map(c => c.name).join(',') === 'Amy A,Zed Z');
 check('blank titles counted, not listed', untitled === 1);
+check('tag columns: every tag but Decision Maker, commonest first',
+  JSON.stringify(tags.map(t => [t.label, t.count])) === JSON.stringify([['ESG', 2], ['Met In Person', 1]]));
+check('per-title tag counts, spelling variants folded',
+  titles[2].tagCounts.esg === 2 && titles[0].tagCounts.metinperson === 1 && !titles[0].tagCounts.esg);
+check('each person carries their tags', JSON.stringify(titles[2].contacts[0].tags) === JSON.stringify(['esg']));
 check('empty input is empty', decisionMakerTitles(null).titles.length === 0);
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

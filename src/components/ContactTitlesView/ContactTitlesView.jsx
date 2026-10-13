@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CONTACT_TITLE_SEARCHES,
   normalizeTitleSearches,
@@ -466,11 +466,17 @@ function DecisionMakerTitles() {
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
 
-  const { titles, untitled } = useMemo(() => decisionMakerTitles(contacts || []), [contacts]);
-  const shown = useMemo(
-    () => (needle ? titles.filter(t => t.title.toLowerCase().includes(needle)) : titles),
-    [titles, needle],
-  );
+  const { titles, tags, untitled } = useMemo(() => decisionMakerTitles(contacts || []), [contacts]);
+  // A to Z by default. Clicking a tag's column heading ranks the titles by
+  // how many of their holders carry it instead; clicking it again goes back.
+  const [sortTag, setSortTag] = useState('');
+  const shown = useMemo(() => {
+    const list = needle ? titles.filter(t => t.title.toLowerCase().includes(needle)) : titles;
+    if (!sortTag) return list;
+    // Array sort is stable, so ties stay A to Z.
+    return [...list].sort((a, b) => (b.tagCounts[sortTag] || 0) - (a.tagCounts[sortTag] || 0));
+  }, [titles, needle, sortTag]);
+  const tagLabel = useMemo(() => new Map(tags.map(t => [t.key, t.label])), [tags]);
   const people = useMemo(() => titles.reduce((n, t) => n + t.count, 0), [titles]);
 
   const toggle = (title) => setOpen(prev => {
@@ -495,8 +501,10 @@ function DecisionMakerTitles() {
         <h2 className={styles.title}>Decision Maker titles</h2>
       </div>
       <div className={styles.blurb}>
-        Every job title held by a contact tagged Decision Maker, A to Z, with how many hold it.
-        Click a title to see who. Hidden and Left contacts are left out, the same as the DMs tab.
+        Every job title held by a contact tagged Decision Maker, A to Z, with how many hold it and,
+        in a column per tag, how many of them also carry that tag. Click a title to see who, or a
+        tag heading to rank the titles by it. Hidden and Left contacts are left out, the same as
+        the DMs tab.
       </div>
 
       <div className={styles.searchRow}>
@@ -532,35 +540,84 @@ function DecisionMakerTitles() {
             : `No decision maker title matches “${term.trim()}”.`}
         </div>
       ) : (
-        <ul className={styles.dmList}>
-          {shown.map(t => {
-            const isOpen = open.has(t.title);
-            return (
-              <li key={t.title} className={styles.dmRow}>
-                <button
-                  type="button"
-                  className={styles.dmTitleBtn}
-                  onClick={() => toggle(t.title)}
-                  aria-expanded={isOpen}
-                >
-                  <span className={styles.dmCaret}>{isOpen ? '▾' : '▸'}</span>
-                  <span className={styles.dmTitle}>{t.title}</span>
-                  <span className={styles.dmCount}>{t.count}</span>
-                </button>
-                {isOpen && (
-                  <ul className={styles.dmPeople}>
-                    {t.contacts.map((p, i) => (
-                      <li key={i}>
-                        {p.name}
-                        {p.company && <span className={styles.dmCompany}>, {p.company}</span>}
-                      </li>
+        <div className={styles.dmTableWrap}>
+          <table className={styles.dmTable}>
+            <thead>
+              <tr>
+                <th className={styles.dmThTitle}>
+                  <button
+                    type="button"
+                    className={!sortTag ? styles.dmSortActive : styles.dmSort}
+                    onClick={() => setSortTag('')}
+                    title="Sort the titles A to Z"
+                  >Title</button>
+                </th>
+                <th className={styles.dmThNum}>DMs</th>
+                {tags.map(t => (
+                  <th key={t.key} className={styles.dmThTag}>
+                    <button
+                      type="button"
+                      className={sortTag === t.key ? styles.dmSortActive : styles.dmSort}
+                      onClick={() => setSortTag(sortTag === t.key ? '' : t.key)}
+                      title={sortTag === t.key
+                        ? 'Back to A to Z'
+                        : `Rank titles by how many of their holders are tagged ${t.label} (${t.count} in all)`}
+                    >{t.label}</button>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map(t => {
+                const isOpen = open.has(t.title);
+                return (
+                  <Fragment key={t.title}>
+                    <tr>
+                      <td className={styles.dmTdTitle}>
+                        <button
+                          type="button"
+                          className={styles.dmTitleBtn}
+                          onClick={() => toggle(t.title)}
+                          aria-expanded={isOpen}
+                        >
+                          <span className={styles.dmCaret}>{isOpen ? '▾' : '▸'}</span>
+                          <span className={styles.dmTitle}>{t.title}</span>
+                        </button>
+                      </td>
+                      <td className={styles.dmTdNum}>{t.count}</td>
+                      {tags.map(tag => {
+                        const n = t.tagCounts[tag.key] || 0;
+                        return (
+                          <td
+                            key={tag.key}
+                            className={n ? styles.dmTdTagHit : styles.dmTdTag}
+                            title={n ? `${n} of ${t.count} ${t.title} tagged ${tag.label}` : undefined}
+                          >{n || ''}</td>
+                        );
+                      })}
+                    </tr>
+                    {isOpen && t.contacts.map((p, i) => (
+                      <tr key={i} className={styles.dmPersonRow}>
+                        <td className={styles.dmTdPerson}>
+                          {p.name}
+                          {p.company && <span className={styles.dmCompany}>, {p.company}</span>}
+                        </td>
+                        <td className={styles.dmTdNum} />
+                        {tags.map(tag => (
+                          <td key={tag.key} className={styles.dmTdTag}>
+                            {p.tags.includes(tag.key) && (
+                              <span className={styles.dmTick} title={`${p.name} is tagged ${tagLabel.get(tag.key)}`}>✓</span>
+                            )}
+                          </td>
+                        ))}
+                      </tr>
                     ))}
-                  </ul>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
