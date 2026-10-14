@@ -22,7 +22,7 @@ import { companiesMatch } from '../../utils/listFlags';
 import { contactIsHidden } from '../ProspectModal/contactTags';
 import { ContactsTable } from '../ProspectModal/ContactsTable';
 import { applyTagPresetToContact, presetSummary } from '../../utils/tagPresets';
-import { tagVocabulary } from '../../utils/contactTagReview';
+import { tagVocabulary, planTagEdit } from '../../utils/contactTagReview';
 import styles from './AgendaView.module.css';
 
 const STORAGE_KEY = 'bulk-contacts-cache';
@@ -491,9 +491,10 @@ function isRealEmail(e) {
 // The HubSpot contacts already at a company, for the Company cell's contacts
 // popup. Read the same way the company card reads its own list: a fuzzy
 // Company-name match, a contact with no Company text on one of the card's
-// email domains, and anyone linked to the card by hand, hidden people left
-// out. `names` is every spelling the popup knows the company by.
-function existingCompanyContacts(contacts, names, card, links) {
+// email domains, and anyone linked to the card by hand, hidden people and
+// the ones removed from this company (`excluded`, the card's own exclusion
+// list) left out. `names` is every spelling the popup knows the company by.
+function existingCompanyContacts(contacts, names, card, links, excluded) {
   const domains = new Set();
   for (const entry of String(card?.emailDomain || '').split(/[\n;,]+/)) {
     const at = entry.lastIndexOf('@');
@@ -503,10 +504,12 @@ function existingCompanyContacts(contacts, names, card, links) {
   const site = String(card?.website || '').replace(/^https?:\/\/(www\.)?/i, '').replace(/\/.*$/, '').toLowerCase().trim();
   if (site) domains.add(site);
   const linked = new Set((links || []).map(String));
+  const removed = new Set((excluded || []).map(String));
   const out = [];
   for (const c of contacts) {
     if (contactIsHidden(c)) continue;
     const id = String(c.id || c.vid || '');
+    if (id && removed.has(id)) continue;
     let hit = (id && linked.has(id)) || names.some(n => companiesMatch(c.company, n));
     if (!hit && !String(c.company || '').trim() && domains.size) {
       const email = String(c.email || '').toLowerCase();
@@ -928,6 +931,132 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
 
   // Reload HubSpot cache whenever results change (so newly-added contacts move to the "exists" state).
   const [hubspotByEmail, setHubspotByEmail] = useState(new Map());
+
+  // The Company cell's contacts popup works on the HubSpot contacts already
+  // at the company the way the company card does: tags added or taken off
+  // (planTagEdit, then update-contact), and contacts deleted from HubSpot
+  // behind the same confirm. `existingPicked` is its selection, by contact id.
+  const [existingPicked, setExistingPicked] = useState(() => new Set());
+  const [deletingExistingContact, setDeletingExistingContact] = useState(null);
+  const [popupTagDraft, setPopupTagDraft] = useState({ existing: '', batch: '' });
+  const [popupTagBusy, setPopupTagBusy] = useState(false);
+
+  // Write a patch onto the contacts in the in-page map, so the popup and
+  // the grid's status read the change without waiting for a reload.
+  const patchHubspotByEmail = (ids, patchFor) => setHubspotByEmail(prev => {
+    const next = new Map(prev);
+    for (const [email, c] of prev) {
+      const id = String(c.id || c.vid || '');
+      if (!ids.has(id)) continue;
+      const patch = patchFor(c);
+      if (patch === null) next.delete(email); else next.set(email, { ...c, ...patch });
+    }
+    return next;
+  });
+
+  async function deleteExistingContacts(contacts) {
+    const targets = contacts.filter(c => c && (c.id || c.vid));
+    if (targets.length === 0) return;
+    const label = targets.length === 1
+      ? ([targets[0].firstname, targets[0].lastname].filter(Boolean).join(' ') || 'this contact')
+      : `${targets.length} contacts`;
+    if (!window.confirm(`Delete ${label} from HubSpot? This cannot be undone.`)) return;
+    const gone = new Set();
+    const errors = [];
+    for (const c of targets) {
+      const cid = String(c.id || c.vid);
+      setDeletingExistingContact(c.id || c.vid);
+      try {
+        if (!c._localOnly) {
+          const res = await apiFetch('/api/hubspot?action=delete-contact', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contactId: cid }),
+          });
+          if (!res.ok) throw new Error('Delete failed');
+        }
+        gone.add(cid);
+      } catch (err) {
+        errors.push(`${[c.firstname, c.lastname].filter(Boolean).join(' ') || cid}: ${err.message || err}`);
+      }
+    }
+    setDeletingExistingContact(null);
+    if (gone.size > 0) {
+      patchHubspotByEmail(gone, () => null);
+      setExistingPicked(prev => new Set([...prev].filter(id => !gone.has(id))));
+      try {
+        await updateHubspotCache(draft => {
+          draft.contacts = draft.contacts.filter(c => !gone.has(String(c.id || c.vid)));
+        });
+      } catch { /* the in-page map is already updated */ }
+    }
+    if (errors.length) alert(`Could not delete ${errors.length} contact${errors.length === 1 ? '' : 's'}:\n${errors.slice(0, 5).join('\n')}`);
+  }
+
+  // Add (mode 'add') or take off (mode 'remove') tags on contacts already in
+  // HubSpot. A contact the edit doesn't change is not written.
+  async function editExistingTags(contacts, mode, tagText) {
+    const chosen = String(tagText || '').split(/[;,]/).map(t => t.trim()).filter(Boolean);
+    if (chosen.length === 0 || contacts.length === 0) return;
+    setPopupTagBusy(true);
+    const written = new Map();
+    const errors = [];
+    for (const c of contacts) {
+      const cid = String(c.id || c.vid || '');
+      if (!cid) continue;
+      const before = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
+      const plan = planTagEdit(mode, chosen, before);
+      if (plan.action !== 'write') continue;
+      const properties = { dans_tags: plan.tags };
+      try {
+        if (!c._localOnly) {
+          const res = await apiFetch('/api/hubspot?action=update-contact', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contactId: cid, properties }),
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
+        }
+        written.set(cid, properties);
+      } catch (err) {
+        errors.push(`${[c.firstname, c.lastname].filter(Boolean).join(' ') || cid}: ${err.message || err}`);
+      }
+    }
+    if (written.size > 0) {
+      patchHubspotByEmail(new Set(written.keys()), c => written.get(String(c.id || c.vid)));
+      try {
+        await updateHubspotCache(draft => {
+          draft.contacts = draft.contacts.map(c => {
+            const w = written.get(String(c.id || c.vid));
+            return w ? { ...c, ...w } : c;
+          });
+        });
+      } catch { /* the in-page map is already updated */ }
+    }
+    setPopupTagBusy(false);
+    if (errors.length === 0) setPopupTagDraft(prev => ({ ...prev, existing: '' }));
+    else alert(`Could not update tags on ${errors.length} contact${errors.length === 1 ? '' : 's'}:\n${errors.slice(0, 5).join('\n')}`);
+  }
+
+  // The same on batch rows: their Dan's Tags cell, which goes to HubSpot
+  // with the row when it is sent.
+  function editBatchTags(emails, mode, tagText) {
+    const chosen = String(tagText || '').split(/[;,]/).map(t => t.trim()).filter(Boolean);
+    if (chosen.length === 0 || emails.length === 0) return;
+    const pick = new Set(emails);
+    setRows(prev => {
+      const next = prev.map(r => {
+        if (!pick.has(r.email)) return r;
+        const before = String(r.dans_tags || '').split(/[;,]/).map(t => t.trim()).filter(Boolean).join(';');
+        const plan = planTagEdit(mode, chosen, before);
+        return plan.action === 'write' ? { ...r, dans_tags: plan.tags } : r;
+      });
+      saveCache(next);
+      return next;
+    });
+    setPopupTagDraft(prev => ({ ...prev, batch: '' }));
+  }
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
@@ -1471,6 +1600,8 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       card: card || null,
     });
     setCompanyContactsPicked(new Set());
+    setExistingPicked(new Set());
+    setPopupTagDraft({ existing: '', batch: '' });
   }
   function clearAll() {
     if (!confirm('Clear all rows?')) return;
@@ -4329,6 +4460,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           [name, card?.company].filter(Boolean),
           card,
           (settings?.companyContactLinks || {})[linkKey],
+          (settings?.companyContactExclusions || {})[linkKey],
         )
           .filter(c => !memberEmails.has(String(c.email || '').toLowerCase()))
           .sort((a, b) => `${a.lastname || ''} ${a.firstname || ''}`.localeCompare(`${b.lastname || ''} ${b.firstname || ''}`));
@@ -4345,6 +4477,70 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           setCompanyContactsPicked(new Set());
         };
         const title = card?.company || name;
+        // Removing someone already in HubSpot works the way it does on the
+        // company card: ⊘ takes them off this company only (the same
+        // settings.companyContactExclusions list the card writes, so they
+        // drop off there too), and × deletes the contact from HubSpot.
+        const excludeExisting = (contactId) => {
+          const id = String(contactId || '');
+          if (!id || !linkKey || !updateSettings) return;
+          const cur = settings?.companyContactExclusions || {};
+          const list = Array.isArray(cur[linkKey]) ? cur[linkKey].map(String) : [];
+          if (list.includes(id)) return;
+          updateSettings({ companyContactExclusions: { ...cur, [linkKey]: [...list, id] } });
+        };
+        const pickedExisting = existing.filter(c => existingPicked.has(String(c.id || c.vid || '')));
+        const excludePickedExisting = () => {
+          const ids = pickedExisting.map(c => String(c.id || c.vid || '')).filter(Boolean);
+          if (ids.length === 0 || !linkKey || !updateSettings) return;
+          const cur = settings?.companyContactExclusions || {};
+          const list = Array.isArray(cur[linkKey]) ? cur[linkKey].map(String) : [];
+          updateSettings({ companyContactExclusions: { ...cur, [linkKey]: [...new Set([...list, ...ids])] } });
+          setExistingPicked(new Set());
+        };
+        // The toolbar over each section's selection: a tag box (typed, or
+        // picked from the tags already in use) with Add / Remove, and
+        // whatever else that section can do to the ticked contacts.
+        const btn = (color, enabled) => ({
+          padding: '0.3rem 0.65rem', border: `1px solid ${enabled ? color : 'var(--color-border)'}`, borderRadius: 6,
+          background: '#fff', color: enabled ? color : '#94A3B8', fontSize: '0.74rem', fontWeight: 600,
+          cursor: enabled ? 'pointer' : 'default', fontFamily: 'inherit', whiteSpace: 'nowrap',
+        });
+        const selectionBar = ({ count, noun, draftKey, onTags, children }) => {
+          const draft = popupTagDraft[draftKey];
+          const canTag = count > 0 && draft.trim() !== '' && !popupTagBusy;
+          return (
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.4rem', padding: '0.4rem 1.25rem 0.5rem' }}>
+              <span style={{ fontSize: '0.74rem', color: count ? 'var(--color-text)' : '#94A3B8', fontWeight: 600, marginRight: '0.25rem' }}>
+                {count ? `${count} ${noun}${count === 1 ? '' : 's'} selected` : `Tick ${noun}s to tag or remove them`}
+              </span>
+              <input
+                type="text"
+                list="company-popup-tag-list"
+                value={draft}
+                placeholder="Tag (or Tag1; Tag2)"
+                disabled={count === 0 || popupTagBusy}
+                onChange={e => setPopupTagDraft(prev => ({ ...prev, [draftKey]: e.target.value }))}
+                onKeyDown={e => { if (e.key === 'Enter' && canTag) onTags('add', draft); }}
+                style={{ width: 220, padding: '0.28rem 0.45rem', fontSize: '0.76rem', border: '1px solid var(--color-border)', borderRadius: 6, fontFamily: 'inherit' }}
+              />
+              <button type="button" disabled={!canTag} onClick={() => onTags('add', draft)} style={btn('#16A34A', canTag)}>+ Add tag</button>
+              <button type="button" disabled={!canTag} onClick={() => onTags('remove', draft)} style={btn('#B45309', canTag)}>- Remove tag</button>
+              {popupTagBusy && draftKey === 'existing' && <span style={{ fontSize: '0.72rem', color: '#64748B' }}>Saving to HubSpot...</span>}
+              {children}
+            </div>
+          );
+        };
+        const unexcludeExisting = (contactId) => {
+          const id = String(contactId || '');
+          const cur = settings?.companyContactExclusions || {};
+          const list = Array.isArray(cur[linkKey]) ? cur[linkKey].map(String) : [];
+          if (!id || !list.includes(id) || !updateSettings) return;
+          const nextList = list.filter(x => x !== id);
+          const next = { ...cur };
+          if (nextList.length) next[linkKey] = nextList; else delete next[linkKey];
+          updateSettings({ companyContactExclusions: next });
+        };
         return (
           <div
             style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: '1.25rem' }}
@@ -4361,7 +4557,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>{title}</div>
                   <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '0.25rem' }}>
-                    {members.length} contact{members.length === 1 ? '' : 's'} in this batch, {existing.length} already in HubSpot. Removing takes batch rows out of the grid only; nothing is deleted in HubSpot.
+                    {members.length} contact{members.length === 1 ? '' : 's'} in this batch, {existing.length} already in HubSpot. Tick contacts in either list to add or remove tags. Tags on contacts already in HubSpot are saved straight to HubSpot; tags on batch rows go with the row when it is added. Removing batch rows takes them out of the grid only. Contacts already in HubSpot can be removed from this company (they stay in HubSpot) or deleted from HubSpot.
                   </div>
                 </div>
                 {card && onSelectProspect && (
@@ -4384,13 +4580,40 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                 {/* The HubSpot contacts already at the company, first and in the
                     company card's own roster table (same columns, widths and
                     order the user set there), so it reads the way the card
-                    does. Read-only here: no select or delete column. */}
+                    does, with the card's ⊘ (remove from this company) and ×
+                    (delete from HubSpot) in its Actions column. */}
                 <div style={{ padding: '0.6rem 1.25rem 0.35rem', fontSize: '0.72rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Already in HubSpot ({existing.length})</div>
                 {existing.length === 0 ? (
                   <div style={{ padding: '0.25rem 1.25rem 1rem', fontSize: '0.8rem', color: '#64748B' }}>
                     {hubspotByEmail.size === 0 ? 'HubSpot contacts have not loaded yet.' : 'No other HubSpot contacts at this company.'}
                   </div>
                 ) : (
+                  <>
+                  {selectionBar({
+                    count: pickedExisting.length,
+                    noun: 'contact',
+                    draftKey: 'existing',
+                    onTags: (mode, text) => editExistingTags(pickedExisting, mode, text),
+                    children: (
+                      <>
+                        <span style={{ width: 1, alignSelf: 'stretch', background: 'var(--color-border)', margin: '0 0.25rem' }} />
+                        <button
+                          type="button"
+                          disabled={pickedExisting.length === 0}
+                          onClick={excludePickedExisting}
+                          title="Take them off this company only. They stay in HubSpot."
+                          style={btn('#B45309', pickedExisting.length > 0)}
+                        >⊘ Remove from company</button>
+                        <button
+                          type="button"
+                          disabled={pickedExisting.length === 0 || deletingExistingContact !== null}
+                          onClick={() => deleteExistingContacts(pickedExisting)}
+                          title="Delete them from HubSpot (permanent)"
+                          style={btn('#DC2626', pickedExisting.length > 0 && deletingExistingContact === null)}
+                        >× Delete from HubSpot</button>
+                      </>
+                    ),
+                  })}
                   <div style={{ padding: '0 1.25rem 0.5rem' }}>
                     <ContactsTable
                       contacts={existing}
@@ -4398,10 +4621,26 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                       settings={settings}
                       updateSettings={updateSettings}
                       height="min(520px, 55vh)"
+                      onExclude={excludeExisting}
+                      onUnexclude={unexcludeExisting}
+                      onDeleteContact={c => deleteExistingContacts([c])}
+                      bulkSelected={existingPicked}
+                      setBulkSelected={setExistingPicked}
+                      deletingContact={deletingExistingContact}
                     />
                   </div>
+                  </>
                 )}
                 <div style={{ padding: '0.9rem 1.25rem 0.35rem', fontSize: '0.72rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', borderTop: '1px solid var(--color-border)', marginTop: '0.5rem' }}>In this batch ({members.length})</div>
+                <datalist id="company-popup-tag-list">
+                  {tagPresetVocab.map(t => <option key={t} value={t} />)}
+                </datalist>
+                {members.length > 0 && selectionBar({
+                  count: picked.length,
+                  noun: 'row',
+                  draftKey: 'batch',
+                  onTags: (mode, text) => editBatchTags(picked.map(r => r.email), mode, text),
+                })}
                 {members.length === 0 ? (
                   <div style={{ padding: '1.25rem', fontSize: '0.8rem', color: '#64748B' }}>No contacts left for this company.</div>
                 ) : (
@@ -4419,6 +4658,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                         <th style={{ padding: '0.45rem 0.6rem' }}>Name</th>
                         <th style={{ padding: '0.45rem 0.6rem' }}>Job title</th>
                         <th style={{ padding: '0.45rem 0.6rem' }}>Email</th>
+                        <th style={{ padding: '0.45rem 0.6rem', width: 260 }}>Dan's Tags</th>
                         <th style={{ padding: '0.45rem 0.6rem' }}>Status</th>
                         <th style={{ padding: '0.45rem 0.6rem', width: 28 }} />
                       </tr>
@@ -4441,6 +4681,16 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                             <td style={{ padding: '0.4rem 0.6rem', fontWeight: 600, color: 'var(--color-text)' }}>{fullName || '-'}</td>
                             <td style={{ padding: '0.4rem 0.6rem', color: '#334155' }}>{r.jobtitle || '-'}</td>
                             <td style={{ padding: '0.4rem 0.6rem', color: '#334155', fontFamily: 'monospace', fontSize: '0.74rem', wordBreak: 'break-all' }}>{isRealEmail(r.email) ? r.email : '-'}</td>
+                            <td style={{ padding: '0.25rem 0.6rem' }}>
+                              <input
+                                className={styles.cellInput}
+                                list="company-popup-tag-list"
+                                value={r.dans_tags || ''}
+                                onChange={e => updateRow(r.email, { dans_tags: e.target.value })}
+                                placeholder="Tag1, Tag2"
+                                aria-label={`Dan's Tags for ${fullName || r.email}`}
+                              />
+                            </td>
                             <td style={{ padding: '0.4rem 0.6rem', color: '#64748B', whiteSpace: 'nowrap' }}>{status}</td>
                             <td style={{ padding: '0.4rem 0.6rem' }}>
                               <button className={styles.rowRemove} onClick={() => removeRows([r.email])} title="Remove row" aria-label={`Remove ${fullName || r.email}`}>×</button>
