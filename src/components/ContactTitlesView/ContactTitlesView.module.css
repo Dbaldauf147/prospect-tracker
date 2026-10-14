@@ -52,16 +52,6 @@
    edit on the page, and a button that does that should not be the one the
    eye lands on first. It stays next to Done rather than being pushed to
    the far edge, where on a wide screen it reads as belonging to nothing. */
-.resetBtn {
-  composes: editBtn;
-  margin-left: 0.4rem;
-}
-
-.resetBtn:hover {
-  border-color: #B91C1C;
-  color: #B91C1C;
-}
-
 .editNote {
   margin: 0.8rem 0 1rem;
   padding: 0.5rem 0.7rem;

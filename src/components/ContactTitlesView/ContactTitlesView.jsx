@@ -1,6 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  CONTACT_TITLE_SEARCHES,
   normalizeTitleSearches,
   resolveTitleSearches,
   termCount,
@@ -136,18 +135,6 @@ function TitleSearches({ settings, updateSettings }) {
     setDraft(null);
   }
 
-  function resetToDefaults() {
-    if (!window.confirm(
-      'Put the seven built-in searches back?\n\n'
-      + 'Every persona, heading and term you have added or changed on this page is '
-      + 'replaced by the original list. This cannot be undone.',
-    )) return;
-    const fresh = CONTACT_TITLE_SEARCHES.map(e => ({
-      ...e, groups: e.groups.map(g => ({ ...g, terms: [...g.terms] })),
-    }));
-    commit(fresh);
-  }
-
   // Every edit below is the same shape: rebuild the list with one search,
   // one group or one term replaced. Written out rather than reached for
   // through a path helper because each one is two lines and the shape of
@@ -247,9 +234,6 @@ function TitleSearches({ settings, updateSettings }) {
     <div ref={pageRef} onBlur={releaseDraft}>
       <div className={styles.head}>
         <h2 className={styles.title}>Titles</h2>
-        <button type="button" className={styles.resetBtn} onClick={resetToDefaults}>
-          Reset to the built-in seven
-        </button>
       </div>
       <div className={styles.searchRow}>
         <input
@@ -271,7 +255,7 @@ function TitleSearches({ settings, updateSettings }) {
       {shown.length === 0 ? (
         <div className={styles.empty}>
           {searches.length === 0
-            ? 'No searches on this page yet. Add one below, or reset to the built-in seven.'
+            ? 'No searches on this page yet. Add one below.'
             : `No search carries “${term.trim()}”. That is an answer as well: nobody has put this title on a persona yet.`}
         </div>
       ) : (
@@ -710,9 +694,9 @@ function DecisionMakerTitles({ settings, updateSettings }) {
 // holding belongs to the group it sits in - one piece of state up in the
 // page would put half-typed text in whichever group was touched last.
 // The general Not list: terms that rule a hit out of every search, not just
-// one persona's. Kept apart from the searches in settings.contactTitleGeneralNot
-// so Reset to the built-in seven leaves it alone. Same autosave shape as the
-// searches: a local draft while typing, written after a pause or on blur.
+// one persona's. Kept apart from the searches in settings.contactTitleGeneralNot.
+// Same autosave shape as the searches: a local draft while typing, written
+// after a pause or on blur.
 const GENERAL_NOT_KEY = 'contactTitleGeneralNot';
 
 function GeneralNot({ settings, updateSettings, needle }) {
