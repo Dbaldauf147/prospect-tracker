@@ -360,6 +360,8 @@ function exactCompanyKey(s) {
 const LIST_MATCH_WARNINGS = [
   { label: 'SBT', storageKey: 'sbt-list-override' },
   { label: 'CA SB', storageKey: 'casb-list-override' },
+  { label: 'CDP', storageKey: 'cdp-list-override' },
+  { label: 'GRESB', storageKey: 'gresb-list-override' },
 ];
 
 function companiesMatch(a, b) {
@@ -9270,7 +9272,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               </span>
             </div>
           )}
-          {/* The same warning for the SBT and CA SB lists: Map the row to
+          {/* The same warning for the SBT, CA SB, CDP and GRESB lists: Map the row to
               this company, or Ignore it here. See ListMatchWarning. */}
           {!isNew && LIST_MATCH_WARNINGS.map(l => (
             <ListMatchWarning
