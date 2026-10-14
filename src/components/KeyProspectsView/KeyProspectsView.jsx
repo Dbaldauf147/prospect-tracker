@@ -310,6 +310,7 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
       }
       contactSelector={selector}
       defaultViewMode="companies"
+      showCompanyVertical
     />
   );
 }

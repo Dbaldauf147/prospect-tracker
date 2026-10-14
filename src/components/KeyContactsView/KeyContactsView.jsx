@@ -51,6 +51,11 @@ const COMPANY_COLUMNS = [
 ];
 const COMPANY_ALWAYS_VISIBLE = ['company'];
 
+// The By Company Vertical column, for pages that pass showCompanyVertical.
+// Sits right after Company.
+const COMPANY_VERTICAL_COLUMN = { key: 'vertical', label: 'Vertical', align: 'left', tip: 'The Vertical from the company card. Blank verticals sort last either way' };
+const COMPANY_COLUMNS_WITH_VERTICAL = [COMPANY_COLUMNS[0], COMPANY_VERTICAL_COLUMN, ...COMPANY_COLUMNS.slice(1)];
+
 // The distinct "City, State" places a company's contacts list, most common
 // first (ties alphabetical), for the By Company Location column.
 function contactLocations(contacts) {
@@ -2617,7 +2622,7 @@ function KeyContactsViewInner({
     }
   }, [campaignRecipientOptions, campaignFilterId]);
 
-  const DEFAULT_COL_WIDTHS = { company: 260, tier: 80, aum: 100, type: 120, status: 130, location: 160, keyContacts: 130, dm: 150, met: 130, ratio: 110 };
+  const DEFAULT_COL_WIDTHS = { company: 260, vertical: 160, tier: 80, aum: 100, type: 120, status: 130, location: 160, keyContacts: 130, dm: 150, met: 130, ratio: 110 };
   const [colWidths, setColWidths] = useSyncedTablePref({
     tableId: `${storagePrefix}:companies`, field: 'widths', settings, updateSettings,
     readLocal: () => {
@@ -2656,13 +2661,14 @@ function KeyContactsViewInner({
   const companyHiddenSet = useMemo(() => new Set(companyHidden || []), [companyHidden]);
   const companyStarredSet = useMemo(() => new Set(companyStarred || []), [companyStarred]);
   const companyRemovedSet = useMemo(() => new Set(companyRemoved || []), [companyRemoved]);
-  const companyColumnsInPlay = useMemo(() => COMPANY_COLUMNS.filter(c => !companyRemovedSet.has(c.key)), [companyRemovedSet]);
-  const companyRemovedColumns = useMemo(() => COMPANY_COLUMNS.filter(c => companyRemovedSet.has(c.key)), [companyRemovedSet]);
+  const companyColumns = showCompanyVertical ? COMPANY_COLUMNS_WITH_VERTICAL : COMPANY_COLUMNS;
+  const companyColumnsInPlay = useMemo(() => companyColumns.filter(c => !companyRemovedSet.has(c.key)), [companyColumns, companyRemovedSet]);
+  const companyRemovedColumns = useMemo(() => companyColumns.filter(c => companyRemovedSet.has(c.key)), [companyColumns, companyRemovedSet]);
   const companyVisibleSet = useMemo(
-    () => new Set(COMPANY_COLUMNS
+    () => new Set(companyColumns
       .filter(c => isColumnVisible(c.key, { hidden: companyHiddenSet, removed: companyRemovedSet, alwaysVisible: COMPANY_ALWAYS_VISIBLE }))
       .map(c => c.key)),
-    [companyHiddenSet, companyRemovedSet],
+    [companyColumns, companyHiddenSet, companyRemovedSet],
   );
   function removeCompanyCol(key) {
     if (COMPANY_ALWAYS_VISIBLE.includes(key)) return;
@@ -2687,7 +2693,7 @@ function KeyContactsViewInner({
   // when nothing is starred.
   function resetCompanyCols() {
     const { hidden, removed } = resetToStarred({
-      columnKeys: COMPANY_COLUMNS.map(c => c.key),
+      columnKeys: companyColumns.map(c => c.key),
       starred: companyStarredSet,
       alwaysVisible: COMPANY_ALWAYS_VISIBLE,
     });
@@ -2695,8 +2701,19 @@ function KeyContactsViewInner({
     setCompanyRemoved([...removed]);
   }
 
-  const [sortKey, setSortKey] = useState(() => localStorage.getItem(lsKey('sort-key')) || 'keyContacts');
-  const [sortDir, setSortDir] = useState(() => localStorage.getItem(lsKey('sort-dir')) || 'desc');
+  // Same once-only move onto Vertical as the contacts table's sort above.
+  const companyVerticalSortMigKey = lsKey('sort-mig-vertical');
+  const [sortKey, setSortKey] = useState(() => {
+    try {
+      if (showCompanyVertical && !localStorage.getItem(companyVerticalSortMigKey)) {
+        localStorage.setItem(companyVerticalSortMigKey, '1');
+        localStorage.setItem(lsKey('sort-dir'), 'asc');
+        return 'vertical';
+      }
+      return localStorage.getItem(lsKey('sort-key')) || (showCompanyVertical ? 'vertical' : 'keyContacts');
+    } catch { return showCompanyVertical ? 'vertical' : 'keyContacts'; }
+  });
+  const [sortDir, setSortDir] = useState(() => localStorage.getItem(lsKey('sort-dir')) || (showCompanyVertical ? 'asc' : 'desc'));
   useEffect(() => { try { localStorage.setItem(lsKey('sort-key'), sortKey); } catch {} }, [sortKey]);
   useEffect(() => { try { localStorage.setItem(lsKey('sort-dir'), sortDir); } catch {} }, [sortDir]);
 
@@ -3100,6 +3117,7 @@ function KeyContactsViewInner({
         type: p?.type || '',
         status: p?.status || '',
         tier: String(p?.tier || '').trim(),
+        vertical: String(p?.vertical || '').trim(),
         locations: contactLocations(row.contacts),
         decisionMakerEntries: dmEntries,
         metInPersonCount: dmEntries.filter(e => e.metInPerson).length,
@@ -3125,6 +3143,12 @@ function KeyContactsViewInner({
           break;
         case 'type':
           cmp = (a.type || '').localeCompare(b.type || '');
+          break;
+        case 'vertical':
+          // Companies with no Vertical sort last either way.
+          if (!a.vertical !== !b.vertical) return a.vertical ? -1 : 1;
+          cmp = a.vertical.localeCompare(b.vertical);
+          if (cmp === 0) return (a.companyName || '').localeCompare(b.companyName || '');
           break;
         case 'tier': {
           // The first click (descending) puts Tier 1 on top, then Tier 2,
@@ -5183,7 +5207,7 @@ function KeyContactsViewInner({
             <div style={{ fontSize: '0.78rem' }}>{emptyDetail}</div>
           </div>
         ) : (() => {
-          const HEADER_COLUMNS = COMPANY_COLUMNS.filter(c => companyVisibleSet.has(c.key));
+          const HEADER_COLUMNS = companyColumns.filter(c => companyVisibleSet.has(c.key));
           const show = (key) => companyVisibleSet.has(key);
           const GRID = `${HEADER_COLUMNS.map(c => `${colWidths[c.key] || DEFAULT_COL_WIDTHS[c.key] || 100}px`).join(' ')} 28px`;
           const SORT_GLYPH = (key) => sortKey === key ? (sortDir === 'desc' ? ' ▼' : ' ▲') : '';
@@ -5272,6 +5296,15 @@ function KeyContactsViewInner({
                           <span style={{ padding: '1px 6px', fontSize: '0.55rem', fontWeight: 700, color: '#92400E', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 999, flexShrink: 0 }}>NO PROSPECT</span>
                         )}
                       </div>
+
+                      {show('vertical') && (
+                        <div
+                          style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', color: row.vertical ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          title={row.vertical || (row.prospect ? 'No Vertical on this company card' : 'Company not mapped to a Table View prospect')}
+                        >
+                          {row.vertical || '-'}
+                        </div>
+                      )}
 
                       {show('tier') && (
                         <div style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem' }}>
