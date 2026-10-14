@@ -47,6 +47,7 @@ import { prwEmailEml } from '../../utils/prwRequestEmail';
 import { downloadDrafts, resolveSignature, safeFileName } from '../../utils/draftEmail';
 import { useAuth } from '../../contexts/AuthContext';
 import { ContactCampaignAdd, ContactsCampaignBulkAdd } from './ContactCampaignAdd';
+import { ListMatchWarning } from './ListMatchWarning';
 import { CompanyCampaignAdd } from './CompanyCampaignAdd';
 import { subVerticalsFor, withSubVertical, withoutSubVertical, renameSubVertical, subVerticalOnList } from '../../utils/subVerticals';
 import { withDefaultCdm } from '../../utils/defaultCdm';
@@ -354,6 +355,12 @@ function exactCompanyKey(s) {
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 }
+
+// Uploaded lists that get a match warning at the top of the company modal.
+const LIST_MATCH_WARNINGS = [
+  { label: 'SBT', storageKey: 'sbt-list-override' },
+  { label: 'CA SB', storageKey: 'casb-list-override' },
+];
 
 function companiesMatch(a, b) {
   const fullA = (a || '').toLowerCase().trim();
@@ -9282,6 +9289,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               </span>
             </div>
           )}
+          {/* The same warning for the SBT and CA SB lists: Map the row to
+              this company, or Ignore it here. See ListMatchWarning. */}
+          {!isNew && LIST_MATCH_WARNINGS.map(l => (
+            <ListMatchWarning
+              key={l.storageKey}
+              label={l.label}
+              storageKey={l.storageKey}
+              company={fields.company}
+              settings={settings}
+              updateSettings={updateSettings}
+              updateSettingsPath={updateSettingsPath}
+            />
+          ))}
           {(isNew || activeTab === 'company') && (
           <div className={styles.grid}>
             <div className={styles.sectionHead}>Identity</div>
