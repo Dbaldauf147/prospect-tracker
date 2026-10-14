@@ -1,4 +1,5 @@
 import { DEFAULT_EMAIL_SIGNATURE } from '../data/emailSignature.js';
+import { absolutizeLinks } from './emailHrefs.js';
 
 // Shared draft-email helpers. The Draft Emails page composes rich HTML
 // bodies; this module covers the simpler "plain-text body + shared
@@ -47,7 +48,7 @@ export function personalizeDraftText(text, c = {}) {
 // Emails page uses, appending the signature one blank line below.
 export function buildStyledBodyHtml(bodyHtml, { signature = '' } = {}) {
   const sigBlock = signature ? `<br>\n<div style="margin-left:24px;">\n${signature}\n</div>` : '';
-  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\np{margin:0pt;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\nul,ol{margin:0pt;padding-left:1.5em;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\nli{margin:0pt;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\ndiv{mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\n</style>\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${bodyHtml}\n</div>${sigBlock}\n</body>\n</html>`;
+  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\np{margin:0pt;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\nul,ol{margin:0pt;padding-left:1.5em;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\nli{margin:0pt;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\ndiv{mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\n</style>\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${absolutizeLinks(bodyHtml)}\n</div>${sigBlock}\n</body>\n</html>`;
 }
 
 // Build one X-Unsent .eml (Outlook opens it as an editable draft). cc is

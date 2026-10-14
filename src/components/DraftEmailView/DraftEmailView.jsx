@@ -34,6 +34,7 @@ import { CampaignPicker } from '../common/CampaignPicker';
 import { primarySubject, withSubjects } from '../../utils/campaignSubjects';
 import { responseRateOf } from '../../utils/campaignContactHold';
 import { recipientMapSaver } from '../../utils/recipientMaps';
+import { absoluteHref, absolutizeLinks } from '../../utils/emailHrefs.js';
 
 // Register an <hr> divider blot once so the editor can hold a horizontal
 // page-break line (inserted from the Insert menu). Quill drops any tag that
@@ -44,6 +45,15 @@ class DividerBlot extends BlockEmbed {}
 DividerBlot.blotName = 'divider';
 DividerBlot.tagName = 'hr';
 Quill.register(DividerBlot, true);
+
+// A link typed into Quill's link box without a scheme ("www.example.com") is
+// stored as a relative href, which a downloaded .eml can't resolve, so Outlook
+// drops it. Supply the scheme as the link is made (see utils/emailHrefs.js).
+const QuillLink = Quill.import('formats/link');
+class AbsoluteLink extends QuillLink {
+  static sanitize(url) { return super.sanitize(absoluteHref(url)); }
+}
+Quill.register(AbsoluteLink, true);
 
 // Quill emits one <p> per line and <p><br></p> for an intentionally blank
 // line. The trap: every <p> is its own Word paragraph, and when Outlook
@@ -137,7 +147,9 @@ function buildPreviewBodyHtml(pBodyHtml, { showBreaks = false, banner = null } =
 }
 
 function buildStyledBodyHtml(pBodyHtml, { signature = '', banner = null } = {}) {
-  const htmlContent = bannerHtml(banner) + collapseBodyToBreaks(pBodyHtml);
+  // absolutizeLinks also repairs scheme-less links in drafts saved before the
+  // editor started adding the scheme itself.
+  const htmlContent = bannerHtml(banner) + absolutizeLinks(collapseBodyToBreaks(pBodyHtml));
 
   // Signature sits a real blank line below the body, indented slightly from
   // the left so it isn't flush against the body text (matches the look of
