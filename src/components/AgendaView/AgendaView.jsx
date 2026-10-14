@@ -8,7 +8,8 @@ import { getHubspotContacts, updateHubspotCache } from '../../utils/hubspotConta
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { getQueuedContactIds, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
-import { buildEmailFromPattern, estimateEmailDomain } from '../../utils/emailDomainPattern';
+import { buildEmailFromPattern, estimateEmailDomain, estimateEmailDomainCandidates } from '../../utils/emailDomainPattern';
+import { remapDomainWrites } from '../../utils/domainCompanyMapping';
 import { FREE_MAIL_DOMAINS } from '../../utils/companyGuess';
 import {
   companyTextEquals, companyRuleKey, groupCompanyMappings, pendingSuggestionActions, summarizeSuggestionActions,
@@ -942,15 +943,21 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   // Also build a token → prospect map from company-name words (e.g. "URW" from
   // "Unibail-Rodamco-Westfield (URW)") so we can fuzzy-match when the domain
   // itself isn't registered on the prospect.
-  const { domainToProspect, prospectDomains, tokenToProspect, prospectByCompanyKey, prospectCompactPrefixMap, prospectCompactPrefixesDesc } = useMemo(() => {
+  const { domainToProspect, domainSource, prospectDomains, tokenToProspect, prospectByCompanyKey, prospectCompactPrefixMap, prospectCompactPrefixesDesc } = useMemo(() => {
     const dToP = new Map();
+    const dSrc = new Map();
     const pDoms = new Map();
     const tToP = new Map();
     const compactToP = new Map();
     const byCompanyKey = new Map();
-    function recordDomain(p, domain) {
+    function recordDomain(p, domain, source) {
       if (!domain || !p.company) return;
-      dToP.set(domain, p);
+      // An Email Domain entry is a deliberate mapping and outranks a
+      // Website, so a domain can be moved off a company whose site it is.
+      if (!(source === 'website' && dSrc.get(domain) === 'emailDomain')) {
+        dToP.set(domain, p);
+        dSrc.set(domain, source);
+      }
       const key = p.company.toLowerCase();
       if (!pDoms.has(key)) pDoms.set(key, new Set());
       pDoms.get(key).add(domain);
@@ -967,12 +974,12 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
         p.emailDomain.split(/[\n;,]+/).map(s => s.trim()).filter(Boolean).forEach(entry => {
           const at = entry.lastIndexOf('@');
           const d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase();
-          recordDomain(p, d);
+          recordDomain(p, d, 'emailDomain');
         });
       }
       if (p.website) {
         const d = p.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase();
-        recordDomain(p, d);
+        recordDomain(p, d, 'website');
       }
       // Tokens from company name — 3+ chars, lowercased, deduped. Skip generic suffixes.
       const GENERIC = new Set(['inc', 'llc', 'ltd', 'corp', 'group', 'holdings', 'plc', 'the', 'and', 'company', 'co']);
@@ -997,6 +1004,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     const compactDesc = Array.from(compactToP.keys()).sort((a, b) => b.length - a.length);
     return {
       domainToProspect: dToP,
+      domainSource: dSrc,
       prospectDomains: pDoms,
       tokenToProspect: tToP,
       prospectByCompanyKey: byCompanyKey,
@@ -2493,6 +2501,80 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     }));
   }, [applyPreview, rows, pendingSuggestions, lookupMatch]);
 
+  // Email domain -> company, for the rows in scope. The domain is what most
+  // matches are made on, so the popup shows each one with the company it
+  // lands on and lets it be changed there: a domain mapped in Table View
+  // (an Email Domain entry or the Website), one only guessed at (fuzzy, not
+  // saved), or one with no company at all. Free-mail domains map to nobody
+  // and are left out.
+  const domainMappingRows = useMemo(() => {
+    if (!applyPreview) return [];
+    const byDomain = new Map();
+    for (const r of suggestionScopeRows) {
+      if (!isRealEmail(r.email)) continue;
+      const d = r.email.slice(r.email.lastIndexOf('@') + 1).toLowerCase();
+      if (!d || FREE_MAIL_DOMAINS.has(d)) continue;
+      if (!byDomain.has(d)) byDomain.set(d, []);
+      byDomain.get(d).push(r);
+    }
+    const STATUS_ORDER = { unmapped: 0, guessed: 1, mapped: 2 };
+    return Array.from(byDomain, ([domain, domainRows]) => {
+      const mapped = domainToProspect.get(domain) || null;
+      let guess = null;
+      if (!mapped) {
+        for (const r of domainRows) {
+          const m = lookupMatch(r.email, r);
+          if (m.matched) { guess = { prospect: m.matched, source: m.suggestSource }; break; }
+        }
+      }
+      return {
+        domain,
+        rows: domainRows,
+        prospect: mapped || guess?.prospect || null,
+        status: mapped ? 'mapped' : guess ? 'guessed' : 'unmapped',
+        via: mapped ? domainSource.get(domain) : guess?.source || '',
+      };
+    }).sort((a, b) => (STATUS_ORDER[a.status] - STATUS_ORDER[b.status])
+      || (b.rows.length - a.rows.length) || a.domain.localeCompare(b.domain));
+  }, [applyPreview, suggestionScopeRows, domainToProspect, domainSource, lookupMatch]);
+
+  // Per-domain edit state in the popup: { [domain]: { draft, busy, error } }.
+  const [domainMapEdits, setDomainMapEdits] = useState({});
+  const setDomainMapEdit = (domain, patch) => setDomainMapEdits(prev => ({ ...prev, [domain]: { ...prev[domain], ...patch } }));
+
+  // Map `line.domain` to the Table View company named `companyName` (blank
+  // unmaps it): the Email Domain entries move off whichever company had
+  // them and onto the new one, and the grid rows on that domain follow, so
+  // their Suggested Company and Table View fields read the new company.
+  async function saveDomainMapping(line, companyName) {
+    const name = String(companyName || '').trim();
+    const target = name ? prospectByCompanyKey.get(name.toLowerCase()) : null;
+    if (name && !target) {
+      setDomainMapEdit(line.domain, { error: `"${name}" is not a Table View company. Pick one from the list.` });
+      return;
+    }
+    if (!onUpdateProspect) return;
+    const learned = estimateEmailDomainCandidates(line.rows).candidates.find(c => c.domain === line.domain);
+    const writes = remapDomainWrites(prospects, line.domain, target, learned?.entry || '');
+    setDomainMapEdit(line.domain, { busy: true, error: '' });
+    try {
+      for (const w of writes) await onUpdateProspect(w.prospect.id, { emailDomain: w.emailDomain });
+    } catch {
+      setDomainMapEdit(line.domain, { busy: false, error: 'Could not save to Table View. Try again.' });
+      return;
+    }
+    if (target) patchedPairsRef.current.add(`${target.id}|${line.domain}`);
+    setRows(prev => {
+      const next = prev.map(r => {
+        if (!isRealEmail(r.email) || r.email.slice(r.email.lastIndexOf('@') + 1).toLowerCase() !== line.domain) return r;
+        return { ...r, _matchedProspectId: target ? target.id : null, _matchedDomain: line.domain, _domainAlreadyKnown: !!target };
+      });
+      saveCache(next);
+      return next;
+    });
+    setDomainMapEdits(prev => { const n = { ...prev }; delete n[line.domain]; return n; });
+  }
+
   const prospectWriteGroups = useMemo(() => {
     if (!applyPreview) return [];
     const byId = new Map();
@@ -2519,6 +2601,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
 
   function applyAllSuggestions() {
     if (applyAllBusy || pendingSuggestions.length === 0) return;
+    setDomainMapEdits({});
     setApplyPreview({ excluded: new Set() });
   }
 
@@ -3955,6 +4038,88 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                 </div>
               </div>
               <div style={{ padding: '0.85rem 1.25rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {domainMappingRows.length > 0 && (() => {
+                  const unmapped = domainMappingRows.filter(l => l.status === 'unmapped').length;
+                  const guessed = domainMappingRows.filter(l => l.status === 'guessed').length;
+                  const VIA_LABELS = {
+                    emailDomain: "company's Email Domain list",
+                    website: "company's Website",
+                  };
+                  return (
+                    <div>
+                      <div style={sectionTitle}>
+                        Email domain mapping ({domainMappingRows.length} domain{domainMappingRows.length === 1 ? '' : 's'}
+                        {unmapped > 0 ? <span style={{ color: '#B91C1C' }}>, {unmapped} unmapped</span> : null}
+                        {guessed > 0 ? <span style={{ color: '#92400E' }}>, {guessed} guessed</span> : null})
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.4rem' }}>
+                        Which Table View company each email domain belongs to. Saving a mapping writes it to the company's Email Domain in Table View (moving it off any other company) and re-matches the rows on that domain, so the suggestions below update.
+                      </div>
+                      <datalist id="apply-preview-company-list">
+                        {prospectCompanyOptions.map(name => <option key={name} value={name} />)}
+                      </datalist>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr>
+                            <th style={th}>Email domain</th>
+                            <th style={th}>Rows</th>
+                            <th style={th}>Status</th>
+                            <th style={th}>Company</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {domainMappingRows.map(line => {
+                            const edit = domainMapEdits[line.domain] || {};
+                            const current = line.status === 'mapped' ? line.prospect.company : '';
+                            const draft = edit.draft ?? (line.prospect?.company || '');
+                            // A guess is offered pre-filled, so saving it is
+                            // one click; a saved mapping only once changed.
+                            const dirty = line.status === 'mapped'
+                              ? draft.trim().toLowerCase() !== current.trim().toLowerCase()
+                              : !!draft.trim();
+                            const names = line.rows.map(r => rowName.get(r.email) || r.email);
+                            const statusCell = line.status === 'mapped'
+                              ? <span style={{ color: '#166534' }}>Mapped ({VIA_LABELS[line.via] || 'Table View'})</span>
+                              : line.status === 'guessed'
+                                ? <span style={{ color: '#92400E' }} title={SUGGEST_SOURCE_LABELS[line.via] || ''}>Guessed, not saved</span>
+                                : <span style={{ color: '#B91C1C', fontWeight: 600 }}>Unmapped</span>;
+                            return (
+                              <tr key={line.domain} style={{ background: line.status === 'unmapped' ? '#FEF2F2' : undefined }}>
+                                <td style={{ ...td, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.72rem', fontWeight: 600 }}>@{line.domain}</td>
+                                <td style={td} title={names.join(', ')}>
+                                  {line.rows.length}: {names.slice(0, 2).join(', ')}{names.length > 2 ? `, +${names.length - 2} more` : ''}
+                                </td>
+                                <td style={td}>{statusCell}</td>
+                                <td style={{ ...td, minWidth: 320 }}>
+                                  <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                                    <input
+                                      type="text"
+                                      list="apply-preview-company-list"
+                                      value={draft}
+                                      placeholder="Pick a Table View company"
+                                      disabled={edit.busy}
+                                      onChange={e => setDomainMapEdit(line.domain, { draft: e.target.value, error: '' })}
+                                      onKeyDown={e => { if (e.key === 'Enter' && dirty) saveDomainMapping(line, draft); }}
+                                      style={{ flex: 1, minWidth: 0, padding: '0.25rem 0.4rem', fontSize: '0.76rem', border: `1px solid ${edit.error ? '#DC2626' : 'var(--color-border)'}`, borderRadius: 4, fontFamily: 'inherit' }}
+                                    />
+                                    <button
+                                      type="button"
+                                      disabled={!dirty || edit.busy}
+                                      onClick={() => saveDomainMapping(line, draft)}
+                                      title={line.status === 'mapped' && !draft.trim() ? 'Remove this domain from the company' : 'Save this mapping to Table View'}
+                                      style={{ padding: '0.25rem 0.6rem', border: '1px solid #16A34A', borderRadius: 4, background: !dirty || edit.busy ? '#F1F5F9' : '#16A34A', color: !dirty || edit.busy ? '#94A3B8' : '#fff', borderColor: !dirty || edit.busy ? 'var(--color-border)' : '#16A34A', fontSize: '0.72rem', fontWeight: 700, cursor: !dirty || edit.busy ? 'default' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                                    >{edit.busy ? 'Saving...' : line.status === 'mapped' && !draft.trim() ? 'Unmap' : 'Save'}</button>
+                                  </div>
+                                  {edit.error && <div style={{ color: '#B91C1C', fontSize: '0.7rem', marginTop: '0.2rem' }}>{edit.error}</div>}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
                 {companyMappingGroups.length > 0 && (
                   <div>
                     <div style={sectionTitle}>Company mapping ({suggestionSummary.companies} row{suggestionSummary.companies === 1 ? '' : 's'})</div>
