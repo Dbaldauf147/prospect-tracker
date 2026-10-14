@@ -1570,7 +1570,12 @@ function resolveComputedDays(row, storedKey, sourceField, compute) {
   return null;
 }
 const resolveCallIn = (row) => resolveComputedDays(row, 'Call In', 'Follow Up', daysFromToday);
-const resolveLastSpoke = (row) => resolveComputedDays(row, 'Last Spoke', 'Last Client Heard From Us', businessDaysSince);
+// Last Spoke always counts from the Last Client Heard From Us date when
+// one is set, even if the sheet import stored a blank ("-", "#N/A") in
+// the cell. The stored value only matters when there's no date.
+const resolveLastSpoke = (row) =>
+  businessDaysSince(row?.['Last Client Heard From Us'])
+  ?? resolveComputedDays(row, 'Last Spoke', 'Last Client Heard From Us', businessDaysSince);
 
 // Days-in-Stage stall flag for an opp record. Returns { days, suggestion }
 // when the opp has sat in its current numbered stage longer than that
@@ -9519,9 +9524,10 @@ function OppFieldEditor({
     // Computed columns stay read-only — they're derived from sibling
     // fields and don't have a stored value to edit.
     if (h === 'Call In' || h === 'Last Spoke') {
+      const shown = h === 'Last Spoke' ? resolveLastSpoke(opp) : value;
       return (
         <span style={{ color: 'var(--color-text-muted)' }}>
-          {value == null || value === '' ? '-' : String(value)}
+          {shown == null || shown === '' ? '-' : String(shown)}
         </span>
       );
     }
