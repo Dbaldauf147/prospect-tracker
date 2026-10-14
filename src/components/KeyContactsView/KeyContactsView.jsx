@@ -43,12 +43,25 @@ const COMPANY_COLUMNS = [
   { key: 'aum',         label: 'AUM',             align: 'right',  tip: 'PE AUM, falling back to RE AUM, from the prospect\'s Table View record' },
   { key: 'type',        label: 'Type',            align: 'left',   tip: 'Prospect type: Private Equity, Real Estate, etc.' },
   { key: 'status',      label: 'Status',          align: 'left',   tip: 'Prospect status: Client, Inside Sales, Qualifying, etc.' },
+  { key: 'location',    label: 'Location',        align: 'left',   tip: 'Where this company\'s contacts on this page are, from their City / State, most common first' },
   { key: 'keyContacts', label: 'Key Contacts',    align: 'center', tip: 'Number of HubSpot contacts at this company tagged "Dan Key Target"' },
   { key: 'dm',          label: 'Decision Makers', align: 'center', tip: 'Number of HubSpot contacts at this company tagged "decision maker"' },
   { key: 'met',         label: 'Met in Person',   align: 'left',   tip: 'Met-in-person count / total decision makers, plus how many of them list New York / NYC' },
   { key: 'ratio',       label: 'Opps 2/4',        align: 'center', tip: 'Active / total opportunities for this company in the Opps tab' },
 ];
 const COMPANY_ALWAYS_VISIBLE = ['company'];
+
+// The distinct "City, State" places a company's contacts list, most common
+// first (ties alphabetical), for the By Company Location column.
+function contactLocations(contacts) {
+  const counts = new Map();
+  for (const c of contacts || []) {
+    const place = [String(c.city || '').trim(), String(c.state || '').trim()].filter(Boolean).join(', ');
+    if (place) counts.set(place, (counts.get(place) || 0) + 1);
+  }
+  return Array.from(counts, ([place, count]) => ({ place, count }))
+    .sort((a, b) => b.count - a.count || a.place.localeCompare(b.place));
+}
 
 // "Tier 1" -> 99, "Tier 2" -> 98 ...; untiered (blank, "-", "Not on tier
 // list") -> 0, so a sort can put it last.
@@ -2585,7 +2598,7 @@ function KeyContactsViewInner({
     }
   }, [campaignRecipientOptions, campaignFilterId]);
 
-  const DEFAULT_COL_WIDTHS = { company: 260, tier: 80, aum: 100, type: 120, status: 130, keyContacts: 130, dm: 150, met: 130, ratio: 110 };
+  const DEFAULT_COL_WIDTHS = { company: 260, tier: 80, aum: 100, type: 120, status: 130, location: 160, keyContacts: 130, dm: 150, met: 130, ratio: 110 };
   const [colWidths, setColWidths] = useSyncedTablePref({
     tableId: `${storagePrefix}:companies`, field: 'widths', settings, updateSettings,
     readLocal: () => {
@@ -3068,6 +3081,7 @@ function KeyContactsViewInner({
         type: p?.type || '',
         status: p?.status || '',
         tier: String(p?.tier || '').trim(),
+        locations: contactLocations(row.contacts),
         decisionMakerEntries: dmEntries,
         metInPersonCount: dmEntries.filter(e => e.metInPerson).length,
         nycCount: dmEntries.filter(e => /(new york|nyc)/i.test(e.city || '')).length,
@@ -3105,6 +3119,14 @@ function KeyContactsViewInner({
         case 'status':
           cmp = (a.status || '').localeCompare(b.status || '');
           break;
+        case 'location': {
+          // Companies with no location sort last either way.
+          const la = a.locations[0]?.place || '';
+          const lb = b.locations[0]?.place || '';
+          if (!la !== !lb) return la ? -1 : 1;
+          cmp = la.localeCompare(lb);
+          break;
+        }
         case 'keyContacts':
           cmp = a.contacts.length - b.contacts.length;
           break;
@@ -5233,6 +5255,18 @@ function KeyContactsViewInner({
                       {show('status') && (
                       <div style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', color: row.status ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {row.status || '-'}
+                      </div>
+                      )}
+
+                      {show('location') && (
+                      <div
+                        style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', color: row.locations.length ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        title={row.locations.length ? row.locations.map(l => `${l.place} (${l.count})`).join('\n') : 'No City / State on these contacts'}
+                      >
+                        {row.locations.length ? row.locations[0].place : '-'}
+                        {row.locations.length > 1 && (
+                          <span style={{ marginLeft: 4, fontSize: '0.62rem', fontWeight: 600, color: '#64748B' }}>+{row.locations.length - 1}</span>
+                        )}
                       </div>
                       )}
 
