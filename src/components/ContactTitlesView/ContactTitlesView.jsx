@@ -411,6 +411,9 @@ function TitleSearches({ settings, updateSettings }) {
 // up later gets a column without anybody having to switch it on.
 const STAR_KEY = 'dmTitleStars';
 const HIDDEN_TAGS_KEY = 'dmTitlesHiddenTags';
+// Keywords that take a title off the table: any title containing one,
+// anywhere and in any case, is left out. Kept in settings.dmTitlesExcludeTerms.
+const EXCLUDE_TERMS_KEY = 'dmTitlesExcludeTerms';
 
 function DecisionMakerTitles({ settings, updateSettings }) {
   const [contacts, setContacts] = useState(null);
@@ -444,7 +447,29 @@ function DecisionMakerTitles({ settings, updateSettings }) {
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
   }, [pickerOpen]);
 
-  const { titles, tags, untitled } = useMemo(() => decisionMakerTitles(contacts || []), [contacts]);
+  const { titles: allTitles, tags, untitled } = useMemo(() => decisionMakerTitles(contacts || []), [contacts]);
+
+  const savedExclude = settings?.[EXCLUDE_TERMS_KEY];
+  const excludeTerms = useMemo(
+    () => (Array.isArray(savedExclude) ? savedExclude.filter(t => typeof t === 'string' && t.trim()) : []),
+    [savedExclude],
+  );
+  const titles = useMemo(() => {
+    const needles = excludeTerms.map(t => t.trim().toLowerCase());
+    if (!needles.length) return allTitles;
+    return allTitles.filter(t => !needles.some(n => t.title.toLowerCase().includes(n)));
+  }, [allTitles, excludeTerms]);
+  const excludedCount = allTitles.length - titles.length;
+
+  function addExclude(value) {
+    const v = String(value || '').trim();
+    if (!v || excludeTerms.some(t => t.toLowerCase() === v.toLowerCase())) return;
+    updateSettings?.({ [EXCLUDE_TERMS_KEY]: [...excludeTerms, v] });
+  }
+
+  function removeExclude(i) {
+    updateSettings?.({ [EXCLUDE_TERMS_KEY]: excludeTerms.filter((_, j) => j !== i) });
+  }
 
   const savedStars = settings?.[STAR_KEY];
   const stars = useMemo(() => {
@@ -600,6 +625,27 @@ function DecisionMakerTitles({ settings, updateSettings }) {
         )}
       </div>
 
+      <div className={styles.dmExcludeRow}>
+        <span className={styles.dmExcludeLabel}>Hide titles containing</span>
+        {excludeTerms.map((t, i) => (
+          <span key={t} className={styles.termEditExclude}>
+            <span className={styles.dmExcludeTerm}>{t}</span>
+            <button
+              type="button"
+              className={styles.dmExcludeX}
+              onClick={() => removeExclude(i)}
+              title={`Stop hiding titles with “${t}”`}
+            >×</button>
+          </span>
+        ))}
+        <AddTerm onAdd={addExclude} placeholder="+ keyword" />
+        {excludedCount > 0 && (
+          <span className={styles.cardCount}>
+            {excludedCount} title{excludedCount === 1 ? '' : 's'} hidden
+          </span>
+        )}
+      </div>
+
       {contacts == null ? null : shown.length === 0 ? (
         <div className={styles.empty}>
           {titles.length === 0
@@ -706,9 +752,6 @@ function DecisionMakerTitles({ settings, updateSettings }) {
   );
 }
 
-// The add box at the end of a group. Its own component so the text it is
-// holding belongs to the group it sits in - one piece of state up in the
-// page would put half-typed text in whichever group was touched last.
 // The general Not list: terms that rule a hit out of every search, not just
 // one persona's. Kept apart from the searches in settings.contactTitleGeneralNot
 // so Reset to the built-in seven leaves it alone. Same autosave shape as the
@@ -808,7 +851,10 @@ function GeneralNot({ settings, updateSettings, needle }) {
   );
 }
 
-function AddTerm({ onAdd }) {
+// The add box at the end of a group. Its own component so the text it is
+// holding belongs to the group it sits in - one piece of state up in the
+// page would put half-typed text in whichever group was touched last.
+function AddTerm({ onAdd, placeholder = '+ term' }) {
   const [value, setValue] = useState('');
   const submit = () => { onAdd(value); setValue(''); };
   return (
@@ -817,7 +863,7 @@ function AddTerm({ onAdd }) {
       className={styles.addTermInput}
       value={value}
       size={inputSize(value) + 4}
-      placeholder="+ term"
+      placeholder={placeholder}
       aria-label="Add a term"
       onChange={e => setValue(e.target.value)}
       onKeyDown={e => {
