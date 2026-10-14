@@ -37,6 +37,7 @@ import { mergeCompletedServices } from '../../utils/servicesCompleted';
 import { FeeBuilderTab } from './FeeBuilderTab';
 import { updateForOption, copyPicksBetweenOptions, pickedStructureFor } from '../../utils/feeBuilderChecklist';
 import { dealFor, snapshotFeeBuilder, restoreFeeBuilder, savedFor, putSaved, removeSaved, listSaved, scenariosFor, newScenario, scenarioName } from '../../utils/feeBuilderSaved';
+import { sheetRows, parseExport, parsePastedCostDeltas, recoverFeeStructures, addRecoveredStructures, recoveredName } from '../../utils/feeStructureRecovery';
 import { SiaHistoryTab } from './SiaHistoryTab';
 import { buildSiaHistoryEntry, siaKeyFacts } from '../../utils/siaHistoryEntry';
 import { saveSiaHistoryEntry } from '../../utils/siaLoadHistory';
@@ -5612,6 +5613,65 @@ export function PricingView({ settings } = {}) {
   // Write a saved structure into the active option's Alternative Fee
   // schedule: the service's current fee rows come out, the structure's go
   // in. Fees another service shares are called out before anything moves.
+  // Services subtab's Recover from export: fee structures rebuilt from Fee
+  // Builder / Fee Margin exports (utils/feeStructureRecovery), added beside
+  // the saved ones. Returns a line per file saying what came back.
+  const recoverContext = () => ({
+    servicesFor: (lineItem) => lineItemServices[String(lineItem || '').trim().toLowerCase()] || [],
+    knownServices: pricingServiceList.map(x => x.name),
+  });
+  // The same from Cost deltas tables pasted as text, a structure per table.
+  function recoverStructuresFromPaste(pasted, baseName) {
+    const tables = parsePastedCostDeltas(pasted);
+    if (!tables.length) return ['No Cost deltas table found. Copy it from Excel with its "Cost line item" header row.'];
+    const base = String(baseName || '').trim() || 'Recovered paste';
+    const recovered = tables.map((t, i) => [recoverFeeStructures(t, recoverContext()), tables.length > 1 ? `${base} ${i + 1}` : base]);
+    let next = serviceFeeStructures;
+    const lines = [];
+    for (const [rec, name] of recovered) {
+      const r = addRecoveredStructures(next, rec, name);
+      next = r.next;
+      if (r.added.length) lines.push(`"${name}" added to ${r.added.join(', ')}.`);
+      if (r.already.length) lines.push(`"${name}": already recovered for ${r.already.join(', ')}.`);
+      if (!r.added.length && !r.already.length) lines.push(`"${name}": no cost line here is mapped to a service (Linked To › Line Item → Services).`);
+    }
+    setServiceFeeStructures(prev => recovered.reduce((acc, [rec, name]) => addRecoveredStructures(acc, rec, name).next, prev));
+    return lines;
+  }
+
+  async function recoverStructuresFromExports(files) {
+    const { Workbook } = await import('exceljs');
+    let next = serviceFeeStructures;
+    const recovered = [];
+    const lines = [];
+    for (const file of files) {
+      try {
+        const wb = new Workbook();
+        await wb.xlsx.load(await file.arrayBuffer());
+        const sheets = {};
+        for (const name of ['As built', 'Cost deltas', 'Fee deltas']) sheets[name] = sheetRows(wb.getWorksheet(name));
+        const parsed = parseExport(sheets);
+        if (!parsed) { lines.push(`${file.name}: no As built or Fee deltas sheet, so not a fee export.`); continue; }
+        const rec = recoverFeeStructures(parsed, recoverContext());
+        const name = recoveredName(file.name);
+        recovered.push([rec, name]);
+        const r = addRecoveredStructures(next, rec, name);
+        next = r.next;
+        if (r.added.length) lines.push(`${file.name}: "${name}" added to ${r.added.join(', ')}.`);
+        if (r.already.length) lines.push(`${file.name}: already recovered for ${r.already.join(', ')}.`);
+        if (!r.added.length && !r.already.length) lines.push(`${file.name}: no fee built from a service in this file.`);
+      } catch (err) {
+        lines.push(`${file.name}: could not be read (${err?.message || err}).`);
+      }
+    }
+    // Laid onto the structures as they are by now, not as they were when
+    // the files started loading.
+    if (recovered.length) {
+      setServiceFeeStructures(prev => recovered.reduce((acc, [rec, name]) => addRecoveredStructures(acc, rec, name).next, prev));
+    }
+    return lines;
+  }
+
   function applyServiceFeeStructure(serviceName, structure) {
     const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
     if (!opt || !structure) return false;
@@ -6417,6 +6477,8 @@ export function PricingView({ settings } = {}) {
           onSetPassThrough={(description, type, on) => setLinkedToPassThroughDefault(linkedToDefaultKey(description, type), on)}
           onSetUnit={(description, type, unit) => setLinkedToUnitDefault(linkedToDefaultKey(description, type), unit)}
           applyFeeStructure={applyServiceFeeStructure}
+          onRecoverFromExports={recoverStructuresFromExports}
+          onRecoverFromPaste={recoverStructuresFromPaste}
           numYears={Math.max(1, Math.ceil(termMonths / 12))}
           termMonths={termMonths}
           onOpenLinkedTo={() => setPageSubtab('linkedTo')}

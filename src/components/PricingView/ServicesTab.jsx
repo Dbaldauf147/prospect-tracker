@@ -24,6 +24,85 @@ const STATUS_CLASS = {
   [SERVICE_STATUS.OFF_LIST]: 'statusOffList',
 };
 
+// Recover fee structures from export files: the Excel files the Fee Builder
+// (and the Pricing tab's Fee Margin export) wrote say which fees each
+// service built and which fee every cost line went into, so a lost saved
+// structure can be rebuilt from one. What comes back is listed under the
+// button until the next recovery.
+function RecoverFromExports({ onRecover, onRecoverPaste }) {
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [lines, setLines] = useState([]);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasted, setPasted] = useState('');
+  const [pasteName, setPasteName] = useState('');
+  const recoverPaste = () => {
+    const out = onRecoverPaste(pasted, pasteName);
+    setLines(out);
+    if (out.some(l => l.includes(' added to '))) { setPasted(''); setPasteName(''); setPasteOpen(false); }
+  };
+  const run = async (fileList) => {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    setBusy(true);
+    try { setLines(await onRecover(files)); }
+    catch (err) { setLines([`Recovery failed: ${err?.message || err}`]); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className={styles.recover}>
+      <button type="button" className={styles.linkBtn} disabled={busy} onClick={() => inputRef.current?.click()}>
+        {busy ? 'Reading files…' : 'Recover fee structures from export files'}
+      </button>
+      {onRecoverPaste && (
+        <button type="button" className={styles.linkBtn} onClick={() => setPasteOpen(o => !o)}>
+          {pasteOpen ? 'Close paste' : 'or paste Cost deltas tables'}
+        </button>
+      )}
+      <span className={styles.recoverHint}>
+        Fee Builder exports (fee-schedule-*.xlsx) or Fee Margin exports. Each file or pasted table adds a Recovered structure to the services it priced, beside the ones saved.
+      </span>
+      {pasteOpen && (
+        <div className={styles.recoverPaste}>
+          <textarea
+            className={styles.recoverText}
+            rows={6}
+            placeholder="Paste one or more Cost deltas tables from Excel, header row included (Cost line item, Type, ...)"
+            value={pasted}
+            onChange={(e) => setPasted(e.target.value)}
+          />
+          <div className={styles.recoverPasteBar}>
+            <input
+              type="text"
+              className={styles.search}
+              placeholder="Structure name (Recovered paste)"
+              value={pasteName}
+              onChange={(e) => setPasteName(e.target.value)}
+            />
+            <button type="button" className={styles.linkBtn} disabled={!pasted.trim()} onClick={recoverPaste}>Recover from paste</button>
+          </div>
+          <span className={styles.recoverHint}>
+            A pasted table names no fee rows, so each fee is read off its name and the costs priced into it (monthly or one time, Per Site / Per Account or Fixed) and its fee derives from those costs. Check the Start Month of a year 2 fee.
+          </span>
+        </div>
+      )}
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".xlsx"
+        multiple
+        hidden
+        onChange={(e) => { const f = e.target.files; run(f).finally(() => { e.target.value = ''; }); }}
+      />
+      {lines.length > 0 && (
+        <ul className={styles.recoverResult}>
+          {lines.map((l, i) => <li key={i}>{l}</li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // Services subtab: the Dropdowns tab's service catalog, each service's
 // status carried over, with the ones the loaded SIA covers pinned to the
 // top. Picking a service shows the cost lines mapped to it (Linked To ›
@@ -72,10 +151,15 @@ const STATUS_CLASS = {
 //   onSetFeeComponent (serviceName, itemId, componentId) => points a cost
 //                   line at one of the rate card's fee components for the
 //                   price check ('' puts it back on Auto)
+//   onRecoverFromExports (File[]) => Promise<string[]>: rebuilds saved fee
+//                   structures from Fee Builder / Fee Margin exports, a line
+//                   per file saying what came back
+//   onRecoverFromPaste (text, name) => string[]: the same from Cost deltas
+//                   tables pasted out of Excel, a structure per table
 export function ServicesTab({
   workbook, activeOption, setActiveOption, services = [], detailFor, numYears = 1, termMonths = 36, onOpenLinkedTo,
   onSetCount, onSetLineCount, onIgnoreForCheck, onSetFeeComponent, feeStructures = {}, setFeeStructures, previewFeeRow, autoStartMonthFor, escalators = {}, previewOnOption, applyFeeStructure, onSetItemType, onSetItemAnnual, onSetPassThrough, onSetUnit,
-  unlinked = null, tagOptions = [], onTagLineItem, onMoveLineItem, onIgnoreLineItem, sharedToSplit = [], onSplitCostLine, onKeepShared, onPickItemServices, onSetCompleted, completedServices = [], globalGmPct = null,
+  unlinked = null, tagOptions = [], onTagLineItem, onMoveLineItem, onIgnoreLineItem, sharedToSplit = [], onSplitCostLine, onKeepShared, onPickItemServices, onSetCompleted, completedServices = [], globalGmPct = null, onRecoverFromExports, onRecoverFromPaste,
 }) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(null);
@@ -162,6 +246,7 @@ export function ServicesTab({
         attached SIA are marked with a blue dot <span className={styles.scopeDot} aria-hidden="true" /> and listed first.
         A cost line is tied to a service on the <strong>Linked To</strong> subtab (Line Item → Services).
       </p>
+      {onRecoverFromExports && <RecoverFromExports onRecover={onRecoverFromExports} onRecoverPaste={onRecoverFromPaste} />}
 
       {workbook && workbook.options.length > 1 && (
         <div className={styles.optionStrip}>
