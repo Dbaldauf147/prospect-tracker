@@ -2644,80 +2644,6 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               ahead of the send — with no visible way to put anybody in it at
               all, and the collapse is a saved preference, so it stayed that
               way across every campaign until somebody thought to expand. */}
-          {/* Companies somebody should be added from. Adding one puts nobody
-              on the roster: it is a placeholder, amber while nobody at the
-              company is on the campaign and green once somebody is. Clicking
-              an open one puts the company in the add-contact box below,
-              which lists the people on file there. */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', alignItems: 'center', marginBottom: '0.5rem' }}>
-            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>
-              Companies to add someone from
-              {companyTargets.length > 0 && ` (${companyTargets.filter(t => t.open).length} open)`}:
-            </span>
-            {companyTargets.map(t => (
-              <span
-                key={t.company}
-                data-company-target={t.open ? 'open' : 'filled'}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.15rem 0.35rem 0.15rem 0.55rem',
-                  borderRadius: 999, fontSize: '0.72rem', fontWeight: 600,
-                  background: t.open ? '#FFFBEB' : '#ECFDF5',
-                  border: `1px solid ${t.open ? '#FCD34D' : '#A7F3D0'}`,
-                  color: t.open ? '#92400E' : '#065F46',
-                }}
-              >
-                {t.open ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAddEmail(t.company);
-                      addContactBoxRef.current?.querySelector('input')?.focus();
-                    }}
-                    title={`Nobody from ${t.company} is on this campaign yet. Click to look up the people on file there.`}
-                    style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', cursor: 'pointer' }}
-                  >{t.company}: add someone</button>
-                ) : (
-                  <span title={t.contacts.map(c => c.name || c.email).join(', ')}>
-                    {t.company} ✓ {t.contacts.length === 1 ? (t.contacts[0].name || t.contacts[0].email) : `${t.contacts.length} contacts`}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => removeCompanyTarget(t.company)}
-                  aria-label={`Take ${t.company} off this campaign's company list`}
-                  title="Take this company off the list. Contacts already on the campaign stay."
-                  style={{ background: 'none', border: 'none', padding: '0 0.15rem', fontSize: '0.85rem', lineHeight: 1, color: 'inherit', opacity: 0.7, cursor: 'pointer' }}
-                >×</button>
-              </span>
-            ))}
-            <input
-              type="text"
-              list="campaign-target-company-list"
-              value={addCompany}
-              onChange={e => setAddCompany(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && addCompany.trim()) { addCompanyTarget(addCompany); setAddCompany(''); } }}
-              placeholder="Add a company..."
-              aria-label="Company to add someone from"
-              style={{ width: 200, padding: '0.3rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.75rem', fontFamily: 'inherit' }}
-            />
-            <datalist id="campaign-target-company-list">
-              {knownCompanies.map(n => <option key={n} value={n} />)}
-            </datalist>
-            <button
-              type="button"
-              onClick={() => { addCompanyTarget(addCompany); setAddCompany(''); }}
-              disabled={!addCompany.trim()}
-              title="Mark this company as one somebody should be added from. Nobody is added to the campaign until you add them."
-              style={{
-                padding: '0.3rem 0.7rem', border: '1px solid var(--color-accent)', borderRadius: '6px',
-                background: addCompany.trim() ? 'var(--color-accent)' : 'var(--color-surface)',
-                color: addCompany.trim() ? '#fff' : 'var(--color-text-muted)',
-                fontSize: '0.75rem', fontWeight: 600, fontFamily: 'inherit',
-                cursor: addCompany.trim() ? 'pointer' : 'default', opacity: addCompany.trim() ? 1 : 0.6,
-              }}
-            >Add company</button>
-          </div>
-
           <div ref={addContactBoxRef} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
             {/* Type any part of a name, an address or a company and the box
                 offers the HubSpot contacts this browser has cached — the
@@ -2753,6 +2679,36 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                 cursor: addEmail.trim() ? 'pointer' : 'default', opacity: addEmail.trim() ? 1 : 0.6,
               }}
             >Add email</button>
+
+            {/* A company somebody should be added from. Adding one puts
+                nobody on the roster: it sits in the table below as a
+                "Contact missing" row until somebody there is added. */}
+            <input
+              type="text"
+              list="campaign-target-company-list"
+              value={addCompany}
+              onChange={e => setAddCompany(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && addCompany.trim()) { addCompanyTarget(addCompany); setAddCompany(''); } }}
+              placeholder="Add a company..."
+              aria-label="Company to add someone from"
+              style={{ width: 200, padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit' }}
+            />
+            <datalist id="campaign-target-company-list">
+              {knownCompanies.map(n => <option key={n} value={n} />)}
+            </datalist>
+            <button
+              type="button"
+              onClick={() => { addCompanyTarget(addCompany); setAddCompany(''); }}
+              disabled={!addCompany.trim()}
+              title="Mark this company as one somebody should be added from. Nobody is added to the campaign until you add them."
+              style={{
+                padding: '0.4rem 0.85rem', border: '1px solid var(--color-accent)', borderRadius: '6px',
+                background: addCompany.trim() ? 'var(--color-accent)' : 'var(--color-surface)',
+                color: addCompany.trim() ? '#fff' : 'var(--color-text-muted)',
+                fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+                cursor: addCompany.trim() ? 'pointer' : 'default', opacity: addCompany.trim() ? 1 : 0.6,
+              }}
+            >Add company</button>
 
             {/* What the filters are currently leaving on the table. A table
                 quietly showing eight of twenty-two rows is the thing a filter
