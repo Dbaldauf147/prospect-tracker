@@ -9,12 +9,15 @@
 // contact record.
 //
 // The Marketing Leads page stamps MARKETING_LEAD_SOURCE on every contact it
-// creates, so leads from there are tracked from the moment they land.
+// creates, and Bulk Add Contacts stamps BULK_ADD_LEAD_SOURCE, so leads from
+// either are tracked from the moment they land.
 
 export const MARKETING_LEAD_SOURCE = 'Marketing Lead';
+export const BULK_ADD_LEAD_SOURCE = 'Bulk Added';
 
 export const LEAD_SOURCE_OPTIONS = [
   MARKETING_LEAD_SOURCE,
+  BULK_ADD_LEAD_SOURCE,
   'Event',
   'Referral',
   'Inbound',

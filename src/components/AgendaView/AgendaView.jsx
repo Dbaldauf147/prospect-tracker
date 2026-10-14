@@ -5,6 +5,7 @@ import { apiFetch } from '../../utils/apiFetch';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts, updateHubspotCache } from '../../utils/hubspotContactsCache';
+import { BULK_ADD_LEAD_SOURCE } from '../../utils/contactLeadSource';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { getQueuedContactIds, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
@@ -2040,6 +2041,12 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
         if (presetOut && newId && Object.keys(presetOut.records).length > 0) {
           if (updateSettingsPath) updateSettingsPath({ [`contactTagReview.${newId}`]: presetOut.records });
           else updateSettings?.({ contactTagReview: { ...(settingsRef.current?.contactTagReview || {}), [newId]: presetOut.records } });
+        }
+        // Every contact this page creates is tracked as Bulk Added. Contacts
+        // already in HubSpot keep whatever Lead Source they had.
+        if (newId) {
+          if (updateSettingsPath) updateSettingsPath({ [`contactLeadSource.${newId}`]: BULK_ADD_LEAD_SOURCE });
+          else updateSettings?.({ contactLeadSource: { ...(settingsRef.current?.contactLeadSource || {}), [newId]: BULK_ADD_LEAD_SOURCE } });
         }
         // After the contact lands, attach any note the user typed for
         // this row as a HubSpot engagement on that contact. Failures
