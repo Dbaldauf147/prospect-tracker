@@ -1596,6 +1596,23 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     if (liveFilters !== colFilters) setColFilters(liveFilters);
   }, [liveFilters, colFilters]);
   const filtersOn = activeFilterCount(liveFilters);
+  // The open company placeholders also sit in the contact table, a row
+  // each with the contact missing, so the roster shows who is still to be
+  // found as well as who is on it. A column filter applies to them as it does to a contact:
+  // the company is in the Company column and "Contact missing" in Sent To
+  // and Status.
+  const missingContactRows = useMemo(() => {
+    const open = companyTargets.filter(t => t.open);
+    if (!(filtersOn > 0)) return open;
+    return open.filter(t => rowMatchesFilters(
+      Object.fromEntries(Object.keys(liveFilters).map(k => [k,
+        k === 'company' ? t.company
+          : (k === 'email' || k === 'status') ? 'Contact missing'
+            : '',
+      ])),
+      liveFilters,
+    ));
+  }, [companyTargets, filtersOn, liveFilters]);
 
   // Each visible column's own vocabulary, read off the campaign's roster —
   // so the box under Company offers the companies in THIS campaign and the
@@ -2783,7 +2800,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
           {/* An empty roster — a just-created campaign, or one every contact has
               been removed from. The table renders nothing at all in that case,
               so say what to do next instead of showing a blank panel. */}
-          {!(displayResults.contacts || []).length && (
+          {!(displayResults.contacts || []).length && !companyTargets.some(t => t.open) && (
             <div style={{ padding: '1rem', border: '1px dashed var(--color-border)', borderRadius: '8px', textAlign: 'center', fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}>
               No contacts in this campaign yet - add an email above to start tracking who it goes to.
             </div>
@@ -2824,7 +2841,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
           )}
 
           {/* Contact table */}
-          {displayResults.contacts && displayResults.contacts.length > 0 && (
+          {((displayResults.contacts || []).length > 0 || companyTargets.some(t => t.open)) && (
             /* Scrolls both ways. It used to be `overflow: hidden` with only
                the vertical axis opened back up, so on a narrow window the
                Event Status column was cut off with no way to reach it — the
@@ -2881,7 +2898,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedContacts.length === 0 && filtersOn > 0 && (
+                  {sortedContacts.length === 0 && missingContactRows.length === 0 && filtersOn > 0 && (
                     <tr>
                       <td
                         colSpan={visibleColumns.length + 2}
@@ -2940,6 +2957,52 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                     </tr>
                     );
                   })}
+                  {/* A company on the campaign that nobody is on the roster
+                      from yet. Not a contact: nothing here is sent, counted
+                      or exported, and the row goes away by itself once
+                      somebody there is added. */}
+                  {missingContactRows.map(t => (
+                    <tr
+                      key={`missing:${t.company}`}
+                      data-missing-contact={t.company}
+                      title={`Nobody from ${t.company} is on this campaign yet`}
+                      style={{ borderBottom: '1px solid var(--color-border-light)', background: '#FFFBEB' }}
+                    >
+                      {visibleColumns.map(col => (
+                        <td key={col.key} style={{ padding: '0.4rem 0.6rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {col.key === 'email' ? (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                              <span style={{ fontStyle: 'italic', fontWeight: 600, color: '#92400E' }}>Contact missing</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAddEmail(t.company);
+                                  addContactBoxRef.current?.querySelector('input')?.focus();
+                                }}
+                                title={`Look up the people on file at ${t.company}`}
+                                style={{ background: 'none', border: 'none', padding: 0, color: 'var(--color-accent)', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', textDecoration: 'underline' }}
+                              >Add someone</button>
+                            </span>
+                          ) : col.key === 'company' ? (
+                            <span style={{ color: 'var(--color-text)' }}>{t.company}</span>
+                          ) : (
+                            <span style={{ color: 'var(--color-text-muted)' }}>-</span>
+                          )}
+                        </td>
+                      ))}
+                      <td style={{ padding: '0.4rem 0.3rem', textAlign: 'center' }}>
+                        <button
+                          onClick={() => removeCompanyTarget(t.company)}
+                          aria-label={`Take ${t.company} off this campaign's company list`}
+                          style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.85rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
+                          onMouseEnter={e => e.target.style.color = '#EF4444'}
+                          onMouseLeave={e => e.target.style.color = '#CBD5E1'}
+                          title="Take this company off the campaign"
+                        >&times;</button>
+                      </td>
+                      <td aria-hidden="true" />
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
