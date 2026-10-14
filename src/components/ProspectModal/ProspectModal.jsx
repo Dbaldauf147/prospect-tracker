@@ -48,7 +48,7 @@ import { downloadDrafts, resolveSignature, safeFileName } from '../../utils/draf
 import { useAuth } from '../../contexts/AuthContext';
 import { ContactCampaignAdd, ContactsCampaignBulkAdd } from './ContactCampaignAdd';
 import { ListMatchWarning } from './ListMatchWarning';
-
+import { CompanyCampaignAdd } from './CompanyCampaignAdd';
 import { withDefaultCdm } from '../../utils/defaultCdm';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { nameFromEmail } from '../../utils/nameFromEmail';
@@ -13778,6 +13778,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   onClick={() => { setAddingContact(true); setEditingContact({ company: fields.company, firstname: '', lastname: '', email: '', phone: '', mobilephone: '', jobtitle: '', hs_linkedin_url: '', dans_tags: '' }); }}
                   style={{ marginLeft: '0.4rem', padding: '0.2rem 0.6rem', border: 'none', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: 'var(--color-accent)', color: '#fff' }}
                 >+ Add Contact</button>
+              </div>
+
+              {/* Put the company on an email campaign as "someone from here
+                  should be added", without adding any of its contacts. See
+                  CompanyCampaignAdd. */}
+              <div style={{ marginBottom: '0.5rem' }}>
+                <CompanyCampaignAdd company={fields.company} />
               </div>
 
               <div

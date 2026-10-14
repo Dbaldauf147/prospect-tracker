@@ -43,6 +43,7 @@ import {
 } from '../../utils/campaignContactLookup';
 import { contactName } from '../../utils/contactSuggest';
 import { mergeCampaignContacts, adoptedCount, withoutInternalRows, isInternalAddress } from '../../utils/campaignRoster';
+import { addTargetCompany, removeTargetCompany, targetCompanyStatus, campaignTargetCompanies } from '../../utils/campaignTargetCompanies';
 
 // The contact table's columns, and how wide each one starts.
 //
@@ -248,6 +249,13 @@ export function EmailCampaignView({ openSubject, onOpened }) {
   // somebody gets onto a campaign BEFORE the mail goes out; anybody the mail
   // has already reached is pulled in on their own (campaignRoster.js).
   const [addEmail, setAddEmail] = useState('');
+  // Draft for "add a company to this campaign": a placeholder saying
+  // somebody there should be added, without adding anybody yet
+  // (utils/campaignTargetCompanies.js).
+  const [addCompany, setAddCompany] = useState('');
+  // Wraps the add-contact box, so a click on an open company placeholder can
+  // put the company in it and focus it, which lists the people there.
+  const addContactBoxRef = useRef(null);
   const [refreshing, setRefreshing] = useState(false); // auto-refresh of an opened saved campaign in flight
   const [refreshingAll, setRefreshingAll] = useState(false); // "Refresh all" sweep in flight
   // Which column the contact table is sorted by, and the direction. key === null
@@ -536,6 +544,10 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     // was opened from the saved campaign, so a re-save of a fresh search would
     // otherwise drop the link somebody added.
     if (!campaignEventUrl(campaign) && campaignEventUrl(prev)) kept.eventUrl = campaignEventUrl(prev);
+    // And the companies somebody should be added from: the open campaign's
+    // own list when it has one, else whatever the saved copy had.
+    const targets = campaignTargetCompanies(results).length ? campaignTargetCompanies(results) : campaignTargetCompanies(prev);
+    if (targets.length) kept.targetCompanies = targets;
     const updated = existing >= 0
       ? savedCampaigns.map((c, i) => i === existing ? { ...campaign, ...kept } : c)
       : [campaign, ...savedCampaigns];
@@ -760,6 +772,37 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     if (viewingSaved != null) {
       saveCampaigns(savedCampaigns.map((c, i) => (i === viewingSaved
         ? { ...c, contacts: updated, removedEmails, ...counts }
+        : c)));
+    }
+  }
+
+  // Put a company on the campaign as a placeholder: somebody there should be
+  // added. Nobody is added to the roster; the placeholder fills by itself
+  // once a contact at that company is on it (targetCompanyStatus).
+  function addCompanyTarget(name) {
+    if (!results) return;
+    const { status, campaign } = addTargetCompany(results, name);
+    if (status === 'blank') return;
+    if (status === 'already') {
+      setError(`${String(name).trim()} is already on this campaign's company list.`);
+      return;
+    }
+    setError('');
+    setResults(campaign);
+    if (viewingSaved != null) {
+      saveCampaigns(savedCampaigns.map((c, i) => (i === viewingSaved
+        ? { ...c, targetCompanies: campaign.targetCompanies }
+        : c)));
+    }
+  }
+
+  function removeCompanyTarget(name) {
+    if (!results) return;
+    const campaign = removeTargetCompany(results, name);
+    setResults(campaign);
+    if (viewingSaved != null) {
+      saveCampaigns(savedCampaigns.map((c, i) => (i === viewingSaved
+        ? { ...c, targetCompanies: campaign.targetCompanies }
         : c)));
     }
   }
@@ -1341,6 +1384,23 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     }
     return { name: '', source: 'none' };
   }, [companyByEmail]);
+
+  // The open campaign's company placeholders, each with the roster rows at
+  // that company (read the way the Company column reads them).
+  const companyTargets = useMemo(
+    () => targetCompanyStatus(displayResults, (c) => companyFor(c).name),
+    [displayResults, companyFor],
+  );
+  // Company names for the "add a company" box to suggest: every employer
+  // the cached HubSpot contacts name.
+  const knownCompanies = useMemo(() => {
+    const seen = new Map();
+    for (const c of hubspotContacts) {
+      const name = String(c?.company || '').trim();
+      if (name && !seen.has(name.toLowerCase())) seen.set(name.toLowerCase(), name);
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  }, [hubspotContacts]);
 
   // Click tracking for this campaign. The campaign report never sends
   // mail — HubSpot is the source of the sends — so tracking is joined in
@@ -2567,7 +2627,81 @@ export function EmailCampaignView({ openSubject, onOpened }) {
               ahead of the send — with no visible way to put anybody in it at
               all, and the collapse is a saved preference, so it stayed that
               way across every campaign until somebody thought to expand. */}
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+          {/* Companies somebody should be added from. Adding one puts nobody
+              on the roster: it is a placeholder, amber while nobody at the
+              company is on the campaign and green once somebody is. Clicking
+              an open one puts the company in the add-contact box below,
+              which lists the people on file there. */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>
+              Companies to add someone from
+              {companyTargets.length > 0 && ` (${companyTargets.filter(t => t.open).length} open)`}:
+            </span>
+            {companyTargets.map(t => (
+              <span
+                key={t.company}
+                data-company-target={t.open ? 'open' : 'filled'}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.15rem 0.35rem 0.15rem 0.55rem',
+                  borderRadius: 999, fontSize: '0.72rem', fontWeight: 600,
+                  background: t.open ? '#FFFBEB' : '#ECFDF5',
+                  border: `1px solid ${t.open ? '#FCD34D' : '#A7F3D0'}`,
+                  color: t.open ? '#92400E' : '#065F46',
+                }}
+              >
+                {t.open ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddEmail(t.company);
+                      addContactBoxRef.current?.querySelector('input')?.focus();
+                    }}
+                    title={`Nobody from ${t.company} is on this campaign yet. Click to look up the people on file there.`}
+                    style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', cursor: 'pointer' }}
+                  >{t.company}: add someone</button>
+                ) : (
+                  <span title={t.contacts.map(c => c.name || c.email).join(', ')}>
+                    {t.company} ✓ {t.contacts.length === 1 ? (t.contacts[0].name || t.contacts[0].email) : `${t.contacts.length} contacts`}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => removeCompanyTarget(t.company)}
+                  aria-label={`Take ${t.company} off this campaign's company list`}
+                  title="Take this company off the list. Contacts already on the campaign stay."
+                  style={{ background: 'none', border: 'none', padding: '0 0.15rem', fontSize: '0.85rem', lineHeight: 1, color: 'inherit', opacity: 0.7, cursor: 'pointer' }}
+                >×</button>
+              </span>
+            ))}
+            <input
+              type="text"
+              list="campaign-target-company-list"
+              value={addCompany}
+              onChange={e => setAddCompany(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && addCompany.trim()) { addCompanyTarget(addCompany); setAddCompany(''); } }}
+              placeholder="Add a company..."
+              aria-label="Company to add someone from"
+              style={{ width: 200, padding: '0.3rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.75rem', fontFamily: 'inherit' }}
+            />
+            <datalist id="campaign-target-company-list">
+              {knownCompanies.map(n => <option key={n} value={n} />)}
+            </datalist>
+            <button
+              type="button"
+              onClick={() => { addCompanyTarget(addCompany); setAddCompany(''); }}
+              disabled={!addCompany.trim()}
+              title="Mark this company as one somebody should be added from. Nobody is added to the campaign until you add them."
+              style={{
+                padding: '0.3rem 0.7rem', border: '1px solid var(--color-accent)', borderRadius: '6px',
+                background: addCompany.trim() ? 'var(--color-accent)' : 'var(--color-surface)',
+                color: addCompany.trim() ? '#fff' : 'var(--color-text-muted)',
+                fontSize: '0.75rem', fontWeight: 600, fontFamily: 'inherit',
+                cursor: addCompany.trim() ? 'pointer' : 'default', opacity: addCompany.trim() ? 1 : 0.6,
+              }}
+            >Add company</button>
+          </div>
+
+          <div ref={addContactBoxRef} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
             {/* Type any part of a name, an address or a company and the box
                 offers the HubSpot contacts this browser has cached — the
                 address is the one thing nobody remembers. Picking one adds
