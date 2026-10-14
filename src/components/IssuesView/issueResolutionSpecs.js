@@ -52,7 +52,8 @@ function writeDeal(ref, patch) {
 
 // A field's `current` is what's stored now and `start` what the popup opens
 // on (a suggested value, when there's an obvious one); Save turns on once
-// any field differs from what's stored.
+// any field differs from what's stored. `compare: true` lays the field out
+// as Current (read-only, left) beside Proposed (the input, right).
 function field(key, label, type, current, extra = {}) {
   const cur = current ?? (type === 'checkbox' ? false : '');
   return { key, label, type, current: cur, start: extra.start ?? cur, ...extra };
@@ -165,7 +166,7 @@ export function buildResolution(row, ctx) {
         subtitle,
         note: `Opps suggests "${r.suggestedStatus}" for this account.`,
         fields: [
-          field('status', 'Status', 'select', prospect.status || r.status, { options: STATUSES, start: r.suggestedStatus || prospect.status }),
+          field('status', 'Status', 'select', prospect.status || r.status, { options: STATUSES, start: r.suggestedStatus || prospect.status, compare: true }),
           field('dismiss', 'Keep the current status and dismiss the suggestion', 'checkbox', false),
         ],
         async save(v, changed) {
