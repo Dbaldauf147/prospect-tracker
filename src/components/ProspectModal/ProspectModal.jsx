@@ -49,6 +49,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { ContactCampaignAdd, ContactsCampaignBulkAdd } from './ContactCampaignAdd';
 import { ListMatchWarning } from './ListMatchWarning';
 import { CompanyCampaignAdd } from './CompanyCampaignAdd';
+import { subVerticalsFor, withSubVertical, withoutSubVertical, renameSubVertical, subVerticalOnList } from '../../utils/subVerticals';
 import { withDefaultCdm } from '../../utils/defaultCdm';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { nameFromEmail } from '../../utils/nameFromEmail';
@@ -655,7 +656,7 @@ function recordToSave(fields) {
 }
 
 const EMPTY = {
-  company: '', cdm: '', status: 'Inside Sales', type: '', vertical: '', geography: '', publicPrivate: '',
+  company: '', cdm: '', status: 'Inside Sales', type: '', vertical: '', subVertical: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, numberOfAccounts: null,
   numberOfMeters: null, equipmentCount: null, annualMwh: null, totalEnergyMwh: null, sitesWithMandate: null,
   // The three headline figures off the Utility Lookup analysis: how much of
@@ -3181,6 +3182,149 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     </div>
   );
 }, contactEditPropsEqual);
+
+// The company's Sub Vertical: picked from the list mapped to its Vertical
+// (utils/subVerticals.js), and that list is edited right here. Typing a name
+// that isn't on the list and picking "Add" both sets it and adds it to the
+// Vertical's list; "Edit list" opens the list to rename or remove entries.
+function SubVerticalField({ vertical, value, onChange, map, onSaveMap }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const v = String(vertical || '').trim();
+  const current = String(value || '').trim();
+  const list = subVerticalsFor(map, v);
+  const onList = !current || subVerticalOnList(map, v, current);
+  const canEdit = typeof onSaveMap === 'function';
+  const options = onList || !current ? list : [...list, current];
+
+  const pick = (next) => {
+    const val = String(next || '').trim();
+    if (val && canEdit && !subVerticalOnList(map, v, val)) onSaveMap(withSubVertical(map, v, val));
+    onChange(val);
+  };
+  const addDraft = () => {
+    const val = draft.trim();
+    if (!val || !canEdit) return;
+    onSaveMap(withSubVertical(map, v, val));
+    setDraft('');
+  };
+  const rename = (from, to) => {
+    const t = String(to || '').trim();
+    if (!t || t === from || !canEdit) return;
+    const next = renameSubVertical(map, v, from, t);
+    if (next === map) return;
+    onSaveMap(next);
+    // The company picked the old name, so it follows the rename.
+    if (current.toLowerCase() === String(from).toLowerCase()) onChange(t);
+  };
+
+  const smallBtn = {
+    padding: '0.1rem 0.45rem', border: '1px solid #CBD5E1', borderRadius: 4,
+    background: '#F8FAFC', color: '#475569', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+        <label className={styles.label}>Sub Vertical</label>
+        {v && canEdit && (
+          <button
+            type="button"
+            onClick={() => setEditing(e => !e)}
+            aria-expanded={editing}
+            title={`Edit the sub verticals listed under ${v}`}
+            style={smallBtn}
+          >{editing ? 'Done' : 'Edit list'}</button>
+        )}
+      </div>
+      {/* One child for the value column: the form's grid puts a field's
+          first child under the label and its second beside it. */}
+      <div>
+      {!v ? (
+        <div
+          title="Sub verticals are listed per Vertical"
+          style={{
+            padding: '0.4rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '6px', minHeight: '36px',
+            boxSizing: 'border-box', background: '#F8FAFC', fontSize: '0.78rem', color: 'var(--color-text-muted)',
+            display: 'flex', alignItems: 'center',
+          }}
+        >{current || 'Pick a Vertical first'}</div>
+      ) : (
+        <div title={`Options come from the sub verticals listed under ${v}`}>
+          <SearchableSelect
+            options={options}
+            value={current}
+            onChange={pick}
+            placeholder={list.length ? '-' : 'Type to add one'}
+            allowCustom={canEdit}
+          />
+        </div>
+      )}
+      {v && current && !onList && (
+        <div style={{ marginTop: '0.3rem', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.68rem', color: 'var(--color-text-secondary)' }}>
+          <span style={{ flex: 1, minWidth: 0 }}>Not on the {v} list.</span>
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => onSaveMap(withSubVertical(map, v, current))}
+              style={{ ...smallBtn, border: '1px solid #93C5FD', background: '#EFF6FF', color: '#1E40AF' }}
+            >Add to list</button>
+          )}
+        </div>
+      )}
+      {editing && v && (
+        <div
+          data-sub-vertical-editor
+          style={{ marginTop: '0.35rem', padding: '0.45rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#F8FAFC', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}
+        >
+          <div style={{ fontSize: '0.66rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            Sub verticals under {v}
+          </div>
+          {list.length === 0 && (
+            <div style={{ fontSize: '0.7rem', color: '#94A3B8' }}>None yet. Add the first one below.</div>
+          )}
+          {list.map(item => (
+            <div key={item} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <input
+                type="text"
+                defaultValue={item}
+                aria-label={`Rename ${item}`}
+                onBlur={e => { if (e.target.value.trim() && e.target.value.trim() !== item) rename(item, e.target.value); else e.target.value = item; }}
+                onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.currentTarget.value = item; e.currentTarget.blur(); } }}
+                style={{ flex: 1, minWidth: 0, padding: '0.25rem 0.4rem', border: '1px solid #E2E8F0', borderRadius: 4, fontSize: '0.74rem', fontFamily: 'inherit', background: '#fff' }}
+              />
+              <button
+                type="button"
+                onClick={() => onSaveMap(withoutSubVertical(map, v, item))}
+                aria-label={`Remove ${item} from the ${v} list`}
+                title={`Take ${item} off the ${v} list. Companies that already have it keep it.`}
+                style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '0.9rem', lineHeight: 1, cursor: 'pointer', padding: '0 0.2rem' }}
+              >×</button>
+            </div>
+          ))}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+            <input
+              type="text"
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addDraft(); } }}
+              placeholder={`Add a sub vertical to ${v}`}
+              aria-label={`Add a sub vertical to ${v}`}
+              style={{ flex: 1, minWidth: 0, padding: '0.25rem 0.4rem', border: '1px solid #E2E8F0', borderRadius: 4, fontSize: '0.74rem', fontFamily: 'inherit', background: '#fff' }}
+            />
+            <button
+              type="button"
+              onClick={addDraft}
+              disabled={!draft.trim()}
+              style={{ ...smallBtn, opacity: draft.trim() ? 1 : 0.5, cursor: draft.trim() ? 'pointer' : 'default' }}
+            >Add</button>
+          </div>
+        </div>
+      )}
+      </div>
+    </div>
+  );
+}
 
 function SearchableSelect({ options, value, onChange, placeholder = 'Select…', allowCustom = true }) {
   const [open, setOpen] = useState(false);
@@ -9803,6 +9947,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 )}
               </div>
             </div>
+
+            <SubVerticalField
+              vertical={fields.vertical}
+              value={fields.subVertical}
+              onChange={v => set('subVertical', v)}
+              map={settings?.subVerticalsByVertical || {}}
+              onSaveMap={updateSettings ? (next) => updateSettings({ subVerticalsByVertical: next }) : undefined}
+            />
 
             {fields.type === 'Private Equity' && (
               <div>
