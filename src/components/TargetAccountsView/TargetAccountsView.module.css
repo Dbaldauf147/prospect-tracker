@@ -315,7 +315,8 @@
 }
 
 /* Vertical names subtab. */
-.vnWrap { padding-top: 0.75rem; }
+/* The page wrapper clips overflow, so the tab scrolls itself (as Compare upload does). */
+.vnWrap { padding-top: 0.75rem; padding-bottom: 1.25rem; flex: 1; min-height: 0; overflow-y: auto; }
 .vnIntro { font-size: 0.8rem; color: var(--color-text-muted); max-width: 75ch; margin-bottom: 0.6rem; }
 .vnToolbar { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.6rem; flex-wrap: wrap; }
 .vnCount { font-size: 0.75rem; color: var(--color-text-muted); }
