@@ -6955,6 +6955,63 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return new Set(((settings.companyContactExclusions || {})[key] || []).map(String));
   }, [fields.company, settings.companyContactExclusions]);
 
+  // Who owns this company: the PE firm(s) in its PE Owner field and the
+  // parent(s) it sits under on the divisions chart. Their people get a
+  // bucket of their own under the roster rather than being mixed in with
+  // the company's staff (or, as before, left off the card entirely).
+  const contactOwners = useMemo(() => {
+    if (isNew || !fields.company) return [];
+    const out = [];
+    const seen = new Set();
+    const push = (name, kind) => {
+      const n = String(name || '').trim();
+      const k = n.toLowerCase();
+      if (!n || seen.has(k) || companiesMatch(n, fields.company)) return;
+      seen.add(k);
+      out.push({ name: n, kind });
+    };
+    for (const o of splitPeOwners(fields.peOwner)) push(o, 'PE owner');
+    if (prospect?.id) {
+      const nameById = new Map((prospects || []).map(p => [p.id, p.company]));
+      for (const p of divisionParentsFor(settings, prospect.id, nameById)) push(p.company, 'parent company');
+    }
+    return out;
+  }, [isNew, fields.company, fields.peOwner, prospect?.id, prospects, settings]);
+
+  // The roster split into the company's own people and the owners'. A
+  // contact already on the roster (linked, or caught by a fuzzy name) whose
+  // Company text names an owner rather than this company moves to the
+  // owner bucket; anyone else at an owner is pulled in alongside, under the
+  // same hidden / excluded rules as the roster itself.
+  const { directContacts, ownerContacts } = useMemo(() => {
+    if (contactOwners.length === 0) return { directContacts: companyContacts, ownerContacts: [] };
+    const isOwnerContact = (c) => !companiesMatch(c.company, fields.company)
+      && contactOwners.some(o => companiesMatch(c.company, o.name));
+    const direct = [];
+    const owner = [];
+    const present = new Set();
+    for (const c of companyContacts) {
+      present.add(String(c.id || c.vid || ''));
+      (isOwnerContact(c) ? owner : direct).push(c);
+    }
+    for (const c of hubspotContacts) {
+      const id = String(c.id || c.vid || '');
+      if (!id || present.has(id) || !isOwnerContact(c)) continue;
+      if (!showHiddenContacts && (contactIsHidden(c) || excludedContactIds.has(id))) continue;
+      owner.push(c);
+      present.add(id);
+    }
+    return { directContacts: direct, ownerContacts: owner };
+  }, [contactOwners, companyContacts, hubspotContacts, fields.company, showHiddenContacts, excludedContactIds]);
+
+  // Everything the roster grids can select: the company's own contacts plus
+  // the owner contacts that aren't on its roster.
+  const selectableContacts = useMemo(() => {
+    if (ownerContacts.length === 0) return companyContacts;
+    const ids = new Set(companyContacts.map(c => String(c.id || c.vid || '')));
+    return [...companyContacts, ...ownerContacts.filter(c => !ids.has(String(c.id || c.vid || '')))];
+  }, [companyContacts, ownerContacts]);
+
   // Remove a contact from this company's roster only. Non-destructive -
   // the contact stays in HubSpot and on every other company it matches.
   const excludeContactFromCompany = useCallback((contactId) => {
@@ -7923,7 +7980,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   async function applyBulkEdit() {
     if (bulkSelected.size === 0) return;
     setBulkApplying(true);
-    const targets = companyContacts.filter(c => bulkSelected.has(String(c.id || c.vid)));
+    const targets = selectableContacts.filter(c => bulkSelected.has(String(c.id || c.vid)));
 
     if (bulkField === 'notes') {
       const current = settings.contactNotes || {};
@@ -8104,7 +8161,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }
 
   async function applyBulkDelete() {
-    const targets = companyContacts.filter(c => bulkSelected.has(String(c.id || c.vid)));
+    const targets = selectableContacts.filter(c => bulkSelected.has(String(c.id || c.vid)));
     if (targets.length === 0) return;
     if (!window.confirm(`Delete ${targets.length} contact${targets.length === 1 ? '' : 's'} from HubSpot? This cannot be undone.`)) return;
     setBulkApplying(true);
@@ -13410,7 +13467,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
                 <label className={styles.label} style={{ margin: 0 }}>
-                  Contacts {companyContacts.length > 0 ? `(${companyContacts.length})` : ''}
+                  Contacts {(directContacts.length + ownerContacts.length) > 0 ? `(${directContacts.length}${ownerContacts.length > 0 ? ` + ${ownerContacts.length} owner` : ''})` : ''}
                 </label>
                 <div style={{ display: 'flex', gap: '0.25rem', background: '#F1F5F9', borderRadius: '6px', padding: '2px' }}>
                   <button
@@ -13718,7 +13775,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 )}
               {contactView === 'orgchart' ? (
                 <OrgChart contacts={companyContacts} onDeleteContact={handleDeleteContact} deletingContact={deletingContact} onEditContact={setEditingContact} reportsTo={settings.contactReportsTo || {}} />
-              ) : companyContacts.length > 0 ? (
+              ) : (companyContacts.length > 0 || ownerContacts.length > 0) ? (
                 <>
                 {bulkSelected.size > 0 && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0.6rem', marginBottom: '0.4rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '6px', fontSize: '0.75rem', color: '#1E3A8A' }}>
@@ -13745,7 +13802,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   </div>
                 )}
                 <ContactsTable
-                  contacts={companyContacts}
+                  contacts={directContacts}
+                  ownerContacts={ownerContacts}
+                  owners={contactOwners}
                   company={fields.company}
                   settings={settings}
                   updateSettings={updateSettings}
