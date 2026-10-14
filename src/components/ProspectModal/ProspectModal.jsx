@@ -138,7 +138,7 @@ import {
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { SENTIMENT_OPTIONS, sentimentFor, sentimentMark } from '../../utils/contactSentiment';
 import { LEAD_SOURCE_OPTIONS, leadSourceFor } from '../../utils/contactLeadSource';
-import { BUCKETS, contactHasTag, contactIsHidden, getContactTags } from './contactTags.js';
+import { BUCKETS, contactHasTag, contactIsHidden } from './contactTags.js';
 import { ContactsTable } from './ContactsTable.jsx';
 import { ContactPasteModal } from './ContactPasteModal.jsx';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
@@ -430,7 +430,7 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
   const idOf = (c) => String(c.id || c.vid || c.email || '');
 
   // Coverage check: which buckets currently have no contacts tagged?
-  const missingBuckets = BUCKETS.filter(b => !contacts.some(c => getContactTags(c).includes(b.tag)));
+  const missingBuckets = BUCKETS.filter(b => !contacts.some(c => contactHasTag(c, b.tag)));
 
   // Who to go to for each category: a column per bucket, A to Z, with the
   // decision makers answered Yes (green) or Not sure (yellow) for that
@@ -440,7 +440,7 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
   const dmAnswer = (c, b) => {
     const cid = c.id ?? c.vid;
     const stored = cid == null ? undefined : findTagRecord(tagReview?.[cid], b.label);
-    return tagStateFrom(getContactTags(c).includes(b.tag), stored).answer;
+    return tagStateFrom(contactHasTag(c, b.tag), stored).answer;
   };
   const dmColumns = [...BUCKETS]
     .sort((a, b) => a.label.localeCompare(b.label))
