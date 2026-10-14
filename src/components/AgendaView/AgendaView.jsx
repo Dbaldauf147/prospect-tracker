@@ -5,7 +5,7 @@ import { apiFetch } from '../../utils/apiFetch';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts, updateHubspotCache } from '../../utils/hubspotContactsCache';
-import { BULK_ADD_LEAD_SOURCE } from '../../utils/contactLeadSource';
+import { BULK_ADD_LEAD_SOURCE, LEAD_SOURCE_OPTIONS, leadSourceFor } from '../../utils/contactLeadSource';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { getQueuedContactIds, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
@@ -323,6 +323,7 @@ const BULK_COLS = [
   { key: 'zoomCompanyName',  label: 'TV Zoom Name',        w: 160 },
   { key: 'emailDomain',      label: 'TV Email Domain',     w: 200 },
   { key: 'dans_tags',        label: "Dan's Tags",          w: 140 },
+  { key: 'leadSource',       label: 'Lead Source',         w: 150 },
   { key: 'phone',            label: 'Work Phone Number',   w: 140 },
   { key: 'mobilePhone',      label: 'Cell Phone Number',   w: 140 },
   { key: 'linkedinUrl',      label: 'LinkedIn URL',        w: 180 },
@@ -408,13 +409,27 @@ function contactOutsideNorthAmerica(country) {
 // What the Bulk Add Contacts table's layout is called in settings.tablePrefs.
 const BULK_PREFS_TABLE_ID = 'agenda-bulk-contacts';
 
+// Columns added after people had already saved a layout. Each one is
+// switched on once, the first time a saved set without it is read, and a
+// `seen:` marker goes into the set alongside it so hiding it afterwards
+// sticks. The markers name no column, so nothing draws them.
+const BULK_COLS_ADDED_LATER = ['leadSource'];
+const seenMarker = (key) => `seen:${key}`;
+const BULK_SEEN_MARKERS = BULK_COLS_ADDED_LATER.map(seenMarker);
+
 // A saved visible set, from either copy, with columns added since it was
 // saved switched on — otherwise a new column arrives hidden and the user has
-// to go find it in the Columns menu. (Today: the Full Name composite cell.)
+// to go find it in the Columns menu. (The Full Name composite cell, always;
+// BULK_COLS_ADDED_LATER, once.)
 function bulkVisibleFromSaved(saved) {
-  if (!saved || saved.size === 0) return new Set(BULK_COLS.map(c => c.key));
+  if (!saved || saved.size === 0) return new Set([...BULK_COLS.map(c => c.key), ...BULK_SEEN_MARKERS]);
   const next = new Set(saved);
   if (!next.has('fullName')) next.add('fullName');
+  for (const key of BULK_COLS_ADDED_LATER) {
+    if (next.has(seenMarker(key))) continue;
+    next.add(key);
+    next.add(seenMarker(key));
+  }
   return next;
 }
 
@@ -648,6 +663,12 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     const field = bulkEditField;
     const value = bulkEditValue;
     if (!field || bulkSelected.size === 0) return;
+    if (field === 'leadSource') {
+      setRowsLeadSource(rows.filter(r => bulkSelected.has(r.email)), value);
+      setBulkEditOpen(false);
+      setBulkEditValue('');
+      return;
+    }
     setRows(prev => {
       const next = prev.map(r => {
         if (!bulkSelected.has(r.email)) return r;
@@ -759,9 +780,12 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   const resetBulkCols = useCallback(() => {
     setBulkColRemoved(new Set());
     setBulkColOrder([]);
-    setBulkColVisible(new Set(BULK_COLS
-      .filter(c => c.toggleable === false || bulkColStarred.size === 0 || bulkColStarred.has(c.key))
-      .map(c => c.key)));
+    setBulkColVisible(new Set([
+      ...BULK_COLS
+        .filter(c => c.toggleable === false || bulkColStarred.size === 0 || bulkColStarred.has(c.key))
+        .map(c => c.key),
+      ...BULK_SEEN_MARKERS,
+    ]));
   }, [bulkColStarred, setBulkColRemoved, setBulkColVisible, setBulkColOrder]);
   // What actually draws: switched on in the picker and not deleted.
   const bulkColShown = useMemo(
@@ -941,6 +965,50 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
 
   // Reload HubSpot cache whenever results change (so newly-added contacts move to the "exists" state).
   const [hubspotByEmail, setHubspotByEmail] = useState(new Map());
+
+  // Lead Source, per row. For someone already in HubSpot it is the same
+  // per-contact setting the contact popup edits (settings.contactLeadSource,
+  // by contact id), read and written straight away. A new row has no id
+  // yet, so its pick rides on the row and is stamped when the contact is
+  // created, and an unpicked one gets BULK_ADD_LEAD_SOURCE, which is what
+  // creating it stamps.
+  const hubspotIdOfRow = (r) => {
+    const c = hubspotByEmail.get(r.email);
+    return c ? String(c.id || c.vid || '') : '';
+  };
+  const contactLeadSourceMap = settings?.contactLeadSource;
+  const rowLeadSource = useCallback((r) => {
+    const c = hubspotByEmail.get(r.email);
+    const id = c ? String(c.id || c.vid || '') : '';
+    if (id) return leadSourceFor(contactLeadSourceMap, id);
+    return String(r.leadSource || '').trim() || BULK_ADD_LEAD_SOURCE;
+  }, [hubspotByEmail, contactLeadSourceMap]);
+  // Every change for contacts already in HubSpot lands as one settings
+  // write; new rows are patched in place.
+  const setRowsLeadSource = (targetRows, value) => {
+    const v = String(value || '').trim();
+    const forSettings = {};
+    const newEmails = new Set();
+    for (const r of targetRows) {
+      const id = hubspotIdOfRow(r);
+      if (id) forSettings[id] = v;
+      else newEmails.add(r.email);
+    }
+    if (Object.keys(forSettings).length && updateSettings) {
+      const next = { ...(settings?.contactLeadSource || {}) };
+      for (const [id, val] of Object.entries(forSettings)) {
+        if (val) next[id] = val; else delete next[id];
+      }
+      updateSettings({ contactLeadSource: next });
+    }
+    if (newEmails.size) {
+      setRows(prev => {
+        const next = prev.map(r => (newEmails.has(r.email) ? { ...r, leadSource: v } : r));
+        saveCache(next);
+        return next;
+      });
+    }
+  };
 
   // The Company cell's contacts popup works on the HubSpot contacts already
   // at the company the way the company card does: tags added or taken off
@@ -1696,6 +1764,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       state:            { label: 'State',             w: 10, get: (r) => r.state || '' },
       country:          { label: 'Country',           w: 14, get: (r) => r.country || '' },
       notes:            { label: 'Notes',             w: 36, get: (r) => r.notes || '' },
+      leadSource:       { label: 'Lead Source',       w: 18, get: (r) => rowLeadSource(r) },
     };
     const exportCols = [];
     for (const c of orderedBulkCols) {
@@ -1829,7 +1898,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-  }, [rows, bulkColShown, orderedBulkCols, hubspotByEmail, results, lookupMatch, prospects, dismissedSuggestedCompanies, otherRepsByProspect, cdmName]);
+  }, [rows, bulkColShown, orderedBulkCols, hubspotByEmail, results, lookupMatch, prospects, dismissedSuggestedCompanies, otherRepsByProspect, cdmName, rowLeadSource]);
 
   // The best company name we can put on the wire for this row. Priority:
   //   1. The explicit row.company the user typed in the cell.
@@ -2044,9 +2113,11 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
         }
         // Every contact this page creates is tracked as Bulk Added. Contacts
         // already in HubSpot keep whatever Lead Source they had.
+        // A Lead Source picked on the row wins over the default.
         if (newId) {
-          if (updateSettingsPath) updateSettingsPath({ [`contactLeadSource.${newId}`]: BULK_ADD_LEAD_SOURCE });
-          else updateSettings?.({ contactLeadSource: { ...(settingsRef.current?.contactLeadSource || {}), [newId]: BULK_ADD_LEAD_SOURCE } });
+          const leadSource = String(row.leadSource || '').trim() || BULK_ADD_LEAD_SOURCE;
+          if (updateSettingsPath) updateSettingsPath({ [`contactLeadSource.${newId}`]: leadSource });
+          else updateSettings?.({ contactLeadSource: { ...(settingsRef.current?.contactLeadSource || {}), [newId]: leadSource } });
         }
         // After the contact lands, attach any note the user typed for
         // this row as a HubSpot engagement on that contact. Failures
@@ -2399,6 +2470,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           case 'zoomCompanyName':
           case 'emailDomain':      return suggestionFor(r._matchedProspectId, key)?.value || '';
           case 'dans_tags':        return r.dans_tags || '';
+          case 'leadSource':       return rowLeadSource(r);
           case 'phone':            return r.phone || '';
           case 'mobilePhone':      return r.mobilePhone || '';
           case 'linkedinUrl':      return r.linkedinUrl || '';
@@ -2442,6 +2514,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           case 'zoomCompanyName':
           case 'emailDomain':      return suggestionFor(r._matchedProspectId, sortKey)?.value || '';
           case 'dans_tags':        return r.dans_tags || '';
+          case 'leadSource':       return rowLeadSource(r);
           case 'jobtitle':         return r.jobtitle || '';
           case 'phone':            return r.phone || '';
           case 'mobilePhone':      return r.mobilePhone || '';
@@ -2464,7 +2537,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       out = [...out].sort((a, b) => String(sortValue(a)).localeCompare(String(sortValue(b))) * dir);
     }
     return out;
-  }, [rows, tvMissingOnly, columnFilters, sortKey, sortDir, rowTableViewState, lookupMatch, suggestionFor, dismissedSuggestedCompanies, hubspotByEmail, results, prospects, bulkColTextFilters]);
+  }, [rows, tvMissingOnly, columnFilters, sortKey, sortDir, rowTableViewState, lookupMatch, suggestionFor, dismissedSuggestedCompanies, hubspotByEmail, results, prospects, bulkColTextFilters, rowLeadSource]);
 
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState(null);
@@ -4156,6 +4229,26 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                     dans_tags: () => (
                       <td><input className={styles.cellInput} value={r.dans_tags || ''} onChange={e => updateRow(r.email, { dans_tags: e.target.value })} placeholder="Tag1, Tag2" /></td>
                     ),
+                    leadSource: () => {
+                      const v = rowLeadSource(r);
+                      const inHubspot = Boolean(hubspotIdOfRow(r));
+                      return (
+                        <td>
+                          <select
+                            className={styles.cellInput}
+                            value={v}
+                            onChange={e => setRowsLeadSource([r], e.target.value)}
+                            title={inHubspot ? 'Saved to this contact straight away' : 'Stamped on the contact when it is added to HubSpot'}
+                            aria-label={`Lead Source for ${composeFullName(r) || r.email}`}
+                            style={{ color: v ? undefined : '#94A3B8' }}
+                          >
+                            {inHubspot && <option value="">Not set</option>}
+                            {LEAD_SOURCE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                            {v && !LEAD_SOURCE_OPTIONS.includes(v) && <option value={v}>{v}</option>}
+                          </select>
+                        </td>
+                      );
+                    },
                     phone: () => (
                       <td><input className={styles.cellInput} value={r.phone} onChange={e => updateRow(r.email, { phone: e.target.value })} /></td>
                     ),
@@ -4455,6 +4548,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                   <option value="mobilePhone">Cell Phone Number</option>
                   <option value="linkedinUrl">LinkedIn URL</option>
                   <option value="dans_tags">Dan's Tags</option>
+                  <option value="leadSource">Lead Source</option>
                   <option value="city">City</option>
                   <option value="state">State</option>
                   <option value="country">Country</option>
@@ -4473,6 +4567,17 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
               )}
               <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)' }}>
                 {bulkEditMode === 'append' ? 'Value to append' : 'New value'}
+                {bulkEditField === 'leadSource' ? (
+                  <select
+                    autoFocus
+                    value={bulkEditValue}
+                    onChange={e => setBulkEditValue(e.target.value)}
+                    style={{ width: '100%', padding: '0.4rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: '0.8rem', fontFamily: 'inherit', marginTop: 4 }}
+                  >
+                    <option value="">Not set (new rows get Bulk Added)</option>
+                    {LEAD_SOURCE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                ) : (
                 <input
                   autoFocus
                   type="text"
@@ -4482,6 +4587,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                   placeholder={bulkEditMode === 'append' ? 'e.g. Dan Key Target' : 'Leave empty to clear the field'}
                   style={{ width: '100%', padding: '0.4rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: '0.8rem', fontFamily: 'inherit', marginTop: 4 }}
                 />
+                )}
               </label>
             </div>
             <div style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid var(--color-border)', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
