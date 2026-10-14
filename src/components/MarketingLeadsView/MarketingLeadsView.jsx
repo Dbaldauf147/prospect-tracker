@@ -27,6 +27,7 @@ import {
   summariseLeadNames,
 } from '../../utils/marketingLeadsImport';
 import { recipientMapSaver } from '../../utils/recipientMaps';
+import { LEAD_MAPPING_LEDGER_KEY } from '../../utils/leadMappings';
 
 // Marketing Leads subtab on the Contacts page. The user pastes a block
 // copied from a Salesforce Leads list view; a column-mapping modal pops
@@ -431,8 +432,16 @@ const HubSpotContactAutocomplete = memo(function HubSpotContactAutocomplete({ co
 export function MarketingLeadsView({ prospects = [], settings, updateSettings, updateSettingsPath, onAddProspect, onSelectProspect, targetAccountsData, onNavigate }) {
   const persistedRows = useMemo(() => {
     const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
+    // A stale rewrite from another tab can land with a lead's Company
+    // Mapping blanked; the mapping ledger still has it, so show it (and
+    // the next write saves it back). See utils/leadMappings.
+    const mapLedger = settings?.[LEAD_MAPPING_LEDGER_KEY] || {};
     return arr.map(r => {
       const base = { ...emptyRow(), ...r, id: r.id || makeId() };
+      if (!String(base.mappedCompany || '').trim()) {
+        const kept = String(mapLedger[base.id]?.company || '').trim();
+        if (kept) base.mappedCompany = kept;
+      }
       // Heal legacy rows stored as "Last, First" so they display (and
       // match / add to HubSpot) as "First Last". Idempotent — any later
       // write persists the normalised form.
@@ -1125,15 +1134,24 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
     }
     // One settings write for both the lead→contact mappings and the note
     // mirror, so the page doesn't churn through two round-trips.
-    const patch = {};
-    if (mappingById.size) {
-      patch.marketingLeads = persistedRows.map(r => {
-        const m = mappingById.get(r.id);
-        return m ? { ...r, hubspotContactId: m.id, hubspotContact: m.label, hubspotContactTitle: m.title } : r;
+    // Built from the settings as they are NOW, not the rows captured
+    // before the API calls: anything edited on the page during the run (a
+    // Company Mapping accepted, a status changed) would otherwise be
+    // written back to what it was.
+    if (mappingById.size || Object.keys(notesPatch).length) {
+      updateSettings(cur => {
+        const patch = {};
+        if (mappingById.size) {
+          const leads = Array.isArray(cur.marketingLeads) ? cur.marketingLeads : [];
+          patch.marketingLeads = leads.map(r => {
+            const m = mappingById.get(r.id);
+            return m ? { ...r, hubspotContactId: m.id, hubspotContact: m.label, hubspotContactTitle: m.title } : r;
+          });
+        }
+        if (Object.keys(notesPatch).length) patch.contactNotes = { ...(cur.contactNotes || {}), ...notesPatch };
+        return patch;
       });
     }
-    if (Object.keys(notesPatch).length) patch.contactNotes = { ...curNotes, ...notesPatch };
-    if (Object.keys(patch).length) updateSettings(patch);
     setBulkAddingHubspot(false);
     window.alert(`Added ${created.length} contact${created.length === 1 ? '' : 's'} to HubSpot${failed ? `: ${failed} failed` : ''}.`);
   }
@@ -1323,7 +1341,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
     if (!selectedLeadIds.size || !bulkField) return;
     const ids = selectedLeadIds;
     const val = bulkValue;
-    persist(persistedRows.map(r => (ids.has(r.id) ? { ...r, [bulkField]: val } : r)));
+    persist(persistedRows.map(r => (ids.has(r.id) ? { ...r, [bulkField]: val } : r)), clearOpts(bulkField, val, [...ids]));
     const n = ids.size;
     setBulkResult(`Set ${bulkFieldLabel} on ${n} lead${n === 1 ? '' : 's'}${val.trim() ? ` to “${val.trim()}”` : ' (cleared)'}.`);
   }
@@ -1446,8 +1464,18 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
 
   // opts.clearLeadLinks names the leads whose Salesforce Link this write
   // removes on purpose; useUserSettings puts any other blanked link back.
+  // opts.clearLeadMappings does the same for the Company Mapping.
   function persist(next, opts) {
     updateSettings({ marketingLeads: next }, opts);
+  }
+
+  // The persist opts for writing `value` into `key` on the leads `ids`:
+  // blanking a link or a mapping has to be named as deliberate.
+  function clearOpts(key, value, ids) {
+    if (String(value || '').trim()) return undefined;
+    if (key === 'sfUrl') return { clearLeadLinks: ids };
+    if (key === 'mappedCompany') return { clearLeadMappings: ids };
+    return undefined;
   }
 
   function updateCell(rowId, key, value) {
@@ -1456,10 +1484,9 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
       persist([...persistedRows, { ...emptyRow(), [key]: value }]);
       return;
     }
-    const clearsLink = key === 'sfUrl' && !String(value || '').trim();
     persist(
       persistedRows.map(r => (r.id === rowId ? { ...r, [key]: value } : r)),
-      clearsLink ? { clearLeadLinks: [rowId] } : undefined,
+      clearOpts(key, value, [rowId]),
     );
   }
 

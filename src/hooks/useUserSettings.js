@@ -3,6 +3,7 @@ import { subscribeToUserSettings, saveUserSettings, savePathUpdates, initUserSet
 import { pushBackup } from '../utils/settingsBackup';
 import { autoMergeValue, mergeSettingsKey, foldWriteResult } from '../utils/settingsMerge';
 import { guardLeadLinks, recordLeadLinks, LEAD_LINK_LEDGER_KEY } from '../utils/leadLinks';
+import { guardLeadMappings, recordLeadMappings, LEAD_MAPPING_LEDGER_KEY } from '../utils/leadMappings';
 import { SETTINGS_SIZE_BUDGET, overBudgetMessage, settingsDocReport } from '../utils/settingsDocSize';
 import {
   isClientWedged, isClientWedgedError, shouldAnnounceWedgedClient, wedgedClientMessage, watchForClientCrash, autoReloadWhenWedged,
@@ -95,16 +96,28 @@ function reportSaveFailure(err) {
 //
 // `base` is whatever this write is being laid over: this tab's state for a
 // plain save, the server's copy after a cross-device merge.
+//
+// The leads' Company Mapping gets the same treatment (utils/leadMappings),
+// with `clears.mappings` naming the deliberate un-maps.
 function protectLeadLinks(updates, base, clears) {
   if (!Array.isArray(updates?.marketingLeads)) return updates;
+  const linkClears = clears?.links || [];
+  const mapClears = clears?.mappings || [];
   const ledgerBase = updates[LEAD_LINK_LEDGER_KEY] ?? base?.[LEAD_LINK_LEDGER_KEY];
-  const { rows, restored } = guardLeadLinks(updates.marketingLeads, base?.marketingLeads, clears, ledgerBase);
+  const { rows: linked, restored } = guardLeadLinks(updates.marketingLeads, base?.marketingLeads, linkClears, ledgerBase);
   if (restored.length) {
     console.warn('Kept Salesforce Links a save would have blanked:', restored.map(r => r.name || r.id));
   }
-  const ledger = recordLeadLinks(ledgerBase, rows, clears);
+  const mapLedgerBase = updates[LEAD_MAPPING_LEDGER_KEY] ?? base?.[LEAD_MAPPING_LEDGER_KEY];
+  const { rows, restored: restoredMaps } = guardLeadMappings(linked, base?.marketingLeads, mapClears, mapLedgerBase);
+  if (restoredMaps.length) {
+    console.warn('Kept Company Mappings a save would have blanked:', restoredMaps.map(r => r.name || r.id));
+  }
+  const ledger = recordLeadLinks(ledgerBase, rows, linkClears);
+  const mapLedger = recordLeadMappings(mapLedgerBase, rows, mapClears);
   const out = { ...updates, marketingLeads: rows };
   if (ledger !== base?.[LEAD_LINK_LEDGER_KEY]) out[LEAD_LINK_LEDGER_KEY] = ledger;
+  if (mapLedger !== base?.[LEAD_MAPPING_LEDGER_KEY]) out[LEAD_MAPPING_LEDGER_KEY] = mapLedger;
   return out;
 }
 
@@ -182,6 +195,7 @@ export function useUserSettings(user) {
   //
   // opts.clearLeadLinks: ids of Marketing Leads whose Salesforce Link this
   // save removes on purpose. Any other blanked link is put back.
+  // opts.clearLeadMappings: the same for the leads' Company Mapping.
   //
   // `updatesOrFn` may be a function of the current settings, returning the
   // keys to write. Use it for one entry of a per-contact map: a caller that
@@ -202,7 +216,7 @@ export function useUserSettings(user) {
       ? updatesOrFn(settingsRef.current || {})
       : updatesOrFn;
     if (!rawUpdates || typeof rawUpdates !== 'object') return false;
-    const clears = opts?.clearLeadLinks || [];
+    const clears = { links: opts?.clearLeadLinks || [], mappings: opts?.clearLeadMappings || [] };
 
     // Snapshot the pre-save state for recovery.
     pushBackup(settingsRef.current, 'pre-save').catch(() => {});
