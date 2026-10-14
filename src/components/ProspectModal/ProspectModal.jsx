@@ -2251,10 +2251,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
             return (
               <div>
                 <label style={labelStyle}>
-                  Full Name{' '}
-                  <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>
-                    (auto, or paste one)
-                  </span>
+                  Full Name
                 </label>
                 <input
                   style={{
@@ -2307,10 +2304,10 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           })()}
           <div><label style={labelStyle}>Work Phone Number</label><input style={inputStyle} value={f.phone} onChange={e => set('phone', e.target.value)} /></div>
           <div><label style={labelStyle}>Cell Phone Number</label><input style={inputStyle} value={f.mobilephone} onChange={e => set('mobilephone', e.target.value)} /></div>
-          <div><label style={labelStyle}>Goes By <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.nickname} onChange={e => set('nickname', e.target.value)} placeholder="e.g. Bob" /></div>
-          <div><label style={labelStyle}>Team Name <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.teamName} onChange={e => set('teamName', e.target.value)} placeholder="e.g. FP&A" /></div>
-          <div><label style={labelStyle}>Partner&apos;s name <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.partner} onChange={e => set('partner', e.target.value)} placeholder="e.g. Jane" /></div>
-          <div><label style={labelStyle}>Kids&apos; names <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.kids} onChange={e => set('kids', e.target.value)} placeholder="e.g. Sam (12), Riley (9)" /></div>
+          <div><label style={labelStyle}>Goes By</label><input style={inputStyle} value={f.nickname} onChange={e => set('nickname', e.target.value)} /></div>
+          <div><label style={labelStyle}>Team Name</label><input style={inputStyle} value={f.teamName} onChange={e => set('teamName', e.target.value)} /></div>
+          <div><label style={labelStyle}>Partner&apos;s name</label><input style={inputStyle} value={f.partner} onChange={e => set('partner', e.target.value)} /></div>
+          <div><label style={labelStyle}>Kids&apos; names</label><input style={inputStyle} value={f.kids} onChange={e => set('kids', e.target.value)} /></div>
           <div style={{ gridColumn: 'span 2' }}>
             <label style={labelStyle}>Email <span style={{ fontWeight: 400, textTransform: 'none', color: '#DC2626' }}>*</span></label>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
@@ -2501,7 +2498,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               );
             })()}
           </div>
-          <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Old Company <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(previous employer)</span></label><input style={inputStyle} value={f.oldCompany} onChange={e => set('oldCompany', e.target.value)} placeholder="Previous company name" /></div>
+          <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Old Company</label><input style={inputStyle} value={f.oldCompany} onChange={e => set('oldCompany', e.target.value)} /></div>
           <div style={{ gridColumn: 'span 2' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
               <label style={labelStyle}>LinkedIn URL</label>
@@ -2600,7 +2597,6 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                     <input
                       style={inputStyle}
                       autoComplete="off"
-                      placeholder="Type to search…"
                       value={f.city}
                       onFocus={() => { setCityOpen(true); setCityHover(0); }}
                       onChange={e => { setCityLookupStatus(''); set('city', e.target.value); setCityOpen(true); setCityHover(0); }}
@@ -2680,26 +2676,26 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                 if (US_STATES.includes(val)) next.country = 'United States';
                 return next;
               });
-            }} placeholder="Start typing..." />
+            }} />
             <datalist id="state-list">
               {US_STATES.map(s => <option key={s} value={s} />)}
             </datalist>
           </div>
           <div style={{ gridColumn: 'span 2' }}>
             <label style={labelStyle}>Country</label>
-            <input style={inputStyle} list="country-list" value={f.country} onChange={e => set('country', e.target.value)} placeholder="Start typing..." />
+            <input style={inputStyle} list="country-list" value={f.country} onChange={e => set('country', e.target.value)} />
             <datalist id="country-list">
               {COUNTRIES.map(c => <option key={c} value={c} />)}
             </datalist>
           </div>
-          <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Old Emails <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(comma-separated, inactive)</span></label><input style={inputStyle} value={f.oldEmails} onChange={e => set('oldEmails', e.target.value)} placeholder="old.email@company.com" /></div>
-          <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Notes</label><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '50px', lineHeight: 1.4 }} value={f.notes} onChange={e => set('notes', e.target.value)} rows={2} placeholder="Add notes about this contact..." /></div>
+          <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Old Emails</label><input style={inputStyle} value={f.oldEmails} onChange={e => set('oldEmails', e.target.value)} /></div>
+          <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Notes</label><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '50px', lineHeight: 1.4 }} value={f.notes} onChange={e => set('notes', e.target.value)} rows={2} /></div>
           <div style={{ gridColumn: 'span 2' }}>
-            <label style={labelStyle}>Events <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(click to add / remove this contact from an event&apos;s attendee list)</span></label>
+            <label style={labelStyle}>Events</label>
             {(!cid) ? (
               <div style={{ fontSize: '0.72rem', color: '#94A3B8', padding: '0.3rem 0' }}>Save the contact first to add them to events.</div>
             ) : events.length === 0 ? (
-              <div style={{ fontSize: '0.72rem', color: '#94A3B8', padding: '0.3rem 0' }}>No events yet: create one in <strong>Contacts → Events</strong>.</div>
+              null
             ) : (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', padding: '0.4rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', maxHeight: 120, overflowY: 'auto' }}>
                 {events.map(ev => {
@@ -2728,7 +2724,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
             )}
           </div>
           <div style={{ gridColumn: 'span 2' }}>
-            <label style={labelStyle}>CC Emails <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(auto-CC when drafting an email to this contact)</span></label>
+            <label style={labelStyle}>CC Emails</label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', padding: '0.35rem', border: '1px solid #CBD5E1', borderRadius: 6, minHeight: 36, alignItems: 'center', background: '#fff' }}>
               {ccEmails.map(email => (
                 <span key={email} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.45rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 999, fontSize: '0.7rem', color: '#1E40AF' }}>
@@ -2745,7 +2741,6 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                     if (e.key === 'Enter' && ccInput.includes('@')) { e.preventDefault(); addCc(ccInput); }
                     if (e.key === 'Backspace' && !ccInput && ccEmails.length > 0) removeCc(ccEmails[ccEmails.length - 1]);
                   }}
-                  placeholder={ccEmails.length === 0 ? 'Search contacts or type email…' : 'Add more…'}
                   style={{ border: 'none', outline: 'none', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text)', padding: '0.15rem 0', width: '100%', background: 'none' }}
                 />
                 {showCcSuggestions && ccSuggestions.length > 0 && (
@@ -2766,7 +2761,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
             </div>
           </div>
           <div style={{ gridColumn: 'span 2' }}>
-            <label style={labelStyle}>To Also <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(auto-add to the To line alongside this contact)</span></label>
+            <label style={labelStyle}>To Also</label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', padding: '0.35rem', border: '1px solid #CBD5E1', borderRadius: 6, minHeight: 36, alignItems: 'center', background: '#fff' }}>
               {toAlsoEmails.map(email => (
                 <span key={email} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.45rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 999, fontSize: '0.7rem', color: '#92400E' }}>
@@ -2783,7 +2778,6 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                     if (e.key === 'Enter' && toAlsoInput.includes('@')) { e.preventDefault(); addToAlso(toAlsoInput); }
                     if (e.key === 'Backspace' && !toAlsoInput && toAlsoEmails.length > 0) removeToAlso(toAlsoEmails[toAlsoEmails.length - 1]);
                   }}
-                  placeholder={toAlsoEmails.length === 0 ? 'Search contacts or type email…' : 'Add more…'}
                   style={{ border: 'none', outline: 'none', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text)', padding: '0.15rem 0', width: '100%', background: 'none' }}
                 />
                 {showToAlsoSuggestions && toAlsoSuggestions.length > 0 && (
@@ -2804,7 +2798,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
             </div>
           </div>
           <div style={{ gridColumn: 'span 2' }}>
-            <label style={labelStyle}>Reports To <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(positions this contact below their manager in the By Category view)</span></label>
+            <label style={labelStyle}>Reports To</label>
             {(() => {
               const selfId = contact.id || contact.vid;
               const rawSelected = (selfId && contactReportsTo[selfId]) || [];
@@ -2820,9 +2814,9 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                 return <div style={{ fontSize: '0.7rem', color: '#94A3B8', fontStyle: 'italic', padding: '0.4rem 0.5rem', border: '1px dashed #E2E8F0', borderRadius: 6 }}>Save the contact first, then you can assign a manager.</div>;
               }
               return (
-                <div style={{ maxHeight: '160px', overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.25rem 0' }}>
+                <div style={{ maxHeight: '160px', minHeight: '2.2rem', boxSizing: 'border-box', overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.25rem 0' }}>
                   {eligible.length === 0 ? (
-                    <div style={{ fontSize: '0.7rem', color: '#94A3B8', fontStyle: 'italic', padding: '0.35rem 0.55rem' }}>No other contacts on this company yet.</div>
+                    null
                   ) : eligible.map(mgr => {
                     const mgrId = String(mgr.id || mgr.vid);
                     const checked = selectedIds.includes(mgrId);
