@@ -9028,6 +9028,20 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               a header that runs the account's own name off the edge to keep
               them on one line has its priorities backwards. */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: '0.5rem' }}>
+            {/* Lists this company is fully mapped to, as small green ticks.
+                The amber strips below cover the ones still to decide. */}
+            {!isNew && LIST_MATCH_WARNINGS.map(l => (
+              <ListMatchWarning
+                key={l.storageKey}
+                variant="badge"
+                label={l.label}
+                storageKey={l.storageKey}
+                company={fields.company}
+                settings={settings}
+                updateSettings={updateSettings}
+                updateSettingsPath={updateSettingsPath}
+              />
+            ))}
             {!isNew && fields.company && (
               <button
                 ref={listsMatchBtnRef}

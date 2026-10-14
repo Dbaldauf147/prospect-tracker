@@ -86,6 +86,21 @@ export function unmapListRow(settings, updateSettingsPath, storageKey, matchKey,
   }
 }
 
+/**
+ * unmapListRow for several rows at once. One write per field, because each
+ * write starts from `settings` as passed and calling unmapListRow in a loop
+ * would have every later write restore the rows the earlier ones removed.
+ */
+export function unmapListRows(settings, updateSettingsPath, storageKey, matchKeys, company) {
+  const fields = company ? MAPPING_FIELDS : ['mapping'];
+  for (const f of fields) {
+    const current = readListField(settings, storageKey, f);
+    const keys = matchKeys.filter(k => !company || fieldMapsToCompany(f, current[k], company));
+    if (keys.length === 0) continue;
+    writeListField(settings, updateSettingsPath, storageKey, f, (m) => { for (const k of keys) delete m[k]; return m; });
+  }
+}
+
 /** Whether `mappedTo` (a mapping's value) names `company`. */
 export function mapsToCompany(mappedTo, company) {
   const a = normalizeCompany(mappedTo);

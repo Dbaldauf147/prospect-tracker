@@ -13,16 +13,18 @@
 //           match on this company only (settings.ignoredListMatches), so
 //           the same row still flags on the company it really is.
 //
-// A mapped row is always shown, green, with an x to unmap it; Ignore never
-// hides it.
+// Once every shown row is mapped there is nothing left to decide, so the
+// strip steps aside and the same component, as variant="badge", draws a
+// small green tick pill in the modal's header row instead (x to unmap).
+// Ignore never hides a mapped row.
 import { useEffect, useMemo, useState } from 'react';
 import { loadList as loadUploadedList } from '../../utils/uploadedListStore';
-import { mapListRow, unmapListRow } from '../../utils/listAccountMapping';
+import { mapListRow, unmapListRow, unmapListRows } from '../../utils/listAccountMapping';
 import { buildItems, namesFromRows } from '../../utils/listMatches';
 
 const MAX_SHOWN = 5;
 
-export function ListMatchWarning({ label, storageKey, company, settings, updateSettings, updateSettingsPath }) {
+export function ListMatchWarning({ variant = 'strip', label, storageKey, company, settings, updateSettings, updateSettingsPath }) {
   // The list's rows live in IndexedDB (with a Firestore fallback), so they
   // load once per modal open, like the Strategic Accounts strip.
   const [names, setNames] = useState([]);
@@ -50,6 +52,35 @@ export function ListMatchWarning({ label, storageKey, company, settings, updateS
   const allMapped = matches.every(m => m.state === 'mapped');
   const anyExact = matches.some(m => m.score === 1);
   const unmapped = matches.filter(m => m.state !== 'mapped');
+
+  if (variant === 'badge') {
+    if (!allMapped) return null;
+    return (
+      <span
+        data-list-mapped-badge={storageKey}
+        title={`Mapped to the Lists → ${label} tab: ${matches.map(m => m.rawName).join(', ')}`}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
+          padding: '0.05rem 0.15rem 0.05rem 0.4rem',
+          background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: 999,
+          fontSize: '0.64rem', fontWeight: 700, color: '#166534', whiteSpace: 'nowrap',
+        }}
+      >
+        <span aria-hidden="true">✓</span>{label}
+        <button
+          type="button"
+          onClick={() => unmapListRows(settings, updateSettingsPath, storageKey, matches.map(m => m.matchKey), name)}
+          title={`Unmap ${matches.map(m => m.rawName).join(', ')} on the ${label} list from ${name}`}
+          aria-label={`Unmap from the ${label} list`}
+          style={{
+            border: 'none', background: 'transparent', color: '#166534', cursor: 'pointer',
+            fontSize: '0.75rem', lineHeight: 1, padding: '0 0.15rem', fontFamily: 'inherit',
+          }}
+        >×</button>
+      </span>
+    );
+  }
+  if (allMapped) return null;
 
   function ignore() {
     if (!ignoreKey || unmapped.length === 0) return;
