@@ -46,7 +46,7 @@ import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { prwEmailEml } from '../../utils/prwRequestEmail';
 import { downloadDrafts, resolveSignature, safeFileName } from '../../utils/draftEmail';
 import { useAuth } from '../../contexts/AuthContext';
-import { ContactCampaignAdd } from './ContactCampaignAdd';
+import { ContactCampaignAdd, ContactsCampaignBulkAdd } from './ContactCampaignAdd';
 import { withDefaultCdm } from '../../utils/defaultCdm';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { nameFromEmail } from '../../utils/nameFromEmail';
@@ -5551,6 +5551,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [showSaved, setShowSaved] = useState(false);
   const [deletingContact, setDeletingContact] = useState(null);
   const [bulkSelected, setBulkSelected] = useState(() => new Set()); // Set<cid string>
+  // The "Add to Campaign" panel above the roster: puts the ticked contacts
+  // on a saved email campaign.
+  const [campaignAddOpen, setCampaignAddOpen] = useState(false);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [bulkApplying, setBulkApplying] = useState(false);
   const [bulkField, setBulkField] = useState('jobtitle');
@@ -13746,6 +13749,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   style={{ marginLeft: '0.4rem', padding: '0.2rem 0.6rem', border: '1px solid var(--color-accent)', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: '#fff', color: 'var(--color-accent)' }}
                 >Paste Contacts</button>
                 <button
+                  onClick={() => { setContactView('table'); setCampaignAddOpen(o => !o); }}
+                  title="Tick several contacts in the table and add them all to a saved email campaign"
+                  style={{ marginLeft: '0.4rem', padding: '0.2rem 0.6rem', border: '1px solid #4F46E5', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: campaignAddOpen ? '#EEF2FF' : '#fff', color: '#4F46E5' }}
+                >Add to Campaign</button>
+                <button
                   onClick={() => { setAddingContact(true); setEditingContact({ company: fields.company, firstname: '', lastname: '', email: '', phone: '', mobilephone: '', jobtitle: '', hs_linkedin_url: '', dans_tags: '' }); }}
                   style={{ marginLeft: '0.4rem', padding: '0.2rem 0.6rem', border: 'none', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: 'var(--color-accent)', color: '#fff' }}
                 >+ Add Contact</button>
@@ -13777,10 +13785,26 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 <OrgChart contacts={companyContacts} onDeleteContact={handleDeleteContact} deletingContact={deletingContact} onEditContact={setEditingContact} reportsTo={settings.contactReportsTo || {}} />
               ) : (companyContacts.length > 0 || ownerContacts.length > 0) ? (
                 <>
+                {campaignAddOpen && (
+                  <ContactsCampaignBulkAdd
+                    contacts={selectableContacts.filter(c => bulkSelected.has(String(c.id || c.vid)))}
+                    company={fields.company}
+                    onClose={() => setCampaignAddOpen(false)}
+                    onAdded={() => setBulkSelected(new Set())}
+                  />
+                )}
                 {bulkSelected.size > 0 && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0.6rem', marginBottom: '0.4rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '6px', fontSize: '0.75rem', color: '#1E3A8A' }}>
                     <strong style={{ fontWeight: 700 }}>{bulkSelected.size} selected</strong>
                     <div style={{ flex: 1 }} />
+                    {!campaignAddOpen && (
+                      <button
+                        type="button"
+                        onClick={() => setCampaignAddOpen(true)}
+                        disabled={bulkApplying}
+                        style={{ padding: '0.25rem 0.7rem', border: '1px solid #4F46E5', background: '#fff', color: '#4F46E5', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 600, cursor: bulkApplying ? 'wait' : 'pointer', fontFamily: 'inherit' }}
+                      >Add to Campaign</button>
+                    )}
                     <button
                       type="button"
                       onClick={() => { setBulkField('jobtitle'); setBulkValue(''); setBulkMode('replace'); setBulkAnswer(''); setBulkEditOpen(true); }}

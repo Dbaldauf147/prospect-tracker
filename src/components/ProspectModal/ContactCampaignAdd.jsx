@@ -14,7 +14,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { primarySubject } from '../../utils/campaignSubjects';
-import { addContactToCampaign, campaignHasContact } from '../../utils/campaignAddContact';
+import { addContactToCampaign, addContactsToCampaign, campaignHasContact } from '../../utils/campaignAddContact';
 import { campaignsByRecency, campaignPickerDetail } from '../../utils/campaignPicker';
 import { CampaignPicker } from '../common/CampaignPicker';
 
@@ -139,6 +139,148 @@ export function ContactCampaignAdd({ email, name, company }) {
       >{busy ? 'Adding...' : 'Add'}</button>
       {note && (
         <span role="status" style={{ flexBasis: '100%', fontSize: '0.68rem', color: note.ok ? '#166534' : '#B91C1C' }}>{note.text}</span>
+      )}
+    </div>
+  );
+}
+
+const contactNameOf = (c) => `${c?.firstname || ''} ${c?.lastname || ''}`.trim();
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+// The company popup's bulk version: the contacts ticked in the roster, put
+// on one saved campaign in a single write. Same storage and the same rows
+// as the one-contact control above, read fresh just before the write for
+// the same reason.
+export function ContactsCampaignBulkAdd({ contacts, company, onClose, onAdded }) {
+  const auth = useAuth();
+  const uid = auth?.user?.uid || null;
+  const [campaigns, setCampaigns] = useState(null); // null = loading
+  const [pick, setPick] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState(null); // { ok, text }
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      if (!uid) { setCampaigns([]); return; }
+      try {
+        const snap = await getDoc(doc(db, 'emailCampaigns', uid));
+        if (live) setCampaigns(snap.exists() ? (snap.data().campaigns || []) : []);
+      } catch { if (live) setCampaigns([]); }
+    })();
+    return () => { live = false; };
+  }, [uid]);
+
+  const people = useMemo(() => (contacts || []).map(c => ({
+    email: String(c?.email || '').trim(),
+    name: contactNameOf(c),
+    company: String(c?.company || company || '').trim(),
+  })), [contacts, company]);
+
+  const entries = useMemo(() => campaignsByRecency(campaigns)
+    .map(({ campaign: c, index }) => ({ index, label: campaignLabel(c), c })), [campaigns]);
+  const pickerOptions = useMemo(() => entries.map(e => {
+    // How many of the selection the campaign already has, so a campaign
+    // that would add nobody reads that way before it's picked.
+    const on = people.filter(p => p.email && campaignHasContact(e.c, p.email)).length;
+    const base = campaignPickerDetail(e.c);
+    return {
+      key: String(e.index),
+      label: e.label,
+      text: [e.c?.subject, ...(Array.isArray(e.c?.subjects) ? e.c.subjects : [])].filter(Boolean).join(' '),
+      detail: on > 0 ? [base, `${on} of ${people.length} already on`].filter(Boolean).join(' · ') : base,
+    };
+  }), [entries, people]);
+
+  const add = async () => {
+    const target = entries.find(e => String(e.index) === pick);
+    if (!target || !uid || people.length === 0) return;
+    setBusy(true);
+    setNote(null);
+    try {
+      const ref = doc(db, 'emailCampaigns', uid);
+      const snap = await getDoc(ref);
+      const fresh = snap.exists() ? (snap.data().campaigns || []) : [];
+      const key = primarySubject(target.c).toLowerCase();
+      const idx = fresh.findIndex(c => primarySubject(c).toLowerCase() === key);
+      if (idx === -1) {
+        setNote({ ok: false, text: `"${target.label}" no longer exists. Pick another.` });
+        setCampaigns(fresh);
+        setPick('');
+        return;
+      }
+      const { campaign, added, already, skipped } = addContactsToCampaign(fresh[idx], people);
+      if (added.length > 0) {
+        const next = fresh.map((c, i) => (i === idx ? campaign : c));
+        await setDoc(ref, { campaigns: next, updatedAt: new Date().toISOString() });
+        setCampaigns(next);
+        try { window.dispatchEvent(new CustomEvent(EMAIL_CAMPAIGNS_UPDATED_EVENT)); } catch { /* no window */ }
+      } else {
+        setCampaigns(fresh);
+      }
+      const parts = [];
+      if (added.length) parts.push(`Added ${plural(added.length, 'contact')} to "${target.label}". They show as Not Sent until a send under that campaign's subject reaches them.`);
+      if (already.length) parts.push(`${plural(already.length, 'contact')} already on it.`);
+      if (skipped.length) {
+        const names = skipped.map(p => p.name || p.email).filter(Boolean).slice(0, 4).join(', ');
+        parts.push(`${plural(skipped.length, 'contact')} left out (no email address, or an @se.com colleague)${names ? `: ${names}` : ''}.`);
+      }
+      setNote({ ok: added.length > 0 || skipped.length === 0, text: parts.join(' ') });
+      setPick('');
+      if (added.length > 0) onAdded?.();
+    } catch (err) {
+      setNote({ ok: false, text: `Couldn't add to the campaign: ${err?.message || 'unknown error'}` });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disabledWhy = !uid ? 'Sign in to use campaigns'
+    : campaigns === null ? 'Loading campaigns'
+    : campaigns.length === 0 ? 'No saved campaigns yet. Create one on Draft Emails > Email Campaigns'
+    : '';
+  const n = people.length;
+  const canAdd = !!pick && !busy && !disabledWhy && n > 0;
+
+  return (
+    <div
+      data-bulk-campaign-add
+      style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', padding: '0.45rem 0.6rem', marginBottom: '0.4rem', border: '1px solid #C7D2FE', borderRadius: '6px', background: '#EEF2FF', fontSize: '0.75rem', color: '#312E81' }}
+    >
+      <strong style={{ fontWeight: 700 }}>Add to email campaign</strong>
+      {n === 0 ? (
+        <span style={{ color: '#4338CA' }}>Tick the contacts to add in the table below. The box in the header row selects every one on screen.</span>
+      ) : (
+        <span>{plural(n, 'selected contact')} to</span>
+      )}
+      <CampaignPicker
+        options={pickerOptions}
+        value={pick}
+        onChange={(key) => { setPick(key); setNote(null); }}
+        disabled={!!disabledWhy || busy}
+        title={disabledWhy || 'Type to search, or pick from the most recent campaigns'}
+        ariaLabel="Campaign to add the selected contacts to"
+        placeholder={campaigns === null ? 'Loading...' : 'Pick a campaign...'}
+        style={{ width: 260, maxWidth: '100%' }}
+      />
+      <button
+        type="button"
+        onClick={add}
+        disabled={!canAdd}
+        title={n === 0 ? 'Select contacts first' : disabledWhy || (!pick ? 'Pick a campaign first' : '')}
+        style={{
+          padding: '0.25rem 0.7rem', borderRadius: '4px', border: 'none', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700,
+          background: canAdd ? '#4F46E5' : '#CBD5E1', color: '#fff', cursor: canAdd ? 'pointer' : 'default',
+        }}
+      >{busy ? 'Adding...' : n > 0 ? `Add ${n}` : 'Add'}</button>
+      <div style={{ flex: 1 }} />
+      <button
+        type="button"
+        onClick={onClose}
+        style={{ padding: '0.25rem 0.6rem', border: '1px solid transparent', background: 'transparent', color: '#475569', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+      >Close</button>
+      {note && (
+        <span role="status" style={{ flexBasis: '100%', fontSize: '0.7rem', color: note.ok ? '#166534' : '#B91C1C' }}>{note.text}</span>
       )}
     </div>
   );
