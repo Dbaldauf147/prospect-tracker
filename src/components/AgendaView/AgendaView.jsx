@@ -10,7 +10,9 @@ import { getQueuedContactIds, setQueuedContactIds } from '../../utils/draftCampa
 import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
 import { buildEmailFromPattern, estimateEmailDomain } from '../../utils/emailDomainPattern';
 import { FREE_MAIL_DOMAINS } from '../../utils/companyGuess';
-import { companyTextEquals, pendingSuggestionActions, summarizeSuggestionActions } from '../../utils/bulkSuggestionActions';
+import {
+  companyTextEquals, companyRuleKey, groupCompanyMappings, pendingSuggestionActions, summarizeSuggestionActions,
+} from '../../utils/bulkSuggestionActions';
 import { ColumnToggle } from '../common/ColumnToggle';
 import { orderColumns, mergeColumnOrder } from '../../utils/tableColumnPrefs';
 import { classifyHqCountry, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
@@ -402,7 +404,15 @@ function bulkVisibleFromSaved(saved) {
   return next;
 }
 
-const companyRuleKey = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+// Why a Suggested Company was offered, by lookupMatch's suggestSource.
+const SUGGEST_SOURCE_LABELS = {
+  'domain-exact':    'matched by email domain (exact)',
+  'hubspot-company': "matched by HubSpot contact's Company",
+  'typed-company':   'matched against the Company you typed',
+  'domain-token':    'matched by email domain brand token',
+  'domain-compact':  'matched by email domain compact prefix',
+};
+
 function loadCompanyRules() {
   try { return JSON.parse(userLsGet(COMPANY_RULES_KEY)) || {}; } catch { return {}; }
 }
@@ -748,7 +758,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
   }, [bulkColWidths, setBulkColWidths]);
-  const saveCompanyRule = useCallback((raw, canonical) => {
+  // `sweep: false` saves the rule without rewriting the other rows: the
+  // bulk Apply sets each row to its own suggestion, and a sweep there would
+  // drag rows it never meant to touch along with it.
+  const saveCompanyRule = useCallback((raw, canonical, { sweep = true } = {}) => {
     const k = companyRuleKey(raw);
     const v = String(canonical || '').trim();
     if (!k || !v || k === v.toLowerCase()) return;
@@ -758,6 +771,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       persistCompanyRules(next);
       return next;
     });
+    if (!sweep) return;
     // Retroactively update every other row currently in the grid
     // whose raw company matches — so mapping "Lennar" → "Lennar
     // Corporation" on one row fixes all the other Lennar rows too.
@@ -2355,43 +2369,93 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     ? Math.floor((applyAllProgress.done / applyAllProgress.total) * 100)
     : 0;
 
-  async function applyAllSuggestions() {
+  // The green button opens a preview of what it is about to do rather than
+  // a one-line confirm: which raw Company goes to which Table View company,
+  // on which rows, why it was matched, and whether that becomes a saved
+  // rule. Each line can be unticked before anything is written.
+  // `excluded` holds the keys of the unticked lines.
+  const [applyPreview, setApplyPreview] = useState(null);
+
+  const companyMappingGroups = useMemo(() => {
+    if (!applyPreview) return [];
+    const byEmail = new Map(rows.map(r => [r.email, r]));
+    return groupCompanyMappings(pendingSuggestions).map(g => ({
+      ...g,
+      targets: g.targets.map(t => {
+        const sources = new Set();
+        for (const email of t.emails) {
+          const src = lookupMatch(email, byEmail.get(email) || null).suggestSource;
+          sources.add(SUGGEST_SOURCE_LABELS[src] || 'matched');
+        }
+        return { ...t, lineKey: `c::${g.key}::${t.to}`, sources: Array.from(sources) };
+      }),
+    }));
+  }, [applyPreview, rows, pendingSuggestions, lookupMatch]);
+
+  const prospectWriteGroups = useMemo(() => {
+    if (!applyPreview) return [];
+    const byId = new Map();
+    for (const a of pendingSuggestions) {
+      if (a.kind !== 'prospect') continue;
+      if (!byId.has(a.prospectId)) byId.set(a.prospectId, { prospect: a.prospect, fields: [] });
+      byId.get(a.prospectId).fields.push({ ...a, lineKey: `p::${a.prospectId}::${a.field}` });
+    }
+    return Array.from(byId.values());
+  }, [applyPreview, pendingSuggestions]);
+
+  const actionLineKey = (a) => (a.kind === 'company'
+    ? `c::${companyRuleKey(a.from)}::${a.to}`
+    : `p::${a.prospectId}::${a.field}`);
+
+  function toggleApplyPreviewLine(lineKey) {
+    setApplyPreview(prev => {
+      if (!prev) return prev;
+      const excluded = new Set(prev.excluded);
+      if (excluded.has(lineKey)) excluded.delete(lineKey); else excluded.add(lineKey);
+      return { ...prev, excluded };
+    });
+  }
+
+  function applyAllSuggestions() {
     if (applyAllBusy || pendingSuggestions.length === 0) return;
-    const { total, companies, prospectFields, prospects: prospectCount } = suggestionSummary;
-    const lines = [
-      `Apply ${total} suggestion${total === 1 ? '' : 's'} on ${suggestionScopeRows.length} row${suggestionScopeRows.length === 1 ? '' : 's'}?`,
-      '',
-    ];
-    if (companies > 0) {
-      lines.push(`- ${companies} row${companies === 1 ? '' : 's'} take their Suggested Company, and the mapping is saved as a rule.`);
-    }
-    if (prospectFields > 0) {
-      lines.push(`- ${prospectFields} Table View field${prospectFields === 1 ? '' : 's'} written to ${prospectCount} prospect record${prospectCount === 1 ? '' : 's'}.`);
-    }
-    lines.push('', 'HubSpot is not touched: send the rows when you are ready.');
-    if (!confirm(lines.join('\n'))) return;
+    setApplyPreview({ excluded: new Set() });
+  }
+
+  async function runApplySuggestions() {
+    if (!applyPreview || applyAllBusy) return;
+    const actions = pendingSuggestions.filter(a => !applyPreview.excluded.has(actionLineKey(a)));
+    setApplyPreview(null);
+    if (actions.length === 0) return;
 
     setApplyAllBusy(true);
-    const actions = [...pendingSuggestions];
     setApplyAllProgress({ done: 0, total: actions.length });
     let done = 0;
     let failed = 0;
-    for (let i = 0; i < actions.length; i += 1) {
-      const action = actions[i];
-      if (action.kind === 'company') {
-        // The same pair the cell's ✓ runs: save the mapping (which fixes
-        // every other row with that raw company) and set this row.
-        saveCompanyRule(action.from, action.to);
-        updateRow(action.email, { company: action.to });
-        done += 1;
-      } else {
-        const ok = await applySingleSuggestion(action.prospect, action.field, action.value);
-        if (ok) done += 1; else failed += 1;
+
+    // Company half, in one pass. Every row takes its own suggestion, and a
+    // rule is saved only for a raw Company that maps to one company across
+    // the run, without the sweep: one row's rule rewriting every other row
+    // with the same raw name is what used to undo the rows before it.
+    const companyActions = actions.filter(a => a.kind === 'company');
+    if (companyActions.length > 0) {
+      for (const g of groupCompanyMappings(companyActions)) {
+        if (g.ruleSafe) saveCompanyRule(g.from, g.targets[0].to, { sweep: false });
       }
-      setApplyAllProgress({ done: i + 1, total: actions.length });
-      // Company actions are synchronous, so a run of them would never let
-      // the button repaint; yield now and then so the % moves.
-      if (action.kind === 'company' && i % 10 === 9) await new Promise(r => setTimeout(r, 0));
+      const toByEmail = new Map(companyActions.map(a => [a.email, a.to]));
+      setRows(prev => {
+        const next = prev.map(r => (toByEmail.has(r.email) ? { ...r, company: toByEmail.get(r.email) } : r));
+        saveCache(next);
+        return next;
+      });
+      done += companyActions.length;
+      setApplyAllProgress({ done, total: actions.length });
+    }
+
+    const prospectActions = actions.filter(a => a.kind === 'prospect');
+    for (const action of prospectActions) {
+      const ok = await applySingleSuggestion(action.prospect, action.field, action.value);
+      if (ok) done += 1; else failed += 1;
+      setApplyAllProgress({ done: done + failed, total: actions.length });
     }
     setApplyAllBusy(false);
     setApplyAllProgress(null);
@@ -3666,13 +3730,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                               </span>
                             );
                           }
-                          const sourceLabel = ({
-                            'domain-exact':    'matched by email domain (exact)',
-                            'hubspot-company': "matched by HubSpot contact's Company",
-                            'typed-company':   'matched against the Company you typed',
-                            'domain-token':    'matched by email domain brand token',
-                            'domain-compact':  'matched by email domain compact prefix',
-                          })[live.suggestSource] || 'matched';
+                          const sourceLabel = SUGGEST_SOURCE_LABELS[live.suggestSource] || 'matched';
                           return (
                             <span
                               title={`${sc} · ${sourceLabel}`}
@@ -3771,6 +3829,131 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           </>
         )}
       </div>
+
+      {applyPreview && (() => {
+        const FIELD_LABELS = { website: 'Website', zoomCompanyId: 'Zoom ID', zoomCompanyName: 'Zoom Name', emailDomain: 'Email Domain' };
+        const ORIGIN_LABELS = { upload: 'from your upload', inferred: 'inferred from contact emails' };
+        const rowName = new Map(rows.map(r => [r.email, [r.firstname, r.lastname].filter(Boolean).join(' ') || r.email]));
+        const included = pendingSuggestions.filter(a => !applyPreview.excluded.has(actionLineKey(a))).length;
+        const th = { textAlign: 'left', padding: '0.35rem 0.5rem', fontSize: '0.68rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)', background: '#F8FAFC', position: 'sticky', top: 0 };
+        const td = { padding: '0.4rem 0.5rem', fontSize: '0.76rem', borderBottom: '1px solid #F1F5F9', verticalAlign: 'top' };
+        const sectionTitle = { fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-text)', margin: '0.25rem 0 0.4rem' };
+        return (
+          <div
+            style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: '1.25rem' }}
+            onClick={() => setApplyPreview(null)}
+          >
+            <div
+              style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', width: 'min(960px, 100%)', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}
+              onClick={e => e.stopPropagation()}
+            >
+              <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-border)' }}>
+                <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>
+                  Apply suggestions on {suggestionScopeRows.length} {suggestionScopeSelected ? 'selected ' : ''}row{suggestionScopeRows.length === 1 ? '' : 's'}
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '0.25rem' }}>
+                  Review the mapping below and untick anything that is wrong. Each row only takes its own suggestion; no other row is changed. HubSpot is not touched: send the rows when you are ready.
+                </div>
+              </div>
+              <div style={{ padding: '0.85rem 1.25rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {companyMappingGroups.length > 0 && (
+                  <div>
+                    <div style={sectionTitle}>Company mapping ({suggestionSummary.companies} row{suggestionSummary.companies === 1 ? '' : 's'})</div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr>
+                          <th style={{ ...th, width: 28 }} />
+                          <th style={th}>Company on row</th>
+                          <th style={th}>Becomes</th>
+                          <th style={th}>Rows</th>
+                          <th style={th}>Why</th>
+                          <th style={th}>Saved rule</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {companyMappingGroups.flatMap(g => g.targets.map((t, i) => {
+                          const on = !applyPreview.excluded.has(t.lineKey);
+                          const names = t.emails.map(e => rowName.get(e) || e);
+                          return (
+                            <tr key={t.lineKey} style={{ opacity: on ? 1 : 0.45 }}>
+                              <td style={td}>
+                                <input type="checkbox" checked={on} onChange={() => toggleApplyPreviewLine(t.lineKey)} />
+                              </td>
+                              <td style={{ ...td, fontWeight: 600 }}>{i === 0 ? (g.from || <span style={{ color: '#94A3B8', fontStyle: 'italic' }}>(blank)</span>) : ''}</td>
+                              <td style={{ ...td, fontWeight: 600, color: '#166534' }}>{t.to}</td>
+                              <td style={td} title={names.join(', ')}>
+                                {t.emails.length}: {names.slice(0, 3).join(', ')}{names.length > 3 ? `, +${names.length - 3} more` : ''}
+                              </td>
+                              <td style={{ ...td, color: '#64748B' }}>{t.sources.join('; ')}</td>
+                              <td style={{ ...td, color: g.ruleSafe ? '#166534' : '#92400E' }}>
+                                {g.ruleSafe
+                                  ? `"${g.from}" → "${t.to}"`
+                                  : !g.key
+                                    ? 'No (blank company)'
+                                    : g.targets.length > 1
+                                      ? `No: "${g.from}" maps to ${g.targets.length} companies here`
+                                      : 'No (same name)'}
+                              </td>
+                            </tr>
+                          );
+                        }))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {prospectWriteGroups.length > 0 && (
+                  <div>
+                    <div style={sectionTitle}>Table View fields ({suggestionSummary.prospectFields} field{suggestionSummary.prospectFields === 1 ? '' : 's'} on {suggestionSummary.prospects} prospect{suggestionSummary.prospects === 1 ? '' : 's'}, saved straight to the prospect record)</div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr>
+                          <th style={{ ...th, width: 28 }} />
+                          <th style={th}>Prospect</th>
+                          <th style={th}>Field</th>
+                          <th style={th}>Value</th>
+                          <th style={th}>Why</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {prospectWriteGroups.flatMap(g => g.fields.map((a, i) => {
+                          const on = !applyPreview.excluded.has(a.lineKey);
+                          return (
+                            <tr key={a.lineKey} style={{ opacity: on ? 1 : 0.45 }}>
+                              <td style={td}>
+                                <input type="checkbox" checked={on} onChange={() => toggleApplyPreviewLine(a.lineKey)} />
+                              </td>
+                              <td style={{ ...td, fontWeight: 600 }}>{i === 0 ? g.prospect.company : ''}</td>
+                              <td style={td}>{FIELD_LABELS[a.field] || a.field}</td>
+                              <td style={{ ...td, color: '#166534', wordBreak: 'break-all' }}>{a.value}</td>
+                              <td style={{ ...td, color: '#64748B' }}>
+                                {a.source === 'useCompany' ? "the prospect's own company name" : (ORIGIN_LABELS[a.origin] || 'suggested')}
+                                {a.field === 'emailDomain' ? ' (added to the list)' : ''}
+                              </td>
+                            </tr>
+                          );
+                        }))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+              <div style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid var(--color-border)', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setApplyPreview(null)}
+                  style={{ padding: '0.4rem 0.9rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#fff', color: 'var(--color-text-secondary)', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                >Cancel</button>
+                <button
+                  type="button"
+                  onClick={runApplySuggestions}
+                  disabled={included === 0}
+                  style={{ padding: '0.4rem 0.9rem', border: '1px solid #16A34A', borderRadius: 6, background: included === 0 ? '#86EFAC' : '#16A34A', color: '#fff', fontSize: '0.8rem', fontWeight: 700, cursor: included === 0 ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}
+                >✓ Apply {included} suggestion{included === 1 ? '' : 's'}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {bulkEditOpen && (
         <div

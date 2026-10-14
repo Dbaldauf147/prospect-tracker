@@ -22,6 +22,10 @@ export const TV_SUGGESTION_FIELDS = ['website', 'zoomCompanyId', 'zoomCompanyNam
 
 const trimmed = (v) => String(v ?? '').trim();
 
+// How a raw Company is keyed in the saved mapping rules: case and runs of
+// whitespace don't make a different company.
+export const companyRuleKey = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
 /**
  * Whether a row's Company is already the company being suggested.
  *
@@ -99,6 +103,7 @@ export function pendingSuggestionActions(rows, read = {}) {
         seen.add(key);
         actions.push({
           kind: 'prospect', prospect, prospectId: prospect.id, field, value, source: 'suggestion',
+          origin: sugg?.origin || '',
         });
         continue;
       }
@@ -128,4 +133,48 @@ export function summarizeSuggestionActions(actions = []) {
     prospectFields: prospectWrites.length,
     prospects: new Set(prospectWrites.map(a => a.prospectId)).size,
   };
+}
+
+/**
+ * The company actions grouped the way they become mapping rules: one
+ * entry per raw Company, with every target it is being sent to.
+ *
+ * A rule is keyed by the raw Company alone, but a suggestion is worked out
+ * per row (mostly off the email domain), so two rows that both say
+ * "Principal" can be pointed at two different Table View companies. Saving
+ * a rule for each, one after the other, is the bug this exists to stop:
+ * the first rule rewrote every "Principal" row in the grid to its target,
+ * the second overwrote the first, and rows nobody had touched (dismissed,
+ * filtered out, or bound for the other company) ended up wherever the last
+ * write left them. So a rule is saved only when the raw Company has one
+ * target (`ruleSafe`); otherwise each row still takes its own suggestion
+ * and no rule is written.
+ *
+ *   [{ key, from, ruleSafe, targets: [{ to, emails: [...] }] }]
+ *
+ * In first-seen order, so the list reads in the same order as the table.
+ */
+export function groupCompanyMappings(actions = []) {
+  const byKey = new Map();
+  for (const a of actions) {
+    if (a.kind !== 'company') continue;
+    const key = companyRuleKey(a.from);
+    let g = byKey.get(key);
+    if (!g) {
+      g = { key, from: trimmed(a.from), targets: [] };
+      byKey.set(key, g);
+    }
+    let t = g.targets.find(x => x.to === a.to);
+    if (!t) {
+      t = { to: a.to, emails: [] };
+      g.targets.push(t);
+    }
+    t.emails.push(a.email);
+  }
+  return Array.from(byKey.values()).map(g => ({
+    ...g,
+    // A blank Company has nothing to key a rule on, and a raw name already
+    // equal to its target (bar case) is not a mapping either.
+    ruleSafe: !!g.key && g.targets.length === 1 && g.key !== g.targets[0].to.toLowerCase(),
+  }));
 }
