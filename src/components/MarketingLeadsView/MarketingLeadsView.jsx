@@ -4,6 +4,7 @@ import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { SF_INSTANCE_URL, resolveSfUrl } from '../../utils/salesforceLeads';
 import { metInPersonUpdate } from '../../utils/metInPerson';
 import { getHubspotContacts, updateHubspotCache, notifyCacheUpdated } from '../../utils/hubspotContactsCache';
+import { MARKETING_LEAD_SOURCE } from '../../utils/contactLeadSource';
 import { apiFetch } from '../../utils/apiFetch';
 import { STATUS_COLORS } from '../../data/enums';
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
@@ -1057,13 +1058,17 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
       notifyCacheUpdated();
       setHubspotMapping(row.id, res.contact);
       const contactId = String(res.contact.id || res.contact.vid || '');
-      const noted = await postHubspotContactNote(contactId, MARKETING_LEAD_NOTE);
-      if (noted && contactId) {
+      // The HubSpot timeline note is best effort; the app's own Notes and
+      // Lead Source are written either way so the origin is always tracked.
+      await postHubspotContactNote(contactId, MARKETING_LEAD_NOTE);
+      if (contactId) {
         const cur = settings?.contactNotes || {};
         const prior = String(cur[contactId] || '').trim();
+        const patch = { contactLeadSource: { ...(settings?.contactLeadSource || {}), [contactId]: MARKETING_LEAD_SOURCE } };
         if (!prior.includes(MARKETING_LEAD_NOTE)) {
-          updateSettings({ contactNotes: { ...cur, [contactId]: prior ? `${prior}\n${MARKETING_LEAD_NOTE}` : MARKETING_LEAD_NOTE } });
+          patch.contactNotes = { ...cur, [contactId]: prior ? `${prior}\n${MARKETING_LEAD_NOTE}` : MARKETING_LEAD_NOTE };
         }
+        updateSettings(patch);
       }
     } else {
       window.alert(`Could not create the HubSpot contact${res.error ? `: ${res.error}` : '.'}`);
@@ -1110,16 +1115,17 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
       try { await updateHubspotCache(draft => { for (const c of created) draft.contacts.push(c); }); } catch { /* ignore */ }
       notifyCacheUpdated();
     }
-    // Stamp a "Marketing Lead" note on each new contact (best effort),
-    // collecting the ones that land so we can mirror them into the local
-    // Notes store alongside the mapping write below.
+    // Stamp a "Marketing Lead" note on each new contact (best effort on the
+    // HubSpot side) and mirror it, plus the Lead Source, into the local
+    // stores alongside the mapping write below.
     const curNotes = settings?.contactNotes || {};
     const notesPatch = {};
+    const leadSourcePatch = {};
     for (const c of created) {
       const cid = String(c.id || c.vid || '');
       if (!cid) continue;
-      const noted = await postHubspotContactNote(cid, MARKETING_LEAD_NOTE); // eslint-disable-line no-await-in-loop
-      if (!noted) continue;
+      await postHubspotContactNote(cid, MARKETING_LEAD_NOTE); // eslint-disable-line no-await-in-loop
+      leadSourcePatch[cid] = MARKETING_LEAD_SOURCE;
       const prior = String((notesPatch[cid] ?? curNotes[cid]) || '').trim();
       notesPatch[cid] = prior && !prior.includes(MARKETING_LEAD_NOTE) ? `${prior}\n${MARKETING_LEAD_NOTE}` : (prior || MARKETING_LEAD_NOTE);
     }
@@ -1133,6 +1139,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
       });
     }
     if (Object.keys(notesPatch).length) patch.contactNotes = { ...curNotes, ...notesPatch };
+    if (Object.keys(leadSourcePatch).length) patch.contactLeadSource = { ...(settings?.contactLeadSource || {}), ...leadSourcePatch };
     if (Object.keys(patch).length) updateSettings(patch);
     setBulkAddingHubspot(false);
     window.alert(`Added ${created.length} contact${created.length === 1 ? '' : 's'} to HubSpot${failed ? `: ${failed} failed` : ''}.`);
@@ -2765,6 +2772,13 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
             const next = { ...(settings?.contactSentiment || {}) };
             if (v) next[cid] = v; else delete next[cid];
             updateSettings({ contactSentiment: next });
+          }}
+          contactLeadSource={settings?.contactLeadSource || {}}
+          onSaveLeadSource={(cid, v) => {
+            if (cid == null) return;
+            const next = { ...(settings?.contactLeadSource || {}) };
+            if (v) next[cid] = v; else delete next[cid];
+            updateSettings({ contactLeadSource: next });
           }}
           contactTagReview={settings?.contactTagReview || {}}
           onSaveTagReview={(cid, map) => saveTagReview({ cid, map, settings, updateSettings, updateSettingsPath })}

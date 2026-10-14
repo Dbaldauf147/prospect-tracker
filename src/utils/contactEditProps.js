@@ -26,6 +26,7 @@ export const SAVED_STORE_PROPS = [
   'contactNotes', 'contactOldEmails', 'contactOldCompany', 'contactNicknames',
   'contactTeamNames', 'contactReportsTo', 'ccMap', 'toAlsoMap', 'contactFamilies',
   'contactMetInPerson', 'contactInvitedToLouisville', 'contactSentiment', 'contactTagReview',
+  'contactLeadSource',
   // Not keyed by contact, but written back whole all the same: saving a
   // preset copies the list it was handed.
   'tagPresets',

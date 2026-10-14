@@ -18561,6 +18561,13 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             if (v) next[cid] = v; else delete next[cid];
             updateSettings({ contactSentiment: next });
           }}
+          contactLeadSource={settings?.contactLeadSource || {}}
+          onSaveLeadSource={(cid, v) => {
+            if (cid == null) return;
+            const next = { ...(settings?.contactLeadSource || {}) };
+            if (v) next[cid] = v; else delete next[cid];
+            updateSettings({ contactLeadSource: next });
+          }}
           contactTagReview={settings?.contactTagReview || {}}
           onSaveTagReview={(cid, map) => saveTagReview({ cid, map, settings, updateSettings, updateSettingsPath })}
           tagPresets={settings?.tagPresets || []}
