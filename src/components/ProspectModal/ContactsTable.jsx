@@ -52,7 +52,13 @@ function sourceChip(source) {
     ? { bg: '#EDE9FE', color: '#5B21B6', label: 'Manual' }
     : source === 'bulk'
       ? { bg: '#DBEAFE', color: '#1D4ED8', label: 'Bulk' }
-      : { bg: '#FFEDD5', color: '#9A3412', label: 'HubSpot' };
+      // A HubSpot contact the Bulk Add batch updates, before and after the
+      // push (the Bulk Add company popup).
+      : source === 'batch-update'
+        ? { bg: '#DCFCE7', color: '#166534', label: 'Updating' }
+        : source === 'batch-updated'
+          ? { bg: '#DCFCE7', color: '#166534', label: 'Updated' }
+          : { bg: '#FFEDD5', color: '#9A3412', label: 'HubSpot' };
   return (
     <span style={{
       display: 'inline-block', padding: '1px 7px', borderRadius: '999px',

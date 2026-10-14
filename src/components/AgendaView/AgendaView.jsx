@@ -4500,19 +4500,44 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
         const members = rows.filter(r =>
           (prospectId && r._matchedProspectId === prospectId) || spellings.some(n => companiesMatch(r.company, n))
         );
-        const memberEmails = new Set(members.map(r => String(r.email || '').toLowerCase()));
+        // A batch row whose email is already in HubSpot only updates that
+        // contact, so it is listed with the HubSpot contacts above, as the
+        // HubSpot record, rather than in the batch table. The batch table
+        // keeps the people the batch creates, including ones it created this
+        // session (they are in HubSpot now, but they came from this batch).
+        const updateRows = members.filter(r => hubspotByEmail.has(r.email) && results[r.email] !== 'added');
+        const updateEmails = new Set(updateRows.map(r => r.email));
+        const batchRows = members.filter(r => !updateEmails.has(r.email));
+        const batchEmails = new Set(batchRows.map(r => String(r.email || '').toLowerCase()));
         const linkKey = norm(card?.company || name);
-        const existing = existingCompanyContacts(
+        const excludedIds = new Set(((settings?.companyContactExclusions || {})[linkKey] || []).map(String));
+        const companyExisting = existingCompanyContacts(
           hubspotByEmail.values(),
           [name, card?.company].filter(Boolean),
           card,
           (settings?.companyContactLinks || {})[linkKey],
           (settings?.companyContactExclusions || {})[linkKey],
-        )
-          .filter(c => !memberEmails.has(String(c.email || '').toLowerCase()))
-          .sort((a, b) => `${a.lastname || ''} ${a.firstname || ''}`.localeCompare(`${b.lastname || ''} ${b.firstname || ''}`));
-        const picked = members.filter(r => companyContactsPicked.has(r.email));
-        const allPicked = members.length > 0 && picked.length === members.length;
+        ).filter(c => !batchEmails.has(String(c.email || '').toLowerCase()));
+        // The batch's updates join the list even when HubSpot files them
+        // under another company name, or this company has them excluded:
+        // the batch is about to write to them either way.
+        const existingIds = new Set(companyExisting.map(c => String(c.id || c.vid || '')));
+        const existing = [
+          ...companyExisting,
+          ...updateRows.map(r => hubspotByEmail.get(r.email)).filter(c => c && !existingIds.has(String(c.id || c.vid || ''))),
+        ].sort((a, b) => `${a.lastname || ''} ${a.firstname || ''}`.localeCompare(`${b.lastname || ''} ${b.firstname || ''}`));
+        const updateEmailOf = (c) => {
+          const e = String(c?.email || '').toLowerCase();
+          return updateEmails.has(e) ? e : null;
+        };
+        // The Source chip says which HubSpot contacts this batch updates.
+        const existingSourceOf = (c) => {
+          const e = updateEmailOf(c);
+          if (!e) return c._source || 'hubspot';
+          return results[e] === 'updated' ? 'batch-updated' : 'batch-update';
+        };
+        const picked = batchRows.filter(r => companyContactsPicked.has(r.email));
+        const allPicked = batchRows.length > 0 && picked.length === batchRows.length;
         const close = () => { setEditingContact(null); setCompanyContacts(null); };
         const togglePick = (email) => setCompanyContactsPicked(prev => {
           const next = new Set(prev);
@@ -4537,6 +4562,14 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           updateSettings({ companyContactExclusions: { ...cur, [linkKey]: [...list, id] } });
         };
         const pickedExisting = existing.filter(c => existingPicked.has(String(c.id || c.vid || '')));
+        // The ticked HubSpot contacts that are batch updates, which can be
+        // taken out of the batch the way a batch row can.
+        const pickedUpdateEmails = pickedExisting.map(updateEmailOf).filter(Boolean);
+        const removePickedUpdates = () => {
+          if (pickedUpdateEmails.length === 0) return;
+          removeRows(pickedUpdateEmails);
+          setExistingPicked(new Set());
+        };
         const excludePickedExisting = () => {
           const ids = pickedExisting.map(c => String(c.id || c.vid || '')).filter(Boolean);
           if (ids.length === 0 || !linkKey || !updateSettings) return;
@@ -4604,7 +4637,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>{title}</div>
                   <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '0.25rem' }}>
-                    {members.length} contact{members.length === 1 ? '' : 's'} in this batch, {existing.length} already in HubSpot. Tick contacts in either list to add or remove tags. Tags on contacts already in HubSpot are saved straight to HubSpot; tags on batch rows go with the row when it is added. Removing batch rows takes them out of the grid only. Contacts already in HubSpot can be removed from this company (they stay in HubSpot) or deleted from HubSpot.
+                    {existing.length} already in HubSpot{updateRows.length ? ` (${updateRows.length} updated by this batch)` : ''}, {batchRows.length} new in this batch. Batch rows for people already in HubSpot only update them, so they are listed with the HubSpot contacts. Tick contacts in either list to add or remove tags. Tags on contacts already in HubSpot are saved straight to HubSpot; tags on batch rows go with the row when it is added. Removing batch rows takes them out of the grid only. Contacts already in HubSpot can be removed from this company (they stay in HubSpot) or deleted from HubSpot.
                   </div>
                 </div>
                 {card && onSelectProspect && (
@@ -4658,6 +4691,15 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                           title="Delete them from HubSpot (permanent)"
                           style={btn('#DC2626', pickedExisting.length > 0 && deletingExistingContact === null)}
                         >× Delete from HubSpot</button>
+                        {updateRows.length > 0 && (
+                          <button
+                            type="button"
+                            disabled={pickedUpdateEmails.length === 0}
+                            onClick={removePickedUpdates}
+                            title="Take the ticked batch updates out of the grid. HubSpot is not touched."
+                            style={btn('#475569', pickedUpdateEmails.length > 0)}
+                          >Remove from batch</button>
+                        )}
                       </>
                     ),
                   })}
@@ -4674,23 +4716,25 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                       bulkSelected={existingPicked}
                       setBulkSelected={setExistingPicked}
                       deletingContact={deletingExistingContact}
+                      excludedContactIds={excludedIds}
+                      sourceOf={existingSourceOf}
                       onEditContact={c => { if (c) setEditingContact(c); }}
                     />
                   </div>
                   </>
                 )}
-                <div style={{ padding: '0.9rem 1.25rem 0.35rem', fontSize: '0.72rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', borderTop: '1px solid var(--color-border)', marginTop: '0.5rem' }}>In this batch ({members.length})</div>
+                <div style={{ padding: '0.9rem 1.25rem 0.35rem', fontSize: '0.72rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', borderTop: '1px solid var(--color-border)', marginTop: '0.5rem' }}>In this batch ({batchRows.length})</div>
                 <datalist id="company-popup-tag-list">
                   {tagPresetVocab.map(t => <option key={t} value={t} />)}
                 </datalist>
-                {members.length > 0 && selectionBar({
+                {batchRows.length > 0 && selectionBar({
                   count: picked.length,
                   noun: 'row',
                   draftKey: 'batch',
                   onTags: (mode, text) => editBatchTags(picked.map(r => r.email), mode, text),
                 })}
-                {members.length === 0 ? (
-                  <div style={{ padding: '1.25rem', fontSize: '0.8rem', color: '#64748B' }}>No contacts left for this company.</div>
+                {batchRows.length === 0 ? (
+                  <div style={{ padding: '1.25rem', fontSize: '0.8rem', color: '#64748B' }}>No new contacts for this company in this batch.</div>
                 ) : (
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
                     <thead>
@@ -4699,7 +4743,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                           <input
                             type="checkbox"
                             checked={allPicked}
-                            onChange={() => setCompanyContactsPicked(allPicked ? new Set() : new Set(members.map(r => r.email)))}
+                            onChange={() => setCompanyContactsPicked(allPicked ? new Set() : new Set(batchRows.map(r => r.email)))}
                             aria-label="Select all"
                           />
                         </th>
@@ -4712,7 +4756,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                       </tr>
                     </thead>
                     <tbody>
-                      {members.map(r => {
+                      {batchRows.map(r => {
                         const outcome = results[r.email];
                         const status = outcome === 'added' ? 'Added' : outcome === 'updated' ? 'Updated' : hubspotByEmail.has(r.email) ? 'In HubSpot' : 'New';
                         const fullName = composeFullName(r).trim();
