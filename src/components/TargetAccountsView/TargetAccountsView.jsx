@@ -6,6 +6,7 @@ import { DataTable } from '../common/DataTable';
 import { dbGet, dbPut } from '../../utils/db';
 import { userLsGet } from '../../utils/userLs';
 import { CompareTab } from './CompareTab';
+import { VerticalNamesTab } from './VerticalNamesTab';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { buildActiveOppsIndex, activeOppsForCompany, findUntiedActiveOpps } from '../../utils/targetAccountOpps';
 import styles from './TargetAccountsView.module.css';
@@ -644,10 +645,17 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
           onClick={() => setInnerTab('compare')}
           title={cdmName ? `Upload a list and diff it against the current Target Accounts filtered to ${cdmName}` : 'Upload a list and diff it against the current Target Accounts'}
         >Compare upload</button>
+        <button
+          className={innerTab === 'verticals' ? styles.sheetTabActive : styles.sheetTab}
+          onClick={() => setInnerTab('verticals')}
+          title="Give the list's vertical names your own, for the company popup to use"
+        >Vertical names</button>
       </div>
 
       {innerTab === 'compare' ? (
         <CompareTab currentData={data} cdmName={cdmName} />
+      ) : innerTab === 'verticals' ? (
+        <VerticalNamesTab data={data} settings={settings} updateSettings={updateSettings} />
       ) : (
         <ListSection
           error={error}

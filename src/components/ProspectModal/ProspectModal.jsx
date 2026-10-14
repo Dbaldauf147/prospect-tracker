@@ -5530,9 +5530,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // with. The mapping is the settings.targetMap entry My Accounts writes.
   const targetRows = useMemo(
     () => (targetAccountsData
-      ? targetAccountRows(targetAccountsData, { targetCdmColumn: settings?.targetCdmColumn, targetVerticalColumn: settings?.targetVerticalColumn })
+      ? targetAccountRows(targetAccountsData, {
+        targetCdmColumn: settings?.targetCdmColumn,
+        targetVerticalColumn: settings?.targetVerticalColumn,
+        targetVerticalNames: settings?.targetVerticalNames,
+      })
       : null),
-    [targetAccountsData, settings?.targetCdmColumn, settings?.targetVerticalColumn],
+    [targetAccountsData, settings?.targetCdmColumn, settings?.targetVerticalColumn, settings?.targetVerticalNames],
   );
   const mappedNames = mappedTargetNames(settings, prospect?.id);
   const mappedRows = useMemo(() => {
@@ -5601,11 +5605,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const targetsVertical = useMemo(() => (targetAccountsData
     ? targetVerticalFor({
       targetAccountsData,
-      settings: { targetMap: settings?.targetMap, targetVerticalColumn: settings?.targetVerticalColumn },
+      settings: {
+        targetMap: settings?.targetMap,
+        targetVerticalColumn: settings?.targetVerticalColumn,
+        targetVerticalNames: settings?.targetVerticalNames,
+      },
       prospectId: prospect?.id,
       options: dropdownVerticals,
     })
-    : null), [targetAccountsData, settings?.targetMap, settings?.targetVerticalColumn, prospect?.id, dropdownVerticals]);
+    : null), [targetAccountsData, settings?.targetMap, settings?.targetVerticalColumn, settings?.targetVerticalNames, prospect?.id, dropdownVerticals]);
 
   // "Suggest" beside Vertical: Claude picks one from the Dropdowns ›
   // Vertical list (never a value outside it) using what this card knows
