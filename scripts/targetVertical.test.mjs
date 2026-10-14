@@ -36,7 +36,23 @@ check('auto prefers a header that is exactly Vertical over Sub Vertical',
 check('a picked column wins over the guess',
   run({ p1: ['Zed Inc'] }, 'p1', { targetVerticalColumn: 'Sub Vertical' }), { name: 'Zed Inc', vertical: 'Hotels', onList: true });
 check('a picked column the row\'s sheet lacks falls back to the guess (Tier 3 tab)', resolveTargetAccountVertical({ Industry: 'X' }, 'Vertical'), 'X');
-check('a picked column that is blank on the row stays blank', resolveTargetAccountVertical({ Vertical: '', Industry: 'X' }, 'Vertical'), '');
+check('a picked column that is blank on the row falls back to the guess', resolveTargetAccountVertical({ Vertical: '', Industry: 'X' }, 'Vertical'), 'X');
+check('a blank exact Vertical header falls through to a filled Industry with no pick', resolveTargetAccountVertical({ Vertical: '', Industry: 'X' }), 'X');
+check('a filled picked column still wins over the guess', resolveTargetAccountVertical({ Vertical: 'V', Industry: 'X' }, 'Vertical'), 'V');
+check('picked and every vertical-like cell blank reads blank', resolveTargetAccountVertical({ Vertical: '', Industry: '' }, 'Vertical'), '');
+{
+  // The reported shape: one tab, Vertical picked, Tier 1/2 rows fill it and
+  // Tier III rows leave it blank with the vertical under another header.
+  const sameTab = { sheetNames: ['Targets'], sheets: { Targets: { records: [
+    { 'Account Name': 'Big Co', Tier: 'Tier 1', Vertical: 'Grocery', Segment: '' },
+    { 'Account Name': 'Small Co', Tier: 'Tier III', Vertical: '', Segment: 'hotels' },
+  ] } } };
+  check('mapped Tier III row with a blank Vertical imports from its other vertical column',
+    targetVerticalFor({ targetAccountsData: sameTab, settings: { targetMap: { p: ['Small Co'] }, targetVerticalColumn: 'Vertical' }, prospectId: 'p', options }),
+    { name: 'Small Co', vertical: 'Hotels', onList: true });
+  check('the popup box row carries it too',
+    targetAccountRows(sameTab, { targetVerticalColumn: 'Vertical' }).find(r => r.name === 'Small Co')?.vertical, 'hotels');
+}
 {
   const tiered = { sheetNames: ['Tier 1-2', 'Tier 3'], sheets: {
     'Tier 1-2': { records: [{ 'Account Name': 'Acme Holdings', Vertical: 'Grocery', Tier: '2' }] },
