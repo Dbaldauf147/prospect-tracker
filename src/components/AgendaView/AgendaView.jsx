@@ -17,6 +17,8 @@ import { ColumnToggle } from '../common/ColumnToggle';
 import { orderColumns, mergeColumnOrder } from '../../utils/tableColumnPrefs';
 import { classifyHqCountry, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
 import { parseContactPaste } from '../../utils/contactPaste';
+import { companiesMatch } from '../../utils/listFlags';
+import { contactIsHidden } from '../ProspectModal/contactTags';
 import { applyTagPresetToContact, presetSummary } from '../../utils/tagPresets';
 import { tagVocabulary } from '../../utils/contactTagReview';
 import styles from './AgendaView.module.css';
@@ -484,6 +486,36 @@ function isRealEmail(e) {
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(e || '').trim());
 }
 
+// The HubSpot contacts already at a company, for the Company cell's contacts
+// popup. Read the same way the company card reads its own list: a fuzzy
+// Company-name match, a contact with no Company text on one of the card's
+// email domains, and anyone linked to the card by hand, hidden people left
+// out. `names` is every spelling the popup knows the company by.
+function existingCompanyContacts(contacts, names, card, links) {
+  const domains = new Set();
+  for (const entry of String(card?.emailDomain || '').split(/[\n;,]+/)) {
+    const at = entry.lastIndexOf('@');
+    const d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
+    if (d) domains.add(d);
+  }
+  const site = String(card?.website || '').replace(/^https?:\/\/(www\.)?/i, '').replace(/\/.*$/, '').toLowerCase().trim();
+  if (site) domains.add(site);
+  const linked = new Set((links || []).map(String));
+  const out = [];
+  for (const c of contacts) {
+    if (contactIsHidden(c)) continue;
+    const id = String(c.id || c.vid || '');
+    let hit = (id && linked.has(id)) || names.some(n => companiesMatch(c.company, n));
+    if (!hit && !String(c.company || '').trim() && domains.size) {
+      const email = String(c.email || '').toLowerCase();
+      const d = email.slice(email.lastIndexOf('@') + 1);
+      hit = Boolean(d) && !FREE_MAIL_DOMAINS.has(d) && domains.has(d);
+    }
+    if (hit) out.push(c);
+  }
+  return out;
+}
+
 // Deterministic, non-email row key for a contact we couldn't find or estimate
 // an address for. Derived from name + company so re-pasting the same list
 // dedupes instead of piling up duplicates. Never contains '@', so it can't be
@@ -546,6 +578,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   // input. One at a time (keyed by the row's email, the same handle
   // updateRow takes), because editing ends the moment the input blurs.
   const [companyEditKey, setCompanyEditKey] = useState(null);
+  // The company whose contacts popup is open: { name, prospectId, card }
+  // from the Company cell that was clicked, or null when it is shut.
+  const [companyContacts, setCompanyContacts] = useState(null);
+  const [companyContactsPicked, setCompanyContactsPicked] = useState(() => new Set());
   const [showRulesPanel, setShowRulesPanel] = useState(false);
   // Bucket groups (New / Update pending / In HubSpot) folded shut on the
   // table. Remembered per browser.
@@ -1388,6 +1424,44 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       delete next[email];
       return next;
     });
+  }
+  // removeRow for several rows at once, so the company contacts popup
+  // takes its picks out of the grid in one pass.
+  function removeRows(emails) {
+    const drop = new Set(emails);
+    if (drop.size === 0) return;
+    setRows(prev => {
+      const next = prev.filter(r => !drop.has(r.email));
+      saveCache(next);
+      return next;
+    });
+    setResults(prev => {
+      const next = { ...prev };
+      for (const e of drop) delete next[e];
+      return next;
+    });
+    setBulkSelected(prev => {
+      if (![...drop].some(e => prev.has(e))) return prev;
+      const next = new Set(prev);
+      for (const e of drop) next.delete(e);
+      return next;
+    });
+  }
+  // Escape shuts the company contacts popup wherever focus has gone (a
+  // removed row takes its focused × button with it).
+  useEffect(() => {
+    if (!companyContacts) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setCompanyContacts(null); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [companyContacts]);
+  function openCompanyContacts(r, card) {
+    setCompanyContacts({
+      name: String(r.company || '').trim(),
+      prospectId: r._matchedProspectId || card?.id || null,
+      card: card || null,
+    });
+    setCompanyContactsPicked(new Set());
   }
   function clearAll() {
     if (!confirm('Clear all rows?')) return;
@@ -3544,46 +3618,44 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                     company: () => (
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          {/* The company name is the way into that company's
-                              card. It is the thing on the row people point
-                              at, so pointing at it is what opens the popup:
-                              a row the tracker holds reads its company as a
-                              link, and clicking it opens the card without
-                              leaving the page.
+                          {/* The company name opens a popup of every row in
+                              this batch at that company, where any of them
+                              can be taken out of the grid in one go. It is
+                              the thing on the row people point at, so
+                              pointing at it is what opens the popup. When the
+                              row is matched to a company the tracker holds,
+                              the popup also carries the way into that
+                              company's card.
 
                               The cell is still typed in - naming companies is
                               most of the work on this table - so the ✎ beside
                               the name swaps the link back for the input, and
                               the input reverts to a link as soon as it blurs.
-                              Rows the tracker does not hold, and rows with
-                              nothing typed yet, are a plain input from the
-                              start: there is no name to click, and on the
-                              second kind the arrow still carries you to the
-                              card the row was matched to.
+                              Rows with nothing typed yet are a plain input:
+                              there is no name to click, and the arrow still
+                              carries you to the card the row was matched to.
 
-                              The company that opens is the row's matched
+                              The card that opens is the row's matched
                               prospect, which is the one every other column on
                               this row is already about: the Tier badge, the
                               CDM pills and the Table View columns all read it.
                               What is typed in the cell can be the HubSpot
                               spelling ("CBRE Inc (CBRE) - HQ") rather than the
-                              tracker's, so matching on the text would leave
-                              the link off exactly the rows that most need it.
-                              The tooltip names the company that will open, so
-                              the two never quietly disagree. */}
+                              tracker's, so the popup gathers rows on the
+                              matched prospect as well as on the typed name. */}
                           {(() => {
                             const canOpen = Boolean(companyCard && onSelectProspect);
                             const editingCompany = companyEditKey === r.email;
-                            const linkable = canOpen && String(r.company || '').trim() !== '';
+                            const linkable = String(r.company || '').trim() !== '';
                             if (linkable && !editingCompany) {
                               return (
                                 <>
                                   <button
                                     type="button"
                                     className={styles.companyLink}
-                                    onClick={() => onSelectProspect(companyCard)}
-                                    title={`Open the company popup for "${companyCard.company}"`}
-                                    aria-label={`Open the company popup for ${companyCard.company}`}
+                                    onClick={() => openCompanyContacts(r, canOpen ? companyCard : null)}
+                                    title={`See this batch's contacts at "${r.company}"`}
+                                    aria-label={`See the contacts at ${r.company}`}
                                   >{r.company}</button>
                                   <button
                                     type="button"
@@ -4076,6 +4148,169 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           </div>
         </div>
       )}
+
+      {companyContacts && (() => {
+        const norm = (v) => String(v || '').trim().toLowerCase();
+        const { name, prospectId, card } = companyContacts;
+        const spellings = [name, card?.company].filter(Boolean);
+        const members = rows.filter(r =>
+          (prospectId && r._matchedProspectId === prospectId) || spellings.some(n => companiesMatch(r.company, n))
+        );
+        const memberEmails = new Set(members.map(r => String(r.email || '').toLowerCase()));
+        const linkKey = norm(card?.company || name);
+        const existing = existingCompanyContacts(
+          hubspotByEmail.values(),
+          [name, card?.company].filter(Boolean),
+          card,
+          (settings?.companyContactLinks || {})[linkKey],
+        )
+          .filter(c => !memberEmails.has(String(c.email || '').toLowerCase()))
+          .sort((a, b) => `${a.lastname || ''} ${a.firstname || ''}`.localeCompare(`${b.lastname || ''} ${b.firstname || ''}`));
+        const picked = members.filter(r => companyContactsPicked.has(r.email));
+        const allPicked = members.length > 0 && picked.length === members.length;
+        const close = () => setCompanyContacts(null);
+        const togglePick = (email) => setCompanyContactsPicked(prev => {
+          const next = new Set(prev);
+          if (next.has(email)) next.delete(email); else next.add(email);
+          return next;
+        });
+        const removePicked = () => {
+          removeRows(picked.map(r => r.email));
+          setCompanyContactsPicked(new Set());
+        };
+        const title = card?.company || name;
+        return (
+          <div
+            style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: '1.25rem' }}
+            onClick={close}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Contacts at ${title}`}
+              style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', width: 'min(720px, 100%)', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}
+              onClick={e => e.stopPropagation()}
+            >
+              <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>{title}</div>
+                  <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '0.25rem' }}>
+                    {members.length} contact{members.length === 1 ? '' : 's'} in this batch, {existing.length} already in HubSpot. Removing takes batch rows out of the grid only; nothing is deleted in HubSpot.
+                  </div>
+                </div>
+                {card && onSelectProspect && (
+                  <button
+                    type="button"
+                    onClick={() => { close(); onSelectProspect(card); }}
+                    title={`Open the company popup for "${card.company}"`}
+                    style={{ padding: '0.35rem 0.7rem', border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-accent)', borderRadius: 6, fontSize: '0.75rem', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                  >Open company card ↗</button>
+                )}
+                <button
+                  type="button"
+                  onClick={close}
+                  aria-label="Close"
+                  autoFocus
+                  style={{ background: 'none', border: 'none', fontSize: '1.2rem', lineHeight: 1, color: '#64748B', cursor: 'pointer', padding: 0 }}
+                >×</button>
+              </div>
+              <div style={{ overflowY: 'auto', flex: 1 }}>
+                <div style={{ padding: '0.6rem 1.25rem 0.35rem', fontSize: '0.72rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em' }}>In this batch ({members.length})</div>
+                {members.length === 0 ? (
+                  <div style={{ padding: '1.25rem', fontSize: '0.8rem', color: '#64748B' }}>No contacts left for this company.</div>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                    <thead>
+                      <tr style={{ textAlign: 'left', color: '#64748B', background: '#F8FAFC' }}>
+                        <th style={{ padding: '0.45rem 0.6rem', width: 28 }}>
+                          <input
+                            type="checkbox"
+                            checked={allPicked}
+                            onChange={() => setCompanyContactsPicked(allPicked ? new Set() : new Set(members.map(r => r.email)))}
+                            aria-label="Select all"
+                          />
+                        </th>
+                        <th style={{ padding: '0.45rem 0.6rem' }}>Name</th>
+                        <th style={{ padding: '0.45rem 0.6rem' }}>Job title</th>
+                        <th style={{ padding: '0.45rem 0.6rem' }}>Email</th>
+                        <th style={{ padding: '0.45rem 0.6rem' }}>Status</th>
+                        <th style={{ padding: '0.45rem 0.6rem', width: 28 }} />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {members.map(r => {
+                        const outcome = results[r.email];
+                        const status = outcome === 'added' ? 'Added' : outcome === 'updated' ? 'Updated' : hubspotByEmail.has(r.email) ? 'In HubSpot' : 'New';
+                        const fullName = composeFullName(r).trim();
+                        return (
+                          <tr key={r.email} style={{ borderTop: '1px solid var(--color-border)' }}>
+                            <td style={{ padding: '0.4rem 0.6rem' }}>
+                              <input
+                                type="checkbox"
+                                checked={companyContactsPicked.has(r.email)}
+                                onChange={() => togglePick(r.email)}
+                                aria-label={`Select ${fullName || r.email}`}
+                              />
+                            </td>
+                            <td style={{ padding: '0.4rem 0.6rem', fontWeight: 600, color: 'var(--color-text)' }}>{fullName || '-'}</td>
+                            <td style={{ padding: '0.4rem 0.6rem', color: '#334155' }}>{r.jobtitle || '-'}</td>
+                            <td style={{ padding: '0.4rem 0.6rem', color: '#334155', fontFamily: 'monospace', fontSize: '0.74rem', wordBreak: 'break-all' }}>{isRealEmail(r.email) ? r.email : '-'}</td>
+                            <td style={{ padding: '0.4rem 0.6rem', color: '#64748B', whiteSpace: 'nowrap' }}>{status}</td>
+                            <td style={{ padding: '0.4rem 0.6rem' }}>
+                              <button className={styles.rowRemove} onClick={() => removeRows([r.email])} title="Remove row" aria-label={`Remove ${fullName || r.email}`}>×</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+                <div style={{ padding: '0.9rem 1.25rem 0.35rem', fontSize: '0.72rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', borderTop: '1px solid var(--color-border)', marginTop: '0.5rem' }}>Already in HubSpot ({existing.length})</div>
+                {existing.length === 0 ? (
+                  <div style={{ padding: '0.25rem 1.25rem 1rem', fontSize: '0.8rem', color: '#64748B' }}>
+                    {hubspotByEmail.size === 0 ? 'HubSpot contacts have not loaded yet.' : 'No other HubSpot contacts at this company.'}
+                  </div>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', marginBottom: '0.5rem' }}>
+                    <thead>
+                      <tr style={{ textAlign: 'left', color: '#64748B', background: '#F8FAFC' }}>
+                        <th style={{ padding: '0.45rem 0.6rem 0.45rem 1.25rem' }}>Name</th>
+                        <th style={{ padding: '0.45rem 0.6rem' }}>Job title</th>
+                        <th style={{ padding: '0.45rem 0.6rem' }}>Email</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {existing.map(c => {
+                        const fullName = `${c.firstname || ''} ${c.lastname || ''}`.trim();
+                        return (
+                          <tr key={c.id || c.vid || c.email} style={{ borderTop: '1px solid var(--color-border)' }}>
+                            <td style={{ padding: '0.4rem 0.6rem 0.4rem 1.25rem', fontWeight: 600, color: 'var(--color-text)' }}>{fullName || '-'}</td>
+                            <td style={{ padding: '0.4rem 0.6rem', color: '#334155' }}>{c.jobtitle || '-'}</td>
+                            <td style={{ padding: '0.4rem 0.6rem', color: '#334155', fontFamily: 'monospace', fontSize: '0.74rem', wordBreak: 'break-all' }}>{c.email || '-'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+              <div style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid var(--color-border)', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={close}
+                  style={{ padding: '0.45rem 0.9rem', border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
+                >Close</button>
+                <button
+                  type="button"
+                  onClick={removePicked}
+                  disabled={picked.length === 0}
+                  style={{ padding: '0.45rem 0.9rem', border: 'none', background: picked.length ? '#DC2626' : '#FCA5A5', color: '#fff', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: picked.length ? 'pointer' : 'default', fontFamily: 'inherit' }}
+                >{picked.length ? `Remove ${picked.length} selected` : 'Remove selected'}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {pendingUpload && (() => {
         const { fileName, headers, rows: rawRows, mapping } = pendingUpload;
