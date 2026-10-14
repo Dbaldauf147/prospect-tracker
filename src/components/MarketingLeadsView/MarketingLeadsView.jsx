@@ -28,6 +28,7 @@ import {
   summariseLeadNames,
 } from '../../utils/marketingLeadsImport';
 import { recipientMapSaver } from '../../utils/recipientMaps';
+import { LEAD_MAPPING_LEDGER_KEY } from '../../utils/leadMappings';
 
 // Marketing Leads subtab on the Contacts page. The user pastes a block
 // copied from a Salesforce Leads list view; a column-mapping modal pops
@@ -432,8 +433,16 @@ const HubSpotContactAutocomplete = memo(function HubSpotContactAutocomplete({ co
 export function MarketingLeadsView({ prospects = [], settings, updateSettings, updateSettingsPath, onAddProspect, onSelectProspect, targetAccountsData, onNavigate }) {
   const persistedRows = useMemo(() => {
     const arr = Array.isArray(settings?.marketingLeads) ? settings.marketingLeads : [];
+    // A stale rewrite from another tab can land with a lead's Company
+    // Mapping blanked; the mapping ledger still has it, so show it (and
+    // the next write saves it back). See utils/leadMappings.
+    const mapLedger = settings?.[LEAD_MAPPING_LEDGER_KEY] || {};
     return arr.map(r => {
       const base = { ...emptyRow(), ...r, id: r.id || makeId() };
+      if (!String(base.mappedCompany || '').trim()) {
+        const kept = String(mapLedger[base.id]?.company || '').trim();
+        if (kept) base.mappedCompany = kept;
+      }
       // Heal legacy rows stored as "Last, First" so they display (and
       // match / add to HubSpot) as "First Last". Idempotent — any later
       // write persists the normalised form.
@@ -1061,14 +1070,18 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
       // The HubSpot timeline note is best effort; the app's own Notes and
       // Lead Source are written either way so the origin is always tracked.
       await postHubspotContactNote(contactId, MARKETING_LEAD_NOTE);
+      // Built from the settings as they are once the note call returns,
+      // not the ones captured before it.
       if (contactId) {
-        const cur = settings?.contactNotes || {};
-        const prior = String(cur[contactId] || '').trim();
-        const patch = { contactLeadSource: { ...(settings?.contactLeadSource || {}), [contactId]: MARKETING_LEAD_SOURCE } };
-        if (!prior.includes(MARKETING_LEAD_NOTE)) {
-          patch.contactNotes = { ...cur, [contactId]: prior ? `${prior}\n${MARKETING_LEAD_NOTE}` : MARKETING_LEAD_NOTE };
-        }
-        updateSettings(patch);
+        updateSettings(cur => {
+          const notes = cur.contactNotes || {};
+          const prior = String(notes[contactId] || '').trim();
+          const patch = { contactLeadSource: { ...(cur.contactLeadSource || {}), [contactId]: MARKETING_LEAD_SOURCE } };
+          if (!prior.includes(MARKETING_LEAD_NOTE)) {
+            patch.contactNotes = { ...notes, [contactId]: prior ? `${prior}\n${MARKETING_LEAD_NOTE}` : MARKETING_LEAD_NOTE };
+          }
+          return patch;
+        });
       }
     } else {
       window.alert(`Could not create the HubSpot contact${res.error ? `: ${res.error}` : '.'}`);
@@ -1131,16 +1144,25 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
     }
     // One settings write for both the lead→contact mappings and the note
     // mirror, so the page doesn't churn through two round-trips.
-    const patch = {};
-    if (mappingById.size) {
-      patch.marketingLeads = persistedRows.map(r => {
-        const m = mappingById.get(r.id);
-        return m ? { ...r, hubspotContactId: m.id, hubspotContact: m.label, hubspotContactTitle: m.title } : r;
+    // Built from the settings as they are NOW, not the rows captured
+    // before the API calls: anything edited on the page during the run (a
+    // Company Mapping accepted, a status changed) would otherwise be
+    // written back to what it was.
+    if (mappingById.size || Object.keys(notesPatch).length || Object.keys(leadSourcePatch).length) {
+      updateSettings(cur => {
+        const patch = {};
+        if (mappingById.size) {
+          const leads = Array.isArray(cur.marketingLeads) ? cur.marketingLeads : [];
+          patch.marketingLeads = leads.map(r => {
+            const m = mappingById.get(r.id);
+            return m ? { ...r, hubspotContactId: m.id, hubspotContact: m.label, hubspotContactTitle: m.title } : r;
+          });
+        }
+        if (Object.keys(notesPatch).length) patch.contactNotes = { ...(cur.contactNotes || {}), ...notesPatch };
+        if (Object.keys(leadSourcePatch).length) patch.contactLeadSource = { ...(cur.contactLeadSource || {}), ...leadSourcePatch };
+        return patch;
       });
     }
-    if (Object.keys(notesPatch).length) patch.contactNotes = { ...curNotes, ...notesPatch };
-    if (Object.keys(leadSourcePatch).length) patch.contactLeadSource = { ...(settings?.contactLeadSource || {}), ...leadSourcePatch };
-    if (Object.keys(patch).length) updateSettings(patch);
     setBulkAddingHubspot(false);
     window.alert(`Added ${created.length} contact${created.length === 1 ? '' : 's'} to HubSpot${failed ? `: ${failed} failed` : ''}.`);
   }
@@ -1330,7 +1352,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
     if (!selectedLeadIds.size || !bulkField) return;
     const ids = selectedLeadIds;
     const val = bulkValue;
-    persist(persistedRows.map(r => (ids.has(r.id) ? { ...r, [bulkField]: val } : r)));
+    persist(persistedRows.map(r => (ids.has(r.id) ? { ...r, [bulkField]: val } : r)), clearOpts(bulkField, val, [...ids]));
     const n = ids.size;
     setBulkResult(`Set ${bulkFieldLabel} on ${n} lead${n === 1 ? '' : 's'}${val.trim() ? ` to “${val.trim()}”` : ' (cleared)'}.`);
   }
@@ -1453,8 +1475,18 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
 
   // opts.clearLeadLinks names the leads whose Salesforce Link this write
   // removes on purpose; useUserSettings puts any other blanked link back.
+  // opts.clearLeadMappings does the same for the Company Mapping.
   function persist(next, opts) {
     updateSettings({ marketingLeads: next }, opts);
+  }
+
+  // The persist opts for writing `value` into `key` on the leads `ids`:
+  // blanking a link or a mapping has to be named as deliberate.
+  function clearOpts(key, value, ids) {
+    if (String(value || '').trim()) return undefined;
+    if (key === 'sfUrl') return { clearLeadLinks: ids };
+    if (key === 'mappedCompany') return { clearLeadMappings: ids };
+    return undefined;
   }
 
   function updateCell(rowId, key, value) {
@@ -1463,10 +1495,9 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
       persist([...persistedRows, { ...emptyRow(), [key]: value }]);
       return;
     }
-    const clearsLink = key === 'sfUrl' && !String(value || '').trim();
     persist(
       persistedRows.map(r => (r.id === rowId ? { ...r, [key]: value } : r)),
-      clearsLink ? { clearLeadLinks: [rowId] } : undefined,
+      clearOpts(key, value, [rowId]),
     );
   }
 
@@ -1728,7 +1759,47 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
       out.push(c);
     }
     return out;
-  }, [persistedRows, prospectCompanies]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [persistedRows, prospectCompanies]);
+
+  // ---- Accept all suggested mappings ---------------------------------
+  // Every unmapped lead that has a suggestion pill showing (Company Mapping
+  // and / or HubSpot Contact), so one click accepts them all in a single
+  // write instead of clicking each pill.
+  const pendingMappings = useMemo(() => {
+    const out = [];
+    let company = 0;
+    let hubspot = 0;
+    for (const r of persistedRows) {
+      const patch = {};
+      if (!(r.mappedCompany || '').trim()) {
+        const sugg = bestCompanyMatch(r.company);
+        if (sugg) { patch.mappedCompany = sugg.name; company++; }
+      }
+      if (!String(r.hubspotContactId || '').trim()) {
+        const sugg = bestHubspotMatch(r);
+        const id = sugg ? String(sugg.contact.id || sugg.contact.vid || '') : '';
+        if (id) {
+          patch.hubspotContactId = id;
+          patch.hubspotContact = hubspotDisplay(sugg.contact);
+          patch.hubspotContactTitle = String(sugg.contact.jobtitle || '').trim();
+          hubspot++;
+        }
+      }
+      if (Object.keys(patch).length) out.push({ id: r.id, patch });
+    }
+    return { list: out, company, hubspot, total: company + hubspot };
+  }, [persistedRows, companyOptions, prospectIndex, hubspotByEmail, hubspotByName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function acceptAllMappings() {
+    const { list, company, hubspot } = pendingMappings;
+    if (!list.length) return;
+    const parts = [];
+    if (company) parts.push(`${company} company mapping${company === 1 ? '' : 's'}`);
+    if (hubspot) parts.push(`${hubspot} HubSpot contact mapping${hubspot === 1 ? '' : 's'}`);
+    if (!window.confirm(`Accept ${parts.join(' and ')}? This includes fuzzy (yellow) suggestions; you can change or clear any of them afterwards.`)) return;
+    const byId = new Map(list.map(x => [x.id, x.patch]));
+    persist(persistedRows.map(r => (byId.has(r.id) ? { ...r, ...byId.get(r.id) } : r)));
+  }
 
   async function addCompanyToTableView(company) {
     if (!onAddProspect) return;
@@ -1950,6 +2021,15 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
             </div>
           )}
         </div>
+        <button
+          type="button"
+          onClick={acceptAllMappings}
+          disabled={!pendingMappings.total}
+          title={pendingMappings.total
+            ? `Accept every suggested mapping shown in the Company Mapping (${pendingMappings.company}) and HubSpot Contact (${pendingMappings.hubspot}) columns.`
+            : 'No suggested mappings left to accept.'}
+          style={btn({ border: 'none', background: pendingMappings.total ? '#16A34A' : '#CBD5E1', color: '#fff', fontWeight: 700, cursor: pendingMappings.total ? 'pointer' : 'not-allowed' })}
+        >{pendingMappings.total ? `✓ Accept all ${pendingMappings.total} mapping${pendingMappings.total === 1 ? '' : 's'}` : '✓ Accept all mappings'}</button>
         {onAddProspect && (
           <button
             type="button"
@@ -1988,7 +2068,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
         >Clear table</button>
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, drag a header to reorder it (drag its right edge to resize), use <strong>Filters</strong> for per-column filtering, and <strong>Columns</strong> to show / hide or reorder columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account: accept the suggested match or type to pick another. The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact: accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. The read-only <strong>HubSpot Title</strong> column shows the mapped contact's job title. The <strong>Status</strong> column is a dropdown driven by the <strong>Marketing Lead Status</strong> list on the <strong>Dropdowns</strong> tab: edit that list to change the options. <strong>✉️ Draft Emails</strong> creates an Outlook draft for every shown lead with an email address, signed with your saved email signature (respects the current search / filters). Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead). Tick the checkboxes and click <strong>🙈 Hide</strong> (or the per-row 🙈) to hide leads you're done with: they aren't deleted; use <strong>Show hidden</strong> to review or 👁 unhide them. Tick leads and click <strong>✏️ Bulk Edit</strong> to set one field (Status, Owner, Company Mapping, …) across all of them at once.
+        Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, drag a header to reorder it (drag its right edge to resize), use <strong>Filters</strong> for per-column filtering, and <strong>Columns</strong> to show / hide or reorder columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account: accept the suggested match or type to pick another (<strong>✓ Accept all mappings</strong> accepts every suggested Company and HubSpot match at once). The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact: accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. The read-only <strong>HubSpot Title</strong> column shows the mapped contact's job title. The <strong>Status</strong> column is a dropdown driven by the <strong>Marketing Lead Status</strong> list on the <strong>Dropdowns</strong> tab: edit that list to change the options. <strong>✉️ Draft Emails</strong> creates an Outlook draft for every shown lead with an email address, signed with your saved email signature (respects the current search / filters). Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead). Tick the checkboxes and click <strong>🙈 Hide</strong> (or the per-row 🙈) to hide leads you're done with: they aren't deleted; use <strong>Show hidden</strong> to review or 👁 unhide them. Tick leads and click <strong>✏️ Bulk Edit</strong> to set one field (Status, Owner, Company Mapping, …) across all of them at once.
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
