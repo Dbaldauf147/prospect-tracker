@@ -1,7 +1,8 @@
 // Assertion tests for importing a company's vertical from the Target
 // Accounts list (targetVerticalFor in src/utils/targetTier.js). Run:
 //   node scripts/targetVertical.test.mjs
-import { targetVerticalFor, resolveTargetAccountVertical } from '../src/utils/targetTier.js';
+import { targetVerticalFor, resolveTargetAccountVertical, renameTargetVertical } from '../src/utils/targetTier.js';
+import { targetAccountRows } from '../src/utils/targetAccountMatch.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -46,6 +47,18 @@ check('a picked column that is blank on the row stays blank', resolveTargetAccou
     { name: 'Tri Corp', vertical: 'Hotels', onList: true });
 }
 check('no record, no vertical', resolveTargetAccountVertical(null), '');
+
+// Target Accounts > Vertical names: the user's own name for a list vertical.
+{
+  const names = { targetVerticalNames: { 'real estate': 'Grocery', hospitality: '  ' } };
+  check('renamed vertical is imported under the user\'s name, snapped to the list',
+    run({ p1: ['Acme Holdings'] }, 'p1', names), { name: 'Acme Holdings', vertical: 'Grocery', onList: true });
+  check('a blank rename keeps the list\'s spelling', run({ p1: ['Zed Inc'] }, 'p1', names)?.vertical, 'Hospitality');
+  check('rename matched ignoring case', renameTargetVertical('REAL ESTATE', names), 'Grocery');
+  check('no mapping: unchanged', renameTargetVertical('Retail', names), 'Retail');
+  check('popup Target Accounts box shows the renamed vertical',
+    targetAccountRows(data, names).find(r => r.name === 'Acme Holdings')?.vertical, 'Grocery');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

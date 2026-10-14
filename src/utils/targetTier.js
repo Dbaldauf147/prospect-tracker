@@ -273,6 +273,19 @@ export function resolveTargetAccountVertical(record, verticalColumn) {
 }
 
 /**
+ * The name the user wants for a vertical the Target Accounts list spells its
+ * own way: settings.targetVerticalNames maps the list's vertical (lower-cased)
+ * to the user's name, set on Target Accounts > Vertical names. A vertical
+ * with no mapping comes back as it is.
+ */
+export function renameTargetVertical(vertical, settings) {
+  const v = String(vertical || '').trim();
+  if (!v) return '';
+  const mine = settings?.targetVerticalNames?.[v.toLowerCase()];
+  return String(mine || '').trim() || v;
+}
+
+/**
  * The vertical the Target Accounts list gives a company, but only once the
  * company has been MAPPED to a target account (settings.targetMap, set on
  * My Accounts) - never off a name guess, since importing a field off the
@@ -298,7 +311,7 @@ export function targetVerticalFor({ targetAccountsData, settings, prospectId, op
     for (const r of data?.sheets?.[sheetName]?.records || []) {
       const k = targetRowCompany(r).toLowerCase();
       if (!wanted.has(k) || found.has(k)) continue;
-      const v = resolveTargetAccountVertical(r, col);
+      const v = renameTargetVertical(resolveTargetAccountVertical(r, col), settings);
       if (v) found.set(k, v);
     }
   }

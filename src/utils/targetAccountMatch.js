@@ -10,7 +10,7 @@
 
 import { normalizeCompanyName } from './companyKey.js';
 import { resolveTargetAccountCdm, matchesCdm } from './cdmMatch.js';
-import { resolveTargetAccountVertical, tierMismatch, targetRowCompany as rowCompany, targetRowTier as rowTier, targetTierColumns } from './targetTier.js';
+import { renameTargetVertical, resolveTargetAccountVertical, tierMismatch, targetRowCompany as rowCompany, targetRowTier as rowTier, targetTierColumns } from './targetTier.js';
 
 /**
  * Every account on the Target Accounts list, once each, with what the
@@ -40,7 +40,7 @@ export function targetAccountRows(targetAccountsData, settings) {
         name,
         cdm: resolveTargetAccountCdm(r, settings?.targetCdmColumn),
         tier,
-        vertical: resolveTargetAccountVertical(r, settings?.targetVerticalColumn),
+        vertical: renameTargetVertical(resolveTargetAccountVertical(r, settings?.targetVerticalColumn), settings),
         sheet: sheetName,
       };
       if (at.has(k)) {
