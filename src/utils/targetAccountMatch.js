@@ -92,10 +92,18 @@ export function sameWord(a, b) {
   return cap > 0 && editDistance(a, b, cap) <= cap;
 }
 
+/** A name's words as nameSimilarity compares them; for a caller that compares one name against many. */
+export function similarityTokens(s) {
+  return [...new Set(tokensOf(s))];
+}
+
 /** How alike two company names are, 0..1. The first word has to agree. */
 export function nameSimilarity(a, b) {
-  const ta = [...new Set(tokensOf(a))];
-  const tb = [...new Set(tokensOf(b))];
+  return tokenSimilarity(similarityTokens(a), similarityTokens(b));
+}
+
+/** nameSimilarity over names already split by similarityTokens. */
+export function tokenSimilarity(ta, tb) {
   if (!ta.length || !tb.length || !sameWord(ta[0], tb[0])) return 0;
   // Pair words off one to one, so a word can't be counted twice.
   const free = [...tb];
