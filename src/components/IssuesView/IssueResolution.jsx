@@ -76,6 +76,26 @@ export function IssueResolutionModal({ spec, saving, error, onSave, onClose }) {
         </>
       );
     }
+    if (f.compare) {
+      const sideLabel = { fontSize: '0.66rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 3 };
+      return (
+        <div>
+          <label style={labelStyle}>{f.label}</label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
+            <div>
+              <div style={sideLabel}>Current</div>
+              <div style={{ ...inputStyle, background: '#F1F5F9', color: f.current ? '#1E293B' : '#94A3B8' }}>
+                {f.current ? String(f.current) : '(None)'}
+              </div>
+            </div>
+            <div>
+              <div style={sideLabel}>Proposed</div>
+              {input}
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <div>
         <label style={labelStyle}>{f.label}</label>
