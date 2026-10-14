@@ -67,14 +67,14 @@ export function alignedRowStyle(row) {
  *
  * The Vertical CDM column shows the account's own CDM when the Target
  * Accounts list names one (`targetCdmFor`), over whoever Coverage lists
- * against the vertical. CDMs aligned still reads the vertical's Coverage
+ * against the vertical - unless that CDM is you (see verticalCdmFor). CDMs aligned still reads the vertical's Coverage
  * names: it is about the other pod, whoever owns the account.
  */
 export function withTierAndAlignment(records, { prospects = [], targetTierFor = null, targetCdmFor = null, cdmName = '' } = {}) {
   return (Array.isArray(records) ? records : []).map((r) => {
     const tier = accountTier(r, prospects, targetTierFor);
     const people = String(r?.[OPP_SALESPERSON_KEY] || '').split(',').map(n => n.trim()).filter(Boolean);
-    const vertCdm = verticalCdmFor(accountTargetCdm(r, prospects, targetCdmFor), people.join(', '));
+    const vertCdm = verticalCdmFor(accountTargetCdm(r, prospects, targetCdmFor), people.join(', '), { cdmName });
     const ownVertical = !!cdmName && people.some(n => matchesCdm(n, cdmName));
     return {
       ...r,
@@ -89,9 +89,18 @@ export function withTierAndAlignment(records, { prospects = [], targetTierFor = 
  * The Vertical CDM cell: the CDM the Target Accounts list names for the
  * account when there is one, else whoever Opps > Coverage lists against
  * the vertical. Shared by New Opps and PE Monthly.
+ *
+ * Except when the account's CDM is you (`cdmName`). The column is there to
+ * say who in another pod is already in on the deal, and naming yourself
+ * says nothing - Pursuit Aerospace read "Dan Baldauf" when the person to
+ * align with was Aerospace's CDM. So for your own accounts it shows the
+ * vertical's Coverage names instead, blank when Coverage has nobody.
  */
-export function verticalCdmFor(accountCdm, coverageNames) {
-  return String(accountCdm ?? '').trim() || String(coverageNames ?? '').trim();
+export function verticalCdmFor(accountCdm, coverageNames, { cdmName = '' } = {}) {
+  const account = String(accountCdm ?? '').trim();
+  const coverage = String(coverageNames ?? '').trim();
+  if (account && cdmName && matchesCdm(account, cdmName)) return coverage;
+  return account || coverage;
 }
 
 function escapeHtml(s) {

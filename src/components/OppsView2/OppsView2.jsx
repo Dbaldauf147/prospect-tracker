@@ -18913,7 +18913,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           </div>
           <div style={{ padding: '0 0 0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
             The PE overlap deals from the Keith agenda: every Private Equity or Portfolio Company opp at Stage 3 (Lead) or later that is still open, furthest along first.
-            CDM is who the Target Accounts list names for the company (click Map on a blank one to map the company to its Targets list row). Vertical CDM is that same account CDM when the Targets list names one, else who Opps &gt; Coverage lists against the deal's vertical, so you can see where another pod is already in. Green rows are aligned with the other CDM; grey rows have nothing to align (CDMs aligned is N/A: not on the tier list, or your own vertical). The Outlook draft carries this table with the same colours.
+            CDM is who the Target Accounts list names for the company (click Map on a blank one to map the company to its Targets list row). Vertical CDM is that same account CDM when the Targets list names someone other than you, else who Opps &gt; Coverage lists against the deal's vertical, so you can see where another pod is already in. Green rows are aligned with the other CDM; grey rows have nothing to align (CDMs aligned is N/A: not on the tier list, or your own vertical). The Outlook draft carries this table with the same colours.
           </div>
           {loading && !data ? (
             <div className={styles.loading}>Loading...</div>
