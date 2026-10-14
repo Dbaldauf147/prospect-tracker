@@ -424,112 +424,8 @@ function getOrgKey(company) {
   return `orgchart-${(company || '').toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 }
 
-function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, reportsTo = {}, zoomCompanyId = '', searchRun = {}, onToggleSearchRun }) {
+function OrgChart({ contacts, onEditContact, zoomCompanyId = '', searchRun = {}, onToggleSearchRun }) {
   const idOf = (c) => String(c.id || c.vid || c.email || '');
-
-  // Build a parent→children map using the full contact set (not per-bucket).
-  const byId = new Map(contacts.map(c => [idOf(c), c]));
-  const childrenByParent = new Map();
-  const hasManager = new Set();
-  for (const c of contacts) {
-    const cid = idOf(c);
-    const mgrs = (reportsTo[c.id || c.vid] || []).map(String);
-    const firstMgrInSet = mgrs.find(m => byId.has(m));
-    if (firstMgrInSet) {
-      hasManager.add(cid);
-      if (!childrenByParent.has(firstMgrInSet)) childrenByParent.set(firstMgrInSet, []);
-      childrenByParent.get(firstMgrInSet).push(c);
-    }
-  }
-  // Roots: contacts with no manager in the set AND who have at least one report.
-  // Orphans: contacts with no manager in the set AND no reports either.
-  const roots = [];
-  const orphans = [];
-  for (const c of contacts) {
-    const cid = idOf(c);
-    if (hasManager.has(cid)) continue;
-    const hasReports = (childrenByParent.get(cid) || []).length > 0;
-    const isDM = contactHasTag(c, 'decision maker');
-    if (hasReports || isDM) roots.push(c);
-    else orphans.push(c);
-  }
-
-  function ContactCard({ contact }) {
-    const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || '-';
-    const isDM = contactHasTag(contact, 'decision maker');
-    const isDeleting = deletingContact === (contact.id || contact.vid);
-    const matchedBuckets = BUCKETS.filter(b => getContactTags(contact).includes(b.tag));
-
-    return (
-      <div
-        onClick={() => onEditContact && onEditContact(contact)}
-        style={{
-          background: isDM ? '#FEFCE8' : '#fff',
-          border: isDM ? '2px solid #F59E0B' : '1px solid #E2E8F0',
-          borderRadius: '6px',
-          padding: '0.45rem 0.55rem',
-          position: 'relative',
-          cursor: 'pointer',
-          minWidth: '180px',
-          maxWidth: '240px',
-        }}
-        onMouseEnter={e => e.currentTarget.style.background = '#F8FAFC'}
-        onMouseLeave={e => e.currentTarget.style.background = isDM ? '#FEFCE8' : '#fff'}
-      >
-        {onDeleteContact && (
-          <button
-            onClick={e => { e.stopPropagation(); onDeleteContact(contact); }}
-            disabled={isDeleting}
-            title="Delete contact"
-            style={{ position: 'absolute', top: '3px', right: '3px', background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.78rem', cursor: 'pointer', lineHeight: 1, padding: '1px 3px', zIndex: 1 }}
-            onMouseEnter={e => e.currentTarget.style.color = '#EF4444'}
-            onMouseLeave={e => e.currentTarget.style.color = '#CBD5E1'}
-          >{isDeleting ? '…' : '×'}</button>
-        )}
-        <div style={{ fontWeight: 700, fontSize: '0.74rem', color: '#1E293B', paddingRight: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-          {name}
-          {isDM && <span style={{ fontSize: '0.5rem', fontWeight: 700, color: '#92400E', background: '#FDE68A', padding: '0px 4px', borderRadius: '3px', flexShrink: 0 }}>DM</span>}
-        </div>
-        {contact.jobtitle && (
-          <div style={{ fontSize: '0.62rem', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '1px' }}>{contact.jobtitle}</div>
-        )}
-        {matchedBuckets.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', marginTop: '4px' }}>
-            {matchedBuckets.map(b => (
-              <span key={b.key} style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.55rem', fontWeight: 700, background: b.headerBg, color: b.headerColor, whiteSpace: 'nowrap' }}>
-                {b.label}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  const rendered = new Set();
-  function renderNode(c) {
-    const id = idOf(c);
-    if (rendered.has(id)) return null;
-    rendered.add(id);
-    const kids = childrenByParent.get(id) || [];
-    return (
-      <div key={id}>
-        <ContactCard contact={c} />
-        {kids.length > 0 && (
-          <div style={{ marginLeft: 12, marginTop: 0, borderLeft: '2px solid #94A3B8' }}>
-            {kids.map(k => (
-              <div key={idOf(k)} style={{ display: 'flex', alignItems: 'flex-start', marginTop: '0.4rem' }}>
-                <div style={{ width: 10, height: 16, borderBottom: '2px solid #94A3B8', flexShrink: 0 }} />
-                <div style={{ flex: 1, paddingLeft: 4, minWidth: 0 }}>
-                  {renderNode(k)}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
 
   // Coverage check: which buckets currently have no contacts tagged?
   const missingBuckets = BUCKETS.filter(b => !contacts.some(c => getContactTags(c).includes(b.tag)));
@@ -637,32 +533,6 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
           </div>
         </div>
       )}
-      <div style={{ display: 'flex', gap: '1rem', overflowX: 'auto', alignItems: 'flex-start', paddingBottom: '0.25rem' }}>
-      {/* Main hierarchy — roots and their direct/indirect reports. Peer roots render
-          side-by-side so multiple independent decision makers sit next to each other
-          instead of stacked vertically. */}
-      <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '0.75rem 1rem' }}>
-        {roots.length === 0 && orphans.length === contacts.length ? (
-          <div style={{ fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>
-            No reporting relationships set. Open a contact and pick a manager under &quot;Reports To&quot; to build the tree.
-          </div>
-        ) : roots.map(r => (
-          <div key={idOf(r)} style={{ flex: '0 0 auto' }}>{renderNode(r)}</div>
-        ))}
-      </div>
-
-      {/* Orphans — contacts with no relationships, shown off to the side */}
-      {orphans.length > 0 && (
-        <div style={{ flex: '0 0 240px', borderLeft: '1px solid var(--color-border-light)', paddingLeft: '0.75rem' }}>
-          <div style={{ fontSize: '0.6rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.35rem' }}>
-            Unlinked
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-            {orphans.map(c => <ContactCard key={idOf(c)} contact={c} />)}
-          </div>
-        </div>
-      )}
-      </div>
       </>)}
     </div>
   );
@@ -14075,10 +13945,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               {contactView === 'orgchart' ? (
                 <OrgChart
                   contacts={companyContacts}
-                  onDeleteContact={handleDeleteContact}
-                  deletingContact={deletingContact}
                   onEditContact={setEditingContact}
-                  reportsTo={settings.contactReportsTo || {}}
                   zoomCompanyId={String(fields.zoomCompanyId || '').trim()}
                   searchRun={fields.dmSearchRun || {}}
                   onToggleSearchRun={(key, on) => setFields(prev => {
