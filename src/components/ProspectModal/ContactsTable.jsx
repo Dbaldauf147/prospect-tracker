@@ -76,7 +76,9 @@ const NO_EMAIL_COUNTS = () => ({ sent: 0, received: 0 });
 const NONE_EXCLUDED = new Set();
 const defaultSourceOf = (c) => c._source || 'hubspot';
 
-export function ContactsTable({
+// One roster grid. ContactsTable below draws one of these for the
+// company's own people and, when it has an owner, a second for the owner's.
+function RosterTable({
   contacts,
   company,
   settings,
@@ -95,6 +97,7 @@ export function ContactsTable({
   // sections under it stay in reach; a popup with nothing else to show can
   // give it more.
   height = 440,
+  emptyMessage = 'No contacts for this company yet.',
 }) {
   // Without a selection to write to there is no select column, and without
   // an exclude or delete handler there is no Actions column: a read-only
@@ -544,8 +547,70 @@ export function ContactsTable({
         variableRowHeight
         settings={settings}
         updateSettings={updateSettings}
-        emptyMessage="No contacts for this company yet."
+        emptyMessage={emptyMessage}
       />
+    </div>
+  );
+}
+
+const sectionHeadStyle = {
+  display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap',
+  margin: '0 0 0.3rem', fontSize: '0.7rem', fontWeight: 700, color: '#475569',
+  textTransform: 'uppercase', letterSpacing: '0.04em',
+};
+const sectionNoteStyle = { fontWeight: 500, textTransform: 'none', letterSpacing: 0, color: '#94A3B8' };
+
+// The company's roster, split in two when the company has an owner: its
+// own people first, then the people at whoever owns it (the PE firm in
+// its PE Owner field, or the parent company on its divisions chart). Both
+// matter on a call, but they are different conversations, and mixed into
+// one list a Blackstone partner reads as one of the portfolio company's
+// own staff.
+//
+// Two grids rather than one with a divider row: each keeps its own sort,
+// filters and select-all, and they share a tableId so a column the user
+// hides or moves goes the same way in both.
+export function ContactsTable({
+  contacts,
+  ownerContacts = [],
+  owners = [],
+  height = 440,
+  ...rest
+}) {
+  if (ownerContacts.length === 0) {
+    return <RosterTable contacts={contacts} height={height} {...rest} />;
+  }
+  // With two grids stacked, each sizes to what it holds, up to the same
+  // cap, so two contacts don't sit in a box built for forty.
+  const fit = (n) => Math.min(height, 130 + Math.max(n, 1) * 42);
+  const ownerHeight = fit(ownerContacts.length);
+  const directHeight = fit(contacts.length);
+  const ownerNames = owners.map(o => o.name).filter(Boolean);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+      <div>
+        <div style={sectionHeadStyle}>
+          Direct contacts ({contacts.length})
+          <span style={sectionNoteStyle}>people at {rest.company || 'this company'}</span>
+        </div>
+        <RosterTable contacts={contacts} height={directHeight} {...rest} />
+      </div>
+      <div>
+        <div style={sectionHeadStyle}>
+          Owner contacts ({ownerContacts.length})
+          {ownerNames.length > 0 && (
+            <span style={sectionNoteStyle}>
+              {owners.map(o => `${o.name} (${o.kind})`).join(', ')}
+            </span>
+          )}
+        </div>
+        <RosterTable
+          contacts={ownerContacts}
+          height={ownerHeight}
+          emptyMessage="No contacts at the owner."
+          {...rest}
+        />
+      </div>
     </div>
   );
 }
