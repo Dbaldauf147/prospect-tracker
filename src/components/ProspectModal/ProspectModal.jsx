@@ -9306,6 +9306,26 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               updateSettingsPath={updateSettingsPath}
             />
           ))}
+          {/* A Portfolio Company with nobody in PE Owner/Parent Company: the
+              owner is what ties it to its PE firm (PE Portfolio, the firm's
+              popup, the owner-based contact matching), so a blank one is a
+              gap worth flagging. Goes away as soon as an owner is filled in. */}
+          {String(fields.type || '').trim() === 'Portfolio Company' && splitPeOwners(fields.peOwner).length === 0 && (
+            <div
+              data-portco-missing-owner
+              style={{
+                marginBottom: '0.8rem', padding: '0.4rem 0.8rem',
+                background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 6,
+                display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.35rem 0.7rem',
+              }}
+            >
+              <span style={{ fontSize: '0.95rem', lineHeight: 1 }}>⚠️</span>
+              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#92400E', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>No PE owner</span>
+              <span style={{ fontSize: '0.75rem', color: '#78350F', minWidth: 0 }}>
+                This company is a Portfolio Company but its PE Owner/Parent Company field is blank. Fill in who owns it on the Company tab.
+              </span>
+            </div>
+          )}
           {(isNew || activeTab === 'company') && (
           <div className={styles.grid}>
             <div className={styles.sectionHead}>Identity</div>
