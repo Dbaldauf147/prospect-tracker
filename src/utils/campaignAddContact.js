@@ -63,3 +63,23 @@ export function addContactToCampaign(campaign, contact) {
     campaign: { ...campaign, contacts, removedEmails, ...deriveCounts(contacts) },
   };
 }
+
+/**
+ * Several contacts at once (the company popup's bulk add), one at a time
+ * through addContactToCampaign so each is held to the same rules and two
+ * selected people sharing an address go on once.
+ * Returns { campaign, added, already, skipped }: the updated campaign and
+ * the contacts that went into each outcome (skipped = no email, or a
+ * colleague).
+ */
+export function addContactsToCampaign(campaign, contacts) {
+  let current = campaign;
+  const added = [], already = [], skipped = [];
+  for (const contact of contacts || []) {
+    const r = addContactToCampaign(current, contact);
+    if (r.status === 'added') { current = r.campaign; added.push(contact); }
+    else if (r.status === 'already') already.push(contact);
+    else skipped.push(contact);
+  }
+  return { campaign: current, added, already, skipped };
+}

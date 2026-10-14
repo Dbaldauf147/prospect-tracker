@@ -1,6 +1,6 @@
 // Assertion tests for adding one contact to a saved campaign from the
 // contact popup. Run: node scripts/campaignAddContact.test.mjs
-import { addContactToCampaign, campaignHasContact } from '../src/utils/campaignAddContact.js';
+import { addContactToCampaign, addContactsToCampaign, campaignHasContact } from '../src/utils/campaignAddContact.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -39,6 +39,22 @@ check('not an email', addContactToCampaign(camp, { email: 'nope' }).status, 'no-
 check('colleagues left out', addContactToCampaign(camp, { email: 'dan@se.com' }).status, 'internal');
 check('empty campaign', addContactToCampaign({ subject: 'x' }, { email: 'a@b.co' }).campaign.contacts.length, 1);
 check('has contact', [campaignHasContact(camp, 'Bob@x.com'), campaignHasContact(camp, 'zed@x.com')], [true, false]);
+
+// Several at once.
+const many = addContactsToCampaign(camp, [
+  { email: 'fay@x.com', name: 'Fay' },
+  { email: 'ann@x.com', name: 'Ann' },
+  { email: 'FAY@x.com', name: 'Fay again' },
+  { email: '', name: 'No Email' },
+  { email: 'dan@se.com', name: 'Dan' },
+  { email: 'gus@x.com', name: 'Gus' },
+]);
+check('bulk added', many.added.map(c => c.name), ['Fay', 'Gus']);
+check('bulk already, incl. a duplicate in the same batch', many.already.map(c => c.name), ['Ann', 'Fay again']);
+check('bulk skipped', many.skipped.map(c => c.name), ['No Email', 'Dan']);
+check('bulk roster and counts', [many.campaign.contacts.length, many.campaign.totalContacts], [4, 4]);
+check('bulk input untouched', camp.contacts.length, 2);
+check('bulk nothing to add keeps the campaign', addContactsToCampaign(camp, [{ email: 'ann@x.com' }]).campaign, camp);
 
 console.log(`${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
