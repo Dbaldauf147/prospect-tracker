@@ -19,6 +19,7 @@ import { classifyHqCountry, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
 import { parseContactPaste } from '../../utils/contactPaste';
 import { companiesMatch } from '../../utils/listFlags';
 import { contactIsHidden } from '../ProspectModal/contactTags';
+import { ContactsTable } from '../ProspectModal/ContactsTable';
 import { applyTagPresetToContact, presetSummary } from '../../utils/tagPresets';
 import { tagVocabulary } from '../../utils/contactTagReview';
 import styles from './AgendaView.module.css';
@@ -4188,7 +4189,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
               role="dialog"
               aria-modal="true"
               aria-label={`Contacts at ${title}`}
-              style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', width: 'min(720px, 100%)', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}
+              style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', width: 'min(1500px, 96vw)', height: '92vh', display: 'flex', flexDirection: 'column' }}
               onClick={e => e.stopPropagation()}
             >
               <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
@@ -4215,7 +4216,27 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                 >×</button>
               </div>
               <div style={{ overflowY: 'auto', flex: 1 }}>
-                <div style={{ padding: '0.6rem 1.25rem 0.35rem', fontSize: '0.72rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em' }}>In this batch ({members.length})</div>
+                {/* The HubSpot contacts already at the company, first and in the
+                    company card's own roster table (same columns, widths and
+                    order the user set there), so it reads the way the card
+                    does. Read-only here: no select or delete column. */}
+                <div style={{ padding: '0.6rem 1.25rem 0.35rem', fontSize: '0.72rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Already in HubSpot ({existing.length})</div>
+                {existing.length === 0 ? (
+                  <div style={{ padding: '0.25rem 1.25rem 1rem', fontSize: '0.8rem', color: '#64748B' }}>
+                    {hubspotByEmail.size === 0 ? 'HubSpot contacts have not loaded yet.' : 'No other HubSpot contacts at this company.'}
+                  </div>
+                ) : (
+                  <div style={{ padding: '0 1.25rem 0.5rem' }}>
+                    <ContactsTable
+                      contacts={existing}
+                      company={title}
+                      settings={settings}
+                      updateSettings={updateSettings}
+                      height="min(520px, 55vh)"
+                    />
+                  </div>
+                )}
+                <div style={{ padding: '0.9rem 1.25rem 0.35rem', fontSize: '0.72rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', borderTop: '1px solid var(--color-border)', marginTop: '0.5rem' }}>In this batch ({members.length})</div>
                 {members.length === 0 ? (
                   <div style={{ padding: '1.25rem', fontSize: '0.8rem', color: '#64748B' }}>No contacts left for this company.</div>
                 ) : (
@@ -4259,34 +4280,6 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                             <td style={{ padding: '0.4rem 0.6rem' }}>
                               <button className={styles.rowRemove} onClick={() => removeRows([r.email])} title="Remove row" aria-label={`Remove ${fullName || r.email}`}>×</button>
                             </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                )}
-                <div style={{ padding: '0.9rem 1.25rem 0.35rem', fontSize: '0.72rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', borderTop: '1px solid var(--color-border)', marginTop: '0.5rem' }}>Already in HubSpot ({existing.length})</div>
-                {existing.length === 0 ? (
-                  <div style={{ padding: '0.25rem 1.25rem 1rem', fontSize: '0.8rem', color: '#64748B' }}>
-                    {hubspotByEmail.size === 0 ? 'HubSpot contacts have not loaded yet.' : 'No other HubSpot contacts at this company.'}
-                  </div>
-                ) : (
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', marginBottom: '0.5rem' }}>
-                    <thead>
-                      <tr style={{ textAlign: 'left', color: '#64748B', background: '#F8FAFC' }}>
-                        <th style={{ padding: '0.45rem 0.6rem 0.45rem 1.25rem' }}>Name</th>
-                        <th style={{ padding: '0.45rem 0.6rem' }}>Job title</th>
-                        <th style={{ padding: '0.45rem 0.6rem' }}>Email</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {existing.map(c => {
-                        const fullName = `${c.firstname || ''} ${c.lastname || ''}`.trim();
-                        return (
-                          <tr key={c.id || c.vid || c.email} style={{ borderTop: '1px solid var(--color-border)' }}>
-                            <td style={{ padding: '0.4rem 0.6rem 0.4rem 1.25rem', fontWeight: 600, color: 'var(--color-text)' }}>{fullName || '-'}</td>
-                            <td style={{ padding: '0.4rem 0.6rem', color: '#334155' }}>{c.jobtitle || '-'}</td>
-                            <td style={{ padding: '0.4rem 0.6rem', color: '#334155', fontFamily: 'monospace', fontSize: '0.74rem', wordBreak: 'break-all' }}>{c.email || '-'}</td>
                           </tr>
                         );
                       })}

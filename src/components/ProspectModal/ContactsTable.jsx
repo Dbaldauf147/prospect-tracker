@@ -68,22 +68,40 @@ const cellPhoneOf = (c) => c.mobilephone || c.mobile_phone || '';
 const bucketsOf = (c) => BUCKETS.filter(b => getContactTags(c).includes(b.tag));
 const tagScoreOf = (c, settings) => tagReviewScore(c, (settings?.contactTagReview || {})[String(c.id || c.vid || '')]);
 
+// Fallbacks for a caller that shows the roster without the company card
+// around it (the Bulk Add Contacts company popup): no Activity tab to count
+// emails from, nothing excluded, and _source read straight off the contact.
+const NO_EMAIL_COUNTS = () => ({ sent: 0, received: 0 });
+const NONE_EXCLUDED = new Set();
+const defaultSourceOf = (c) => c._source || 'hubspot';
+
 export function ContactsTable({
   contacts,
   company,
   settings,
   updateSettings,
-  bulkSelected,
+  bulkSelected = NONE_EXCLUDED,
   setBulkSelected,
-  excludedContactIds,
+  excludedContactIds = NONE_EXCLUDED,
   onExclude,
   onUnexclude,
   onEditContact,
   onDeleteContact,
   deletingContact,
-  emailCountsFor,
-  sourceOf,
+  emailCountsFor = NO_EMAIL_COUNTS,
+  sourceOf = defaultSourceOf,
+  // The roster's fixed height. The company card caps it at 440 so the
+  // sections under it stay in reach; a popup with nothing else to show can
+  // give it more.
+  height = 440,
 }) {
+  // Without a selection to write to there is no select column, and without
+  // an exclude or delete handler there is no Actions column: a read-only
+  // roster (the Bulk Add popup) shows the same table minus the controls it
+  // has nothing to wire up to. Same tableId either way, so the column
+  // layout the user set on the company card carries over.
+  const selectable = typeof setBulkSelected === 'function';
+  const actionable = typeof onExclude === 'function' || typeof onDeleteContact === 'function';
   // The rows currently passing the table's own column filters, so the
   // select-all box ticks exactly what the user can see. Null until the
   // table reports, and while a filter is off nothing distinguishes the
@@ -97,7 +115,7 @@ export function ContactsTable({
   const someSelected = selectableIds.some(id => bulkSelected.has(id));
 
   const columns = useMemo(() => [
-    {
+    selectable && {
       key: '__select__',
       // Named rather than blank because the Columns menu reads its list
       // off these labels, and it prints the label itself: a checkbox node
@@ -422,7 +440,7 @@ export function ContactsTable({
           : dash;
       },
     },
-    {
+    actionable && {
       // Named rather than blank: the header is the only place the Columns
       // menu can read a name off, and two locked "(unnamed)" rows in that
       // list tell nobody anything.
@@ -436,7 +454,7 @@ export function ContactsTable({
         const isExcluded = excludedContactIds.has(cid);
         return (
           <span style={{ display: 'inline-block', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
-            {cid && (isExcluded ? (
+            {cid && onExclude && (isExcluded ? (
               <button
                 onClick={e => { e.stopPropagation(); onUnexclude(cid); }}
                 title="Re-add this contact to this company"
@@ -451,19 +469,19 @@ export function ContactsTable({
                 onMouseLeave={e => { e.currentTarget.style.color = '#CBD5E1'; }}
               >⊘</button>
             ))}
-            <button
+            {onDeleteContact && <button
               onClick={e => { e.stopPropagation(); onDeleteContact(c); }}
               disabled={deletingContact === (c.id || c.vid)}
               title="Delete contact from HubSpot (permanent)"
               style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.85rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1, fontFamily: 'inherit' }}
               onMouseEnter={e => { e.currentTarget.style.color = '#EF4444'; }}
               onMouseLeave={e => { e.currentTarget.style.color = '#CBD5E1'; }}
-            >{deletingContact === (c.id || c.vid) ? '...' : '×'}</button>
+            >{deletingContact === (c.id || c.vid) ? '...' : '×'}</button>}
           </span>
         );
       },
     },
-  ], [settings, bulkSelected, setBulkSelected, excludedContactIds, onExclude, onUnexclude,
+  ].filter(Boolean), [selectable, actionable, settings, bulkSelected, setBulkSelected, excludedContactIds, onExclude, onUnexclude,
     onDeleteContact, deletingContact, emailCountsFor, sourceOf, company,
     allSelected, someSelected, selectableIds]);
 
@@ -493,7 +511,7 @@ export function ContactsTable({
     // Capped and scrolled, the way the hand-rolled table was: the modal
     // holds several sections and a roster of two hundred people must not
     // push the ones under it off the page.
-    <div style={{ height: 440, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'hidden' }}>
+    <div style={{ height, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'hidden' }}>
       <DataTable
         tableId={TABLE_ID}
         columns={columns}
