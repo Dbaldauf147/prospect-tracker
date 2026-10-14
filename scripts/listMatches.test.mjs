@@ -23,7 +23,8 @@ check('names off the name column', names, ['Acme Corp', 'Acme Holdings Internati
 const sum = (items) => items.map(i => [i.rawName, i.state, Math.round(i.score * 100)]);
 const listMappings = (mapping = {}, dismissed = {}) => ({ listMappings: { 'sbt-list-override': { mapping, dismissed } } });
 
-check('exact match, deduped', sum(buildItems('sbt-list-override', names, 'Acme', listMappings())), [['Acme Corp', 'suggested', 100]]);
+check('exact match first, deduped, then a name it sits inside', sum(buildItems('sbt-list-override', names, 'Acme', listMappings())),
+  [['Acme Corp', 'suggested', 100], ['Acme Holdings International', 'suggested', 75]]);
 check('nothing for an unrelated company', buildItems('sbt-list-override', names, 'Omega', listMappings()), []);
 
 const zetaKey = 'name::zeta';
@@ -33,6 +34,16 @@ check('row mapped to another company is left alone',
   buildItems('sbt-list-override', names, 'Zeta', listMappings({ [zetaKey]: 'Someone Else' })), []);
 check('dismissed row is left alone',
   buildItems('sbt-list-override', names, 'Zeta', listMappings({}, { [zetaKey]: true })), []);
+
+// Close but not exact: suggested, and never scored as exact.
+const close = ['Marriott International Inc', 'Kohls Corp', 'Wal-Mart Stores', 'Brookfeild Asset Mgmt', 'Acne Industries', 'Hilton Grand Vacations'];
+const top = (company) => sum(buildItems('casb-list-override', close, company, {})).slice(0, 1);
+check('one typo in a word', top('Marriot International'), [['Marriott International Inc', 'suggested', 95]]);
+check('apostrophe splitting a word', top("Kohl's"), [['Kohls Corp', 'suggested', 95]]);
+check('hyphen splitting a word', top('Walmart'), [['Wal-Mart Stores', 'suggested', 54]]);
+check('typo in a long word', top('Brookfield Asset Management'), [['Brookfeild Asset Mgmt', 'suggested', 50]]);
+check('short words must match exactly', top('Acme'), []);
+check('a shared first word alone is not enough', top('Hilton Worldwide'), []);
 
 console.log(`${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
