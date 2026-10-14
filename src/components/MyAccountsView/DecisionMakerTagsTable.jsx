@@ -3,7 +3,7 @@
 // account who also carry that tag. Above each tag, how much of Tier 1, 2
 // and 3 has at least one. After them, in amber, the "maybes": decision
 // makers marked Not sure for the tag in the contact popup. They're shown,
-// not counted - the percentages and the Zoom export are confirmed tags only. The matching lives in
+// not counted - the percentages are confirmed tags only. The matching lives in
 // utils/decisionMakerTagMatrix.js; this file lays it out.
 //
 // It is a DataTable, so the columns can be renamed, reordered, resized,
@@ -13,13 +13,14 @@
 // Zoom Export by Tag mirrors the My Accounts tab's Zoom Export (same four
 // columns, same Inside Sales rows on screen) cut to one tag: the accounts
 // with no decision maker carrying it yet, i.e. the gaps behind that
-// column's percentages, ready to take into ZoomInfo.
+// column's percentages, plus any account with somebody marked Not sure for
+// it, ready to take into ZoomInfo.
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { Badge } from '../common/Badge';
 import { statusColor } from '../../utils/formatters';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
-import { tagMatrixColumns, tagColumnKey, tagMatrixRows, tagMatrixCoverage } from '../../utils/decisionMakerTagMatrix';
+import { tagMatrixColumns, tagColumnKey, tagMatrixRows, tagMatrixCoverage, zoomExportRowsForTag } from '../../utils/decisionMakerTagMatrix';
 import { TIERS } from '../../data/enums';
 
 const TIER_INK = { 'Tier 1': '#DC2626', 'Tier 2': '#3B82F6', 'Tier 3': '#F59E0B' };
@@ -57,10 +58,6 @@ function TierCoverage({ coverage }) {
   );
 }
 
-// The Inside Sales rows with nobody in `key`'s column: what one tag's Zoom
-// export holds.
-const zoomRowsFor = (rows, key) => rows.filter(r => r.status === 'Inside Sales' && !(r.byTag[key] || []).length);
-
 // Pick a tag, get its Zoom CSV. Each tag shows how many accounts its file
 // would hold, and a tag with none can't be picked.
 function ZoomByTagPicker({ tags, rows, onPick, onClose }) {
@@ -72,10 +69,10 @@ function ZoomByTagPicker({ tags, rows, onPick, onClose }) {
           <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer' }}>&times;</button>
         </div>
         <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.6rem', lineHeight: 1.4 }}>
-          Downloads the Inside Sales accounts shown here that have no decision maker with the tag yet: Company, Zoom Company ID, Zoom Company Name, Company URL.
+          Downloads the Inside Sales accounts shown here that have no decision maker with the tag yet, or have someone marked Not sure for it: Company, Zoom Company ID, Zoom Company Name, Company URL.
         </div>
         {tags.map(tag => {
-          const n = zoomRowsFor(rows, tagColumnKey(tag)).length;
+          const n = zoomExportRowsForTag(rows, tagColumnKey(tag)).length;
           return (
             <button
               key={tag}
@@ -193,10 +190,10 @@ export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSet
 
   const zoomSource = onScreen || rows;
   function exportTag(tag) {
-    const picked = zoomRowsFor(zoomSource, tagColumnKey(tag));
+    const picked = zoomExportRowsForTag(zoomSource, tagColumnKey(tag));
     setZoomOpen(false);
     if (picked.length === 0) {
-      alert(`Every Inside Sales account shown here already has a decision maker tagged ${tag}.`);
+      alert(`Every Inside Sales account shown here already has a decision maker tagged ${tag}, and nobody marked Not sure for it.`);
       return;
     }
     const slug = tag.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -221,7 +218,7 @@ export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSet
       toolbarActions={onZoomExport ? [{
         key: 'zoom-export-by-tag',
         label: 'Zoom Export by Tag',
-        title: 'Pick a tag and download a CSV of the Inside Sales accounts shown here with no decision maker carrying it: Company, Zoom Company ID, Zoom Company Name, Company URL',
+        title: 'Pick a tag and download a CSV of the Inside Sales accounts shown here with no decision maker carrying it, or with someone marked Not sure for it: Company, Zoom Company ID, Zoom Company Name, Company URL',
         onClick: () => setZoomOpen(true),
       }] : undefined}
       gridLines

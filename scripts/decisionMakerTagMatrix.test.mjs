@@ -17,6 +17,7 @@ import {
   decisionMakersMaybe,
   tagMatrixRows,
   tagMatrixCoverage,
+  zoomExportRowsForTag,
 } from '../src/utils/decisionMakerTagMatrix.js';
 import { makeDecisionMakerLookup } from '../src/utils/decisionMakerCoverage.js';
 
@@ -109,6 +110,25 @@ const contact = (id, company, tags) => ({ id, company, firstname: id, dans_tags:
   check('a maybe-only account is not mapped', tagMatrixCoverage(rows, ['ESG'])[esg]['Tier 1'], { total: 2, mapped: 1, pct: 50 });
   check('rows without a review still have an empty maybe list',
     tagMatrixRows(accounts, makeDecisionMakerLookup(contacts), ['ESG'])[1].maybeByTag[esg], []);
+}
+
+// --- Zoom export by tag ---------------------------------------------------
+// The gaps, plus any account with a Not sure for the tag even beside a
+// confirmed decision maker. Inside Sales only.
+{
+  const k = tagColumnKey('Solar');
+  const row = (company, status, confirmed, maybe) => ({ company, status, byTag: { [k]: confirmed }, maybeByTag: { [k]: maybe } });
+  const rows = [
+    row('Gap', 'Inside Sales', [], []),
+    row('OnlyMaybe', 'Inside Sales', [], [{ id: 1 }]),
+    row('Confirmed', 'Inside Sales', [{ id: 2 }], []),
+    row('ConfirmedAndMaybe', 'Inside Sales', [{ id: 3 }], [{ id: 4 }]),
+    row('ClientGap', 'Client', [], []),
+    row('ClientMaybe', 'Client', [{ id: 5 }], [{ id: 6 }]),
+    { company: 'NoMaybeMap', status: 'Inside Sales', byTag: { [k]: [{ id: 7 }] } },
+  ];
+  check('zoom export: gaps and Not sure, Inside Sales only',
+    zoomExportRowsForTag(rows, k).map(r => r.company), ['Gap', 'OnlyMaybe', 'ConfirmedAndMaybe']);
 }
 
 console.log(`${passed} passed, ${failed} failed`);
