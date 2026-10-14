@@ -1,9 +1,11 @@
-// The company size numbers the My Accounts "Company Data" subtab tracks:
+// The company data the My Accounts "Company Data" subtab tracks (the size
+// numbers plus the ZoomInfo id / name and the company's website):
 // which accounts have them, an export of the ones that don't, and a paste
 // that writes the filled-in numbers back onto the company records.
 //
-// The same fields, under the same names, as the company popup's Scale
-// section. Pure, so the paste rules can be pinned without a browser
+// The number fields are the company popup's Scale section, under the same
+// names; the text fields (type: 'text') are the same record keys Table View
+// and the Zoom Info tab read and write. Pure, so the paste rules can be pinned without a browser
 // (scripts/companyDataFields.test.mjs).
 
 export const COMPANY_DATA_FIELDS = [
@@ -12,7 +14,12 @@ export const COMPANY_DATA_FIELDS = [
   { key: 'numberOfMeters', label: 'Meters', aliases: ['meters', 'meter count', '# meters', 'number of meters', 'numberofmeters'] },
   { key: 'equipmentCount', label: 'Equipment', aliases: ['equipment', 'equipment count', '# equipment', 'equipmentcount'] },
   { key: 'annualMwh', label: 'Electric MWh', aliases: ['electric mwh', 'mwh', 'annual mwh', 'electricity mwh', 'annualmwh'] },
+  { key: 'zoomCompanyId', label: 'Zoom Company ID', type: 'text', aliases: ['zoom company id', 'zoom id', 'zoominfo company id', 'zoominfo id', 'zoomcompanyid'] },
+  { key: 'zoomCompanyName', label: 'Zoom Company Name', type: 'text', aliases: ['zoom company name', 'zoom name', 'zoominfo company name', 'zoominfo name', 'zoomcompanyname'] },
+  { key: 'website', label: 'Company URL', type: 'text', aliases: ['company url', 'url', 'website', 'company website', 'web site', 'homepage'] },
 ];
+
+export const isTextField = (f) => f?.type === 'text';
 
 // A value counts as there when it is a real number. 0 is an answer (a
 // company with no meters of its own); blank, null and junk are not.
@@ -22,8 +29,21 @@ export function hasValue(v) {
   return Number.isFinite(n);
 }
 
+// A text field is there when it has something other than spaces.
+export function fieldHasValue(field, v) {
+  if (isTextField(field)) return String(v ?? '').trim() !== '';
+  return hasValue(v);
+}
+
+// The record's value for a field, normalised: a number, a trimmed string,
+// or null when it isn't there.
+export function fieldValue(field, v) {
+  if (!fieldHasValue(field, v)) return null;
+  return isTextField(field) ? String(v).trim() : Number(v);
+}
+
 export function missingFields(record, fields = COMPANY_DATA_FIELDS) {
-  return fields.filter(f => !hasValue(record?.[f.key])).map(f => f.key);
+  return fields.filter(f => !fieldHasValue(f, record?.[f.key])).map(f => f.key);
 }
 
 // "10,000", " $1,200 ", "3.5" -> numbers. Blank -> null (nothing to write).
@@ -55,6 +75,14 @@ export function mapHeaders(headers, fields = COMPANY_DATA_FIELDS) {
   return out;
 }
 
+// A pasted cell for a field: text fields take the trimmed text (blank or a
+// lone dash writes nothing), number fields go through parseCount.
+export function parseFieldCell(field, raw) {
+  if (!isTextField(field)) return parseCount(raw);
+  const s = String(raw ?? '').trim();
+  return s === '' || s === '-' ? null : s;
+}
+
 // Read a paste (tab-separated, as Excel copies it, with a header row) into
 // the writes it asks for.
 //
@@ -67,7 +95,7 @@ export function mapHeaders(headers, fields = COMPANY_DATA_FIELDS) {
 // newer edit.
 //
 // Returns {
-//   updates:   [{ id, company, patch: { key: number }, changes: [{ key, from, to }] }],
+//   updates:   [{ id, company, patch: { key: value }, changes: [{ key, from, to }] }],
 //   skipped:   [{ company, key, from, to }]   would overwrite, overwrite off
 //   unmatched: [company text]                 no record found
 //   invalid:   [{ company, label, value }]    not a number
@@ -102,12 +130,13 @@ export function planCompanyDataPaste(text, records, { overwrite = false, fields 
       continue;
     }
     for (const [key, col] of fieldCols) {
-      const label = fields.find(f => f.key === key)?.label || key;
+      const field = fields.find(f => f.key === key);
+      const label = field?.label || key;
       const raw = row[col];
-      const value = parseCount(raw);
+      const value = parseFieldCell(field, raw);
       if (value === null) continue;
       if (Number.isNaN(value)) { out.invalid.push({ company: rec.company, label, value: String(raw).trim() }); continue; }
-      const from = hasValue(rec[key]) ? Number(rec[key]) : null;
+      const from = fieldValue(field, rec[key]);
       if (from === value) continue;
       if (from !== null && !overwrite) { out.skipped.push({ company: rec.company, key, label, from, to: value }); continue; }
       let u = updatesById.get(rec.id);

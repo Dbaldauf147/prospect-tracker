@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
-import { COMPANY_DATA_FIELDS, hasValue, missingFields, planCompanyDataPaste } from '../../utils/companyDataFields';
+import { COMPANY_DATA_FIELDS, fieldValue, isTextField, missingFields, planCompanyDataPaste } from '../../utils/companyDataFields';
 import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize';
 
 // My Accounts > Company Data: which of the accounts have their size numbers
-// (sites, utility accounts, meters, equipment, electric MWh) filled in, an
+// (sites, utility accounts, meters, equipment, electric MWh) and their
+// ZoomInfo id / name and company URL filled in, an
 // Excel export of the ones that don't, and a paste box that writes the
 // numbers back once they've been found.
 //
@@ -36,7 +37,7 @@ export function CompanyDataTab({ accounts = [], prospects = [], onUpdate, onSele
       const p = prospectById.get(a.id);
       if (!p) { missing += 1; continue; }
       const row = { id: p.id, company: p.company || a.company || '', tier: a.myTier || a.tier || '', status: p.status || '', cdm: p.cdm || '' };
-      for (const f of COMPANY_DATA_FIELDS) row[f.key] = hasValue(p[f.key]) ? Number(p[f.key]) : null;
+      for (const f of COMPANY_DATA_FIELDS) row[f.key] = fieldValue(f, p[f.key]);
       row.missing = missingFields(row);
       row.missingCount = row.missing.length;
       out.push(row);
@@ -71,9 +72,17 @@ export function CompanyDataTab({ accounts = [], prospects = [], onUpdate, onSele
     { key: 'tier', label: 'Tier', defaultWidth: 80 },
     { key: 'status', label: 'Status', defaultWidth: 120 },
     ...COMPANY_DATA_FIELDS.map(f => ({
-      key: f.key, label: f.label, defaultWidth: 120,
+      key: f.key, label: f.label, defaultWidth: f.key === 'website' ? 200 : isTextField(f) ? 160 : 120,
       getFilterValue: (row) => (row[f.key] === null ? 'Missing' : String(row[f.key])),
-      render: (row) => (row[f.key] === null ? <MissingChip /> : row[f.key].toLocaleString()),
+      render: (row) => {
+        const v = row[f.key];
+        if (v === null) return <MissingChip />;
+        if (f.key === 'website') {
+          const href = /^https?:\/\//i.test(v) ? v : `https://${v}`;
+          return <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: '#1D4ED8' }}>{v}</a>;
+        }
+        return isTextField(f) ? v : v.toLocaleString();
+      },
     })),
     {
       key: 'missingCount', label: 'Missing', defaultWidth: 90,
@@ -97,7 +106,7 @@ export function CompanyDataTab({ accounts = [], prospects = [], onUpdate, onSele
       return o;
     });
     const ws = XLSX.utils.json_to_sheet(data);
-    ws['!cols'] = [{ wch: 22 }, { wch: 40 }, { wch: 9 }, { wch: 16 }, ...COMPANY_DATA_FIELDS.map(() => ({ wch: 16 }))];
+    ws['!cols'] = [{ wch: 22 }, { wch: 40 }, { wch: 9 }, { wch: 16 }, ...COMPANY_DATA_FIELDS.map(f => ({ wch: isTextField(f) ? 28 : 16 }))];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Missing company data');
     sanitizeSheetJsWorkbook(wb);
@@ -129,7 +138,7 @@ export function CompanyDataTab({ accounts = [], prospects = [], onUpdate, onSele
         <button
           type="button"
           onClick={() => setPasteOpen(true)}
-          title="Paste rows copied from the filled-in export to write the numbers onto the companies"
+          title="Paste rows copied from the filled-in export to write the values onto the companies"
           style={{ ...btn, border: '1px solid #2563EB', background: '#EFF6FF', color: '#1D4ED8' }}
         >Paste values</button>
         {noRecord > 0 && (
@@ -208,7 +217,7 @@ function PasteValuesModal({ records, onUpdate, onClose }) {
     setText('');
   }
 
-  const fmt = (v) => (v === null ? 'blank' : Number(v).toLocaleString());
+  const fmt = (v) => (v === null ? 'blank' : typeof v === 'string' ? v : Number(v).toLocaleString());
   const section = { fontSize: '0.72rem', lineHeight: 1.5, padding: '0.45rem 0.6rem', borderRadius: 6 };
 
   return createPortal(
@@ -234,7 +243,7 @@ function PasteValuesModal({ records, onUpdate, onClose }) {
           />
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', color: '#334155' }}>
             <input type="checkbox" checked={overwrite} onChange={e => setOverwrite(e.target.checked)} disabled={applying} />
-            Also replace numbers a company already has (off: only blanks are filled)
+            Also replace values a company already has (off: only blanks are filled)
           </label>
 
           {done && (
@@ -250,7 +259,7 @@ function PasteValuesModal({ records, onUpdate, onClose }) {
             <>
               <div style={{ ...section, background: '#F8FAFC', color: '#334155' }}>
                 <strong>{writes} value{writes === 1 ? '' : 's'}</strong> to write on <strong>{plan.updates.length} compan{plan.updates.length === 1 ? 'y' : 'ies'}</strong>
-                {plan.skipped.length > 0 && <>, {plan.skipped.length} kept because the company already has a number</>}
+                {plan.skipped.length > 0 && <>, {plan.skipped.length} kept because the company already has a value</>}
                 {plan.invalid.length > 0 && <>, {plan.invalid.length} not a number</>}
                 {plan.unmatched.length > 0 && <>, {plan.unmatched.length} row{plan.unmatched.length === 1 ? '' : 's'} with no matching company</>}.
               </div>

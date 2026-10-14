@@ -1,7 +1,7 @@
 // Assertion tests for src/utils/companyDataFields.js, the My Accounts
 // Company Data subtab's missing-value check and paste-back. Plain Node. Run:
 //   node scripts/companyDataFields.test.mjs
-import { hasValue, missingFields, parseCount, mapHeaders, planCompanyDataPaste } from '../src/utils/companyDataFields.js';
+import { hasValue, fieldHasValue, missingFields, parseCount, mapHeaders, planCompanyDataPaste, COMPANY_DATA_FIELDS } from '../src/utils/companyDataFields.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -13,8 +13,12 @@ function eq(actual, expected, name) {
 // --- what counts as missing ------------------------------------------------
 eq([hasValue(0), hasValue('12'), hasValue(null), hasValue(''), hasValue(undefined), hasValue('abc')], [true, true, false, false, false, false],
   '0 is a value, blank / null / junk are not');
-eq(missingFields({ numberOfSites: 10, numberOfAccounts: null, numberOfMeters: 0 }), ['numberOfAccounts', 'equipmentCount', 'annualMwh'],
-  'missing fields, in field order');
+eq(missingFields({ numberOfSites: 10, numberOfAccounts: null, numberOfMeters: 0, zoomCompanyId: '123', website: '  ' }), ['numberOfAccounts', 'equipmentCount', 'annualMwh', 'zoomCompanyName', 'website'],
+  'missing fields, in field order; a blank text field is missing');
+{
+  const idField = COMPANY_DATA_FIELDS.find(f => f.key === 'zoomCompanyId');
+  eq([fieldHasValue(idField, 'abc'), fieldHasValue(idField, ' '), fieldHasValue(idField, null)], [true, false, false], 'any text counts for a text field');
+}
 
 // --- numbers -----------------------------------------------------------------
 eq([parseCount('10,000'), parseCount(' $1,200 '), parseCount('3.5'), parseCount(''), parseCount('-')], [10000, 1200, 3.5, null, null],
@@ -25,6 +29,9 @@ eq([Number.isNaN(parseCount('about 40')), Number.isNaN(parseCount('-5'))], [true
 eq(mapHeaders(['ID', 'Company', 'Sites', 'Utility Accounts', 'Meters', 'Equipment', 'Electric MWh']),
   { company: 1, id: 0, fields: { numberOfSites: 2, numberOfAccounts: 3, numberOfMeters: 4, equipmentCount: 5, annualMwh: 6 } },
   'the export\'s own header row maps back');
+eq(mapHeaders(['Company', 'Zoom Company ID', 'Zoom Company Name', 'Company URL']),
+  { company: 0, id: -1, fields: { zoomCompanyId: 1, zoomCompanyName: 2, website: 3 } },
+  'Zoom Company ID / Name are not taken for the record ID or company columns');
 eq(mapHeaders(['Account Name', '# Sites', 'MWh']).fields, { numberOfSites: 1, annualMwh: 2 }, 'common ways of writing a header');
 
 // --- the paste ---------------------------------------------------------------
@@ -60,6 +67,26 @@ eq(planCompanyDataPaste('a1\t5', records).error !== '', true, 'one line is not a
 eq(planCompanyDataPaste('Company\tNotes\nAcme Corp\thi', records).error.startsWith('No data columns'), true, 'a header with no data column says so');
 eq(planCompanyDataPaste('Sites\tMeters\n4\t5', records).error, 'No Company column found in the header row.', 'no company or id column says so');
 eq(planCompanyDataPaste('ID\tSites\nc3\t9', records).updates.map(u => [u.id, u.patch]), [['c3', { numberOfSites: 9 }]], 'the ID column alone is enough');
+
+{
+  const recs = [
+    { id: 'a1', company: 'Acme Corp', zoomCompanyId: '', website: 'acme.com' },
+    { id: 'b2', company: 'Beta Holdings', zoomCompanyName: 'Beta Holdings LLC' },
+  ];
+  const text = [
+    'Company\tZoom Company ID\tZoom Company Name\tCompany URL',
+    'Acme Corp\t 104567 \tAcme Corporation\twww.acme.com',
+    'Beta Holdings\t-\tBeta Holdings LLC\tbeta.com',
+  ].join('\n');
+  const plan = planCompanyDataPaste(text, recs);
+  eq(plan.updates.map(u => [u.id, u.patch]), [
+    ['a1', { zoomCompanyId: '104567', zoomCompanyName: 'Acme Corporation' }],
+    ['b2', { website: 'beta.com' }],
+  ], 'text cells are trimmed and written as text; a dash or an equal value writes nothing');
+  eq(plan.skipped.map(s => [s.company, s.key, s.from, s.to]), [['Acme Corp', 'website', 'acme.com', 'www.acme.com']],
+    'existing text is not replaced by default');
+  eq(plan.invalid, [], 'text is never "not a number"');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
