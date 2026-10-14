@@ -16,7 +16,7 @@
 // The count on the button comes from this list, so a rule that drifts from
 // the cells shows up as a number nobody can reconcile with the rows.
 import {
-  companyTextEquals, pendingSuggestionActions, summarizeSuggestionActions, TV_SUGGESTION_FIELDS,
+  companyTextEquals, companyRuleKey, groupCompanyMappings, pendingSuggestionActions, summarizeSuggestionActions, TV_SUGGESTION_FIELDS,
 } from '../src/utils/bulkSuggestionActions.js';
 
 let passed = 0, failed = 0;
@@ -195,6 +195,28 @@ check('no reads at all is not a crash', pendingSuggestionActions([row1]), []);
 // The columns, in the order the table shows them.
 check('the Table View columns it covers', TV_SUGGESTION_FIELDS,
   ['website', 'zoomCompanyId', 'zoomCompanyName', 'emailDomain']);
+
+// --- grouping company actions into rules ---------------------------------
+// One raw Company sent to two different companies must not become a rule:
+// saving one after the other is what rewrote the other rows.
+const mappingActions = [
+  { kind: 'company', email: 'a@principal.com', from: 'Principal', to: 'Principal Financial Group' },
+  { kind: 'company', email: 'b@principalam.com', from: 'principal ', to: 'Principal Asset Management' },
+  { kind: 'company', email: 'c@principal.com', from: 'Principal', to: 'Principal Financial Group' },
+  { kind: 'company', email: 'd@lennar.com', from: 'Lennar', to: 'Lennar Corporation' },
+  { kind: 'company', email: 'e@x.com', from: '', to: 'Xylem' },
+  { kind: 'prospect', prospectId: 'p1', field: 'website', value: 'x' },
+];
+check('groups by raw company, one rule only where the target is unambiguous',
+  groupCompanyMappings(mappingActions).map(g => [g.key, g.ruleSafe, g.targets.map(t => `${t.to}:${t.emails.length}`)]),
+  [
+    ['principal', false, ['Principal Financial Group:2', 'Principal Asset Management:1']],
+    ['lennar', true, ['Lennar Corporation:1']],
+    ['', false, ['Xylem:1']],
+  ]);
+check('a casing-only change is not a rule',
+  groupCompanyMappings([{ kind: 'company', email: 'a', from: 'cbre', to: 'CBRE' }])[0].ruleSafe, false);
+check('rule keys ignore case and spacing', companyRuleKey('  Lennar   Corp '), 'lennar corp');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
