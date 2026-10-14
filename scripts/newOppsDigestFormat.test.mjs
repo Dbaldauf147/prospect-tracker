@@ -51,8 +51,8 @@ check('it reads the Vertical CDM withVerticalCoverage fills',
     { Account: 'Unaligned Co', [OPP_SALESPERSON_KEY]: 'Jane Doe' },
     { Account: 'Mine Co', [OPP_SALESPERSON_KEY]: 'Jane Doe' },
   ], { prospects, targetCdmFor, cdmName: 'Dan Baldauf' });
-  check('account CDM replaces the vertical CDM; none falls back to Coverage',
-    out.map(r => r[OPP_SALESPERSON_KEY]), ['Sam Owner', 'Jane Doe', 'Dan Baldauf']);
+  check('account CDM replaces the vertical CDM; none falls back to Coverage; yours shows the vertical\'s',
+    out.map(r => r[OPP_SALESPERSON_KEY]), ['Sam Owner', 'Jane Doe', 'Jane Doe']);
   check('CDMs aligned still reads the vertical\'s Coverage names',
     out.map(r => r[NEW_OPPS_CDMS_ALIGNED_KEY]),
     rows.filter(r => r.Account !== 'Untiered Co').slice(0, 2).map(r => r[NEW_OPPS_CDMS_ALIGNED_KEY]).concat(

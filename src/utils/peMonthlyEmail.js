@@ -81,8 +81,8 @@ export function peMonthlyRows(deals, records = [], salespeopleFor = () => [], { 
     const people = (d.vertical ? (salespeopleFor(d.vertical) || []) : [])
       .map(p => String(p?.name || '').trim()).filter(Boolean);
     // The Vertical CDM column: the account's own CDM (Target Accounts list)
-    // over the vertical's. CDMs aligned still reads the vertical's people.
-    const vertCdm = verticalCdmFor(d.targetCdm, people.join(', '));
+    // over the vertical's, unless the account's CDM is you. CDMs aligned still reads the vertical's people.
+    const vertCdm = verticalCdmFor(d.targetCdm, people.join(', '), { cdmName });
     const ownVertical = !!cdmName && people.some(n => matchesCdm(n, cdmName));
     return {
       id: d.id,

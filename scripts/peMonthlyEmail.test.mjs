@@ -52,6 +52,21 @@ check('the account\'s own CDM beats the vertical\'s', rows[0].Salesperson, 'Dan'
   const noOwner = peMonthlyRows([{ ...deals[0], targetCdm: '' }], records, coverage);
   check('no account CDM: salespeople off Coverage for the vertical', noOwner[0].Salesperson, 'Pat, Lee');
 }
+{
+  // Pursuit Aerospace: your own account, in a vertical another pod covers.
+  // Naming yourself as its Vertical CDM said nothing; the column is there
+  // to name who to align with.
+  const cov = (v) => (v === 'Aerospace' ? [{ name: 'Alexis Nickl' }] : []);
+  const own = peMonthlyRows([
+    { id: 'p', name: 'Pursuit Aerospace', vertical: 'Aerospace', tier: 'Tier 3', targetCdm: 'Dan Baldauf' },
+    { id: 'q', name: 'Orphan Co', vertical: 'Nobody', tier: 'Tier 3', targetCdm: 'Dan Baldauf' },
+    { id: 'r', name: 'Rehlko', vertical: 'Aerospace', tier: 'Tier 2', targetCdm: 'Sam Owner' },
+  ], [], cov, { cdmName: 'Dan Baldauf' });
+  const by = Object.fromEntries(own.map(r => [r.Account, r]));
+  check('your account shows the vertical\'s CDM, not you',
+    ['Pursuit Aerospace', 'Orphan Co', 'Rehlko'].map(a => by[a].Salesperson), ['Alexis Nickl', '', 'Sam Owner']);
+  check('the CDM column still names you', by['Pursuit Aerospace'].CDM, 'Dan Baldauf');
+}
 check('shown as Vertical CDM', PE_MONTHLY_COLUMNS.find(c => c.key === 'Salesperson').label, 'Vertical CDM');
 {
   const cov = (v) => ({ Mine: [{ name: 'Dan Baldauf' }], Shared: [{ name: 'Dan Baldauf' }, { name: 'Pat' }], Theirs: [{ name: 'Pat' }] }[v] || []);
@@ -127,13 +142,15 @@ const pageRows = peMonthlyRows(
   }),
   oppRecords,
   v => salespeopleForVertical(coverageFromSettings(userSettings), v),
+  { cdmName: 'Dan Baldauf' },
 );
 const built = buildPeMonthlyRows({ records: oppRecords, prospects: companies, settings: userSettings, targetAccountsData: targets, cdmName: 'Dan Baldauf' });
 check('buildPeMonthlyRows matches the page', built, pageRows);
 check('and the rows are the PE ones with their details',
   built.map(r => [r.Account, r.Tier, r.CDM, r['PE Owner'], r.Vertical, r.Salesperson, r['Deal Size']]),
   [['Thoma Bravo', 'Tier 1', 'Jo Rep', 'Thoma Bravo', 'Software', 'Jo Rep', ''],
-   ['Kensing Solutions', 'Tier 2', 'Dan Baldauf', 'KKR', 'Chemicals', 'Dan Baldauf', '$120,000']]);
+   // Your own account: Vertical CDM is Chemicals' CDM off Coverage, not you.
+   ['Kensing Solutions', 'Tier 2', 'Dan Baldauf', 'KKR', 'Chemicals', 'Pat Smith', '$120,000']]);
 
 // Posted rows are cut to the email's columns, as strings.
 const clean = sanitizePeMonthlyRows([{ Account: 'A', Tier: 3, evil: '<x>', 'Next Steps': null }, null, 'x']);
