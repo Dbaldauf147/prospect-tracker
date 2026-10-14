@@ -251,13 +251,18 @@ const VERTICAL_COLUMN_KEYWORDS = ['vertical', 'industry', 'sector', 'segment'];
  * header that reads like one. The picked column is one header across the
  * whole workbook, so a sheet that doesn't have it (a Tier 3 tab headed
  * "Industry" beside a Tier 1/2 tab headed "Vertical") falls back to the
- * guess rather than reading blank. Every record carries every header of
- * its sheet (blank cells as ''), so a missing key means a missing column.
+ * guess rather than reading blank. So does a row whose picked cell is
+ * blank: Tier 3 rows leave Vertical empty and keep the vertical under
+ * another header on the same row, and reading only the picked cell left
+ * every mapped Tier 3 company with no vertical to import.
  */
 export function resolveTargetAccountVertical(record, verticalColumn) {
   if (!record) return '';
   const col = String(verticalColumn || '').trim();
-  if (col && Object.prototype.hasOwnProperty.call(record, col)) return String(record[col] ?? '').trim();
+  if (col && Object.prototype.hasOwnProperty.call(record, col)) {
+    const picked = String(record[col] ?? '').trim();
+    if (picked) return picked;
+  }
   // A header that IS one of the words ("Vertical") before one that only
   // contains it ("Sub Vertical").
   const keys = Object.keys(record);
