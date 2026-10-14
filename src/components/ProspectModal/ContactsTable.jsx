@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { sentimentFor, sentimentMark } from '../../utils/contactSentiment';
-import { BUCKETS, contactHasTag, getContactTags } from './contactTags.js';
+import { BUCKETS, contactHasTag } from './contactTags.js';
 import { tagReviewScore } from '../../utils/contactTagReview';
 
 // The company card's contact roster.
@@ -72,7 +72,7 @@ const leadSourceOf = (c, settings) => String((settings?.contactLeadSource || {})
 const notesOf = (c, settings) => (settings?.contactNotes || {})[c.id || c.vid] || c.notes || c.hs_content_membership_notes || c.message || '';
 const linkedinOf = (c) => c.hs_linkedin_url || c.linkedin_url || c.hs_linkedinid || '';
 const cellPhoneOf = (c) => c.mobilephone || c.mobile_phone || '';
-const bucketsOf = (c) => BUCKETS.filter(b => getContactTags(c).includes(b.tag));
+const bucketsOf = (c) => BUCKETS.filter(b => contactHasTag(c, b.tag));
 const tagScoreOf = (c, settings) => tagReviewScore(c, (settings?.contactTagReview || {})[String(c.id || c.vid || '')]);
 
 // Fallbacks for a caller that shows the roster without the company card

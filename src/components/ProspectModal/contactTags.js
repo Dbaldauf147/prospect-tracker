@@ -6,6 +6,8 @@
 // contact filed under Procurement on the org chart, on the roster table and
 // in the five-bucket view is filed there by this one list.
 
+import { tagKey } from '../../utils/contactTagReview.js';
+
 // The five (now six) buckets the org chart groups people into, and the
 // colours a chip for each one carries.
 export const BUCKETS = [
@@ -24,8 +26,12 @@ export function getContactTags(c) {
   return raw.split(';').map(t => t.trim().toLowerCase()).filter(Boolean);
 }
 
+// Spacing is ignored as well as case: HubSpot holds "Efficiency/Renewables"
+// where the bucket list says "Efficiency / Renewables", and an exact match
+// left everybody tagged the HubSpot way out of that bucket.
 export function contactHasTag(c, tag) {
-  return getContactTags(c).includes(tag.toLowerCase());
+  const k = tagKey(tag);
+  return getContactTags(c).some(t => tagKey(t) === k);
 }
 
 export function contactIsHidden(c) {
