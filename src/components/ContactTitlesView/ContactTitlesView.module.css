@@ -822,3 +822,13 @@
 .dmStarredRow .dmTdTitle {
   background: #FFFBEB;
 }
+
+/* The page-wide Not list sits above the persona columns at full width,
+   and keeps its add box showing so an empty list still says how to fill it. */
+.generalNot {
+  max-width: 100%;
+}
+
+.generalNot .addTermInput:placeholder-shown {
+  visibility: visible;
+}
