@@ -84,7 +84,7 @@ import { loadOpps2Newest, bulkSetOppField } from '../../utils/opps2Store';
 import { OPPS2_EXTERNAL_UPDATE_EVENT } from '../../utils/serviceRenameRunner';
 import { companyOverrideUpdate, companyOverridesUpdate } from '../../utils/contactCompanyOverride';
 import { companyPopupTarget } from '../../utils/companyLookup';
-import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites } from '../../utils/companyRenameCascade';
+import { buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, applyListMappingWrites, renameContactTargets } from '../../utils/companyRenameCascade';
 import { countClientsSubtabRename, clientsSubtabRenameTotal, summarizeClientsSubtabRename, applyClientsSubtabRename } from '../../utils/clientsRename';
 import { loadTargetAccountsFromDB, saveTargetAccountsToDB, renameTargetAccountRows, countBlockedAccountRename, renameBlockedAccountName } from '../TargetAccountsView/TargetAccountsView';
 import { planSiteListRename, summarizeSiteListRename, applySiteListRename } from '../MasterSiteListView/siteListRename';
@@ -8511,7 +8511,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       const newKey = cleanNew.toLowerCase();
       const links = settings.companyContactLinks || {};
       const pinnedIds = Array.isArray(links[oldKey]) ? links[oldKey].map(String) : [];
-      const contactTargets = (hubspotContacts || []).filter(c => companiesMatch(c.company, oldName));
+      // Direct contacts only: the owner contacts listed under them keep
+      // their own Company text (renameContactTargets).
+      const contactTargets = renameContactTargets({
+        contacts: hubspotContacts || [], oldName, ownerContacts,
+      });
+      const targetIds = new Set(contactTargets.map(c => String(c.id || c.vid || '')).filter(Boolean));
       const contactCount = contactTargets.length;
 
       // Clients-view subtabs (Deals / Commissions rows, plus the typed
@@ -8667,22 +8672,36 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         try {
           await updateHubspotCache(draft => {
             draft.contacts = draft.contacts.map(c =>
-              companiesMatch(c.company, oldName) ? { ...c, company: cleanNew } : c
+              targetIds.has(String(c.id || c.vid || '')) ? { ...c, company: cleanNew } : c
             );
           });
         } catch (err) { console.warn('Company rename: contact cache update failed', err?.message || err); }
-        // Best-effort: push the rename to HubSpot, which also reassigns each
-        // contact's primary Company association so the CRM stays in sync. On
-        // failure the local override + cache rewrite remain as the fallback.
+        // Best-effort: push the rename to HubSpot. 'relink' points each
+        // contact at a Company record of the new name rather than renaming
+        // the record it is linked to, which would rename it for everyone
+        // else linked there too - an owner's staff sharing the record
+        // included. On failure the local override + cache rewrite remain as
+        // the fallback.
+        //
+        // The first contact may be the one that creates the new-name record.
+        // HubSpot's search takes a few seconds to see it, and every later
+        // relink finds the record by searching, so pause once after a create
+        // rather than have each contact create a duplicate of its own.
+        let waited = false;
         for (const c of contactTargets) {
           const id = c.id || c.vid;
           if (!id) continue;
           try {
-            await apiFetch('/api/hubspot?action=update-contact', {
+            const res = await apiFetch('/api/hubspot?action=update-contact', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ contactId: id, properties: { company: cleanNew } }),
+              body: JSON.stringify({ contactId: id, properties: { company: cleanNew }, companyMode: 'relink' }),
             });
+            const out = await res.json().catch(() => null);
+            if (!waited && out?.companyAssignment?.created) {
+              waited = true;
+              await new Promise(r => setTimeout(r, 5000));
+            }
           } catch { /* fallback already in place */ }
         }
       }

@@ -7,6 +7,7 @@
 // — the page shows the stored string, not the company record's.
 import {
   buildCompanyRenamePlan, planHasWork, summarizeRenamePlan, accountMatchesCompany,
+  renameContactTargets,
 } from '../src/utils/companyRenameCascade.js';
 
 let pass = 0, fail = 0;
@@ -95,6 +96,23 @@ const opps = [
 ok(accountMatchesCompany('iberconsa', 'Iberconsa'), 'matcher: case-insensitive');
 ok(accountMatchesCompany('Iberconsa', 'Iberconsa Inc.'), 'matcher: ignores a corporate suffix');
 ok(!accountMatchesCompany('Iberconsa', 'Some Other Co'), 'matcher: unrelated names do not match');
+
+// ── Contacts a rename moves: the direct ones, never the owner contacts ──
+{
+  const contacts = [
+    { id: '1', company: 'Pursuit Aerospace' },
+    { id: '2', company: 'Pursuit Aerospace Inc.' },
+    // On the Contacts tab's owner list (by id), whatever their Company says.
+    { id: '3', company: 'Pursuit Aerospace' },
+    { vid: '4', company: 'Clayton, Dubilier & Rice' },
+  ];
+  const ids = (list) => list.map(c => c.id || c.vid);
+  eq(ids(renameContactTargets({ contacts, oldName: 'Pursuit Aerospace' })), ['1', '2', '3'],
+    'contacts: no owner contacts, every match moves');
+  eq(ids(renameContactTargets({
+    contacts, oldName: 'Pursuit Aerospace', ownerContacts: [{ id: '3' }, { vid: '4' }],
+  })), ['1', '2'], 'contacts: owner contacts are left alone');
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

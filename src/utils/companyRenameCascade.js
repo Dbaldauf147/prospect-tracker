@@ -23,7 +23,7 @@
 // activity counts already follow a rename on their own — they read the
 // prospect's current name — so they need no migration here.
 import { splitPeOwners, joinPeOwners } from './peOwners.js';
-import { LIST_FLAG_SOURCES } from './listFlags.js';
+import { LIST_FLAG_SOURCES, companiesMatch } from './listFlags.js';
 import { userLsGet, userLsSet } from './userLs.js';
 
 // Mirror of PEPortfolioView's opp-account matcher so the cascade repoints
@@ -210,4 +210,17 @@ export function applyListMappingWrites(plan) {
   for (const w of (plan?.listWrites || [])) {
     try { userLsSet(w.key, JSON.stringify(w.value)); } catch { /* quota etc. — non-fatal */ }
   }
+}
+
+/**
+ * The HubSpot contacts a company rename moves onto the new name: everyone
+ * whose Company text matches the old name, less the owner contacts the
+ * Contacts tab lists under the direct ones (matched by id). Those are a PE
+ * owner's or parent company's staff; they work somewhere else and keep
+ * their own Company text.
+ */
+export function renameContactTargets({ contacts = [], oldName, ownerContacts = [] }) {
+  const idOf = (c) => String(c?.id || c?.vid || '');
+  const ownerIds = new Set(ownerContacts.map(idOf).filter(Boolean));
+  return contacts.filter(c => companiesMatch(c.company, oldName) && !ownerIds.has(idOf(c)));
 }
