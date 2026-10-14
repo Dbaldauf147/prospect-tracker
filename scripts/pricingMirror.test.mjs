@@ -10,7 +10,7 @@
 // let whichever machine signs in last erase the rows the other one had.
 import { readFileSync } from 'node:fs';
 import { mergeMirroredMaps } from '../src/utils/localMirrorSync.js';
-import { PRICING_MIRRORED_KEYS } from '../src/utils/pricingMirroredKeys.js';
+import { PRICING_MIRRORED_KEYS, mergeFeeStructures, mergeFeeBuilderSaved } from '../src/utils/pricingMirroredKeys.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -36,6 +36,33 @@ eq(mergeMirroredMaps({ a: ['Kept'] }, { a: [] }), { a: ['Kept'] },
 eq(mergeMirroredMaps(['esg', 'audit'], ['audit', 'carbon']), ['audit', 'carbon', 'esg'],
   'lists are unioned');
 eq(mergeMirroredMaps({}, { a: true }), { a: true }, 'an empty local map takes the cloud one');
+
+// Fee structures: a service both machines have keeps every structure either
+// built. The plain map merge took the cloud's service whole and dropped the
+// structures only this browser had.
+eq(mergeFeeStructures(
+  { ubm: { structures: [{ id: 's1', name: 'Standard' }, { id: 's2', name: 'Option 2' }], standardId: 's1' }, audit: { structures: [{ id: 'a1' }], standardId: 'a1' } },
+  { ubm: { structures: [{ id: 's1', name: 'Standard (edited)' }, { id: 's3', name: 'Option 3' }], standardId: 's3' }, esg: { structures: [{ id: 'e1' }], standardId: 'e1' } },
+), {
+  ubm: { structures: [{ id: 's1', name: 'Standard (edited)' }, { id: 's3', name: 'Option 3' }, { id: 's2', name: 'Option 2' }], standardId: 's3' },
+  audit: { structures: [{ id: 'a1' }], standardId: 'a1' },
+  esg: { structures: [{ id: 'e1' }], standardId: 'e1' },
+}, 'fee structures from both machines survive, the cloud copy of a shared one wins');
+eq(mergeFeeStructures(
+  { ubm: { structures: [{ id: 's2' }], standardId: 's2' } },
+  { ubm: { structures: [], standardId: null } },
+), { ubm: { structures: [{ id: 's2' }], standardId: 's2' } }, 'an empty cloud service keeps the local standard');
+
+// Fee Builder saved scenarios: every one either side has, the later save winning.
+eq(mergeFeeBuilderSaved(
+  { 'company:acme': { key: 'company:acme', savedAt: 200, name: 'local' }, 'company:beta': { key: 'company:beta', savedAt: 5 } },
+  { 'company:acme': { key: 'company:acme', savedAt: 100, name: 'cloud' }, 'company:gamma': { key: 'company:gamma', savedAt: 7 } },
+), {
+  'company:acme': { key: 'company:acme', savedAt: 200, name: 'local' },
+  'company:beta': { key: 'company:beta', savedAt: 5 },
+  'company:gamma': { key: 'company:gamma', savedAt: 7 },
+}, 'saved scenarios from both machines survive, the later save of a shared one wins');
+eq(PRICING_MIRRORED_KEYS.includes('feeBuilderSaved'), true, 'Fee Builder saved scenarios are synced');
 
 // Hydration at signin only reaches stores it has loaded, so the Pricing keys
 // module has to be on its list.

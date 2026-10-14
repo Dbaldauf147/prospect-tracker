@@ -2350,7 +2350,7 @@ const SERVICES_COMPLETED_KEY = 'servicesCompleted';
 // Fee Builder settings saved per deal (the Save settings button), so the
 // same SIA uploaded again comes back with the same picks: see
 // feeBuilderSaved.js. Own key so it outlives Clear, a new SIA and parser
-// bumps.
+// bumps, and synced to the account (utils/pricingMirroredKeys).
 const FEE_BUILDER_SAVED_KEY = 'feeBuilderSaved';
 // Cost lines left out of a service's price check (the In price check
 // tickbox): { [serviceKey]: [lineItemKey] }, by the line's description so
@@ -2796,6 +2796,7 @@ export function PricingView({ settings } = {}) {
       s2cLineItemTags: setS2cLineItemTags,
       serviceFeeStructures: setServiceFeeStructures,
       servicesCompleted: setServicesCompleted,
+      feeBuilderSaved: (v) => { feeBuilderSavedRef.current = v; setFeeBuilderSaved(v); },
     };
     const reload = async () => {
       for (const key of PRICING_MIRRORED_KEYS) {
@@ -2965,7 +2966,12 @@ export function PricingView({ settings } = {}) {
   function writeFeeBuilderSaved(next) {
     feeBuilderSavedRef.current = next;
     setFeeBuilderSaved(next);
-    dbPut(STORE, next, FEE_BUILDER_SAVED_KEY).catch(err => console.warn('Failed to save Fee Builder settings:', err));
+    mirrorBaselineRef.current[FEE_BUILDER_SAVED_KEY] = JSON.stringify(next ?? null);
+    // Synced to the account like the fee structures (utils/pricingMirroredKeys),
+    // pushed once the record is on disk since the push reads it back from there.
+    dbPut(STORE, next, FEE_BUILDER_SAVED_KEY)
+      .then(() => queuePricingMirrorPush(FEE_BUILDER_SAVED_KEY))
+      .catch(err => console.warn('Failed to save Fee Builder settings:', err));
   }
 
   useEffect(() => {
