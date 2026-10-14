@@ -251,13 +251,6 @@ function TitleSearches({ settings, updateSettings }) {
           Reset to the built-in seven
         </button>
       </div>
-      <div className={styles.blurb}>
-        What each persona is searched by: the scope the search runs against, the title terms to
-        look for, and, where one was worked out, the terms that rule a hit back out. A reference
-        for running the search in HubSpot or ZoomInfo - nothing here reads or changes a contact.
-        Click any name, scope, heading or term to change it; changes save as you type.
-      </div>
-
       <div className={styles.searchRow}>
         <input
           type="text"
@@ -272,6 +265,8 @@ function TitleSearches({ settings, updateSettings }) {
             : `${searches.length} searches, ${total} terms`}
         </span>
       </div>
+
+      <GeneralNot settings={settings} updateSettings={updateSettings} needle={needle} />
 
       {shown.length === 0 ? (
         <div className={styles.empty}>
@@ -714,6 +709,105 @@ function DecisionMakerTitles({ settings, updateSettings }) {
 // The add box at the end of a group. Its own component so the text it is
 // holding belongs to the group it sits in - one piece of state up in the
 // page would put half-typed text in whichever group was touched last.
+// The general Not list: terms that rule a hit out of every search, not just
+// one persona's. Kept apart from the searches in settings.contactTitleGeneralNot
+// so Reset to the built-in seven leaves it alone. Same autosave shape as the
+// searches: a local draft while typing, written after a pause or on blur.
+const GENERAL_NOT_KEY = 'contactTitleGeneralNot';
+
+function GeneralNot({ settings, updateSettings, needle }) {
+  const savedRaw = settings?.[GENERAL_NOT_KEY];
+  const saved = useMemo(
+    () => (Array.isArray(savedRaw) ? savedRaw.filter(t => typeof t === 'string') : []),
+    [savedRaw],
+  );
+  const [draft, setDraft] = useState(null);
+  const terms = draft ?? saved;
+  const [copied, setCopied] = useState(false);
+  const boxRef = useRef(null);
+
+  const pendingRef = useRef(null);
+  const timerRef = useRef(null);
+  const updateRef = useRef(updateSettings);
+  useEffect(() => { updateRef.current = updateSettings; }, [updateSettings]);
+
+  const flush = useCallback(() => {
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    const next = pendingRef.current;
+    pendingRef.current = null;
+    if (next) updateRef.current?.({ [GENERAL_NOT_KEY]: next.map(t => t.trim()).filter(Boolean) });
+  }, []);
+  useEffect(() => flush, [flush]);
+
+  const commit = (next) => {
+    setDraft(next);
+    pendingRef.current = next;
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(flush, 800);
+  };
+
+  function release(e) {
+    if (boxRef.current?.contains(e.relatedTarget)) return;
+    flush();
+    setDraft(null);
+  }
+
+  const add = (value) => {
+    const v = String(value || '').trim();
+    if (v) commit([...terms, v]);
+  };
+  const setAt = (ti, value) => commit(terms.map((t, i) => (i === ti ? value : t)));
+  const removeAt = (ti) => commit(terms.filter((_, i) => i !== ti));
+
+  async function copy() {
+    try {
+      await navigator.clipboard?.writeText(terms.join(', '));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch { /* on screen to select by hand */ }
+  }
+
+  return (
+    <div ref={boxRef} className={`${styles.card} ${styles.generalNot}`} onBlur={release}>
+      <div className={styles.groupHead}>
+        <span className={styles.groupLabelExclude}>Not (applies to every search)</span>
+        <span className={styles.cardCount}>{terms.length} terms</span>
+        <button
+          type="button"
+          className={styles.copyBtn}
+          onClick={copy}
+          title={`Copy these ${terms.length} terms, comma separated, to paste into a search`}
+        >{copied ? 'Copied' : 'Copy'}</button>
+      </div>
+      <div className={styles.terms}>
+        {terms.map((t, ti) => (
+          <span
+            key={ti}
+            className={[styles.termEditExclude, hits(t, needle) ? styles.termHit : ''].filter(Boolean).join(' ')}
+          >
+            <input
+              type="text"
+              className={styles.termInput}
+              value={t}
+              size={inputSize(t)}
+              aria-label="General Not term"
+              onChange={e => setAt(ti, e.target.value)}
+              onBlur={() => { if (!t.trim()) removeAt(ti); }}
+            />
+            <button
+              type="button"
+              className={styles.termX}
+              onClick={() => removeAt(ti)}
+              title={`Remove “${t}”`}
+            >×</button>
+          </span>
+        ))}
+        <AddTerm onAdd={add} />
+      </div>
+    </div>
+  );
+}
+
 function AddTerm({ onAdd }) {
   const [value, setValue] = useState('');
   const submit = () => { onAdd(value); setValue(''); };
