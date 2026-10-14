@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useRef, useEffect, Fragment } from 'react';
+import { useMemo, useState, useCallback, useRef, useEffect, Fragment, lazy, Suspense } from 'react';
 import { useSyncedTablePref, SET_PREF } from '../../hooks/useSyncedTablePref';
 import { writeWorkKey } from '../../utils/mirroredWorkKeys';
 import { apiFetch } from '../../utils/apiFetch';
@@ -23,7 +23,16 @@ import { contactIsHidden } from '../ProspectModal/contactTags';
 import { ContactsTable } from '../ProspectModal/ContactsTable';
 import { applyTagPresetToContact, presetSummary } from '../../utils/tagPresets';
 import { tagVocabulary, planTagEdit } from '../../utils/contactTagReview';
+import { useContactEditSettings } from '../../hooks/useContactEditSettings';
+import { companyPopupTarget } from '../../utils/companyLookup';
 import styles from './AgendaView.module.css';
+
+// The contact popup, for a name clicked in the Company cell's contacts
+// popup. It lives in ProspectModal, the largest module in the app, so it is
+// only fetched when somebody actually opens one.
+const ContactEditModal = lazy(() =>
+  import('../ProspectModal/ProspectModal').then(m => ({ default: m.ContactEditModal })),
+);
 
 const STORAGE_KEY = 'bulk-contacts-cache';
 
@@ -941,6 +950,38 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   const [popupTagDraft, setPopupTagDraft] = useState({ existing: '', batch: '' });
   const [popupTagBusy, setPopupTagBusy] = useState(false);
 
+  // The contact whose popup is open over the company contacts popup: a
+  // HubSpot record, either a row of the "Already in HubSpot" table or a
+  // batch row whose email is already in HubSpot. The popup saves through
+  // HubSpot and the shared cache itself, and hubspotByEmail reloads off the
+  // hubspot-cache-updated event, so nothing here writes back. A `silent`
+  // save is the popup's tag autosave, which must not close it.
+  const [editingContact, setEditingContact] = useState(null);
+  const contactEditSettings = useContactEditSettings({ settings, updateSettings });
+  const saveEditingContact = useCallback((_updated, opts) => { if (!opts?.silent) setEditingContact(null); }, []);
+  const openCompanyFromContact = useCallback((name) => {
+    const target = companyPopupTarget(prospects, name);
+    if (!target || !onSelectProspect) return;
+    setEditingContact(null);
+    setCompanyContacts(null);
+    onSelectProspect(target);
+  }, [prospects, onSelectProspect]);
+  const allHubspotContacts = useMemo(() => [...hubspotByEmail.values()], [hubspotByEmail]);
+  const editCompanyContacts = useMemo(() => {
+    const k = String(editingContact?.company || '').trim().toLowerCase();
+    if (!k) return [];
+    return allHubspotContacts.filter(c => String(c?.company || '').trim().toLowerCase() === k);
+  }, [editingContact, allHubspotContacts]);
+  const editEmailDomains = useMemo(() => {
+    const k = String(editingContact?.company || '').trim().toLowerCase();
+    if (!k) return [];
+    const matched = (prospects || []).find(p => String(p.company || '').trim().toLowerCase() === k);
+    return matched?.emailDomain
+      ? String(matched.emailDomain).split(/[\n;,]+/).map(x => x.trim()).filter(Boolean)
+      : [];
+  }, [editingContact, prospects]);
+  const editCompanyNames = useMemo(() => (prospects || []).map(p => p.company).filter(Boolean), [prospects]);
+
   // Write a patch onto the contacts in the in-page map, so the popup and
   // the grid's status read the change without waiting for a reload.
   const patchHubspotByEmail = (ids, patchFor) => setHubspotByEmail(prev => {
@@ -1586,13 +1627,19 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     });
   }
   // Escape shuts the company contacts popup wherever focus has gone (a
-  // removed row takes its focused × button with it).
+  // removed row takes its focused × button with it). With a contact's popup
+  // open on top of it, Escape shuts that one first, since it has no Escape
+  // of its own and would otherwise be left floating over nothing.
   useEffect(() => {
     if (!companyContacts) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') setCompanyContacts(null); };
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      if (editingContact) setEditingContact(null);
+      else setCompanyContacts(null);
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [companyContacts]);
+  }, [companyContacts, editingContact]);
   function openCompanyContacts(r, card) {
     setCompanyContacts({
       name: String(r.company || '').trim(),
@@ -4466,7 +4513,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           .sort((a, b) => `${a.lastname || ''} ${a.firstname || ''}`.localeCompare(`${b.lastname || ''} ${b.firstname || ''}`));
         const picked = members.filter(r => companyContactsPicked.has(r.email));
         const allPicked = members.length > 0 && picked.length === members.length;
-        const close = () => setCompanyContacts(null);
+        const close = () => { setEditingContact(null); setCompanyContacts(null); };
         const togglePick = (email) => setCompanyContactsPicked(prev => {
           const next = new Set(prev);
           if (next.has(email)) next.delete(email); else next.add(email);
@@ -4627,6 +4674,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                       bulkSelected={existingPicked}
                       setBulkSelected={setExistingPicked}
                       deletingContact={deletingExistingContact}
+                      onEditContact={c => { if (c) setEditingContact(c); }}
                     />
                   </div>
                   </>
@@ -4678,7 +4726,19 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                                 aria-label={`Select ${fullName || r.email}`}
                               />
                             </td>
-                            <td style={{ padding: '0.4rem 0.6rem', fontWeight: 600, color: 'var(--color-text)' }}>{fullName || '-'}</td>
+                            <td style={{ padding: '0.4rem 0.6rem', fontWeight: 600, color: 'var(--color-text)' }}>
+                              {/* A batch row already in HubSpot opens that
+                                  contact's popup. A new row has no record
+                                  to open yet, so its name stays plain. */}
+                              {hubspotByEmail.has(r.email) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingContact(hubspotByEmail.get(r.email))}
+                                  title={`Open the contact popup for ${fullName || r.email}`}
+                                  style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 600, color: 'var(--color-accent)', cursor: 'pointer', textAlign: 'left' }}
+                                >{fullName || r.email}</button>
+                              ) : (fullName || '-')}
+                            </td>
                             <td style={{ padding: '0.4rem 0.6rem', color: '#334155' }}>{r.jobtitle || '-'}</td>
                             <td style={{ padding: '0.4rem 0.6rem', color: '#334155', fontFamily: 'monospace', fontSize: '0.74rem', wordBreak: 'break-all' }}>{isRealEmail(r.email) ? r.email : '-'}</td>
                             <td style={{ padding: '0.25rem 0.6rem' }}>
@@ -4719,6 +4779,24 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           </div>
         );
       })()}
+
+      {/* No fallback: a "Loading" panel flashing where the popup is about to
+          appear is worse than the click taking a beat. */}
+      {companyContacts && editingContact && (
+        <Suspense fallback={null}>
+          <ContactEditModal
+            contact={editingContact}
+            onSave={saveEditingContact}
+            onClose={() => setEditingContact(null)}
+            onOpenCompany={onSelectProspect ? openCompanyFromContact : null}
+            {...contactEditSettings}
+            companyContacts={editCompanyContacts}
+            allContacts={allHubspotContacts}
+            emailDomains={editEmailDomains}
+            companyNames={editCompanyNames}
+          />
+        </Suspense>
+      )}
 
       {pendingUpload && (() => {
         const { fileName, headers, rows: rawRows, mapping } = pendingUpload;
