@@ -71,6 +71,13 @@ const VibeProspecting = lazyView(() => import('./components/VibeProspecting/Vibe
 
 const EMPTY_OBJ = Object.freeze({});
 
+// The company popup reads its fields once, on mount, so it remounts when
+// the company changes. A key pinned on the modal state wins, so a stand-in
+// that is saved (and only then gets an id) stays the same popup.
+function modalKey(m) {
+  return m?.key || m?.prospect?.id || m?.prospect?.company || 'new';
+}
+
 function App() {
   const { user, isAdmin, loading: authLoading, stalled: authStalled, authError, signInWithEmail, createAccount, resetPassword, logout } = useAuth();
   const { settings, loaded: settingsLoaded, updateSettings, updateSettingsPath } = useUserSettings(user);
@@ -441,6 +448,9 @@ function App() {
     })();
   }, [user, settingsLoaded, dataLoading, prospects, updateProspect, updateSettings, renameLog]);
 
+  // The document a stand-in popup's first save created, so the autosaves
+  // racing it update that one rather than adding the company again.
+  const standInRef = useRef(null);
   const handleModalSave = useCallback(async (data, { close = true } = {}) => {
     try {
       if (modal?.isNew) {
@@ -461,6 +471,40 @@ function App() {
         } else {
           setModal(null);
         }
+      } else if (modal && !modal.prospect?.id) {
+        // A company-only stand-in (a contact opened from the sidebar search
+        // whose company isn't on Table View) has no document to update:
+        // updateProspect(undefined) failed inside Firestore with "Cannot
+        // read properties of undefined (reading 'indexOf')". Its first save
+        // adds the company instead.
+        const k = modalKey(modal);
+        const known = standInRef.current?.key === k ? standInRef.current : null;
+        // An autosave that left before the popup learned its id goes to the
+        // document the first one made.
+        if (known) {
+          if (!known.existing) await updateProspect(known.id, data);
+          return;
+        }
+        const id = await addProspect(data);
+        if (!id) return;
+        // addProspect hands back the company already on the roster when the
+        // name matches one. The stand-in's blank fields must not be written
+        // over that record, so open the real one instead, as + New does.
+        const existing = prospects.find(p => p.id === id) || null;
+        if (standInRef.current?.key === k) {
+          if (!standInRef.current.existing) await updateProspect(id, data);
+          return;
+        }
+        standInRef.current = { key: k, id, existing: !!existing };
+        if (existing) {
+          window.alert(`"${existing.company}" is already on Table View. Opening it, so make the change there.`);
+          setModal(m => (m && modalKey(m) === k ? { ...m, key: undefined, prospect: existing } : m));
+          return;
+        }
+        if (close) setModal(null);
+        // Keep the popup's key, so gaining an id doesn't remount it and
+        // throw away the contact being edited inside it.
+        else setModal(m => (m && modalKey(m) === k ? { ...m, key: k, prospect: { ...m.prospect, ...data, id } } : m));
       } else if (modal) {
         await updateProspect(modal.prospect.id, data);
         if (close) setModal(null);
@@ -750,7 +794,7 @@ function App() {
           // switching to another company from inside it (a portfolio row's
           // name, a contact's company) has to remount it - otherwise the
           // old company's card stays on screen.
-          key={modal.prospect?.id || modal.prospect?.company || 'new'}
+          key={modalKey(modal)}
           prospect={modal.prospect}
           prospects={prospects}
           onSelectProspect={handleSelect}
