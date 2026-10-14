@@ -148,7 +148,7 @@ export function buildResolution(row, ctx) {
         subtitle,
         note: `Target Accounts has this account at ${r.targetTier || '-'}. Match it, or keep your tier and stop flagging it.`,
         fields: [
-          field('tier', 'Tier', 'select', prospect.tier || r.myTier, { options: TIER_OPTIONS, start: r.targetTier || prospect.tier }),
+          field('tier', 'Tier', 'select', prospect.tier || r.myTier, { options: TIER_OPTIONS, start: r.targetTier || prospect.tier, compare: true }),
           field('ignore', 'Keep my tier and ignore this mismatch', 'checkbox', false),
         ],
         async save(v, changed) {
