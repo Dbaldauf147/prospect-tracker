@@ -62,6 +62,7 @@ function sourceChip(source) {
 }
 
 const fullNameOf = (c) => `${c.firstname || ''} ${c.lastname || ''}`.trim();
+const leadSourceOf = (c, settings) => String((settings?.contactLeadSource || {})[c.id || c.vid] || '').trim();
 const notesOf = (c, settings) => (settings?.contactNotes || {})[c.id || c.vid] || c.notes || c.hs_content_membership_notes || c.message || '';
 const linkedinOf = (c) => c.hs_linkedin_url || c.linkedin_url || c.hs_linkedinid || '';
 const cellPhoneOf = (c) => c.mobilephone || c.mobile_phone || '';
@@ -205,6 +206,18 @@ export function ContactsTable({
       getFilterValue: (c) => sourceOf(c),
       exportValue: (c) => sourceOf(c),
       render: (c) => sourceChip(sourceOf(c)),
+    },
+    {
+      key: 'leadSource',
+      label: 'Lead Source',
+      defaultWidth: 130,
+      title: 'Where this contact came to us from (Marketing Lead, Event, ...). Set it on the contact popup.',
+      getFilterValue: (c) => leadSourceOf(c, settings),
+      exportValue: (c) => leadSourceOf(c, settings),
+      render: (c) => {
+        const v = leadSourceOf(c, settings);
+        return v ? <span style={{ fontSize: '0.7rem', color: '#334155' }}>{v}</span> : dash;
+      },
     },
     {
       key: 'fullName',

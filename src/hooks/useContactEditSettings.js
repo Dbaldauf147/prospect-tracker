@@ -91,6 +91,9 @@ export function useContactEditSettings({ settings, updateSettings }) {
       // "blank means remove the key" is exactly that.
       contactSentiment: settings?.contactSentiment || {},
       onSaveSentiment: (cid, v) => saveMap('contactSentiment', cid, v),
+      // Where the contact came from. See utils/contactLeadSource.js.
+      contactLeadSource: settings?.contactLeadSource || {},
+      onSaveLeadSource: (cid, v) => saveMap('contactLeadSource', cid, v),
       contactTagReview: settings?.contactTagReview || {},
       onSaveTagReview: (cid, map) => {
         if (cid == null) return;

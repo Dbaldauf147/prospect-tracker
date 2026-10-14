@@ -134,6 +134,7 @@ import {
 } from '../../utils/divisions';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { SENTIMENT_OPTIONS, sentimentFor, sentimentMark } from '../../utils/contactSentiment';
+import { LEAD_SOURCE_OPTIONS, leadSourceFor } from '../../utils/contactLeadSource';
 import { BUCKETS, contactHasTag, contactIsHidden, getContactTags } from './contactTags.js';
 import { ContactsTable } from './ContactsTable.jsx';
 import { ContactPasteModal } from './ContactPasteModal.jsx';
@@ -934,7 +935,7 @@ function findPortfolioProspect(row, byName, byId) {
 // can share the exact same auto-fill behavior as this modal.
 
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactSentiment = {}, onSaveSentiment, contactTagReview = {}, onSaveTagReview, tagPresets = [], onSaveTagPresets, events = [], onToggleContactEvent, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactOldCompany = {}, onSaveOldCompany, onSaveCompanyOverride, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, contactMetInPerson = {}, onSaveMetInPerson, contactInvitedToLouisville = {}, onSaveInvitedToLouisville, contactSentiment = {}, onSaveSentiment, contactLeadSource = {}, onSaveLeadSource, contactTagReview = {}, onSaveTagReview, tagPresets = [], onSaveTagPresets, events = [], onToggleContactEvent, companyContacts = [], allContacts = null, emailDomains = [], companyNames = [], onOpenCompany = null }) {
   const rawTags = contactTagString(contact);
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -1032,6 +1033,9 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // Divisions chart marks people with. Neutral is the stored absence, so a
   // contact nobody has judged starts here and leaves no key behind.
   const [sentiment, setSentiment] = useState(() => sentimentFor(contactSentiment, metCid));
+  // Where this contact came from (Marketing Lead, Event, ...). Local-only,
+  // see utils/contactLeadSource.js.
+  const [leadSource, setLeadSource] = useState(() => leadSourceFor(contactLeadSource, metCid));
   // Per-tag records: { tag: { answer, status } }. The tag itself is still
   // where a Yes lives, so a stored answer of "yes" only counts while it's
   // backed by the tag or held off by a Not sold — see tagStateFrom.
@@ -1697,6 +1701,12 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     });
   }
 
+  function chooseLeadSource(value) {
+    setLeadSource(value);
+    const cid = contact.id || contact.vid;
+    if (cid != null && onSaveLeadSource) onSaveLeadSource(cid, value);
+  }
+
   // Every field the user actually typed in. A blank field they never touched,
   // on a contact record that has no value for it either, is a blank this form
   // can't speak for — withoutUnknownBlanks keeps it out of the HubSpot write
@@ -1712,7 +1722,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   // usually typed more. Keep the editable state on a ref that every render
   // refreshes and have handleSave read from that instead.
   const stateRef = useRef(null);
-  stateRef.current = { f, checkedTags, ccEmails, toAlsoEmails, metInPerson, invitedToLouisville, sentiment };
+  stateRef.current = { f, checkedTags, ccEmails, toAlsoEmails, metInPerson, invitedToLouisville, sentiment, leadSource };
 
   // Re-render trigger for the moment a new contact gains a HubSpot id (see
   // handleSave). The id itself is pinned on the contact prop, which React
@@ -1887,6 +1897,9 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       // click-time save above was a no-op — persist it under the real id now.
       if (savedCid && onSaveSentiment) {
         onSaveSentiment(savedCid, latest.sentiment);
+      }
+      if (savedCid && onSaveLeadSource) {
+        onSaveLeadSource(savedCid, latest.leadSource);
       }
       // Company edits behave the same here as on the HubSpot Contacts
       // page: the API renames the Company record this contact is linked to,
@@ -2182,6 +2195,22 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               })}
             </div>
           </div>
+          {/* Where this contact came to us from. A value saved before the
+              option list had it still shows, so nothing is silently lost. */}
+          <label
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: '8px', background: '#fff' }}
+          >
+            <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Lead Source</span>
+            <select
+              value={leadSource}
+              onChange={e => chooseLeadSource(e.target.value)}
+              style={{ fontFamily: 'inherit', fontSize: '0.78rem', padding: '0.18rem 0.35rem', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', color: leadSource ? '#1E293B' : '#94A3B8' }}
+            >
+              <option value="">Not set</option>
+              {LEAD_SOURCE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+              {leadSource && !LEAD_SOURCE_OPTIONS.includes(leadSource) && <option value={leadSource}>{leadSource}</option>}
+            </select>
+          </label>
           {/* Put this contact on a saved email campaign, and see which ones
               they are already on. Self-contained: see ContactCampaignAdd. */}
           {(contact.id || contact.vid) && (
@@ -7058,6 +7087,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     if (value) next[contactId] = value; else delete next[contactId];
     updateSettings({ contactSentiment: next });
   }, [settings.contactSentiment, updateSettings]);
+
+  // Where the contact came from. Blank removes the key, like sentiment.
+  const handleSaveContactLeadSource = useCallback((contactId, value) => {
+    const current = settings.contactLeadSource || {};
+    const next = { ...current };
+    if (value) next[contactId] = value; else delete next[contactId];
+    updateSettings({ contactLeadSource: next });
+  }, [settings.contactLeadSource, updateSettings]);
 
   const handleSaveContactReportsTo = useCallback((contactId, managerIds) => {
     const current = settings.contactReportsTo || {};
@@ -14079,6 +14116,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSaveInvitedToLouisville={handleSaveContactInvitedToLouisville}
           contactSentiment={settings.contactSentiment || {}}
           onSaveSentiment={handleSaveContactSentiment}
+          contactLeadSource={settings.contactLeadSource || {}}
+          onSaveLeadSource={handleSaveContactLeadSource}
           contactTagReview={settings.contactTagReview || {}}
           onSaveTagReview={(cid, map) => saveTagReview({ cid, map, settings: settingsRef.current, updateSettings, updateSettingsPath })}
           tagPresets={settings?.tagPresets || []}
