@@ -17,8 +17,9 @@
 // A cell also lists the "maybes": decision makers who don't carry the tag
 // but whose tag review (the contact popup's Yes / No / Not sure) says Not
 // sure for it. They sit in `maybeByTag`, apart from `byTag`, so they show
-// in the cell without counting as mapped - the percentages, the Zoom
-// export of gaps and the History snapshots stay on confirmed tags only.
+// in the cell without counting as mapped - the percentages and the History
+// snapshots stay on confirmed tags only. The Zoom export is the one place a
+// maybe pulls an account IN: see zoomExportRowsForTag.
 
 import { tagKey, tagVocabulary, TAG_OPTIONS, findTagRecord, isLocalTagVerdict, tagAnswerFrom } from './contactTagReview.js';
 import { TIERS } from '../data/enums.js';
@@ -127,4 +128,16 @@ export function tagMatrixCoverage(rows, tags, tierOf = r => r.myTier) {
     out[key] = byTier;
   }
   return out;
+}
+
+/**
+ * The rows one tag's Zoom export holds: the Inside Sales accounts with no
+ * confirmed decision maker for the tag, plus the ones with somebody marked
+ * Not sure for it even when a confirmed one is there too. An unsettled
+ * answer is still worth a ZoomInfo pull, so a Not sure keeps the account in
+ * the file. `key` is tagColumnKey(tag).
+ */
+export function zoomExportRowsForTag(rows, key) {
+  return (rows || []).filter(r => r.status === 'Inside Sales'
+    && (!(r.byTag?.[key] || []).length || (r.maybeByTag?.[key] || []).length > 0));
 }
