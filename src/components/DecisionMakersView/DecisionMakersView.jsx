@@ -541,6 +541,7 @@ export function DecisionMakersView({ prospects = [], onSelectProspect, settings,
       categoryFilter={categoryFilter}
       linkCompanyToProspect
       companyStatusFilterEnabled
+      showCompanyVertical
     />
   );
 }
