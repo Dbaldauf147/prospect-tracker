@@ -822,3 +822,41 @@
 .generalNot .addTermInput:placeholder-shown {
   visibility: visible;
 }
+
+/* Decision Makers: the keywords that take a title off the table. Always
+   drawn, add box included, since there is no card to hover. */
+.dmExcludeRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0 0 0.7rem;
+}
+
+.dmExcludeLabel {
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #B91C1C;
+  margin-right: 0.2rem;
+}
+
+.dmExcludeRow .addTermInput:placeholder-shown {
+  visibility: visible;
+}
+
+.dmExcludeTerm {
+  font-size: 0.72rem;
+  color: #991B1B;
+}
+
+.dmExcludeX {
+  border: none;
+  background: transparent;
+  color: #B91C1C;
+  cursor: pointer;
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 0 0 0 4px;
+}
