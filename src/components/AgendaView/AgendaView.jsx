@@ -2383,11 +2383,37 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       ...g,
       targets: g.targets.map(t => {
         const sources = new Set();
+        // The email domains on these rows, with a count each: the address
+        // is what most matches are made on, so it is the thing to check.
+        const domainCounts = new Map();
+        let target = null;
         for (const email of t.emails) {
-          const src = lookupMatch(email, byEmail.get(email) || null).suggestSource;
-          sources.add(SUGGEST_SOURCE_LABELS[src] || 'matched');
+          const m = lookupMatch(email, byEmail.get(email) || null);
+          sources.add(SUGGEST_SOURCE_LABELS[m.suggestSource] || 'matched');
+          if (!target && m.matched) target = m.matched;
+          const at = email.lastIndexOf('@');
+          const d = at >= 0 ? email.slice(at + 1).toLowerCase() : '';
+          if (d) domainCounts.set(d, (domainCounts.get(d) || 0) + 1);
         }
-        return { ...t, lineKey: `c::${g.key}::${t.to}`, sources: Array.from(sources) };
+        // The target company's address formats: the ones Table View holds
+        // now, and the ones this apply would add (its Email Domain write).
+        const splitFormats = (v) => String(v || '').split(/[\n;,]+/).map(x => x.trim()).filter(Boolean);
+        const existingFormats = target ? splitFormats(target.emailDomain) : [];
+        const existingLower = new Set(existingFormats.map(f => f.toLowerCase()));
+        const proposedFormats = target
+          ? pendingSuggestions
+            .filter(a => a.kind === 'prospect' && a.prospectId === target.id && a.field === 'emailDomain')
+            .flatMap(a => splitFormats(a.value))
+            .filter(f => !existingLower.has(f.toLowerCase()))
+          : [];
+        return {
+          ...t,
+          lineKey: `c::${g.key}::${t.to}`,
+          sources: Array.from(sources),
+          domains: Array.from(domainCounts, ([domain, count]) => ({ domain, count })).sort((a, b) => b.count - a.count),
+          existingFormats,
+          proposedFormats: Array.from(new Set(proposedFormats)),
+        };
       }),
     }));
   }, [applyPreview, rows, pendingSuggestions, lookupMatch]);
@@ -3844,7 +3870,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
             onClick={() => setApplyPreview(null)}
           >
             <div
-              style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', width: 'min(960px, 100%)', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}
+              style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', width: 'min(1180px, 100%)', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}
               onClick={e => e.stopPropagation()}
             >
               <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-border)' }}>
@@ -3866,6 +3892,8 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                           <th style={th}>Company on row</th>
                           <th style={th}>Becomes</th>
                           <th style={th}>Rows</th>
+                          <th style={th}>Email domains on rows</th>
+                          <th style={th}>Company email formats</th>
                           <th style={th}>Why</th>
                           <th style={th}>Saved rule</th>
                         </tr>
@@ -3883,6 +3911,24 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                               <td style={{ ...td, fontWeight: 600, color: '#166534' }}>{t.to}</td>
                               <td style={td} title={names.join(', ')}>
                                 {t.emails.length}: {names.slice(0, 3).join(', ')}{names.length > 3 ? `, +${names.length - 3} more` : ''}
+                              </td>
+                              <td style={{ ...td, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.72rem' }}>
+                                {t.domains.length === 0
+                                  ? <span style={{ color: '#94A3B8' }}>-</span>
+                                  : t.domains.map(d => (
+                                    <div key={d.domain}>@{d.domain}{t.domains.length > 1 || d.count > 1 ? <span style={{ color: '#94A3B8' }}> x{d.count}</span> : null}</div>
+                                  ))}
+                              </td>
+                              <td style={{ ...td, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.72rem', minWidth: 240, overflowWrap: 'anywhere' }}>
+                                {t.existingFormats.length === 0 && t.proposedFormats.length === 0 && (
+                                  <span style={{ color: '#94A3B8', fontFamily: 'inherit' }}>none on file</span>
+                                )}
+                                {t.existingFormats.map(f => (
+                                  <div key={`e:${f}`} title="Already on the company in Table View" style={{ color: '#475569' }}>{f}</div>
+                                ))}
+                                {t.proposedFormats.map(f => (
+                                  <div key={`p:${f}`} title="Proposed: added to the company's Email Domain by this apply" style={{ color: '#166534', fontWeight: 600 }}>+ {f} <span style={{ fontWeight: 400, color: '#64748B' }}>(new)</span></div>
+                                ))}
                               </td>
                               <td style={{ ...td, color: '#64748B' }}>{t.sources.join('; ')}</td>
                               <td style={{ ...td, color: g.ruleSafe ? '#166534' : '#92400E' }}>
