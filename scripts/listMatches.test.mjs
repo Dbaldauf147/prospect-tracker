@@ -1,6 +1,7 @@
 // Assertion tests for the list-row matcher shared by "Search lists..." and
 // the company modal's SBT / CA SB warnings. Run: node scripts/listMatches.test.mjs
 import { buildItems, namesFromRows } from '../src/utils/listMatches.js';
+import { listMatchKey, unmapListRow } from '../src/utils/listAccountMapping.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -44,6 +45,27 @@ check('hyphen splitting a word', top('Walmart'), [['Wal-Mart Stores', 'suggested
 check('typo in a long word', top('Brookfield Asset Management'), [['Brookfeild Asset Mgmt', 'suggested', 50]]);
 check('short words must match exactly', top('Acme'), []);
 check('a shared first word alone is not enough', top('Hilton Worldwide'), []);
+
+// Mapped from the list page's My Accounts or Portfolio column, not only
+// its Table View one, and through a one-word bracket alias.
+const jll = ['Jones Lang LaSalle Incorporated', 'CBRE Group'];
+const jllKey = listMatchKey(jll[0]);
+const via = (field, mapped) => ({ listMappings: { 'sbt-list-override': { [field]: { [jllKey]: mapped } } } });
+const states = (company, settings) => sum(buildItems('sbt-list-override', jll, company, settings)).map(r => r.slice(0, 2));
+for (const field of ['mapping', 'myAccountMapping', 'portfolioMapping']) {
+  check(`${field}: mapped here`, states('Jones Lang LaSalle (JLL)', via(field, 'Jones Lang LaSalle (JLL)')), [['Jones Lang LaSalle Incorporated', 'mapped']]);
+  check(`${field}: card is the bracket alias`, states('JLL', via(field, 'Jones Lang LaSalle (JLL)')), [['Jones Lang LaSalle Incorporated', 'mapped']]);
+  check(`${field}: mapped to someone else is left alone`, states('Jones Lang LaSalle', via(field, 'CBRE')), []);
+}
+check('a two-word bracket is a note, not an alias', states('Lang Group', via('mapping', 'Jones Lang LaSalle (Lang Group)')), []);
+
+// Unmapping clears whichever field maps the row here, and only that one.
+const patches = [];
+unmapListRow(
+  { listMappings: { 'sbt-list-override': { mapping: { [jllKey]: 'CBRE' }, myAccountMapping: { [jllKey]: 'Jones Lang LaSalle (JLL)' } } } },
+  (p) => patches.push(p), 'sbt-list-override', jllKey, 'JLL',
+);
+check('unmap clears the My Accounts mapping only', patches, [{ 'listMappings.sbt-list-override.myAccountMapping': {} }]);
 
 console.log(`${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

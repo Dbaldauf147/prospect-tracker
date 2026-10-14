@@ -4,7 +4,7 @@
 // the list-match warning strips on the company modal, so the two always
 // agree on what counts as a match.
 import { normalizeCompany, pickNameKey } from './companyNorm.js';
-import { readListField } from './listAccountMapping.js';
+import { readListField, MAPPING_FIELDS, fieldMapsToCompany } from './listAccountMapping.js';
 import { similarityTokens, tokenSimilarity } from './targetAccountMatch.js';
 
 // Extract a company name per row using the same header-detection the
@@ -85,7 +85,9 @@ export function buildItems(storageKey, names, prospectCompany, settings) {
   const prospectNorm = normalizeCompany(prospectCompany || '');
   if (!prospectNorm || !Array.isArray(names) || names.length === 0) return [];
 
-  const mapping = readListField(settings, storageKey, 'mapping');
+  // A row can be mapped from any of the list page's three mapping columns
+  // (see MAPPING_FIELDS); mapped from any of them, it is mapped.
+  const mappings = MAPPING_FIELDS.map(f => [f, readListField(settings, storageKey, f)]);
   const dismissed = readListField(settings, storageKey, 'dismissed');
 
   const prospect = prepare(prospectCompany);
@@ -98,11 +100,17 @@ export function buildItems(storageKey, names, prospectCompany, settings) {
     if (seenKeys.has(matchKey)) return;
     seenKeys.add(matchKey);
 
-    const mappedTo = mapping[matchKey] || '';
-    const alreadyMapped = !!mappedTo && normalizeCompany(mappedTo) === prospectNorm;
+    let mappedTo = '';
+    let mappedHere = '';
+    for (const [field, m] of mappings) {
+      const v = m[matchKey];
+      if (!v) continue;
+      mappedTo = mappedTo || v;
+      if (!mappedHere && fieldMapsToCompany(field, v, prospectCompany)) mappedHere = v;
+    }
 
-    if (alreadyMapped) {
-      items.push({ matchKey, rawName, mappedTo, score: 1, state: 'mapped' });
+    if (mappedHere) {
+      items.push({ matchKey, rawName, mappedTo: mappedHere, score: 1, state: 'mapped' });
       return;
     }
     if (dismissed[matchKey]) return;

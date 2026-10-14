@@ -93,7 +93,7 @@ export function ListsMatchPanel({ anchorRef, prospectCompany, settings, updateSe
   }
 
   function unmap(storageKey, matchKey) {
-    unmapListRow(settings, updateSettingsPath, storageKey, matchKey);
+    unmapListRow(settings, updateSettingsPath, storageKey, matchKey, prospectCompany);
     markActed(storageKey, matchKey);
   }
 

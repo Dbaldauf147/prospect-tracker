@@ -110,7 +110,7 @@ export function ListMatchWarning({ label, storageKey, company, settings, updateS
               {mapped ? (
                 <button
                   type="button"
-                  onClick={() => unmapListRow(settings, updateSettingsPath, storageKey, m.matchKey)}
+                  onClick={() => unmapListRow(settings, updateSettingsPath, storageKey, m.matchKey, name)}
                   title={`Unmap ${m.rawName} on the ${label} list from ${name}`}
                   aria-label={`Unmap ${m.rawName}`}
                   style={{
