@@ -538,8 +538,60 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
   // Coverage check: which buckets currently have no contacts tagged?
   const missingBuckets = BUCKETS.filter(b => !contacts.some(c => getContactTags(c).includes(b.tag)));
 
+  // Who to go to for each category: a column per bucket, A to Z, with the
+  // decision makers carrying that bucket's tag listed under its heading.
+  const dmColumns = [...BUCKETS]
+    .sort((a, b) => a.label.localeCompare(b.label))
+    .map(b => ({
+      bucket: b,
+      dms: contacts.filter(c => contactHasTag(c, 'decision maker') && getContactTags(c).includes(b.tag)),
+    }));
+  const headCell = {
+    padding: '0.5rem 0.6rem', textAlign: 'left', fontSize: '0.68rem', fontWeight: 700,
+    color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em',
+    background: '#F1F5F9', borderBottom: '1px solid #E2E8F0',
+    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+      <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, overflowX: 'auto' }}>
+        <table data-dm-by-category style={{ width: '100%', minWidth: dmColumns.length * 130, tableLayout: 'fixed', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              {dmColumns.map(({ bucket }) => (
+                <th key={bucket.key} style={headCell} title={bucket.label}>{bucket.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              {dmColumns.map(({ bucket, dms }) => (
+                <td key={bucket.key} style={{ padding: '0.45rem 0.6rem', verticalAlign: 'top', fontSize: '0.74rem' }}>
+                  {dms.length === 0 ? (
+                    <span style={{ color: '#CBD5E1' }} title={`No decision maker tagged ${bucket.label}`}>-</span>
+                  ) : dms.map(c => {
+                    const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || '-';
+                    return (
+                      <div key={idOf(c)} style={{ marginBottom: '0.3rem', minWidth: 0 }}>
+                        <button
+                          type="button"
+                          onClick={() => onEditContact && onEditContact(c)}
+                          title={c.jobtitle ? `${name}, ${c.jobtitle}` : name}
+                          style={{ display: 'block', maxWidth: '100%', background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 700, color: '#1E293B', cursor: 'pointer', textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        >{name}</button>
+                        {c.jobtitle && (
+                          <div style={{ fontSize: '0.62rem', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.jobtitle}</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
       {missingBuckets.length > 0 && (
         <div style={{ padding: '0.5rem 0.7rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6 }}>
           <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#92400E', marginBottom: '0.3rem' }}>
