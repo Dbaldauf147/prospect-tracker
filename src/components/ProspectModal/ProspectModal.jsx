@@ -424,7 +424,7 @@ function getOrgKey(company) {
   return `orgchart-${(company || '').toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 }
 
-function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, reportsTo = {}, zoomCompanyId = '', searchRun = {}, onToggleSearchRun }) {
+function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, reportsTo = {}, tagReview = {}, zoomCompanyId = '', searchRun = {}, onToggleSearchRun }) {
   const idOf = (c) => String(c.id || c.vid || c.email || '');
 
   // Build a parent→children map using the full contact set (not per-bucket).
@@ -535,13 +535,32 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
   const missingBuckets = BUCKETS.filter(b => !contacts.some(c => getContactTags(c).includes(b.tag)));
 
   // Who to go to for each category: a column per bucket, A to Z, with the
-  // decision makers carrying that bucket's tag listed under its heading.
+  // decision makers answered Yes (green) or Not sure (yellow) for that
+  // bucket's tag listed under its heading, Yes first. The answer is read the
+  // way the contact popup reads it (tagStateFrom), so a Yes held off by a Not
+  // sold still counts as Yes here.
+  const dmAnswer = (c, b) => {
+    const cid = c.id ?? c.vid;
+    const stored = cid == null ? undefined : findTagRecord(tagReview?.[cid], b.label);
+    return tagStateFrom(getContactTags(c).includes(b.tag), stored).answer;
+  };
   const dmColumns = [...BUCKETS]
     .sort((a, b) => a.label.localeCompare(b.label))
-    .map(b => ({
-      bucket: b,
-      dms: contacts.filter(c => contactHasTag(c, 'decision maker') && getContactTags(c).includes(b.tag)),
-    }));
+    .map(b => {
+      const yes = [];
+      const unsure = [];
+      for (const c of contacts) {
+        if (!contactHasTag(c, 'decision maker')) continue;
+        const a = dmAnswer(c, b);
+        if (a === 'yes') yes.push({ c, answer: 'yes' });
+        else if (a === 'unsure') unsure.push({ c, answer: 'unsure' });
+      }
+      return { bucket: b, dms: [...yes, ...unsure] };
+    });
+  const DM_ANSWER_STYLE = {
+    yes: { background: '#DCFCE7', borderLeft: '3px solid #22C55E', name: '#166534', title: '#15803D', label: 'Yes' },
+    unsure: { background: '#FEF3C7', borderLeft: '3px solid #F59E0B', name: '#92400E', title: '#B45309', label: 'Not sure' },
+  };
   const headCell = {
     padding: '0.5rem 0.6rem', textAlign: 'left', fontSize: '0.68rem', fontWeight: 700,
     color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em',
@@ -565,19 +584,20 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
               {dmColumns.map(({ bucket, dms }) => (
                 <td key={bucket.key} style={{ padding: '0.45rem 0.6rem', verticalAlign: 'top', fontSize: '0.74rem' }}>
                   {dms.length === 0 ? (
-                    <span style={{ color: '#CBD5E1' }} title={`No decision maker tagged ${bucket.label}`}>-</span>
-                  ) : dms.map(c => {
+                    <span style={{ color: '#CBD5E1' }} title={`No decision maker answered Yes or Not sure for ${bucket.label}`}>-</span>
+                  ) : dms.map(({ c, answer }) => {
                     const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || '-';
+                    const look = DM_ANSWER_STYLE[answer];
                     return (
-                      <div key={idOf(c)} style={{ marginBottom: '0.3rem', minWidth: 0 }}>
+                      <div key={idOf(c)} data-dm-answer={answer} style={{ marginBottom: '0.3rem', minWidth: 0, padding: '0.2rem 0.4rem', borderRadius: 4, background: look.background, borderLeft: look.borderLeft }}>
                         <button
                           type="button"
                           onClick={() => onEditContact && onEditContact(c)}
-                          title={c.jobtitle ? `${name}, ${c.jobtitle}` : name}
-                          style={{ display: 'block', maxWidth: '100%', background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 700, color: '#1E293B', cursor: 'pointer', textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          title={`${c.jobtitle ? `${name}, ${c.jobtitle}` : name} (${look.label} for ${bucket.label})`}
+                          style={{ display: 'block', maxWidth: '100%', background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 700, color: look.name, cursor: 'pointer', textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                         >{name}</button>
                         {c.jobtitle && (
-                          <div style={{ fontSize: '0.62rem', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.jobtitle}</div>
+                          <div style={{ fontSize: '0.62rem', color: look.title, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.jobtitle}</div>
                         )}
                       </div>
                     );
@@ -585,13 +605,14 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
                 </td>
               ))}
             </tr>
-            {/* A category nobody is the decision maker for: the company's
+            {/* A category nobody is a Yes decision maker for (a Not sure
+                alone still gets it): the company's
                 Zoom Company ID to run the search with, and a box to tick once
                 it has been run, saved on the record with the date. */}
-            {dmColumns.some(col => col.dms.length === 0) && (
+            {dmColumns.some(col => !col.dms.some(d => d.answer === 'yes')) && (
               <tr data-dm-search-row style={{ borderTop: '1px solid #E2E8F0', background: '#FAFAF9' }}>
                 {dmColumns.map(({ bucket, dms }) => {
-                  if (dms.length > 0) return <td key={bucket.key} />;
+                  if (dms.some(d => d.answer === 'yes')) return <td key={bucket.key} />;
                   const ranAt = searchRun?.[bucket.key];
                   return (
                     <td key={bucket.key} style={{ padding: '0.45rem 0.6rem', verticalAlign: 'top', fontSize: '0.7rem' }}>
@@ -14079,6 +14100,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   deletingContact={deletingContact}
                   onEditContact={setEditingContact}
                   reportsTo={settings.contactReportsTo || {}}
+                  tagReview={settings.contactTagReview || {}}
                   zoomCompanyId={String(fields.zoomCompanyId || '').trim()}
                   searchRun={fields.dmSearchRun || {}}
                   onToggleSearchRun={(key, on) => setFields(prev => {
