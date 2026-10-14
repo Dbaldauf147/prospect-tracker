@@ -424,11 +424,7 @@ function getOrgKey(company) {
   return `orgchart-${(company || '').toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 }
 
-function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, reportsTo = {} }) {
-  if (contacts.length === 0) {
-    return <div style={{ fontSize: '0.78rem', color: '#9CA3AF', fontStyle: 'italic', padding: '1rem 0' }}>No contacts to display</div>;
-  }
-
+function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, reportsTo = {}, zoomCompanyId = '', searchRun = {}, onToggleSearchRun }) {
   const idOf = (c) => String(c.id || c.vid || c.email || '');
 
   // Build a parent→children map using the full contact set (not per-bucket).
@@ -589,9 +585,44 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
                 </td>
               ))}
             </tr>
+            {/* A category nobody is the decision maker for: the company's
+                Zoom Company ID to run the search with, and a box to tick once
+                it has been run, saved on the record with the date. */}
+            {dmColumns.some(col => col.dms.length === 0) && (
+              <tr data-dm-search-row style={{ borderTop: '1px solid #E2E8F0', background: '#FAFAF9' }}>
+                {dmColumns.map(({ bucket, dms }) => {
+                  if (dms.length > 0) return <td key={bucket.key} />;
+                  const ranAt = searchRun?.[bucket.key];
+                  return (
+                    <td key={bucket.key} style={{ padding: '0.45rem 0.6rem', verticalAlign: 'top', fontSize: '0.7rem' }}>
+                      <div style={{ fontSize: '0.6rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Zoom Company ID</div>
+                      {zoomCompanyId
+                        ? <div style={{ fontWeight: 600, color: '#1E293B', userSelect: 'all', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={zoomCompanyId}>{zoomCompanyId}</div>
+                        : <div style={{ color: '#94A3B8', fontStyle: 'italic' }}>Not set</div>}
+                      <label
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.3rem', color: ranAt ? '#166534' : '#475569', cursor: onToggleSearchRun ? 'pointer' : 'default' }}
+                        title={ranAt ? `Search run ${new Date(ranAt).toLocaleDateString()}` : `Tick once the ${bucket.label} search has been run in Zoom for this company`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!!ranAt}
+                          disabled={!onToggleSearchRun}
+                          onChange={e => onToggleSearchRun?.(bucket.key, e.target.checked)}
+                          aria-label={`${bucket.label} search run`}
+                        />
+                        Search run{ranAt ? ` ${new Date(ranAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : ''}
+                      </label>
+                    </td>
+                  );
+                })}
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
+      {contacts.length === 0 ? (
+        <div style={{ fontSize: '0.78rem', color: '#9CA3AF', fontStyle: 'italic', padding: '0.25rem 0' }}>No contacts to display</div>
+      ) : (<>
       {missingBuckets.length > 0 && (
         <div style={{ padding: '0.5rem 0.7rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6 }}>
           <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#92400E', marginBottom: '0.3rem' }}>
@@ -632,6 +663,7 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
         </div>
       )}
       </div>
+      </>)}
     </div>
   );
 }
@@ -14041,7 +14073,20 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   </div>
                 )}
               {contactView === 'orgchart' ? (
-                <OrgChart contacts={companyContacts} onDeleteContact={handleDeleteContact} deletingContact={deletingContact} onEditContact={setEditingContact} reportsTo={settings.contactReportsTo || {}} />
+                <OrgChart
+                  contacts={companyContacts}
+                  onDeleteContact={handleDeleteContact}
+                  deletingContact={deletingContact}
+                  onEditContact={setEditingContact}
+                  reportsTo={settings.contactReportsTo || {}}
+                  zoomCompanyId={String(fields.zoomCompanyId || '').trim()}
+                  searchRun={fields.dmSearchRun || {}}
+                  onToggleSearchRun={(key, on) => setFields(prev => {
+                    const next = { ...(prev.dmSearchRun || {}) };
+                    if (on) next[key] = new Date().toISOString(); else delete next[key];
+                    return { ...prev, dmSearchRun: next };
+                  })}
+                />
               ) : (companyContacts.length > 0 || ownerContacts.length > 0) ? (
                 <>
                 {campaignAddOpen && (
