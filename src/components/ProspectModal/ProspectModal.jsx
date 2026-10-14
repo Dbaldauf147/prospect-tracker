@@ -5592,6 +5592,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     })
     : null), [targetAccountsData, settings?.targetMap, settings?.targetVerticalColumn, settings?.targetVerticalNames, prospect?.id, dropdownVerticals]);
 
+  // The card's Vertical kept on purpose over what the Targets list says:
+  // fields.verticalOverride holds the vertical that was kept, and while the
+  // card still has that one the list's "card:" chip and Import line stay
+  // quiet. Changing the Vertical brings them back.
+  const verticalKept = (() => {
+    const kept = String(fields.verticalOverride || '').trim().toLowerCase();
+    return !!kept && kept === String(fields.vertical || '').trim().toLowerCase();
+  })();
+  const keepCardVertical = () => set('verticalOverride', String(fields.vertical || '').trim());
+
   // "Suggest" beside Vertical: Claude picks one from the Dropdowns ›
   // Vertical list (never a value outside it) using what this card knows
   // about the company. It only suggests - the answer sits under the field
@@ -9816,7 +9826,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               )}
                             </span>
                             {field('Tier', row.tier, flags.tier, 'tier')}
-                            {field('Vertical', flags.vertical?.row || row.vertical, flags.vertical, 'vertical')}
+                            {field('Vertical', flags.vertical?.row || row.vertical, verticalKept ? null : flags.vertical, 'vertical')}
+                            {flags.vertical && !verticalKept && fields.vertical && (
+                              <button
+                                type="button"
+                                onClick={keepCardVertical}
+                                title={`Keep ${fields.vertical} as this company's Vertical, whatever the Targets list says. The warning comes back if the Vertical changes.`}
+                                style={{ marginLeft: -8, marginRight: 12, padding: '0 0.35rem', borderRadius: 4, background: '#fff', border: '1px solid #CBD5E1', color: '#334155', fontSize: '0.62rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+                              >Keep {fields.vertical}</button>
+                            )}
+                            {flags.vertical && verticalKept && (
+                              <span
+                                title={`${fields.vertical} is kept as this company's Vertical over the Targets list's ${flags.vertical.row}.`}
+                                style={{ marginLeft: -8, marginRight: 12, color: '#64748B', fontSize: '0.62rem' }}
+                              >(card keeps {fields.vertical})</span>
+                            )}
                           </>}
                         <button
                           type="button"
@@ -9915,7 +9939,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 />
                 {/* From the Targets list, once the company is mapped there.
                     Shown only when it would change the field. */}
-                {targetsVertical?.vertical && targetsVertical.vertical !== String(fields.vertical || '').trim() && (
+                {targetsVertical?.vertical && targetsVertical.vertical !== String(fields.vertical || '').trim() && !verticalKept && (
                   <div
                     style={{
                       marginTop: '0.3rem', display: 'flex', alignItems: 'center', gap: '0.4rem',
@@ -9934,6 +9958,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       title={`Set Vertical to ${targetsVertical.vertical}, from the Target Accounts row this company is mapped to (${targetsVertical.name})`}
                       style={{ padding: '0 0.4rem', border: '1px solid #93C5FD', borderRadius: 4, background: '#EFF6FF', color: '#1E40AF', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
                     >Import</button>
+                    {fields.vertical && (
+                      <button
+                        type="button"
+                        onClick={keepCardVertical}
+                        title={`Keep ${fields.vertical} as this company's Vertical and stop suggesting ${targetsVertical.vertical}. The suggestion comes back if the Vertical changes.`}
+                        style={{ padding: '0 0.4rem', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#334155', fontSize: '0.66rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+                      >Keep mine</button>
+                    )}
                   </div>
                 )}
                 {liveVerticalSuggestion && !liveVerticalSuggestion.loading && (
