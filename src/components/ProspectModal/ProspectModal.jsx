@@ -472,6 +472,9 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
     yes: { background: '#DCFCE7', borderLeft: '3px solid #22C55E', name: '#166534', title: '#15803D', label: 'Yes' },
     unsure: { background: '#FEF3C7', borderLeft: '3px solid #F59E0B', name: '#92400E', title: '#B45309', label: 'Not sure' },
   };
+  // A line between columns so each category reads as its own lane down the
+  // ladder of steps; the first column has the table's own border on its left.
+  const colLine = (i) => (i === 0 ? {} : { borderLeft: '1px solid #E2E8F0' });
   const headCell = {
     padding: '0.5rem 0.6rem', textAlign: 'left', fontSize: '0.68rem', fontWeight: 700,
     color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em',
@@ -485,15 +488,15 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
         <table data-dm-by-category style={{ width: '100%', minWidth: dmColumns.length * 130, tableLayout: 'fixed', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
-              {dmColumns.map(({ bucket }) => (
-                <th key={bucket.key} style={headCell} title={bucket.label}>{bucket.label}</th>
+              {dmColumns.map(({ bucket }, i) => (
+                <th key={bucket.key} style={{ ...headCell, ...colLine(i) }} title={bucket.label}>{bucket.label}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             <tr>
-              {dmColumns.map(({ bucket, dms }) => (
-                <td key={bucket.key} style={{ padding: '0.45rem 0.6rem', verticalAlign: 'top', fontSize: '0.74rem' }}>
+              {dmColumns.map(({ bucket, dms }, i) => (
+                <td key={bucket.key} style={{ padding: '0.45rem 0.6rem', verticalAlign: 'top', fontSize: '0.74rem', ...colLine(i) }}>
                   {dms.length === 0 ? (
                     <span style={{ color: '#CBD5E1' }} title={`No decision maker answered Yes or Not sure for ${bucket.label}`}>-</span>
                   ) : dms.map(({ c, answer }) => {
@@ -526,15 +529,15 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                 blank. */}
             {DM_STEPS.map((step, i) => (
               <tr key={step.key} data-dm-step={step.key} style={{ borderTop: '1px solid #E2E8F0', background: i % 2 === 0 ? '#FAFAF9' : '#fff' }}>
-                {dmColumns.map(({ bucket, dms }) => {
-                  if (dms.some(d => d.answer === 'yes')) return <td key={bucket.key} />;
+                {dmColumns.map(({ bucket, dms }, i) => {
+                  if (dms.some(d => d.answer === 'yes')) return <td key={bucket.key} style={colLine(i)} />;
                   const ranAt = step.key === 'zoom' ? searchRun?.[bucket.key] : searchSteps?.[bucket.key]?.[step.key];
                   const canToggle = step.key === 'zoom' ? !!onToggleSearchRun : !!onToggleSearchStep;
                   const toggle = (on) => step.key === 'zoom'
                     ? onToggleSearchRun?.(bucket.key, on)
                     : onToggleSearchStep?.(bucket.key, step.key, on);
                   return (
-                    <td key={bucket.key} style={{ padding: '0.45rem 0.6rem', verticalAlign: 'top', fontSize: '0.7rem' }}>
+                    <td key={bucket.key} style={{ padding: '0.45rem 0.6rem', verticalAlign: 'top', fontSize: '0.7rem', ...colLine(i) }}>
                       <label
                         style={{ display: 'flex', alignItems: 'flex-start', gap: '0.3rem', color: ranAt ? '#166534' : '#475569', fontWeight: ranAt ? 600 : 400, cursor: canToggle ? 'pointer' : 'default' }}
                         title={ranAt ? `${step.label}: ticked ${new Date(ranAt).toLocaleDateString()}` : `Tick once "${step.label}" applies to ${bucket.label} at this company`}
