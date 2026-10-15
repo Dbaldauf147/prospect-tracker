@@ -142,6 +142,8 @@ import { SENTIMENT_OPTIONS, sentimentFor, sentimentMark } from '../../utils/cont
 import { LEAD_SOURCE_OPTIONS, leadSourceFor } from '../../utils/contactLeadSource';
 import { BUCKETS, contactHasTag, contactIsHidden } from './contactTags.js';
 import { DM_STEPS, bucketStepsLeft, dmBucketAnswer } from '../../utils/dmSteps.js';
+import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, titleSearchesForCompany } from '../../utils/zoomSearchLog';
+import { readWorkKey, ZOOM_SEARCH_LOG_EVENT } from '../../utils/mirroredWorkKeys';
 import { ContactsTable } from './ContactsTable.jsx';
 import { ContactPasteModal } from './ContactPasteModal.jsx';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
@@ -429,7 +431,25 @@ function getOrgKey(company) {
   return `orgchart-${(company || '').toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 }
 
-function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '', searchRun = {}, onToggleSearchRun, searchSteps = {}, onToggleSearchStep }) {
+function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '', searchRun = {}, onToggleSearchRun, searchSteps = {}, onToggleSearchStep, company = '', zoomCompanyName = '' }) {
+  // The Zoom title searches logged for this company on Bulk Add > Zoom
+  // Search Log, for the bottom row: per category, which titles have
+  // already been pulled and when. Re-read when the log changes elsewhere.
+  const [zoomLog, setZoomLog] = useState(() => readZoomSearchLog(readWorkKey(ZOOM_SEARCH_LOG_KEY)));
+  useEffect(() => {
+    const reload = () => setZoomLog(readZoomSearchLog(readWorkKey(ZOOM_SEARCH_LOG_KEY)));
+    window.addEventListener(ZOOM_SEARCH_LOG_EVENT, reload);
+    return () => window.removeEventListener(ZOOM_SEARCH_LOG_EVENT, reload);
+  }, []);
+  const titleSearches = useMemo(
+    () => titleSearchesForCompany(zoomLog.searches, { company, zoomCompanyId, zoomCompanyName }),
+    [zoomLog, company, zoomCompanyId, zoomCompanyName],
+  );
+  const titleSearchesFor = (bucket) => titleSearches.filter(t => tagKey(t.tag) === tagKey(bucket.label));
+  const fmtSearchDate = (iso) => {
+    const d = new Date(`${iso}T00:00:00`);
+    return Number.isNaN(d.getTime()) ? (iso || '-') : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  };
   const idOf = (c) => String(c.id || c.vid || c.email || '');
 
   // Coverage check: which buckets currently have no contacts tagged?
@@ -571,6 +591,33 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                 })}
               </tr>
             ))}
+            {/* The Zoom title searches already logged for this company, per
+                category (Bulk Add > Zoom Search Log), so the next pull can
+                start from the titles already tried. */}
+            <tr data-dm-title-searches style={{ borderTop: '2px solid #E2E8F0', background: '#F8FAFC' }}>
+              {dmColumns.map(({ bucket }, i) => {
+                const list = titleSearchesFor(bucket);
+                return (
+                  <td key={bucket.key} style={{ padding: '0.45rem 0.6rem', verticalAlign: 'top', fontSize: '0.7rem', ...colLine(i) }}>
+                    <div style={{ fontSize: '0.6rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.2rem' }}>Zoom title searches</div>
+                    {list.length === 0
+                      ? <span style={{ color: '#CBD5E1' }} title={`No ${bucket.label} title search logged for this company`}>-</span>
+                      : list.map((t, k) => (
+                        <div key={`${t.date}-${k}`} style={{ marginBottom: '0.3rem', minWidth: 0 }} title={`${fmtSearchDate(t.date)}${t.contacts ? `, ${t.contacts} contact${t.contacts === 1 ? '' : 's'}` : ''}\n${t.titles.join('\n') || 'No titles recorded'}`}>
+                          <div style={{ fontWeight: 700, color: '#334155' }}>{fmtSearchDate(t.date)}</div>
+                          <div style={{ color: '#475569', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }}>
+                            {t.titles.length ? t.titles.join(', ') : <span style={{ fontStyle: 'italic', color: '#94A3B8' }}>No titles recorded</span>}
+                          </div>
+                        </div>
+                      ))}
+                  </td>
+                );
+              })}
+              <td style={{ padding: '0.45rem 0.6rem', verticalAlign: 'top', textAlign: 'center', fontSize: '0.7rem', color: '#475569', ...colLine(1), background: '#F8FAFC' }} title="Title searches logged for this company on Bulk Add > Zoom Search Log">
+                <div style={{ fontSize: '1rem', fontWeight: 800, color: '#1E293B' }}>{titleSearches.length}</div>
+                <div style={{ fontSize: '0.6rem', color: '#94A3B8' }}>title search{titleSearches.length === 1 ? '' : 'es'}</div>
+              </td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -14230,6 +14277,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   onEditContact={setEditingContact}
                   tagReview={settings.contactTagReview || {}}
                   zoomCompanyId={String(fields.zoomCompanyId || '').trim()}
+                  company={fields.company || ''}
+                  zoomCompanyName={fields.zoomCompanyName || ''}
                   searchRun={fields.dmSearchRun || {}}
                   onToggleSearchRun={(key, on) => setFields(prev => {
                     const next = { ...(prev.dmSearchRun || {}) };

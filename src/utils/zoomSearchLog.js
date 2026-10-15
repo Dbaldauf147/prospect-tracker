@@ -217,3 +217,27 @@ export function buildProspectMatcher(prospects) {
     return byName.get(normZoomCompany(c?.name)) || null;
   };
 }
+
+/**
+ * The title searches logged against one company, newest first:
+ * [{ tag, titles, date, contacts }]. The company is a Table View record's
+ * identity ({ company, zoomCompanyId, zoomCompanyName }) and a logged
+ * company counts as it by Zoom Company ID, or by either name, compared the
+ * way the Zoom exports compare them. Read by the company popup's Contacts >
+ * By Category table, one cell per tag.
+ */
+export function titleSearchesForCompany(searches, { company = '', zoomCompanyId = '', zoomCompanyName = '' } = {}) {
+  const id = cleanZoomId(zoomCompanyId);
+  const names = new Set([company, zoomCompanyName].map(normZoomCompany).filter(Boolean));
+  if (!id && !names.size) return [];
+  const isThis = (c) => {
+    const cid = cleanZoomId(c?.zoomId);
+    if (id && cid) return cid === id;
+    const n = normZoomCompany(c?.name);
+    return !!n && names.has(n);
+  };
+  return (searches || [])
+    .filter(s => s?.type === 'title' && (s.companies || []).some(isThis))
+    .map(s => ({ tag: s.tag || '', titles: s.titles || [], date: s.date || '', contacts: s.contacts || 0 }))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}

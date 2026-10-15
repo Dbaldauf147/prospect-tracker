@@ -1,7 +1,7 @@
 // Assertion tests for the Zoom Search Log's parsing and roll-up.
 //   node scripts/zoomSearchLog.test.mjs
 import {
-  splitPastedTable, parseZoomPaste, splitTitles, readLog, makeSearch, companyLog, buildProspectMatcher, cleanZoomId,
+  splitPastedTable, parseZoomPaste, splitTitles, readLog, makeSearch, companyLog, buildProspectMatcher, cleanZoomId, titleSearchesForCompany,
 } from '../src/utils/zoomSearchLog.js';
 
 let passed = 0, failed = 0;
@@ -82,6 +82,26 @@ check('company search drops tag and titles',
   check('by name with corporate suffix set aside', match({ zoomId: '99', name: 'Kilroy Realty Corp' })?.id, 'p2');
   check('by the zoom company name', match({ name: 'Silver Lake Partners' })?.id, 'p3');
   check('no match is null', match({ zoomId: '5', name: 'Nobody' }), null);
+}
+
+// --- one company's title searches (company popup, By Category) -----------
+{
+  const searches = [
+    makeSearch({ id: '1', type: 'company', date: '2026-10-01', companies: [{ zoomId: '7', name: 'URW' }] }),
+    makeSearch({ id: '2', type: 'title', date: '2026-10-05', tag: 'Capital Planning', titles: ['VP Capital Planning'], companies: [{ zoomId: '7', name: 'URW' }], contactCount: 3 }),
+    makeSearch({ id: '3', type: 'title', date: '2026-10-09', tag: 'ESG', titles: ['Head of ESG', 'CSO'], companies: [{ zoomId: '', name: 'Unibail-Rodamco-Westfield SE' }] }),
+    makeSearch({ id: '4', type: 'title', date: '2026-10-10', tag: 'ESG', titles: ['CSO'], companies: [{ zoomId: '9', name: 'URW' }] }),
+    makeSearch({ id: '5', type: 'title', date: '2026-10-11', tag: 'Utilities', titles: ['Energy Manager'], companies: [{ zoomId: '', name: 'Other Co' }] }),
+  ];
+  const urw = { company: 'URW', zoomCompanyId: '7', zoomCompanyName: 'Unibail-Rodamco-Westfield SE' };
+  check('title searches for a company: by Zoom ID or name, newest first, company searches out',
+    titleSearchesForCompany(searches, urw).map(s => [s.date, s.tag, s.titles]),
+    [['2026-10-09', 'ESG', ['Head of ESG', 'CSO']], ['2026-10-05', 'Capital Planning', ['VP Capital Planning']]]);
+  check('a different Zoom ID under the same name is a different company',
+    titleSearchesForCompany(searches, urw).some(s => s.date === '2026-10-10'), false);
+  check('matched by name when the record has no Zoom ID',
+    titleSearchesForCompany(searches, { company: 'Other Co' }).map(s => s.tag), ['Utilities']);
+  check('no identity, nothing', titleSearchesForCompany(searches, {}), []);
 }
 
 console.log(`${passed} passed, ${failed} failed`);
