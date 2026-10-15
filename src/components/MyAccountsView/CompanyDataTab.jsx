@@ -168,6 +168,25 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
     },
   ], [prospectById, onSelect]);
 
+  // The table's own Export Excel writes the whole page: the rows as listed
+  // (with the column filters, sort and shown columns applied), then a
+  // Summary sheet carrying the missing / filled counts from the cards.
+  const showLabel = show === MISSING_ANY ? 'Missing any value'
+    : show ? `Missing ${COMPANY_DATA_FIELDS.find(f => f.key === show)?.label || show}` : 'All companies';
+  const summarySheet = useMemo(() => ({
+    name: 'Summary',
+    rows: [
+      ...COMPANY_DATA_FIELDS.map(f => ({
+        Field: f.label,
+        Missing: missingCounts[f.key],
+        Filled: rows.length - missingCounts[f.key],
+        Companies: rows.length,
+      })),
+      { Field: 'Missing any value', Missing: missingCounts[MISSING_ANY], Filled: rows.length - missingCounts[MISSING_ANY], Companies: rows.length },
+      { Field: `Listed in this export: ${showLabel}`, Missing: '', Filled: '', Companies: shown.length },
+    ],
+  }), [missingCounts, rows.length, shown.length, showLabel]);
+
   // The export is the paste-back template: ID and Company first (what the
   // paste matches on), then every field, filled where the company already
   // has a number and blank where it doesn't.
@@ -256,6 +275,8 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
           enableColumnFilters
           emptyMessage={show === '' ? 'No companies to show.' : 'Nothing missing here.'}
           exportFileName="my_accounts_company_data"
+          exportPrimarySheetName="Company data"
+          exportExtraSheets={[summarySheet]}
         />
       </div>
 
