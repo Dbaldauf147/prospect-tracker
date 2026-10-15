@@ -67,6 +67,7 @@ for (const [key, area] of [
   ['target-accounts:blocked-names', 'the blocked account names'],
   ['bulk-contacts-company-rules', 'the bulk-add company rules'],
   ['clients-view:contract-services', 'the contract-services analysis'],
+  ['zoom-search-log', 'the Zoom search log'],
 ]) {
   ok(isMirroredWorkKey(key), `${area} follow the user`, key);
 }
@@ -110,6 +111,7 @@ const KEY_CONSTANTS = {
   'target-accounts:blocked-names': ['BLOCKED_KEY'],
   'bulk-contacts-company-rules': ['COMPANY_RULES_KEY'],
   'clients-view:contract-services': ['STORAGE_KEY'],
+  'zoom-search-log': ['ZOOM_SEARCH_LOG_KEY'],
 };
 
 const unmirroredWrites = [];
