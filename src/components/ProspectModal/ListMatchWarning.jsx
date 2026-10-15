@@ -16,7 +16,8 @@
 // Once every shown row is mapped there is nothing left to decide, so the
 // strip steps aside and the same component, as variant="badge", draws a
 // small green tick pill in the modal's header row instead (x to unmap).
-// Ignore never hides a mapped row.
+// Ignore never hides a mapped row, and once any row is mapped the
+// unmapped name-alikes are no longer shown.
 import { useEffect, useMemo, useState } from 'react';
 import { loadList as loadUploadedList } from '../../utils/uploadedListStore';
 import { mapListRow, unmapListRow, unmapListRows } from '../../utils/listAccountMapping';
@@ -42,8 +43,11 @@ export function ListMatchWarning({ variant = 'strip', label, storageKey, company
   const matches = useMemo(() => {
     if (!name) return [];
     const items = buildItems(storageKey, names, name, settings);
+    // A row mapped here settles it: the other name-alikes drop out, so
+    // the strip steps aside for the green badge.
+    if (items.some(m => m.state === 'mapped')) return items.filter(m => m.state === 'mapped').slice(0, MAX_SHOWN);
     return items
-      .filter(m => m.state === 'mapped' || !(ignored || {})[m.matchKey])
+      .filter(m => !(ignored || {})[m.matchKey])
       .slice(0, MAX_SHOWN);
   }, [storageKey, names, name, settings, ignored]);
 

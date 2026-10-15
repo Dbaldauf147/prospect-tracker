@@ -6053,6 +6053,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         out.push({ name, cm: raClientCm(ra), score: 1, exact: false, mapped: true, mappedElsewhere: '' });
       }
     }
+    // Once a client is mapped to this company the question is answered:
+    // the other name-alikes are just noise, so only the mapped ones stay.
+    if (out.some(m => m.mapped)) return out.filter(m => m.mapped);
     return out;
   }, [raClientMatches, raClientMapping, fields.company, settings?.ignoredRaClientMatches, raIgnoreKey]);
   const raAllMapped = visibleRaClientMatches.length > 0 && visibleRaClientMatches.every(m => m.mapped);
