@@ -859,6 +859,10 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     [settings?.dropdownLists, settings?.customServiceCategories]
   );
   const listRegistry = useMemo(() => buildListRegistry(dropdownLists), [dropdownLists]);
+  const substatusOptions = useMemo(
+    () => dropdownLists.find(l => l.key === 'substatus')?.options || [],
+    [dropdownLists],
+  );
   const availableLists = useMemo(() => buildAvailableLists(dropdownLists), [dropdownLists]);
   const [linkModalOpen, setLinkModalOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -1099,6 +1103,27 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
           <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: isOld ? '#F1F5F9' : '#DCFCE7', color: isOld ? '#64748B' : '#166534' }}>
             {row.status || '-'}
           </span>
+        );
+      },
+    },
+    {
+      // The company's Substatus, the same field and the same Dropdowns ›
+      // Substatus choices as the company popup, saved straight to the
+      // record. A value no longer on the list still shows (SelectCell adds it).
+      key: 'substatus', label: 'Substatus', defaultWidth: 150,
+      headerTitle: 'The company Substatus (same field as the company popup). Choices come from Dropdowns › Substatus.',
+      getSortValue: (row) => (row.substatus || '').toLowerCase(),
+      getFilterValue: (row) => row.substatus || '',
+      exportValue: (row) => row.substatus || '',
+      render: (row) => {
+        const current = String(row.substatus || '').trim();
+        if (!updateProspect || !row.id) return <span>{current || '-'}</span>;
+        return (
+          <SelectCell
+            value={current}
+            options={substatusOptions}
+            onChange={(v) => updateProspect(row.id, { substatus: v || '' })}
+          />
         );
       },
     },
@@ -1345,7 +1370,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
         />
       ),
     },
-  ], [expandedIds, columnLinks, listRegistry, onSelectProspect, openCompany]);
+  ], [expandedIds, columnLinks, listRegistry, onSelectProspect, openCompany, substatusOptions, updateProspect]);
 
   const subtabBar = (
     <div style={{ display: 'flex', gap: '0.25rem', padding: '0.5rem 1.25rem 0', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
