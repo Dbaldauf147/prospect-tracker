@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, useCallback, memo, Suspense } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback, memo, Suspense, Fragment, isValidElement, cloneElement } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { hasMetInPersonTag, metInPersonState, normalizeMetState, metInPersonUpdate, MET_STATE_OPTIONS, MET_YES, MET_ASKED, MET_HOLD } from '../../utils/metInPerson';
 import { contactDisplayName } from '../../utils/contactRosters';
@@ -189,6 +189,17 @@ async function loadClientsFromIndexedDB() {
 // back to a fuzzy companiesMatch scan so slight name drift (e.g.
 // "Blue Owl" vs "Blue Owl Capital") still resolves. Returns null when
 // the company has no manager assigned on the Clients page.
+// Flattens a row's cells (fragments, arrays from .map, single elements)
+// into one list so the Portfolio Companies table can lay them out in the
+// user's column order.
+function flattenTableCells(node, out = []) {
+  if (node == null || node === false || node === true) return out;
+  if (Array.isArray(node)) { node.forEach(n => flattenTableCells(n, out)); return out; }
+  if (isValidElement(node) && node.type === Fragment) return flattenTableCells(node.props.children, out);
+  out.push(node);
+  return out;
+}
+
 function resolveClientManagerFromMap(company) {
   if (!company) return null;
   const map = loadClientManagerMap();
@@ -6238,6 +6249,46 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // collapsed column still counted in the sum would leave that much blank
   // on the right.
   const colWidth = (key) => (isPortfolioColShown(key) ? `${portfolioColWidths[key]}px` : '0px');
+  // Column order for the Portfolio Companies table, set by dragging a
+  // header. Per browser, like the visibility toggles above; the Excel
+  // export keeps its own fixed order. null means the default order.
+  const [portfolioColOrder, setPortfolioColOrder] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('portfolio-col-order'));
+      if (Array.isArray(saved)) return saved;
+    } catch { /* noop */ }
+    return null;
+  });
+  useEffect(() => {
+    try {
+      if (portfolioColOrder) localStorage.setItem('portfolio-col-order', JSON.stringify(portfolioColOrder));
+      else localStorage.removeItem('portfolio-col-order');
+    } catch { /* noop */ }
+  }, [portfolioColOrder]);
+  const orderedPortfolioColKeys = useMemo(() => {
+    const keys = PORTFOLIO_COL_DEFS.map(c => c.key);
+    const out = (portfolioColOrder || []).filter((k, idx, arr) => keys.includes(k) && arr.indexOf(k) === idx);
+    // A column the saved order doesn't know (added since it was saved)
+    // goes in after the column it follows by default.
+    keys.forEach((k, idx) => {
+      if (out.includes(k)) return;
+      const prevAt = idx === 0 ? -1 : out.indexOf(keys[idx - 1]);
+      out.splice(prevAt + 1, 0, k);
+    });
+    return out;
+  }, [PORTFOLIO_COL_DEFS, portfolioColOrder]);
+  const movePortfolioCol = useCallback((fromKey, toKey) => {
+    if (!fromKey || !toKey || fromKey === toKey) return;
+    const fromIdx = orderedPortfolioColKeys.indexOf(fromKey);
+    const toIdx = orderedPortfolioColKeys.indexOf(toKey);
+    if (fromIdx < 0 || toIdx < 0) return;
+    const next = orderedPortfolioColKeys.filter(k => k !== fromKey);
+    // Dragged rightward it lands after the target, leftward before it.
+    next.splice(next.indexOf(toKey) + (fromIdx < toIdx ? 1 : 0), 0, fromKey);
+    setPortfolioColOrder(next);
+  }, [orderedPortfolioColKeys]);
+  const [portfolioDragCol, setPortfolioDragCol] = useState(null);
+  const [portfolioDragOverCol, setPortfolioDragOverCol] = useState(null);
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(true);
   // Rows added by hand in this sitting, keyed by their `addedManuallyAt`
   // stamp. They pin to the top of the table so "+ Add Row" lands somewhere
@@ -12952,6 +13003,67 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 }
 
                 const resizeHandleStyle = { position: 'absolute', right: 0, top: 0, bottom: 0, width: '5px', cursor: 'col-resize', userSelect: 'none' };
+                // The pin column and Company stay put while the rest of the
+                // table scrolls sideways under them; the header row stays put
+                // while it scrolls down.
+                const PIN_COL_W = 24;
+                const stickyHeadBg = '#F8FAFC';
+                // Lays a row's 26 data cells (written in PORTFOLIO_COL_DEFS
+                // order) out in the user's column order. If the count ever
+                // drifts from the defs it falls back to the written order
+                // rather than mislabelling columns.
+                function orderPortfolioCells(node, decorate) {
+                  const cells = flattenTableCells(node);
+                  if (cells.length !== PORTFOLIO_COL_DEFS.length) return cells;
+                  const byKey = Object.fromEntries(PORTFOLIO_COL_DEFS.map((c, idx) => [c.key, cells[idx]]));
+                  return orderedPortfolioColKeys.map(k => cloneElement(byKey[k], { key: k, ...(decorate ? decorate(k, byKey[k]) : {}) }));
+                }
+                function clearPortfolioDrag() {
+                  setPortfolioDragCol(null);
+                  setPortfolioDragOverCol(null);
+                }
+                function decorateHeadCell(k, el) {
+                  const base = el.props.style || {};
+                  const isCompany = k === 'company';
+                  const over = portfolioDragCol && portfolioDragOverCol === k && portfolioDragCol !== k;
+                  const dropRight = over && orderedPortfolioColKeys.indexOf(portfolioDragCol) < orderedPortfolioColKeys.indexOf(k);
+                  const shadows = ['inset 0 -1px 0 var(--color-border)'];
+                  if (over) shadows.push(dropRight ? 'inset -3px 0 0 var(--color-accent)' : 'inset 3px 0 0 var(--color-accent)');
+                  if (isCompany) shadows.push('1px 0 0 var(--color-border)');
+                  return {
+                    draggable: true,
+                    title: el.props.title ? `${el.props.title}\nDrag the header to move this column.` : 'Drag the header to move this column.',
+                    onDragStart: e => {
+                      setPortfolioDragCol(k);
+                      e.dataTransfer.effectAllowed = 'move';
+                      try { e.dataTransfer.setData('text/plain', k); } catch { /* noop */ }
+                    },
+                    onDragOver: e => {
+                      if (!portfolioDragCol) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                      if (portfolioDragOverCol !== k) setPortfolioDragOverCol(k);
+                    },
+                    onDrop: e => {
+                      e.preventDefault();
+                      movePortfolioCol(portfolioDragCol, k);
+                      clearPortfolioDrag();
+                    },
+                    onDragEnd: clearPortfolioDrag,
+                    style: {
+                      ...base,
+                      cursor: base.cursor || 'grab',
+                      position: 'sticky',
+                      top: 0,
+                      ...(isCompany ? { left: PIN_COL_W } : {}),
+                      zIndex: isCompany ? 4 : 2,
+                      background: stickyHeadBg,
+                      borderBottom: 'none',
+                      boxShadow: shadows.join(', '),
+                      opacity: portfolioDragCol === k ? 0.45 : 1,
+                    },
+                  };
+                }
                 const thBase = { padding: '0.3rem 0.4rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)', position: 'relative', whiteSpace: 'normal', wordBreak: 'normal', overflowWrap: 'normal', overflow: 'hidden', lineHeight: 1.25, verticalAlign: 'bottom' };
                 return (
                   <div style={{ marginTop: '0.5rem' }}>
@@ -13106,9 +13218,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                 style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', fontSize: '0.65rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}
                                 title={portfolioStarredCols.size > 0 ? 'Hide every column except Company and the ones you starred' : 'Hide every column except Company'}
                               >Hide all</button>
+                              <button
+                                type="button"
+                                onClick={() => setPortfolioColOrder(null)}
+                                disabled={!portfolioColOrder}
+                                style={{ background: 'none', border: 'none', color: portfolioColOrder ? 'var(--color-accent)' : '#CBD5E1', fontSize: '0.65rem', fontWeight: 600, cursor: portfolioColOrder ? 'pointer' : 'default', fontFamily: 'inherit', padding: 0 }}
+                                title="Put the columns back in their original order"
+                              >Reset order</button>
                             </div>
                             <div style={{ padding: '0 0.25rem 0.3rem', fontSize: '0.62rem', color: 'var(--color-text-muted)', lineHeight: 1.35, whiteSpace: 'normal', maxWidth: 220 }}>
-                              Star a column to make it standard: starred columns show on every company popup, and Hide all leaves them alone.
+                              Star a column to make it standard: starred columns show on every company popup, and Hide all leaves them alone. Drag a column header on the table to move it.
                             </div>
                             {PORTFOLIO_COL_DEFS.map(({ key, label }) => {
                               const starred = portfolioStarredCols.has(key);
@@ -13143,51 +13262,27 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           </div>
                         )}
                       </div>
-                      <div style={{ border: '1px solid var(--color-border)', borderRadius: '6px', overflow: 'auto' }}>
+                      <div style={{ border: '1px solid var(--color-border)', borderRadius: '6px', overflow: 'auto', maxHeight: '70vh', background: 'var(--color-surface)' }}>
                         {/* Full width: a fixed-layout table is never narrower than its
                             columns, so a portfolio wider than the card still scrolls,
                             and a narrower one shares the spare width out across its
                             columns instead of leaving a blank strip on the right. */}
                         <table style={{ borderCollapse: 'collapse', fontSize: '0.7rem', tableLayout: 'fixed', width: '100%' }}>
                           <colgroup>
-                            <col style={{ width: '24px' }} />
-                            <col style={{ width: colWidth('rank'),             visibility: colVis('rank') }} />
-                            <col style={{ width: colWidth('company'),          visibility: colVis('company') }} />
-                            <col style={{ width: colWidth('status'),           visibility: colVis('status') }} />
-                            <col style={{ width: colWidth('siteListSaved'),    visibility: colVis('siteListSaved') }} />
-                            <col style={{ width: colWidth('analysisSaved'),    visibility: colVis('analysisSaved') }} />
-                            <col style={{ width: colWidth('analysisSavings'),  visibility: colVis('analysisSavings') }} />
-                            <col style={{ width: colWidth('analysisExposure'), visibility: colVis('analysisExposure') }} />
-                            <col style={{ width: colWidth('hqCity'),           visibility: colVis('hqCity') }} />
-                            <col style={{ width: colWidth('hqCountry'),        visibility: colVis('hqCountry') }} />
-                            <col style={{ width: colWidth('energy'),           visibility: colVis('energy') }} />
-                            <col style={{ width: colWidth('estElectricity'),   visibility: colVis('estElectricity') }} />
-                            <col style={{ width: colWidth('estNaturalGas'),    visibility: colVis('estNaturalGas') }} />
-                            <col style={{ width: colWidth('siteCount'),        visibility: colVis('siteCount') }} />
-                            <col style={{ width: colWidth('sector'),           visibility: colVis('sector') }} />
-                            <col style={{ width: colWidth('subsector'),        visibility: colVis('subsector') }} />
-                            <col style={{ width: colWidth('subsectorScore'),   visibility: colVis('subsectorScore') }} />
-                            <col style={{ width: colWidth('strategy'),         visibility: colVis('strategy') }} />
-                            <col style={{ width: colWidth('acquisitionYear'),  visibility: colVis('acquisitionYear') }} />
-                            <col style={{ width: colWidth('pcDescription'),    visibility: colVis('pcDescription') }} />
-                            <col style={{ width: colWidth('notes'),            visibility: colVis('notes') }} />
-                            <col style={{ width: colWidth('raClient'),         visibility: colVis('raClient') }} />
-                            <col style={{ width: colWidth('clientManager'),    visibility: colVis('clientManager') }} />
-                            <col style={{ width: colWidth('targetAccount'),    visibility: colVis('targetAccount') }} />
-                            <col style={{ width: colWidth('tier'),             visibility: colVis('tier') }} />
-                            <col style={{ width: colWidth('salesRep'),         visibility: colVis('salesRep') }} />
-                            <col style={{ width: colWidth('listFlags'),        visibility: colVis('listFlags') }} />
+                            <col style={{ width: `${PIN_COL_W}px` }} />
+                            {orderedPortfolioColKeys.map(k => <col key={k} style={{ width: colWidth(k), visibility: colVis(k) }} />)}
                             <col style={{ width: '28px' }} />
                           </colgroup>
                           <thead>
                             <tr style={{ background: '#F8FAFC' }}>
                               <th
-                                style={{ ...thBase, padding: '0.3rem 0.1rem', textAlign: 'center' }}
+                                style={{ ...thBase, padding: '0.3rem 0.1rem', textAlign: 'center', position: 'sticky', top: 0, left: 0, zIndex: 4, background: stickyHeadBg, borderBottom: 'none', boxShadow: 'inset 0 -1px 0 var(--color-border)' }}
                                 title={pinnedCount > 0
                                   ? `${pinnedCount} pinned ${pinnedCount === 1 ? 'company' : 'companies'} held at the top of the table, whatever the sort. Click a row's pin to release it.`
                                   : "Pin a company to hold it at the top of the table, whatever the sort. Pins stay put after you close this popup."}
                                 aria-label="Pinned"
                               >📌</th>
+                              {orderPortfolioCells(<>
                               <th
                                 style={{ ...thBase, cursor: 'pointer', userSelect: 'none' }}
                                 onClick={() => setPortfolioSortByRank(v => !v)}
@@ -13220,7 +13315,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               <th style={thBase}>Tier<span style={resizeHandleStyle} onMouseDown={e => startResize('tier', e)} /></th>
                               <th style={thBase}>Other CDM<span style={resizeHandleStyle} onMouseDown={e => startResize('salesRep', e)} /></th>
                               <th style={thBase} title="External reporting / disclosure lists this company has been mapped onto from the Lists tab">External Reporting<span style={resizeHandleStyle} onMouseDown={e => startResize('listFlags', e)} /></th>
-                              <th style={{ padding: '0.3rem 0.3rem', borderBottom: '1px solid var(--color-border)' }}></th>
+                              </>, decorateHeadCell)}
+                              <th style={{ padding: '0.3rem 0.3rem', position: 'sticky', top: 0, zIndex: 2, background: stickyHeadBg, boxShadow: 'inset 0 -1px 0 var(--color-border)' }}></th>
                             </tr>
                           </thead>
                           <tbody>
@@ -13245,16 +13341,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               // it off - a heavier rule there says where the
                               // pins stop and the ranking resumes.
                               const lastPinned = isPinned && displayI === pinnedCount - 1;
+                              const rowBg = isPinned ? '#FFFBEB' : (justAdded ? '#F0F9FF' : 'var(--color-surface)');
                               return (
                               <tr
                                 key={i}
                                 title={justAdded ? 'Added by hand just now - it stays at the top of the table until you reopen this company, then it takes its own rank.' : undefined}
                                 style={{
                                   borderBottom: lastPinned ? '2px solid #FCD34D' : '1px solid #F1F5F9',
-                                  background: isPinned ? '#FFFBEB' : (justAdded ? '#F0F9FF' : 'transparent'),
+                                  background: rowBg,
                                 }}
                               >
-                                <td style={{ padding: '0.15rem 0', textAlign: 'center' }}>
+                                <td style={{ padding: '0.15rem 0', textAlign: 'center', position: 'sticky', left: 0, zIndex: 1, background: rowBg }}>
                                   <button
                                     type="button"
                                     onClick={() => togglePin(i)}
@@ -13274,6 +13371,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     onMouseLeave={e => { if (!isPinned) e.currentTarget.style.opacity = '0.22'; }}
                                   >📌</button>
                                 </td>
+                                {orderPortfolioCells(<>
                                 {(() => {
                                   const score = rowScores[i];
                                   const tier = industryTier(r.sector || r.industry);
@@ -13960,6 +14058,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     </td>
                                   );
                                 })()}
+                                </>, (k, el) => (k === 'company' ? { style: { ...el.props.style, position: 'sticky', left: PIN_COL_W, zIndex: 1, background: rowBg, boxShadow: '1px 0 0 var(--color-border)' } } : null))}
                                 <td style={{ padding: '0.15rem 0.25rem', textAlign: 'center' }}>
                                   <button
                                     onClick={() => deleteRow(i)}
@@ -13974,17 +14073,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             })}
                             {(totalEnergy > 0 || totalSites > 0 || totalSavings > 0 || totalExposure > 0) && (
                               <tr style={{ background: '#F8FAFC', fontWeight: 700 }}>
-                                {/* Cell spans track the 28 columns above: Totals covers
-                                    the pin column and Opportunity Score → Master Analysis,
-                                    then each total sits under the column it sums. */}
-                                <td colSpan={6} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
-                                <td style={{ padding: '0.3rem 0.3rem', textAlign: 'right', whiteSpace: 'nowrap' }} title={totalSavings > 0 ? 'Sum of the indicative annual savings across these portfolio companies' : undefined}>{totalSavings > 0 ? totalSavings.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }) : ''}</td>
-                                <td style={{ padding: '0.3rem 0.3rem', textAlign: 'right', whiteSpace: 'nowrap', color: '#B91C1C' }} title={totalExposure > 0 ? 'Sum of the estimated max yearly fine exposure across these portfolio companies' : undefined}>{totalExposure > 0 ? totalExposure.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }) : ''}</td>
-                                <td colSpan={2}></td>
-                                <td style={{ padding: '0.3rem 0.4rem' }}>{totalEnergy > 0 ? totalEnergy.toLocaleString() : ''}</td>
-                                <td colSpan={2}></td>
-                                <td style={{ padding: '0.3rem 0.4rem' }}>{totalSites > 0 ? totalSites.toLocaleString() : ''}</td>
-                                <td colSpan={14}></td>
+                                {/* One cell per column, in the user's column order, so each
+                                    total sits under the column it sums. */}
+                                <td style={{ position: 'sticky', left: 0, zIndex: 1, background: '#F8FAFC' }}></td>
+                                {orderedPortfolioColKeys.map(k => {
+                                  if (k === 'company') return <td key={k} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase', position: 'sticky', left: PIN_COL_W, zIndex: 1, background: '#F8FAFC', boxShadow: '1px 0 0 var(--color-border)' }}>Totals</td>;
+                                  if (k === 'analysisSavings') return <td key={k} style={{ padding: '0.3rem 0.3rem', textAlign: 'right', whiteSpace: 'nowrap' }} title={totalSavings > 0 ? 'Sum of the indicative annual savings across these portfolio companies' : undefined}>{totalSavings > 0 ? totalSavings.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }) : ''}</td>;
+                                  if (k === 'analysisExposure') return <td key={k} style={{ padding: '0.3rem 0.3rem', textAlign: 'right', whiteSpace: 'nowrap', color: '#B91C1C' }} title={totalExposure > 0 ? 'Sum of the estimated max yearly fine exposure across these portfolio companies' : undefined}>{totalExposure > 0 ? totalExposure.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }) : ''}</td>;
+                                  if (k === 'energy') return <td key={k} style={{ padding: '0.3rem 0.4rem' }}>{totalEnergy > 0 ? totalEnergy.toLocaleString() : ''}</td>;
+                                  if (k === 'siteCount') return <td key={k} style={{ padding: '0.3rem 0.4rem' }}>{totalSites > 0 ? totalSites.toLocaleString() : ''}</td>;
+                                  return <td key={k}></td>;
+                                })}
+                                <td></td>
                               </tr>
                             )}
                           </tbody>
