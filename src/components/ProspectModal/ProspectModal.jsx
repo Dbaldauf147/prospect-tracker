@@ -470,6 +470,25 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
       }
       return { bucket: b, dms: [...yes, ...unsure] };
     });
+  // Steps left for each category, read as how far down the ladder it has got:
+  // a Yes decision maker means nothing is left (0); otherwise the furthest
+  // step done says where it stands, so a category with no DM and nothing else
+  // has all five left, one with a Zoom Company ID (the company has one, or
+  // the tick is on) has four, and one closed out has none. The total sums
+  // every category.
+  const stepsLeftFor = ({ bucket, dms }) => {
+    if (dms.some(d => d.answer === 'yes')) return 0;
+    let reached = 0;
+    DM_STEPS.forEach((step, i) => {
+      const done = step.key === 'zoom'
+        ? (!!zoomCompanyId || !!searchRun?.[bucket.key])
+        : !!searchSteps?.[bucket.key]?.[step.key];
+      if (done) reached = i + 1;
+    });
+    return DM_STEPS.length - reached;
+  };
+  const stepsLeft = dmColumns.map(col => ({ bucket: col.bucket, left: stepsLeftFor(col) }));
+  const stepsLeftTotal = stepsLeft.reduce((sum, s) => sum + s.left, 0);
   const DM_ANSWER_STYLE = {
     yes: { background: '#DCFCE7', borderLeft: '3px solid #22C55E', name: '#166534', title: '#15803D', label: 'Yes' },
     unsure: { background: '#FEF3C7', borderLeft: '3px solid #F59E0B', name: '#92400E', title: '#B45309', label: 'Not sure' },
@@ -487,12 +506,13 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
       <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, overflowX: 'auto' }}>
-        <table data-dm-by-category style={{ width: '100%', minWidth: dmColumns.length * 130, tableLayout: 'fixed', borderCollapse: 'collapse' }}>
+        <table data-dm-by-category style={{ width: '100%', minWidth: dmColumns.length * 130 + 120, tableLayout: 'fixed', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
               {dmColumns.map(({ bucket }, i) => (
                 <th key={bucket.key} style={{ ...headCell, ...colLine(i) }} title={bucket.label}>{bucket.label}</th>
               ))}
+              <th style={{ ...headCell, ...colLine(1), width: 120, textAlign: 'center' }} title="Steps left across every category: 0 for a category with a Yes decision maker, otherwise the steps below the furthest one done">Steps remaining</th>
             </tr>
           </thead>
           <tbody>
@@ -520,6 +540,20 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                   })}
                 </td>
               ))}
+              <td
+                rowSpan={DM_STEPS.length + 1}
+                data-dm-steps-remaining={stepsLeftTotal}
+                style={{ padding: '0.6rem', verticalAlign: 'top', textAlign: 'center', ...colLine(1), background: '#F8FAFC' }}
+              >
+                <div style={{ fontSize: '1.6rem', fontWeight: 800, lineHeight: 1.1, color: stepsLeftTotal === 0 ? '#166534' : '#1E293B' }}>{stepsLeftTotal}</div>
+                <div style={{ fontSize: '0.6rem', color: '#94A3B8', marginBottom: '0.5rem' }}>of {dmColumns.length * DM_STEPS.length}</div>
+                {stepsLeft.map(({ bucket, left }) => (
+                  <div key={bucket.key} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.3rem', fontSize: '0.62rem', color: left === 0 ? '#166534' : '#475569', padding: '0.1rem 0' }} title={`${bucket.label}: ${left} step${left === 1 ? '' : 's'} remaining`}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>{bucket.label}</span>
+                    <span style={{ fontWeight: 700 }}>{left}</span>
+                  </div>
+                ))}
+              </td>
             </tr>
             {/* A category nobody is a Yes decision maker for (a Not sure
                 alone still gets it) is worked down a ladder, one row per
