@@ -8,6 +8,7 @@ import {
   pruneServicesFromCategories,
   renameServiceInCategories,
   UNGROUPED_SERVICES,
+  renameBucketCounted,
 } from '../../utils/serviceCategoriesStore';
 import {
   boardOnlyServiceCount,
@@ -1940,7 +1941,10 @@ export function DropdownsView({ settings, updateSettings }) {
             <ServiceBucketsPanel
               categories={serviceCategories}
               unfiledCount={serviceRows.filter(r => !r.bucket || r.bucket === UNGROUPED_SERVICES).length}
-              onSave={next => updateSettings?.({ customServiceCategories: next })}
+              onSave={(next, rename) => {
+                const counted = rename ? renameBucketCounted(settings, rename.from, rename.to) : null;
+                updateSettings?.({ customServiceCategories: next, ...(counted ? { serviceBucketCounted: counted } : {}) });
+              }}
               onClose={() => setEditingBuckets(false)}
             />
           )}

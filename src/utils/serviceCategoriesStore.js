@@ -98,7 +98,44 @@ export function graveyardTest(settings) {
 // sensors) and Renewables. Matched on the words so a renamed "Broader SE
 // offers" or "Renewables & PPAs" still counts. Graveyard boxes are left
 // out too, through graveyardTest.
-export const isUncountedBucket = (bucket) => /broader\s*se\b|renewable/i.test(String(bucket ?? ''));
+//
+// That is the default. Clicking a box's header on the company card lets the
+// user say otherwise for any box, either way, and the answer is kept in
+// settings.serviceBucketCounted as { [box name]: true | false }. A box with
+// no entry there falls back to the name match, so a layout nobody has
+// touched reads exactly as it always did.
+const DEFAULT_UNCOUNTED = /broader\s*se\b|renewable/i;
+export function isUncountedBucket(bucket, settings) {
+  const name = String(bucket ?? '');
+  const overrides = settings?.serviceBucketCounted;
+  if (overrides && typeof overrides === 'object' && typeof overrides[name] === 'boolean') {
+    return !overrides[name];
+  }
+  return DEFAULT_UNCOUNTED.test(name);
+}
+
+// settings.serviceBucketCounted with `bucket` set to count (true) or not
+// (false). An answer that matches the default is dropped rather than
+// stored, so the map only ever holds the boxes somebody actually changed.
+export function setBucketCounted(settings, bucket, counted) {
+  const name = String(bucket ?? '');
+  const next = { ...(settings?.serviceBucketCounted || {}) };
+  if (counted === !DEFAULT_UNCOUNTED.test(name)) delete next[name];
+  else next[name] = !!counted;
+  return next;
+}
+
+// settings.serviceBucketCounted after a box rename: the answer moves with
+// the box, so renaming "Broader SE" doesn't quietly undo somebody's choice
+// to count it. Null when the old name had no answer to carry.
+export function renameBucketCounted(settings, oldName, newName) {
+  const map = settings?.serviceBucketCounted;
+  if (!map || typeof map !== 'object' || typeof map[oldName] !== 'boolean') return null;
+  const next = { ...map };
+  const counted = next[oldName];
+  delete next[oldName];
+  return setBucketCounted({ serviceBucketCounted: next }, newName, counted);
+}
 
 /**
  * A test for "does this service count toward a company's % of services
@@ -111,7 +148,7 @@ export function exploredCountTest(settings) {
   const isDead = graveyardTest(settings);
   const skipped = new Set();
   for (const cat of getServiceCategories(settings)) {
-    if (!isUncountedBucket(cat.name)) continue;
+    if (!isUncountedBucket(cat.name, settings)) continue;
     for (const item of cat.items || []) skipped.add(String(item).trim().toLowerCase());
   }
   return (name) => {
