@@ -59,3 +59,19 @@ export function salespeopleForVertical(coverage, vertical) {
   }
   return [...byName.values()];
 }
+
+// One inline edit on the Coverage table, applied to the list as shown and
+// tidied the way a full Edit-mode save is. `gi` / `ri` index the unfiltered
+// list; `field` is 'team' (ri ignored), 'vertical' or 'salespeople' (typed
+// "A, B"). Returns a new list; the one passed in is left alone.
+export function withCoverageEdit(coverage, { gi, ri, field, value }) {
+  const next = (coverage || []).map((g, i) => {
+    if (i !== gi) return g;
+    if (field === 'team') return { ...g, team: value };
+    return {
+      ...g,
+      rows: (g.rows || []).map((r, j) => (j !== ri ? r : { ...r, [field]: field === 'salespeople' ? splitSalespeople(value) : value })),
+    };
+  });
+  return cleanCoverage(next);
+}

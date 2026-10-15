@@ -3,7 +3,7 @@
 // Plain Node - no test framework (the project has none). Run:
 //   node scripts/salesCoverage.test.mjs
 import { SALES_COVERAGE } from '../src/data/salesCoverage.js';
-import { cleanCoverage, coverageFromSettings, splitSalespeople, salespeopleForVertical } from '../src/utils/salesCoverage.js';
+import { cleanCoverage, coverageFromSettings, splitSalespeople, salespeopleForVertical, withCoverageEdit } from '../src/utils/salesCoverage.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -53,6 +53,22 @@ eq(cleanCoverage([
   { team: 'New Team', rows: [] },
 ], 'trims, drops blank rows and blank teams, keeps a vertical with nobody on it yet');
 eq(cleanCoverage(SALES_COVERAGE), SALES_COVERAGE, 'the default list survives a save unchanged');
+
+// ── inline edits ─────────────────────────────────────────────────────────
+{
+  const list = [
+    { team: 'Mark', rows: [{ vertical: 'Hotels', salespeople: ['Doug'] }, { vertical: 'Grocery', salespeople: ['Jackie'] }] },
+    { team: 'Robbie', rows: [{ vertical: 'Oil & Gas', salespeople: ['Jon'] }] },
+  ];
+  eq(withCoverageEdit(list, { gi: 0, ri: 1, field: 'salespeople', value: 'Jackie Cobb,  Sara ' })[0].rows[1],
+    { vertical: 'Grocery', salespeople: ['Jackie Cobb', 'Sara'] }, 'salespeople typed with commas become a list');
+  eq(withCoverageEdit(list, { gi: 1, ri: 0, field: 'vertical', value: ' Oil and Gas ' })[1].rows[0].vertical,
+    'Oil and Gas', 'a vertical is trimmed');
+  eq(withCoverageEdit(list, { gi: 0, field: 'team', value: 'Mark Z' }).map(g => g.team), ['Mark Z', 'Robbie'], 'a team is renamed');
+  eq(withCoverageEdit(list, { gi: 0, ri: 0, field: 'vertical', value: '' })[0].rows[0],
+    { vertical: '', salespeople: ['Doug'] }, 'clearing the vertical keeps a row that still has a salesperson');
+  eq(list[0].rows[0].vertical, 'Hotels', 'the list passed in is not changed');
+}
 
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
