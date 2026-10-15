@@ -27,6 +27,9 @@ export function normZoomCompany(s) {
     .trim();
 }
 
+/** What a table column says for a company, in a filter or an Excel export. */
+export const zoomExcludedLabel = (excluded) => (excluded ? 'Excluded' : 'Included');
+
 export function isZoomExcluded(prospect) {
   return !!prospect?.excludeFromZoomExports;
 }
