@@ -1,11 +1,13 @@
-// My Accounts > "All Missing History" subtab: the sum of every missing value
-// on the Company Data subtab, day by day, with each field's share of it in
-// the table underneath. The days come from utils/missingHistory.js,
+// My Accounts > "All Missing History" subtab: the Company Data subtab's All
+// Missing Steps column summed, day by day, with its two parts and each
+// field's missing count in the table underneath. Days recorded before the
+// chart tracked All Missing Steps (their total was the field counts summed)
+// are left off, so the line doesn't jump between the two measures. The days come from utils/missingHistory.js,
 // recorded while My Accounts is open.
 import { useMemo, useSyncExternalStore } from 'react';
 import { DataTable } from '../common/DataTable';
 import { COMPANY_DATA_FIELDS } from '../../utils/companyDataFields';
-import { subscribeMissingHistory, missingHistorySnapshot, parseMissingHistory } from '../../utils/missingHistory';
+import { subscribeMissingHistory, missingHistorySnapshot, parseMissingHistory, isStepsDay } from '../../utils/missingHistory';
 
 const INK = '#DC2626';
 
@@ -28,7 +30,7 @@ function TotalLine({ series }) {
   const ticks = [...new Set(n <= 1 ? [0] : [0, Math.floor((n - 1) / 2), n - 1])];
   const last = series[n - 1];
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Total missing values by day" style={{ display: 'block', maxWidth: W }}>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="All Missing Steps by day" style={{ display: 'block', maxWidth: W }}>
       {[0, top / 2, top].map(g => (
         <g key={g}>
           <line x1={PAD.l} x2={W - PAD.r} y1={y(g)} y2={y(g)} stroke="#E2E8F0" strokeWidth="1" />
@@ -49,7 +51,7 @@ function TotalLine({ series }) {
       <text x={x(n - 1) + 8} y={y(last.total) + 4} fontSize="12" fontWeight="600" fill="#334155">{last.total.toLocaleString()}</text>
       {series.map((s, i) => (
         <rect key={s.day} x={x(i) - band / 2} y={PAD.t} width={band} height={H - PAD.t - PAD.b} fill="transparent">
-          <title>{`${fmtDay(s.day)}: ${s.total.toLocaleString()} missing across ${s.companies} companies`}</title>
+          <title>{`${fmtDay(s.day)}: ${s.total.toLocaleString()} missing steps across ${s.companies} companies`}</title>
         </rect>
       ))}
     </svg>
@@ -60,7 +62,7 @@ export function MissingHistoryView({ settings, updateSettings }) {
   const raw = useSyncExternalStore(subscribeMissingHistory, missingHistorySnapshot);
   const history = useMemo(() => parseMissingHistory(raw), [raw]);
   const series = useMemo(
-    () => Object.keys(history).sort().map(day => ({ day, ...history[day], total: Number(history[day]?.total) || 0 })),
+    () => Object.keys(history).sort().filter(day => isStepsDay(history[day])).map(day => ({ day, ...history[day], total: Number(history[day]?.total) || 0 })),
     [history],
   );
 
@@ -72,7 +74,7 @@ export function MissingHistoryView({ settings, updateSettings }) {
 
   const columns = [
     { key: 'day', label: 'Date', defaultWidth: 100, sticky: true, render: r => fmtDay(r.day), getSortValue: r => Number(r.day.replace(/-/g, '')), exportValue: r => r.day },
-    { key: 'total', label: 'All Missing', defaultWidth: 110, render: r => <span style={{ fontWeight: 700 }}>{r.total.toLocaleString()}</span> },
+    { key: 'total', label: 'All Missing Steps', defaultWidth: 140, render: r => <span style={{ fontWeight: 700 }}>{r.total.toLocaleString()}</span> },
     {
       key: 'change', label: 'Change', defaultWidth: 90,
       getSortValue: r => r.change ?? 0,
@@ -83,6 +85,8 @@ export function MissingHistoryView({ settings, updateSettings }) {
         : <span style={{ fontWeight: 600, color: r.change < 0 ? '#047857' : '#B91C1C' }}>{`${r.change > 0 ? '+' : ''}${r.change}`}</span>),
     },
     { key: 'companies', label: 'Companies', defaultWidth: 100 },
+    { key: 'stepsRemaining', label: 'Steps Remaining', defaultWidth: 130, render: r => (r.stepsRemaining ?? 0).toLocaleString() },
+    { key: 'missingData', label: 'Missing Data', defaultWidth: 110, render: r => (r.missingData ?? 0).toLocaleString() },
     ...COMPANY_DATA_FIELDS.map(f => ({
       key: f.key, label: f.label, defaultWidth: 120,
       getSortValue: r => r.fields?.[f.key] ?? -1,
@@ -95,7 +99,7 @@ export function MissingHistoryView({ settings, updateSettings }) {
   if (series.length === 0) {
     return (
       <div style={{ padding: '1rem', fontSize: '0.8rem', color: '#64748B', maxWidth: 640 }}>
-        Nothing recorded yet. A reading is taken each day while My Accounts is open, once the accounts have loaded.
+        Nothing recorded yet. A reading is taken each day while My Accounts is open, once the accounts and contacts have loaded.
         The first reading is also logged as yesterday, so the chart starts with two points.
       </div>
     );
@@ -109,12 +113,13 @@ export function MissingHistoryView({ settings, updateSettings }) {
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0.25rem 0.25rem 1rem' }}>
       <div style={{ fontSize: '0.72rem', color: '#64748B', margin: '0 0 0.6rem' }}>
         {`${series.length} day${series.length === 1 ? '' : 's'} recorded since ${fmtDay(first.day)}. `}
-        Each day is the sum of every missing value on the Company Data subtab (sites, utility accounts, meters, equipment,
-        MWh, Zoom ID and name, URL) across the My Accounts companies, inactive ones left out, as it stood at the end of that day.
+        Each day is the All Missing Steps column on the Company Data subtab added up (steps remaining on each company's
+        By Category ladder, plus its blank sites, utility accounts and equipment) across the My Accounts companies,
+        inactive ones left out, as it stood at the end of that day. The field columns in the table count the companies missing each value.
       </div>
       <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: '0.6rem 0.75rem', background: '#fff', maxWidth: 820 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1E293B' }}>All missing</span>
+          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1E293B' }}>All missing steps</span>
           <span style={{ fontSize: '1.3rem', fontWeight: 700, color: '#1E293B', fontVariantNumeric: 'tabular-nums' }}>{last.total.toLocaleString()}</span>
           <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>{`across ${last.companies} companies`}</span>
           {delta !== 0 && (

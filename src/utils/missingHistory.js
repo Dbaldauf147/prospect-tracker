@@ -1,9 +1,11 @@
-// A day-by-day record of how much company data is missing, for the My
-// Accounts "All Missing History" subtab.
+// A day-by-day record of the All Missing Steps total, for the My Accounts
+// "All Missing History" subtab.
 //
-// The Company Data subtab only says "today": its cards count, per field,
-// the companies with no value. This keeps one small row per day with those
-// counts and their sum, so the backlog can be charted as it burns down.
+// The Company Data subtab only says "today": its All Missing Steps column
+// counts, per company, the decision-maker steps left plus the blank Sites,
+// Utility Accounts and Equipment (utils/allMissingSteps). This keeps one
+// small row per day with that column summed, and the per-field missing
+// counts beside it, so the backlog can be charted as it burns down.
 //
 // Measured on a FIXED basis, the one the Company Data tab opens on: every
 // My Accounts account that has a company record, inactive ones (Old Client
@@ -12,8 +14,13 @@
 //
 // A row:
 //
-//   total      the sum of every field's missing count (the headline)
-//   fields     { [fieldKey]: missing count }
+//   total           All Missing Steps summed across the companies (the headline)
+//   stepsRemaining  its decision-maker steps part
+//   missingData     its blank Sites / Utility Accounts / Equipment part
+//   fields          { [fieldKey]: missing count }, every Company Data field
+//   basis           'steps'. Days recorded before the total was All Missing
+//                   Steps carry none: their total was the field counts
+//                   summed, so they are not charted beside these.
 //   companies  how many companies the counts are out of
 //   seeded     true on the one day backfilled from the first reading
 //   updatedAt  wall-clock ms of the last write
@@ -25,6 +32,7 @@
 import { userLsGet, userLsSet } from './userLs.js';
 import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 import { COMPANY_DATA_FIELDS, fieldHasValue } from './companyDataFields.js';
+import { allMissingStepsFor } from './allMissingSteps.js';
 
 export const MISSING_HISTORY_KEY = 'company-data-missing-history';
 export const MISSING_HISTORY_EVENT = 'company-data-missing-history-changed';
@@ -62,6 +70,39 @@ export function missingReading(records, fields = COMPANY_DATA_FIELDS) {
   return { total, fields: counts, companies: list.length };
 }
 
+export const MISSING_HISTORY_BASIS = 'steps';
+
+/** Whether a stored day was counted the way the chart counts now. */
+export const isStepsDay = (row) => row?.basis === MISSING_HISTORY_BASIS;
+
+/**
+ * Today's All Missing Steps reading. `entries` is one { record, dms,
+ * titleSearches } per company, read the way the Company Data subtab reads
+ * them; `tagReview` is settings.contactTagReview. Null when there is
+ * nothing to count.
+ */
+export function missingStepsReading(entries, { tagReview = null, fields = COMPANY_DATA_FIELDS } = {}) {
+  const list = (entries || []).filter(e => e?.record);
+  if (list.length === 0) return null;
+  let stepsRemaining = 0;
+  let missingData = 0;
+  for (const e of list) {
+    const s = allMissingStepsFor({ record: e.record, dms: e.dms || [], tagReview, titleSearches: e.titleSearches || [] });
+    stepsRemaining += s.stepsRemaining;
+    missingData += s.missingData;
+  }
+  const counts = {};
+  for (const f of fields) counts[f.key] = list.filter(e => !fieldHasValue(f, e.record[f.key])).length;
+  return {
+    total: stepsRemaining + missingData,
+    stepsRemaining,
+    missingData,
+    fields: counts,
+    companies: list.length,
+    basis: MISSING_HISTORY_BASIS,
+  };
+}
+
 // YYYY-MM-DD in local time.
 export function dayKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -74,7 +115,8 @@ export function previousDay(day) {
 
 function sameReading(a, b) {
   if (!a || !b) return false;
-  return a.total === b.total && a.companies === b.companies
+  return a.total === b.total && a.companies === b.companies && a.basis === b.basis
+    && a.stepsRemaining === b.stepsRemaining && a.missingData === b.missingData
     && JSON.stringify(a.fields) === JSON.stringify(b.fields);
 }
 
@@ -94,7 +136,9 @@ function trim(history, max = MISSING_HISTORY_MAX_DAYS) {
 export function withMissingDay(history, day, reading, now = Date.now()) {
   const h = history || {};
   if (!day || !reading) return h;
-  const hasEarlier = Object.keys(h).some(k => k < day);
+  // Only a day counted the same way counts as earlier, so the first
+  // All Missing Steps reading still gets its seeded yesterday.
+  const hasEarlier = Object.keys(h).some(k => k < day && h[k]?.basis === reading.basis);
   const seedYesterday = !hasEarlier;
   if (!seedYesterday && sameReading(h[day], reading)) return h;
   const next = { ...h, [day]: { ...reading, updatedAt: now } };

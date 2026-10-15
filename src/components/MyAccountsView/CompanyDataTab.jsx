@@ -4,7 +4,7 @@ import { DataTable } from '../common/DataTable';
 import { COMPANY_DATA_FIELDS, fieldValue, isTextField, missingFields, planCompanyDataPaste } from '../../utils/companyDataFields';
 import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
-import { companyStepsRemaining } from '../../utils/dmSteps';
+import { allMissingStepsFor, STEP_FIELDS } from '../../utils/allMissingSteps';
 import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, titleSearchesForCompany } from '../../utils/zoomSearchLog';
 import { readWorkKey, ZOOM_SEARCH_LOG_EVENT } from '../../utils/mirroredWorkKeys';
 import { buildZoomExcludedMatcher, zoomExcludedLabel } from '../../utils/zoomExportExclude';
@@ -21,10 +21,6 @@ import { ZoomExcludedCell } from './ZoomExcludedCell';
 // with no company record to write to, is counted but not listed.
 
 const MISSING_ANY = '__any';
-
-// The size numbers counted as steps of their own in Missing Data, and so in
-// All Missing Steps alongside the decision-maker ladder.
-const STEP_FIELDS = COMPANY_DATA_FIELDS.filter(f => ['numberOfSites', 'numberOfAccounts', 'equipmentCount'].includes(f.key));
 
 function MissingChip() {
   return (
@@ -79,14 +75,14 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       row.zoomExcluded = isZoomExcluded({ id: p.id, company: p.company || a.company, zoomId: p.zoomCompanyId });
       row.missing = missingFields(row);
       row.missingCount = row.missing.length;
-      const steps = dmLookup ? companyStepsRemaining({
+      const steps = dmLookup ? allMissingStepsFor({
         dms: dmLookup.forAccount(p), record: p, tagReview,
         titleSearches: titleSearchesForCompany(zoomLog.searches, { company: p.company || a.company, zoomCompanyId: p.zoomCompanyId, zoomCompanyName: p.zoomCompanyName }),
       }) : null;
-      row.stepsRemaining = steps ? steps.total : null;
+      row.stepsRemaining = steps ? steps.stepsRemaining : null;
       row.stepsDetail = steps ? steps.perBucket.map(b => `${b.bucket.label}: ${b.left}`).join('\n') : '';
       row.missingData = STEP_FIELDS.filter(f => row[f.key] === null).length;
-      row.allMissingSteps = row.stepsRemaining === null ? null : row.stepsRemaining + row.missingData;
+      row.allMissingSteps = steps ? steps.allMissingSteps : null;
       out.push(row);
     }
     return { rows: out, noRecord: missing };

@@ -36,7 +36,9 @@ import { DecisionMakerTagsTable } from './DecisionMakerTagsTable';
 import { DmTagHistoryView } from './DmTagHistoryView';
 import { CompanyDataTab } from './CompanyDataTab';
 import { MissingHistoryView } from './MissingHistoryView';
-import { missingReading, recordMissingDay, dayKey } from '../../utils/missingHistory';
+import { missingStepsReading, recordMissingDay, dayKey } from '../../utils/missingHistory';
+import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, titleSearchesForCompany } from '../../utils/zoomSearchLog';
+import { readWorkKey } from '../../utils/mirroredWorkKeys';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { tagMatrixColumns } from '../../utils/decisionMakerTagMatrix';
 import { dmTagReading, recordDmTagDay } from '../../utils/dmTagHistory';
@@ -3127,22 +3129,37 @@ Fix that now?
     return () => clearTimeout(timer);
   }, [hubspotCache, allAccounts, dmTagLocalFields, dmTagLinks, dmTagExclusions]);
 
-  // Record today's total of missing company data for the All Missing
-  // History subtab, on the basis the Company Data subtab opens on: every
-  // account with a company record, inactive ones out, no search. Debounced
-  // for the same reason as the DM tag reading above.
+  // Record today's All Missing Steps total for the All Missing History
+  // subtab, on the basis the Company Data subtab opens on: every account
+  // with a company record, inactive ones out, no search. Each company is
+  // counted the way that subtab's All Missing Steps column counts it, so
+  // it waits for the contacts (the decision makers) to load. Debounced for
+  // the same reason as the DM tag reading above.
+  const missingTagReview = settings?.contactTagReview || null;
   useEffect(() => {
-    if (!allAccounts?.length || !prospects?.length) return undefined;
+    if (!hubspotCache || !allAccounts?.length || !prospects?.length) return undefined;
     const timer = setTimeout(() => {
       try {
+        const lookup = makeDecisionMakerLookup(hubspotCache.contacts || [], {
+          localFields: dmTagLocalFields, links: dmTagLinks, exclusions: dmTagExclusions,
+        });
+        const zoomSearches = readZoomSearchLog(readWorkKey(ZOOM_SEARCH_LOG_KEY)).searches;
         const byId = new Map(prospects.map(p => [p.id, p]));
-        const records = allAccounts.filter(a => !isInactive(a)).map(a => byId.get(a.id)).filter(Boolean);
-        const reading = missingReading(records);
+        const entries = allAccounts.filter(a => !isInactive(a)).map((a) => {
+          const p = byId.get(a.id);
+          if (!p) return null;
+          return {
+            record: p,
+            dms: lookup.forAccount(p),
+            titleSearches: titleSearchesForCompany(zoomSearches, { company: p.company || a.company, zoomCompanyId: p.zoomCompanyId, zoomCompanyName: p.zoomCompanyName }),
+          };
+        }).filter(Boolean);
+        const reading = missingStepsReading(entries, { tagReview: missingTagReview });
         if (reading) recordMissingDay(dayKey(new Date()), reading);
       } catch { /* a missed reading just leaves a gap in the chart */ }
     }, 3000);
     return () => clearTimeout(timer);
-  }, [allAccounts, prospects]);
+  }, [hubspotCache, allAccounts, prospects, dmTagLocalFields, dmTagLinks, dmTagExclusions, missingTagReview]);
 
   const dmTagAccounts = useMemo(() => {
     let rows = allAccounts;
