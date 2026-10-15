@@ -113,21 +113,24 @@ const contact = (id, company, tags) => ({ id, company, firstname: id, dans_tags:
 }
 
 // --- Zoom export by tag ---------------------------------------------------
-// The gaps, plus any account with a Not sure for the tag even beside a
-// confirmed decision maker. Inside Sales only.
+// Accounts with a decision maker but none confirmed for the tag, plus any
+// with a Not sure for it even beside a confirmed one. No decision maker at
+// all keeps an account out. Inside Sales only.
 {
   const k = tagColumnKey('Solar');
-  const row = (company, status, confirmed, maybe) => ({ company, status, byTag: { [k]: confirmed }, maybeByTag: { [k]: maybe } });
+  const row = (company, status, confirmed, maybe, dmCount = 1) => ({ company, status, dmCount, byTag: { [k]: confirmed }, maybeByTag: { [k]: maybe } });
   const rows = [
     row('Gap', 'Inside Sales', [], []),
+    row('NoDms', 'Inside Sales', [], [], 0),
     row('OnlyMaybe', 'Inside Sales', [], [{ id: 1 }]),
     row('Confirmed', 'Inside Sales', [{ id: 2 }], []),
-    row('ConfirmedAndMaybe', 'Inside Sales', [{ id: 3 }], [{ id: 4 }]),
+    row('ConfirmedAndMaybe', 'Inside Sales', [{ id: 3 }], [{ id: 4 }], 2),
     row('ClientGap', 'Client', [], []),
     row('ClientMaybe', 'Client', [{ id: 5 }], [{ id: 6 }]),
-    { company: 'NoMaybeMap', status: 'Inside Sales', byTag: { [k]: [{ id: 7 }] } },
+    { company: 'NoMaybeMap', status: 'Inside Sales', dmCount: 1, byTag: { [k]: [{ id: 7 }] } },
+    { company: 'NoCount', status: 'Inside Sales', byTag: { [k]: [] }, maybeByTag: { [k]: [] } },
   ];
-  check('zoom export: gaps and Not sure, Inside Sales only',
+  check('zoom export: decision maker without a Yes, or a Not sure, Inside Sales only',
     zoomExportRowsForTag(rows, k).map(r => r.company), ['Gap', 'OnlyMaybe', 'ConfirmedAndMaybe']);
 }
 

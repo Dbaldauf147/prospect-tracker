@@ -12,9 +12,9 @@
 //
 // Zoom Export by Tag mirrors the My Accounts tab's Zoom Export (same four
 // columns, same Inside Sales rows on screen) cut to one tag: the accounts
-// with no decision maker carrying it yet, i.e. the gaps behind that
-// column's percentages, plus any account with somebody marked Not sure for
-// it, ready to take into ZoomInfo.
+// that have a decision maker but none carrying it yet, plus any account
+// with somebody marked Not sure for it, ready to take into ZoomInfo.
+// Accounts with no decision maker at all stay out.
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { Badge } from '../common/Badge';
@@ -69,7 +69,7 @@ function ZoomByTagPicker({ tags, rows, onPick, onClose }) {
           <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer' }}>&times;</button>
         </div>
         <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.6rem', lineHeight: 1.4 }}>
-          Downloads the Inside Sales accounts shown here that have no decision maker with the tag yet, or have someone marked Not sure for it: Company, Zoom Company ID, Zoom Company Name, Company URL.
+          Downloads the Inside Sales accounts shown here that have a decision maker but none with the tag yet, or have someone marked Not sure for it. Accounts with no decision maker are left out. Columns: Company, Zoom Company ID, Zoom Company Name, Company URL.
         </div>
         {tags.map(tag => {
           const n = zoomExportRowsForTag(rows, tagColumnKey(tag)).length;
@@ -193,7 +193,7 @@ export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSet
     const picked = zoomExportRowsForTag(zoomSource, tagColumnKey(tag));
     setZoomOpen(false);
     if (picked.length === 0) {
-      alert(`Every Inside Sales account shown here already has a decision maker tagged ${tag}, and nobody marked Not sure for it.`);
+      alert(`No Inside Sales account shown here has a decision maker without ${tag}: each one either has a decision maker tagged ${tag} (and nobody marked Not sure for it) or no decision maker at all.`);
       return;
     }
     const slug = tag.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -218,7 +218,7 @@ export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSet
       toolbarActions={onZoomExport ? [{
         key: 'zoom-export-by-tag',
         label: 'Zoom Export by Tag',
-        title: 'Pick a tag and download a CSV of the Inside Sales accounts shown here with no decision maker carrying it, or with someone marked Not sure for it: Company, Zoom Company ID, Zoom Company Name, Company URL',
+        title: 'Pick a tag and download a CSV of the Inside Sales accounts shown here that have a decision maker but none carrying it, or someone marked Not sure for it: Company, Zoom Company ID, Zoom Company Name, Company URL',
         onClick: () => setZoomOpen(true),
       }] : undefined}
       gridLines
