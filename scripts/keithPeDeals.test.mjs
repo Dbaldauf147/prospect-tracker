@@ -1,6 +1,6 @@
 // Assertion tests for the "PE overlap deals" list on the Keith agenda.
 //   node scripts/keithPeDeals.test.mjs
-import { buildPeOverlapDeals, isPeOpp, oppStageNumber, peOwnerAndVertical, ownerFromAccountName, accountTier, accountTargetCdm } from '../src/utils/keithPeDeals.js';
+import { buildPeOverlapDeals, isPeOpp, ownedByNonPeFirm, oppStageNumber, peOwnerAndVertical, ownerFromAccountName, accountTier, accountTargetCdm } from '../src/utils/keithPeDeals.js';
 import { buildTargetCdmResolver, buildTargetTierResolver } from '../src/utils/targetTier.js';
 
 let passed = 0, failed = 0;
@@ -10,6 +10,30 @@ function check(label, actual, expected) {
   if (a === e) { passed += 1; return; }
   failed += 1;
   console.log(`FAIL ${label}\n  expected ${e}\n  actual   ${a}`);
+}
+
+{
+  const prospects = [
+    { company: 'Brookfield Asset Management', type: 'Asset Management Firm' },
+    { company: 'Brookfield (NAM Multifamily)', type: 'Portfolio Company', peOwner: 'Brookfield Asset Management' },
+    { company: 'Platinum Equity', type: 'Private Equity' },
+    { company: 'Rehlko', peOwner: 'Platinum Equity' },
+    { company: 'Untyped Parent' },
+    { company: 'Kid Co', peOwner: 'Untyped Parent' },
+  ];
+  const opp = (Account, extra = {}) => ({ _id: Account, Account, Stage: 'Quoted', ...extra });
+  check('an owner typed Asset Management Firm is not PE', ownedByNonPeFirm(opp('Brookfield (NAM Multifamily)'), prospects), true);
+  check('even when the opp itself says Portfolio Company',
+    ownedByNonPeFirm(opp('Brookfield (NAM Multifamily)', { Type: 'Portfolio Company' }), prospects), true);
+  check('an owner typed Private Equity stays', ownedByNonPeFirm(opp('Rehlko'), prospects), false);
+  check('an owner with a blank Type stays', ownedByNonPeFirm(opp('Kid Co'), prospects), false);
+  check('an owner with no company record stays', ownedByNonPeFirm(opp('Solo', { 'PE Owner': 'Nobody Capital' }), prospects), false);
+  check('a deal at a PE firm itself stays', ownedByNonPeFirm(opp('Platinum Equity'), prospects), false);
+  check('one PE owner among several keeps the deal',
+    ownedByNonPeFirm(opp('Joint', { 'PE Owner': 'Brookfield Asset Management, Platinum Equity' }), prospects), false);
+  check('the deal list drops the non-PE-owned deal',
+    buildPeOverlapDeals([opp('Brookfield (NAM Multifamily)', { Type: 'Portfolio Company' }), opp('Rehlko')], { prospects }).map(d => d.name),
+    ['Rehlko']);
 }
 
 check('Private Equity type is PE', isPeOpp({ Type: 'Private Equity' }), true);

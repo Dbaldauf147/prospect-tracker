@@ -68,6 +68,27 @@ export function isPeOpp(row, prospects = []) {
   return PE_TYPES.has(text(company.type).toLowerCase()) || splitPeOwners(company.peOwner).length > 0;
 }
 
+// Whether the firm(s) owning an opp's company are all known NOT to be PE: each
+// owner named in the PE Owner column matches a company in the app whose Type
+// is set to something other than Private Equity or Portfolio Company (e.g.
+// Brookfield Asset Management, an Asset Management Firm, owning "Brookfield
+// (NAM Multifamily)"). Such a deal isn't a PE deal however its Type reads.
+// An owner with no company record, or one whose Type is blank, is given the
+// benefit of the doubt; so is an opp at a PE firm itself.
+export function ownedByNonPeFirm(row, prospects = []) {
+  const list = Array.isArray(prospects) ? prospects : [];
+  const account = text(row?.['Account']);
+  const company = findCompany(account, list);
+  if (text(row?.['Type']).toLowerCase() === 'private equity' || text(company?.type).toLowerCase() === 'private equity') return false;
+  const owners = splitPeOwners(peOwnerAndVertical(row, list).peOwner);
+  if (owners.length === 0) return false;
+  return owners.every(owner => {
+    const firm = findCompany(text(owner), list);
+    const type = text(firm?.type).toLowerCase();
+    return !!firm && firm !== company && type !== '' && !PE_TYPES.has(type);
+  });
+}
+
 // The numbered stage (3-6) an opp is at, or null before Stage 3 / once closed.
 export function oppStageNumber(row) {
   return STAGE_NUMBER.get(String(row?.['Stage'] || '').trim()) ?? null;
@@ -183,7 +204,8 @@ export function accountTargetCdm(row, prospects = [], targetCdmFor = null) {
 }
 
 /**
- * PE / Portfolio Company opps at Stage 3+, furthest along first, then
+ * PE / Portfolio Company opps at Stage 3+, less those owned by a firm the app
+ * types as something other than PE (ownedByNonPeFirm), furthest along first, then
  * biggest, then by account so the order is stable.
  *
  *   parseAmount  (raw) => number | null
@@ -198,7 +220,7 @@ export function accountTargetCdm(row, prospects = [], targetCdmFor = null) {
  */
 export function buildPeOverlapDeals(records, { parseAmount = () => null, fmtAmount = String, prospects = [], targetTierFor = null, targetCdmFor = null } = {}) {
   return (Array.isArray(records) ? records : [])
-    .filter(row => oppStageNumber(row) != null && isPeOpp(row, prospects))
+    .filter(row => oppStageNumber(row) != null && isPeOpp(row, prospects) && !ownedByNonPeFirm(row, prospects))
     .map(row => {
       const stage = oppStageNumber(row);
       const amount = parseAmount(row?.['Quoted Amount']);
