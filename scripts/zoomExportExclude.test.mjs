@@ -40,8 +40,8 @@ check('why: another company by name', why({ company: 'ACME Corporation' }),
 check('why: not excluded', why({ id: 'p2', company: 'Globex' }), null);
 check('why: nothing excluded', buildZoomExclusionExplainer([])({ company: 'Acme' }), null);
 
-// Clients are never excluded: not by their own flag, not by another
-// company's flag through a shared Zoom ID or name.
+// Client status does not override the button: a Client set to Exclude
+// from ZoomInfo is left out, as is one caught by another company's flag.
 const withClients = [
   { id: 'c1', company: 'Griffis Residential', status: 'Client', excludeFromZoomExports: true, zoomCompanyId: '777' },
   { id: 'c2', company: 'Ettinger', status: 'Client ', zoomCompanyId: '888' },
@@ -50,11 +50,12 @@ const withClients = [
 ];
 const whyC = buildZoomExclusionExplainer(withClients);
 const isExC = buildZoomExcludedMatcher(withClients);
-check('client: own flag ignored', [isZoomExcluded(withClients[0]), whyC({ id: 'c1', company: 'Griffis Residential' })], [false, null]);
-check('client: by status on the row', whyC({ company: 'Prospect Co', status: 'client' }), null);
-check('client: shared Zoom ID with an excluded company', whyC({ id: 'c2', company: 'Ettinger', zoomId: '888' }), null);
-check('client: a name that reads the same as a client is that client', isExC({ company: 'Ettinger Holdings Inc' }), false);
-check('client: found by name without an id', isExC({ company: 'Griffis Residential LLC' }), false);
+check('client: own flag applies', [isZoomExcluded(withClients[0]), whyC({ id: 'c1', company: 'Griffis Residential' })], [true, 'set to Exclude from ZoomInfo']);
+check('client: status on the row does not save it', whyC({ company: 'Prospect Co', status: 'client' }), 'set to Exclude from ZoomInfo');
+check('client: shared Zoom ID with an excluded company', whyC({ id: 'c3', company: 'Kensing', status: 'Client', zoomId: '888' }),
+  'shares Zoom Company ID 888 with Ettinger Holdings, which is set to Exclude from ZoomInfo');
+check('client: unflagged client with nothing shared stays in', isExC({ id: 'c3', company: 'Kensing', status: 'Client' }), false);
+check('client: found by name without an id', isExC({ company: 'Griffis Residential LLC' }), true);
 check('non-client still excluded', isExC({ id: 'x2', company: 'Prospect Co' }), true);
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -9200,8 +9200,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 onClick={() => setFields(prev => ({ ...prev, excludeFromZoomExports: !prev.excludeFromZoomExports }))}
                 aria-pressed={!!fields.excludeFromZoomExports}
                 title={fields.excludeFromZoomExports
-                  ? 'Excluded from the ZoomInfo exports (Zoom Info page and My Accounts Zoom CSVs). Never applies while the status is Client. Click to include it again.'
-                  : 'Leave this company out of the ZoomInfo exports (Zoom Info page and My Accounts Zoom CSVs). Never applies while the status is Client.'}
+                  ? 'Excluded from the ZoomInfo exports (Zoom Info page and My Accounts Zoom CSVs). Click to include it again.'
+                  : 'Leave this company out of the ZoomInfo exports (Zoom Info page and My Accounts Zoom CSVs).'}
                 style={{
                   padding: '0.25rem 0.6rem', borderRadius: 6, fontSize: '0.72rem', fontWeight: 600,
                   cursor: 'pointer', fontFamily: 'inherit',
