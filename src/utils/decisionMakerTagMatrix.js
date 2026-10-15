@@ -131,13 +131,16 @@ export function tagMatrixCoverage(rows, tags, tierOf = r => r.myTier) {
 }
 
 /**
- * The rows one tag's Zoom export holds: the Inside Sales accounts with no
- * confirmed decision maker for the tag, plus the ones with somebody marked
- * Not sure for it even when a confirmed one is there too. An unsettled
- * answer is still worth a ZoomInfo pull, so a Not sure keeps the account in
- * the file. `key` is tagColumnKey(tag).
+ * The rows one tag's Zoom export holds: the Inside Sales accounts that have
+ * a decision maker but none confirmed for the tag, plus the ones with
+ * somebody marked Not sure for it even when a confirmed one is there too.
+ * An unsettled answer is still worth a ZoomInfo pull, so a Not sure keeps
+ * the account in the file. An account with no decision maker at all is
+ * left out: the tag question can't be asked of nobody. `key` is
+ * tagColumnKey(tag).
  */
 export function zoomExportRowsForTag(rows, key) {
   return (rows || []).filter(r => r.status === 'Inside Sales'
+    && r.dmCount > 0
     && (!(r.byTag?.[key] || []).length || (r.maybeByTag?.[key] || []).length > 0));
 }
