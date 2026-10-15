@@ -9,15 +9,18 @@
 // scripts/dmSteps.test.mjs.
 
 import { BUCKETS, contactHasTag } from '../components/ProspectModal/contactTags.js';
-import { findTagRecord, tagStateFrom } from './contactTagReview.js';
+import { findTagRecord, tagKey, tagStateFrom } from './contactTagReview.js';
 
 // The steps a category with no Yes decision maker is worked through, in
 // order. 'zoom' is the original Search run tick and still reads and writes
 // the record's dmSearchRun, so ticks made before the ladder existed carry
 // over; the rest live in dmSearchSteps, keyed by bucket then step.
+// 'zoomFailed' kept its key when it became "Zoom search ran", so old ticks
+// still count; it is also done, tick or not, once a Zoom title search is
+// logged for that category (Bulk Add > Zoom Search Log).
 export const DM_STEPS = [
   { key: 'zoom',         label: 'No DM, but company Zoom ID' },
-  { key: 'zoomFailed',   label: "Zoom ID didn't work" },
+  { key: 'zoomFailed',   label: 'Zoom search ran' },
   { key: 'manual',       label: 'Manual search' },
   { key: 'manualFailed', label: "Manual search didn't work" },
   { key: 'closeOut',     label: 'Close out' },
@@ -36,14 +39,18 @@ export function dmBucketAnswer(c, bucket, tagReview = null) {
 // a Yes decision maker means nothing is left (0); otherwise the furthest
 // step done says where it stands, so a category with no DM and nothing else
 // has all five left, one with a Zoom Company ID (the company has one, or the
-// tick is on) has four, and one closed out has none.
-export function bucketStepsLeft({ bucket, hasYesDm, zoomCompanyId = '', searchRun = null, searchSteps = null }) {
+// tick is on) has four, and one closed out has none. `titleSearched` says a
+// Zoom title search is logged for this category, which does the Zoom search
+// ran step on its own.
+export function bucketStepsLeft({ bucket, hasYesDm, zoomCompanyId = '', searchRun = null, searchSteps = null, titleSearched = false }) {
   if (hasYesDm) return 0;
   let reached = 0;
   DM_STEPS.forEach((step, i) => {
     const done = step.key === 'zoom'
       ? (!!String(zoomCompanyId || '').trim() || !!searchRun?.[bucket.key])
-      : !!searchSteps?.[bucket.key]?.[step.key];
+      : step.key === 'zoomFailed'
+        ? (!!titleSearched || !!searchSteps?.[bucket.key]?.[step.key])
+        : !!searchSteps?.[bucket.key]?.[step.key];
     if (done) reached = i + 1;
   });
   return DM_STEPS.length - reached;
@@ -51,9 +58,10 @@ export function bucketStepsLeft({ bucket, hasYesDm, zoomCompanyId = '', searchRu
 
 // Every category for one company. `dms` is the company's decision makers
 // (already gated on the Decision Maker tag); the company record supplies
-// the Zoom Company ID and the ticks. Returns { total, max, perBucket:
+// the Zoom Company ID and the ticks; `titleSearches` is the company's logged
+// Zoom title searches ([{ tag }], from titleSearchesForCompany). Returns { total, max, perBucket:
 // [{ bucket, left }] } with the buckets A to Z.
-export function companyStepsRemaining({ dms = [], record = {}, tagReview = null } = {}) {
+export function companyStepsRemaining({ dms = [], record = {}, tagReview = null, titleSearches = [] } = {}) {
   const perBucket = [...BUCKETS]
     .sort((a, b) => a.label.localeCompare(b.label))
     .map(bucket => ({
@@ -64,6 +72,7 @@ export function companyStepsRemaining({ dms = [], record = {}, tagReview = null 
         zoomCompanyId: record?.zoomCompanyId,
         searchRun: record?.dmSearchRun,
         searchSteps: record?.dmSearchSteps,
+        titleSearched: (titleSearches || []).some(t => tagKey(t?.tag) === tagKey(bucket.label)),
       }),
     }));
   return {

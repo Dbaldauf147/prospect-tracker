@@ -20,6 +20,12 @@ assert.equal(bucketStepsLeft({ bucket: esg, hasYesDm: false, searchSteps: { esg:
 // Another bucket's ticks don't count.
 assert.equal(bucketStepsLeft({ bucket: esg, hasYesDm: false, searchSteps: { utilities: { closeOut: 'x' } } }), 5);
 
+// A logged Zoom title search does Zoom search ran (step 2) on its own.
+assert.equal(bucketStepsLeft({ bucket: esg, hasYesDm: false, zoomCompanyId: '1', titleSearched: true }), 3);
+assert.equal(companyStepsRemaining({ record: { zoomCompanyId: '1' }, titleSearches: [{ tag: 'ESG' }] })
+  .perBucket.find(b => b.bucket.key === 'esg').left, 3);
+assert.equal(companyStepsRemaining({ record: { zoomCompanyId: '1' }, titleSearches: [{ tag: 'ESG' }] }).total, 23);
+
 // A whole company: six categories, a DM who is Yes for ESG only (the tag
 // read ignoring spacing, as the popup does), a Zoom ID, Procurement closed out.
 const dm = { id: 7, dans_tags: 'Decision Maker; ESG; Efficiency/Renewables' };
