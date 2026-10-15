@@ -2237,6 +2237,212 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           )}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem' }}>
+          {/* Tags lead the form: they are the field reached for most. */}
+          <div
+            style={{ gridColumn: '1 / -1' }}
+            ref={tagsRef}
+            data-tags-picker="true"
+            onMouseDown={e => e.stopPropagation()}
+            onClick={e => e.stopPropagation()}
+          >
+            <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <span>Tags</span>
+              {tagsSaveStatus && (
+                <span style={{ fontSize: '0.6rem', fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: tagsSaveStatus.startsWith('Saved') ? '#10B981' : tagsSaveStatus.startsWith('Sav') ? '#64748B' : '#DC2626' }}>{tagsSaveStatus}</span>
+              )}
+            </label>
+            <button
+              type="button"
+              onClick={() => setTagsOpen(p => !p)}
+              style={{ width: '100%', padding: '0.35rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit', background: '#fff', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: checkedTags.size === 0 ? '#94A3B8' : '#1E293B' }}
+            >
+              <span>
+                {checkedTags.size === 0
+                  ? 'Select tags…'
+                  : [...checkedTags].join(', ')}
+              </span>
+              <span style={{ fontSize: '0.6rem', color: '#94A3B8' }}>{tagsOpen ? '▲' : '▼'}</span>
+            </button>
+            {tagsOpen && (() => {
+              // One row per tag, answered Yes / No / Not sure / Sold / Not
+              // sold. Yes and Sold both mean the tag is on the contact and go
+              // to HubSpot as the tag; the rest are recorded here only, so a
+              // tag left off can say WHY it's off — decided against, not yet
+              // known, or true of the person but not yet bought by their
+              // company — rather than being indistinguishable from one nobody
+              // has looked at.
+              const stateOf = (tag) => tagStateFrom(checkedTags.has(tag), verdictFor(tag));
+              // Hide, Left and Test are housekeeping, not classifications:
+              // the first two control whether a contact surfaces at all and
+              // the third is a scratch value. They're still answerable rows,
+              // they just don't belong in a score meant to say "have I worked
+              // out what this person is about".
+              const scored = visibleTagOptions.filter(t => !TAG_SCORE_EXCLUDED.has(t.toLowerCase()));
+              // Either half counts: a tag with only a Not sold against it has
+              // been thought about just as much as one answered No.
+              const answered = scored.filter(t => {
+                const st = stateOf(t);
+                return !!(st.answer || st.status);
+              }).length;
+              const total = scored.length;
+              const pct = total > 0 ? Math.round((answered / total) * 100) : 0;
+              const done = total > 0 && answered === total;
+              // Two independent groups, not one row of five. ANSWER says
+              // whether the area is this person's; STATUS says whether their
+              // company has bought it. Both can be set, so "Yes · Not sold"
+              // — theirs, not bought yet — is finally sayable.
+              const ANSWERS = [
+                { key: 'yes',     label: 'Yes',      on: { bg: '#DCFCE7', border: '#4ADE80', color: '#166534' },
+                  tip: (tag) => `${tag} is this person's area. Puts the tag on in HubSpot, unless a Not sold below is holding it off` },
+                { key: 'no',      label: 'No',       on: { bg: '#FEE2E2', border: '#FCA5A5', color: '#991B1B' },
+                  tip: (tag) => `Record ${tag} as “No” - doesn't apply to this person. Kept here, not sent to HubSpot` },
+                { key: 'unsure',  label: 'Not sure', on: { bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' },
+                  tip: (tag) => `Record ${tag} as “Not sure” - haven't worked it out yet. Kept here, not sent to HubSpot` },
+              ];
+              const STATUSES = [
+                { key: 'sold',    label: 'Sold',     on: { bg: '#CCFBF1', border: '#5EEAD4', color: '#115E59' },
+                  tip: (tag) => `Their company has bought ${tag}. Keeps the tag on, so they still come back in a general ${tag} pull` },
+                { key: 'notsold', label: 'Not sold', on: { bg: '#EEF2FF', border: '#A5B4FC', color: '#3730A3' },
+                  tip: (tag) => `Their company hasn't bought ${tag} yet. Takes the tag off whatever the answer says, so they stay out of a general ${tag} pull; find them again under the Not sold status on All Contacts` },
+              ];
+              return (
+                <div style={{ marginTop: '2px', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                    padding: '0.4rem 0.7rem', borderBottom: '1px solid #E2E8F0',
+                    background: done ? '#F0FDF4' : '#F8FAFC',
+                    fontSize: '0.68rem', fontWeight: 700,
+                    color: done ? '#166534' : '#475569',
+                  }}>
+                    <span title={`${answered} of ${total} scored tags have been answered. Hide, Left and Test are excluded - they're housekeeping, not classifications. Either half counts: an answer of Yes / No / Not sure, or a Sold / Not sold status on its own.`}>
+                      Tagged {pct}%
+                      <span style={{ fontWeight: 500, color: done ? '#15803D' : '#94A3B8' }}>
+                        {' · '}{done ? 'all tags mapped' : `${answered} of ${total} mapped`}
+                      </span>
+                    </span>
+                    <span style={{ fontWeight: 500, color: '#94A3B8' }}>“Yes” and “Sold” put the tag in HubSpot - “Not sold” holds it off</span>
+                  </div>
+                  {onSaveTagPresets && (
+                    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, padding: '0.4rem 0.7rem', borderBottom: '1px solid #E2E8F0', background: '#FAF5FF' }}>
+                      <span
+                        style={{ fontSize: '0.64rem', fontWeight: 700, color: '#6D28D9', textTransform: 'uppercase', letterSpacing: '0.03em' }}
+                        title="Click a preset to set every answer it saved on this contact at once. Tags the preset doesn't mention are left as they are."
+                      >Presets</span>
+                      {(tagPresets || []).map(p => (
+                        <span key={p.id} style={{ display: 'inline-flex', alignItems: 'center', border: '1px solid #C4B5FD', borderRadius: 999, background: '#fff', overflow: 'hidden' }}>
+                          <button
+                            type="button"
+                            onClick={() => applyPreset(p)}
+                            title={`Apply "${p.name}". ${presetSummary(p)}`}
+                            style={{ padding: '0.12rem 0.55rem', border: 'none', background: 'transparent', color: '#5B21B6', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                          >{p.name}</button>
+                          <button
+                            type="button"
+                            onClick={() => removePreset(p)}
+                            title={`Delete the "${p.name}" preset`}
+                            style={{ padding: '0.12rem 0.4rem', border: 'none', borderLeft: '1px solid #EDE9FE', background: 'transparent', color: '#A78BFA', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit' }}
+                          >×</button>
+                        </span>
+                      ))}
+                      {(tagPresets || []).length === 0 && (
+                        <span style={{ fontSize: '0.66rem', color: '#94A3B8' }}>None yet. Tag this contact, then save it as one.</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={saveCurrentAsPreset}
+                        title="Save this contact's answers as a preset you can apply to other contacts in one click. Saving under an existing name updates that preset."
+                        style={{ marginLeft: 'auto', padding: '0.12rem 0.55rem', border: '1px dashed #A78BFA', borderRadius: 999, background: '#fff', color: '#6D28D9', fontSize: '0.66rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                      >+ Save as preset</button>
+                    </div>
+                  )}
+                  {/* Tall enough for the whole vocabulary at once — the point
+                      of the table is reading a contact's answers in one look,
+                      and a cap that cut it off mid-list made you scroll a
+                      dropdown to find out what you'd already answered. Still
+                      capped, generously, so an expanded vocabulary can't push
+                      the modal's own buttons off screen. */}
+                  <div style={{ maxHeight: '60vh', overflowY: 'auto', overflowX: 'auto' }}>
+                    {/* Fixed layout so the five columns keep the widths set
+                        below and a long tag name wraps instead of shoving the
+                        last column off the edge of the picker. */}
+                    <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
+                      <thead>
+                        {/* Two header rows: the group names say which
+                            question each set of buttons answers, so the
+                            five columns don't read as one choice of five. */}
+                        <tr style={{ background: '#F1F5F9', color: '#94A3B8' }}>
+                          <th />
+                          <th colSpan={ANSWERS.length} style={GROUP_HEAD}>Answer</th>
+                          <th colSpan={STATUSES.length} style={{ ...GROUP_HEAD, borderLeft: '1px solid #CBD5E1' }}>Status</th>
+                        </tr>
+                        <tr style={{ background: '#F1F5F9', color: '#475569' }}>
+                          <th style={{ textAlign: 'left', padding: '0.3rem 0.5rem', fontWeight: 700, fontSize: '0.66rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Tag</th>
+                          {ANSWERS.map(c => (
+                            <th key={c.key} style={COL_HEAD}>{c.label}</th>
+                          ))}
+                          {STATUSES.map((c, i) => (
+                            <th key={c.key} style={i === 0 ? { ...COL_HEAD, borderLeft: '1px solid #CBD5E1' } : COL_HEAD}>{c.label}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visibleTagOptions.map(tag => {
+                          const bucket = BUCKETS.find(b => b.tag === tag.toLowerCase());
+                          const st = stateOf(tag);
+                          const answered = !!(st.answer || st.status);
+                          // The tag's own styling marks the rows that are
+                          // actually in HubSpot — which a Not sold takes a
+                          // row out of, however the answer reads.
+                          const tagged = checkedTags.has(tag);
+                          return (
+                            <tr key={tag} style={{ borderBottom: '1px solid #F1F5F9', background: answered ? '#fff' : '#FCFCFD' }}>
+                              <td style={{ padding: '0.3rem 0.5rem' }}>
+                                <span style={{ fontWeight: tagged ? 600 : 400, color: tagged ? (bucket?.headerColor || '#1E293B') : (answered ? '#475569' : '#94A3B8') }}>{tag}</span>
+                                {tagged && bucket && (
+                                  <span style={{ marginLeft: 6, fontSize: '0.58rem', fontWeight: 700, color: bucket.headerColor, background: bucket.headerBg, padding: '1px 6px', borderRadius: 999 }}>{bucket.label}</span>
+                                )}
+                                {/* Otherwise the header's total reads as
+                                    wrong: three of the rows on screen aren't
+                                    in it. */}
+                                {TAG_SCORE_EXCLUDED.has(tag.toLowerCase()) && (
+                                  <span
+                                    title="Housekeeping tag - answerable, but not counted in the Tagged %."
+                                    style={{ marginLeft: 6, fontSize: '0.56rem', fontWeight: 600, color: '#94A3B8', background: '#F1F5F9', padding: '1px 5px', borderRadius: 999 }}
+                                  >not scored</span>
+                                )}
+                              </td>
+                              {[
+                                ...ANSWERS.map(c => ({ c, active: st.answer === c.key, set: setTagAnswer, edge: false })),
+                                ...STATUSES.map((c, i) => ({ c, active: st.status === c.key, set: setTagStatus, edge: i === 0 })),
+                              ].map(({ c, active, set, edge }) => (
+                                <td key={c.key} style={{ textAlign: 'center', padding: '0.25rem 0.1rem', borderLeft: edge ? '1px solid #E2E8F0' : undefined }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => set(tag, c.key)}
+                                    title={active
+                                      ? `${tag}: ${c.label} - click again to clear`
+                                      : c.tip(tag)}
+                                    style={{
+                                      width: '100%', maxWidth: 50, padding: '0.15rem 0', borderRadius: 999, cursor: 'pointer',
+                                      fontFamily: 'inherit', fontSize: '0.64rem',
+                                      fontWeight: active ? 700 : 500,
+                                      border: `1px solid ${active ? c.on.border : '#E2E8F0'}`,
+                                      background: active ? c.on.bg : '#fff',
+                                      color: active ? c.on.color : '#94A3B8',
+                                    }}
+                                  >{active ? c.label : '·'}</button>
+                                </td>
+                              ))}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
           {/* Editing either half by hand settles the question the Full Name
               box was asking, so the draft in it goes: leaving a stale one
               behind would have the box showing one name while the fields
@@ -2847,211 +3053,6 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                       </label>
                     );
                   })}
-                </div>
-              );
-            })()}
-          </div>
-          <div
-            style={{ gridColumn: 'span 2' }}
-            ref={tagsRef}
-            data-tags-picker="true"
-            onMouseDown={e => e.stopPropagation()}
-            onClick={e => e.stopPropagation()}
-          >
-            <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              <span>Tags</span>
-              {tagsSaveStatus && (
-                <span style={{ fontSize: '0.6rem', fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: tagsSaveStatus.startsWith('Saved') ? '#10B981' : tagsSaveStatus.startsWith('Sav') ? '#64748B' : '#DC2626' }}>{tagsSaveStatus}</span>
-              )}
-            </label>
-            <button
-              type="button"
-              onClick={() => setTagsOpen(p => !p)}
-              style={{ width: '100%', padding: '0.35rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit', background: '#fff', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: checkedTags.size === 0 ? '#94A3B8' : '#1E293B' }}
-            >
-              <span>
-                {checkedTags.size === 0
-                  ? 'Select tags…'
-                  : [...checkedTags].join(', ')}
-              </span>
-              <span style={{ fontSize: '0.6rem', color: '#94A3B8' }}>{tagsOpen ? '▲' : '▼'}</span>
-            </button>
-            {tagsOpen && (() => {
-              // One row per tag, answered Yes / No / Not sure / Sold / Not
-              // sold. Yes and Sold both mean the tag is on the contact and go
-              // to HubSpot as the tag; the rest are recorded here only, so a
-              // tag left off can say WHY it's off — decided against, not yet
-              // known, or true of the person but not yet bought by their
-              // company — rather than being indistinguishable from one nobody
-              // has looked at.
-              const stateOf = (tag) => tagStateFrom(checkedTags.has(tag), verdictFor(tag));
-              // Hide, Left and Test are housekeeping, not classifications:
-              // the first two control whether a contact surfaces at all and
-              // the third is a scratch value. They're still answerable rows,
-              // they just don't belong in a score meant to say "have I worked
-              // out what this person is about".
-              const scored = visibleTagOptions.filter(t => !TAG_SCORE_EXCLUDED.has(t.toLowerCase()));
-              // Either half counts: a tag with only a Not sold against it has
-              // been thought about just as much as one answered No.
-              const answered = scored.filter(t => {
-                const st = stateOf(t);
-                return !!(st.answer || st.status);
-              }).length;
-              const total = scored.length;
-              const pct = total > 0 ? Math.round((answered / total) * 100) : 0;
-              const done = total > 0 && answered === total;
-              // Two independent groups, not one row of five. ANSWER says
-              // whether the area is this person's; STATUS says whether their
-              // company has bought it. Both can be set, so "Yes · Not sold"
-              // — theirs, not bought yet — is finally sayable.
-              const ANSWERS = [
-                { key: 'yes',     label: 'Yes',      on: { bg: '#DCFCE7', border: '#4ADE80', color: '#166534' },
-                  tip: (tag) => `${tag} is this person's area. Puts the tag on in HubSpot, unless a Not sold below is holding it off` },
-                { key: 'no',      label: 'No',       on: { bg: '#FEE2E2', border: '#FCA5A5', color: '#991B1B' },
-                  tip: (tag) => `Record ${tag} as “No” - doesn't apply to this person. Kept here, not sent to HubSpot` },
-                { key: 'unsure',  label: 'Not sure', on: { bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' },
-                  tip: (tag) => `Record ${tag} as “Not sure” - haven't worked it out yet. Kept here, not sent to HubSpot` },
-              ];
-              const STATUSES = [
-                { key: 'sold',    label: 'Sold',     on: { bg: '#CCFBF1', border: '#5EEAD4', color: '#115E59' },
-                  tip: (tag) => `Their company has bought ${tag}. Keeps the tag on, so they still come back in a general ${tag} pull` },
-                { key: 'notsold', label: 'Not sold', on: { bg: '#EEF2FF', border: '#A5B4FC', color: '#3730A3' },
-                  tip: (tag) => `Their company hasn't bought ${tag} yet. Takes the tag off whatever the answer says, so they stay out of a general ${tag} pull; find them again under the Not sold status on All Contacts` },
-              ];
-              return (
-                <div style={{ marginTop: '2px', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
-                  <div style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-                    padding: '0.4rem 0.7rem', borderBottom: '1px solid #E2E8F0',
-                    background: done ? '#F0FDF4' : '#F8FAFC',
-                    fontSize: '0.68rem', fontWeight: 700,
-                    color: done ? '#166534' : '#475569',
-                  }}>
-                    <span title={`${answered} of ${total} scored tags have been answered. Hide, Left and Test are excluded - they're housekeeping, not classifications. Either half counts: an answer of Yes / No / Not sure, or a Sold / Not sold status on its own.`}>
-                      Tagged {pct}%
-                      <span style={{ fontWeight: 500, color: done ? '#15803D' : '#94A3B8' }}>
-                        {' · '}{done ? 'all tags mapped' : `${answered} of ${total} mapped`}
-                      </span>
-                    </span>
-                    <span style={{ fontWeight: 500, color: '#94A3B8' }}>“Yes” and “Sold” put the tag in HubSpot - “Not sold” holds it off</span>
-                  </div>
-                  {onSaveTagPresets && (
-                    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, padding: '0.4rem 0.7rem', borderBottom: '1px solid #E2E8F0', background: '#FAF5FF' }}>
-                      <span
-                        style={{ fontSize: '0.64rem', fontWeight: 700, color: '#6D28D9', textTransform: 'uppercase', letterSpacing: '0.03em' }}
-                        title="Click a preset to set every answer it saved on this contact at once. Tags the preset doesn't mention are left as they are."
-                      >Presets</span>
-                      {(tagPresets || []).map(p => (
-                        <span key={p.id} style={{ display: 'inline-flex', alignItems: 'center', border: '1px solid #C4B5FD', borderRadius: 999, background: '#fff', overflow: 'hidden' }}>
-                          <button
-                            type="button"
-                            onClick={() => applyPreset(p)}
-                            title={`Apply "${p.name}". ${presetSummary(p)}`}
-                            style={{ padding: '0.12rem 0.55rem', border: 'none', background: 'transparent', color: '#5B21B6', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-                          >{p.name}</button>
-                          <button
-                            type="button"
-                            onClick={() => removePreset(p)}
-                            title={`Delete the "${p.name}" preset`}
-                            style={{ padding: '0.12rem 0.4rem', border: 'none', borderLeft: '1px solid #EDE9FE', background: 'transparent', color: '#A78BFA', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit' }}
-                          >×</button>
-                        </span>
-                      ))}
-                      {(tagPresets || []).length === 0 && (
-                        <span style={{ fontSize: '0.66rem', color: '#94A3B8' }}>None yet. Tag this contact, then save it as one.</span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={saveCurrentAsPreset}
-                        title="Save this contact's answers as a preset you can apply to other contacts in one click. Saving under an existing name updates that preset."
-                        style={{ marginLeft: 'auto', padding: '0.12rem 0.55rem', border: '1px dashed #A78BFA', borderRadius: 999, background: '#fff', color: '#6D28D9', fontSize: '0.66rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-                      >+ Save as preset</button>
-                    </div>
-                  )}
-                  {/* Tall enough for the whole vocabulary at once — the point
-                      of the table is reading a contact's answers in one look,
-                      and a cap that cut it off mid-list made you scroll a
-                      dropdown to find out what you'd already answered. Still
-                      capped, generously, so an expanded vocabulary can't push
-                      the modal's own buttons off screen. */}
-                  <div style={{ maxHeight: '60vh', overflowY: 'auto', overflowX: 'auto' }}>
-                    {/* Fixed layout so the five columns keep the widths set
-                        below and a long tag name wraps instead of shoving the
-                        last column off the edge of the picker. */}
-                    <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
-                      <thead>
-                        {/* Two header rows: the group names say which
-                            question each set of buttons answers, so the
-                            five columns don't read as one choice of five. */}
-                        <tr style={{ background: '#F1F5F9', color: '#94A3B8' }}>
-                          <th />
-                          <th colSpan={ANSWERS.length} style={GROUP_HEAD}>Answer</th>
-                          <th colSpan={STATUSES.length} style={{ ...GROUP_HEAD, borderLeft: '1px solid #CBD5E1' }}>Status</th>
-                        </tr>
-                        <tr style={{ background: '#F1F5F9', color: '#475569' }}>
-                          <th style={{ textAlign: 'left', padding: '0.3rem 0.5rem', fontWeight: 700, fontSize: '0.66rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Tag</th>
-                          {ANSWERS.map(c => (
-                            <th key={c.key} style={COL_HEAD}>{c.label}</th>
-                          ))}
-                          {STATUSES.map((c, i) => (
-                            <th key={c.key} style={i === 0 ? { ...COL_HEAD, borderLeft: '1px solid #CBD5E1' } : COL_HEAD}>{c.label}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {visibleTagOptions.map(tag => {
-                          const bucket = BUCKETS.find(b => b.tag === tag.toLowerCase());
-                          const st = stateOf(tag);
-                          const answered = !!(st.answer || st.status);
-                          // The tag's own styling marks the rows that are
-                          // actually in HubSpot — which a Not sold takes a
-                          // row out of, however the answer reads.
-                          const tagged = checkedTags.has(tag);
-                          return (
-                            <tr key={tag} style={{ borderBottom: '1px solid #F1F5F9', background: answered ? '#fff' : '#FCFCFD' }}>
-                              <td style={{ padding: '0.3rem 0.5rem' }}>
-                                <span style={{ fontWeight: tagged ? 600 : 400, color: tagged ? (bucket?.headerColor || '#1E293B') : (answered ? '#475569' : '#94A3B8') }}>{tag}</span>
-                                {tagged && bucket && (
-                                  <span style={{ marginLeft: 6, fontSize: '0.58rem', fontWeight: 700, color: bucket.headerColor, background: bucket.headerBg, padding: '1px 6px', borderRadius: 999 }}>{bucket.label}</span>
-                                )}
-                                {/* Otherwise the header's total reads as
-                                    wrong: three of the rows on screen aren't
-                                    in it. */}
-                                {TAG_SCORE_EXCLUDED.has(tag.toLowerCase()) && (
-                                  <span
-                                    title="Housekeeping tag - answerable, but not counted in the Tagged %."
-                                    style={{ marginLeft: 6, fontSize: '0.56rem', fontWeight: 600, color: '#94A3B8', background: '#F1F5F9', padding: '1px 5px', borderRadius: 999 }}
-                                  >not scored</span>
-                                )}
-                              </td>
-                              {[
-                                ...ANSWERS.map(c => ({ c, active: st.answer === c.key, set: setTagAnswer, edge: false })),
-                                ...STATUSES.map((c, i) => ({ c, active: st.status === c.key, set: setTagStatus, edge: i === 0 })),
-                              ].map(({ c, active, set, edge }) => (
-                                <td key={c.key} style={{ textAlign: 'center', padding: '0.25rem 0.1rem', borderLeft: edge ? '1px solid #E2E8F0' : undefined }}>
-                                  <button
-                                    type="button"
-                                    onClick={() => set(tag, c.key)}
-                                    title={active
-                                      ? `${tag}: ${c.label} - click again to clear`
-                                      : c.tip(tag)}
-                                    style={{
-                                      width: '100%', maxWidth: 50, padding: '0.15rem 0', borderRadius: 999, cursor: 'pointer',
-                                      fontFamily: 'inherit', fontSize: '0.64rem',
-                                      fontWeight: active ? 700 : 500,
-                                      border: `1px solid ${active ? c.on.border : '#E2E8F0'}`,
-                                      background: active ? c.on.bg : '#fff',
-                                      color: active ? c.on.color : '#94A3B8',
-                                    }}
-                                  >{active ? c.label : '·'}</button>
-                                </td>
-                              ))}
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
                 </div>
               );
             })()}
