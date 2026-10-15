@@ -114,8 +114,8 @@ const contact = (id, company, tags) => ({ id, company, firstname: id, dans_tags:
 
 // --- Zoom export by tag ---------------------------------------------------
 // Every Inside Sales, Qualifying and Client account with no contact who is
-// both a Decision Maker and a Yes for the tag. A confirmed one takes the
-// account out even beside a Not sure; no decision maker at all keeps it in.
+// both a Decision Maker and a Yes for the tag, plus any with a Not sure for
+// it even beside a confirmed one. No decision maker at all keeps it in.
 {
   const k = tagColumnKey('Solar');
   const row = (company, status, confirmed, maybe, dmCount = 1) => ({ company, status, dmCount, byTag: { [k]: confirmed }, maybeByTag: { [k]: maybe } });
@@ -137,7 +137,7 @@ const contact = (id, company, tags) => ({ id, company, firstname: id, dans_tags:
     { company: 'NoCount', status: 'Inside Sales', byTag: { [k]: [] }, maybeByTag: { [k]: [] } },
   ];
   check('zoom export: no Decision Maker who is a Yes, Inside Sales / Qualifying / Client',
-    zoomExportRowsForTag(rows, k).map(r => r.company), ['Gap', 'NoDms', 'OnlyMaybe', 'ClientGap', 'QualifyingGap', 'QualifyingNoDms', 'NoCount']);
+    zoomExportRowsForTag(rows, k).map(r => r.company), ['Gap', 'NoDms', 'OnlyMaybe', 'ConfirmedAndMaybe', 'ClientGap', 'ClientMaybe', 'QualifyingGap', 'QualifyingNoDms', 'NoCount']);
   // The status comes from a sheet: a trailing space or other casing is
   // still Client (Ettinger Engineering was dropped on an exact match).
   check('zoom export: status read ignoring spacing and case',

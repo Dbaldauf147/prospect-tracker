@@ -144,12 +144,13 @@ const ZOOM_TAG_EXPORT_STATUS_KEYS = new Set(ZOOM_TAG_EXPORT_STATUSES.map(statusK
 /**
  * The rows one tag's Zoom export holds: every Inside Sales, Qualifying and
  * Client account that has no contact who is both a Decision Maker and a
- * Yes for the tag (carries it). That is the account's cell on the DM Tags
- * tab having no confirmed name in it: empty, or only "(maybe)" names, or
- * no decision maker at all. One confirmed decision maker on the tag is the
- * one thing that takes an account out. `key` is tagColumnKey(tag).
+ * Yes for the tag (carries it), plus any with somebody marked Not sure for
+ * it even beside a confirmed one: an unsettled answer is still worth a
+ * ZoomInfo pull. On the DM Tags tab that is every cell except one holding
+ * confirmed names and no "(maybe)". No decision maker at all is in.
+ * `key` is tagColumnKey(tag).
  */
 export function zoomExportRowsForTag(rows, key) {
   return (rows || []).filter(r => ZOOM_TAG_EXPORT_STATUS_KEYS.has(statusKey(r.status))
-    && !(r.byTag?.[key] || []).length);
+    && (!(r.byTag?.[key] || []).length || (r.maybeByTag?.[key] || []).length > 0));
 }

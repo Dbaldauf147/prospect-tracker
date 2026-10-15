@@ -13,7 +13,8 @@
 // Zoom Export by Tag mirrors the My Accounts tab's Zoom Export (same four
 // columns, rows on screen) cut to one tag: every Inside Sales, Qualifying
 // and Client account with no contact who is both a Decision Maker and a Yes
-// for the tag, ready to take into ZoomInfo.
+// for the tag, or with someone marked Not sure for it, ready to take into
+// ZoomInfo.
 import { useCallback, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { Badge } from '../common/Badge';
@@ -70,7 +71,7 @@ function ZoomByTagPicker({ tags, rows, onPick, onClose }) {
           <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer' }}>&times;</button>
         </div>
         <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.6rem', lineHeight: 1.4 }}>
-          Downloads the Inside Sales, Qualifying and Client accounts shown here that have no contact who is both a Decision Maker and a Yes for the tag. Columns: Company, Zoom Company ID, Zoom Company Name, Company URL.
+          Downloads the Inside Sales, Qualifying and Client accounts shown here that have no contact who is both a Decision Maker and a Yes for the tag, or have someone marked Not sure for it. Columns: Company, Zoom Company ID, Zoom Company Name, Company URL.
         </div>
         {tags.map(tag => {
           const n = zoomExportRowsForTag(rows, tagColumnKey(tag)).length;
@@ -206,7 +207,7 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
     const picked = zoomExportRowsForTag(zoomSource, tagColumnKey(tag));
     setZoomOpen(false);
     if (picked.length === 0) {
-      alert(`Every Inside Sales, Qualifying and Client account shown here already has a Decision Maker tagged ${tag}.`);
+      alert(`Every Inside Sales, Qualifying and Client account shown here already has a Decision Maker tagged ${tag}, and nobody marked Not sure for it.`);
       return;
     }
     const slug = tag.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -231,7 +232,7 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
       toolbarActions={onZoomExport ? [{
         key: 'zoom-export-by-tag',
         label: 'Zoom Export by Tag',
-        title: 'Pick a tag and download a CSV of the Inside Sales, Qualifying and Client accounts shown here with no contact who is both a Decision Maker and a Yes for it: Company, Zoom Company ID, Zoom Company Name, Company URL',
+        title: 'Pick a tag and download a CSV of the Inside Sales, Qualifying and Client accounts shown here with no contact who is both a Decision Maker and a Yes for it, or someone marked Not sure for it: Company, Zoom Company ID, Zoom Company Name, Company URL',
         onClick: () => setZoomOpen(true),
       }] : undefined}
       gridLines
