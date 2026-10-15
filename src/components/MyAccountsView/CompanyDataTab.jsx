@@ -18,6 +18,10 @@ import { companyStepsRemaining } from '../../utils/dmSteps';
 
 const MISSING_ANY = '__any';
 
+// The size numbers counted as steps of their own in Missing Data, and so in
+// All Missing Steps alongside the decision-maker ladder.
+const STEP_FIELDS = COMPANY_DATA_FIELDS.filter(f => ['numberOfSites', 'numberOfAccounts', 'equipmentCount'].includes(f.key));
+
 function MissingChip() {
   return (
     <span style={{ padding: '1px 7px', borderRadius: 999, fontSize: '0.66rem', fontWeight: 700, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C' }}>Missing</span>
@@ -60,6 +64,8 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       const steps = dmLookup ? companyStepsRemaining({ dms: dmLookup.forAccount(p), record: p, tagReview }) : null;
       row.stepsRemaining = steps ? steps.total : null;
       row.stepsDetail = steps ? steps.perBucket.map(b => `${b.bucket.label}: ${b.left}`).join('\n') : '';
+      row.missingData = STEP_FIELDS.filter(f => row[f.key] === null).length;
+      row.allMissingSteps = row.stepsRemaining === null ? null : row.stepsRemaining + row.missingData;
       out.push(row);
     }
     return { rows: out, noRecord: missing };
@@ -115,6 +121,28 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
             title={`Steps left on the Contacts > By Category ladder, per category:\n${row.stepsDetail}`}
             style={{ fontWeight: 700, color: row.stepsRemaining === 0 ? '#16A34A' : '#1E293B' }}
           >{row.stepsRemaining}</span>
+        )),
+    },
+    {
+      key: 'missingData', label: 'Missing Data', defaultWidth: 120,
+      getFilterValue: (row) => String(row.missingData),
+      render: (row) => (
+        <span
+          title={`Missing: ${STEP_FIELDS.filter(f => row[f.key] === null).map(f => f.label).join(', ') || 'none'}`}
+          style={{ fontWeight: 700, color: row.missingData === 0 ? '#16A34A' : '#B91C1C' }}
+        >{row.missingData}</span>
+      ),
+    },
+    {
+      key: 'allMissingSteps', label: 'All Missing Steps', defaultWidth: 150,
+      getFilterValue: (row) => (row.allMissingSteps === null ? '' : String(row.allMissingSteps)),
+      render: (row) => (row.allMissingSteps === null
+        ? <span style={{ color: '#94A3B8' }} title="Contacts are still loading">-</span>
+        : (
+          <span
+            title={`Steps remaining (${row.stepsRemaining}) + missing sites, utility accounts and equipment (${row.missingData})`}
+            style={{ fontWeight: 700, color: row.allMissingSteps === 0 ? '#16A34A' : '#1E293B' }}
+          >{row.allMissingSteps}</span>
         )),
     },
     {
