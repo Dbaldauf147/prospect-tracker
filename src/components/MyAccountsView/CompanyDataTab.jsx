@@ -91,6 +91,7 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
     },
     { key: 'tier', label: 'Tier', defaultWidth: 80 },
     { key: 'status', label: 'Status', defaultWidth: 120 },
+    { key: 'cdm', label: 'CDM', defaultWidth: 130 },
     ...COMPANY_DATA_FIELDS.map(f => ({
       key: f.key, label: f.label, defaultWidth: f.key === 'website' ? 200 : isTextField(f) ? 160 : 120,
       getFilterValue: (row) => (row[f.key] === null ? 'Missing' : String(row[f.key])),
