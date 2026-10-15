@@ -35,7 +35,9 @@ import { loadList as loadUploadedList } from '../../utils/uploadedListStore';
 import { STRATEGIC_STORAGE_KEY, strategicMatches } from '../../utils/strategicAccounts';
 import { STATUSES, STATUS_COLORS, TIER_OPTIONS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { peStageOf } from '../../utils/peStages';
-import { getServiceCategories, buildServiceBoard, exploredCountTest, isUncountedBucket, moveServiceToBucket, serviceBucketOf, UNGROUPED_SERVICES, addServiceBox, renameServiceBox } from '../../utils/serviceCategoriesStore';
+import ServiceBucketPopup from './ServiceBucketPopup';
+import { isGraveyardBucket } from '../../utils/servicePricing';
+import { getServiceCategories, buildServiceBoard, exploredCountTest, isUncountedBucket, setBucketCounted, renameBucketCounted, moveServiceToBucket, serviceBucketOf, UNGROUPED_SERVICES, addServiceBox, renameServiceBox } from '../../utils/serviceCategoriesStore';
 import { isCoverageTracked } from '../../utils/pipelineDashboardStore';
 import { coverageRowStyle } from '../../utils/coverageMark';
 import { useCoverageServices } from '../../hooks/useCoverageServices';
@@ -5882,6 +5884,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [serviceSearch, setServiceSearch] = useState('');
   const [serviceStatusFilter, setServiceStatusFilter] = useState('all');
   const [editingServiceName, setEditingServiceName] = useState(null);
+  // The box whose header was clicked on the Services board: its popup sets
+  // every service in it at once and says whether it counts toward the %.
+  const [serviceBucketPopup, setServiceBucketPopup] = useState(null);
   const [expandedServiceNote, setExpandedServiceNote] = useState(null);
   const [portfolioOpen, setPortfolioOpen] = useState(true);
   // Which page of the Portfolio tab is showing: the site list and holdings,
@@ -6803,11 +6808,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const hidden = new Set(settings.hiddenServices || []);
     const counts = exploredCountTest(settings);
     const uncountedBoxed = new Set(
-      serviceBoard.filter(cat => isUncountedBucket(cat.name)).flatMap(cat => cat.items || []),
+      serviceBoard.filter(cat => isUncountedBucket(cat.name, settings)).flatMap(cat => cat.items || []),
     );
     const inScope = (i) => !hidden.has(i) && !uncountedBoxed.has(i) && counts(i);
     const universe = new Set(
-      serviceBoard.flatMap(cat => (isUncountedBucket(cat.name) ? [] : cat.items.filter(inScope)))
+      serviceBoard.flatMap(cat => (isUncountedBucket(cat.name, settings) ? [] : cat.items.filter(inScope)))
     );
     const total = universe.size;
     const explored = new Set();
@@ -11508,7 +11513,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   if (!newName.trim() || newName === oldName || isUngrouped(oldName)) return;
                   const result = renameServiceBox(storedCategories, oldName, newName);
                   if (result.error) { alert(result.error); return; }
-                  if (result.categories) saveCategories(result.categories);
+                  if (!result.categories) return;
+                  // The box's count-toward-% answer follows it to its new name.
+                  const renamedTo = result.categories[storedCategories.findIndex(c => c.name === oldName)]?.name;
+                  const counted = renamedTo ? renameBucketCounted(settings, oldName, renamedTo) : null;
+                  updateSettings({ customServiceCategories: result.categories, ...(counted ? { serviceBucketCounted: counted } : {}) });
                 }
                 function deleteCategoryBox(catName) {
                   if (isUngrouped(catName)) return;
@@ -11539,8 +11548,36 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   ? categories.reduce((n, c) => n + c.items.filter(item => (servicesEditMode || !hiddenServices.has(item)) && matchesFilter(item, c.name)).length, 0)
                   : null;
 
+                // The box behind an open header popup, and the services it
+                // acts on: the ones on show, so a hidden service isn't set
+                // behind the user's back.
+                const popupCat = serviceBucketPopup ? categories.find(c => c.name === serviceBucketPopup) : null;
+                const popupItems = popupCat ? popupCat.items.filter(item => !hiddenServices.has(item)) : [];
+
                 return (
                 <div>
+                  {popupCat && (
+                    <ServiceBucketPopup
+                      name={popupCat.name}
+                      items={popupItems}
+                      manualOf={(item) => svcAll[item] || '-'}
+                      effectiveOf={effectiveStatusOf}
+                      colorOf={serviceStatusColor}
+                      counted={!isUncountedBucket(popupCat.name, settings)}
+                      countLocked={isGraveyardBucket(popupCat.name)}
+                      onApply={(status) => {
+                        const next = { ...(fields.servicesExplored || {}) };
+                        for (const item of popupItems) {
+                          if (status === '-') delete next[item];
+                          else next[item] = status;
+                        }
+                        set('servicesExplored', next);
+                        setServiceBucketPopup(null);
+                      }}
+                      onToggleCounted={(counted) => updateSettings({ serviceBucketCounted: setBucketCounted(settings, popupCat.name, counted) })}
+                      onClose={() => setServiceBucketPopup(null)}
+                    />
+                  )}
                   {filtering && (
                     <div style={{ marginTop: '0.5rem', fontSize: '0.68rem', color: '#64748B' }}>
                       {matchCount === 0
@@ -11593,14 +11630,28 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             />
                           ) : (
                             <span
-                              style={{ flex: 1, cursor: (servicesEditMode && !isUngrouped(cat.name)) ? 'pointer' : 'default' }}
-                              onClick={() => servicesEditMode && !isUngrouped(cat.name) && setEditingServiceName({ catName: cat.name })}
-                              title={isUngrouped(cat.name)
-                                ? 'Services on Dropdowns › Services that no box claims yet. Drag one into a box to file it.'
-                                : (servicesEditMode ? 'Click to rename' : '')}
+                              role={servicesEditMode ? undefined : 'button'}
+                              tabIndex={servicesEditMode ? undefined : 0}
+                              style={{ flex: 1, cursor: (servicesEditMode && isUngrouped(cat.name)) ? 'default' : 'pointer' }}
+                              onClick={() => {
+                                if (!servicesEditMode) setServiceBucketPopup(cat.name);
+                                else if (!isUngrouped(cat.name)) setEditingServiceName({ catName: cat.name });
+                              }}
+                              onKeyDown={(e) => {
+                                if (!servicesEditMode && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setServiceBucketPopup(cat.name); }
+                              }}
+                              title={servicesEditMode
+                                ? (isUngrouped(cat.name) ? 'Services on Dropdowns › Services that no box claims yet. Drag one into a box to file it.' : 'Click to rename')
+                                : 'Click to set every service in this bucket at once, or choose whether it counts toward the %'}
                             >
                               {cat.name}
                             </span>
+                          )}
+                          {!servicesEditMode && (isGraveyardBucket(cat.name) || isUncountedBucket(cat.name, settings)) && (
+                            <span
+                              title="Left out of the % of services explored. Click the bucket name to change that."
+                              style={{ fontSize: '0.55rem', fontWeight: 600, color: '#64748B', background: '#E2E8F0', borderRadius: 3, padding: '0 4px', whiteSpace: 'nowrap' }}
+                            >not in %</span>
                           )}
                           {servicesEditMode && !isUngrouped(cat.name) && (
                             <button

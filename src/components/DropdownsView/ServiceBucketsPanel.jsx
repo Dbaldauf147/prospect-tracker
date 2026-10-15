@@ -34,7 +34,8 @@ function BucketRow({ cat, index, categories, onSave }) {
   function commit() {
     const result = renameServiceBox(categories, cat.name, draft);
     if (result.error) { setError(result.error); return; }
-    if (result.categories) onSave(result.categories);
+    // The new name goes along so the box's count-toward-% answer can follow it.
+    if (result.categories) onSave(result.categories, { from: cat.name, to: result.categories[index]?.name });
     setDraft(null);
     setError('');
   }
