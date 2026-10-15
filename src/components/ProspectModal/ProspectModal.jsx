@@ -141,6 +141,7 @@ import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { SENTIMENT_OPTIONS, sentimentFor, sentimentMark } from '../../utils/contactSentiment';
 import { LEAD_SOURCE_OPTIONS, leadSourceFor } from '../../utils/contactLeadSource';
 import { BUCKETS, contactHasTag, contactIsHidden } from './contactTags.js';
+import { DM_STEPS, bucketStepsLeft, dmBucketAnswer } from '../../utils/dmSteps.js';
 import { ContactsTable } from './ContactsTable.jsx';
 import { ContactPasteModal } from './ContactPasteModal.jsx';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
@@ -428,19 +429,6 @@ function getOrgKey(company) {
   return `orgchart-${(company || '').toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 }
 
-// The steps a category with no Yes decision maker is worked through, in
-// order, under the decision makers row of the By Category table. 'zoom' is
-// the original Search run tick and still reads and writes dmSearchRun, so
-// ticks made before the ladder existed carry over; the rest live in
-// dmSearchSteps, keyed by bucket then step.
-const DM_STEPS = [
-  { key: 'zoom',         label: 'No DM, but company Zoom ID' },
-  { key: 'zoomFailed',   label: "Zoom ID didn't work" },
-  { key: 'manual',       label: 'Manual search' },
-  { key: 'manualFailed', label: "Manual search didn't work" },
-  { key: 'closeOut',     label: 'Close out' },
-];
-
 function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '', searchRun = {}, onToggleSearchRun, searchSteps = {}, onToggleSearchStep }) {
   const idOf = (c) => String(c.id || c.vid || c.email || '');
 
@@ -452,11 +440,7 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
   // bucket's tag listed under its heading, Yes first. The answer is read the
   // way the contact popup reads it (tagStateFrom), so a Yes held off by a Not
   // sold still counts as Yes here.
-  const dmAnswer = (c, b) => {
-    const cid = c.id ?? c.vid;
-    const stored = cid == null ? undefined : findTagRecord(tagReview?.[cid], b.label);
-    return tagStateFrom(contactHasTag(c, b.tag), stored).answer;
-  };
+  const dmAnswer = (c, b) => dmBucketAnswer(c, b, tagReview);
   const dmColumns = [...BUCKETS]
     .sort((a, b) => a.label.localeCompare(b.label))
     .map(b => {
@@ -470,23 +454,11 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
       }
       return { bucket: b, dms: [...yes, ...unsure] };
     });
-  // Steps left for each category, read as how far down the ladder it has got:
-  // a Yes decision maker means nothing is left (0); otherwise the furthest
-  // step done says where it stands, so a category with no DM and nothing else
-  // has all five left, one with a Zoom Company ID (the company has one, or
-  // the tick is on) has four, and one closed out has none. The total sums
-  // every category.
-  const stepsLeftFor = ({ bucket, dms }) => {
-    if (dms.some(d => d.answer === 'yes')) return 0;
-    let reached = 0;
-    DM_STEPS.forEach((step, i) => {
-      const done = step.key === 'zoom'
-        ? (!!zoomCompanyId || !!searchRun?.[bucket.key])
-        : !!searchSteps?.[bucket.key]?.[step.key];
-      if (done) reached = i + 1;
-    });
-    return DM_STEPS.length - reached;
-  };
+  // Steps left per category and in all (src/utils/dmSteps.js, the same rule
+  // My Accounts > Company Data counts with).
+  const stepsLeftFor = ({ bucket, dms }) => bucketStepsLeft({
+    bucket, hasYesDm: dms.some(d => d.answer === 'yes'), zoomCompanyId, searchRun, searchSteps,
+  });
   const stepsLeft = dmColumns.map(col => ({ bucket: col.bucket, left: stepsLeftFor(col) }));
   const stepsLeftTotal = stepsLeft.reduce((sum, s) => sum + s.left, 0);
   const DM_ANSWER_STYLE = {

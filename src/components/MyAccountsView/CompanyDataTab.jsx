@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
 import { COMPANY_DATA_FIELDS, fieldValue, isTextField, missingFields, planCompanyDataPaste } from '../../utils/companyDataFields';
 import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize';
+import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
+import { companyStepsRemaining } from '../../utils/dmSteps';
 
 // My Accounts > Company Data: which of the accounts have their size numbers
 // (sites, utility accounts, meters, equipment, electric MWh) and their
@@ -22,11 +24,26 @@ function MissingChip() {
   );
 }
 
-export function CompanyDataTab({ accounts = [], prospects = [], onUpdate, onSelect, settings, updateSettings, filterBar }) {
+export function CompanyDataTab({ accounts = [], prospects = [], contacts = null, onUpdate, onSelect, settings, updateSettings, filterBar }) {
   const [show, setShow] = useState(MISSING_ANY);
   const [pasteOpen, setPasteOpen] = useState(false);
 
   const prospectById = useMemo(() => new Map((prospects || []).map(p => [p.id, p])), [prospects]);
+
+  // Steps remaining on each company's Contacts > By Category ladder, counted
+  // by the same rule the popup's own Steps remaining column uses
+  // (utils/dmSteps). Who a company's decision makers are comes from the
+  // shared lookup (name match, plus the contacts linked or matched on the
+  // email domain, less those removed by hand). Null while contacts load, so
+  // a company isn't shown as owing every step before we know.
+  const localFields = settings?.contactLocalFields || null;
+  const links = settings?.companyContactLinks || null;
+  const exclusions = settings?.companyContactExclusions || null;
+  const tagReview = settings?.contactTagReview || null;
+  const dmLookup = useMemo(
+    () => (contacts ? makeDecisionMakerLookup(contacts, { localFields, links, exclusions }) : null),
+    [contacts, localFields, links, exclusions],
+  );
 
   // One row per account with a company record behind it, its numbers read
   // off that record so an edit made anywhere shows here at once.
@@ -40,10 +57,13 @@ export function CompanyDataTab({ accounts = [], prospects = [], onUpdate, onSele
       for (const f of COMPANY_DATA_FIELDS) row[f.key] = fieldValue(f, p[f.key]);
       row.missing = missingFields(row);
       row.missingCount = row.missing.length;
+      const steps = dmLookup ? companyStepsRemaining({ dms: dmLookup.forAccount(p), record: p, tagReview }) : null;
+      row.stepsRemaining = steps ? steps.total : null;
+      row.stepsDetail = steps ? steps.perBucket.map(b => `${b.bucket.label}: ${b.left}`).join('\n') : '';
       out.push(row);
     }
     return { rows: out, noRecord: missing };
-  }, [accounts, prospectById]);
+  }, [accounts, prospectById, dmLookup, tagReview]);
 
   const missingCounts = useMemo(() => {
     const m = {};
@@ -84,6 +104,18 @@ export function CompanyDataTab({ accounts = [], prospects = [], onUpdate, onSele
         return isTextField(f) ? v : v.toLocaleString();
       },
     })),
+    {
+      key: 'stepsRemaining', label: 'Steps Remaining', defaultWidth: 150,
+      getFilterValue: (row) => (row.stepsRemaining === null ? '' : String(row.stepsRemaining)),
+      render: (row) => (row.stepsRemaining === null
+        ? <span style={{ color: '#94A3B8' }} title="Contacts are still loading">-</span>
+        : (
+          <span
+            title={`Steps left on the Contacts > By Category ladder, per category:\n${row.stepsDetail}`}
+            style={{ fontWeight: 700, color: row.stepsRemaining === 0 ? '#16A34A' : '#1E293B' }}
+          >{row.stepsRemaining}</span>
+        )),
+    },
     {
       key: 'missingCount', label: 'Missing', defaultWidth: 90,
       getFilterValue: (row) => String(row.missingCount),

@@ -1,0 +1,74 @@
+// The By Category ladder: for each contact category (the BUCKETS the org
+// chart groups people into), how many steps are left before it is either
+// mapped to a decision maker or closed out.
+//
+// One rule, read in two places: the company popup's Contacts > By Category
+// table (the Steps remaining column beside the ladder) and My Accounts >
+// Company Data (a Steps remaining column per company). Kept here so the two
+// can't count differently. Pure, so it is pinned by
+// scripts/dmSteps.test.mjs.
+
+import { BUCKETS, contactHasTag } from '../components/ProspectModal/contactTags.js';
+import { findTagRecord, tagStateFrom } from './contactTagReview.js';
+
+// The steps a category with no Yes decision maker is worked through, in
+// order. 'zoom' is the original Search run tick and still reads and writes
+// the record's dmSearchRun, so ticks made before the ladder existed carry
+// over; the rest live in dmSearchSteps, keyed by bucket then step.
+export const DM_STEPS = [
+  { key: 'zoom',         label: 'No DM, but company Zoom ID' },
+  { key: 'zoomFailed',   label: "Zoom ID didn't work" },
+  { key: 'manual',       label: 'Manual search' },
+  { key: 'manualFailed', label: "Manual search didn't work" },
+  { key: 'closeOut',     label: 'Close out' },
+];
+
+// How a decision maker stands on one category, read the way the contact
+// popup reads it: 'yes' when they carry the category's tag (a Yes held off
+// by a Not sold still counts), 'unsure' for a Not sure answer, '' otherwise.
+export function dmBucketAnswer(c, bucket, tagReview = null) {
+  const cid = c?.id ?? c?.vid;
+  const stored = cid == null ? undefined : findTagRecord(tagReview?.[cid], bucket.label);
+  return tagStateFrom(contactHasTag(c, bucket.tag), stored).answer;
+}
+
+// Steps left for one category, read as how far down the ladder it has got:
+// a Yes decision maker means nothing is left (0); otherwise the furthest
+// step done says where it stands, so a category with no DM and nothing else
+// has all five left, one with a Zoom Company ID (the company has one, or the
+// tick is on) has four, and one closed out has none.
+export function bucketStepsLeft({ bucket, hasYesDm, zoomCompanyId = '', searchRun = null, searchSteps = null }) {
+  if (hasYesDm) return 0;
+  let reached = 0;
+  DM_STEPS.forEach((step, i) => {
+    const done = step.key === 'zoom'
+      ? (!!String(zoomCompanyId || '').trim() || !!searchRun?.[bucket.key])
+      : !!searchSteps?.[bucket.key]?.[step.key];
+    if (done) reached = i + 1;
+  });
+  return DM_STEPS.length - reached;
+}
+
+// Every category for one company. `dms` is the company's decision makers
+// (already gated on the Decision Maker tag); the company record supplies
+// the Zoom Company ID and the ticks. Returns { total, max, perBucket:
+// [{ bucket, left }] } with the buckets A to Z.
+export function companyStepsRemaining({ dms = [], record = {}, tagReview = null } = {}) {
+  const perBucket = [...BUCKETS]
+    .sort((a, b) => a.label.localeCompare(b.label))
+    .map(bucket => ({
+      bucket,
+      left: bucketStepsLeft({
+        bucket,
+        hasYesDm: (dms || []).some(c => dmBucketAnswer(c, bucket, tagReview) === 'yes'),
+        zoomCompanyId: record?.zoomCompanyId,
+        searchRun: record?.dmSearchRun,
+        searchSteps: record?.dmSearchSteps,
+      }),
+    }));
+  return {
+    total: perBucket.reduce((sum, b) => sum + b.left, 0),
+    max: perBucket.length * DM_STEPS.length,
+    perBucket,
+  };
+}
