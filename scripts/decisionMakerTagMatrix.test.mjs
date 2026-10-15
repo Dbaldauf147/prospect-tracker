@@ -115,7 +115,7 @@ const contact = (id, company, tags) => ({ id, company, firstname: id, dans_tags:
 // --- Zoom export by tag ---------------------------------------------------
 // Accounts with a decision maker but none confirmed for the tag, plus any
 // with a Not sure for it even beside a confirmed one. No decision maker at
-// all keeps an account out. Inside Sales only.
+// all keeps an account out. Inside Sales and Client; other statuses out.
 {
   const k = tagColumnKey('Solar');
   const row = (company, status, confirmed, maybe, dmCount = 1) => ({ company, status, dmCount, byTag: { [k]: confirmed }, maybeByTag: { [k]: maybe } });
@@ -127,11 +127,14 @@ const contact = (id, company, tags) => ({ id, company, firstname: id, dans_tags:
     row('ConfirmedAndMaybe', 'Inside Sales', [{ id: 3 }], [{ id: 4 }], 2),
     row('ClientGap', 'Client', [], []),
     row('ClientMaybe', 'Client', [{ id: 5 }], [{ id: 6 }]),
+    row('ClientConfirmed', 'Client', [{ id: 8 }], []),
+    row('HoldOffGap', 'Hold Off', [], []),
+    row('OldClientMaybe', 'Old Client', [], [{ id: 9 }]),
     { company: 'NoMaybeMap', status: 'Inside Sales', dmCount: 1, byTag: { [k]: [{ id: 7 }] } },
     { company: 'NoCount', status: 'Inside Sales', byTag: { [k]: [] }, maybeByTag: { [k]: [] } },
   ];
-  check('zoom export: decision maker without a Yes, or a Not sure, Inside Sales only',
-    zoomExportRowsForTag(rows, k).map(r => r.company), ['Gap', 'OnlyMaybe', 'ConfirmedAndMaybe']);
+  check('zoom export: decision maker without a Yes, or a Not sure, Inside Sales and Client',
+    zoomExportRowsForTag(rows, k).map(r => r.company), ['Gap', 'OnlyMaybe', 'ConfirmedAndMaybe', 'ClientGap', 'ClientMaybe']);
 }
 
 console.log(`${passed} passed, ${failed} failed`);
