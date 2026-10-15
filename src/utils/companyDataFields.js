@@ -42,8 +42,23 @@ export function fieldValue(field, v) {
   return isTextField(field) ? String(v).trim() : Number(v);
 }
 
-export function missingFields(record, fields = COMPANY_DATA_FIELDS) {
-  return fields.filter(f => !fieldHasValue(f, record?.[f.key])).map(f => f.key);
+// The ZoomInfo fields. A company excluded from ZoomInfo (the Exclude from
+// ZoomInfo button on its popup) will never be searched there, so it isn't
+// owed a Zoom id or name and a blank one isn't counted as missing.
+export const ZOOM_FIELD_KEYS = new Set(['zoomCompanyId', 'zoomCompanyName']);
+
+/** Whether a field isn't asked of this company at all (see ZOOM_FIELD_KEYS). */
+export function fieldNotNeeded(field, { zoomExcluded = false } = {}) {
+  return !!zoomExcluded && ZOOM_FIELD_KEYS.has(field?.key);
+}
+
+/** Whether a field is blank on the record and the company is owed it. */
+export function fieldMissing(field, record, { zoomExcluded = false } = {}) {
+  return !fieldNotNeeded(field, { zoomExcluded }) && !fieldHasValue(field, record?.[field.key]);
+}
+
+export function missingFields(record, fields = COMPANY_DATA_FIELDS, { zoomExcluded = false } = {}) {
+  return fields.filter(f => fieldMissing(f, record, { zoomExcluded })).map(f => f.key);
 }
 
 // "10,000", " $1,200 ", "3.5" -> numbers. Blank -> null (nothing to write).
