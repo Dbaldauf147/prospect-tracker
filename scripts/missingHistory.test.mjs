@@ -44,7 +44,7 @@ const same = withMissingDay(first, '2026-10-15', { total: 5, fields: {}, compani
 check('unchanged reading writes nothing', same === first, true);
 const moved = withMissingDay(first, '2026-10-15', { total: 3, fields: {}, companies: 1 }, 3);
 check('a changed reading rewrites today', moved['2026-10-15'].total, 3);
-check('yesterday is left alone', moved['2026-10-14'].total, 5);
+check('the seeded yesterday follows today on the first day', moved['2026-10-14'].total, 3);
 const tomorrow = withMissingDay(moved, '2026-10-16', { total: 2, fields: {}, companies: 1 }, 4);
 check('a later day does not reseed', Object.keys(tomorrow).sort(), ['2026-10-14', '2026-10-15', '2026-10-16']);
 
@@ -66,6 +66,23 @@ check('a later day does not reseed', Object.keys(tomorrow).sort(), ['2026-10-14'
   const next = withMissingDay(old, '2026-10-15', s, 9);
   check('steps: first steps day seeds yesterday over an old-basis day', [isStepsDay(next['2026-10-14']), next['2026-10-14'].seeded], [true, true]);
   check('steps: older days kept', next['2026-10-13'].total, 900);
+}
+
+// 5. The seed follows today for the whole first day: a first reading
+// taken mid-load (100 of 180 companies) mustn't stay as yesterday.
+{
+  const partial = { total: 1577, fields: {}, companies: 100, basis: 'steps' };
+  const full = { total: 3669, fields: {}, companies: 180, basis: 'steps' };
+  const a = withMissingDay({}, '2026-10-15', partial, 1);
+  const b = withMissingDay(a, '2026-10-15', full, 2);
+  check('seed: yesterday follows the full reading', [b['2026-10-14'].total, b['2026-10-14'].seeded], [3669, true]);
+  // The stored case: today already full, yesterday still the partial seed.
+  const stuck = { '2026-10-14': { ...partial, seeded: true }, '2026-10-15': full };
+  const fixed = withMissingDay(stuck, '2026-10-15', full, 3);
+  check('seed: a stuck seed is repaired by the next reading', fixed['2026-10-14'].total, 3669);
+  check('seed: nothing to repair writes nothing', withMissingDay(fixed, '2026-10-15', full, 4) === fixed, true);
+  const next = withMissingDay(fixed, '2026-10-16', { ...full, total: 3600 }, 5);
+  check('seed: a later day leaves the seed alone', [next['2026-10-14'].total, next['2026-10-15'].total], [3669, 3669]);
 }
 
 console.log(`${passed} passed, ${failed} failed`);
