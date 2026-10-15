@@ -7,9 +7,10 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import { DataTable } from '../common/DataTable';
 import { COMPANY_DATA_FIELDS } from '../../utils/companyDataFields';
-import { subscribeMissingHistory, missingHistorySnapshot, parseMissingHistory, isStepsDay } from '../../utils/missingHistory';
+import { subscribeMissingHistory, missingHistorySnapshot, parseMissingHistory, isStepsDay, baselineDay, setMissingBaseline } from '../../utils/missingHistory';
 
 const INK = '#DC2626';
+const BASELINE_CHIP = { marginLeft: 4, padding: '0 5px', borderRadius: 3, background: '#E0E7FF', color: '#3730A3', fontSize: '0.62rem', fontWeight: 700 };
 
 const fmtDay = (iso) => {
   const [y, m, d] = String(iso).split('-').map(Number);
@@ -66,24 +67,43 @@ export function MissingHistoryView({ settings, updateSettings }) {
     [history],
   );
 
+  // The frozen baseline day, when one is set and counted the same way as
+  // the chart. Progress is measured against it rather than the first day.
+  const baseDay = baselineDay(history);
+  const base = series.find(x => x.day === baseDay) || null;
+
   const rows = useMemo(() => series.map((s, i) => ({
     id: s.day,
     ...s,
     change: i === 0 ? null : s.total - series[i - 1].total,
-  })), [series]);
+    vsBaseline: base && s.day > base.day ? s.total - base.total : null,
+  })), [series, base]);
+
+  const signed = (n) => (n == null || n === 0
+    ? <span style={{ color: '#94A3B8' }}>-</span>
+    // Fewer missing is progress, so a drop reads green.
+    : <span style={{ fontWeight: 600, color: n < 0 ? '#047857' : '#B91C1C' }}>{`${n > 0 ? '+' : ''}${n.toLocaleString()}`}</span>);
 
   const columns = [
-    { key: 'day', label: 'Date', defaultWidth: 100, sticky: true, render: r => fmtDay(r.day), getSortValue: r => Number(r.day.replace(/-/g, '')), exportValue: r => r.day },
+    {
+      key: 'day', label: 'Date', defaultWidth: 130, sticky: true, getSortValue: r => Number(r.day.replace(/-/g, '')), exportValue: r => r.day,
+      render: r => (r.baseline
+        ? <span>{fmtDay(r.day)} <span style={BASELINE_CHIP} title="Frozen baseline: never rewritten">Baseline</span></span>
+        : fmtDay(r.day)),
+    },
     { key: 'total', label: 'All Missing Steps', defaultWidth: 140, render: r => <span style={{ fontWeight: 700 }}>{r.total.toLocaleString()}</span> },
     {
       key: 'change', label: 'Change', defaultWidth: 90,
       getSortValue: r => r.change ?? 0,
       exportValue: r => (r.change == null ? '' : r.change),
-      render: r => (r.change == null || r.change === 0
-        ? <span style={{ color: '#94A3B8' }}>-</span>
-        // Fewer missing is progress, so a drop reads green.
-        : <span style={{ fontWeight: 600, color: r.change < 0 ? '#047857' : '#B91C1C' }}>{`${r.change > 0 ? '+' : ''}${r.change}`}</span>),
+      render: r => signed(r.change),
     },
+    ...(base ? [{
+      key: 'vsBaseline', label: 'Vs Baseline', defaultWidth: 110,
+      getSortValue: r => r.vsBaseline ?? 0,
+      exportValue: r => (r.vsBaseline == null ? '' : r.vsBaseline),
+      render: r => signed(r.vsBaseline),
+    }] : []),
     { key: 'companies', label: 'Companies', defaultWidth: 100 },
     { key: 'stepsRemaining', label: 'Steps Remaining', defaultWidth: 130, render: r => (r.stepsRemaining ?? 0).toLocaleString() },
     { key: 'missingData', label: 'Missing Data', defaultWidth: 110, render: r => (r.missingData ?? 0).toLocaleString() },
@@ -107,7 +127,8 @@ export function MissingHistoryView({ settings, updateSettings }) {
 
   const last = series[series.length - 1];
   const first = series[0];
-  const delta = last.total - first.total;
+  const from = base || first;
+  const delta = last.total - from.total;
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0.25rem 0.25rem 1rem' }}>
@@ -124,9 +145,23 @@ export function MissingHistoryView({ settings, updateSettings }) {
           <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>{`across ${last.companies} companies`}</span>
           {delta !== 0 && (
             <span style={{ fontSize: '0.72rem', fontWeight: 600, color: delta < 0 ? '#047857' : '#B91C1C' }}>
-              {`${delta > 0 ? '+' : ''}${delta.toLocaleString()} since ${fmtDay(first.day)}`}
+              {`${delta > 0 ? '+' : ''}${delta.toLocaleString()} ${base ? `vs the ${fmtDay(base.day)} baseline` : `since ${fmtDay(first.day)}`}`}
             </span>
           )}
+          <span style={{ marginLeft: 'auto', fontSize: '0.72rem', color: '#64748B' }}>
+            {base ? (
+              <span title="The baseline day is frozen: later readings never rewrite it">
+                {`Baseline: ${fmtDay(base.day)}, ${base.total.toLocaleString()} (frozen)`}
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setMissingBaseline(first.day)}
+                title={`Freeze ${fmtDay(first.day)} as it stands now (${first.total.toLocaleString()}) and measure progress against it`}
+                style={{ padding: '0.2rem 0.55rem', border: '1px solid #CBD5E1', borderRadius: 5, background: '#fff', color: '#334155', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+              >{`Freeze ${fmtDay(first.day)} as baseline`}</button>
+            )}
+          </span>
         </div>
         <div style={{ marginTop: 6 }}><TotalLine series={series} /></div>
       </div>

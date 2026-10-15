@@ -23,6 +23,8 @@
 //                   summed, so they are not charted beside these.
 //   companies  how many companies the counts are out of
 //   seeded     true on the one day backfilled from the first reading
+//   baseline   true on the one day frozen as the baseline: never rewritten,
+//              and what the subtab measures progress against
 //   updatedAt  wall-clock ms of the last write
 //
 // The LAST reading of the day wins, and a row is only rewritten when its
@@ -125,6 +127,8 @@ function trim(history, max = MISSING_HISTORY_MAX_DAYS) {
   const keys = Object.keys(history || {}).sort();
   if (keys.length <= max) return history;
   const out = {};
+  // The baseline outlives the window: it is what the rest is measured against.
+  for (const k of keys) if (history[k]?.baseline) out[k] = history[k];
   for (const k of keys.slice(keys.length - max)) out[k] = history[k];
   return out;
 }
@@ -144,7 +148,10 @@ export function withMissingDay(history, day, reading, now = Date.now()) {
   // still loading (100 of 180 companies); freezing the seed at that left
   // yesterday reading half of today and the chart showing a jump that
   // never happened.
-  const hasEarlier = Object.keys(h).some(k => k < day && h[k]?.basis === reading.basis && !h[k]?.seeded);
+  // The baseline day is frozen: a reading never rewrites it, and it counts
+  // as a real earlier day, so it is not reseeded either.
+  if (h[day]?.baseline) return h;
+  const hasEarlier = Object.keys(h).some(k => k < day && h[k]?.basis === reading.basis && (!h[k]?.seeded || h[k]?.baseline));
   const seedYesterday = !hasEarlier;
   const yesterday = previousDay(day);
   if (sameReading(h[day], reading) && (!seedYesterday || sameReading(h[yesterday], reading))) return h;
@@ -153,17 +160,50 @@ export function withMissingDay(history, day, reading, now = Date.now()) {
   return trim(next);
 }
 
-/** Record `day` (YYYY-MM-DD). Writes only when something changed. */
-export function recordMissingDay(day, reading, now = Date.now()) {
-  const history = loadMissingHistory();
-  const next = withMissingDay(history, day, reading, now);
-  if (next === history) return false;
+/** The day frozen as the baseline, or null. */
+export function baselineDay(history) {
+  return Object.keys(history || {}).sort().find(k => history[k]?.baseline) || null;
+}
+
+/**
+ * Pure: the history with `day` frozen as the one baseline (any earlier
+ * baseline is released), or the same object when `day` is not recorded.
+ */
+export function withBaseline(history, day, now = Date.now()) {
+  const h = history || {};
+  if (!h[day]) return h;
+  const next = {};
+  for (const [k, row] of Object.entries(h)) {
+    if (k === day) next[k] = { ...row, baseline: true, frozenAt: now };
+    else if (row?.baseline) { const { baseline: _b, frozenAt: _f, ...rest } = row; next[k] = rest; }
+    else next[k] = row;
+  }
+  return next;
+}
+
+function writeHistory(next) {
   try {
     userLsSet(MISSING_HISTORY_KEY, JSON.stringify(next));
     queueMirrorPush(MISSING_HISTORY_KEY);
     window.dispatchEvent(new CustomEvent(MISSING_HISTORY_EVENT));
     return true;
   } catch { return false; }
+}
+
+/** Freeze `day` (YYYY-MM-DD) as the baseline. */
+export function setMissingBaseline(day, now = Date.now()) {
+  const history = loadMissingHistory();
+  const next = withBaseline(history, day, now);
+  if (next === history) return false;
+  return writeHistory(next);
+}
+
+/** Record `day` (YYYY-MM-DD). Writes only when something changed. */
+export function recordMissingDay(day, reading, now = Date.now()) {
+  const history = loadMissingHistory();
+  const next = withMissingDay(history, day, reading, now);
+  if (next === history) return false;
+  return writeHistory(next);
 }
 
 const EVENTS = [MISSING_HISTORY_EVENT, 'storage'];
