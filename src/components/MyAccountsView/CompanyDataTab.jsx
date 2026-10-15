@@ -204,7 +204,8 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
 
   // The export is the paste-back template: ID and Company first (what the
   // paste matches on), then every field, filled where the company already
-  // has a number and blank where it doesn't.
+  // has a number and blank where it doesn't. The step counts ride along at
+  // the end for reference; Paste values ignores their headers.
   async function exportMissing() {
     const list = shown.filter(r => r.missingCount > 0);
     if (list.length === 0) { alert('Nothing is missing for the companies shown.'); return; }
@@ -212,10 +213,13 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
     const data = list.map(r => {
       const o = { ID: r.id, Company: r.company, Tier: r.tier, Status: r.status };
       for (const f of COMPANY_DATA_FIELDS) o[f.label] = r[f.key] === null ? '' : r[f.key];
+      o['Steps Remaining'] = r.stepsRemaining ?? '';
+      o['Missing Data'] = r.missingData;
+      o['All Missing Steps'] = r.allMissingSteps ?? '';
       return o;
     });
     const ws = XLSX.utils.json_to_sheet(data);
-    ws['!cols'] = [{ wch: 22 }, { wch: 40 }, { wch: 9 }, { wch: 16 }, ...COMPANY_DATA_FIELDS.map(f => ({ wch: isTextField(f) ? 28 : 16 }))];
+    ws['!cols'] = [{ wch: 22 }, { wch: 40 }, { wch: 9 }, { wch: 16 }, ...COMPANY_DATA_FIELDS.map(f => ({ wch: isTextField(f) ? 28 : 16 })), { wch: 16 }, { wch: 13 }, { wch: 18 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Missing company data');
     sanitizeSheetJsWorkbook(wb);
