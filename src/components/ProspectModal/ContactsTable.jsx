@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { sentimentFor, sentimentMark } from '../../utils/contactSentiment';
-import { BUCKETS, contactHasTag } from './contactTags.js';
+import { BUCKETS, contactHasTag, contactIsHidden } from './contactTags.js';
 import { tagReviewScore } from '../../utils/contactTagReview';
 
 // The company card's contact roster.
@@ -94,6 +94,11 @@ function RosterTable({
   excludedContactIds = NONE_EXCLUDED,
   onExclude,
   onUnexclude,
+  // The ⊘ button: puts the Hide tag on a contact, or takes it off a
+  // hidden one. Without it, ⊘ falls back to removing the contact from
+  // this company (onExclude).
+  onHideContact,
+  hidingContact,
   onEditContact,
   onDeleteContact,
   deletingContact,
@@ -111,7 +116,7 @@ function RosterTable({
   // has nothing to wire up to. Same tableId either way, so the column
   // layout the user set on the company card carries over.
   const selectable = typeof setBulkSelected === 'function';
-  const actionable = typeof onExclude === 'function' || typeof onDeleteContact === 'function';
+  const actionable = typeof onExclude === 'function' || typeof onHideContact === 'function' || typeof onDeleteContact === 'function';
   // The rows currently passing the table's own column filters, so the
   // select-all box ticks exactly what the user can see. Null until the
   // table reports, and while a filter is off nothing distinguishes the
@@ -474,15 +479,34 @@ function RosterTable({
       render: (c) => {
         const cid = String(c.id || c.vid || '');
         const isExcluded = excludedContactIds.has(cid);
+        const isHidden = contactIsHidden(c);
+        const hiding = hidingContact === cid;
         return (
           <span style={{ display: 'inline-block', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
+            {cid && onHideContact && !isExcluded && (isHidden ? (
+              <button
+                onClick={e => { e.stopPropagation(); onHideContact(c); }}
+                disabled={hiding}
+                title="Take the Hide tag off this contact (writes to HubSpot)"
+                style={{ background: 'none', border: 'none', color: '#059669', fontSize: '0.66rem', fontWeight: 700, cursor: 'pointer', padding: '0 4px', lineHeight: 1, fontFamily: 'inherit' }}
+              >{hiding ? '...' : 'Unhide'}</button>
+            ) : (
+              <button
+                onClick={e => { e.stopPropagation(); onHideContact(c); }}
+                disabled={hiding}
+                title="Tag this contact Hide (writes to HubSpot)"
+                style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.9rem', cursor: 'pointer', padding: '0 3px', lineHeight: 1, fontFamily: 'inherit' }}
+                onMouseEnter={e => { e.currentTarget.style.color = '#F59E0B'; }}
+                onMouseLeave={e => { e.currentTarget.style.color = '#CBD5E1'; }}
+              >{hiding ? '...' : '⊘'}</button>
+            ))}
             {cid && onExclude && (isExcluded ? (
               <button
                 onClick={e => { e.stopPropagation(); onUnexclude(cid); }}
                 title="Re-add this contact to this company"
                 style={{ background: 'none', border: 'none', color: '#059669', fontSize: '0.66rem', fontWeight: 700, cursor: 'pointer', padding: '0 4px', lineHeight: 1, fontFamily: 'inherit' }}
               >＋ Re-add</button>
-            ) : (
+            ) : !onHideContact && (
               <button
                 onClick={e => { e.stopPropagation(); onExclude(cid); }}
                 title="Remove from this company only (keeps the contact in HubSpot)"
@@ -504,7 +528,7 @@ function RosterTable({
       },
     },
   ].filter(Boolean), [selectable, actionable, settings, bulkSelected, setBulkSelected, excludedContactIds, onExclude, onUnexclude,
-    onDeleteContact, deletingContact, emailCountsFor, sourceOf, company,
+    onHideContact, hidingContact, onDeleteContact, deletingContact, emailCountsFor, sourceOf, company,
     allSelected, someSelected, selectableIds]);
 
   // The row's own tints, which say two things at a glance and have to
