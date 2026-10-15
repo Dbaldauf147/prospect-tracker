@@ -22,6 +22,8 @@ import { CampaignPicker } from '../common/CampaignPicker';
 // this to re-read the list after an add.
 export const EMAIL_CAMPAIGNS_UPDATED_EVENT = 'email-campaigns-updated';
 
+const CHIPS_SHOWN = 2;
+
 const campaignLabel = (c) => c?.title || primarySubject(c) || '(untitled campaign)';
 
 export function ContactCampaignAdd({ email, name, company }) {
@@ -31,6 +33,9 @@ export function ContactCampaignAdd({ email, name, company }) {
   const [pick, setPick] = useState('');
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState(null); // { ok, text }
+  // Collapsed to the first couple of chips: a contact on a dozen campaigns
+  // otherwise pushed the whole form down the popup.
+  const [showAll, setShowAll] = useState(false);
 
   const load = useCallback(async () => {
     if (!uid) { setCampaigns([]); return; }
@@ -111,13 +116,22 @@ export function ContactCampaignAdd({ email, name, company }) {
       style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.4rem', padding: '0.3rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: '8px', background: '#fff', maxWidth: '100%' }}
     >
       <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Email Campaign</span>
-      {onCampaigns.map(e => (
+      {(showAll ? onCampaigns : onCampaigns.slice(0, CHIPS_SHOWN)).map(e => (
         <span
           key={e.index}
           title={`On the "${e.label}" campaign`}
           style={{ fontSize: '0.7rem', fontWeight: 600, color: '#1D4ED8', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 999, padding: '1px 8px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
         >{e.label}</span>
       ))}
+      {onCampaigns.length > CHIPS_SHOWN && (
+        <button
+          type="button"
+          onClick={() => setShowAll(v => !v)}
+          aria-expanded={showAll}
+          title={showAll ? 'Show fewer' : onCampaigns.slice(CHIPS_SHOWN).map(e => e.label).join('\n')}
+          style={{ fontSize: '0.7rem', fontWeight: 600, color: '#475569', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: 999, padding: '1px 8px', cursor: 'pointer', fontFamily: 'inherit' }}
+        >{showAll ? 'Show less' : `+${onCampaigns.length - CHIPS_SHOWN} more`}</button>
+      )}
       <CampaignPicker
         options={pickerOptions}
         value={pick}
