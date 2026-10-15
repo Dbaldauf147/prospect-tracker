@@ -560,23 +560,32 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                 {dmColumns.map(({ bucket, dms }, i) => {
                   if (dms.some(d => d.answer === 'yes')) return <td key={bucket.key} style={colLine(i)} />;
                   const ranAt = step.key === 'zoom' ? searchRun?.[bucket.key] : searchSteps?.[bucket.key]?.[step.key];
-                  const canToggle = step.key === 'zoom' ? !!onToggleSearchRun : !!onToggleSearchStep;
+                  // The Zoom step is done once the company HAS a Zoom
+                  // Company ID, tick or no tick - the same rule the Steps
+                  // remaining count uses (bucketStepsLeft). Found that way,
+                  // the box is checked and locked: the ID is what checks it.
+                  const foundById = step.key === 'zoom' && !!String(zoomCompanyId || '').trim();
+                  const done = !!ranAt || foundById;
+                  const canToggle = !foundById && (step.key === 'zoom' ? !!onToggleSearchRun : !!onToggleSearchStep);
                   const toggle = (on) => step.key === 'zoom'
                     ? onToggleSearchRun?.(bucket.key, on)
                     : onToggleSearchStep?.(bucket.key, step.key, on);
                   return (
-                    <td key={bucket.key} style={{ padding: '0.45rem 0.6rem', verticalAlign: 'top', fontSize: '0.7rem', ...colLine(i) }}>
+                    <td key={bucket.key} style={{ padding: '0.45rem 0.6rem', verticalAlign: 'top', fontSize: '0.7rem', ...colLine(i), ...(done ? { background: '#F0FDF4' } : {}) }}>
                       <label
-                        style={{ display: 'flex', alignItems: 'flex-start', gap: '0.3rem', color: ranAt ? '#166534' : '#475569', fontWeight: ranAt ? 600 : 400, cursor: canToggle ? 'pointer' : 'default' }}
-                        title={ranAt ? `${step.label}: ticked ${new Date(ranAt).toLocaleDateString()}` : `Tick once "${step.label}" applies to ${bucket.label} at this company`}
+                        style={{ display: 'flex', alignItems: 'flex-start', gap: '0.3rem', color: done ? '#166534' : '#475569', fontWeight: done ? 600 : 400, cursor: canToggle ? 'pointer' : 'default' }}
+                        title={foundById ? `Checked: the company has a Zoom Company ID (${zoomCompanyId})`
+                          : ranAt ? `${step.label}: ticked ${new Date(ranAt).toLocaleDateString()}` : `Tick once "${step.label}" applies to ${bucket.label} at this company`}
                       >
                         <input
                           type="checkbox"
-                          checked={!!ranAt}
-                          disabled={!canToggle}
-                          onChange={e => toggle(e.target.checked)}
+                          checked={done}
+                          // Not disabled when found by ID, so it draws as a
+                          // green tick rather than a greyed-out one.
+                          disabled={!canToggle && !foundById}
+                          onChange={e => { if (canToggle) toggle(e.target.checked); }}
                           aria-label={`${bucket.label}: ${step.label}`}
-                          style={{ marginTop: 1, flexShrink: 0 }}
+                          style={{ marginTop: 1, flexShrink: 0, accentColor: '#16A34A' }}
                         />
                         <span style={{ minWidth: 0 }}>
                           {step.label}
@@ -584,7 +593,7 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                         </span>
                       </label>
                       {step.key === 'zoom' && (zoomCompanyId
-                        ? <div style={{ marginTop: '0.2rem', marginLeft: '1.2rem', fontWeight: 600, color: '#1E293B', userSelect: 'all', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Zoom Company ID ${zoomCompanyId}`}>{zoomCompanyId}</div>
+                        ? <div style={{ marginTop: '0.2rem', marginLeft: '1.2rem', fontWeight: 600, color: '#166534', userSelect: 'all', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Zoom Company ID ${zoomCompanyId}`}>{zoomCompanyId}</div>
                         : <div style={{ marginTop: '0.2rem', marginLeft: '1.2rem', color: '#94A3B8', fontStyle: 'italic' }}>Zoom ID not set</div>)}
                     </td>
                   );
