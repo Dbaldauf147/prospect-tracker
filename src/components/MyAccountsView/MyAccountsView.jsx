@@ -35,6 +35,8 @@ import {
 import { DecisionMakerTagsTable } from './DecisionMakerTagsTable';
 import { DmTagHistoryView } from './DmTagHistoryView';
 import { CompanyDataTab } from './CompanyDataTab';
+import { MissingHistoryView } from './MissingHistoryView';
+import { missingReading, recordMissingDay, dayKey } from '../../utils/missingHistory';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { tagMatrixColumns } from '../../utils/decisionMakerTagMatrix';
 import { dmTagReading, recordDmTagDay } from '../../utils/dmTagHistory';
@@ -3125,6 +3127,23 @@ Fix that now?
     return () => clearTimeout(timer);
   }, [hubspotCache, allAccounts, dmTagLocalFields, dmTagLinks, dmTagExclusions]);
 
+  // Record today's total of missing company data for the All Missing
+  // History subtab, on the basis the Company Data subtab opens on: every
+  // account with a company record, inactive ones out, no search. Debounced
+  // for the same reason as the DM tag reading above.
+  useEffect(() => {
+    if (!allAccounts?.length || !prospects?.length) return undefined;
+    const timer = setTimeout(() => {
+      try {
+        const byId = new Map(prospects.map(p => [p.id, p]));
+        const records = allAccounts.filter(a => !isInactive(a)).map(a => byId.get(a.id)).filter(Boolean);
+        const reading = missingReading(records);
+        if (reading) recordMissingDay(dayKey(new Date()), reading);
+      } catch { /* a missed reading just leaves a gap in the chart */ }
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [allAccounts, prospects]);
+
   const dmTagAccounts = useMemo(() => {
     let rows = allAccounts;
     if (inactiveMode === 'hide') rows = rows.filter(a => !isInactive(a));
@@ -3709,6 +3728,14 @@ Fix that now?
             </>
           )}
         />
+      </div>
+    );
+  }
+
+  if (mode === 'missingHistory') {
+    return (
+      <div className={styles.wrapper}>
+        <MissingHistoryView settings={settings} updateSettings={updateSettings} />
       </div>
     );
   }
