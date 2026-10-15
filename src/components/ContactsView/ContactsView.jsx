@@ -69,7 +69,9 @@ const BULK_VIEW_KEY = 'contacts-view:bulk-view';
 
 function BulkAddTabs({ view, onChange }) {
   return (
-    <div style={{ display: 'flex', gap: '0.35rem', padding: '0.55rem 1.25rem 0', flexWrap: 'wrap' }} role="tablist" aria-label="Bulk Add views">
+    // flex: none: .content stretches every child to fill the page, which
+    // turned this one-line bar into two pills half a screen tall.
+    <div style={{ display: 'flex', alignItems: 'center', flex: 'none', gap: '0.35rem', padding: '0.55rem 1.25rem 0', flexWrap: 'wrap' }} role="tablist" aria-label="Bulk Add views">
       {BULK_VIEWS.map(v => {
         const on = view === v.key;
         return (
