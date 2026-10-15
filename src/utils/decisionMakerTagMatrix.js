@@ -131,9 +131,9 @@ export function tagMatrixCoverage(rows, tags, tierOf = r => r.myTier) {
 }
 
 // The statuses a tag's Zoom export pulls from. Clients are in as well as
-// Inside Sales: a client with a decision maker who isn't (or isn't yet
-// known to be) on the tag is exactly the cross-sell gap the pull is for.
-export const ZOOM_TAG_EXPORT_STATUSES = ['Inside Sales', 'Client'];
+// Inside Sales and Qualifying: a client with nobody confirmed on the tag is
+// exactly the cross-sell gap the pull is for.
+export const ZOOM_TAG_EXPORT_STATUSES = ['Inside Sales', 'Qualifying', 'Client'];
 
 // Statuses arrive from a sheet, so "Client " or "client" must still read as
 // Client: Ettinger Engineering showed a Client badge on the DM Tags tab but
@@ -142,16 +142,14 @@ const statusKey = (s) => String(s || '').trim().toLowerCase();
 const ZOOM_TAG_EXPORT_STATUS_KEYS = new Set(ZOOM_TAG_EXPORT_STATUSES.map(statusKey));
 
 /**
- * The rows one tag's Zoom export holds: the Inside Sales and Client accounts that have
- * a decision maker but none confirmed for the tag, plus the ones with
- * somebody marked Not sure for it even when a confirmed one is there too.
- * An unsettled answer is still worth a ZoomInfo pull, so a Not sure keeps
- * the account in the file. An account with no decision maker at all is
- * left out: the tag question can't be asked of nobody. `key` is
- * tagColumnKey(tag).
+ * The rows one tag's Zoom export holds: every Inside Sales, Qualifying and
+ * Client account that has no contact who is both a Decision Maker and a
+ * Yes for the tag (carries it). That is the account's cell on the DM Tags
+ * tab having no confirmed name in it: empty, or only "(maybe)" names, or
+ * no decision maker at all. One confirmed decision maker on the tag is the
+ * one thing that takes an account out. `key` is tagColumnKey(tag).
  */
 export function zoomExportRowsForTag(rows, key) {
   return (rows || []).filter(r => ZOOM_TAG_EXPORT_STATUS_KEYS.has(statusKey(r.status))
-    && r.dmCount > 0
-    && (!(r.byTag?.[key] || []).length || (r.maybeByTag?.[key] || []).length > 0));
+    && !(r.byTag?.[key] || []).length);
 }
