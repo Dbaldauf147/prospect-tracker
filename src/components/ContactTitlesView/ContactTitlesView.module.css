@@ -229,6 +229,13 @@
 /* The one a search matched. Deliberately loud: the point of typing in the
    box is to find which of seven searches already carries a title, and a
    highlight you have to hunt for answers the question slowly. */
+/* A general Not term shown inside a search's Not group: read only, and
+   dashed so it reads as carried in from the list at the top. */
+.termInherited {
+  border-style: dashed;
+  cursor: default;
+}
+
 .termHit {
   background: #FEF9C3;
   border-color: #FDE047;

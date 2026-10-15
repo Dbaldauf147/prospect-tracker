@@ -90,6 +90,20 @@ function TitleSearches({ settings, updateSettings }) {
 
   const saved = useMemo(() => resolveTitleSearches(settings), [settings]);
 
+  // The general Not list, shown in every search's Not group (read only;
+  // edited in its own box at the top) so each card reads as the search
+  // that actually gets run, and its Copy carries them too.
+  const generalNotRaw = settings?.[GENERAL_NOT_KEY];
+  const generalNot = useMemo(
+    () => (Array.isArray(generalNotRaw) ? generalNotRaw.filter(t => typeof t === 'string' && t.trim()).map(t => t.trim()) : []),
+    [generalNotRaw],
+  );
+  // The general terms a group doesn't already carry itself.
+  const inheritedFor = (group) => {
+    const own = new Set(group.terms.map(t => t.trim().toLowerCase()));
+    return generalNot.filter(t => !own.has(t.toLowerCase()));
+  };
+
   // The page is always editable. Once something has been typed the draft
   // is authoritative: `saved` is rebuilt from settings on every write, and
   // reading through it mid-edit would snap a half-typed name back to the
@@ -220,8 +234,9 @@ function TitleSearches({ settings, updateSettings }) {
 
   async function copy(entry, group, gi) {
     const id = `${entry.key}:${gi}`;
+    const terms = group.kind === 'exclude' ? [...group.terms, ...inheritedFor(group)] : group.terms;
     try {
-      await navigator.clipboard?.writeText(group.terms.join(', '));
+      await navigator.clipboard?.writeText(terms.join(', '));
       setCopied(id);
       setTimeout(() => setCopied(c => (c === id ? '' : c)), 1600);
     } catch {
@@ -262,6 +277,9 @@ function TitleSearches({ settings, updateSettings }) {
         <div className={styles.cards}>
           {shown.map((entry) => {
             const si = searches.indexOf(entry);
+            // The general terms ride along in the card's first Not group;
+            // a card with none gets a Not block of its own for them.
+            const firstExclude = entry.groups.findIndex(g => g.kind === 'exclude');
             return (
               <div key={entry.key} className={styles.card}>
                 <div className={styles.cardHead}>
@@ -291,8 +309,32 @@ function TitleSearches({ settings, updateSettings }) {
                   onChange={e => patchSearch(si, { scope: e.target.value })}
                 />
 
+                {firstExclude === -1 && generalNot.length > 0 && (
+                  <div className={styles.group}>
+                    <div className={styles.groupHead}>
+                      <span className={styles.groupLabelExclude}>Not</span>
+                      <button
+                        type="button"
+                        className={styles.copyBtn}
+                        onClick={() => copy(entry, { kind: 'exclude', terms: [] }, 'general')}
+                        title={`Copy these ${generalNot.length} terms, comma separated, to paste into a search`}
+                      >{copied === `${entry.key}:general` ? 'Copied' : 'Copy'}</button>
+                    </div>
+                    <div className={styles.terms}>
+                      {generalNot.map((t, ti) => (
+                        <span
+                          key={ti}
+                          className={[styles.termExclude, styles.termInherited, hits(t, needle) ? styles.termHit : ''].filter(Boolean).join(' ')}
+                          title="From the Not list that applies to every search. Edit it in the box at the top."
+                        >{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {entry.groups.map((group, gi) => {
                   const exclude = group.kind === 'exclude';
+                  const inherited = gi === firstExclude ? inheritedFor(group) : [];
                   const id = `${entry.key}:${gi}`;
                   return (
                     <div key={id} className={styles.group}>
@@ -315,7 +357,7 @@ function TitleSearches({ settings, updateSettings }) {
                           type="button"
                           className={styles.copyBtn}
                           onClick={() => copy(entry, group, gi)}
-                          title={`Copy these ${group.terms.length} terms, comma separated, to paste into a search`}
+                          title={`Copy these ${group.terms.length + inherited.length} terms, comma separated, to paste into a search`}
                         >{copied === id ? 'Copied' : 'Copy'}</button>
                       </div>
                       <div className={styles.terms}>
@@ -343,6 +385,13 @@ function TitleSearches({ settings, updateSettings }) {
                               title={`Remove “${t}”`}
                             >×</button>
                           </span>
+                        ))}
+                        {inherited.map((t, ti) => (
+                          <span
+                            key={`general-${ti}`}
+                            className={[styles.termExclude, styles.termInherited, hits(t, needle) ? styles.termHit : ''].filter(Boolean).join(' ')}
+                            title="From the Not list that applies to every search. Edit it in the box at the top."
+                          >{t}</span>
                         ))}
                         <AddTerm onAdd={v => addTerm(si, gi, v)} />
                       </div>
