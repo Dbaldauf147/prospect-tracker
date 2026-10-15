@@ -478,6 +478,7 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
   // My Accounts > Company Data counts with).
   const stepsLeftFor = ({ bucket, dms }) => bucketStepsLeft({
     bucket, hasYesDm: dms.some(d => d.answer === 'yes'), zoomCompanyId, searchRun, searchSteps,
+    titleSearched: titleSearchesFor(bucket).length > 0,
   });
   const stepsLeft = dmColumns.map(col => ({ bucket: col.bucket, left: stepsLeftFor(col) }));
   const stepsLeftTotal = stepsLeft.reduce((sum, s) => sum + s.left, 0);
@@ -565,8 +566,13 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                   // remaining count uses (bucketStepsLeft). Found that way,
                   // the box is checked and locked: the ID is what checks it.
                   const foundById = step.key === 'zoom' && !!String(zoomCompanyId || '').trim();
-                  const done = !!ranAt || foundById;
-                  const canToggle = !foundById && (step.key === 'zoom' ? !!onToggleSearchRun : !!onToggleSearchStep);
+                  // Likewise Zoom search ran is done, checked and locked,
+                  // once a title search for this category is in the Zoom
+                  // Search Log: the logged search is the proof it ran.
+                  const loggedSearch = step.key === 'zoomFailed' ? titleSearchesFor(bucket)[0] : null;
+                  const lockedOn = foundById || !!loggedSearch;
+                  const done = !!ranAt || lockedOn;
+                  const canToggle = !lockedOn && (step.key === 'zoom' ? !!onToggleSearchRun : !!onToggleSearchStep);
                   const toggle = (on) => step.key === 'zoom'
                     ? onToggleSearchRun?.(bucket.key, on)
                     : onToggleSearchStep?.(bucket.key, step.key, on);
@@ -575,14 +581,16 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                       <label
                         style={{ display: 'flex', alignItems: 'flex-start', gap: '0.3rem', color: done ? '#166534' : '#475569', fontWeight: done ? 600 : 400, cursor: canToggle ? 'pointer' : 'default' }}
                         title={foundById ? `Checked: the company has a Zoom Company ID (${zoomCompanyId})`
+                          : loggedSearch ? `Checked: a ${bucket.label} Zoom title search is logged (${fmtSearchDate(loggedSearch.date)})`
                           : ranAt ? `${step.label}: ticked ${new Date(ranAt).toLocaleDateString()}` : `Tick once "${step.label}" applies to ${bucket.label} at this company`}
                       >
                         <input
                           type="checkbox"
                           checked={done}
-                          // Not disabled when found by ID, so it draws as a
-                          // green tick rather than a greyed-out one.
-                          disabled={!canToggle && !foundById}
+                          // Not disabled when locked on (by ID or a logged
+                          // search), so it draws as a green tick rather than
+                          // a greyed-out one.
+                          disabled={!canToggle && !lockedOn}
                           onChange={e => { if (canToggle) toggle(e.target.checked); }}
                           aria-label={`${bucket.label}: ${step.label}`}
                           style={{ marginTop: 1, flexShrink: 0, accentColor: '#16A34A' }}

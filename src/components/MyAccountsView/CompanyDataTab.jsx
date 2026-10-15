@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
 import { COMPANY_DATA_FIELDS, fieldValue, isTextField, missingFields, planCompanyDataPaste } from '../../utils/companyDataFields';
 import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { companyStepsRemaining } from '../../utils/dmSteps';
+import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, titleSearchesForCompany } from '../../utils/zoomSearchLog';
+import { readWorkKey, ZOOM_SEARCH_LOG_EVENT } from '../../utils/mirroredWorkKeys';
 import { buildZoomExcludedMatcher, zoomExcludedLabel } from '../../utils/zoomExportExclude';
 import { ZoomExcludedCell } from './ZoomExcludedCell';
 
@@ -54,6 +56,16 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
     [contacts, localFields, links, exclusions],
   );
 
+  // The Zoom title searches logged on Bulk Add > Zoom Search Log: a logged
+  // search for a category does its Zoom search ran step, the same as in the
+  // popup. Re-read when the log changes elsewhere.
+  const [zoomLog, setZoomLog] = useState(() => readZoomSearchLog(readWorkKey(ZOOM_SEARCH_LOG_KEY)));
+  useEffect(() => {
+    const reload = () => setZoomLog(readZoomSearchLog(readWorkKey(ZOOM_SEARCH_LOG_KEY)));
+    window.addEventListener(ZOOM_SEARCH_LOG_EVENT, reload);
+    return () => window.removeEventListener(ZOOM_SEARCH_LOG_EVENT, reload);
+  }, []);
+
   // One row per account with a company record behind it, its numbers read
   // off that record so an edit made anywhere shows here at once.
   const { rows, noRecord } = useMemo(() => {
@@ -67,7 +79,10 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       row.zoomExcluded = isZoomExcluded({ id: p.id, company: p.company || a.company, zoomId: p.zoomCompanyId });
       row.missing = missingFields(row);
       row.missingCount = row.missing.length;
-      const steps = dmLookup ? companyStepsRemaining({ dms: dmLookup.forAccount(p), record: p, tagReview }) : null;
+      const steps = dmLookup ? companyStepsRemaining({
+        dms: dmLookup.forAccount(p), record: p, tagReview,
+        titleSearches: titleSearchesForCompany(zoomLog.searches, { company: p.company || a.company, zoomCompanyId: p.zoomCompanyId, zoomCompanyName: p.zoomCompanyName }),
+      }) : null;
       row.stepsRemaining = steps ? steps.total : null;
       row.stepsDetail = steps ? steps.perBucket.map(b => `${b.bucket.label}: ${b.left}`).join('\n') : '';
       row.missingData = STEP_FIELDS.filter(f => row[f.key] === null).length;
@@ -75,7 +90,7 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       out.push(row);
     }
     return { rows: out, noRecord: missing };
-  }, [accounts, prospectById, dmLookup, tagReview, isZoomExcluded]);
+  }, [accounts, prospectById, dmLookup, tagReview, isZoomExcluded, zoomLog]);
 
   const missingCounts = useMemo(() => {
     const m = {};
