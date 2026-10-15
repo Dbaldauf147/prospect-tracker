@@ -5442,7 +5442,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const people = salespeopleForVertical(coverageFromSettings(settings), vertical);
     if (people.length === 0) return null;
     if (people.some(p => matchesCdm(p.name, cdmName))) return null;
-    return { vertical, names: people.map(p => p.name) };
+    const teams = [...new Set(people.flatMap(p => p.teams || []))];
+    return { vertical, names: people.map(p => p.name), teams };
   }, [fields.vertical, cdmName, settings?.salesCoverage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Collect all unique tags across all HubSpot contacts for the dropdown.
@@ -10303,7 +10304,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   })()}
                   {verticalCoverageConflict && (
                     <span
-                      title={`Opps > Coverage lists ${verticalCoverageConflict.names.join(', ')} for the ${verticalCoverageConflict.vertical} vertical, not ${cdmName}.`}
+                      title={`Opps > Coverage lists ${verticalCoverageConflict.names.join(', ')}${verticalCoverageConflict.teams.length ? ` (${verticalCoverageConflict.teams.join(', ')} team${verticalCoverageConflict.teams.length === 1 ? '' : 's'})` : ''} for the ${verticalCoverageConflict.vertical} vertical, not ${cdmName}.`}
                       style={{
                         display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
                         flexShrink: 0, maxWidth: '100%', padding: '0.15rem 0.35rem', borderRadius: 4,
@@ -10313,7 +10314,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     >
                       <span aria-hidden="true">⚠</span>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {`${verticalCoverageConflict.vertical}: ${verticalCoverageConflict.names.join(', ')}`}
+                        {`${verticalCoverageConflict.vertical}: ${verticalCoverageConflict.names.join(', ')}${verticalCoverageConflict.teams.length ? ` (${verticalCoverageConflict.teams.join(', ')})` : ''}`}
                       </span>
                     </span>
                   )}

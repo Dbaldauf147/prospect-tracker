@@ -28,6 +28,8 @@ export const PE_MONTHLY_COLUMNS = [
   { key: 'CDM', label: 'CDM' },
   { key: 'PE Owner', label: 'PE Owner' },
   { key: 'Vertical', label: 'Vertical' },
+  // The Opps > Coverage team(s) the vertical is listed under.
+  { key: 'Team', label: 'Team' },
   // Labelled Vertical CDM: on this table the person Coverage names is the
   // CDM for the deal's vertical. The key stays Salesperson so saved rows
   // still read.
@@ -70,7 +72,7 @@ export const peMonthlyTierRank = tierRank;
  *
  *   deals           buildPeOverlapDeals output (agenda order; re-sorted by tier)
  *   records         the opp rows, to fill Scope / Next Steps / BFO Address
- *   salespeopleFor  (vertical) => [{ name }] - Opps > Coverage's lookup
+ *   salespeopleFor  (vertical) => [{ name, teams }] - Opps > Coverage's lookup
  *   cdmName         you: Vertical CDM still names you, and CDMs aligned
  *                   reads N/A when you are one of the vertical's CDMs
  */
@@ -78,8 +80,9 @@ export function peMonthlyRows(deals, records = [], salespeopleFor = () => [], { 
   const byId = new Map((Array.isArray(records) ? records : []).map(r => [String(r?._id), r]));
   return (Array.isArray(deals) ? deals : []).map((d) => {
     const opp = byId.get(String(d.id)) || {};
-    const people = (d.vertical ? (salespeopleFor(d.vertical) || []) : [])
-      .map(p => String(p?.name || '').trim()).filter(Boolean);
+    const covering = d.vertical ? (salespeopleFor(d.vertical) || []) : [];
+    const people = covering.map(p => String(p?.name || '').trim()).filter(Boolean);
+    const teams = [...new Set(covering.flatMap(p => p?.teams || []).map(t => String(t || '').trim()).filter(Boolean))];
     // The Vertical CDM column: the account's own CDM (Target Accounts list)
     // over the vertical's, unless the account's CDM is you. CDMs aligned still reads the vertical's people.
     const vertCdm = verticalCdmFor(d.targetCdm, people.join(', '), { cdmName });
@@ -93,6 +96,7 @@ export function peMonthlyRows(deals, records = [], salespeopleFor = () => [], { 
       CDM: d.targetCdm || '',
       'PE Owner': d.peOwner || '',
       Vertical: d.vertical || '',
+      Team: teams.join(', '),
       Salesperson: vertCdm,
       'CDMs Aligned': peMonthlyCdmsAligned(d.tier, d.cdmAligned, { ownVertical }),
       Stage: d.stageLabel || '',
