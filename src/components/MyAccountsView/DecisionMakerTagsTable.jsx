@@ -15,13 +15,15 @@
 // that have a decision maker but none carrying it yet, plus any account
 // with somebody marked Not sure for it, ready to take into ZoomInfo.
 // Accounts with no decision maker at all stay out.
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { Badge } from '../common/Badge';
 import { statusColor } from '../../utils/formatters';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { tagMatrixColumns, tagColumnKey, tagMatrixRows, tagMatrixCoverage, zoomExportRowsForTag } from '../../utils/decisionMakerTagMatrix';
 import { TIERS } from '../../data/enums';
+import { buildZoomExcludedMatcher, zoomExcludedLabel } from '../../utils/zoomExportExclude';
+import { ZoomExcludedCell } from './ZoomExcludedCell';
 
 const TIER_INK = { 'Tier 1': '#DC2626', 'Tier 2': '#3B82F6', 'Tier 3': '#F59E0B' };
 
@@ -97,7 +99,7 @@ function ZoomByTagPicker({ tags, rows, onPick, onClose }) {
   );
 }
 
-export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSettings, onSelect, onZoomExport }) {
+export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings, updateSettings, onSelect, onZoomExport }) {
   // The rows the column filters leave on screen, so the export matches
   // Export Excel the way the My Accounts tab's Zoom Export does.
   const [onScreen, setOnScreen] = useState(null);
@@ -117,6 +119,10 @@ export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSet
     dmLookup, tags, review,
   ), [accounts, dmLookup, tags, review]);
   const coverage = useMemo(() => tagMatrixCoverage(rows, tags), [rows, tags]);
+  // Same match the Zoom CSV download drops rows by, so the column says
+  // exactly which accounts the export will leave out.
+  const isZoomExcluded = useMemo(() => buildZoomExcludedMatcher(prospects || accounts), [prospects, accounts]);
+  const zoomExcludedOf = useCallback((r) => isZoomExcluded({ id: r.id, company: r.company, zoomId: r.zoomCompanyId }), [isZoomExcluded]);
 
   const columns = useMemo(() => [
     {
@@ -140,6 +146,14 @@ export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSet
     {
       key: 'type', label: 'Company Type', defaultWidth: 170,
       render: r => (r.type ? <span>{r.type}</span> : <span style={{ color: '#CBD5E1' }}>-</span>),
+    },
+    {
+      key: 'zoomExcluded', label: 'ZoomInfo', defaultWidth: 110,
+      headerTitle: 'Whether the company is excluded from ZoomInfo exports (the Exclude from ZoomInfo button on its company popup). Excluded accounts are left out of Zoom Export by Tag.',
+      getSortValue: r => (zoomExcludedOf(r) ? 1 : 0),
+      getFilterValue: r => zoomExcludedLabel(zoomExcludedOf(r)),
+      exportValue: r => zoomExcludedLabel(zoomExcludedOf(r)),
+      render: r => <ZoomExcludedCell excluded={zoomExcludedOf(r)} />,
     },
     {
       key: 'dmCount', label: 'Decision Makers', defaultWidth: 110,
@@ -186,7 +200,7 @@ export function DecisionMakerTagsTable({ accounts, contacts, settings, updateSet
         },
       };
     }),
-  ], [tags, coverage]);
+  ], [tags, coverage, zoomExcludedOf]);
 
   const zoomSource = onScreen || rows;
   function exportTag(tag) {

@@ -3747,6 +3747,7 @@ Fix that now?
           <DecisionMakerTagsTable
             accounts={dmTagAccounts}
             contacts={hubspotCache ? (hubspotCache.contacts || []) : null}
+            prospects={prospects}
             settings={settings}
             updateSettings={updateSettings}
             onSelect={onSelect}
