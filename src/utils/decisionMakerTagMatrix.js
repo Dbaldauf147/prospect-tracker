@@ -135,6 +135,12 @@ export function tagMatrixCoverage(rows, tags, tierOf = r => r.myTier) {
 // known to be) on the tag is exactly the cross-sell gap the pull is for.
 export const ZOOM_TAG_EXPORT_STATUSES = ['Inside Sales', 'Client'];
 
+// Statuses arrive from a sheet, so "Client " or "client" must still read as
+// Client: Ettinger Engineering showed a Client badge on the DM Tags tab but
+// was missing from the Capital Planning export on an exact match.
+const statusKey = (s) => String(s || '').trim().toLowerCase();
+const ZOOM_TAG_EXPORT_STATUS_KEYS = new Set(ZOOM_TAG_EXPORT_STATUSES.map(statusKey));
+
 /**
  * The rows one tag's Zoom export holds: the Inside Sales and Client accounts that have
  * a decision maker but none confirmed for the tag, plus the ones with
@@ -145,7 +151,7 @@ export const ZOOM_TAG_EXPORT_STATUSES = ['Inside Sales', 'Client'];
  * tagColumnKey(tag).
  */
 export function zoomExportRowsForTag(rows, key) {
-  return (rows || []).filter(r => ZOOM_TAG_EXPORT_STATUSES.includes(r.status)
+  return (rows || []).filter(r => ZOOM_TAG_EXPORT_STATUS_KEYS.has(statusKey(r.status))
     && r.dmCount > 0
     && (!(r.byTag?.[key] || []).length || (r.maybeByTag?.[key] || []).length > 0));
 }

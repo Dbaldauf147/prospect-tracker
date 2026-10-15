@@ -1,6 +1,6 @@
 // Assertion tests for keeping companies out of the ZoomInfo exports.
 //   node scripts/zoomExportExclude.test.mjs
-import { buildZoomExcludedMatcher, normZoomCompany, isZoomExcluded } from '../src/utils/zoomExportExclude.js';
+import { buildZoomExcludedMatcher, buildZoomExclusionExplainer, normZoomCompany, isZoomExcluded } from '../src/utils/zoomExportExclude.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -29,6 +29,33 @@ check('not excluded', isExcluded({ id: 'p2', company: 'Globex' }), false);
 check('never flagged', isExcluded({ id: 'p3', company: 'Initech' }), false);
 check('nothing excluded, nothing matches', buildZoomExcludedMatcher([{ id: 'x', company: 'Acme' }])({ company: 'Acme' }), false);
 check('no prospects', buildZoomExcludedMatcher(undefined)({ company: 'Acme' }), false);
+
+// The explainer says why, so an export can name what it left out.
+const why = buildZoomExclusionExplainer(prospects);
+check('why: its own flag', why({ id: 'p1', company: 'Acme, Inc.' }), 'set to Exclude from ZoomInfo');
+check('why: another company\'s Zoom ID', why({ company: 'Griffis Residential', zoomId: '12345' }),
+  'shares Zoom Company ID 12345 with Acme, Inc., which is set to Exclude from ZoomInfo');
+check('why: another company by name', why({ company: 'ACME Corporation' }),
+  'matches Acme, Inc. by name, which is set to Exclude from ZoomInfo');
+check('why: not excluded', why({ id: 'p2', company: 'Globex' }), null);
+check('why: nothing excluded', buildZoomExclusionExplainer([])({ company: 'Acme' }), null);
+
+// Clients are never excluded: not by their own flag, not by another
+// company's flag through a shared Zoom ID or name.
+const withClients = [
+  { id: 'c1', company: 'Griffis Residential', status: 'Client', excludeFromZoomExports: true, zoomCompanyId: '777' },
+  { id: 'c2', company: 'Ettinger', status: 'Client ', zoomCompanyId: '888' },
+  { id: 'x1', company: 'Ettinger Holdings', excludeFromZoomExports: true, zoomCompanyId: '888' },
+  { id: 'x2', company: 'Prospect Co', status: 'Inside Sales', excludeFromZoomExports: true },
+];
+const whyC = buildZoomExclusionExplainer(withClients);
+const isExC = buildZoomExcludedMatcher(withClients);
+check('client: own flag ignored', [isZoomExcluded(withClients[0]), whyC({ id: 'c1', company: 'Griffis Residential' })], [false, null]);
+check('client: by status on the row', whyC({ company: 'Prospect Co', status: 'client' }), null);
+check('client: shared Zoom ID with an excluded company', whyC({ id: 'c2', company: 'Ettinger', zoomId: '888' }), null);
+check('client: a name that reads the same as a client is that client', isExC({ company: 'Ettinger Holdings Inc' }), false);
+check('client: found by name without an id', isExC({ company: 'Griffis Residential LLC' }), false);
+check('non-client still excluded', isExC({ id: 'x2', company: 'Prospect Co' }), true);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
