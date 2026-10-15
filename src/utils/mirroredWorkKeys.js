@@ -26,6 +26,7 @@ export const DEDUPE_DISMISSED_EVENT = 'dedupe-dismissed-changed';
 export const BLOCKED_NAMES_EVENT = 'blocked-names-changed';
 export const BULK_CONTACT_RULES_EVENT = 'bulk-contact-rules-changed';
 export const CONTRACT_SERVICES_EVENT = 'contract-services-changed';
+export const ZOOM_SEARCH_LOG_EVENT = 'zoom-search-log-changed';
 
 const GROUPS = [
   {
@@ -92,6 +93,9 @@ const GROUPS = [
   // The Clients tab's contract-services analysis (the analysis only — the
   // uploaded file's bytes were never kept).
   { event: CONTRACT_SERVICES_EVENT, keys: ['clients-view:contract-services'] },
+  // Bulk Add > Zoom Search Log: which ZoomInfo pulls have been run, by
+  // company and by tag. A record of work done, so it follows the user.
+  { event: ZOOM_SEARCH_LOG_EVENT, keys: ['zoom-search-log'] },
 ];
 
 const EVENT_FOR_KEY = new Map();

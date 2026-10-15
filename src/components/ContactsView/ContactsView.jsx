@@ -12,6 +12,7 @@ import { slimHubspotContact } from '../../utils/hubspotContactFields';
 // <Suspense> around the tab body below covers them all.
 const HubSpotView = lazyView(() => import('../HubSpotView/HubSpotView'), 'HubSpotView');
 const AgendaView = lazyView(() => import('../AgendaView/AgendaView'), 'AgendaView');
+const ZoomSearchLogView = lazyView(() => import('../AgendaView/ZoomSearchLogView'), 'ZoomSearchLogView');
 const KeyContactsView = lazyView(() => import('../KeyContactsView/KeyContactsView'), 'KeyContactsView');
 const ActiveContactsView = lazyView(() => import('../ActiveContactsView/ActiveContactsView'), 'ActiveContactsView');
 const ClientContactsView = lazyView(() => import('../ClientContactsView/ClientContactsView'), 'ClientContactsView');
@@ -58,6 +59,39 @@ const ALL_SUBTABS = [
 
 const STORAGE_KEY = 'contacts-view:active-subtab';
 
+// Bulk Add's own tabs: the contact import it has always been, and the log
+// of ZoomInfo pulls that feed it.
+const BULK_VIEWS = [
+  { key: 'import', label: 'Add Contacts' },
+  { key: 'zoomlog', label: 'Zoom Search Log' },
+];
+const BULK_VIEW_KEY = 'contacts-view:bulk-view';
+
+function BulkAddTabs({ view, onChange }) {
+  return (
+    <div style={{ display: 'flex', gap: '0.35rem', padding: '0.55rem 1.25rem 0', flexWrap: 'wrap' }} role="tablist" aria-label="Bulk Add views">
+      {BULK_VIEWS.map(v => {
+        const on = view === v.key;
+        return (
+          <button
+            key={v.key}
+            type="button"
+            role="tab"
+            aria-selected={on}
+            onClick={() => onChange(v.key)}
+            style={{
+              padding: '0.3rem 0.85rem', borderRadius: 999, fontFamily: 'inherit', fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer',
+              border: `1px solid ${on ? 'var(--color-accent)' : 'var(--color-border)'}`,
+              background: on ? 'var(--color-accent)' : 'var(--color-surface)',
+              color: on ? '#fff' : 'var(--color-text-muted)',
+            }}
+          >{v.label}</button>
+        );
+      })}
+    </div>
+  );
+}
+
 function readSavedSubtab(visibleKeys) {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -91,6 +125,16 @@ export function ContactsView({
   const [subtab, setSubtab] = useState(() => readSavedSubtab(visibleKeys));
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState('');
+  const [bulkView, setBulkView] = useState(() => {
+    try {
+      const saved = localStorage.getItem(BULK_VIEW_KEY);
+      if (BULK_VIEWS.some(v => v.key === saved)) return saved;
+    } catch { /* storage blocked: open on the import */ }
+    return 'import';
+  });
+  useEffect(() => {
+    try { localStorage.setItem(BULK_VIEW_KEY, bulkView); } catch { /* storage blocked */ }
+  }, [bulkView]);
 
   // If the active subtab disappears (e.g. a non-admin loaded with the
   // admin-only key saved), snap to a visible one.
@@ -167,7 +211,11 @@ export function ContactsView({
         {subtab === 'se' && (
           <HubSpotView prospects={prospects} settings={settings} updateSettings={updateSettings} emailFilterMode="only-se" />
         )}
-        {subtab === 'bulk' && (
+        {subtab === 'bulk' && <BulkAddTabs view={bulkView} onChange={setBulkView} />}
+        {subtab === 'bulk' && bulkView === 'zoomlog' && (
+          <ZoomSearchLogView prospects={prospects} onUpdateProspect={onUpdateProspect} settings={settings} />
+        )}
+        {subtab === 'bulk' && bulkView === 'import' && (
           <AgendaView
             prospects={prospects}
             onSelectProspect={onSelectProspect}
