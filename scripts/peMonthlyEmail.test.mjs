@@ -46,6 +46,12 @@ check('one row per deal, in the deals\' order', rows.map(r => r.Account), ['Kens
     tiered.map(r => r.Account), ['T1a', 'T1b', 'T2', 'T3', 'NoTier', 'NotOnList']);
 }
 check('row carries every column', Object.keys(rows[0]).filter(k => k !== 'id' && k !== 'companyId'), PE_MONTHLY_COLUMNS.map(c => c.key));
+{
+  const cov = (v) => (v === 'Grocery' ? [{ name: 'Pat', teams: ['Retail', 'Food'] }, { name: 'Lee', teams: ['Retail'] }] : []);
+  const t = peMonthlyRows([{ id: 1, name: 'G', vertical: 'Grocery' }, { id: 2, name: 'N', vertical: 'None' }], [], cov);
+  check('Team: the vertical\'s Coverage teams, once each', t.map(r => r.Team), ['Retail, Food', '']);
+  check('Team sits right of Vertical', PE_MONTHLY_COLUMNS.map(c => c.key).indexOf('Team'), PE_MONTHLY_COLUMNS.map(c => c.key).indexOf('Vertical') + 1);
+}
 check('opp fields joined by id', [rows[0].Scope, rows[0]['BFO Address']], ['Bill pay', 'https://bfo.example/7']);
 check('the account\'s own CDM beats the vertical\'s', rows[0].Salesperson, 'Dan');
 {
