@@ -130,8 +130,13 @@ export function tagMatrixCoverage(rows, tags, tierOf = r => r.myTier) {
   return out;
 }
 
+// The statuses a tag's Zoom export pulls from. Clients are in as well as
+// Inside Sales: a client with a decision maker who isn't (or isn't yet
+// known to be) on the tag is exactly the cross-sell gap the pull is for.
+export const ZOOM_TAG_EXPORT_STATUSES = ['Inside Sales', 'Client'];
+
 /**
- * The rows one tag's Zoom export holds: the Inside Sales accounts that have
+ * The rows one tag's Zoom export holds: the Inside Sales and Client accounts that have
  * a decision maker but none confirmed for the tag, plus the ones with
  * somebody marked Not sure for it even when a confirmed one is there too.
  * An unsettled answer is still worth a ZoomInfo pull, so a Not sure keeps
@@ -140,7 +145,7 @@ export function tagMatrixCoverage(rows, tags, tierOf = r => r.myTier) {
  * tagColumnKey(tag).
  */
 export function zoomExportRowsForTag(rows, key) {
-  return (rows || []).filter(r => r.status === 'Inside Sales'
+  return (rows || []).filter(r => ZOOM_TAG_EXPORT_STATUSES.includes(r.status)
     && r.dmCount > 0
     && (!(r.byTag?.[key] || []).length || (r.maybeByTag?.[key] || []).length > 0));
 }
