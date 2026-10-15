@@ -3685,6 +3685,7 @@ Fix that now?
         <CompanyDataTab
           accounts={rows}
           prospects={prospects}
+          contacts={hubspotCache ? (hubspotCache.contacts || []) : null}
           onUpdate={onUpdate}
           onSelect={onSelect}
           settings={settings}
