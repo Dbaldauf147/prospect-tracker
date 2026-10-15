@@ -31,7 +31,7 @@ import { tagReviewScore } from '../../utils/contactTagReview';
 // Everything the old table did behaviourally is kept: click a row to open
 // the contact, the yellow tint on a decision maker, the faded row for a
 // contact excluded from this company, the bulk-select checkbox column, and
-// contacts tagged "left" pinned to the bottom whatever the sort.
+// contacts tagged "left" greyed out and pinned to the bottom whatever the sort.
 const TABLE_ID = 'company-contacts';
 
 // Tagged as having left the company. Pinned under everyone still there,
@@ -525,6 +525,16 @@ function RosterTable({
     const isExcluded = excludedContactIds.has(String(c.id || c.vid || ''));
     const style = {};
     if (isDM) style.background = '#FEFCE8';
+    // Somebody who has left the company is greyed out under everyone still
+    // there: a grey wash in place of any DM yellow, every coloured chip
+    // drained to grey, and the text faded. The style lands on the <tr> and
+    // again on each <td>, so the opacity compounds - 0.75 reads as about
+    // 0.55, faded but still legible.
+    if (contactHasTag(c, 'left')) {
+      style.background = '#F1F5F9';
+      style.filter = 'grayscale(1)';
+      style.opacity = 0.75;
+    }
     if (isExcluded) style.opacity = 0.5;
     return Object.keys(style).length > 0 ? style : undefined;
   };
