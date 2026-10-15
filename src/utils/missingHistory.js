@@ -136,13 +136,19 @@ function trim(history, max = MISSING_HISTORY_MAX_DAYS) {
 export function withMissingDay(history, day, reading, now = Date.now()) {
   const h = history || {};
   if (!day || !reading) return h;
-  // Only a day counted the same way counts as earlier, so the first
-  // All Missing Steps reading still gets its seeded yesterday.
-  const hasEarlier = Object.keys(h).some(k => k < day && h[k]?.basis === reading.basis);
+  // Only a real (not seeded) day counted the same way counts as earlier,
+  // so the first All Missing Steps reading still gets its seeded
+  // yesterday, and that seed keeps following today's reading for the rest
+  // of the first day. The first reading can land while the accounts are
+  // still loading (100 of 180 companies); freezing the seed at that left
+  // yesterday reading half of today and the chart showing a jump that
+  // never happened.
+  const hasEarlier = Object.keys(h).some(k => k < day && h[k]?.basis === reading.basis && !h[k]?.seeded);
   const seedYesterday = !hasEarlier;
-  if (!seedYesterday && sameReading(h[day], reading)) return h;
+  const yesterday = previousDay(day);
+  if (sameReading(h[day], reading) && (!seedYesterday || sameReading(h[yesterday], reading))) return h;
   const next = { ...h, [day]: { ...reading, updatedAt: now } };
-  if (seedYesterday) next[previousDay(day)] = { ...reading, seeded: true, updatedAt: now };
+  if (seedYesterday) next[yesterday] = { ...reading, seeded: true, updatedAt: now };
   return trim(next);
 }
 
