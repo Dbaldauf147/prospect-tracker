@@ -31,7 +31,7 @@
 
 import { userLsGet, userLsSet } from './userLs.js';
 import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
-import { COMPANY_DATA_FIELDS, fieldHasValue } from './companyDataFields.js';
+import { COMPANY_DATA_FIELDS, fieldHasValue, fieldMissing } from './companyDataFields.js';
 import { allMissingStepsFor } from './allMissingSteps.js';
 
 export const MISSING_HISTORY_KEY = 'company-data-missing-history';
@@ -77,7 +77,7 @@ export const isStepsDay = (row) => row?.basis === MISSING_HISTORY_BASIS;
 
 /**
  * Today's All Missing Steps reading. `entries` is one { record, dms,
- * titleSearches } per company, read the way the Company Data subtab reads
+ * titleSearches, zoomExcluded } per company, read the way the Company Data subtab reads
  * them; `tagReview` is settings.contactTagReview. Null when there is
  * nothing to count.
  */
@@ -92,7 +92,8 @@ export function missingStepsReading(entries, { tagReview = null, fields = COMPAN
     missingData += s.missingData;
   }
   const counts = {};
-  for (const f of fields) counts[f.key] = list.filter(e => !fieldHasValue(f, e.record[f.key])).length;
+  // A company excluded from ZoomInfo isn't owed its Zoom fields (e.zoomExcluded).
+  for (const f of fields) counts[f.key] = list.filter(e => fieldMissing(f, e.record, { zoomExcluded: !!e.zoomExcluded })).length;
   return {
     total: stepsRemaining + missingData,
     stepsRemaining,

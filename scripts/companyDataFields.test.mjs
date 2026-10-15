@@ -1,7 +1,7 @@
 // Assertion tests for src/utils/companyDataFields.js, the My Accounts
 // Company Data subtab's missing-value check and paste-back. Plain Node. Run:
 //   node scripts/companyDataFields.test.mjs
-import { hasValue, fieldHasValue, missingFields, parseCount, mapHeaders, planCompanyDataPaste, COMPANY_DATA_FIELDS } from '../src/utils/companyDataFields.js';
+import { hasValue, fieldHasValue, missingFields, fieldNotNeeded, parseCount, mapHeaders, planCompanyDataPaste, COMPANY_DATA_FIELDS } from '../src/utils/companyDataFields.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -86,6 +86,14 @@ eq(planCompanyDataPaste('ID\tSites\nc3\t9', records).updates.map(u => [u.id, u.p
   eq(plan.skipped.map(s => [s.company, s.key, s.from, s.to]), [['Acme Corp', 'website', 'acme.com', 'www.acme.com']],
     'existing text is not replaced by default');
   eq(plan.invalid, [], 'text is never "not a number"');
+}
+
+{
+  const rec = { numberOfSites: 3, numberOfAccounts: 4, numberOfMeters: 5, equipmentCount: 6, annualMwh: 7, website: 'x.com' };
+  eq(missingFields(rec), ['zoomCompanyId', 'zoomCompanyName'], 'blank Zoom fields are missing by default');
+  eq(missingFields(rec, COMPANY_DATA_FIELDS, { zoomExcluded: true }), [], 'not when the company is excluded from ZoomInfo');
+  eq(missingFields({ ...rec, website: '' }, COMPANY_DATA_FIELDS, { zoomExcluded: true }), ['website'], 'other fields still count when excluded');
+  eq(fieldNotNeeded(COMPANY_DATA_FIELDS.find(f => f.key === 'numberOfSites'), { zoomExcluded: true }), false, 'only the Zoom fields are waived');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

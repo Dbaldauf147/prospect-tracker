@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
-import { COMPANY_DATA_FIELDS, fieldValue, isTextField, missingFields, planCompanyDataPaste } from '../../utils/companyDataFields';
+import { COMPANY_DATA_FIELDS, fieldNotNeeded, fieldValue, isTextField, missingFields, planCompanyDataPaste } from '../../utils/companyDataFields';
 import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { allMissingStepsFor, STEP_FIELDS } from '../../utils/allMissingSteps';
@@ -21,6 +21,10 @@ import { ZoomExcludedCell } from './ZoomExcludedCell';
 // with no company record to write to, is counted but not listed.
 
 const MISSING_ANY = '__any';
+
+// A blank field the company isn't owed (a Zoom field on a company excluded
+// from ZoomInfo) is not missing.
+const isMissing = (row, f) => row[f.key] === null && !fieldNotNeeded(f, row);
 
 function MissingChip() {
   return (
@@ -73,7 +77,7 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       const row = { id: p.id, company: p.company || a.company || '', tier: a.myTier || a.tier || '', status: p.status || '', cdm: p.cdm || '' };
       for (const f of COMPANY_DATA_FIELDS) row[f.key] = fieldValue(f, p[f.key]);
       row.zoomExcluded = isZoomExcluded({ id: p.id, company: p.company || a.company, zoomId: p.zoomCompanyId });
-      row.missing = missingFields(row);
+      row.missing = missingFields(row, COMPANY_DATA_FIELDS, { zoomExcluded: row.zoomExcluded });
       row.missingCount = row.missing.length;
       const steps = dmLookup ? allMissingStepsFor({
         dms: dmLookup.forAccount(p), record: p, tagReview,
@@ -90,14 +94,19 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
 
   const missingCounts = useMemo(() => {
     const m = {};
-    for (const f of COMPANY_DATA_FIELDS) m[f.key] = rows.filter(r => r[f.key] === null).length;
+    const needed = {};
+    for (const f of COMPANY_DATA_FIELDS) {
+      m[f.key] = rows.filter(r => isMissing(r, f)).length;
+      needed[f.key] = rows.filter(r => !fieldNotNeeded(f, r)).length;
+    }
+    m.needed = needed;
     m[MISSING_ANY] = rows.filter(r => r.missingCount > 0).length;
     return m;
   }, [rows]);
 
   const shown = useMemo(() => {
     if (show === MISSING_ANY) return rows.filter(r => r.missingCount > 0);
-    if (show) return rows.filter(r => r[show] === null);
+    if (show) { const f = COMPANY_DATA_FIELDS.find(x => x.key === show); return rows.filter(r => isMissing(r, f)); }
     return rows;
   }, [rows, show]);
 
@@ -125,9 +134,10 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
     },
     ...COMPANY_DATA_FIELDS.map(f => ({
       key: f.key, label: f.label, defaultWidth: f.key === 'website' ? 200 : isTextField(f) ? 160 : 120,
-      getFilterValue: (row) => (row[f.key] === null ? 'Missing' : String(row[f.key])),
+      getFilterValue: (row) => (row[f.key] !== null ? String(row[f.key]) : isMissing(row, f) ? 'Missing' : 'N/A'),
       render: (row) => {
         const v = row[f.key];
+        if (v === null && !isMissing(row, f)) return <span style={{ color: '#94A3B8' }} title="Not needed: the company is excluded from ZoomInfo">N/A</span>;
         if (v === null) return <MissingChip />;
         if (f.key === 'website') {
           const href = /^https?:\/\//i.test(v) ? v : `https://${v}`;
@@ -175,7 +185,7 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       getFilterValue: (row) => String(row.missingCount),
       render: (row) => (row.missingCount === 0
         ? <span style={{ color: '#16A34A', fontWeight: 700 }}>Complete</span>
-        : <span style={{ color: '#B91C1C', fontWeight: 700 }}>{row.missingCount} of {COMPANY_DATA_FIELDS.length}</span>),
+        : <span style={{ color: '#B91C1C', fontWeight: 700 }}>{row.missingCount} of {COMPANY_DATA_FIELDS.filter(f => !fieldNotNeeded(f, row)).length}</span>),
     },
   ], [prospectById, onSelect]);
 
@@ -190,8 +200,8 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       ...COMPANY_DATA_FIELDS.map(f => ({
         Field: f.label,
         Missing: missingCounts[f.key],
-        Filled: rows.length - missingCounts[f.key],
-        Companies: rows.length,
+        Filled: missingCounts.needed[f.key] - missingCounts[f.key],
+        Companies: missingCounts.needed[f.key],
       })),
       { Field: 'Missing any value', Missing: missingCounts[MISSING_ANY], Filled: rows.length - missingCounts[MISSING_ANY], Companies: rows.length },
       { Field: `Listed in this export: ${showLabel}`, Missing: '', Filled: '', Companies: shown.length },
@@ -260,7 +270,8 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', margin: '0.6rem 0' }}>
         {COMPANY_DATA_FIELDS.map(f => {
           const n = missingCounts[f.key];
-          const have = rows.length - n;
+          const owed = missingCounts.needed[f.key];
+          const have = owed - n;
           const active = show === f.key;
           return (
             <button
@@ -272,7 +283,7 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
             >
               <div style={{ fontSize: '0.66rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{f.label}</div>
               <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#1E293B' }}>{n} missing</div>
-              <div style={{ fontSize: '0.68rem', color: '#64748B' }}>{have} of {rows.length} filled</div>
+              <div style={{ fontSize: '0.68rem', color: '#64748B' }}>{have} of {owed} filled</div>
             </button>
           );
         })}

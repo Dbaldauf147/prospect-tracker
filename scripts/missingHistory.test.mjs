@@ -85,5 +85,13 @@ check('a later day does not reseed', Object.keys(tomorrow).sort(), ['2026-10-14'
   check('seed: a later day leaves the seed alone', [next['2026-10-14'].total, next['2026-10-15'].total], [3669, 3669]);
 }
 
+{
+  const s = missingStepsReading([
+    { record: { company: 'A' } },
+    { record: { company: 'B' }, zoomExcluded: true },
+  ]);
+  check('steps: a company excluded from ZoomInfo owes no Zoom id', [s.fields.zoomCompanyId, s.fields.zoomCompanyName, s.fields.numberOfSites], [1, 1, 2]);
+}
+
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -43,7 +43,7 @@ import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { tagMatrixColumns } from '../../utils/decisionMakerTagMatrix';
 import { dmTagReading, recordDmTagDay } from '../../utils/dmTagHistory';
 import styles from './MyAccountsView.module.css';
-import { buildZoomExclusionExplainer, normZoomCompany } from '../../utils/zoomExportExclude';
+import { buildZoomExclusionExplainer, buildZoomExcludedMatcher, normZoomCompany } from '../../utils/zoomExportExclude';
 
 function InlineCell({ row, field, value, onUpdate, type, options, displayValue }) {
   const [editing, setEditing] = useState(false);
@@ -3145,11 +3145,13 @@ Fix that now?
         });
         const zoomSearches = readZoomSearchLog(readWorkKey(ZOOM_SEARCH_LOG_KEY)).searches;
         const byId = new Map(prospects.map(p => [p.id, p]));
+        const isZoomExcluded = buildZoomExcludedMatcher(prospects);
         const entries = allAccounts.filter(a => !isInactive(a)).map((a) => {
           const p = byId.get(a.id);
           if (!p) return null;
           return {
             record: p,
+            zoomExcluded: isZoomExcluded({ id: p.id, company: p.company || a.company, zoomId: p.zoomCompanyId }),
             dms: lookup.forAccount(p),
             titleSearches: titleSearchesForCompany(zoomSearches, { company: p.company || a.company, zoomCompanyId: p.zoomCompanyId, zoomCompanyName: p.zoomCompanyName }),
           };
