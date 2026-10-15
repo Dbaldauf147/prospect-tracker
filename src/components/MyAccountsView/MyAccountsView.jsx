@@ -39,7 +39,7 @@ import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { tagMatrixColumns } from '../../utils/decisionMakerTagMatrix';
 import { dmTagReading, recordDmTagDay } from '../../utils/dmTagHistory';
 import styles from './MyAccountsView.module.css';
-import { buildZoomExcludedMatcher, normZoomCompany } from '../../utils/zoomExportExclude';
+import { buildZoomExclusionExplainer, normZoomCompany } from '../../utils/zoomExportExclude';
 
 function InlineCell({ row, field, value, onUpdate, type, options, displayValue }) {
   const [editing, setEditing] = useState(false);
@@ -3175,11 +3175,20 @@ Fix that now?
       if (k && !prospectByNorm.has(k)) prospectByNorm.set(k, p);
     }
 
-    // Companies excluded from ZoomInfo exports on their company popup.
-    const isExcluded = buildZoomExcludedMatcher(prospects);
-    const kept = accounts.filter(a => !isExcluded({ id: a.id, company: a.company, zoomId: prospectByNorm.get(norm(a.company))?.zoomCompanyId }));
+    // Companies excluded from ZoomInfo exports on their company popup. A
+    // company can be caught by ANOTHER company's exclusion (a shared Zoom
+    // Company ID, or a name that reads the same), so the ones left out are
+    // named once the file is down rather than dropped silently.
+    const whyExcluded = buildZoomExclusionExplainer(prospects);
+    const kept = [];
+    const dropped = [];
+    for (const a of accounts) {
+      const why = whyExcluded({ id: a.id, company: a.company, zoomId: prospectByNorm.get(norm(a.company))?.zoomCompanyId });
+      if (why) dropped.push(`${a.company}: ${why}`);
+      else kept.push(a);
+    }
     if (kept.length === 0) {
-      alert('Every account in this export is excluded from ZoomInfo exports, so there is nothing to download.');
+      alert(`Every account in this export is excluded from ZoomInfo exports, so there is nothing to download.\n\n${dropped.join('\n')}`);
       return;
     }
 
@@ -3208,6 +3217,9 @@ Fix that now?
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    if (dropped.length > 0) {
+      alert(`${kept.length} compan${kept.length === 1 ? 'y' : 'ies'} exported. ${dropped.length} left out because of Exclude from ZoomInfo:\n\n${dropped.join('\n')}`);
+    }
   }
 
   function downloadAccountsWithoutContacts() {

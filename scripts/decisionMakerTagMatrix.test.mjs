@@ -135,6 +135,11 @@ const contact = (id, company, tags) => ({ id, company, firstname: id, dans_tags:
   ];
   check('zoom export: decision maker without a Yes, or a Not sure, Inside Sales and Client',
     zoomExportRowsForTag(rows, k).map(r => r.company), ['Gap', 'OnlyMaybe', 'ConfirmedAndMaybe', 'ClientGap', 'ClientMaybe']);
+  // The status comes from a sheet: a trailing space or other casing is
+  // still Client (Ettinger Engineering was dropped on an exact match).
+  check('zoom export: status read ignoring spacing and case',
+    zoomExportRowsForTag([row('Spaced', 'Client ', [], [{ id: 10 }]), row('Lower', 'client', [], []), row('Inside', ' inside sales', [], [])], k).map(r => r.company),
+    ['Spaced', 'Lower', 'Inside']);
 }
 
 console.log(`${passed} passed, ${failed} failed`);

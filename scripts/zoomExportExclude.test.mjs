@@ -1,6 +1,6 @@
 // Assertion tests for keeping companies out of the ZoomInfo exports.
 //   node scripts/zoomExportExclude.test.mjs
-import { buildZoomExcludedMatcher, normZoomCompany, isZoomExcluded } from '../src/utils/zoomExportExclude.js';
+import { buildZoomExcludedMatcher, buildZoomExclusionExplainer, normZoomCompany, isZoomExcluded } from '../src/utils/zoomExportExclude.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -29,6 +29,16 @@ check('not excluded', isExcluded({ id: 'p2', company: 'Globex' }), false);
 check('never flagged', isExcluded({ id: 'p3', company: 'Initech' }), false);
 check('nothing excluded, nothing matches', buildZoomExcludedMatcher([{ id: 'x', company: 'Acme' }])({ company: 'Acme' }), false);
 check('no prospects', buildZoomExcludedMatcher(undefined)({ company: 'Acme' }), false);
+
+// The explainer says why, so an export can name what it left out.
+const why = buildZoomExclusionExplainer(prospects);
+check('why: its own flag', why({ id: 'p1', company: 'Acme, Inc.' }), 'set to Exclude from ZoomInfo');
+check('why: another company\'s Zoom ID', why({ company: 'Griffis Residential', zoomId: '12345' }),
+  'shares Zoom Company ID 12345 with Acme, Inc., which is set to Exclude from ZoomInfo');
+check('why: another company by name', why({ company: 'ACME Corporation' }),
+  'matches Acme, Inc. by name, which is set to Exclude from ZoomInfo');
+check('why: not excluded', why({ id: 'p2', company: 'Globex' }), null);
+check('why: nothing excluded', buildZoomExclusionExplainer([])({ company: 'Acme' }), null);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
