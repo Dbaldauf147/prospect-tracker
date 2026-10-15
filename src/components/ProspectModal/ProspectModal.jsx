@@ -426,7 +426,20 @@ function getOrgKey(company) {
   return `orgchart-${(company || '').toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 }
 
-function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '', searchRun = {}, onToggleSearchRun }) {
+// The steps a category with no Yes decision maker is worked through, in
+// order, under the decision makers row of the By Category table. 'zoom' is
+// the original Search run tick and still reads and writes dmSearchRun, so
+// ticks made before the ladder existed carry over; the rest live in
+// dmSearchSteps, keyed by bucket then step.
+const DM_STEPS = [
+  { key: 'zoom',         label: 'No DM, but company Zoom ID' },
+  { key: 'zoomFailed',   label: "Zoom ID didn't work" },
+  { key: 'manual',       label: 'Manual search' },
+  { key: 'manualFailed', label: "Manual search didn't work" },
+  { key: 'closeOut',     label: 'Close out' },
+];
+
+function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '', searchRun = {}, onToggleSearchRun, searchSteps = {}, onToggleSearchStep }) {
   const idOf = (c) => String(c.id || c.vid || c.email || '');
 
   // Coverage check: which buckets currently have no contacts tagged?
@@ -504,38 +517,49 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
               ))}
             </tr>
             {/* A category nobody is a Yes decision maker for (a Not sure
-                alone still gets it): the company's
-                Zoom Company ID to run the search with, and a box to tick once
-                it has been run, saved on the record with the date. */}
-            {dmColumns.some(col => !col.dms.some(d => d.answer === 'yes')) && (
-              <tr data-dm-search-row style={{ borderTop: '1px solid #E2E8F0', background: '#FAFAF9' }}>
+                alone still gets it) is worked down a ladder, one row per
+                step: the company's Zoom Company ID search, then whether that
+                came up empty, then a manual search, whether that came up
+                empty too, and finally closing the category out. Each step is
+                a tick saved on the record with the date. A category with a
+                Yes decision maker has nothing to work, so its cells stay
+                blank. */}
+            {DM_STEPS.map((step, i) => (
+              <tr key={step.key} data-dm-step={step.key} style={{ borderTop: '1px solid #E2E8F0', background: i % 2 === 0 ? '#FAFAF9' : '#fff' }}>
                 {dmColumns.map(({ bucket, dms }) => {
                   if (dms.some(d => d.answer === 'yes')) return <td key={bucket.key} />;
-                  const ranAt = searchRun?.[bucket.key];
+                  const ranAt = step.key === 'zoom' ? searchRun?.[bucket.key] : searchSteps?.[bucket.key]?.[step.key];
+                  const canToggle = step.key === 'zoom' ? !!onToggleSearchRun : !!onToggleSearchStep;
+                  const toggle = (on) => step.key === 'zoom'
+                    ? onToggleSearchRun?.(bucket.key, on)
+                    : onToggleSearchStep?.(bucket.key, step.key, on);
                   return (
                     <td key={bucket.key} style={{ padding: '0.45rem 0.6rem', verticalAlign: 'top', fontSize: '0.7rem' }}>
-                      <div style={{ fontSize: '0.6rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Zoom Company ID</div>
-                      {zoomCompanyId
-                        ? <div style={{ fontWeight: 600, color: '#1E293B', userSelect: 'all', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={zoomCompanyId}>{zoomCompanyId}</div>
-                        : <div style={{ color: '#94A3B8', fontStyle: 'italic' }}>Not set</div>}
                       <label
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.3rem', color: ranAt ? '#166534' : '#475569', cursor: onToggleSearchRun ? 'pointer' : 'default' }}
-                        title={ranAt ? `Search run ${new Date(ranAt).toLocaleDateString()}` : `Tick once the ${bucket.label} search has been run in Zoom for this company`}
+                        style={{ display: 'flex', alignItems: 'flex-start', gap: '0.3rem', color: ranAt ? '#166534' : '#475569', fontWeight: ranAt ? 600 : 400, cursor: canToggle ? 'pointer' : 'default' }}
+                        title={ranAt ? `${step.label}: ticked ${new Date(ranAt).toLocaleDateString()}` : `Tick once "${step.label}" applies to ${bucket.label} at this company`}
                       >
                         <input
                           type="checkbox"
                           checked={!!ranAt}
-                          disabled={!onToggleSearchRun}
-                          onChange={e => onToggleSearchRun?.(bucket.key, e.target.checked)}
-                          aria-label={`${bucket.label} search run`}
+                          disabled={!canToggle}
+                          onChange={e => toggle(e.target.checked)}
+                          aria-label={`${bucket.label}: ${step.label}`}
+                          style={{ marginTop: 1, flexShrink: 0 }}
                         />
-                        Search run{ranAt ? ` ${new Date(ranAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : ''}
+                        <span style={{ minWidth: 0 }}>
+                          {step.label}
+                          {ranAt ? <span style={{ fontWeight: 400 }}>{` (${new Date(ranAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })})`}</span> : null}
+                        </span>
                       </label>
+                      {step.key === 'zoom' && (zoomCompanyId
+                        ? <div style={{ marginTop: '0.2rem', marginLeft: '1.2rem', fontWeight: 600, color: '#1E293B', userSelect: 'all', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Zoom Company ID ${zoomCompanyId}`}>{zoomCompanyId}</div>
+                        : <div style={{ marginTop: '0.2rem', marginLeft: '1.2rem', color: '#94A3B8', fontStyle: 'italic' }}>Zoom ID not set</div>)}
                     </td>
                   );
                 })}
               </tr>
-            )}
+            ))}
           </tbody>
         </table>
       </div>
@@ -14042,6 +14066,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     const next = { ...(prev.dmSearchRun || {}) };
                     if (on) next[key] = new Date().toISOString(); else delete next[key];
                     return { ...prev, dmSearchRun: next };
+                  })}
+                  searchSteps={fields.dmSearchSteps || {}}
+                  onToggleSearchStep={(bucketKey, stepKey, on) => setFields(prev => {
+                    const all = { ...(prev.dmSearchSteps || {}) };
+                    const steps = { ...(all[bucketKey] || {}) };
+                    if (on) steps[stepKey] = new Date().toISOString(); else delete steps[stepKey];
+                    if (Object.keys(steps).length) all[bucketKey] = steps; else delete all[bucketKey];
+                    return { ...prev, dmSearchSteps: all };
                   })}
                 />
               ) : (companyContacts.length > 0 || ownerContacts.length > 0) ? (
