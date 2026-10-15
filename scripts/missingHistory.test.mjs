@@ -7,7 +7,7 @@
 //      when there are no companies to read.
 //   2. The first reading on record is also logged as the day before.
 //   3. After that a day is rewritten only when its numbers move.
-import { missingReading, missingStepsReading, isStepsDay, withMissingDay, previousDay } from '../src/utils/missingHistory.js';
+import { missingReading, missingStepsReading, isStepsDay, withMissingDay, previousDay, withBaseline, baselineDay } from '../src/utils/missingHistory.js';
 import { allMissingStepsFor } from '../src/utils/allMissingSteps.js';
 
 let passed = 0, failed = 0;
@@ -91,6 +91,20 @@ check('a later day does not reseed', Object.keys(tomorrow).sort(), ['2026-10-14'
     { record: { company: 'B' }, zoomExcluded: true },
   ]);
   check('steps: a company excluded from ZoomInfo owes no Zoom id', [s.fields.zoomCompanyId, s.fields.zoomCompanyName, s.fields.numberOfSites], [1, 1, 2]);
+}
+
+{
+  // Freezing the seeded first day as the baseline.
+  const reading = (total) => ({ total, stepsRemaining: total, missingData: 0, fields: {}, companies: 180, basis: 'steps' });
+  const seeded = withMissingDay({}, '2026-10-15', reading(3684), 1);
+  const frozen = withBaseline(seeded, '2026-10-14', 2);
+  check('baseline: marked', [baselineDay(frozen), frozen['2026-10-14'].baseline], ['2026-10-14', true]);
+  check('baseline: unknown day writes nothing', withBaseline(frozen, '2026-09-01') === frozen, true);
+  const later = withMissingDay(frozen, '2026-10-15', reading(3600), 3);
+  check('baseline: same-day reading no longer drags the seed', [later['2026-10-14'].total, later['2026-10-15'].total], [3684, 3600]);
+  check('baseline: a reading on the baseline day writes nothing', withMissingDay(frozen, '2026-10-14', reading(1), 4) === frozen, true);
+  const moved = withBaseline(later, '2026-10-15', 5);
+  check('baseline: only one at a time', [moved['2026-10-14'].baseline, moved['2026-10-15'].baseline], [undefined, true]);
 }
 
 console.log(`${passed} passed, ${failed} failed`);
