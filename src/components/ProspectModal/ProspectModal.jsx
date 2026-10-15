@@ -5922,6 +5922,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // The box whose header was clicked on the Services board: its popup sets
   // every service in it at once and says whether it counts toward the %.
   const [serviceBucketPopup, setServiceBucketPopup] = useState(null);
+  // Bulk edit on the Services board: null while it's off, else the set of
+  // services ticked. Ticks can span buckets, and one status (or SME) is
+  // written to all of them at once from the bar above the board.
+  const [bulkServices, setBulkServices] = useState(null);
+  const [bulkStatus, setBulkStatus] = useState('Not Sold');
+  const [bulkSME, setBulkSME] = useState('');
   const [expandedServiceNote, setExpandedServiceNote] = useState(null);
   const [portfolioOpen, setPortfolioOpen] = useState(true);
   // Which page of the Portfolio tab is showing: the site list and holdings,
@@ -11433,9 +11439,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   style={{ marginLeft: '0.5rem', padding: '0.15rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', background: '#fff', fontSize: '0.62rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: '#059669' }}
                 >Export Excel</button>
                 <button
-                  onClick={(e) => { e.stopPropagation(); setServicesEditMode(m => !m); }}
+                  onClick={(e) => { e.stopPropagation(); setBulkServices(null); setServicesEditMode(m => !m); }}
                   style={{ marginLeft: '0.4rem', padding: '0.15rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', background: servicesEditMode ? '#FEF3C7' : 'var(--color-surface)', fontSize: '0.62rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: servicesEditMode ? '#92400E' : 'var(--color-text-muted)' }}
                 >{servicesEditMode ? 'Done Editing' : 'Edit Services'}</button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setServicesEditMode(false); setBulkServices(b => (b ? null : new Set())); }}
+                  title="Tick services across any buckets and set their status or SME in one go"
+                  style={{ marginLeft: '0.4rem', padding: '0.15rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', background: bulkServices ? '#DBEAFE' : 'var(--color-surface)', fontSize: '0.62rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: bulkServices ? '#1E40AF' : 'var(--color-text-muted)' }}
+                >{bulkServices ? 'Done bulk editing' : 'Bulk edit'}</button>
                 {/* The PRW (Pricing Request Workbook) email, the same draft the
                     Scope board's button downloads, with this company as the
                     customer. */}
@@ -11589,8 +11600,81 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 const popupCat = serviceBucketPopup ? categories.find(c => c.name === serviceBucketPopup) : null;
                 const popupItems = popupCat ? popupCat.items.filter(item => !hiddenServices.has(item)) : [];
 
+                // Bulk edit: what's ticked, and the services on show that
+                // "Select all shown" would tick (search and filter respected).
+                const bulkOn = !!bulkServices && !servicesEditMode;
+                const shownItems = categories.flatMap(c => c.items.filter(item => !hiddenServices.has(item) && (!filtering || matchesFilter(item, c.name))));
+                function toggleBulk(items, on) {
+                  setBulkServices(prev => {
+                    const next = new Set(prev || []);
+                    for (const i of items) { if (on) next.add(i); else next.delete(i); }
+                    return next;
+                  });
+                }
+                function applyBulkStatus() {
+                  const picked = [...(bulkServices || [])];
+                  if (!picked.length) return;
+                  const clobbered = picked.filter(i => (svcAll[i] || '-') !== '-' && svcAll[i] !== bulkStatus);
+                  if (clobbered.length && !window.confirm(
+                    `${clobbered.length} of these already ${clobbered.length === 1 ? 'has a status' : 'have a status'} set by hand. ${bulkStatus === '-' ? 'Clear' : `Change to "${bulkStatus}" on`} all ${picked.length}?`,
+                  )) return;
+                  const next = { ...(fields.servicesExplored || {}) };
+                  for (const i of picked) { if (bulkStatus === '-') delete next[i]; else next[i] = bulkStatus; }
+                  set('servicesExplored', next);
+                  setBulkServices(new Set());
+                }
+                function applyBulkSME() {
+                  const picked = [...(bulkServices || [])];
+                  if (!picked.length) return;
+                  const v = bulkSME.trim();
+                  const next = { ...(fields.serviceSMEs || {}) };
+                  for (const i of picked) { if (v) next[i] = v; else delete next[i]; }
+                  set('serviceSMEs', next);
+                  setBulkServices(new Set());
+                  setBulkSME('');
+                }
+                const bulkBtn = { padding: '0.15rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', background: 'var(--color-surface)', fontSize: '0.65rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' };
+                const bulkCount = bulkServices ? bulkServices.size : 0;
+
                 return (
                 <div>
+                  {bulkOn && (
+                    <div style={{ marginTop: '0.5rem', padding: '0.35rem 0.5rem', border: '1px solid #93C5FD', background: '#EFF6FF', borderRadius: '5px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.4rem', fontSize: '0.68rem' }}>
+                      <span style={{ fontWeight: 700, color: '#1E40AF', minWidth: '5.5rem' }}>{bulkCount} selected</span>
+                      <button type="button" style={bulkBtn} onClick={() => toggleBulk(shownItems, true)}>
+                        Select all{filtering ? ' shown' : ''} ({shownItems.length})
+                      </button>
+                      <button type="button" style={bulkBtn} disabled={!bulkCount} onClick={() => setBulkServices(new Set())}>Clear</button>
+                      <span style={{ width: 1, alignSelf: 'stretch', background: '#BFDBFE', margin: '0 0.2rem' }} />
+                      <span>Status</span>
+                      <select
+                        value={bulkStatus}
+                        onChange={e => setBulkStatus(e.target.value)}
+                        aria-label="Status for the selected services"
+                        style={{ fontSize: '0.65rem', padding: '1px 2px', border: '1px solid var(--color-border)', borderRadius: '3px', fontFamily: 'inherit' }}
+                      >
+                        {SERVICE_STATUSES.map(st => <option key={st} value={st}>{st === '-' ? '- (auto)' : st}</option>)}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={!bulkCount}
+                        onClick={applyBulkStatus}
+                        style={{ ...bulkBtn, background: bulkCount ? '#1E40AF' : '#E2E8F0', color: bulkCount ? '#fff' : '#94A3B8', borderColor: bulkCount ? '#1E40AF' : 'var(--color-border)', cursor: bulkCount ? 'pointer' : 'default' }}
+                      >Set status</button>
+                      <span style={{ width: 1, alignSelf: 'stretch', background: '#BFDBFE', margin: '0 0.2rem' }} />
+                      <span>SME</span>
+                      <input
+                        type="text"
+                        list="service-sme-names"
+                        value={bulkSME}
+                        onChange={e => setBulkSME(e.target.value)}
+                        placeholder="Name, or blank to clear"
+                        aria-label="SME for the selected services"
+                        style={{ fontSize: '0.65rem', padding: '1px 4px', border: '1px solid var(--color-border)', borderRadius: '3px', fontFamily: 'inherit', width: '9rem' }}
+                      />
+                      <button type="button" disabled={!bulkCount} onClick={applyBulkSME} style={{ ...bulkBtn, cursor: bulkCount ? 'pointer' : 'default', opacity: bulkCount ? 1 : 0.5 }}>Set SME</button>
+                    </div>
+                  )}
                   {popupCat && (
                     <ServiceBucketPopup
                       name={popupCat.name}
@@ -11654,6 +11738,20 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     return (
                       <div key={cat.name} style={{ breakInside: 'avoid', border: '1px solid var(--color-border)', borderRadius: '5px', overflow: 'hidden', fontSize: '0.72rem', marginBottom: '0.4rem' }}>
                         <div style={{ padding: '0.2rem 0.4rem', background: '#EFF6FF', borderBottom: '1px solid var(--color-border)', fontWeight: 700, fontSize: '0.65rem', color: '#1E40AF', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                          {bulkOn && visibleItems.length > 0 && (() => {
+                            const n = visibleItems.filter(i => bulkServices.has(i)).length;
+                            return (
+                              <input
+                                type="checkbox"
+                                checked={n === visibleItems.length}
+                                ref={el => { if (el) el.indeterminate = n > 0 && n < visibleItems.length; }}
+                                onChange={e => toggleBulk(visibleItems, e.target.checked)}
+                                aria-label={`Select every service in ${cat.name}`}
+                                title={`Select every service in ${cat.name}`}
+                                style={{ margin: 0, cursor: 'pointer' }}
+                              />
+                            );
+                          })()}
                           {servicesEditMode && !isUngrouped(cat.name) && editingServiceName?.catName === cat.name ? (
                             <input
                               autoFocus
@@ -11799,6 +11897,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     ...(tracked ? coverageRowStyle : null),
                                   }}
                                 >
+                                  {bulkOn && (
+                                    <input
+                                      type="checkbox"
+                                      checked={bulkServices.has(item)}
+                                      onChange={e => toggleBulk([item], e.target.checked)}
+                                      aria-label={`Select ${getDisplayName(item)}`}
+                                      style={{ margin: 0, cursor: 'pointer', flexShrink: 0 }}
+                                    />
+                                  )}
                                   <span
                                     onClick={() => setExpandedServiceNote(isNoteOpen ? null : noteKey)}
                                     style={{ fontSize: '0.6rem', cursor: 'pointer', color: hasNote ? '#F59E0B' : '#CBD5E1', padding: '0 1px', lineHeight: 1, flexShrink: 0 }}
