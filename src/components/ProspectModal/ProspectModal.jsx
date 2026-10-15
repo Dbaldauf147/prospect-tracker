@@ -7290,6 +7290,42 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     updateSettings({ companyContactExclusions: next });
   }, [fields.company, settings.companyContactExclusions, updateSettings]);
 
+  // The roster's ⊘: put the Hide tag on a contact (or take it off again),
+  // written to HubSpot like any tag edit. Hidden contacts drop off this
+  // company's list until Show hidden is on.
+  const [hidingContact, setHidingContact] = useState(null);
+  async function toggleContactHideTag(c) {
+    const cid = String(c?.id || c?.vid || '');
+    if (!cid || hidingContact) return;
+    const before = String(c.dans_tags || c.dan_s_tags || c.dans_tag || '');
+    const plan = planTagEdit(contactIsHidden(c) ? 'remove' : 'add', ['Hide'], before);
+    if (plan.action !== 'write') return;
+    const properties = { dans_tags: plan.tags };
+    setHidingContact(cid);
+    try {
+      if (!c._localOnly) {
+        const res = await apiFetch('/api/hubspot?action=update-contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contactId: cid, properties }),
+        });
+        const json = await res.json();
+        if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
+      }
+      try {
+        await updateHubspotCache(draft => {
+          const i = draft.contacts.findIndex(x => String(x.id || x.vid) === cid);
+          if (i !== -1) draft.contacts[i] = { ...draft.contacts[i], ...properties };
+        });
+      } catch { /* the roster copy below still shows it */ }
+      handleContactSaved({ ...c, ...properties }, { silent: true });
+    } catch (err) {
+      alert(`Could not update the Hide tag: ${err.message || err}`);
+    } finally {
+      setHidingContact(null);
+    }
+  }
+
   const handleContactSaved = useCallback((updated, options = {}) => {
     const updatedId = String(updated.id || updated.vid || '');
     // A contact that moved to a new HubSpot id (re-created, or attached to
@@ -14357,6 +14393,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   excludedContactIds={excludedContactIds}
                   onExclude={excludeContactFromCompany}
                   onUnexclude={unexcludeContactFromCompany}
+                  onHideContact={toggleContactHideTag}
+                  hidingContact={hidingContact}
                   onEditContact={setEditingContact}
                   onDeleteContact={handleDeleteContact}
                   deletingContact={deletingContact}
