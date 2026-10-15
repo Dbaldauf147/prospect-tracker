@@ -15,7 +15,7 @@ import {
 import { readWorkKey, writeWorkKey, ZOOM_SEARCH_LOG_EVENT } from '../../utils/mirroredWorkKeys';
 import { resolveTitleSearches } from '../../data/contactTitleSearches';
 import { tagMatrixColumns } from '../../utils/decisionMakerTagMatrix';
-import { TAG_OPTIONS } from '../../utils/contactTagReview';
+import { TAG_OPTIONS, tagKey } from '../../utils/contactTagReview';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 
 const loadLog = () => readLog(readWorkKey(ZOOM_SEARCH_LOG_KEY));
@@ -72,6 +72,24 @@ export function ZoomSearchLogView({ prospects = [], onUpdateProspect, settings }
   const tags = useMemo(() => tagMatrixColumns(contacts, TAG_OPTIONS), [contacts]);
   const titleSearches = useMemo(() => resolveTitleSearches(settings), [settings]);
 
+  // A bucket's include terms, and the tag it most likely stands for: the
+  // tag whose name the bucket's name starts with ("ESG reporting" is ESG),
+  // longest first so "Climate Risk" beats a shorter tag that also fits.
+  const includeTerms = (b) => (b.groups || []).filter(g => g.kind !== 'exclude').flatMap(g => g.terms || []);
+  const excludeTerms = (b) => (b.groups || []).filter(g => g.kind === 'exclude').flatMap(g => g.terms || []);
+  const tagForBucket = (b) => {
+    const name = tagKey(b.name);
+    return [...tags].sort((a, c) => tagKey(c).length - tagKey(a).length)
+      .find(t => tagKey(t) && name.startsWith(tagKey(t))) || '';
+  };
+  function pullBucket(b) {
+    setType('title');
+    setBucketKey(b.key);
+    setTitlesText([...new Set(includeTerms(b))].join('\n'));
+    const guess = tagForBucket(b);
+    if (guess) setTag(guess);
+  }
+
   const [pasteText, setPasteText] = useState('');
   const parsed = useMemo(() => (pasteText.trim() ? parseZoomPaste(pasteText) : null), [pasteText]);
   const companies = useMemo(() => parsed?.companies || [], [parsed]);
@@ -88,6 +106,10 @@ export function ZoomSearchLogView({ prospects = [], onUpdateProspect, settings }
   const [type, setType] = useState('company');
   const [tag, setTag] = useState('');
   const [titlesText, setTitlesText] = useState('');
+  // The search bucket (a saved title search on Contacts > Titles) the titles
+  // were last pulled from, so its button reads as picked and its Not terms
+  // can be shown under the box.
+  const [bucketKey, setBucketKey] = useState('');
   const [date, setDate] = useState(today);
   const [note, setNote] = useState('');
   const [flash, setFlash] = useState('');
@@ -211,6 +233,27 @@ export function ZoomSearchLogView({ prospects = [], onUpdateProspect, settings }
 
       <div style={card}>
         <h3 style={h3}>2. What was searched</h3>
+        {titleSearches.length > 0 && (
+          <div style={{ marginBottom: '0.7rem' }}>
+            <span style={label}>Pull titles from a search bucket</span>
+            <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }} role="group" aria-label="Search buckets">
+              {titleSearches.map(b => {
+                const on = type === 'title' && bucketKey === b.key;
+                const n = new Set(includeTerms(b)).size;
+                return (
+                  <button
+                    key={b.key}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => pullBucket(b)}
+                    title={`Fill the titles with the ${n} title${n === 1 ? '' : 's'} in ${b.name} (Contacts > Titles)${tagForBucket(b) ? ` and tag it ${tagForBucket(b)}` : ''}`}
+                    style={pill(on, '#7C3AED')}
+                  >{b.name} <span style={{ opacity: 0.6 }}>({n})</span></button>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.7rem' }} role="group" aria-label="Search type">
           {SEARCH_TYPES.map(t => (
             <button key={t.key} type="button" aria-pressed={type === t.key} style={pill(type === t.key)} onClick={() => setType(t.key)}>{t.label}</button>
@@ -229,22 +272,6 @@ export function ZoomSearchLogView({ prospects = [], onUpdateProspect, settings }
               <div style={{ flex: '1 1 320px' }}>
                 <span style={{ ...label, display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span>Titles searched</span>
-                  {titleSearches.length > 0 && (
-                    <select
-                      value=""
-                      onChange={e => {
-                        const s = titleSearches.find(x => x.key === e.target.value);
-                        // The include terms only: the Not groups are titles to leave out.
-                        if (s) setTitlesText((s.groups || []).filter(g => g.kind !== 'exclude').flatMap(g => g.terms || []).join('\n'));
-                      }}
-                      style={{ fontFamily: 'inherit', fontSize: '0.68rem', textTransform: 'none', letterSpacing: 0, padding: '1px 4px', border: '1px solid #E2E8F0', borderRadius: 4, color: '#2563EB', background: '#fff' }}
-                      aria-label="Fill titles from a saved title search"
-                      title="Fill the box with a saved title search from Contacts > Titles"
-                    >
-                      <option value="">Fill from a saved search...</option>
-                      {titleSearches.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}
-                    </select>
-                  )}
                 </span>
                 <textarea
                   value={titlesText}
@@ -253,6 +280,16 @@ export function ZoomSearchLogView({ prospects = [], onUpdateProspect, settings }
                   style={{ ...input, width: '100%', minHeight: 70, resize: 'vertical' }}
                 />
                 <div style={{ fontSize: '0.66rem', color: '#94A3B8', marginTop: 2 }}>{titles.length} title{titles.length === 1 ? '' : 's'}</div>
+                {(() => {
+                  const b = titleSearches.find(x => x.key === bucketKey);
+                  const not = b ? [...new Set(excludeTerms(b))] : [];
+                  if (!not.length) return null;
+                  return (
+                    <div style={{ fontSize: '0.66rem', color: '#64748B', marginTop: 4 }}>
+                      <strong>{b.name} leaves out:</strong> {not.join(', ')}
+                    </div>
+                  );
+                })()}
               </div>
             </>
           )}
