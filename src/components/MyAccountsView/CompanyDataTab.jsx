@@ -5,6 +5,8 @@ import { COMPANY_DATA_FIELDS, fieldValue, isTextField, missingFields, planCompan
 import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { companyStepsRemaining } from '../../utils/dmSteps';
+import { buildZoomExcludedMatcher, zoomExcludedLabel } from '../../utils/zoomExportExclude';
+import { ZoomExcludedCell } from './ZoomExcludedCell';
 
 // My Accounts > Company Data: which of the accounts have their size numbers
 // (sites, utility accounts, meters, equipment, electric MWh) and their
@@ -33,6 +35,9 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
   const [pasteOpen, setPasteOpen] = useState(false);
 
   const prospectById = useMemo(() => new Map((prospects || []).map(p => [p.id, p])), [prospects]);
+  // Same match the Zoom CSV downloads drop rows by, so the column and the
+  // export can't disagree about a company.
+  const isZoomExcluded = useMemo(() => buildZoomExcludedMatcher(prospects), [prospects]);
 
   // Steps remaining on each company's Contacts > By Category ladder, counted
   // by the same rule the popup's own Steps remaining column uses
@@ -59,6 +64,7 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       if (!p) { missing += 1; continue; }
       const row = { id: p.id, company: p.company || a.company || '', tier: a.myTier || a.tier || '', status: p.status || '', cdm: p.cdm || '' };
       for (const f of COMPANY_DATA_FIELDS) row[f.key] = fieldValue(f, p[f.key]);
+      row.zoomExcluded = isZoomExcluded({ id: p.id, company: p.company || a.company, zoomId: p.zoomCompanyId });
       row.missing = missingFields(row);
       row.missingCount = row.missing.length;
       const steps = dmLookup ? companyStepsRemaining({ dms: dmLookup.forAccount(p), record: p, tagReview }) : null;
@@ -69,7 +75,7 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       out.push(row);
     }
     return { rows: out, noRecord: missing };
-  }, [accounts, prospectById, dmLookup, tagReview]);
+  }, [accounts, prospectById, dmLookup, tagReview, isZoomExcluded]);
 
   const missingCounts = useMemo(() => {
     const m = {};
@@ -98,6 +104,14 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
     { key: 'tier', label: 'Tier', defaultWidth: 80 },
     { key: 'status', label: 'Status', defaultWidth: 120 },
     { key: 'cdm', label: 'CDM', defaultWidth: 130 },
+    {
+      key: 'zoomExcluded', label: 'ZoomInfo', defaultWidth: 110,
+      headerTitle: 'Whether the company is excluded from ZoomInfo exports (the Exclude from ZoomInfo button on its company popup)',
+      getSortValue: (row) => (row.zoomExcluded ? 1 : 0),
+      getFilterValue: (row) => zoomExcludedLabel(row.zoomExcluded),
+      exportValue: (row) => zoomExcludedLabel(row.zoomExcluded),
+      render: (row) => <ZoomExcludedCell excluded={row.zoomExcluded} />,
+    },
     ...COMPANY_DATA_FIELDS.map(f => ({
       key: f.key, label: f.label, defaultWidth: f.key === 'website' ? 200 : isTextField(f) ? 160 : 120,
       getFilterValue: (row) => (row[f.key] === null ? 'Missing' : String(row[f.key])),

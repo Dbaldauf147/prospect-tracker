@@ -419,6 +419,7 @@ async function loadMirroredStores() {
     import('./activeFirmsHistory.js'),
     import('./contactCountHistory.js'),
     import('./dmTagHistory.js'),
+    import('./missingHistory.js'),
     import('./soldWarningIgnore.js'),
     import('./fillerIgnoreStore.js'),
     import('./pricingOptionLinks.js'),

@@ -27,6 +27,9 @@ export function normZoomCompany(s) {
     .trim();
 }
 
+/** What a table column says for a company, in a filter or an Excel export. */
+export const zoomExcludedLabel = (excluded) => (excluded ? 'Excluded' : 'Included');
+
 // A Client is never left out of a ZoomInfo export: the flag is for keeping
 // prospects out of a pull, and a client's decision makers are exactly the
 // cross-sell names the pulls are for. Read ignoring spacing and case, as
