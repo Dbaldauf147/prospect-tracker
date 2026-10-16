@@ -86,17 +86,47 @@ function tagsOf(c) {
 // prospect's company is spelled differently from the contact's HubSpot
 // Company text (suffixes, abbreviations). Note the Active Contacts page
 // keeps a stricter variant of its own — the two are not interchangeable.
+//
+// It runs inside contact x account loops (the roster gates, decision-maker
+// coverage) over tens of thousands of contacts, so the suffix-stripped form
+// of each name is remembered rather than re-run through two regexes on every
+// call; that was most of the time the sidebar's coverage took. Bounded so a
+// long session can't grow it without limit; clearing only costs a recompute.
+const STRIPPED_MAX = 50000;
+const strippedNames = new Map();
+function strippedName(lower) {
+  let v = strippedNames.get(lower);
+  if (v === undefined) {
+    v = lower.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
+    if (strippedNames.size >= STRIPPED_MAX) strippedNames.clear();
+    strippedNames.set(lower, v);
+  }
+  return v;
+}
+
 export function rosterCompaniesMatch(a, b) {
-  const na = String(a || '').toLowerCase().trim();
-  const nb = String(b || '').toLowerCase().trim();
+  return rosterKeysMatch(rosterMatchKey(a), rosterMatchKey(b));
+}
+
+// The same compare split in two, for the loops that check one name against
+// many: build each side's key once with rosterMatchKey, then rosterKeysMatch
+// a pair of them. rosterKeysMatch(rosterMatchKey(a), rosterMatchKey(b)) is
+// rosterCompaniesMatch(a, b) by definition.
+export function rosterMatchKey(name) {
+  const n = String(name || '').toLowerCase().trim();
+  return { n, s: n ? strippedName(n) : '' };
+}
+
+export function rosterKeysMatch(ka, kb) {
+  const na = ka.n;
+  const nb = kb.n;
   if (!na || !nb) return false;
   if (na === nb) return true;
   const longer = na.length >= nb.length ? na : nb;
   const shorter = na.length >= nb.length ? nb : na;
   if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
-  const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
-  const sa = strip(na);
-  const sb = strip(nb);
+  const sa = ka.s;
+  const sb = kb.s;
   if (sa && sb && (sa === sb || sa.includes(sb) || sb.includes(sa))) return true;
   return false;
 }
@@ -356,13 +386,24 @@ export function makeRosterGates({
       activeOppCompanies.push(acct);
     }
   }
+  const activeOppKeys = activeOppCompanies.map(rosterMatchKey);
+  // Whether a company name has an open opp depends only on the name, and
+  // thousands of contacts share a handful of companies, so each name is
+  // looked up against the opps once per set of gates.
+  const hasActiveOppByName = new Map();
   const isActive = (c) => {
     if (!baseActive(c)) return false;
     const cName = String(c.company || '').trim();
     if (!cName) return false;
-    const lc = cName.toLowerCase();
-    if (activeOppCompanies.some(a => a.toLowerCase() === lc)) return true;
-    return activeOppCompanies.some(a => rosterCompaniesMatch(a, cName));
+    let hit = hasActiveOppByName.get(cName);
+    if (hit === undefined) {
+      const lc = cName.toLowerCase();
+      const k = rosterMatchKey(cName);
+      hit = activeOppCompanies.some(a => a.toLowerCase() === lc)
+        || activeOppKeys.some(a => rosterKeysMatch(a, k));
+      hasActiveOppByName.set(cName, hit);
+    }
+    return hit;
   };
 
   // ---- Client gate (mirror of ClientContactsView) -------------------
@@ -403,7 +444,8 @@ export function makeRosterGates({
     const acct = String(r['Account'] || '').trim().toLowerCase();
     if (acct) allOppAccounts.add(acct);
   }
-  const allOppAccountsArr = [...allOppAccounts];
+  const allOppAccountKeys = [...allOppAccounts].map(rosterMatchKey);
+  const myTierAccountKeys = myTierAccounts.map(p => rosterMatchKey(p.company));
   // Map<lowercase company, { tier, hasOpp }> for the Tier 1/2/3 accounts.
   const tierAccountStatus = new Map();
   for (const p of myTierAccounts) {
@@ -411,24 +453,34 @@ export function makeRosterGates({
     if (!lc) continue;
     let hasOpp = allOppAccounts.has(lc);
     if (!hasOpp) {
-      for (const acct of allOppAccountsArr) {
-        if (rosterCompaniesMatch(p.company, acct)) { hasOpp = true; break; }
+      const pk = rosterMatchKey(p.company);
+      for (const acct of allOppAccountKeys) {
+        if (rosterKeysMatch(pk, acct)) { hasOpp = true; break; }
       }
     }
     tierAccountStatus.set(lc, { tier: p.tier, hasOpp });
   }
+  // Also a function of the company name alone; remembered per set of gates
+  // for the same reason as hasActiveOppByName above.
+  const untouchedByName = new Map();
   const isAtUntouchedTierAccount = (c) => {
     const company = String(c.company || '').trim();
     if (!company) return false;
     const direct = tierAccountStatus.get(company.toLowerCase());
     if (direct) return !direct.hasOpp;
-    for (const p of myTierAccounts) {
-      if (rosterCompaniesMatch(p.company, company)) {
+    const known = untouchedByName.get(company);
+    if (known !== undefined) return known;
+    let result = false;
+    const ck = rosterMatchKey(company);
+    for (let i = 0; i < myTierAccounts.length; i++) {
+      const p = myTierAccounts[i];
+      if (rosterKeysMatch(myTierAccountKeys[i], ck)) {
         const status = tierAccountStatus.get(String(p.company || '').toLowerCase().trim());
-        if (status) return !status.hasOpp;
+        if (status) { result = !status.hasOpp; break; }
       }
     }
-    return false;
+    untouchedByName.set(company, result);
+    return result;
   };
   const isKeyProspect = (c) => {
     if (!passesBaseGate(c)) return false;
