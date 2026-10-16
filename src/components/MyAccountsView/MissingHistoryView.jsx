@@ -75,6 +75,7 @@ export function MissingHistoryView({ settings, updateSettings }) {
   const rows = useMemo(() => series.map((s, i) => ({
     id: s.day,
     ...s,
+    prev: i === 0 ? null : series[i - 1],
     change: i === 0 ? null : s.total - series[i - 1].total,
     vsBaseline: base && s.day > base.day ? s.total - base.total : null,
   })), [series, base]);
@@ -83,6 +84,25 @@ export function MissingHistoryView({ settings, updateSettings }) {
     ? <span style={{ color: '#94A3B8' }}>-</span>
     // Fewer missing is progress, so a drop reads green.
     : <span style={{ fontWeight: 600, color: n < 0 ? '#047857' : '#B91C1C' }}>{`${n > 0 ? '+' : ''}${n.toLocaleString()}`}</span>);
+
+  // A data point with its move since the day before tucked in beside it,
+  // small and colored the same way as the Change column (a drop is green).
+  // A day with no earlier reading, or no move, shows the value alone.
+  // `neutral` greys the move for a count that isn't good or bad (Companies).
+  const withDelta = (value, prevValue, neutral = false) => {
+    if (value == null) return <span style={{ color: '#CBD5E1' }}>-</span>;
+    const d = prevValue == null ? 0 : value - prevValue;
+    return (
+      <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+        {value.toLocaleString()}
+        {d !== 0 && (
+          <span style={{ marginLeft: 6, fontSize: '0.68rem', fontWeight: 600, color: neutral ? '#64748B' : d < 0 ? '#047857' : '#B91C1C' }}>
+            {`${d > 0 ? '+' : ''}${d.toLocaleString()}`}
+          </span>
+        )}
+      </span>
+    );
+  };
 
   const columns = [
     {
@@ -104,15 +124,15 @@ export function MissingHistoryView({ settings, updateSettings }) {
       exportValue: r => (r.vsBaseline == null ? '' : r.vsBaseline),
       render: r => signed(r.vsBaseline),
     }] : []),
-    { key: 'companies', label: 'Companies', defaultWidth: 100 },
-    { key: 'stepsRemaining', label: 'Steps Remaining', defaultWidth: 130, render: r => (r.stepsRemaining ?? 0).toLocaleString() },
-    { key: 'missingData', label: 'Missing Data', defaultWidth: 110, render: r => (r.missingData ?? 0).toLocaleString() },
+    { key: 'companies', label: 'Companies', defaultWidth: 100, render: r => withDelta(r.companies ?? 0, r.prev?.companies, true) },
+    { key: 'stepsRemaining', label: 'Steps Remaining', defaultWidth: 130, render: r => withDelta(r.stepsRemaining ?? 0, r.prev?.stepsRemaining) },
+    { key: 'missingData', label: 'Missing Data', defaultWidth: 110, render: r => withDelta(r.missingData ?? 0, r.prev?.missingData) },
     ...COMPANY_DATA_FIELDS.map(f => ({
       key: f.key, label: f.label, defaultWidth: 120,
       getSortValue: r => r.fields?.[f.key] ?? -1,
       exportValue: r => r.fields?.[f.key] ?? '',
       getFilterValue: r => String(r.fields?.[f.key] ?? ''),
-      render: r => (r.fields?.[f.key] == null ? <span style={{ color: '#CBD5E1' }}>-</span> : r.fields[f.key].toLocaleString()),
+      render: r => withDelta(r.fields?.[f.key], r.prev?.fields?.[f.key]),
     })),
   ];
 
