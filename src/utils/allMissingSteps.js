@@ -12,7 +12,7 @@ import { companyStepsRemaining } from './dmSteps.js';
 export const STEP_FIELDS = COMPANY_DATA_FIELDS.filter(f => ['numberOfSites', 'numberOfAccounts', 'equipmentCount'].includes(f.key));
 
 /**
- * { stepsRemaining, perBucket, missingData, missingDataFields, allMissingSteps }
+ * { stepsRemaining, perBucket, allDms, missingData, missingDataFields, allMissingSteps }
  * for one company record. `dms` is its decision makers (the shared
  * decision-maker lookup's forAccount), `titleSearches` its logged Zoom
  * title searches (titleSearchesForCompany).
@@ -23,6 +23,7 @@ export function allMissingStepsFor({ record = {}, dms = [], tagReview = null, ti
   return {
     stepsRemaining: steps.total,
     perBucket: steps.perBucket,
+    allDms: steps.allDms,
     missingData: missingDataFields.length,
     missingDataFields,
     allMissingSteps: steps.total + missingDataFields.length,

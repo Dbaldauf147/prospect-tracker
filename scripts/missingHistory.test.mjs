@@ -61,6 +61,10 @@ check('a later day does not reseed', Object.keys(tomorrow).sort(), ['2026-10-14'
   check('steps: per-field counts still kept', s.fields.numberOfSites, 1);
   check('steps: marked', isStepsDay(s), true);
   check('steps: nothing to read', missingStepsReading([]), null);
+  // A company with a decision maker on every tag isn't counted missing its Zoom id.
+  const everyTag = { id: 9, dans_tags: 'Decision Maker; ESG; Procurement; Utilities; Climate Risk; Capital Planning; Efficiency/Renewables' };
+  const dmRead = missingStepsReading([{ record: {}, dms: [everyTag] }, { record: {} }]);
+  check('steps: every DM waives the Zoom id', [dmRead.fields.zoomCompanyId, dmRead.fields.zoomCompanyName], [1, 2]);
   // An older field-count day doesn't stop the first steps day seeding yesterday.
   const old = { '2026-10-13': { total: 900, fields: {}, companies: 2 }, '2026-10-14': { total: 950, fields: {}, companies: 2 } };
   const next = withMissingDay(old, '2026-10-15', s, 9);

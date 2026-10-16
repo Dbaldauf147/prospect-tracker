@@ -37,6 +37,14 @@ assert.equal(all.max, 30);
 const left = Object.fromEntries(all.perBucket.map(b => [b.bucket.key, b.left]));
 assert.deepEqual(left, { capitalplanning: 4, climaterisk: 4, efficiencyrenewables: 0, esg: 0, procurement: 0, utilities: 4 });
 assert.equal(all.total, 12);
+// Closed out isn't a decision maker, so this company doesn't have them all.
+assert.equal(all.allDms, false);
+
+// A Yes decision maker on every category: allDms.
+const everyTag = { id: 9, dans_tags: 'Decision Maker; ESG; Procurement; Utilities; Climate Risk; Capital Planning; Efficiency/Renewables' };
+assert.equal(companyStepsRemaining({ dms: [everyTag] }).allDms, true);
+assert.equal(companyStepsRemaining({ dms: [everyTag] }).total, 0);
+assert.equal(companyStepsRemaining({}).allDms, false);
 
 // Nobody and nothing: 30.
 assert.equal(companyStepsRemaining({}).total, 30);

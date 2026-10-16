@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
-import { COMPANY_DATA_FIELDS, fieldNotNeeded, fieldValue, isTextField, missingFields, planCompanyDataPaste } from '../../utils/companyDataFields';
+import { COMPANY_DATA_FIELDS, fieldNotNeeded, fieldNotNeededReason, fieldValue, isTextField, missingFields, planCompanyDataPaste } from '../../utils/companyDataFields';
 import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { allMissingStepsFor, STEP_FIELDS } from '../../utils/allMissingSteps';
@@ -77,12 +77,14 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       const row = { id: p.id, company: p.company || a.company || '', tier: a.myTier || a.tier || '', status: p.status || '', cdm: p.cdm || '' };
       for (const f of COMPANY_DATA_FIELDS) row[f.key] = fieldValue(f, p[f.key]);
       row.zoomExcluded = isZoomExcluded({ id: p.id, company: p.company || a.company, zoomId: p.zoomCompanyId });
-      row.missing = missingFields(row, COMPANY_DATA_FIELDS, { zoomExcluded: row.zoomExcluded });
-      row.missingCount = row.missing.length;
       const steps = dmLookup ? allMissingStepsFor({
         dms: dmLookup.forAccount(p), record: p, tagReview,
         titleSearches: titleSearchesForCompany(zoomLog.searches, { company: p.company || a.company, zoomCompanyId: p.zoomCompanyId, zoomCompanyName: p.zoomCompanyName }),
       }) : null;
+      // A decision maker on every tag waives the Zoom id (fieldNotNeeded).
+      row.allDms = !!steps?.allDms;
+      row.missing = missingFields(row, COMPANY_DATA_FIELDS, { zoomExcluded: row.zoomExcluded, allDms: row.allDms });
+      row.missingCount = row.missing.length;
       row.stepsRemaining = steps ? steps.stepsRemaining : null;
       row.stepsDetail = steps ? steps.perBucket.map(b => `${b.bucket.label}: ${b.left}`).join('\n') : '';
       row.missingData = STEP_FIELDS.filter(f => row[f.key] === null).length;
@@ -137,7 +139,7 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       getFilterValue: (row) => (row[f.key] !== null ? String(row[f.key]) : isMissing(row, f) ? 'Missing' : 'N/A'),
       render: (row) => {
         const v = row[f.key];
-        if (v === null && !isMissing(row, f)) return <span style={{ color: '#94A3B8' }} title="Not needed: the company is excluded from ZoomInfo">N/A</span>;
+        if (v === null && !isMissing(row, f)) return <span style={{ color: '#94A3B8' }} title={fieldNotNeededReason(f, row)}>N/A</span>;
         if (v === null) return <MissingChip />;
         if (f.key === 'website') {
           const href = /^https?:\/\//i.test(v) ? v : `https://${v}`;
