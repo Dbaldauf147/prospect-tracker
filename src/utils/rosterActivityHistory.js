@@ -13,6 +13,7 @@
 //
 //   rosters   { [rosterKey]: { label, total, active: { [days]: count } } }
 //   at        wall-clock ms of the reading
+//   seeded    true on the one day backfilled from the first reading
 //
 // The latest reading of a day wins. Stored in localStorage under the
 // user's key and mirrored to Firestore, merged day by day.
@@ -65,13 +66,30 @@ function sameReading(a, b) {
   return !!a && !!b && JSON.stringify(a.rosters) === JSON.stringify(b.rosters);
 }
 
+// The working day before `day` (Friday for a Monday), the day the History
+// axis puts just before it.
+export function previousWorkingDay(day) {
+  const [y, m, d] = String(day).split('-').map(Number);
+  const dt = new Date(y, m - 1, d - 1);
+  while (dt.getDay() === 0 || dt.getDay() === 6) dt.setDate(dt.getDate() - 1);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+}
+
 // The history with `reading` under `day`, oldest days past the cap dropped.
 // The same object back when nothing changes, so the caller can skip a write.
+// While no real (not seeded) earlier day is on record, the reading is also
+// written as the working day before, so the charts start with a line rather
+// than a lone dot, and that seed keeps following the day's reading until a
+// real earlier day exists.
 export function withRosterActivityReading(history, day, reading, now = Date.now()) {
   const prev = (history && typeof history === 'object') ? history : {};
   if (!day || !reading) return prev;
-  if (sameReading(prev[day], reading)) return prev;
+  const seedYesterday = !Object.keys(prev).some(k => k < day && !prev[k]?.seeded);
+  const yesterday = previousWorkingDay(day);
+  if (sameReading(prev[day], reading) && (!seedYesterday || sameReading(prev[yesterday], reading))) return prev;
   const next = { ...prev, [day]: { ...reading, at: now } };
+  if (seedYesterday) next[yesterday] = { ...reading, seeded: true, at: now };
   const keys = Object.keys(next).sort();
   if (keys.length <= ROSTER_ACTIVITY_MAX_DAYS) return next;
   const out = {};
