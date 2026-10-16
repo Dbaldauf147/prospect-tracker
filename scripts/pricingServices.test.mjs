@@ -20,7 +20,7 @@ import {
   costTypeConversion, moveCostAllocation, buildScheduleFromStructures, standardFeeContext, groupFeeRows, effectiveLineItemServices,
   passThroughFeeRows, addPassThroughFees, sharedLineItemsToSplit, setCostLineService, sharedSignature,
   lineItemServicesOnOption, setOptionCostLineService, setOptionItemService, clearOptionItemPicks,
-  moveOptionCostLineService, sharedLineItemServices,
+  moveOptionCostLineService, moveOptionItemService, sharedLineItemServices,
   costKeysFor, allocationFor, feeStructureCostInputs,
 } from '../src/utils/pricingServices.js';
 
@@ -328,6 +328,29 @@ test('Move to saves on the option, never in the shared mapping', () => {
   assert.deepEqual(moveOptionCostLineService(rowPick, map, setup, 'Budgets', 'GHG', [setup]), { 'nam::setup': ['GHG'] });
   // Not on the service it is moving from: unchanged.
   assert.equal(moveOptionCostLineService(own, map, monthly, 'GHG', 'Budgets'), own);
+});
+
+test('Move to moves one row, not every line alike in Line Item and type', () => {
+  const map = { nam: ['Client Management'] };
+  const a = { id: 'a', description: 'NAM', type: 'Recurring (monthly)' };
+  const b = { id: 'b', description: 'NAM', type: 'Recurring (monthly)' };
+  const c = { id: 'c', description: 'NAM', type: 'Recurring (monthly)' };
+  const own = moveOptionItemService({}, map, a, 'client management', 'BBS reporting');
+  assert.deepEqual(own, { '#item:a': ['BBS reporting'] });
+  const opt = lineItemServicesOnOption({ costLineServices: own }, map);
+  assert.deepEqual(costItemsForService([a, b, c], opt, 'BBS reporting'), [a]);
+  assert.deepEqual(costItemsForService([a, b, c], opt, 'Client Management'), [b, c]);
+  // The next one goes on its own.
+  const two = moveOptionItemService(own, map, b, 'Client Management', 'BBS reporting');
+  assert.deepEqual(costItemsForService([a, b, c], lineItemServicesOnOption({ costLineServices: two }, map), 'BBS reporting'), [a, b]);
+  // Moving back drops the row's pick.
+  assert.deepEqual(moveOptionItemService(own, map, a, 'BBS reporting', 'Client Management'), {});
+  // An older pick for the whole type: one row moves back out of it alone.
+  const typePick = { 'nam::recurring (monthly)': ['BBS reporting'] };
+  const back = moveOptionItemService(typePick, map, c, 'BBS reporting', 'Client Management');
+  assert.deepEqual(back, { ...typePick, '#item:c': ['Client Management'] });
+  // Not on the service it is moving from: unchanged.
+  assert.equal(moveOptionItemService(own, map, b, 'BBS reporting', 'GHG'), own);
 });
 
 test('cost line picks left in the shared mapping are ignored', () => {
