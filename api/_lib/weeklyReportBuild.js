@@ -17,6 +17,7 @@
 //   Hold Off / Old Client the owner's prospects (company, substatus, status)
 //   Progress weeks        progressHistory/{uid}
 //   Coverage ratio log    coverageRatioHistory/{uid}
+//   All missing steps     …/company-data-missing-history
 //   Targets, work email   userSettings/{uid}
 //   Emails / calls / mtgs  the HubSpot API itself, live
 //
@@ -47,6 +48,7 @@ import {
   COVERAGE_FILL_GRACE_MS,
 } from '../../src/utils/weeklyReportTrends.js';
 import { withCoverageImages, withCoverageRatioImage } from '../../src/utils/coverageChartImage.js';
+import { missingStepsTrend, withMissingStepsImage } from '../../src/utils/missingStepsTrend.js';
 import { excludeUntrackedFromWeeks } from '../../src/utils/progressUntracked.js';
 import { withCoverageLeftOut } from '../../src/utils/reportingStatus.js';
 
@@ -137,7 +139,7 @@ export async function loadReportSources(db, uid, { token = '', start, end, histo
     }
   };
 
-  const [opps2, pipeline, bfo, goals, activityLog, yoyOverrides, progress, coverageRatioLog, settings, activityCache, clientUntracked, prospects] =
+  const [opps2, pipeline, bfo, goals, activityLog, yoyOverrides, progress, coverageRatioLog, settings, activityCache, clientUntracked, prospects, missingHistory] =
     await Promise.all([
       settle('opps2', () => loadOpps2(db, uid), null),
       settle('pipeline', () => loadMirror(db, uid, MIRROR.pipeline), null),
@@ -185,6 +187,7 @@ export async function loadReportSources(db, uid, { token = '', start, end, histo
         const snap = await col.select('company', 'substatus', 'status').get();
         return snap.docs.map(d => d.data() || {});
       }, []),
+      settle('missingHistory', () => loadMirror(db, uid, MIRROR.missingHistory, {}), {}),
     ]);
 
   return {
@@ -201,10 +204,19 @@ export async function loadReportSources(db, uid, { token = '', start, end, histo
     clientUntrackedMap: (clientUntracked && typeof clientUntracked === 'object') ? clientUntracked : {},
     prospects: Array.isArray(prospects) ? prospects : [],
     coverageRatioLog: coverageRatioLog || {},
+    missingHistory: parseMissingMirror(missingHistory),
     settings: settings || {},
     activityCache,
     errors,
   };
+}
+
+// The mirrored history, whether the mirror handed back the map or the
+// JSON string localStorage held.
+function parseMissingMirror(v) {
+  let h = v;
+  if (typeof h === 'string') { try { h = JSON.parse(h); } catch { h = null; } }
+  return h && typeof h === 'object' && !Array.isArray(h) ? h : {};
 }
 
 /**
@@ -221,7 +233,7 @@ export function buildReportPayload(sources, period, opts) {
  * null otherwise). Still pure: the caller decides whether to write the fill.
  * `now` is when the reading is being taken; without one, nothing is filled.
  */
-export function buildReport(sources, period, { now = null } = {}) {
+export function buildReport(sources, period, { now = null, timeZone = '' } = {}) {
   const s = sources || {};
   const { start, end, scope, label } = period;
   const settings = s.settings || {};
@@ -296,6 +308,11 @@ export function buildReport(sources, period, { now = null } = {}) {
   const coverageFill = filledLog !== log ? { key: reportWeekKey, entry: filledLog[reportWeekKey] } : null;
   const coverageRatio = withCoverageRatioImage(coverageRatioByWeek({ log: filledLog, refMs: start, weeks: COVERAGE_RATIO_WEEKS }));
 
+  // My Accounts > All Missing History, the recorded days up to the end of
+  // the period. The days are the app's own local dates, so they are cut
+  // in the schedule's zone.
+  const missingSteps = withMissingStepsImage(missingStepsTrend(s.missingHistory, { endMs: end, timeZone }));
+
   const funnelStages = buildFunnelStages({
     stages: Array.isArray(s.pipeline?.stages) ? s.pipeline.stages : [],
     bfoMetrics: bfoStageMetrics(s.bfo),
@@ -319,6 +336,7 @@ export function buildReport(sources, period, { now = null } = {}) {
     trends,
     coverage,
     coverageRatio,
+    missingSteps,
     oppChanges,
     goalsProgress,
     // The recap is the tab's one on-demand piece; a cron that wrote its own
@@ -339,6 +357,7 @@ export function payloadHasFigures(payload) {
   if (payload.closeRateTrend) return true;
   if (payload.coverage) return true;
   if (payload.coverageRatio) return true;
+  if (payload.missingSteps) return true;
   const tr = payload.trends || {};
   const points = [...(tr.emailsByWeek || []), ...(tr.newOppsByWeek || [])];
   if (points.some(p => Number(p.value) > 0)) return true;
@@ -366,7 +385,7 @@ export async function buildWeeklyReport(db, uid, {
     fetchOpts,
     ownerEmail,
   });
-  const { payload, coverageFill } = buildReport(sources, period, { now });
+  const { payload, coverageFill } = buildReport(sources, period, { now, timeZone });
   const errors = [...sources.errors];
   // Write the week's reading down, so next week's email has this point
   // whether or not this one is sent. A merge of the one map entry: the

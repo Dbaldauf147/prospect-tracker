@@ -242,6 +242,34 @@ function coverageRatioDoc(c) {
   };
 }
 
+// The All Missing Steps total by recorded day, with the subtab's headline.
+// Bounded like the other series, keeping the recent end, and its picture
+// through the same checks as the coverage pictures.
+export const MAX_MISSING_POINTS = 90;
+
+function missingStepsDoc(m) {
+  if (!m || typeof m !== 'object') return null;
+  const points = (Array.isArray(m.points) ? m.points : [])
+    .slice(-MAX_MISSING_POINTS)
+    .map(p => ({
+      key: str(p?.key, 10),
+      label: str(p?.label, 16),
+      value: clampInt(p?.value, 0, 1e9, 0),
+    }))
+    .filter(p => p.label);
+  if (!points.length) return null;
+  const delta = Number(m.delta);
+  return {
+    points,
+    latest: points[points.length - 1].value,
+    companies: clampInt(m.companies, 0, 1e6, 0),
+    sinceLabel: str(m.sinceLabel, 16),
+    delta: m.delta == null || !Number.isFinite(delta) ? null : clampInt(delta, -1e9, 1e9, 0),
+    sinceBaseline: m.sinceBaseline === true,
+    image: coverageImageDoc(m.image),
+  };
+}
+
 // The funnel as a picture: a PNG the tab rasterised off its own chart,
 // carried as a data URL and mailed as an attachment.
 //
@@ -309,6 +337,8 @@ export function buildSnapshotDoc(input, auth) {
     coverage: coverageDoc(s.coverage),
     // The KPI card's coverage ratio, a reading per week.
     coverageRatio: coverageRatioDoc(s.coverageRatio),
+    // My Accounts > All Missing History's line.
+    missingSteps: missingStepsDoc(s.missingSteps),
     oppChanges: {
       closed: trimList(oc.closed),
       newOpps: trimList(oc.newOpps),

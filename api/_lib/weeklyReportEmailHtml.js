@@ -517,6 +517,39 @@ const mutedRow = (text) => `<div style="font-family:${FONT};font-size:13px;color
 // projected-total block that used to sit under it were taken out on
 // request, since the picture already draws both. With no picture there is
 // nothing to show, so the section is left out rather than headed and empty.
+// My Accounts > All Missing History: the All Missing Steps total by
+// recorded day. The headline the subtab prints over its chart (today's
+// total, how many companies, the move since the baseline or first day),
+// then the chart. Without the picture, the last few days as text rows.
+const MISSING_ACCENT = '#DC2626';
+const MISSING_DOWN = '#047857';
+const MISSING_ROWS = 8;
+
+export function missingStepsHtml(ms, src = '') {
+  const points = (Array.isArray(ms?.points) ? ms.points : []).filter(p => p && p.label);
+  if (!points.length) return '';
+  const last = points[points.length - 1];
+  const fmt = (n) => Number(n).toLocaleString('en-US');
+  const delta = Number.isFinite(ms.delta) && ms.delta !== 0 && ms.sinceLabel
+    ? `<td style="font-family:${FONT};font-size:12px;font-weight:700;color:${ms.delta < 0 ? MISSING_DOWN : MISSING_ACCENT};white-space:nowrap">${esc(`${ms.delta > 0 ? '+' : ''}${fmt(ms.delta)} ${ms.sinceBaseline ? `vs the ${ms.sinceLabel} baseline` : `since ${ms.sinceLabel}`}`)}</td>`
+    : '';
+  const head = table(`style="border-collapse:collapse"`, `<tr>
+      <td valign="baseline" style="padding-right:10px;font-family:${FONT};font-size:22px;font-weight:700;color:${INK};white-space:nowrap">${esc(fmt(last.value))}</td>
+      <td valign="baseline" style="padding-right:12px;font-family:${FONT};font-size:12px;color:${MUTED};white-space:nowrap">${esc(`${ms.companies ? `across ${fmt(ms.companies)} companies, ` : ''}${last.label}`)}</td>
+      ${delta}
+    </tr>`);
+  const body = src && ms.image
+    ? `<img src="${esc(src)}" width="${ms.image.width}" height="${ms.image.height}" alt="${esc(ms.image.alt || 'All missing steps by day')}" style="display:block;width:100%;max-width:${ms.image.width}px;height:auto;border:0;outline:none;text-decoration:none;margin-top:8px">`
+    : table(`style="border-collapse:collapse;margin-top:8px"`, points.slice(-MISSING_ROWS).map(p => `<tr>
+        <td style="padding:2px 14px 2px 0;font-family:${FONT};font-size:12px;color:${MUTED};white-space:nowrap">${esc(p.label)}</td>
+        <td style="padding:2px 0;font-family:${FONT};font-size:13px;font-weight:600;color:${INK};text-align:right;white-space:nowrap">${esc(fmt(p.value))}</td>
+      </tr>`).join(''));
+  return `${cardOpen({ left: MISSING_ACCENT })}
+      ${head}
+      ${body}
+    ${CARD_CLOSE}`;
+}
+
 export function funnelHtml(funnel, image = null) {
   const stages = Array.isArray(funnel?.stages) ? funnel.stages : [];
   if (!stages.length || !image?.src) return '';
@@ -771,6 +804,7 @@ export function staleBannerHtml(fresh) {
  */
 export function renderWeeklyReportHtml(snapshot, {
   message = '', funnelImageSrc = '', coverageImageSrcs = {}, coverageRatioImageSrc = '',
+  missingStepsImageSrc = '',
 } = {}) {
   const s = snapshot || {};
   const fresh = freshnessNote(s);
@@ -831,6 +865,7 @@ export function renderWeeklyReportHtml(snapshot, {
   const coverageSpanLabel = coverageMonths ? `Last ${coverageMonths} months` : `Last ${coverageWeeks} weeks`;
   const coverageRatio = coverageRatioHtml(s.coverageRatio, coverageRatioImageSrc);
   const coverageRatioWeeks = (s.coverageRatio?.points || []).length;
+  const missingSteps = missingStepsHtml(s.missingSteps, missingStepsImageSrc);
   const trendMonths = (Array.isArray(s.closeRateTrend?.months) ? s.closeRateTrend.months : []).length;
   const narrative = narrativeHtml(s.narrative);
 
@@ -906,6 +941,8 @@ ${table(`width="100%" bgcolor="${PAGE_BG}" style="border-collapse:collapse;backg
     ${spacer(16)}${trendRow}
 
     ${coverage ? `${spacer(20)}${headingHtml('Account coverage', `${coverageSpanLabel}, from the Progress tab`)}${spacer(8)}${coverage}` : ''}
+
+    ${missingSteps ? `${spacer(20)}${headingHtml('All missing steps', 'By day, from My Accounts > All Missing History')}${spacer(8)}${missingSteps}` : ''}
 
     ${narrative ? `${spacer(16)}${narrative}` : ''}
 

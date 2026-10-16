@@ -112,6 +112,7 @@ export function emailSnapshotPayload({
   trends = null,
   coverage = null,
   coverageRatio = null,
+  missingSteps = null,
   oppChanges = {},
   goalsProgress = {},
   narrative = '',
@@ -191,6 +192,20 @@ export function emailSnapshotPayload({
         note: coverageRatio.note || '',
         // The line chart drawn from the points (utils/coverageChartImage).
         image: coverageRatio.image || null,
+      }
+      : null,
+    // My Accounts > All Missing History: the All Missing Steps total by
+    // recorded day (utils/missingStepsTrend), with the headline the subtab
+    // prints over it. Null until a day is recorded.
+    missingSteps: missingSteps?.points?.length
+      ? {
+        points: missingSteps.points,
+        latest: missingSteps.latest,
+        companies: missingSteps.companies || 0,
+        sinceLabel: missingSteps.sinceLabel || '',
+        delta: missingSteps.delta ?? null,
+        sinceBaseline: !!missingSteps.sinceBaseline,
+        image: missingSteps.image || null,
       }
       : null,
     oppChanges: {
