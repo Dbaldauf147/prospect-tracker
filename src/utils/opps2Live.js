@@ -16,15 +16,28 @@
 //   - a read that comes back with the `_updatedAt` already held keeps the
 //     object already held (saveOpps2Cache stamps every write, and it is the
 //     only writer), so nothing downstream sees a change that isn't one,
-//   - the 10-minute tick still publishes a new snapshot regardless, because
-//     Call In and the ladder are relative to today and have to roll over at
-//     midnight without an edit.
+//   - the 10-minute tick re-reads like a focus does, and publishes a new
+//     snapshot of unchanged data only once the local date has moved on:
+//     Call In, the ladder and the Issues dates count whole days from today,
+//     so they have to roll over at midnight without an edit, but nothing in
+//     them changes between one tick and the next on the same day. Forcing
+//     it every tick re-ran every App-level hook over the whole book every
+//     ten minutes for no change.
 //
 // No imports: the loaders are handed in, so this runs in plain Node for its
 // test.
 
-export function createOpps2Live({ loadCache, loadNewest, tickMs = 10 * 60 * 1000 }) {
+// YYYY-MM-DD in local time: the day the date math is counted from.
+function localDay() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+export function createOpps2Live({ loadCache, loadNewest, tickMs = 10 * 60 * 1000, today = localDay }) {
   let current = null;
+  // The day `current` was last handed out on; a tick on a later day forces
+  // a new snapshot so the day-relative counts roll over.
+  let publishedDay = null;
   // Matches no real id (not even undefined), so the first start loads.
   let userId = {};
   let readId = 0;
@@ -45,6 +58,7 @@ export function createOpps2Live({ loadCache, loadNewest, tickMs = 10 * 60 * 1000
     // A forced publish of unchanged data still hands out a new records
     // array: the consumers memoize on it, and the date math is the point.
     current = same ? { ...current, records: current.records.slice() } : data;
+    publishedDay = today();
     emit();
   }
 
@@ -78,7 +92,7 @@ export function createOpps2Live({ loadCache, loadNewest, tickMs = 10 * 60 * 1000
 
   const onFocus = () => { refresh(); };
   const onSaved = () => { refresh(); };
-  const onTick = () => { refresh({ force: true }); };
+  const onTick = () => { refresh({ force: today() !== publishedDay }); };
 
   return {
     getSnapshot: () => current,
