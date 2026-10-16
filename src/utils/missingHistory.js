@@ -32,14 +32,16 @@
 // to Firestore, the same way the DM tag history is.
 
 import { userLsGet, userLsSet } from './userLs.js';
-import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
+import { mergeDayHistories, registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 import { COMPANY_DATA_FIELDS, fieldHasValue, fieldMissing } from './companyDataFields.js';
 import { allMissingStepsFor } from './allMissingSteps.js';
 
 export const MISSING_HISTORY_KEY = 'company-data-missing-history';
 export const MISSING_HISTORY_EVENT = 'company-data-missing-history-changed';
 
-registerMirroredKey(MISSING_HISTORY_KEY, MISSING_HISTORY_EVENT);
+// Merged row by row on sync (mergeDayHistories), so a tab left open since
+// an earlier day can't push its copy over days it never saw.
+registerMirroredKey(MISSING_HISTORY_KEY, MISSING_HISTORY_EVENT, { merge: mergeDayHistories });
 
 export const MISSING_HISTORY_MAX_DAYS = 730;
 

@@ -15,7 +15,7 @@
 // @se.com. Calls and meetings ride along because they're free once the
 // feed is being walked.
 import { userLsGet, userLsSet } from './userLs.js';
-import { registerMirroredKey, queueMirrorPush, dispatchStoreEvent } from './localMirrorSync.js';
+import { mergeDayHistories, registerMirroredKey, queueMirrorPush, dispatchStoreEvent } from './localMirrorSync.js';
 import {
   isSentExternalEmail, isCountedCall, emailTs, callTs, meetingTs,
 } from './weeklyReport.js';
@@ -31,7 +31,9 @@ export const WEEKLY_ACTIVITY_EVENT = 'weekly-activity-log-updated';
 // has rolled past what the feed still carries — or the browser is cleared,
 // or the user moves machines — nothing can recompute it, which is the
 // whole reason the number is written down in the first place.
-registerMirroredKey(LOG_KEY, WEEKLY_ACTIVITY_EVENT);
+// Merged row by row on sync (mergeDayHistories), so a tab left open since
+// an earlier day can't push its copy over days it never saw.
+registerMirroredKey(LOG_KEY, WEEKLY_ACTIVITY_EVENT, { merge: mergeDayHistories });
 
 // Three years of weeks. Each entry is ~60 bytes, so the whole log stays
 // a rounding error against the quota that motivated it.

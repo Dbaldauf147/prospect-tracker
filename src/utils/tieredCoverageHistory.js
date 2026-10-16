@@ -24,12 +24,14 @@
 
 import { TIERS } from '../data/enums.js';
 import { userLsGet, userLsSet } from './userLs.js';
-import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
+import { mergeDayHistories, registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 
 export const TIERED_COVERAGE_HISTORY_KEY = 'tiered-coverage-history';
 export const TIERED_COVERAGE_HISTORY_EVENT = 'tiered-coverage-history-changed';
 
-registerMirroredKey(TIERED_COVERAGE_HISTORY_KEY, TIERED_COVERAGE_HISTORY_EVENT);
+// Merged row by row on sync (mergeDayHistories), so a tab left open since
+// an earlier day can't push its copy over days it never saw.
+registerMirroredKey(TIERED_COVERAGE_HISTORY_KEY, TIERED_COVERAGE_HISTORY_EVENT, { merge: mergeDayHistories });
 
 export const COVERAGE_MAX_DAYS = 1000;
 
