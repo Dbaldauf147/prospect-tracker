@@ -1,7 +1,7 @@
 // Assertion tests for the Zoom Search Log's parsing and roll-up.
 //   node scripts/zoomSearchLog.test.mjs
 import {
-  splitPastedTable, parseZoomPaste, splitTitles, readLog, makeSearch, companyLog, buildProspectMatcher, cleanZoomId, titleSearchesForCompany,
+  splitPastedTable, parseZoomPaste, splitTitles, readLog, makeSearch, companyLog, buildProspectMatcher, cleanZoomId, titleSearchesForCompany, buildTitleSearchedMatcher,
 } from '../src/utils/zoomSearchLog.js';
 
 let passed = 0, failed = 0;
@@ -102,6 +102,14 @@ check('company search drops tag and titles',
   check('matched by name when the record has no Zoom ID',
     titleSearchesForCompany(searches, { company: 'Other Co' }).map(s => s.tag), ['Utilities']);
   check('no identity, nothing', titleSearchesForCompany(searches, {}), []);
+
+  const esg = buildTitleSearchedMatcher(searches, 'esg');
+  check('title searched for a tag: by name, newest date', esg(urw), '2026-10-09');
+  check('title searched: by Zoom ID', esg({ company: 'Nope', zoomCompanyId: '9' }), '2026-10-10');
+  check('title searched: other tag is not this one', buildTitleSearchedMatcher(searches, 'Utilities')(urw), '');
+  check('title searched: company searches do not count', buildTitleSearchedMatcher(searches, '')(urw), '');
+  check('title searched: name match with a different Zoom ID is not it',
+    buildTitleSearchedMatcher(searches, 'Capital Planning')({ company: 'URW', zoomCompanyId: '9' }), '');
 }
 
 console.log(`${passed} passed, ${failed} failed`);
