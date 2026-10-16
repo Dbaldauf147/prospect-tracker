@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { loadDealsList, DEALS_LIST_EVENT } from '../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../utils/dealClientMap';
 import { loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT, loadClientStatusMap, CLIENT_STATUS_EVENT } from '../utils/clientManagerStore';
@@ -55,7 +55,20 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   const [myAccountsFlags, setMyAccountsFlags] = useState(() => loadMyAccountsFlags());
   // BFO Activity rows + Opps cache (both IndexedDB) drive the "BFO
   // Opportunity Name not tagged to an opp" issue. Loaded async below.
-  const [bfoActivity, setBfoActivity] = useState(null);
+  const [bfoActivity, setBfoActivityState] = useState(null);
+  // Every focus re-reads the record, and IndexedDB hands back a new object
+  // each time, which re-ran computeIssues (every detector over the whole
+  // book) on every switch back to the tab. A read whose content matches
+  // what is held keeps the held object. Compared on the whole content, not
+  // `updatedAt`: that is when the rows were pasted, and an edit can keep it.
+  const bfoJsonRef = useRef('null');
+  const setBfoActivity = useCallback((d) => {
+    let json = null;
+    try { json = JSON.stringify(d); } catch { /* not comparable: take it */ }
+    if (json !== null && json === bfoJsonRef.current) return;
+    bfoJsonRef.current = json;
+    setBfoActivityState(d);
+  }, []);
   // The Opps 2 records, off the reader the other App-level hooks share, so
   // a focus or an Opps save is one IndexedDB read rather than one per hook,
   // and an unchanged record doesn't re-run computeIssues.
@@ -112,7 +125,7 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
     setMyAccountsFlags(loadMyAccountsFlags());
     dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY).then(d => setBfoActivity(d || null)).catch(() => {});
     loadPipelineDashboard().then(p => setCoverageServices(prev => keepIfSame(prev, coverageServicesOf(p)))).catch(() => {});
-  }, [user?.uid]);
+  }, [user?.uid, setBfoActivity]);
 
   useEffect(() => {
     function onStorage(e) {
@@ -178,7 +191,7 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
       window.removeEventListener(ISSUE_SNOOZED_EVENT, onSnoozed);
       window.removeEventListener(MY_ACCOUNTS_FLAGS_EVENT, onMaFlags);
     };
-  }, []);
+  }, [setBfoActivity]);
 
   const issues = useMemo(() => {
     const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings });
