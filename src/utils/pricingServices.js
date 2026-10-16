@@ -811,6 +811,41 @@ export function moveOptionCostLineService(optionPicks, lineItemServices, item, f
   return out;
 }
 
+// Move to on the Services subtab, for ONE row of ONE option.
+//
+// Lines alike in Line Item and SIA type (three "Commercial Client
+// Management NAM" monthly lines, say) are moved one at a time, so the move
+// is saved as that row's own pick (keyed by its workbook id) rather than
+// for its line item + type the way moveOptionCostLineService does. The
+// row's services as the option reads them now have the one swapped for
+// the other. A move that lands the row back on what it would read without
+// a pick of its own drops the pick rather than keeping a copy. A row not
+// tied to the service it is moving from is left as it was.
+//
+//   item   the cost line: { id, description, type } with type as the SIA has it
+export function moveOptionItemService(optionPicks, lineItemServices, item, fromService, toService) {
+  const map = sharedLineItemServices(lineItemServices);
+  const own = optionPicks && typeof optionPicks === 'object' ? optionPicks : {};
+  const key = costLineItemKey(item?.id);
+  const from = norm(fromService);
+  const name = String(toService ?? '').trim();
+  if (!key || !from || !name || from === norm(name)) return own;
+  const current = servicesForCostLine({ ...map, ...own }, item);
+  const list = Array.isArray(current) ? current : [];
+  if (!list.some(s => norm(s) === from)) return own;
+  const has = list.some(s => norm(s) === norm(name));
+  const next = has
+    ? list.filter(s => norm(s) !== from)
+    : list.map(s => (norm(s) === from ? name : s));
+  const out = { ...own };
+  delete out[key];
+  const without = servicesForCostLine({ ...map, ...out }, item);
+  const same = Array.isArray(without) && without.length === next.length
+    && without.every((s, i) => norm(s) === norm(next[i]));
+  if (!same) out[key] = next;
+  return out;
+}
+
 // Cost figures for the unlinked rows the warning lists: how many cost lines
 // on the option carry each description, and their summed CTS.
 export function costTotalsByLineItem(items) {

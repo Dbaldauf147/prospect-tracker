@@ -42,7 +42,7 @@ import { SiaHistoryTab } from './SiaHistoryTab';
 import { buildSiaHistoryEntry, siaKeyFacts } from '../../utils/siaHistoryEntry';
 import { saveSiaHistoryEntry } from '../../utils/siaLoadHistory';
 import { buildServiceRows } from '../../utils/serviceRows';
-import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, moveOptionCostLineService, sharedLineItemServices, servicesForCostLine, isCostLineServiceKey, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices, sharedLineItemsToSplit, sharedSignature, lineItemServicesOnOption, setOptionCostLineService, setOptionItemService, clearOptionItemPicks, roundFee } from '../../utils/pricingServices';
+import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, sharedLineItemServices, servicesForCostLine, isCostLineServiceKey, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices, sharedLineItemsToSplit, sharedSignature, lineItemServicesOnOption, setOptionCostLineService, setOptionItemService, moveOptionItemService, clearOptionItemPicks, roundFee } from '../../utils/pricingServices';
 import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
 import { isSetupFeeType } from '../../utils/setupFeeFloor';
 import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
@@ -6487,12 +6487,10 @@ export function PricingView({ settings } = {}) {
           onTagLineItem={(key, service) => setLineItemServices(prev => addServiceToLineItem(prev, key, service))}
           // A move is this option's answer alone: saved on the option, never
           // in the Linked To mapping other options and later SIAs read.
-          onMoveLineItem={(line, from, to) => updateActiveOption(o => {
-            const lc = (v) => String(v ?? '').trim().toLowerCase();
-            const rows = (o.sections || []).flatMap(sec => sec.items || [])
-              .filter(x => lc(x.description) === lc(line.description) && lc(x.type) === lc(line.type));
-            return { ...o, costLineServices: moveOptionCostLineService(o.costLineServices, lineItemServices, line, from, to, rows) };
-          })}
+          // One row at a time: lines alike in Line Item and type stay put.
+          onMoveLineItem={(line, from, to) => updateActiveOption(o => ({
+            ...o, costLineServices: moveOptionItemService(o.costLineServices, lineItemServices, line, from, to),
+          }))}
           onIgnoreLineItem={(key) => setLineItemIgnored(prev => ({ ...(prev || {}), [key]: true }))}
           sharedToSplit={sharedToSplit}
           // The line menu sets every row of that type, so row picks made in

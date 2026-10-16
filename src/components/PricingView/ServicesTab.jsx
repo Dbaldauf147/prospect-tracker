@@ -124,9 +124,9 @@ function RecoverFromExports({ onRecover, onRecoverPaste }) {
 //   tagOptions      the Dropdowns catalog a cost line can be tagged to
 //   onTagLineItem   (lineItemKey, serviceName) => adds the service
 //   onMoveLineItem  ({ id, description, type }, fromService, toService) =>
-//                   swaps one service for another on that one cost line (type
-//                   as the SIA gives it), on the active option only; the line
-//                   item's other cost lines and every other option stay
+//                   swaps one service for another on that one row (type as
+//                   the SIA gives it), on the active option only; every other
+//                   row, alike or not, and every other option stay
 //   onIgnoreLineItem (lineItemKey) => marks the line item Ignore
 //   sharedToSplit   sharedLineItemsToSplit() for the active option: line
 //                   items tied to several services with no priority order,
@@ -738,10 +738,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
   // The last cost line moved off to another service, said above the table
   // since the line itself leaves it.
   const [moved, setMoved] = useState(null);
-  // A move is one cost line: its line item and the type the SIA gives it.
-  // Two lines alike in both (rare) can't be told apart, so they go together.
-  const lc = (v) => String(v ?? '').trim().toLowerCase();
-  const sameLine = (a, b) => lc(a.description) === lc(b.description) && lc(a.siaType) === lc(b.siaType);
+  // A move is one row, so lines alike in Line Item and type go one at a time.
   // A line's counts are its own, except a deal size: that one is the
   // deal's, so it stays the service's (typed on any line, shown on all).
   const lineEntered = (it) => {
@@ -756,9 +753,8 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
   };
   function moveItem(it, to) {
     if (!onMoveItem || !to) return;
-    const count = items.filter(x => sameLine(x, it)).length;
     onMoveItem({ id: it.id, description: it.description, type: it.siaType }, to);
-    setMoved({ name: it.description, type: it.type, to, count });
+    setMoved({ name: it.description, type: it.type, to });
   }
 
   function addStructure(fromSia) {
@@ -977,7 +973,7 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
             {moved && (
               <div className={styles.movedNote}>
                 <span>
-                  Moved {moved.count === 1 ? '' : `${moved.count} cost lines of `}&quot;{moved.name}&quot;{moved.type ? ` (${moved.type})` : ''} to <strong>{moved.to}</strong>.
+                  Moved &quot;{moved.name}&quot;{moved.type ? ` (${moved.type})` : ''} to <strong>{moved.to}</strong>.
                 </span>
                 {onOpenService && (
                   <button type="button" className={styles.linkBtn} onClick={() => onOpenService(moved.to)}>Open {moved.to}</button>
@@ -1029,12 +1025,9 @@ function ServiceDetail({ service, globalGmPct, completed = false, onSetCompleted
                               value=""
                               onChange={(e) => moveItem(it, e.target.value)}
                               aria-label={`Move ${it.description} to another service`}
-                              title={(() => {
-                                const n = items.filter(x => sameLine(x, it)).length;
-                                return `Move this one cost line to another service in scope on ${optionName || 'this option'}. `
-                                  + `Only this "${it.description}" line moves${it.siaType ? ` (${it.siaType})` : ''}; other lines with the same Line Item stay where they are. `
-                                  + `It holds on ${optionName || 'this option'} only${n > 1 ? `, and the ${n} identical lines move together` : ''}.`;
-                              })()}
+                              title={`Move this one cost line to another service in scope on ${optionName || 'this option'}. `
+                                + `Only this "${it.description}" line moves${it.siaType ? ` (${it.siaType})` : ''}; other lines with the same Line Item, even the same type, stay where they are. `
+                                + `It holds on ${optionName || 'this option'} only.`}
                             >
                               <option value="">Move to...</option>
                               {moveTargets.map(n => <option key={n} value={n}>{n}</option>)}
