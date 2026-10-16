@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { getHubspotCache } from '../utils/hubspotContactsCache';
+import { getHubspotCacheShared } from '../utils/hubspotContactsCache';
 import { decisionMakerCoverage } from '../utils/decisionMakerCoverage';
 
 // Decision-maker mapping per tier, for the cold-outreach step of the
@@ -17,7 +17,7 @@ export function useDecisionMakerCoverage({ prospects, cdmName, settings, userId 
   useEffect(() => {
     let cancelled = false;
     function refresh() {
-      getHubspotCache()
+      getHubspotCacheShared()
         .then(c => { if (!cancelled) setContacts(c?.contacts || []); })
         .catch(() => { if (!cancelled) setContacts([]); });
     }

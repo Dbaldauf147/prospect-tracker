@@ -7,7 +7,7 @@
 // On first read, any cache still in localStorage is migrated into IDB and the
 // localStorage entry is removed.
 
-import { dbGet, dbPut } from './db';
+import { dbGet, dbPut, getDbUserId } from './db';
 
 const STORE = 'hubspot-contacts';
 const KEY = 'cache';
@@ -49,8 +49,38 @@ export async function getHubspotContacts() {
   return c?.contacts || [];
 }
 
+// One read for the readers that fire together. App, the sidebar's roster
+// coverage and the decision-maker coverage all re-read the whole cache on
+// load and on every 'hubspot-cache-updated' event, at the same moment; each
+// read deserialises tens of thousands of contacts. A read already in flight
+// is handed to whoever asks while it runs, and forgotten as soon as it
+// settles, so nothing is ever served from memory: the next read goes back
+// to IndexedDB. A write (or the update event) starts a new generation, and
+// a read begun before it is not reused after it.
+//
+// For READERS only. The object is shared between the callers that joined
+// the read, so a caller that edits contacts and saves must use
+// getHubspotCache / updateHubspotCache, which always read their own copy.
+let readGen = 0;
+let inflight = null; // { uid, gen, promise }
+export function getHubspotCacheShared() {
+  const uid = getDbUserId();
+  if (inflight && inflight.uid === uid && inflight.gen === readGen) return inflight.promise;
+  const entry = { uid, gen: readGen, promise: null };
+  entry.promise = getHubspotCache().finally(() => {
+    if (inflight === entry) inflight = null;
+  });
+  inflight = entry;
+  return entry.promise;
+}
+function newReadGen() {
+  readGen += 1;
+  inflight = null;
+}
+
 export async function setHubspotCache(cache) {
   await migrateFromLocalStorage();
+  newReadGen();
   await dbPut(STORE, cache, KEY);
   notifyCacheUpdated();
 }
@@ -86,6 +116,7 @@ export async function setHubspotCachePreservingManual(cache) {
   const merged = preserved.length
     ? { ...cache, contacts: [...(cache.contacts || []), ...preserved] }
     : cache;
+  newReadGen();
   await dbPut(STORE, merged, KEY);
   notifyCacheUpdated();
 }
@@ -101,6 +132,7 @@ export async function updateHubspotCache(mutate) {
 }
 
 export function notifyCacheUpdated() {
+  newReadGen();
   try { window.dispatchEvent(new Event('hubspot-cache-updated')); } catch { /* noop */ }
 }
 
