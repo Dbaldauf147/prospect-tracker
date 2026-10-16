@@ -57,4 +57,18 @@ const o = rosterActivityChartRows(old, ['2026-10-16'], 'keyTarget')[0];
 assert.deepEqual([o.p30, o.p90, o.p120, o.pNone], [35.4, null, 49.4, 50.6]);
 assert.equal(rosterActivityChartRows(h3, ['2026-10-16'], 'nobody')[0].recorded, false);
 
+// The stacked bands: no overlap, and they add up to exactly 100.
+assert.deepEqual([rows[2].b30, rows[2].b90, rows[2].b120, rows[2].bNone], [39.5, 9.2, 1.3, 50]);
+for (const row of rows.filter(x => x.recorded)) {
+  assert.equal(Math.round((row.b30 + row.b90 + row.b120 + row.bNone) * 10) / 10, 100, `${row.iso} adds to 100`);
+}
+// Thirds that round awkwardly still close to 100.
+const thirds = { d: { rosters: { k: { label: 'K', total: 3, active: { 30: 1, 60: 1, 90: 2, 120: 3 } } } } };
+const t = rosterActivityChartRows(thirds, ['d'], 'k')[0];
+assert.deepEqual([t.b30, t.b90, t.b120, t.bNone], [33.3, 33.3, 33.3, 0.1]);
+assert.equal(Math.round((t.b30 + t.b90 + t.b120 + t.bNone) * 10) / 10, 100);
+// Unrecorded, or recorded before 90 days was tracked: no bands.
+assert.deepEqual([rows[1].b30, rows[1].bNone], [null, null]);
+assert.deepEqual([o.b30, o.b90, o.b120, o.bNone], [null, null, null, null]);
+
 console.log('rosterActivityHistory: all assertions passed');
