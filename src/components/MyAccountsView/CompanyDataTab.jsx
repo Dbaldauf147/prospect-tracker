@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
-import { COMPANY_DATA_FIELDS, fieldNotNeeded, fieldNotNeededReason, fieldValue, isTextField, missingFields, planCompanyDataPaste } from '../../utils/companyDataFields';
+import { COMPANY_DATA_FIELDS, fieldNotNeeded, fieldNotNeededReason, fieldValue, isQualifyingCompany, isTextField, missingFields, planCompanyDataPaste } from '../../utils/companyDataFields';
 import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { allMissingStepsFor, STEP_FIELDS } from '../../utils/allMissingSteps';
@@ -66,14 +66,17 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
     return () => window.removeEventListener(ZOOM_SEARCH_LOG_EVENT, reload);
   }, []);
 
-  // One row per account with a company record behind it, its numbers read
+  // One row per account with a company record behind it (Qualifying ones
+  // left out, see isQualifyingCompany), its numbers read
   // off that record so an edit made anywhere shows here at once.
-  const { rows, noRecord } = useMemo(() => {
+  const { rows, noRecord, qualifying } = useMemo(() => {
     const out = [];
     let missing = 0;
+    let qualifyingCount = 0;
     for (const a of accounts) {
       const p = prospectById.get(a.id);
       if (!p) { missing += 1; continue; }
+      if (isQualifyingCompany(p)) { qualifyingCount += 1; continue; }
       const row = { id: p.id, company: p.company || a.company || '', tier: a.myTier || a.tier || '', status: p.status || '', cdm: p.cdm || '' };
       for (const f of COMPANY_DATA_FIELDS) row[f.key] = fieldValue(f, p[f.key]);
       row.zoomExcluded = isZoomExcluded({ id: p.id, company: p.company || a.company, zoomId: p.zoomCompanyId });
@@ -91,7 +94,7 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       row.allMissingSteps = steps ? steps.allMissingSteps : null;
       out.push(row);
     }
-    return { rows: out, noRecord: missing };
+    return { rows: out, noRecord: missing, qualifying: qualifyingCount };
   }, [accounts, prospectById, dmLookup, tagReview, isZoomExcluded, zoomLog]);
 
   const missingCounts = useMemo(() => {
@@ -265,6 +268,11 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
         {noRecord > 0 && (
           <span style={{ fontSize: '0.7rem', color: '#64748B' }}>
             {noRecord} account{noRecord === 1 ? '' : 's'} with no company record (Opps sheet only) left out.
+          </span>
+        )}
+        {qualifying > 0 && (
+          <span style={{ fontSize: '0.7rem', color: '#64748B' }}>
+            {qualifying} Qualifying compan{qualifying === 1 ? 'y' : 'ies'} left out.
           </span>
         )}
       </div>
