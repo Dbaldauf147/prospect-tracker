@@ -143,6 +143,17 @@ export function rosterActivityChartRows(history, days, rosterKey, windows = ROST
     row.p90 = share(row.w90, row.total);
     row.p120 = share(row.w120, row.total);
     row.pNone = row.w120 == null ? null : share(row.total - row.w120, row.total);
+    // The same list split into bands that don't overlap, for the stacked
+    // 100% area: last touched 0-30 days ago, 31-90, 91-120, or not in 120.
+    // The last band is what's left of 100, so rounding can't leave the
+    // stack a hair short or over. A day missing any window (recorded
+    // before 90 days was tracked) has no bands, so it isn't drawn as if
+    // everyone in 31-120 sat in one band.
+    const ok = row.total > 0 && [row.w30, row.w90, row.w120].every(v => v != null);
+    row.b30 = ok ? share(row.w30, row.total) : null;
+    row.b90 = ok ? share(row.w90 - row.w30, row.total) : null;
+    row.b120 = ok ? share(row.w120 - row.w90, row.total) : null;
+    row.bNone = ok ? Math.round((100 - row.b30 - row.b90 - row.b120) * 10) / 10 : null;
     return row;
   });
 }
