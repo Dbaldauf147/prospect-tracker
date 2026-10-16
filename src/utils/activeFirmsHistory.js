@@ -19,12 +19,14 @@
 
 import { ACTIVE_FIRM_BUCKETS } from './tieredAccountActivity.js';
 import { userLsGet, userLsSet } from './userLs.js';
-import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
+import { mergeDayHistories, registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 
 export const ACTIVE_FIRMS_HISTORY_KEY = 'active-firms-history';
 export const ACTIVE_FIRMS_HISTORY_EVENT = 'active-firms-history-changed';
 
-registerMirroredKey(ACTIVE_FIRMS_HISTORY_KEY, ACTIVE_FIRMS_HISTORY_EVENT);
+// Merged row by row on sync (mergeDayHistories), so a tab left open since
+// an earlier day can't push its copy over days it never saw.
+registerMirroredKey(ACTIVE_FIRMS_HISTORY_KEY, ACTIVE_FIRMS_HISTORY_EVENT, { merge: mergeDayHistories });
 
 export const ACTIVE_FIRMS_MAX_DAYS = 1000;
 

@@ -19,6 +19,15 @@
 // or a roster replaced wholesale by an upload. Two devices editing
 // DIFFERENT clients between hydrations will keep only the later save.
 //
+// The exception is a key registered with a `merge` (the day-by-day chart
+// histories, see mergeDayHistories). Those are written automatically by
+// every open tab, so whole-key replacement let a tab left open since
+// yesterday push its copy over today's and erase a day it never saw (it
+// happened to Oct 15 2026 on the Prospecting History charts). For them,
+// every push reads the cloud copy first and sends up the merge of both,
+// and hydration merges instead of replacing, so a stale copy can only add
+// rows, never remove them.
+//
 // The chunked document layout mirrors utils/opps2Store — deliberately a
 // second implementation rather than a shared one, so this can't destabilize
 // the Opps 2 sync path. Both exist for the same reason: past ~1 MB a
@@ -70,9 +79,12 @@ const AT_SUFFIX = ':__mirroredAt';
 // import from them, which would be a cycle).
 const registry = new Map();
 
-export function registerMirroredKey(key, eventName) {
+// `merge(local, remote)` (optional) makes the key merge on every push and
+// hydration instead of last-write-wins (see the header). It must be
+// order-tolerant and keep every row either side has.
+export function registerMirroredKey(key, eventName, { merge = null } = {}) {
   if (!key || key.includes('/')) throw new Error(`Unmirrorable key: ${key}`);
-  registry.set(key, { kind: 'ls', eventName });
+  registry.set(key, { kind: 'ls', eventName, merge, mergeAlways: !!merge });
 }
 
 // The id a mirrored IndexedDB record is stored under. IDB records are
@@ -122,6 +134,43 @@ export function mergeMirroredMaps(local, remote) {
     return out;
   }
   return remote;
+}
+
+// A merge for registerMirroredKey's day-by-day histories: maps keyed by day
+// (or week) whose rows carry a wall-clock stamp (`at`, `updatedAt`, or for
+// All Missing History's baseline `frozenAt`). Every day either side has is
+// kept; where both have one, the row stamped later wins (this browser's on
+// a tie). If that leaves more than one row marked `baseline`, only the most
+// recently frozen keeps the mark, so moving the baseline on one machine
+// isn't undone by the other's older copy.
+const rowStamp = (row) => Math.max(0, ...['at', 'updatedAt', 'frozenAt'].map(k => Number(row?.[k]) || 0));
+export function mergeDayHistories(local, remote) {
+  const isMap = (v) => v && typeof v === 'object' && !Array.isArray(v);
+  if (!isMap(remote)) return isMap(local) ? local : remote;
+  if (!isMap(local)) return remote;
+  const out = { ...remote };
+  for (const [k, row] of Object.entries(local)) {
+    if (!(k in out) || rowStamp(row) >= rowStamp(out[k])) out[k] = row;
+  }
+  const baselines = Object.keys(out).filter(k => out[k]?.baseline);
+  if (baselines.length > 1) {
+    const keep = baselines.reduce((a, b) => ((Number(out[b]?.frozenAt) || 0) > (Number(out[a]?.frozenAt) || 0) ? b : a));
+    for (const k of baselines) {
+      if (k === keep) continue;
+      const { baseline: _b, frozenAt: _f, ...rest } = out[k];
+      out[k] = rest;
+    }
+  }
+  const sorted = {};
+  for (const k of Object.keys(out).sort()) sorted[k] = out[k];
+  return sorted;
+}
+
+// `merge` applied to two JSON strings, or null when either won't parse or
+// the merge throws (the caller then keeps what it has).
+function mergeJson(entry, localRaw, remoteRaw, key) {
+  try { return JSON.stringify(entry.merge(JSON.parse(localRaw), JSON.parse(remoteRaw))); }
+  catch (err) { console.warn(`localMirror: merge failed for "${key}"`, err); return null; }
 }
 
 // dbPut + "remember to sync it". Call sites that write a mirrored record go
@@ -315,8 +364,27 @@ async function pushNow(key, { allowEmpty = false } = {}) {
   if (!_userId) return; // signed out: nothing to push to
   const entry = registry.get(key);
   if (!entry) return;
-  const raw = await readLocal(key, entry);
+  let raw = await readLocal(key, entry);
   if (raw == null && !allowEmpty) return;
+  // A merged key never overwrites the cloud blind: fold in what the cloud
+  // holds first, so rows another tab or machine wrote survive this push.
+  // If the cloud can't be read, don't push at all (the next write retries)
+  // rather than risk replacing rows this browser has never seen.
+  if (entry.mergeAlways && raw != null) {
+    let remote;
+    try { remote = await readMirror(_userId, key); }
+    catch (err) { console.warn(`localMirror: couldn't read "${key}" before pushing; will retry on the next change`, err); return; }
+    if (remote?.json) {
+      const merged = mergeJson(entry, raw, remote.json, key);
+      if (merged == null) return;
+      if (merged !== raw) {
+        await writeLocal(key, entry, merged);
+        fire(entry.eventName);
+        raw = merged;
+      }
+      if (merged === remote.json) return; // the cloud already has all of it
+    }
+  }
   // A push with no stamp yet is data this browser held from before mirroring
   // existed. Stamp it as it goes up, so the next hydration compares it like
   // any other value instead of re-adopting (and re-pushing) it every signin.
@@ -346,6 +414,22 @@ async function hydrateKey(userId, key, entry) {
   if (!remote) {
     if (localRaw != null) await pushNow(key);
     return false;
+  }
+
+  // A merged key: keep both sides' rows whichever is newer. Write the merge
+  // here if it adds anything, and send it up if the cloud is missing some.
+  if (entry.mergeAlways && localRaw != null && remote.json) {
+    const merged = mergeJson(entry, localRaw, remote.json, key);
+    if (merged == null) return false;
+    let changed = false;
+    if (merged !== localRaw) {
+      await writeLocal(key, entry, merged);
+      fire(eventName);
+      changed = true;
+    }
+    userLsSet(key + AT_SUFFIX, String(Math.max(localAt, remote.updatedAt, 1)));
+    if (merged !== remote.json) await pushNow(key);
+    return changed;
   }
 
   // Data this browser had before mirroring existed carries no stamp, so its

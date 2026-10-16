@@ -24,12 +24,14 @@
 // follows the user to another machine.
 
 import { userLsGet, userLsSet } from './userLs.js';
-import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
+import { mergeDayHistories, registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 
 export const CONTACT_COUNT_HISTORY_KEY = 'contact-count-history';
 export const CONTACT_COUNT_HISTORY_EVENT = 'contact-count-history-changed';
 
-registerMirroredKey(CONTACT_COUNT_HISTORY_KEY, CONTACT_COUNT_HISTORY_EVENT);
+// Merged row by row on sync (mergeDayHistories), so a tab left open since
+// an earlier day can't push its copy over days it never saw.
+registerMirroredKey(CONTACT_COUNT_HISTORY_KEY, CONTACT_COUNT_HISTORY_EVENT, { merge: mergeDayHistories });
 
 // The rosters charted, in the order the Totals pills read them. Active is
 // left out: it is a rolling window of whoever has been in touch lately, so

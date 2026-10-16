@@ -30,14 +30,16 @@
 // and follows the user to another machine.
 
 import { userLsGet, userLsSet } from './userLs.js';
-import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
+import { mergeDayHistories, registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 import { TIERS } from '../data/enums.js';
 import { tagColumnKey, tagMatrixRows, tagMatrixCoverage } from './decisionMakerTagMatrix.js';
 
 export const DM_TAG_HISTORY_KEY = 'dm-tag-history';
 export const DM_TAG_HISTORY_EVENT = 'dm-tag-history-changed';
 
-registerMirroredKey(DM_TAG_HISTORY_KEY, DM_TAG_HISTORY_EVENT);
+// Merged row by row on sync (mergeDayHistories), so a tab left open since
+// an earlier day can't push its copy over days it never saw.
+registerMirroredKey(DM_TAG_HISTORY_KEY, DM_TAG_HISTORY_EVENT, { merge: mergeDayHistories });
 
 // Two years of days. A row is a few hundred bytes, so this stays well inside
 // what the mirror carries.

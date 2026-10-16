@@ -33,12 +33,14 @@
 // browser and follows the user to another machine.
 
 import { userLsGet, userLsSet } from './userLs.js';
-import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
+import { mergeDayHistories, registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 
 export const PROSPECTING_HISTORY_KEY = 'prospecting-history';
 export const PROSPECTING_HISTORY_EVENT = 'prospecting-history-changed';
 
-registerMirroredKey(PROSPECTING_HISTORY_KEY, PROSPECTING_HISTORY_EVENT);
+// Merged row by row on sync (mergeDayHistories), so a tab left open since
+// an earlier day can't push its copy over days it never saw.
+registerMirroredKey(PROSPECTING_HISTORY_KEY, PROSPECTING_HISTORY_EVENT, { merge: mergeDayHistories });
 
 // Kept bounded so the mirrored value stays small: a few years of working
 // days is far more than the chart will ever be asked to show.
