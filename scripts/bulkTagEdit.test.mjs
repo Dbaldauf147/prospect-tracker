@@ -267,12 +267,14 @@ function eq(actual, expected, name) {
     'the two spellings of NAM Only are one option');
   eq(vocab.includes('NAM Only'), true,
     'and it is the vocabulary\'s spelling that is offered');
-  eq(vocab.filter(t => tagKey(t) === tagKey('Efficiency / Renewables')).length, 1,
-    'same for the spaced and unspaced Efficiency / Renewables');
+  eq(vocab.filter(t => tagKey(t) === tagKey('Efficiency / Renewables')).length, 0,
+    'a retired tag some contacts still carry is not offered again');
   eq(vocab.includes('Water Rights'), true,
     'a tag only the contacts know about is still offered');
   eq(vocab.length, TAG_OPTIONS.length + 1,
     'nothing else is added: the vocabulary plus the one unknown tag');
+  eq(TAG_OPTIONS.some(t => tagKey(t) === tagKey('Efficiency/Renewables')), false,
+    'and Efficiency / Renewables is no longer one of the standard tags');
   eq(tagVocabulary([]).length, TAG_OPTIONS.length,
     'with no contacts, the vocabulary is the whole list');
 }

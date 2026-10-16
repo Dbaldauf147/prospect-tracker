@@ -33,9 +33,18 @@
 // the option on the property and retries (see ensureDansTagsOptions).
 export const TAG_OPTIONS = [
   'ESG', 'Procurement', 'Utilities', 'Climate Risk', 'Private Equity', 'Real Estate', 'Capital Planning',
-  'Efficiency / Renewables', 'Dan Key Target', 'Decision Maker',
+  'Dan Key Target', 'Decision Maker',
   'Primary Point of Contact', 'Test', 'NAM Only', 'EU', 'Hide', 'Left',
 ];
+
+// Tags the app no longer offers or tracks. Contacts in HubSpot may still
+// carry them, and the vocabulary below is built partly from what contacts
+// carry, so without this a retired tag would come straight back as a picker
+// option, a Tagged % question and a decision-maker column. A contact keeping
+// one in its dans_tags string is left alone; it is just not offered again.
+export const RETIRED_TAGS = new Set([
+  'Efficiency / Renewables',
+].map(t => tagKey(t)));
 
 // Case- and spacing-insensitive identity for a tag. HubSpot validates a
 // dans_tags value against the exact option string, but "Efficiency /
@@ -126,7 +135,7 @@ export function tagVocabulary(extra = [], tagOptions = TAG_OPTIONS) {
     const t = String(raw || '').trim();
     if (!t) continue;
     const k = tagKey(t);
-    if (!seen.has(k)) seen.set(k, t);
+    if (!seen.has(k) && !RETIRED_TAGS.has(k)) seen.set(k, t);
   }
   return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 }
