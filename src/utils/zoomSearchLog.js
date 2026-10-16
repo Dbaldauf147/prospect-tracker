@@ -16,6 +16,7 @@
 // scripts/zoomSearchLog.test.mjs.
 
 import { normZoomCompany } from './zoomExportExclude.js';
+import { tagKey } from './contactTagReview.js';
 
 export const ZOOM_SEARCH_LOG_KEY = 'zoom-search-log';
 
@@ -240,4 +241,43 @@ export function titleSearchesForCompany(searches, { company = '', zoomCompanyId 
     .filter(s => s?.type === 'title' && (s.companies || []).some(isThis))
     .map(s => ({ tag: s.tag || '', titles: s.titles || [], date: s.date || '', contacts: s.contacts || 0 }))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+
+/**
+ * (identity) => the newest date a title search for `tag` is logged against
+ * that company, or '' when none is. Same identity rule as
+ * titleSearchesForCompany (Zoom Company ID when both sides have one, else
+ * either name), and the tag compared on tagKey. Read by Zoom Export by Tag
+ * to leave out companies whose title search for the tag has already run.
+ */
+export function buildTitleSearchedMatcher(searches, tag) {
+  const k = tagKey(tag);
+  const byId = new Map();
+  const byName = new Map();
+  const keep = (map, key, date, cid) => {
+    const prev = map.get(key);
+    if (!prev) map.set(key, [{ date, cid }]);
+    else prev.push({ date, cid });
+  };
+  for (const s of (searches || [])) {
+    if (s?.type !== 'title' || !k || tagKey(s.tag) !== k) continue;
+    const date = String(s.date || '');
+    for (const c of (s.companies || [])) {
+      const cid = cleanZoomId(c?.zoomId);
+      if (cid) keep(byId, cid, date, cid);
+      const n = normZoomCompany(c?.name);
+      if (n) keep(byName, n, date, cid);
+    }
+  }
+  const newest = (list) => list.reduce((best, e) => (e.date > best ? e.date : best), '') || 'logged';
+  return ({ company = '', zoomCompanyId = '', zoomCompanyName = '' } = {}) => {
+    const id = cleanZoomId(zoomCompanyId);
+    const hits = [];
+    if (id && byId.has(id)) hits.push(...byId.get(id));
+    for (const n of new Set([company, zoomCompanyName].map(normZoomCompany).filter(Boolean))) {
+      // A name match counts unless both sides carry different Zoom IDs.
+      for (const e of (byName.get(n) || [])) if (!id || !e.cid) hits.push(e);
+    }
+    return hits.length ? newest(hits) : '';
+  };
 }

@@ -14,8 +14,9 @@
 // columns, rows on screen) cut to one tag: every Inside Sales, Qualifying
 // and Client account with no contact who is both a Decision Maker and a Yes
 // for the tag, or with someone marked Not sure for it, ready to take into
-// ZoomInfo.
-import { useCallback, useMemo, useState } from 'react';
+// ZoomInfo. A tick in the picker also leaves out the accounts whose title
+// search for that tag is already logged on Bulk Add > Zoom Search Log.
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { Badge } from '../common/Badge';
 import { statusColor } from '../../utils/formatters';
@@ -24,6 +25,8 @@ import { tagMatrixColumns, tagColumnKey, tagMatrixRows, tagMatrixCoverage, zoomE
 import { TIERS } from '../../data/enums';
 import { buildZoomExcludedMatcher, zoomExcludedLabel } from '../../utils/zoomExportExclude';
 import { ZoomExcludedCell } from './ZoomExcludedCell';
+import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, buildTitleSearchedMatcher } from '../../utils/zoomSearchLog';
+import { readWorkKey, ZOOM_SEARCH_LOG_EVENT } from '../../utils/mirroredWorkKeys';
 
 const TIER_INK = { 'Tier 1': '#DC2626', 'Tier 2': '#3B82F6', 'Tier 3': '#F59E0B' };
 
@@ -61,8 +64,9 @@ function TierCoverage({ coverage }) {
 }
 
 // Pick a tag, get its Zoom CSV. Each tag shows how many accounts its file
-// would hold, and a tag with none can't be picked.
-function ZoomByTagPicker({ tags, rows, onPick, onClose }) {
+// would hold, and a tag with none can't be picked. `rowsFor(tag)` is the
+// file for a tag, already cut by the skip-searched tick.
+function ZoomByTagPicker({ tags, rowsFor, skippedFor, skipSearched, onSkipSearched, onPick, onClose }) {
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
       <div style={{ background: '#fff', borderRadius: 10, padding: '1rem 1.1rem', width: 380, maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 10px 30px rgba(0,0,0,0.2)' }} onClick={e => e.stopPropagation()}>
@@ -73,8 +77,13 @@ function ZoomByTagPicker({ tags, rows, onPick, onClose }) {
         <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.6rem', lineHeight: 1.4 }}>
           Downloads the Inside Sales, Qualifying and Client accounts shown here that have no contact who is both a Decision Maker and a Yes for the tag, or have someone marked Not sure for it. Columns: Company, Zoom Company ID, Zoom Company Name, Company URL.
         </div>
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: '0.75rem', color: '#334155', marginBottom: '0.6rem', cursor: 'pointer', lineHeight: 1.35 }}>
+          <input type="checkbox" checked={skipSearched} onChange={e => onSkipSearched(e.target.checked)} style={{ marginTop: 2 }} />
+          <span>Leave out companies whose title search for the tag is already logged (Bulk Add &gt; Zoom Search Log)</span>
+        </label>
         {tags.map(tag => {
-          const n = zoomExportRowsForTag(rows, tagColumnKey(tag)).length;
+          const n = rowsFor(tag).length;
+          const skipped = skipSearched ? skippedFor(tag) : 0;
           return (
             <button
               key={tag}
@@ -90,6 +99,7 @@ function ZoomByTagPicker({ tags, rows, onPick, onClose }) {
               <span>{tag}</span>
               <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: '0.72rem', color: n ? '#3B82F6' : '#CBD5E1' }}>
                 {n} account{n === 1 ? '' : 's'}
+                {skipped > 0 && <span style={{ color: '#94A3B8' }}> ({skipped} already searched)</span>}
               </span>
             </button>
           );
@@ -104,6 +114,14 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
   // Export Excel the way the My Accounts tab's Zoom Export does.
   const [onScreen, setOnScreen] = useState(null);
   const [zoomOpen, setZoomOpen] = useState(false);
+  const [skipSearched, setSkipSearched] = useState(true);
+  // The Zoom Search Log, re-read when it changes elsewhere.
+  const [zoomLog, setZoomLog] = useState(() => readZoomSearchLog(readWorkKey(ZOOM_SEARCH_LOG_KEY)));
+  useEffect(() => {
+    const reload = () => setZoomLog(readZoomSearchLog(readWorkKey(ZOOM_SEARCH_LOG_KEY)));
+    window.addEventListener(ZOOM_SEARCH_LOG_EVENT, reload);
+    return () => window.removeEventListener(ZOOM_SEARCH_LOG_EVENT, reload);
+  }, []);
   const localFields = settings?.contactLocalFields || null;
   const links = settings?.companyContactLinks || null;
   const exclusions = settings?.companyContactExclusions || null;
@@ -203,11 +221,41 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
   ], [tags, coverage, zoomExcludedOf]);
 
   const zoomSource = onScreen || rows;
+  const prospectById = useMemo(() => new Map((prospects || []).map(p => [p.id, p])), [prospects]);
+  // Per tag: the accounts the file would hold before the skip-searched tick,
+  // and how many of them have that tag's title search logged.
+  const zoomByTag = useMemo(() => {
+    const out = new Map();
+    for (const tag of tags) {
+      const all = zoomExportRowsForTag(zoomSource, tagColumnKey(tag));
+      const searched = buildTitleSearchedMatcher(zoomLog.searches, tag);
+      const fresh = all.filter(r => {
+        const p = prospectById.get(r.id);
+        return !searched({
+          company: p?.company || r.company,
+          zoomCompanyId: p?.zoomCompanyId || r.zoomCompanyId,
+          zoomCompanyName: p?.zoomCompanyName || r.zoomCompanyName,
+        });
+      });
+      out.set(tag, { all, fresh });
+    }
+    return out;
+  }, [tags, zoomSource, zoomLog, prospectById]);
+  const rowsFor = (tag) => {
+    const e = zoomByTag.get(tag);
+    return (skipSearched ? e?.fresh : e?.all) || [];
+  };
+  const skippedFor = (tag) => {
+    const e = zoomByTag.get(tag);
+    return e ? e.all.length - e.fresh.length : 0;
+  };
   function exportTag(tag) {
-    const picked = zoomExportRowsForTag(zoomSource, tagColumnKey(tag));
+    const picked = rowsFor(tag);
     setZoomOpen(false);
     if (picked.length === 0) {
-      alert(`Every Inside Sales, Qualifying and Client account shown here already has a Decision Maker tagged ${tag}, and nobody marked Not sure for it.`);
+      alert(skipSearched && skippedFor(tag)
+        ? `Every account left for ${tag} already has its ${tag} title search logged. Untick the box to include them.`
+        : `Every Inside Sales, Qualifying and Client account shown here already has a Decision Maker tagged ${tag}, and nobody marked Not sure for it.`);
       return;
     }
     const slug = tag.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -241,7 +289,17 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
       settings={settings}
       updateSettings={updateSettings}
     />
-    {zoomOpen && <ZoomByTagPicker tags={tags} rows={zoomSource} onPick={exportTag} onClose={() => setZoomOpen(false)} />}
+    {zoomOpen && (
+      <ZoomByTagPicker
+        tags={tags}
+        rowsFor={rowsFor}
+        skippedFor={skippedFor}
+        skipSearched={skipSearched}
+        onSkipSearched={setSkipSearched}
+        onPick={exportTag}
+        onClose={() => setZoomOpen(false)}
+      />
+    )}
     </>
   );
 }
