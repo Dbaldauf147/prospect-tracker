@@ -24,6 +24,7 @@ import { tierPreferringTargetsList } from '../../utils/tierSource';
 import { companyDedupeKey } from '../../utils/companyKey';
 import { MASTER_FIELDS, CANONICAL_HEADERS } from '../MasterSiteListView/masterSiteFields';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
+import { suggestTargetVertical, targetVerticalIndex } from '../../utils/targetTier';
 import { normalizeTierText } from '../../utils/tierText';
 import {
   addDivisionPatch,
@@ -237,6 +238,7 @@ const ACCOUNT_COLUMNS = [
     return val ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: s.bg, color: s.color }}>{val}</span> : <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
   }},
   { key: 'vertical', label: 'Vertical', defaultWidth: 110 },
+  { key: 'verticalSuggestion', label: 'Suggested Vertical', defaultWidth: 195, render: null /* set in columns memo */ },
   { key: 'geography', label: 'Geography', defaultWidth: 100 },
   { key: 'publicPrivate', label: 'Pub/Priv', defaultWidth: 80 },
   { key: 'reAum', label: 'RE AUM', defaultWidth: 90, render: (row) => formatAum(row.reAum) },
@@ -821,6 +823,37 @@ function TypeMismatchWarning({ row, onUpdate }) {
 // Its own click, stopped here: the header cell around it sorts the column,
 // and a badge that sorted as well as filtered would do two things to the
 // table for one press.
+// One Suggested Vertical cell: the vertical the mapped Target Accounts row
+// gives, with a button to take it. Off the Dropdowns > Vertical list it is
+// shown greyed with no button: rename it on Target Accounts > Vertical names
+// (or add it to the list) and it becomes acceptable.
+function VerticalSuggestionCell({ row, hit, onUpdate }) {
+  if (!hit) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
+  const current = String(row.vertical || '').trim();
+  if (!hit.onList) {
+    return (
+      <span
+        title={`${hit.from} on the Target Accounts list has "${hit.vertical}", which isn't on the Dropdowns > Vertical list. Rename it on Target Accounts > Vertical names to accept it.`}
+        style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem', fontStyle: 'italic' }}
+      >{hit.vertical} (not on list)</span>
+    );
+  }
+  return (
+    <span
+      style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0 }}
+      title={`From ${hit.from} on the Target Accounts list${current ? `. Replaces ${current}.` : '.'}`}
+    >
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: current ? '#B45309' : '#047857', fontWeight: 600, fontSize: '0.75rem' }}>{hit.vertical}</span>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onUpdate(row.id, { vertical: hit.vertical }); }}
+        title={`Set Vertical to ${hit.vertical}`}
+        style={{ flexShrink: 0, padding: '0 6px', borderRadius: 4, border: '1px solid #059669', background: '#ECFDF5', color: '#047857', fontSize: '0.62rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1.5 }}
+      >Accept</button>
+    </span>
+  );
+}
+
 function ColumnFlagBadge({ count, active, onToggle, what }) {
   if (!count) return null;
   const n = `${count} account${count === 1 ? '' : 's'}`;
@@ -3009,12 +3042,38 @@ Fix that now?
   // matches and the filter below keeps them. Written out once because a
   // badge that said 12 and a filter that showed 9 would be a table nobody
   // could trust, and two copies of a rule is how that happens.
+  // The Suggested Vertical column: per company id, the vertical the Targets
+  // list gives the target account(s) it is mapped to, when that differs from
+  // its Vertical (utils/targetTier suggestTargetVertical). Off-list ones are
+  // shown but never written by Accept all, so the Vertical column only ever
+  // gets values the Dropdowns > Vertical list offers.
+  const verticalListOptions = useMemo(
+    () => getEffectiveDropdownLists(settings).find(l => l.key === 'vertical')?.options || [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [settings?.dropdownLists, settings?.dropdownListsHidden],
+  );
+  const targetVerticals = useMemo(
+    () => targetVerticalIndex(targetAccountsData, { targetVerticalColumn: settings?.targetVerticalColumn, targetVerticalNames: settings?.targetVerticalNames }),
+    [targetAccountsData, settings?.targetVerticalColumn, settings?.targetVerticalNames],
+  );
+  const verticalSuggestions = useMemo(() => {
+    const out = new Map();
+    if (targetVerticals.size === 0) return out;
+    for (const a of allAccounts) {
+      if (!isBulkSelectable(a)) continue;
+      const hit = suggestTargetVertical({ targetNames: a.targetNames, vertical: a.vertical, verticalOverride: a.verticalOverride, index: targetVerticals, options: verticalListOptions });
+      if (hit) out.set(a.id, hit);
+    }
+    return out;
+  }, [allAccounts, targetVerticals, verticalListOptions]);
+
   const flagTests = useMemo(() => ({
     company: (a) => similarNamesByAccount.has((a.company || '').toLowerCase().trim()),
     status: (a) => !!a.statusMismatch,
     type: (a) => !!a.typeMismatch,
     hqRegion: (a) => !a.hqRegion && !isInactive(a),
-  }), [similarNamesByAccount]);
+    verticalSuggestion: (a) => verticalSuggestions.has(a.id),
+  }), [similarNamesByAccount, verticalSuggestions]);
 
   // Everything the search box, the column filters and the summary cards
   // keep. The ⚠ filter is applied after this rather than inside it, so the
@@ -3506,6 +3565,25 @@ Fix that now?
         const verticalOptions = [...listed, ...inUse];
         return { ...col, render: (row) => <InlineCell row={row} field="vertical" value={row.vertical} onUpdate={onUpdate} options={verticalOptions} /> };
       }
+      if (col.key === 'verticalSuggestion') {
+        const suggested = matchingAccounts.filter(flagTests.verticalSuggestion).map(a => a.company);
+        const textOf = (row) => verticalSuggestions.get(row.id)?.vertical || '';
+        return { ...col, renderHeader: (label) => (
+          <span>
+            {label}
+            <ColumnFlagBadge
+              count={suggested.length}
+              active={flagFilter === 'verticalSuggestion'}
+              onToggle={() => toggleFlagFilter('verticalSuggestion')}
+              what="the Targets list gives a different Vertical"
+            />
+          </span>
+        ), headerTitle: warningHeaderTitle('Vertical differs from the mapped Target Accounts row', suggested),
+        getSortValue: (row) => textOf(row).toLowerCase() || null,
+        getFilterValue: textOf,
+        exportValue: textOf,
+        render: (row) => <VerticalSuggestionCell row={row} hit={verticalSuggestions.get(row.id)} onUpdate={onUpdate} /> };
+      }
       if (col.key === 'geography') {
         return { ...col, render: (row) => <InlineCell row={row} field="geography" value={row.geography} onUpdate={onUpdate} options={GEOGRAPHIES} /> };
       }
@@ -3603,7 +3681,7 @@ Fix that now?
         }};
       }
       // Skip computed columns - they stay read-only
-      if (['myTier', 'activityCount', 'oppsCount', 'contactCount', 'bucketCount', 'naRegion', 'type2', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', 'listFlags', '_hide'].includes(col.key)) {
+      if (['myTier', 'verticalSuggestion', 'activityCount', 'oppsCount', 'contactCount', 'bucketCount', 'naRegion', 'type2', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', 'listFlags', '_hide'].includes(col.key)) {
         return col;
       }
       // Make any remaining columns editable as text
@@ -3620,7 +3698,7 @@ Fix that now?
       render: (row) => <button className={styles.deleteBtn} onClick={(e) => { e.stopPropagation(); if (confirm(`Remove "${row.company}" from the database?`)) { dismissCompany(row.company); onDelete(row.id); } }} title="Remove">&#x2715;</button>,
     });
     return mapped;
-  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany, similarNamesByAccount, matchingAccounts, flagTests, flagFilter, mslRowsByCompany, settings?.dropdownLists, settings?.dropdownListsHidden]);
+  }, [onSelect, onUpdate, verticalSuggestions, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany, similarNamesByAccount, matchingAccounts, flagTests, flagFilter, mslRowsByCompany, settings?.dropdownLists, settings?.dropdownListsHidden]);
 
   // Prepend a checkbox column for the mass-edit selection. Opps-only rows
   // render no checkbox since they have no backing prospect to update.
@@ -3711,6 +3789,33 @@ Fix that now?
       alert('Bulk edit failed: ' + (err?.message || err));
     } finally {
       setBulkRunning(false);
+    }
+  }
+
+  // Suggested Vertical > Accept all: every on-list suggestion among the rows
+  // on screen (the column-header filters included), written in one go.
+  const visibleVerticalSuggestions = useMemo(
+    () => (tableVisibleRows || filteredAccounts || [])
+      .map(r => ({ row: r, hit: verticalSuggestions.get(r.id) }))
+      .filter(x => x.hit?.onList),
+    [tableVisibleRows, filteredAccounts, verticalSuggestions],
+  );
+  const [acceptingVerticals, setAcceptingVerticals] = useState(false);
+  async function acceptAllVerticalSuggestions() {
+    const todo = visibleVerticalSuggestions;
+    if (acceptingVerticals || todo.length === 0) return;
+    const replacing = todo.filter(x => String(x.row.vertical || '').trim()).length;
+    const n = `${todo.length} account${todo.length === 1 ? '' : 's'}`;
+    const detail = replacing > 0 ? ` ${replacing} of them already ${replacing === 1 ? 'has' : 'have'} a different Vertical, which will be replaced.` : '';
+    if (!window.confirm(`Set Vertical from the Target Accounts list on ${n}?${detail}`)) return;
+    setAcceptingVerticals(true);
+    try {
+      await Promise.all(todo.map(x => onUpdate(x.row.id, { vertical: x.hit.vertical })));
+    } catch (err) {
+      console.error('Accept vertical suggestions failed:', err);
+      alert('Accepting the suggested verticals failed: ' + (err?.message || err));
+    } finally {
+      setAcceptingVerticals(false);
     }
   }
 
@@ -4382,6 +4487,16 @@ Fix that now?
             style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
           >
             Clear selection
+          </button>
+        )}
+        {visibleVerticalSuggestions.length > 0 && (
+          <button
+            onClick={acceptAllVerticalSuggestions}
+            disabled={acceptingVerticals}
+            title="Set Vertical to the Suggested Vertical on every account on screen that has one on the Dropdowns > Vertical list"
+            style={{ marginLeft: 'auto', padding: '0.25rem 0.7rem', borderRadius: '6px', border: '1px solid #059669', background: '#ECFDF5', color: '#047857', fontSize: '0.7rem', fontWeight: 600, cursor: acceptingVerticals ? 'default' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+          >
+            {acceptingVerticals ? 'Accepting…' : `Accept all suggested verticals (${visibleVerticalSuggestions.length})`}
           </button>
         )}
       </div>
