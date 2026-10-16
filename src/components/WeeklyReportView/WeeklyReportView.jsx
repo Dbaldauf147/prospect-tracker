@@ -3,7 +3,7 @@
 // timestamps, and the Daily Success goals — scopes it to the selected
 // week or day, shows the hard numbers, and (on demand) asks Claude to
 // write a short narrative recap over them.
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import styles from './WeeklyReportView.module.css';
 import { WeeklyReportEmailModal } from './WeeklyReportEmailModal';
 import { WeeklyReportEmailPreview } from './WeeklyReportEmailPreview';
@@ -55,6 +55,8 @@ import { COVERAGE_T1, COVERAGE_T2, COVERAGE_T3 } from '../../utils/progressCover
 import { useClientFlagMaps } from '../../utils/rosterHooks';
 import { excludeUntrackedFromWeeks } from '../../utils/progressUntracked';
 import { withCoverageLeftOut } from '../../utils/reportingStatus';
+import { subscribeMissingHistory, missingHistorySnapshot, parseMissingHistory } from '../../utils/missingHistory';
+import { missingStepsTrend, withMissingStepsImage } from '../../utils/missingStepsTrend';
 
 const ACTIVITY_CACHE_KEY = 'hubspot-activity-cache';
 const PIPELINE_STORE = 'pipeline-dashboard';
@@ -678,6 +680,13 @@ export function WeeklyReportView({ prospects = [], settings, updateSettings, cdm
     refMs: bounds.start,
   })), [coverageRatioLog, bounds]);
 
+  // My Accounts > All Missing History, up to the end of the period, drawn
+  // the way the scheduled send draws it.
+  const missingRaw = useSyncExternalStore(subscribeMissingHistory, missingHistorySnapshot);
+  const missingStepsSeries = useMemo(() => withMissingStepsImage(missingStepsTrend(
+    parseMissingHistory(missingRaw), { endMs: bounds.end },
+  )), [missingRaw, bounds]);
+
   // ---- Click-through breakdowns -----------------------------------------
   // Every figure the email carries is on this tab too, and a click on any
   // of them opens the rows it was counted from with an Excel download
@@ -721,13 +730,15 @@ export function WeeklyReportView({ prospects = [], settings, updateSettings, cdm
     // The coverage ratio card's history: one reading a week, so the email
     // says which way the ratio is going as well as where it stands.
     coverageRatio: coverageRatioSeries,
+    // The All Missing Steps line off My Accounts > All Missing History.
+    missingSteps: missingStepsSeries,
     oppChanges,
     goalsProgress: goalsProg,
     // Only ship a recap that was written for this period; a stale one
     // would describe a different week under this week's heading.
     narrative: narrativeStale ? '' : narrative,
   }), [mode, label, bounds, kpisReady, kpis, funnelSummary, funnelImage, closeRateTrendSummary,
-    trendSeries, coverageSeries, coverageRatioSeries, oppChanges, goalsProg, narrative, narrativeStale]);
+    trendSeries, coverageSeries, coverageRatioSeries, missingStepsSeries, oppChanges, goalsProg, narrative, narrativeStale]);
 
   // Publish on a debounce whenever the snapshot changes and there is
   // something in it worth sending. Only the current period is published:

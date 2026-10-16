@@ -86,6 +86,20 @@ export function coverageRatioAttachment(snapshot) {
   };
 }
 
+// The All Missing Steps line chart, as its own attachment.
+const MISSING_STEPS_CID = 'weekly-report-missing-steps@prospect-tracker';
+
+export function missingStepsAttachment(snapshot) {
+  const content = pngBytes(snapshot?.missingSteps?.image?.src);
+  if (!content) return null;
+  return {
+    filename: 'all-missing-steps.png',
+    content,
+    cid: MISSING_STEPS_CID,
+    contentType: 'image/png',
+  };
+}
+
 // A stale send is marked in the subject as well as in the banner. The
 // banner only works on a report someone opens; the tag is what says "these
 // are old numbers" from the message list, which is where a weekly report
@@ -99,11 +113,13 @@ export async function sendWeeklyReportEmail({ to, subject, message, snapshot, re
   const coverage = coverageAttachments(snapshot);
   const coverageImageSrcs = Object.fromEntries(coverage.map(a => [a.id, `cid:${a.cid}`]));
   const ratio = coverageRatioAttachment(snapshot);
+  const missing = missingStepsAttachment(snapshot);
   const html = renderWeeklyReportHtml(snapshot, {
     message,
     funnelImageSrc: attachment ? `cid:${FUNNEL_CID}` : '',
     coverageImageSrcs,
     coverageRatioImageSrc: ratio ? `cid:${ratio.cid}` : '',
+    missingStepsImageSrc: missing ? `cid:${missing.cid}` : '',
   });
   const label = snapshot?.periodLabel ? ` - ${snapshot.periodLabel}` : '';
   // `id` is this module's own bookkeeping for pairing a picture with its
@@ -111,6 +127,7 @@ export async function sendWeeklyReportEmail({ to, subject, message, snapshot, re
   const files = [
     ...(attachment ? [attachment] : []),
     ...(ratio ? [ratio] : []),
+    ...(missing ? [missing] : []),
     ...coverage.map(a => ({ filename: a.filename, content: a.content, cid: a.cid, contentType: a.contentType })),
   ];
   return sendEmail({

@@ -94,4 +94,6 @@ export const MIRROR = {
   // The Clients tab's "Don't Track" ticks, which the Progress tab takes
   // out of its coverage charts before plotting them.
   clientUntracked: 'clients-untracked-map',
+  // My Accounts > All Missing History, the All Missing Steps total by day.
+  missingHistory: 'company-data-missing-history',
 };
