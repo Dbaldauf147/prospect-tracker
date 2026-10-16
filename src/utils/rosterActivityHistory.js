@@ -1,6 +1,6 @@
 // A day-by-day record of how many people on each contacts roster (Dan Key
 // Target, Dan Key Prospect, Decision Makers) had activity in the last 30,
-// 60 and 120 days, for the Prospecting History subtab's "Contacts with
+// 60, 90 and 120 days, for the Prospecting History subtab's "Contacts with
 // activity" line charts.
 //
 // Like the firms-active record beside it (activeFirmsHistory.js) this can't
@@ -106,15 +106,25 @@ export function rosterActivityHistorySnapshot() {
   return userLsGet(ROSTER_ACTIVITY_HISTORY_KEY) || '';
 }
 
-// One roster's chart points, one per day on the axis: `w30`, `w60`, `w120`
-// (null where the day wasn't recorded, so the line breaks there rather than
-// drawing through a day nobody saw), `total` that day, and `recorded`.
+// A share to one decimal, so a one-person move still shows on the line.
+const share = (n, total) => (n == null || !total ? null : Math.round((n / total) * 1000) / 10);
+
+// One roster's chart points, one per day on the axis: the counts `w30`,
+// `w60`, `w90`, `w120` and `total`, and the shares the charts draw, `p30`,
+// `p90`, `p120` (% of the list with activity in that window) and `pNone`
+// (% with none in 120 days). All null where the day wasn't recorded, so the
+// line breaks there rather than drawing through a day nobody saw; a day
+// recorded before a window was tracked has null for that window alone.
 export function rosterActivityChartRows(history, days, rosterKey, windows = ROSTER_ACTIVITY_WINDOWS) {
   const h = history || {};
   return days.map((iso) => {
     const r = h[iso]?.rosters?.[rosterKey] || null;
     const row = { iso, recorded: !!r, total: r ? r.total : null };
     for (const d of windows) row[`w${d}`] = r ? (r.active?.[d] ?? null) : null;
+    row.p30 = share(row.w30, row.total);
+    row.p90 = share(row.w90, row.total);
+    row.p120 = share(row.w120, row.total);
+    row.pNone = row.w120 == null ? null : share(row.total - row.w120, row.total);
     return row;
   });
 }

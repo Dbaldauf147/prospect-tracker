@@ -20,7 +20,7 @@ import {
   workingDaysBack,
 } from '../../utils/prospectingHistory';
 import { TIERS } from '../../data/enums.js';
-import { ACTIVE_FIRMS_DAYS, ACTIVE_FIRM_BUCKETS, ACTIVITY_SUMMARY_DAYS, ROSTER_ACTIVITY_WINDOWS, rosterActivityCounts, tierActivityCoverage } from '../../utils/tieredAccountActivity';
+import { ACTIVE_FIRMS_DAYS, ACTIVE_FIRM_BUCKETS, ACTIVITY_SUMMARY_DAYS, rosterActivityCounts, tierActivityCoverage } from '../../utils/tieredAccountActivity';
 import { makeMyCdmContactGate } from '../../utils/myCdmContacts';
 import { useAuth } from '../../contexts/AuthContext';
 import { useOpps2Data } from '../../hooks/useOpps2Data';
@@ -177,15 +177,23 @@ function Stat({ label, value, sub }) {
   );
 }
 
-// The three contact rosters, one line chart each: per recorded day, how many
-// of its people had a HubSpot email, call or contact in the last 30, 60 and
-// 120 days (utils/rosterActivityHistory). One hue per window, checked as a
-// set with the palette validator (normal and colour-blind vision, contrast
-// on white), and kept apart from the tier colours used above so blue never
-// reads as Tier 1 here. Every line has a dot per day and the shared legend
-// under the charts, so colour is never the only cue.
-const ROSTER_LINE_COLORS = { 30: '#4F46E5', 60: '#C2410C', 120: '#0891B2' };
-const rosterPct = (n, total) => (total ? Math.round((n / total) * 100) : null);
+// The three contact rosters, one line chart each: per recorded day, the
+// share of its people who had a HubSpot email, call or contact in the last
+// 30, 90 and 120 days, and the share with none in 120 days, so the lines
+// read against one 0-100% scale whatever the list's size
+// (utils/rosterActivityHistory). The hues are checked as a set with the
+// palette validator (every pair, normal and colour-blind vision, contrast
+// on white) and kept apart from the tier colours above, so blue never reads
+// as Tier 1 here. No activity is also dashed: it is the remainder of the
+// 120-day line, not another window. Every line has a dot per day and the
+// legend under the chart, so colour is never the only cue.
+const ROSTER_SERIES = [
+  { key: 'p30', label: 'Last 30 days', short: '30d', color: '#4F46E5', count: (r) => r.w30 },
+  { key: 'p90', label: 'Last 90 days', short: '90d', color: '#D97706', count: (r) => r.w90 },
+  { key: 'p120', label: 'Last 120 days', short: '120d', color: '#0891B2', count: (r) => r.w120 },
+  { key: 'pNone', label: 'No activity in 120 days', short: 'None', color: '#BE123C', dashed: true, count: (r) => (r.w120 == null || r.total == null ? null : r.total - r.w120) },
+];
+const fmtPct = (v) => (v == null ? '-' : `${Math.round(v)}%`);
 
 function RosterActivityTooltip({ active, payload }) {
   const row = active && payload?.[0]?.payload;
@@ -197,13 +205,12 @@ function RosterActivityTooltip({ active, payload }) {
         <div style={{ color: '#64748B' }}>Not recorded (the app wasn&apos;t open with contacts loaded)</div>
       ) : (
         <>
-          {ROSTER_ACTIVITY_WINDOWS.map((d) => {
-            const n = row[`w${d}`];
-            const pct = rosterPct(n, row.total);
+          {ROSTER_SERIES.map((s) => {
+            const n = s.count(row);
             return (
-              <div key={d} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ width: 8, height: 8, borderRadius: 999, background: ROSTER_LINE_COLORS[d], flexShrink: 0 }} />
-                <span>Last {d} days: <strong>{n}</strong> of {row.total}{pct != null ? ` (${pct}%)` : ''}</span>
+              <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: s.color, flexShrink: 0 }} />
+                <span>{s.label}: <strong>{fmtPct(row[s.key])}</strong>{n != null ? ` (${n} of ${row.total})` : ''}</span>
               </div>
             );
           })}
@@ -216,7 +223,6 @@ function RosterActivityTooltip({ active, payload }) {
 // One roster's chart, as a full-width card of its own like the charts above.
 function RosterActivityChart({ label, data, note = '' }) {
   const latest = [...data].reverse().find(r => r.recorded) || null;
-  const top = Math.max(1, ...data.map(r => r.total || 0));
   return (
     <div style={CARD}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
@@ -227,39 +233,37 @@ function RosterActivityChart({ label, data, note = '' }) {
       </div>
       {latest && (
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: '0.68rem', color: '#475569', marginTop: 2 }}>
-          {ROSTER_ACTIVITY_WINDOWS.map((d) => {
-            const n = latest[`w${d}`];
-            const pct = rosterPct(n, latest.total);
-            return (
-              <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ width: 8, height: 8, borderRadius: 999, background: ROSTER_LINE_COLORS[d] }} />
-                {d}d <strong style={{ color: '#1E293B' }}>{n}</strong>{pct != null ? ` (${pct}%)` : ''}
-              </span>
-            );
-          })}
+          {ROSTER_SERIES.map(s => (
+            <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: s.color }} />
+              {s.short} <strong style={{ color: '#1E293B' }}>{fmtPct(latest[s.key])}</strong>
+              {s.count(latest) != null ? ` (${s.count(latest)})` : ''}
+            </span>
+          ))}
         </div>
       )}
       <div style={{ fontSize: '0.68rem', color: '#64748B', margin: '2px 0 4px' }}>
-        How many people on the {label} list had a HubSpot email, call or contact in the last{' '}
-        {ROSTER_ACTIVITY_WINDOWS.slice(0, -1).join(', ')} and {ROSTER_ACTIVITY_WINDOWS[ROSTER_ACTIVITY_WINDOWS.length - 1]} days, day by day.
-        A day is recorded whenever the app is open with contacts and the email/call feed loaded; a break in a line is a day that wasn&apos;t.{note}
+        The share of the {label} list who had a HubSpot email, call or contact in the last 30, 90 and 120 days, and the share with none
+        in 120 days, day by day. A day is recorded whenever the app is open with contacts and the email/call feed loaded; a break in a
+        line is a day that wasn&apos;t.{note}
       </div>
       <ResponsiveContainer width="100%" height={240}>
-        <LineChart data={data} margin={{ top: 10, right: 16, left: -18, bottom: 0 }}>
+        <LineChart data={data} margin={{ top: 10, right: 16, left: -10, bottom: 0 }}>
           <CartesianGrid vertical={false} stroke="#EEF2F6" />
           <XAxis dataKey="label" tick={AXIS_TICK} tickLine={false} axisLine={{ stroke: '#CBD5E1' }} interval="preserveStartEnd" minTickGap={12} />
-          <YAxis allowDecimals={false} domain={[0, top]} tick={AXIS_TICK} tickLine={false} axisLine={false} />
+          <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={v => `${v}%`} tick={AXIS_TICK} tickLine={false} axisLine={false} />
           <Tooltip content={<RosterActivityTooltip />} cursor={{ stroke: '#CBD5E1', strokeWidth: 1 }} />
-          {ROSTER_ACTIVITY_WINDOWS.map(d => (
+          {ROSTER_SERIES.map(s => (
             <Line
-              key={d}
+              key={s.key}
               type="linear"
-              dataKey={`w${d}`}
-              name={`Last ${d} days`}
-              stroke={ROSTER_LINE_COLORS[d]}
+              dataKey={s.key}
+              name={s.label}
+              stroke={s.color}
               strokeWidth={2}
+              strokeDasharray={s.dashed ? '5 4' : undefined}
               // Smaller on the long ranges, where full-size dots would crowd.
-              dot={{ r: data.length > 22 ? 2.5 : 4, strokeWidth: data.length > 22 ? 1 : 2, stroke: '#fff', fill: ROSTER_LINE_COLORS[d] }}
+              dot={{ r: data.length > 22 ? 2.5 : 4, strokeWidth: data.length > 22 ? 1 : 2, stroke: '#fff', fill: s.color }}
               activeDot={{ r: 5, stroke: '#fff', strokeWidth: 2 }}
               // A day that wasn't recorded is a break in the line, not a
               // straight run across it that reads like a reading.
@@ -269,11 +273,13 @@ function RosterActivityChart({ label, data, note = '' }) {
           ))}
         </LineChart>
       </ResponsiveContainer>
-      <div style={{ display: 'flex', justifyContent: 'center', gap: 14, fontSize: '0.7rem', color: '#475569', margin: '2px 0 4px' }}>
-        {ROSTER_ACTIVITY_WINDOWS.map(d => (
-          <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-            <span style={{ width: 8, height: 8, borderRadius: 999, background: ROSTER_LINE_COLORS[d] }} />
-            Last {d} days
+      <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 14, fontSize: '0.7rem', color: '#475569', margin: '2px 0 4px' }}>
+        {ROSTER_SERIES.map(s => (
+          <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <svg width="18" height="8" aria-hidden="true">
+              <line x1="1" y1="4" x2="17" y2="4" stroke={s.color} strokeWidth="2" strokeDasharray={s.dashed ? '4 3' : undefined} />
+            </svg>
+            {s.label}
           </span>
         ))}
       </div>
@@ -615,7 +621,7 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
           <table style={{ marginTop: 8, borderCollapse: 'collapse', fontSize: '0.72rem', width: '100%', background: '#fff' }}>
             <thead>
               <tr style={{ textAlign: 'left', color: '#64748B' }}>
-                {['Day', 'Steps clear', 'Stopped at', 'Overdue at start', 'Overdue at end', ...TIERS.map(t => `${t} reached`), ...ACTIVE_FIRM_BUCKETS.map(b => `${b} active ${ACTIVE_FIRMS_DAYS}d`), ...rosterCharts.map(r => `${r.label} ${ROSTER_ACTIVITY_WINDOWS.join('/')}d`)].map(h => (
+                {['Day', 'Steps clear', 'Stopped at', 'Overdue at start', 'Overdue at end', ...TIERS.map(t => `${t} reached`), ...ACTIVE_FIRM_BUCKETS.map(b => `${b} active ${ACTIVE_FIRMS_DAYS}d`), ...rosterCharts.map(r => `${r.label} 30/90/120d, none`)].map(h => (
                   <th key={h} style={{ padding: '4px 8px', borderBottom: '1px solid #E2E8F0', fontWeight: 700 }}>{h}</th>
                 ))}
               </tr>
@@ -645,7 +651,7 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
                     const d = rc.data.find(x => x.iso === r.iso);
                     return (
                       <td key={rc.key} style={{ padding: '4px 8px', borderBottom: '1px solid #F1F5F9', color: d?.recorded ? '#1E293B' : '#94A3B8' }}>
-                        {d?.recorded ? `${ROSTER_ACTIVITY_WINDOWS.map(w => d[`w${w}`]).join(' / ')} of ${d.total}` : '-'}
+                        {d?.recorded ? `${ROSTER_SERIES.map(sr => fmtPct(d[sr.key])).join(' / ')} of ${d.total}` : '-'}
                       </td>
                     );
                   })}

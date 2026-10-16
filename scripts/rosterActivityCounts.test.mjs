@@ -69,17 +69,17 @@ check('nothing on record is null', contactLastOutreachMs({ email: 'x@y.com' }, o
 const out = rosterActivityCounts({ contacts, gates, myCdmGate, outreachIndex, nowMs: NOW });
 const view = Object.fromEntries(out.map(r => [r.key, { total: r.total, active: r.windows.map(w => w.active) }]));
 check('rosters in order', out.map(r => r.label), ['Dan Key Target', 'Dan Key Prospect', 'Decision Makers']);
-check('windows are 30, 60, 120', out[0].windows.map(w => w.days), [30, 60, 120]);
-check('Dan Key Target', view.keyTarget, { total: 3, active: [1, 1, 1] });
-check('Dan Key Prospect', view.keyProspect, { total: 2, active: [1, 2, 2] });
-check('Decision Makers', view.decisionMakers, { total: 3, active: [1, 2, 3] });
-check('percentages are whole', out[2].windows.map(w => w.pct), [33, 67, 100]);
+check('windows are 30, 60, 90, 120', out[0].windows.map(w => w.days), [30, 60, 90, 120]);
+check('Dan Key Target', view.keyTarget, { total: 3, active: [1, 1, 1, 1] });
+check('Dan Key Prospect', view.keyProspect, { total: 2, active: [1, 2, 2, 2] });
+check('Decision Makers', view.decisionMakers, { total: 3, active: [1, 2, 2, 3] });
+check('percentages are whole', out[2].windows.map(w => w.pct), [33, 67, 67, 100]);
 
 // Window edges count.
 {
   const edge = [{ id: 'e', email: 'e@acme.com', company: 'Acme Realty', dans_tags: 'Dan Key Target', notes_last_contacted: new Date(NOW - 30 * DAY).toISOString() }];
   const r = rosterActivityCounts({ contacts: edge, gates, myCdmGate, nowMs: NOW });
-  check('exactly 30 days ago is inside the 30-day window', r[0].windows.map(w => w.active), [1, 1, 1]);
+  check('exactly 30 days ago is inside the 30-day window', r[0].windows.map(w => w.active), [1, 1, 1, 1]);
 }
 
 // Empty rosters.

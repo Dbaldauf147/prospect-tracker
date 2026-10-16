@@ -267,12 +267,13 @@ export function activeFirmsByBucket({
 // ── Contact rosters: who has had activity lately ────────────────────────
 //
 // Prospecting > History charts, for three lists of people, how many have
-// had activity in the last 30, 60 and 120 days. "Activity" is the same
+// had activity in the last 30, 60, 90 and 120 days (all four are recorded;
+// the charts show 30, 90 and 120 and the share with none in 120). "Activity" is the same
 // outreach the account-level reading above counts, taken per contact: a
 // HubSpot email or call from the outreach index, or HubSpot's Last
 // Contacted date - whichever is newest.
 
-export const ROSTER_ACTIVITY_WINDOWS = [30, 60, 120];
+export const ROSTER_ACTIVITY_WINDOWS = [30, 60, 90, 120];
 
 /** The newest outreach to one contact, in ms, or null when there's none. */
 export function contactLastOutreachMs(c, outreachIndex = null) {
