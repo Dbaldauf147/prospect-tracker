@@ -421,10 +421,10 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, cdm: 130, status: 140, peAum: 110, geography: 110, tier: 120, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, topPc: 200, topPcAnalysis: 140, topPcStatus: 150, clients: 110, keyContacts: 120, caseStudy: 110, peStage: 170, newsFeed: 110 };
+  const DEFAULT_COL_WIDTHS = { company: 240, cdm: 130, status: 140, peAum: 110, geography: 110, tier: 120, frameworks: 200, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, topPc: 200, topPcAnalysis: 140, topPcStatus: 150, clients: 110, keyContacts: 120, caseStudy: 110, peStage: 170, newsFeed: 110 };
   // company is sticky and always shown — every other column is opt-in, and
   // a starred one is opt-in that stays in (see starredCols below).
-  const ALL_COL_KEYS = ['company', 'cdm', 'status', 'peAum', 'geography', 'tier', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'topPcAnalysis', 'topPcStatus', 'clients', 'keyContacts', 'caseStudy', 'peStage', 'newsFeed'];
+  const ALL_COL_KEYS = ['company', 'cdm', 'status', 'peAum', 'geography', 'tier', 'frameworks', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'topPcAnalysis', 'topPcStatus', 'clients', 'keyContacts', 'caseStudy', 'peStage', 'newsFeed'];
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -552,6 +552,12 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         if (!localStorage.getItem('pe-portfolio:cols-tier')) {
           next.add('tier');
           try { localStorage.setItem('pe-portfolio:cols-tier', '1'); } catch { /* ignore */ }
+        }
+        // One-time migration: reveal the Frameworks column (asked for by
+        // name) for users whose saved set predates it.
+        if (!localStorage.getItem('pe-portfolio:cols-frameworks')) {
+          next.add('frameworks');
+          try { localStorage.setItem('pe-portfolio:cols-frameworks', '1'); } catch { /* ignore */ }
         }
         return next;
       }
@@ -731,6 +737,33 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       .filter(p => p.type === 'Private Equity')
       .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
   ), [prospects]);
+
+  // The Frameworks column: the same pills My Accounts shows (CDP, GRESB,
+  // SBT, ...) - the firm's own Frameworks field plus the Lists page's
+  // confirmed mappings, via the one computeListFlags both pages call.
+  // Re-read when a Lists-page mapping is saved here or in another tab.
+  const [firmFlagVersion, setFirmFlagVersion] = useState(0);
+  useEffect(() => {
+    const bump = () => setFirmFlagVersion(v => v + 1);
+    window.addEventListener('my-accounts-coverage-changed', bump);
+    window.addEventListener('storage', bump);
+    return () => {
+      window.removeEventListener('my-accounts-coverage-changed', bump);
+      window.removeEventListener('storage', bump);
+    };
+  }, []);
+  const [firmFlags, setFirmFlags] = useState(() => new Map());
+  useEffect(() => {
+    let cancelled = false;
+    computeListFlags(peFirms.map(p => p.company).filter(Boolean), { prospects: peFirms })
+      .then(flags => { if (!cancelled) setFirmFlags(flags); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [peFirms, firmFlagVersion]);
+  const frameworksOf = useCallback(
+    (pe) => [...(firmFlags.get(String(pe?.company || '').toLowerCase().trim()) || [])],
+    [firmFlags],
+  );
 
   // ── Whose firms ───────────────────────────────────────────────────────
   //
@@ -1278,6 +1311,13 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         case 'geography':
           cmp = (a.geography || '').localeCompare(b.geography || '');
           break;
+        case 'frameworks': {
+          // Most frameworks first on the first click, then by name.
+          const fa = frameworksOf(a);
+          const fb = frameworksOf(b);
+          cmp = (fa.length - fb.length) || fb.join(', ').localeCompare(fa.join(', '));
+          break;
+        }
         case 'tier': {
           // Tier 1 ranks highest, then 2, 3 and Not on tier list, so the
           // first click (descending, like every column here) reads Tier 1
@@ -1399,7 +1439,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       return cmp;
     });
     return arr;
-  }, [visibleFirms, stageStatsByFirm, sortKey, sortDir, analysisForTopPc]);
+  }, [visibleFirms, stageStatsByFirm, sortKey, sortDir, analysisForTopPc, frameworksOf]);
 
   // What a column's filter matches a row against: the words the cell shows,
   // so a filter reads the same as the table does. Blank where the cell is a
@@ -1415,6 +1455,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       case 'peAum': return pe.peAum ? formatAum(pe.peAum) : '';
       case 'geography': return String(pe.geography || '').trim();
       case 'tier': return String(pe.tier || '').trim();
+      case 'frameworks': return frameworksOf(pe).join(', ');
       case 'dm': return dmTotal > 0 ? 'Found' : 'Not found';
       case 'met': return dmTotal > 0 ? `${st.metInPersonCount || 0}/${dmTotal}` : '';
       case 'mapping': return st.pcMapped ? 'Yes' : 'No';
@@ -1432,7 +1473,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       case 'newsFeed': return pe.trackAcquisitionNews === true ? 'Yes' : 'No';
       default: return '';
     }
-  }, [stageStatsByFirm, prospectForPc, analysisForTopPc]);
+  }, [stageStatsByFirm, prospectForPc, analysisForTopPc, frameworksOf]);
 
   // Only the filters on columns that are showing count: hiding a column
   // shouldn't leave rows missing for a reason nothing on screen names.
@@ -1775,7 +1816,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           >Columns ({visibleCols.size}/{ALL_COL_KEYS.length})</button>
           {colMenuOpen && (() => {
             const COL_LABELS = {
-              company: 'PE firm', cdm: 'CDM', status: 'Status', peAum: 'PE AUM', geography: 'Geography', tier: 'Tier',
+              company: 'PE firm', cdm: 'CDM', status: 'Status', peAum: 'PE AUM', geography: 'Geography', tier: 'Tier', frameworks: 'Frameworks',
               dm: 'Decision Maker Found?',
               met: 'Met in Person', mapping: 'PC Mapping', pcDownload: 'PC Download', ratio: 'PE Opps',
               topPc: 'Top/Current PC', topPcAnalysis: 'Top/Current PC Analysis', topPcStatus: 'Top/Current PC Status',
@@ -1935,6 +1976,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             { key: 'peAum',   label: 'PE AUM', align: 'right', tip: 'AUM (in billions) pulled from each PE firm\'s Table View record. Sort by AUM.' },
             { key: 'geography', label: 'Geography', align: 'left', tip: 'Geography from the PE firm\'s prospect record (Global / NAM / State-Regional)' },
             { key: 'tier', label: 'Tier', align: 'left', tip: `The Tier on the PE firm's own prospect record (${TIER_OPTIONS.join(' / ')}), the same field the company popup sets. Sorts in that order, with firms carrying no tier below.` },
+            { key: 'frameworks', label: 'Frameworks', align: 'left', tip: 'External reporting / disclosure frameworks (CDP, GRESB, SBT, ...) the firm is on: its own Frameworks field plus the Lists page mappings, the same pills as the Frameworks column on My Accounts. Sorts the firms on the most frameworks first.' },
             { key: 'dm',      label: 'Decision Maker Found?', align: 'left', tip: 'Sort by number of decision makers found on HubSpot' },
             { key: 'met',     label: 'Met in Person', align: 'left', tip: 'Met-in-person count / total decision makers, plus how many of them list New York / NYC as their city' },
             { key: 'mapping', label: 'PC Mapping', align: 'center', tip: 'Yes when the PE firm has entries in its Portfolio Companies tab; No otherwise' },
@@ -2157,6 +2199,26 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                         {pe.tier || '-'}
                       </div>
                       )}
+
+                      {visibleCols.has('frameworks') && (() => {
+                        const flags = frameworksOf(pe);
+                        return (
+                          <div style={{ padding: '0.45rem 0.6rem', overflow: 'hidden' }} title={flags.join(', ') || 'Not on any framework list'}>
+                            {flags.length === 0 ? (
+                              <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>-</span>
+                            ) : (
+                              <span style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
+                                {flags.map(label => {
+                                  const color = LIST_FLAG_BY_LABEL[label]?.color || { bg: '#F1F5F9', text: '#334155' };
+                                  return (
+                                    <span key={label} style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: color.bg, color: color.text, whiteSpace: 'nowrap' }}>{label}</span>
+                                  );
+                                })}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       {visibleCols.has('dm') && (
                       <div style={{ padding: '0.55rem 0.6rem' }}>
