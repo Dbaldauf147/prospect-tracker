@@ -213,13 +213,14 @@ function RosterActivityTooltip({ active, payload }) {
   );
 }
 
-function RosterActivityChart({ label, data }) {
+// One roster's chart, as a full-width card of its own like the charts above.
+function RosterActivityChart({ label, data, note = '' }) {
   const latest = [...data].reverse().find(r => r.recorded) || null;
   const top = Math.max(1, ...data.map(r => r.total || 0));
   return (
-    <div style={{ flex: '1 1 260px', minWidth: 0 }}>
+    <div style={CARD}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-        <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#1E293B' }}>{label}</div>
+        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>{label}: contacts with activity</div>
         <div style={{ fontSize: '0.68rem', color: '#64748B' }}>
           {latest ? `${latest.total} on the list${latest.iso !== data[data.length - 1]?.iso ? `, ${latest.label}` : ''}` : 'Not recorded yet'}
         </div>
@@ -238,8 +239,13 @@ function RosterActivityChart({ label, data }) {
           })}
         </div>
       )}
-      <ResponsiveContainer width="100%" height={190}>
-        <LineChart data={data} margin={{ top: 10, right: 10, left: -18, bottom: 0 }}>
+      <div style={{ fontSize: '0.68rem', color: '#64748B', margin: '2px 0 4px' }}>
+        How many people on the {label} list had a HubSpot email, call or contact in the last{' '}
+        {ROSTER_ACTIVITY_WINDOWS.slice(0, -1).join(', ')} and {ROSTER_ACTIVITY_WINDOWS[ROSTER_ACTIVITY_WINDOWS.length - 1]} days, day by day.
+        A day is recorded whenever the app is open with contacts and the email/call feed loaded; a break in a line is a day that wasn&apos;t.{note}
+      </div>
+      <ResponsiveContainer width="100%" height={240}>
+        <LineChart data={data} margin={{ top: 10, right: 16, left: -18, bottom: 0 }}>
           <CartesianGrid vertical={false} stroke="#EEF2F6" />
           <XAxis dataKey="label" tick={AXIS_TICK} tickLine={false} axisLine={{ stroke: '#CBD5E1' }} interval="preserveStartEnd" minTickGap={12} />
           <YAxis allowDecimals={false} domain={[0, top]} tick={AXIS_TICK} tickLine={false} axisLine={false} />
@@ -263,6 +269,14 @@ function RosterActivityChart({ label, data }) {
           ))}
         </LineChart>
       </ResponsiveContainer>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 14, fontSize: '0.7rem', color: '#475569', margin: '2px 0 4px' }}>
+        {ROSTER_ACTIVITY_WINDOWS.map(d => (
+          <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 999, background: ROSTER_LINE_COLORS[d] }} />
+            Last {d} days
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -574,33 +588,19 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
         </ResponsiveContainer>
       </div>
 
-      <div style={CARD}>
-        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Contacts with activity</div>
-        <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: 6 }}>
-          How many people on each list had a HubSpot email, call or contact in the last{' '}
-          {ROSTER_ACTIVITY_WINDOWS.slice(0, -1).join(', ')} and {ROSTER_ACTIVITY_WINDOWS[ROSTER_ACTIVITY_WINDOWS.length - 1]} days,
-          day by day. The lists are the Contacts pages&apos; own: Key Targets, Key Prospects, and Decision Makers at your accounts.
-          A day is recorded whenever the app is open with contacts and the email/call feed loaded; a break in a line is a day that wasn&apos;t.
-          {noIndex ? ' HubSpot emails and calls count once the Activity tab has loaded its feed; until then only Last Contacted dates do.' : ''}
-        </div>
-        {rosterCharts.length === 0 ? (
+      {rosterCharts.length === 0 ? (
+        <div style={CARD}>
+          <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Contacts with activity</div>
           <div style={{ fontSize: '0.7rem', color: '#94A3B8', padding: '1rem 0' }}>{rosterActivity ? 'Nothing recorded yet.' : 'Loading contacts...'}</div>
-        ) : (
-          <>
-            <div style={{ display: 'flex', gap: '1.25rem', flexWrap: 'wrap' }}>
-              {rosterCharts.map(r => <RosterActivityChart key={r.key} label={r.label} data={r.data} />)}
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'center', gap: 14, fontSize: '0.7rem', color: '#475569', marginTop: 4 }}>
-              {ROSTER_ACTIVITY_WINDOWS.map(d => (
-                <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 999, background: ROSTER_LINE_COLORS[d] }} />
-                  Last {d} days
-                </span>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
+        </div>
+      ) : rosterCharts.map(r => (
+        <RosterActivityChart
+          key={r.key}
+          label={r.label}
+          data={r.data}
+          note={noIndex ? ' HubSpot emails and calls count once the Activity tab has loaded its feed; until then only Last Contacted dates do.' : ''}
+        />
+      ))}
 
       <div>
         <button
