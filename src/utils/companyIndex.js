@@ -85,6 +85,45 @@ export function parenAliases(name) {
   return out;
 }
 
+// The division a name singles out in brackets: "Brookfield (Self
+// Storage)" is the self-storage arm of Brookfield, and the bracket is what
+// tells it apart from the parent. Returned as lower-cased word lists, one
+// per such bracket.
+//
+// Not every bracket is one. Left out:
+//   - an acronym or short name, "(TIAA)", "(JLL)", "(US)": one word in
+//     capitals is the company's own alias (parenAliases), not a division;
+//   - a note about the company, "(a Platinum Equity Co.)", "(formerly
+//     Acme)", "(owned by KKR)": it describes the company rather than naming
+//     a part of it.
+const NOTE_RE = /^(a|an|the)\b|\b(formerly|fka|f k a|aka|owned|portfolio|subsidiary|company|co|part of|acquired)\b/;
+export function divisionQualifiers(name) {
+  const out = [];
+  for (const m of String(name || '').matchAll(/\(([^)]*)\)/g)) {
+    const raw = m[1].trim();
+    const words = raw.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ').split(/\s+/).filter(Boolean);
+    if (!words.length) continue;
+    if (words.length === 1 && raw === raw.toUpperCase()) continue;
+    if (NOTE_RE.test(words.join(' '))) continue;
+    out.push(words);
+  }
+  return out;
+}
+
+// Does a contact's Company text name the division `company` singles out?
+// True when `company` has no division bracket at all. Otherwise every word
+// of each division bracket has to appear in the contact's Company, so
+// "Brookfield Self Storage" counts for "Brookfield (Self Storage)" and
+// "Brookfield" or "Brookfield Asset Management" (the parent) does not.
+export function carriesDivision(contactCompany, company) {
+  const quals = divisionQualifiers(company);
+  if (!quals.length) return true;
+  const words = new Set(String(contactCompany || '').toLowerCase().normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').split(/\s+/).filter(Boolean));
+  return quals.every(q => q.every(w => words.has(w)));
+}
+
 // Does `longer` contain `shorter` as whole words? The match has to start
 // and end on a word edge (string end or a non-alphanumeric neighbour), so
 // "Bank of America" is inside "Bank of America Holdings" but "sp global"

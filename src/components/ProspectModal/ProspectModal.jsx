@@ -57,7 +57,7 @@ import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadP
 import { nameFromEmail } from '../../utils/nameFromEmail';
 import { splitFullName } from '../../utils/splitFullName';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
-import { withoutParenNotes, parenAliases } from '../../utils/companyIndex';
+import { withoutParenNotes, parenAliases, carriesDivision } from '../../utils/companyIndex';
 import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../utils/reportingFrameworks';
 import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
 import { EQUIPMENT_ESTIMATE_TYPES, portfolioEquipmentEstimate, propertyTypeEquipment } from '../../data/propertyTypeEstimates';
@@ -5302,7 +5302,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         // Linked contacts below still come through: a link is the user
         // saying so directly.
         if (exactKey) return exactCompanyKey(c.company) === exactKey;
-        if (companiesMatch(c.company, fields.company)) return true;
+        // A company named for one division of a bigger one, "Brookfield
+        // (Self Storage)", only takes contacts whose Company names that
+        // division too. The fuzzy match drops the bracket, and then every
+        // "Brookfield" and "Brookfield Asset Management" contact (the
+        // parent's people) landed here. Link the odd exception.
+        if (companiesMatch(c.company, fields.company)) return carriesDivision(c.company, fields.company);
         const d = contactDomain(c.email);
         if (d && domains.has(d)) {
           // Domain match only fills in contacts whose own Company text
