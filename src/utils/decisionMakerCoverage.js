@@ -24,7 +24,7 @@
 // yet, so accounts that already have a history are out (see
 // COLD_OUTREACH_EXCLUDED_STATUSES). Only this step reads that rule.
 
-import { applyCompanyOverride, collectClientDomains, isSchneiderContact, rosterCompaniesMatch } from './contactRosters.js';
+import { applyCompanyOverride, collectClientDomains, isSchneiderContact, rosterMatchKey, rosterKeysMatch } from './contactRosters.js';
 import { matchesCdm } from './cdmMatch.js';
 import { findTagRecord, isLocalTagVerdict, tagAnswerFrom } from './contactTagReview.js';
 import { TIERS } from '../data/enums.js';
@@ -112,7 +112,7 @@ export function decisionMakerCompanies(contacts, localFields = null) {
     const id = String(c.id || c.vid || '');
     const at = seen.get(lc);
     if (at) { if (id) at.ids.push(id); }
-    else seen.set(lc, { company, lc, ids: id ? [id] : [] });
+    else seen.set(lc, { company, lc, ids: id ? [id] : [], key: rosterMatchKey(company) });
   }
   return [...seen.values()];
 }
@@ -200,10 +200,11 @@ export function accountHasDecisionMaker(prospect, dmCompanies, index = null) {
   const excluded = index ? index.excludedFor(prospect) : null;
   const counts = (c) => !excluded || !excluded.size || !c.ids || c.ids.length === 0
     || c.ids.some(id => !excluded.has(id));
+  const pk = rosterMatchKey(prospect.company);
   for (const c of (dmCompanies || [])) {
     // The contact's HubSpot Company text and the account name drift apart
     // (suffixes, abbreviations), so an exact miss isn't an answer.
-    if ((c.lc === lc || rosterCompaniesMatch(prospect.company, c.company)) && counts(c)) return true;
+    if ((c.lc === lc || rosterKeysMatch(pk, c.key || rosterMatchKey(c.company))) && counts(c)) return true;
   }
   if (index) {
     for (const c of index.extraFor(prospect)) {
@@ -237,7 +238,7 @@ export function makeDecisionMakerLookup(contacts, { localFields = null, links = 
     const lc = company.toLowerCase();
     const at = groups.get(lc);
     if (at) at.contacts.push(c);
-    else groups.set(lc, { company, lc, contacts: [c] });
+    else groups.set(lc, { company, lc, contacts: [c], key: rosterMatchKey(company) });
   }
   const list = [...groups.values()];
   const index = makeAccountContactIndex(contacts, { localFields, links, exclusions });
@@ -257,8 +258,9 @@ export function makeDecisionMakerLookup(contacts, { localFields = null, links = 
         if (id) seen.add(id);
         out.push(c);
       };
+      const ak = rosterMatchKey(company);
       for (const g of list) {
-        if (g.lc === lc || rosterCompaniesMatch(company, g.company)) g.contacts.forEach(add);
+        if (g.lc === lc || rosterKeysMatch(ak, g.key)) g.contacts.forEach(add);
       }
       for (const c of index.extraFor(account)) if (gate(c)) add(c);
       return out.sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
@@ -415,7 +417,7 @@ export function decisionMakerCoverage({ prospects, contacts, cdmName, localField
     const lc = company.toLowerCase();
     const at = byCompany.get(lc);
     if (at) at.count += 1;
-    else byCompany.set(lc, { company, lc, count: 1 });
+    else byCompany.set(lc, { company, lc, count: 1, key: rosterMatchKey(company) });
   }
   const companyCounts = [...byCompany.values()];
 
@@ -427,8 +429,9 @@ export function decisionMakerCoverage({ prospects, contacts, cdmName, localField
     const lc = String(prospect?.company || '').toLowerCase().trim();
     if (!lc) return 0;
     let n = 0;
+    const pk = rosterMatchKey(prospect.company);
     for (const c of companyCounts) {
-      if (c.lc === lc || rosterCompaniesMatch(prospect.company, c.company)) n += c.count;
+      if (c.lc === lc || rosterKeysMatch(pk, c.key)) n += c.count;
     }
     for (const c of index.extraFor(prospect)) if (isMappableContact(c)) n += 1;
     return n;
