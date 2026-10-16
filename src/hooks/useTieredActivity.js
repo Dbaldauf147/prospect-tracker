@@ -50,6 +50,24 @@ function readOutreachIndex() {
   try { return JSON.parse(userLsGet('hubspot-outreach-index') || 'null'); } catch { return null; }
 }
 
+// The email/call index the Activity tab writes, re-read when it rewrites it
+// (here or in another tab) and when the signed-in user changes.
+export function useOutreachIndex(uid) {
+  const [outreachIndex, setOutreachIndex] = useState(readOutreachIndex);
+  useEffect(() => {
+    const reload = () => setOutreachIndex(readOutreachIndex());
+    const onStorage = (e) => { if (e.key && e.key.endsWith(':hubspot-outreach-index')) reload(); };
+    reload();
+    window.addEventListener('hubspot-activity-cache-updated', reload);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('hubspot-activity-cache-updated', reload);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [uid]);
+  return outreachIndex;
+}
+
 export function useTieredActivity({ prospects, settings, cdmName = '' }) {
   const { user } = useAuth() || {};
   const uid = user?.uid || '';
@@ -68,19 +86,7 @@ export function useTieredActivity({ prospects, settings, cdmName = '' }) {
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, [uid]);
 
-  // The email/call index the Activity tab writes, re-read when it rewrites it.
-  const [outreachIndex, setOutreachIndex] = useState(readOutreachIndex);
-  useEffect(() => {
-    const reload = () => setOutreachIndex(readOutreachIndex());
-    const onStorage = (e) => { if (e.key && e.key.endsWith(':hubspot-outreach-index')) reload(); };
-    reload();
-    window.addEventListener('hubspot-activity-cache-updated', reload);
-    window.addEventListener('storage', onStorage);
-    return () => {
-      window.removeEventListener('hubspot-activity-cache-updated', reload);
-      window.removeEventListener('storage', onStorage);
-    };
-  }, [uid]);
+  const outreachIndex = useOutreachIndex(uid);
 
   const accounts = useMemo(() => myTieredAccounts(prospects, cdmName), [prospects, cdmName]);
   const localFields = settings?.contactLocalFields || null;

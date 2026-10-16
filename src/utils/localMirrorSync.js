@@ -501,6 +501,7 @@ async function loadMirroredStores() {
     import('./prospectingHistory.js'),
     import('./tieredCoverageHistory.js'),
     import('./activeFirmsHistory.js'),
+    import('./rosterActivityHistory.js'),
     import('./contactCountHistory.js'),
     import('./dmTagHistory.js'),
     import('./missingHistory.js'),
