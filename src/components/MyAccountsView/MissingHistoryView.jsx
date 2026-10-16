@@ -156,7 +156,7 @@ export function MissingHistoryView({ settings, updateSettings }) {
         {`${series.length} day${series.length === 1 ? '' : 's'} recorded since ${fmtDay(first.day)}. `}
         Each day is the All Missing Steps column on the Company Data subtab added up (steps remaining on each company's
         By Category ladder, plus its blank sites, utility accounts and equipment) across the My Accounts companies,
-        inactive ones left out, as it stood at the end of that day. The field columns in the table count the companies missing each value.
+        inactive and Qualifying ones left out, as it stood at the end of that day. The field columns in the table count the companies missing each value.
       </div>
       <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: '0.6rem 0.75rem', background: '#fff', maxWidth: 820 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>

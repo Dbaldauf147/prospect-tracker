@@ -74,6 +74,10 @@ export function missingFields(record, fields = COMPANY_DATA_FIELDS, { zoomExclud
   return fields.filter(f => fieldMissing(f, record, { zoomExcluded, allDms })).map(f => f.key);
 }
 
+// Companies still at the Qualifying status aren't tracked for company data
+// yet: Company Data and All Missing History both leave them out.
+export const isQualifyingCompany = (record) => String(record?.status || '').trim().toLowerCase() === 'qualifying';
+
 // "10,000", " $1,200 ", "3.5" -> numbers. Blank -> null (nothing to write).
 // Anything else -> NaN, which the paste reports rather than writing.
 export function parseCount(raw) {

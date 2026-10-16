@@ -1,7 +1,7 @@
 // Assertion tests for src/utils/companyDataFields.js, the My Accounts
 // Company Data subtab's missing-value check and paste-back. Plain Node. Run:
 //   node scripts/companyDataFields.test.mjs
-import { hasValue, fieldHasValue, missingFields, fieldNotNeeded, parseCount, mapHeaders, planCompanyDataPaste, COMPANY_DATA_FIELDS } from '../src/utils/companyDataFields.js';
+import { isQualifyingCompany, hasValue, fieldHasValue, missingFields, fieldNotNeeded, parseCount, mapHeaders, planCompanyDataPaste, COMPANY_DATA_FIELDS } from '../src/utils/companyDataFields.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -97,6 +97,8 @@ eq(planCompanyDataPaste('ID\tSites\nc3\t9', records).updates.map(u => [u.id, u.p
   eq(missingFields(rec, COMPANY_DATA_FIELDS, { allDms: true }), ['zoomCompanyName'], 'a decision maker on every tag waives the Zoom id only');
   eq(missingFields({ ...rec, numberOfSites: null }, COMPANY_DATA_FIELDS, { allDms: true }), ['numberOfSites', 'zoomCompanyName'], 'other fields still count with every DM');
 }
+
+eq([isQualifyingCompany({ status: 'Qualifying' }), isQualifyingCompany({ status: ' qualifying ' }), isQualifyingCompany({ status: 'Client' }), isQualifyingCompany(null)], [true, true, false, false], 'Qualifying status is left out');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

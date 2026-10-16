@@ -34,6 +34,7 @@ import {
 } from '../../utils/divisions';
 import { DecisionMakerTagsTable } from './DecisionMakerTagsTable';
 import { DmTagHistoryView } from './DmTagHistoryView';
+import { isQualifyingCompany } from '../../utils/companyDataFields';
 import { CompanyDataTab } from './CompanyDataTab';
 import { MissingHistoryView } from './MissingHistoryView';
 import { missingStepsReading, recordMissingDay, dayKey } from '../../utils/missingHistory';
@@ -3131,7 +3132,7 @@ Fix that now?
 
   // Record today's All Missing Steps total for the All Missing History
   // subtab, on the basis the Company Data subtab opens on: every account
-  // with a company record, inactive ones out, no search. Each company is
+  // with a company record, inactive and Qualifying ones out, no search. Each company is
   // counted the way that subtab's All Missing Steps column counts it, so
   // it waits for the contacts (the decision makers) to load. Debounced for
   // the same reason as the DM tag reading above.
@@ -3148,7 +3149,7 @@ Fix that now?
         const isZoomExcluded = buildZoomExcludedMatcher(prospects);
         const entries = allAccounts.filter(a => !isInactive(a)).map((a) => {
           const p = byId.get(a.id);
-          if (!p) return null;
+          if (!p || isQualifyingCompany(p)) return null;
           return {
             record: p,
             zoomExcluded: isZoomExcluded({ id: p.id, company: p.company || a.company, zoomId: p.zoomCompanyId }),
