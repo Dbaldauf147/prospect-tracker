@@ -2,7 +2,7 @@
 // activity" line charts (utils/rosterActivityHistory). Plain Node. Run:
 //   node scripts/rosterActivityHistory.test.mjs
 import assert from 'node:assert/strict';
-import { readingFromRosterCounts, withRosterActivityReading, rosterActivityChartRows } from '../src/utils/rosterActivityHistory.js';
+import { readingFromRosterCounts, withRosterActivityReading, rosterActivityChartRows, previousWorkingDay } from '../src/utils/rosterActivityHistory.js';
 
 const counts = (kt = 26) => [
   { key: 'keyTarget', label: 'Dan Key Target', total: 76, windows: [{ days: 30, active: kt }, { days: 60, active: 36 }, { days: 90, active: 37 }, { days: 120, active: 38 }] },
@@ -26,8 +26,22 @@ const h2 = withRosterActivityReading(h1, '2026-10-16', readingFromRosterCounts(c
 assert.equal(h2['2026-10-16'].rosters.keyTarget.active[30], 30);
 assert.equal(h2['2026-10-16'].at, 300);
 
+// The first reading is also the working day before, seeded, so the chart
+// starts with a line; the seed follows the day's reading while it's the only one.
+assert.deepEqual(h1['2026-10-15'], { ...r, seeded: true, at: 100 });
+assert.equal(h2['2026-10-15'].rosters.keyTarget.active[30], 30, 'the seed follows today');
+assert.equal(previousWorkingDay('2026-10-19'), '2026-10-16', 'Monday seeds Friday');
+assert.equal(previousWorkingDay('2026-11-01'), '2026-10-30', 'Sunday seeds Friday');
+// A real earlier day already on record: no seed, and an existing seed is left alone.
+const real = { '2026-10-14': { ...readingFromRosterCounts(counts(20)), at: 1 } };
+const hr = withRosterActivityReading(real, '2026-10-16', r, 100);
+assert.equal(hr['2026-10-15'], undefined, 'no seed once a real day exists');
+const h2b = withRosterActivityReading(h2, '2026-10-19', readingFromRosterCounts(counts(31)), 400);
+assert.equal(h2b['2026-10-16'].seeded, undefined, 'a real earlier day stops seeding');
+assert.equal(h2b['2026-10-15'].rosters.keyTarget.active[30], 30, 'the old seed keeps its numbers');
+
 // Chart rows: one per axis day, null (a break in the line) where unrecorded.
-const h3 = withRosterActivityReading(h2, '2026-10-14', readingFromRosterCounts(counts(20)), 50);
+const h3 = { '2026-10-14': { ...readingFromRosterCounts(counts(20)), at: 50 }, '2026-10-16': h2['2026-10-16'] };
 const rows = rosterActivityChartRows(h3, ['2026-10-14', '2026-10-15', '2026-10-16'], 'keyTarget');
 assert.deepEqual(rows.map(x => [x.iso, x.recorded, x.w30, x.w60, x.w90, x.w120, x.total]), [
   ['2026-10-14', true, 20, 36, 37, 38, 76],
