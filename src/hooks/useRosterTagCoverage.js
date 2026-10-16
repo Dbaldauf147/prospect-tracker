@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { getHubspotCache } from '../utils/hubspotContactsCache';
+import { getHubspotCacheShared } from '../utils/hubspotContactsCache';
 import {
   loadClientStatusMap, CLIENT_STATUS_EVENT,
   loadClientUntrackedMap, CLIENT_UNTRACKED_EVENT,
@@ -30,7 +30,7 @@ export function useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings
   useEffect(() => {
     let cancelled = false;
     function refresh() {
-      getHubspotCache()
+      getHubspotCacheShared()
         .then(c => { if (!cancelled) setContacts(c?.contacts || []); })
         .catch(() => { if (!cancelled) setContacts([]); });
     }

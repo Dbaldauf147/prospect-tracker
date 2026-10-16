@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Suspense } from 'react';
 import { lazyView } from './utils/lazyView';
-import { getHubspotContacts } from './utils/hubspotContactsCache';
+import { getHubspotContacts, getHubspotCacheShared } from './utils/hubspotContactsCache';
 import { useAuth } from './contexts/AuthContext';
 import { useProspects } from './hooks/useProspects';
 import { userLsGet, userLsSet } from './utils/userLs';
@@ -242,14 +242,14 @@ function App() {
   // Load HubSpot contacts from IndexedDB and refresh on cache updates.
   // Keyed on the user's uid because IndexedDB reads return nothing until
   // AuthContext calls setDbUserId(uid) (db scopes every key by uid). On a
-  // fresh load this effect first runs before auth resolves — getHubspotContacts
+  // fresh load this effect first runs before auth resolves — the read
   // reads an unscoped store and gets []. Re-running once user.uid is known
   // re-reads the now-scoped cache so the persisted contacts reappear instead
   // of waiting for a manual "Refresh HubSpot Contacts".
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
-      getHubspotContacts().then(c => { if (!cancelled) setHubspotContacts(c); }).catch(() => {});
+      getHubspotCacheShared().then(c => { if (!cancelled) setHubspotContacts(c?.contacts || []); }).catch(() => {});
     };
     refresh();
     window.addEventListener('hubspot-cache-updated', refresh);
