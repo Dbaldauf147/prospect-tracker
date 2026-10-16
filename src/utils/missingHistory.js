@@ -88,14 +88,17 @@ export function missingStepsReading(entries, { tagReview = null, fields = COMPAN
   if (list.length === 0) return null;
   let stepsRemaining = 0;
   let missingData = 0;
+  const allDms = [];
   for (const e of list) {
     const s = allMissingStepsFor({ record: e.record, dms: e.dms || [], tagReview, titleSearches: e.titleSearches || [] });
     stepsRemaining += s.stepsRemaining;
     missingData += s.missingData;
+    allDms.push(!!s.allDms);
   }
   const counts = {};
-  // A company excluded from ZoomInfo isn't owed its Zoom fields (e.zoomExcluded).
-  for (const f of fields) counts[f.key] = list.filter(e => fieldMissing(f, e.record, { zoomExcluded: !!e.zoomExcluded })).length;
+  // A company excluded from ZoomInfo isn't owed its Zoom fields (e.zoomExcluded),
+  // and one with a decision maker on every tag isn't owed its Zoom id (allDms).
+  for (const f of fields) counts[f.key] = list.filter((e, i) => fieldMissing(f, e.record, { zoomExcluded: !!e.zoomExcluded, allDms: allDms[i] })).length;
   return {
     total: stepsRemaining + missingData,
     stepsRemaining,

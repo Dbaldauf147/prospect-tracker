@@ -60,22 +60,28 @@ export function bucketStepsLeft({ bucket, hasYesDm, zoomCompanyId = '', searchRu
 // (already gated on the Decision Maker tag); the company record supplies
 // the Zoom Company ID and the ticks; `titleSearches` is the company's logged
 // Zoom title searches ([{ tag }], from titleSearchesForCompany). Returns { total, max, perBucket:
-// [{ bucket, left }] } with the buckets A to Z.
+// [{ bucket, left, hasYesDm }], allDms } with the buckets A to Z; allDms is
+// a Yes decision maker on every category (closed-out ones don't count).
 export function companyStepsRemaining({ dms = [], record = {}, tagReview = null, titleSearches = [] } = {}) {
   const perBucket = [...BUCKETS]
     .sort((a, b) => a.label.localeCompare(b.label))
-    .map(bucket => ({
-      bucket,
-      left: bucketStepsLeft({
+    .map((bucket) => {
+      const hasYesDm = (dms || []).some(c => dmBucketAnswer(c, bucket, tagReview) === 'yes');
+      return {
         bucket,
-        hasYesDm: (dms || []).some(c => dmBucketAnswer(c, bucket, tagReview) === 'yes'),
-        zoomCompanyId: record?.zoomCompanyId,
-        searchRun: record?.dmSearchRun,
-        searchSteps: record?.dmSearchSteps,
-        titleSearched: (titleSearches || []).some(t => tagKey(t?.tag) === tagKey(bucket.label)),
-      }),
-    }));
+        hasYesDm,
+        left: bucketStepsLeft({
+          bucket,
+          hasYesDm,
+          zoomCompanyId: record?.zoomCompanyId,
+          searchRun: record?.dmSearchRun,
+          searchSteps: record?.dmSearchSteps,
+          titleSearched: (titleSearches || []).some(t => tagKey(t?.tag) === tagKey(bucket.label)),
+        }),
+      };
+    });
   return {
+    allDms: perBucket.length > 0 && perBucket.every(b => b.hasYesDm),
     total: perBucket.reduce((sum, b) => sum + b.left, 0),
     max: perBucket.length * DM_STEPS.length,
     perBucket,

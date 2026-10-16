@@ -47,18 +47,31 @@ export function fieldValue(field, v) {
 // owed a Zoom id or name and a blank one isn't counted as missing.
 export const ZOOM_FIELD_KEYS = new Set(['zoomCompanyId', 'zoomCompanyName']);
 
+// A company with a Yes decision maker on every category of its By Category
+// ladder (allDms) has nothing left to find in ZoomInfo, so it isn't owed a
+// Zoom Company ID either. Its Zoom name still counts.
+
 /** Whether a field isn't asked of this company at all (see ZOOM_FIELD_KEYS). */
-export function fieldNotNeeded(field, { zoomExcluded = false } = {}) {
-  return !!zoomExcluded && ZOOM_FIELD_KEYS.has(field?.key);
+export function fieldNotNeeded(field, { zoomExcluded = false, allDms = false } = {}) {
+  if (zoomExcluded && ZOOM_FIELD_KEYS.has(field?.key)) return true;
+  return !!allDms && field?.key === 'zoomCompanyId';
+}
+
+/** Why a field isn't needed, for the N/A cell's tooltip; '' when it is. */
+export function fieldNotNeededReason(field, opts = {}) {
+  if (!fieldNotNeeded(field, opts)) return '';
+  return opts.zoomExcluded && ZOOM_FIELD_KEYS.has(field?.key)
+    ? 'Not needed: the company is excluded from ZoomInfo'
+    : 'Not needed: the company has a decision maker for every tag';
 }
 
 /** Whether a field is blank on the record and the company is owed it. */
-export function fieldMissing(field, record, { zoomExcluded = false } = {}) {
-  return !fieldNotNeeded(field, { zoomExcluded }) && !fieldHasValue(field, record?.[field.key]);
+export function fieldMissing(field, record, { zoomExcluded = false, allDms = false } = {}) {
+  return !fieldNotNeeded(field, { zoomExcluded, allDms }) && !fieldHasValue(field, record?.[field.key]);
 }
 
-export function missingFields(record, fields = COMPANY_DATA_FIELDS, { zoomExcluded = false } = {}) {
-  return fields.filter(f => fieldMissing(f, record, { zoomExcluded })).map(f => f.key);
+export function missingFields(record, fields = COMPANY_DATA_FIELDS, { zoomExcluded = false, allDms = false } = {}) {
+  return fields.filter(f => fieldMissing(f, record, { zoomExcluded, allDms })).map(f => f.key);
 }
 
 // "10,000", " $1,200 ", "3.5" -> numbers. Blank -> null (nothing to write).

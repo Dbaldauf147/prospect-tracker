@@ -94,6 +94,8 @@ eq(planCompanyDataPaste('ID\tSites\nc3\t9', records).updates.map(u => [u.id, u.p
   eq(missingFields(rec, COMPANY_DATA_FIELDS, { zoomExcluded: true }), [], 'not when the company is excluded from ZoomInfo');
   eq(missingFields({ ...rec, website: '' }, COMPANY_DATA_FIELDS, { zoomExcluded: true }), ['website'], 'other fields still count when excluded');
   eq(fieldNotNeeded(COMPANY_DATA_FIELDS.find(f => f.key === 'numberOfSites'), { zoomExcluded: true }), false, 'only the Zoom fields are waived');
+  eq(missingFields(rec, COMPANY_DATA_FIELDS, { allDms: true }), ['zoomCompanyName'], 'a decision maker on every tag waives the Zoom id only');
+  eq(missingFields({ ...rec, numberOfSites: null }, COMPANY_DATA_FIELDS, { allDms: true }), ['numberOfSites', 'zoomCompanyName'], 'other fields still count with every DM');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
