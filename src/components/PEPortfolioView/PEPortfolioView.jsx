@@ -421,10 +421,10 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, cdm: 130, status: 140, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, topPc: 200, topPcAnalysis: 140, topPcStatus: 150, clients: 110, keyContacts: 120, caseStudy: 110, peStage: 170, newsFeed: 110 };
+  const DEFAULT_COL_WIDTHS = { company: 240, cdm: 130, status: 140, peAum: 110, geography: 110, tier: 120, dm: 170, met: 170, mapping: 110, pcDownload: 120, ratio: 120, topPc: 200, topPcAnalysis: 140, topPcStatus: 150, clients: 110, keyContacts: 120, caseStudy: 110, peStage: 170, newsFeed: 110 };
   // company is sticky and always shown — every other column is opt-in, and
   // a starred one is opt-in that stays in (see starredCols below).
-  const ALL_COL_KEYS = ['company', 'cdm', 'status', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'topPcAnalysis', 'topPcStatus', 'clients', 'keyContacts', 'caseStudy', 'peStage', 'newsFeed'];
+  const ALL_COL_KEYS = ['company', 'cdm', 'status', 'peAum', 'geography', 'tier', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'topPcAnalysis', 'topPcStatus', 'clients', 'keyContacts', 'caseStudy', 'peStage', 'newsFeed'];
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -546,6 +546,12 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         if (!localStorage.getItem('pe-portfolio:cols-status')) {
           next.add('status');
           try { localStorage.setItem('pe-portfolio:cols-status', '1'); } catch { /* ignore */ }
+        }
+        // One-time migration: reveal the Tier column (asked for by name)
+        // for users whose saved set predates it.
+        if (!localStorage.getItem('pe-portfolio:cols-tier')) {
+          next.add('tier');
+          try { localStorage.setItem('pe-portfolio:cols-tier', '1'); } catch { /* ignore */ }
         }
         return next;
       }
@@ -1272,6 +1278,18 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         case 'geography':
           cmp = (a.geography || '').localeCompare(b.geography || '');
           break;
+        case 'tier': {
+          // Tier 1 ranks highest, then 2, 3 and Not on tier list, so the
+          // first click (descending, like every column here) reads Tier 1
+          // down. A firm with no tier ranks below all of them, the way
+          // Status ranks its blanks.
+          const rank = (p) => {
+            const i = TIER_OPTIONS.indexOf(String(p.tier || '').trim());
+            return i < 0 ? -1 : TIER_OPTIONS.length - i;
+          };
+          cmp = rank(a) - rank(b);
+          break;
+        }
         case 'cdm':
           cmp = (a.cdm || '').localeCompare(b.cdm || '');
           break;
@@ -1396,6 +1414,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       case 'status': return String(pe.status || '').trim() || 'No status';
       case 'peAum': return pe.peAum ? formatAum(pe.peAum) : '';
       case 'geography': return String(pe.geography || '').trim();
+      case 'tier': return String(pe.tier || '').trim();
       case 'dm': return dmTotal > 0 ? 'Found' : 'Not found';
       case 'met': return dmTotal > 0 ? `${st.metInPersonCount || 0}/${dmTotal}` : '';
       case 'mapping': return st.pcMapped ? 'Yes' : 'No';
@@ -1756,7 +1775,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           >Columns ({visibleCols.size}/{ALL_COL_KEYS.length})</button>
           {colMenuOpen && (() => {
             const COL_LABELS = {
-              company: 'PE firm', cdm: 'CDM', status: 'Status', peAum: 'PE AUM', geography: 'Geography',
+              company: 'PE firm', cdm: 'CDM', status: 'Status', peAum: 'PE AUM', geography: 'Geography', tier: 'Tier',
               dm: 'Decision Maker Found?',
               met: 'Met in Person', mapping: 'PC Mapping', pcDownload: 'PC Download', ratio: 'PE Opps',
               topPc: 'Top/Current PC', topPcAnalysis: 'Top/Current PC Analysis', topPcStatus: 'Top/Current PC Status',
@@ -1915,6 +1934,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
             { key: 'status', label: 'Status', align: 'left', tip: `The Status on the PE firm's own prospect record - the same field the company popup and Table View set: ${STATUSES.join(' / ')}. Sorts in that order, with firms carrying no status below every one that does.` },
             { key: 'peAum',   label: 'PE AUM', align: 'right', tip: 'AUM (in billions) pulled from each PE firm\'s Table View record. Sort by AUM.' },
             { key: 'geography', label: 'Geography', align: 'left', tip: 'Geography from the PE firm\'s prospect record (Global / NAM / State-Regional)' },
+            { key: 'tier', label: 'Tier', align: 'left', tip: `The Tier on the PE firm's own prospect record (${TIER_OPTIONS.join(' / ')}), the same field the company popup sets. Sorts in that order, with firms carrying no tier below.` },
             { key: 'dm',      label: 'Decision Maker Found?', align: 'left', tip: 'Sort by number of decision makers found on HubSpot' },
             { key: 'met',     label: 'Met in Person', align: 'left', tip: 'Met-in-person count / total decision makers, plus how many of them list New York / NYC as their city' },
             { key: 'mapping', label: 'PC Mapping', align: 'center', tip: 'Yes when the PE firm has entries in its Portfolio Companies tab; No otherwise' },
@@ -2126,6 +2146,15 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
                         title={pe.geography || 'No geography set on this prospect record'}
                       >
                         {pe.geography || '-'}
+                      </div>
+                      )}
+
+                      {visibleCols.has('tier') && (
+                      <div
+                        style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', fontWeight: 600, color: pe.tier ? '#1E293B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        title={pe.tier || 'No tier set on this prospect record'}
+                      >
+                        {pe.tier || '-'}
                       </div>
                       )}
 
