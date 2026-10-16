@@ -328,3 +328,50 @@ export function targetVerticalFor({ targetAccountsData, settings, prospectId, op
   }
   return { name: names[0], vertical: '', onList: false };
 }
+
+/**
+ * Every Target Accounts row's vertical, keyed by its company lower-cased:
+ * the same read as targetVerticalFor (the picked Vertical column, then a
+ * header that reads like one, renamed through Target Accounts > Vertical
+ * names), built once so a whole table can look its rows up. The first row
+ * with a vertical wins, as there.
+ */
+export function targetVerticalIndex(targetAccountsData, settings) {
+  const out = new Map();
+  const col = settings?.targetVerticalColumn;
+  const data = targetAccountsData;
+  for (const sheetName of data?.sheetNames || []) {
+    for (const r of data?.sheets?.[sheetName]?.records || []) {
+      const k = targetRowCompany(r).toLowerCase();
+      if (!k || out.has(k)) continue;
+      const v = renameTargetVertical(resolveTargetAccountVertical(r, col), settings);
+      if (v) out.set(k, v);
+    }
+  }
+  return out;
+}
+
+/**
+ * The Vertical My Accounts suggests for one company off the target
+ * accounts it is mapped to (`targetNames`, what its Target Accounts column
+ * shows), or null when there is nothing to suggest: no mapped row with a
+ * vertical, the company already has it (ignoring case), or the company's
+ * Vertical was kept on purpose over the Targets list (verticalOverride,
+ * the company popup's Keep button). `options` (Dropdowns > Vertical) snaps
+ * it to the list's spelling; `onList` says whether it is on the list.
+ * Returns { vertical, from, onList }.
+ */
+export function suggestTargetVertical({ targetNames = [], vertical = '', verticalOverride = '', index, options = [] }) {
+  const current = String(vertical || '').trim().toLowerCase();
+  const kept = String(verticalOverride || '').trim().toLowerCase();
+  if (kept && kept === current) return null;
+  for (const n of targetNames || []) {
+    const name = String(n || '').trim();
+    const v = name && index?.get(name.toLowerCase());
+    if (!v) continue;
+    if (v.toLowerCase() === current) return null;
+    const listed = (options || []).find(o => String(o).trim().toLowerCase() === v.toLowerCase());
+    return { vertical: listed || v, from: name, onList: !!listed };
+  }
+  return null;
+}
