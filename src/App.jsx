@@ -17,6 +17,7 @@ import { useIssues } from './hooks/useIssues';
 import { useAgentsRunDue } from './hooks/useAgentsRunDue';
 import { useOppsCallInDue } from './hooks/useOppsCallInDue';
 import { useProspectingTagDebt } from './hooks/useProspectingTagDebt';
+import { useRosterActivityRecorder } from './hooks/useRosterActivityRecorder';
 import { useContactCountRecorder } from './hooks/useContactCountRecorder';
 import { useProspectingLadder } from './hooks/useProspectingLadder';
 import { useDecisionMakerCoverage } from './hooks/useDecisionMakerCoverage';
@@ -140,6 +141,12 @@ function App() {
   useContactCountRecorder({
     coverage: tagDebt.coverage,
     oppsReady: tagDebt.oppsReady,
+    prospectsReady: !dataLoading && (prospects || []).length > 0,
+  });
+  // Prospecting > History's Contacts with activity, written down once a day.
+  useRosterActivityRecorder({
+    prospects, cdmName, settings, userId: user?.uid,
+    oppsRecords: tagDebt.oppsRecords,
     prospectsReady: !dataLoading && (prospects || []).length > 0,
   });
   const { issues, openCount: openIssuesCount, serviceGaps } = useIssues({ prospects, cdmName, user, marketingLeads: settings.marketingLeads, serviceOverrides: settings.serviceOverrides, settings });

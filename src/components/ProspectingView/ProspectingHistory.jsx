@@ -10,7 +10,7 @@
 // or Tiered Activity is open (hooks/useTieredActivity.js), so this page loads
 // the same counts and records today's reading too.
 
-import { useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
   historyChartRows,
@@ -25,6 +25,8 @@ import { makeMyCdmContactGate } from '../../utils/myCdmContacts';
 import { useAuth } from '../../contexts/AuthContext';
 import { useOpps2Data } from '../../hooks/useOpps2Data';
 import { useRosterGates } from '../../hooks/useRosterTagCoverage';
+import { todayISO } from '../../utils/prospectingStatus';
+import { parseRosterActivityHistory, recordRosterActivity, rosterActivityChartRows, rosterActivityHistorySnapshot, subscribeRosterActivityHistory } from '../../utils/rosterActivityHistory';
 import { activeFirmsChartRows, activeFirmsHistorySnapshot, parseActiveFirmsHistory, subscribeActiveFirmsHistory } from '../../utils/activeFirmsHistory';
 import { coverageChartRows, coverageHistorySnapshot, parseCoverageHistory, subscribeCoverageHistory } from '../../utils/tieredCoverageHistory';
 import {
@@ -175,57 +177,92 @@ function Stat({ label, value, sub }) {
   );
 }
 
-// The three contact rosters, each with how many of its people had a HubSpot
-// email, call or contact in the last 30, 60 and 120 days. Today's reading,
-// not a recorded series: the windows already look back over time.
-const ROSTER_BAR_COLOR = PROGRESS_COLOR;
+// The three contact rosters, one line chart each: per recorded day, how many
+// of its people had a HubSpot email, call or contact in the last 30, 60 and
+// 120 days (utils/rosterActivityHistory). One hue per window, checked as a
+// set with the palette validator (normal and colour-blind vision, contrast
+// on white), and kept apart from the tier colours used above so blue never
+// reads as Tier 1 here. Every line has a dot per day and the shared legend
+// under the charts, so colour is never the only cue.
+const ROSTER_LINE_COLORS = { 30: '#4F46E5', 60: '#C2410C', 120: '#0891B2' };
+const rosterPct = (n, total) => (total ? Math.round((n / total) * 100) : null);
 
-function RosterActivityTooltip({ active, payload, total }) {
+function RosterActivityTooltip({ active, payload }) {
   const row = active && payload?.[0]?.payload;
   if (!row) return null;
   return (
     <TooltipBox>
-      <div style={{ fontWeight: 700 }}>Last {row.days} days</div>
-      <div>{row.active} of {total} had activity{row.pct != null ? ` (${row.pct}%)` : ''}</div>
+      <div style={{ fontWeight: 700 }}>{row.weekday}, {row.label}</div>
+      {!row.recorded ? (
+        <div style={{ color: '#64748B' }}>Not recorded (the app wasn&apos;t open with contacts loaded)</div>
+      ) : (
+        <>
+          {ROSTER_ACTIVITY_WINDOWS.map((d) => {
+            const n = row[`w${d}`];
+            const pct = rosterPct(n, row.total);
+            return (
+              <div key={d} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: ROSTER_LINE_COLORS[d], flexShrink: 0 }} />
+                <span>Last {d} days: <strong>{n}</strong> of {row.total}{pct != null ? ` (${pct}%)` : ''}</span>
+              </div>
+            );
+          })}
+        </>
+      )}
     </TooltipBox>
   );
 }
 
-function RosterActivityChart({ roster }) {
-  const data = roster.windows.map(w => ({ ...w, label: `${w.days} days` }));
+function RosterActivityChart({ label, data }) {
+  const latest = [...data].reverse().find(r => r.recorded) || null;
+  const top = Math.max(1, ...data.map(r => r.total || 0));
   return (
-    <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+    <div style={{ flex: '1 1 260px', minWidth: 0 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
-        <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#1E293B' }}>{roster.label}</div>
-        <div style={{ fontSize: '0.68rem', color: '#64748B' }}>{roster.total} on the list</div>
+        <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#1E293B' }}>{label}</div>
+        <div style={{ fontSize: '0.68rem', color: '#64748B' }}>
+          {latest ? `${latest.total} on the list${latest.iso !== data[data.length - 1]?.iso ? `, ${latest.label}` : ''}` : 'Not recorded yet'}
+        </div>
       </div>
-      {roster.total === 0 ? (
-        <div style={{ fontSize: '0.7rem', color: '#94A3B8', padding: '2.5rem 0', textAlign: 'center' }}>Nobody on this list yet.</div>
-      ) : (
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={data} margin={{ top: 22, right: 8, left: -18, bottom: 0 }} barCategoryGap="28%">
-            <CartesianGrid vertical={false} stroke="#EEF2F6" />
-            <XAxis dataKey="label" tick={AXIS_TICK} tickLine={false} axisLine={{ stroke: '#CBD5E1' }} />
-            <YAxis allowDecimals={false} domain={[0, roster.total]} tick={AXIS_TICK} tickLine={false} axisLine={false} />
-            <Tooltip content={<RosterActivityTooltip total={roster.total} />} cursor={{ fill: 'rgba(148, 163, 184, 0.12)' }} />
-            <Bar dataKey="active" name="Had activity" fill={ROSTER_BAR_COLOR} radius={[4, 4, 0, 0]} maxBarSize={48} isAnimationActive={false}>
-              <LabelList
-                dataKey="active"
-                content={({ x, y, width, value, index }) => {
-                  if (value == null || x == null || y == null) return null;
-                  const pct = data[index]?.pct;
-                  return (
-                    <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={11} fill="#1E293B">
-                      <tspan fontWeight={700}>{value}</tspan>
-                      {pct != null ? <tspan fill="#64748B">{` (${pct}%)`}</tspan> : null}
-                    </text>
-                  );
-                }}
-              />
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+      {latest && (
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: '0.68rem', color: '#475569', marginTop: 2 }}>
+          {ROSTER_ACTIVITY_WINDOWS.map((d) => {
+            const n = latest[`w${d}`];
+            const pct = rosterPct(n, latest.total);
+            return (
+              <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: ROSTER_LINE_COLORS[d] }} />
+                {d}d <strong style={{ color: '#1E293B' }}>{n}</strong>{pct != null ? ` (${pct}%)` : ''}
+              </span>
+            );
+          })}
+        </div>
       )}
+      <ResponsiveContainer width="100%" height={190}>
+        <LineChart data={data} margin={{ top: 10, right: 10, left: -18, bottom: 0 }}>
+          <CartesianGrid vertical={false} stroke="#EEF2F6" />
+          <XAxis dataKey="label" tick={AXIS_TICK} tickLine={false} axisLine={{ stroke: '#CBD5E1' }} interval="preserveStartEnd" minTickGap={12} />
+          <YAxis allowDecimals={false} domain={[0, top]} tick={AXIS_TICK} tickLine={false} axisLine={false} />
+          <Tooltip content={<RosterActivityTooltip />} cursor={{ stroke: '#CBD5E1', strokeWidth: 1 }} />
+          {ROSTER_ACTIVITY_WINDOWS.map(d => (
+            <Line
+              key={d}
+              type="linear"
+              dataKey={`w${d}`}
+              name={`Last ${d} days`}
+              stroke={ROSTER_LINE_COLORS[d]}
+              strokeWidth={2}
+              // Smaller on the long ranges, where full-size dots would crowd.
+              dot={{ r: data.length > 22 ? 2.5 : 4, strokeWidth: data.length > 22 ? 1 : 2, stroke: '#fff', fill: ROSTER_LINE_COLORS[d] }}
+              activeDot={{ r: 5, stroke: '#fff', strokeWidth: 2 }}
+              // A day that wasn't recorded is a break in the line, not a
+              // straight run across it that reads like a reading.
+              connectNulls={false}
+              isAnimationActive={false}
+            />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
     </div>
   );
 }
@@ -272,6 +309,33 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
     () => (contacts ? rosterActivityCounts({ contacts, gates: rosterGates, myCdmGate, outreachIndex, localFields }) : null),
     [contacts, rosterGates, myCdmGate, outreachIndex, localFields],
   );
+  // Today's reading goes into the record straight away while this page is
+  // open (App records it too, so a day is logged without visiting here),
+  // but only once it is real: the email/call index loaded and the opps in
+  // hand, since they decide who is a Key Prospect.
+  useEffect(() => {
+    if (!rosterActivity || noIndex || oppsRecords == null || !contacts?.length) return;
+    recordRosterActivity(todayISO(), rosterActivity);
+  }, [rosterActivity, noIndex, oppsRecords, contacts]);
+  const rawRosterHistory = useSyncExternalStore(subscribeRosterActivityHistory, rosterActivityHistorySnapshot);
+  const rosterHistory = useMemo(() => parseRosterActivityHistory(rawRosterHistory), [rawRosterHistory]);
+  // One chart per roster, in the order the counts list them; a roster's
+  // name comes from its latest recorded row, else today's counts.
+  const rosterCharts = useMemo(() => {
+    const byIso = new Map(rows.map(r => [r.iso, r]));
+    const keys = (rosterActivity || []).map(r => ({ key: r.key, label: r.label }));
+    for (const day of Object.keys(rosterHistory).sort()) {
+      for (const [key, r] of Object.entries(rosterHistory[day]?.rosters || {})) {
+        const at = keys.find(k => k.key === key);
+        if (at) { if (!rosterActivity) at.label = r.label || at.label; } else keys.push({ key, label: r.label || key });
+      }
+    }
+    return keys.map(k => ({
+      ...k,
+      data: rosterActivityChartRows(rosterHistory, rows.map(r => r.iso), k.key)
+        .map(c => ({ ...c, label: byIso.get(c.iso)?.label, weekday: byIso.get(c.iso)?.weekday })),
+    }));
+  }, [rosterActivity, rosterHistory, rows]);
 
   const rawFirms = useSyncExternalStore(subscribeActiveFirmsHistory, activeFirmsHistorySnapshot);
   const firmsHistory = useMemo(() => parseActiveFirmsHistory(rawFirms), [rawFirms]);
@@ -515,15 +579,26 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
         <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: 6 }}>
           How many people on each list had a HubSpot email, call or contact in the last{' '}
           {ROSTER_ACTIVITY_WINDOWS.slice(0, -1).join(', ')} and {ROSTER_ACTIVITY_WINDOWS[ROSTER_ACTIVITY_WINDOWS.length - 1]} days,
-          as of today. The lists are the Contacts pages&apos; own: Key Targets, Key Prospects, and Decision Makers at your accounts.
+          day by day. The lists are the Contacts pages&apos; own: Key Targets, Key Prospects, and Decision Makers at your accounts.
+          A day is recorded whenever the app is open with contacts and the email/call feed loaded; a break in a line is a day that wasn&apos;t.
           {noIndex ? ' HubSpot emails and calls count once the Activity tab has loaded its feed; until then only Last Contacted dates do.' : ''}
         </div>
-        {!rosterActivity ? (
-          <div style={{ fontSize: '0.7rem', color: '#94A3B8', padding: '1rem 0' }}>Loading contacts...</div>
+        {rosterCharts.length === 0 ? (
+          <div style={{ fontSize: '0.7rem', color: '#94A3B8', padding: '1rem 0' }}>{rosterActivity ? 'Nothing recorded yet.' : 'Loading contacts...'}</div>
         ) : (
-          <div style={{ display: 'flex', gap: '1.25rem', flexWrap: 'wrap' }}>
-            {rosterActivity.map(r => <RosterActivityChart key={r.key} roster={r} />)}
-          </div>
+          <>
+            <div style={{ display: 'flex', gap: '1.25rem', flexWrap: 'wrap' }}>
+              {rosterCharts.map(r => <RosterActivityChart key={r.key} label={r.label} data={r.data} />)}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 14, fontSize: '0.7rem', color: '#475569', marginTop: 4 }}>
+              {ROSTER_ACTIVITY_WINDOWS.map(d => (
+                <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 999, background: ROSTER_LINE_COLORS[d] }} />
+                  Last {d} days
+                </span>
+              ))}
+            </div>
+          </>
         )}
       </div>
 
@@ -540,7 +615,7 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
           <table style={{ marginTop: 8, borderCollapse: 'collapse', fontSize: '0.72rem', width: '100%', background: '#fff' }}>
             <thead>
               <tr style={{ textAlign: 'left', color: '#64748B' }}>
-                {['Day', 'Steps clear', 'Stopped at', 'Overdue at start', 'Overdue at end', ...TIERS.map(t => `${t} reached`), ...ACTIVE_FIRM_BUCKETS.map(b => `${b} active ${ACTIVE_FIRMS_DAYS}d`)].map(h => (
+                {['Day', 'Steps clear', 'Stopped at', 'Overdue at start', 'Overdue at end', ...TIERS.map(t => `${t} reached`), ...ACTIVE_FIRM_BUCKETS.map(b => `${b} active ${ACTIVE_FIRMS_DAYS}d`), ...rosterCharts.map(r => `${r.label} ${ROSTER_ACTIVITY_WINDOWS.join('/')}d`)].map(h => (
                   <th key={h} style={{ padding: '4px 8px', borderBottom: '1px solid #E2E8F0', fontWeight: 700 }}>{h}</th>
                 ))}
               </tr>
@@ -566,6 +641,14 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
                       {f?.[b] == null ? '-' : `${f[b]} of ${f[`${b} total`]}`}
                     </td>
                   ))}
+                  {rosterCharts.map((rc) => {
+                    const d = rc.data.find(x => x.iso === r.iso);
+                    return (
+                      <td key={rc.key} style={{ padding: '4px 8px', borderBottom: '1px solid #F1F5F9', color: d?.recorded ? '#1E293B' : '#94A3B8' }}>
+                        {d?.recorded ? `${ROSTER_ACTIVITY_WINDOWS.map(w => d[`w${w}`]).join(' / ')} of ${d.total}` : '-'}
+                      </td>
+                    );
+                  })}
                 </tr>
                 );
               })}
