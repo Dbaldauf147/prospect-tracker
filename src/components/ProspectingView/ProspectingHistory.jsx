@@ -20,7 +20,8 @@ import {
   workingDaysBack,
 } from '../../utils/prospectingHistory';
 import { TIERS } from '../../data/enums.js';
-import { ACTIVE_FIRMS_DAYS, ACTIVE_FIRM_BUCKETS, ACTIVITY_SUMMARY_DAYS, rosterActivityCounts, tierActivityCoverage } from '../../utils/tieredAccountActivity';
+import { ACTIVE_FIRMS_DAYS, ACTIVE_FIRM_BUCKETS, ACTIVITY_SUMMARY_DAYS, rosterActivityCounts, rosterActivityPeople, tierActivityCoverage } from '../../utils/tieredAccountActivity';
+import { rosterActivityWorkbook } from '../../utils/rosterActivityExport';
 import { makeMyCdmContactGate } from '../../utils/myCdmContacts';
 import { useAuth } from '../../contexts/AuthContext';
 import { useOpps2Data } from '../../hooks/useOpps2Data';
@@ -222,7 +223,9 @@ function RosterActivityTooltip({ active, payload }) {
 }
 
 // One roster's chart, as a full-width card of its own like the charts above.
-function RosterActivityChart({ label, data, note = '' }) {
+// Clicking a day hands that chart row to `onPick`, which downloads the
+// roster's raw data for it in Excel.
+function RosterActivityChart({ label, data, note = '', onPick = null }) {
   const latest = [...data].reverse().find(r => r.recorded && r.b30 != null) || null;
   // An area needs a neighbour to span to; a day standing alone (the first
   // day recorded, or one between gaps) gets a dot per band edge instead, so
@@ -254,10 +257,20 @@ function RosterActivityChart({ label, data, note = '' }) {
       <div style={{ fontSize: '0.68rem', color: '#64748B', margin: '2px 0 4px' }}>
         The {label} list split by when each person last had a HubSpot email, call or contact: in the last 30 days, 31 to 90, 91 to 120,
         or not in 120 days. The bands add up to 100%. A day is recorded whenever the app is open with contacts and the email/call feed
-        loaded; a gap is a day that wasn&apos;t.{note}
+        loaded; a gap is a day that wasn&apos;t.{note}{onPick ? ' Click a day to download its raw data in Excel.' : ''}
       </div>
       <ResponsiveContainer width="100%" height={240}>
-        <AreaChart data={data} margin={{ top: 10, right: 16, left: -10, bottom: 0 }}>
+        <AreaChart
+          data={data}
+          margin={{ top: 10, right: 16, left: -10, bottom: 0 }}
+          onClick={onPick ? (state) => {
+            // The day under the pointer; nothing when it isn't over one.
+            const i = state?.activeTooltipIndex;
+            const row = i == null || i === '' ? null : data[Number(i)];
+            if (row) onPick(row);
+          } : undefined}
+          style={onPick ? { cursor: 'pointer' } : undefined}
+        >
           <CartesianGrid vertical={false} stroke="#EEF2F6" />
           <XAxis dataKey="label" tick={AXIS_TICK} tickLine={false} axisLine={{ stroke: '#CBD5E1' }} interval="preserveStartEnd" minTickGap={12} />
           <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={v => `${v}%`} tick={AXIS_TICK} tickLine={false} axisLine={false} allowDataOverflow />
@@ -364,6 +377,18 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
         .map(c => ({ ...c, label: byIso.get(c.iso)?.label, weekday: byIso.get(c.iso)?.weekday })),
     }));
   }, [rosterActivity, rosterHistory, rows]);
+
+  // One roster's raw data for a clicked day, as an Excel download: the
+  // day's counts, every day on the chart, and the people on the list now.
+  const downloadRosterDay = async (roster, day) => {
+    const people = rosterActivityPeople({ contacts, gates: rosterGates, myCdmGate, outreachIndex, localFields })
+      .find(x => x.key === roster.key)?.people || [];
+    const { filename, sheets } = rosterActivityWorkbook({ label: roster.label, day, data: roster.data, people, today: todayISO() });
+    const XLSX = await import('xlsx');
+    const wb = XLSX.utils.book_new();
+    for (const sh of sheets) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sh.rows), sh.name);
+    XLSX.writeFile(wb, filename);
+  };
 
   const rawFirms = useSyncExternalStore(subscribeActiveFirmsHistory, activeFirmsHistorySnapshot);
   const firmsHistory = useMemo(() => parseActiveFirmsHistory(rawFirms), [rawFirms]);
@@ -612,6 +637,7 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
           key={r.key}
           label={r.label}
           data={r.data}
+          onPick={contacts ? (day) => downloadRosterDay(r, day) : null}
           note={noIndex ? ' HubSpot emails and calls count once the Activity tab has loaded its feed; until then only Last Contacted dates do.' : ''}
         />
       ))}

@@ -306,27 +306,14 @@ export function rosterActivityCounts({
   contacts, gates, myCdmGate = null, outreachIndex = null, localFields = null,
   windows = ROSTER_ACTIVITY_WINDOWS, nowMs = Date.now(),
 } = {}) {
-  const rosters = [
-    { key: 'keyTarget', label: 'Dan Key Target', on: (c) => gates.gateFor.key(c) },
-    { key: 'keyProspect', label: 'Dan Key Prospect', on: (c) => gates.gateFor.keyProspect(c) },
-    { key: 'decisionMakers', label: 'Decision Makers', on: (c, raw) => isDecisionMakerContact(raw) && (!myCdmGate || myCdmGate(raw)) },
-  ];
+  const rosters = rosterDefs(gates, myCdmGate);
   const tally = rosters.map(() => ({ total: 0, active: windows.map(() => 0) }));
   if (!gates) return finish();
   const cutoffs = windows.map(d => nowMs - d * MS_PER_DAY);
-  for (const raw of (contacts || [])) {
-    const c = localFields ? applyCompanyOverride(raw, localFields) : raw;
-    let ts;
-    let excluded;
-    rosters.forEach((r, i) => {
-      if (!r.on(c, raw)) return;
-      if (excluded === undefined) excluded = !!gates.clientExclusionOf(c);
-      if (excluded) return;
-      if (ts === undefined) ts = contactLastOutreachMs(c, outreachIndex);
-      tally[i].total += 1;
-      cutoffs.forEach((cut, w) => { if (ts != null && ts >= cut) tally[i].active[w] += 1; });
-    });
-  }
+  eachRosterMember({ contacts, gates, rosters, outreachIndex, localFields }, (i, _c, ts) => {
+    tally[i].total += 1;
+    cutoffs.forEach((cut, w) => { if (ts != null && ts >= cut) tally[i].active[w] += 1; });
+  });
   return finish();
 
   function finish() {
@@ -341,4 +328,43 @@ export function rosterActivityCounts({
       })),
     }));
   }
+}
+
+// The three rosters and who is on each, shared by the counts above and the
+// people list below so the two can't disagree.
+function rosterDefs(gates, myCdmGate) {
+  return [
+    { key: 'keyTarget', label: 'Dan Key Target', on: (c) => gates.gateFor.key(c) },
+    { key: 'keyProspect', label: 'Dan Key Prospect', on: (c) => gates.gateFor.keyProspect(c) },
+    { key: 'decisionMakers', label: 'Decision Makers', on: (c, raw) => isDecisionMakerContact(raw) && (!myCdmGate || myCdmGate(raw)) },
+  ];
+}
+
+// Calls visit(rosterIndex, contact, lastOutreachMs) for every person on
+// every roster, client exclusions left out.
+function eachRosterMember({ contacts, gates, rosters, outreachIndex, localFields }, visit) {
+  for (const raw of (contacts || [])) {
+    const c = localFields ? applyCompanyOverride(raw, localFields) : raw;
+    let ts;
+    let excluded;
+    rosters.forEach((r, i) => {
+      if (!r.on(c, raw)) return;
+      if (excluded === undefined) excluded = !!gates.clientExclusionOf(c);
+      if (excluded) return;
+      if (ts === undefined) ts = contactLastOutreachMs(c, outreachIndex);
+      visit(i, c, ts);
+    });
+  }
+}
+
+/**
+ * Per roster, the people rosterActivityCounts counts:
+ * [{ key, label, people: [{ contact, lastMs }] }], in the same order.
+ * What the History charts' Excel download lists.
+ */
+export function rosterActivityPeople({ contacts, gates, myCdmGate = null, outreachIndex = null, localFields = null } = {}) {
+  const rosters = rosterDefs(gates, myCdmGate);
+  const people = rosters.map(() => []);
+  if (gates) eachRosterMember({ contacts, gates, rosters, outreachIndex, localFields }, (i, contact, lastMs) => people[i].push({ contact, lastMs }));
+  return rosters.map((r, i) => ({ key: r.key, label: r.label, people: people[i] }));
 }
