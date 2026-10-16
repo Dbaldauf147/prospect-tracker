@@ -12,7 +12,7 @@
 //   - the windows nest: anyone active in 30 days is active in 60 and 120;
 //   - an empty roster reports pct null, not 0.
 import { makeRosterGates } from '../src/utils/contactRosters.js';
-import { contactLastOutreachMs, rosterActivityCounts } from '../src/utils/tieredAccountActivity.js';
+import { contactLastOutreachMs, rosterActivityCounts, rosterActivityPeople } from '../src/utils/tieredAccountActivity.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -74,6 +74,13 @@ check('Dan Key Target', view.keyTarget, { total: 3, active: [1, 1, 1, 1] });
 check('Dan Key Prospect', view.keyProspect, { total: 2, active: [1, 2, 2, 2] });
 check('Decision Makers', view.decisionMakers, { total: 3, active: [1, 2, 2, 3] });
 check('percentages are whole', out[2].windows.map(w => w.pct), [33, 67, 67, 100]);
+
+// The Excel download's people list is exactly who the counts count.
+{
+  const people = rosterActivityPeople({ contacts, gates, myCdmGate, outreachIndex });
+  check('people per roster match the totals', people.map(r => r.people.length), out.map(r => r.total));
+  check('people carry their last activity', people[0].people.map(p => p.lastMs), people[0].people.map(p => contactLastOutreachMs(p.contact, outreachIndex)));
+}
 
 // Window edges count.
 {
