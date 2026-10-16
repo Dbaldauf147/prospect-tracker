@@ -39,13 +39,30 @@ export function useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, [userId]);
 
+  const gates = useRosterGates({ prospects, cdmName, oppsRecords, userId });
+  return useMemo(() => {
+    if (contacts == null) return null;
+    return rosterTagCoverage({
+      contacts,
+      gates,
+      tagReviewMap: settings?.contactTagReview || {},
+      localFields: settings?.contactLocalFields || null,
+    });
+  }, [contacts, gates, settings?.contactTagReview, settings?.contactLocalFields]);
+}
+
+// The roster gates (Key / Active / Client / Key Prospect, plus the client
+// exclusions) as the contacts pages build them, kept current with the
+// Clients tab's maps. Shared by the coverage above and the Prospecting >
+// History activity charts, so both count the same people.
+export function useRosterGates({ prospects, cdmName, oppsRecords, userId }) {
   // Same stores and the same events the contacts pages listen to, so a
   // company switched to "Cancelling for Sure" or ticked "Don't Track" drops
   // out of these numbers without a reload — and drops out here exactly as it
   // does on All Contacts, which is the point of sharing the gates.
   //
-  // Re-read when the uid lands, for the same reason the contact cache above
-  // is: these live in localStorage under a `u:<uid>:` prefix, so a read
+  // Re-read when the uid lands, for the same reason useRosterTagCoverage's
+  // contact read is: these live in localStorage under a `u:<uid>:` prefix, so a read
   // before auth resolves returns an empty map. An empty one doesn't fail
   // loudly — it just stops excluding anybody, so every cancelling and Don't
   // Track client's contacts stay on the rosters and drag the percentages
@@ -79,13 +96,5 @@ export function useRosterTagCoverage({ prospects, cdmName, oppsRecords, settings
     () => makeRosterGates({ prospects: prospects || [], cdmName, oppsRecords, clientStatusMap, clientUntrackedMap, showHidden: false }),
     [prospects, cdmName, oppsRecords, clientStatusMap, clientUntrackedMap],
   );
-  return useMemo(() => {
-    if (contacts == null) return null;
-    return rosterTagCoverage({
-      contacts,
-      gates,
-      tagReviewMap: settings?.contactTagReview || {},
-      localFields: settings?.contactLocalFields || null,
-    });
-  }, [contacts, gates, settings?.contactTagReview, settings?.contactLocalFields]);
+  return gates;
 }

@@ -20,7 +20,11 @@ import {
   workingDaysBack,
 } from '../../utils/prospectingHistory';
 import { TIERS } from '../../data/enums.js';
-import { ACTIVE_FIRMS_DAYS, ACTIVE_FIRM_BUCKETS, ACTIVITY_SUMMARY_DAYS, tierActivityCoverage } from '../../utils/tieredAccountActivity';
+import { ACTIVE_FIRMS_DAYS, ACTIVE_FIRM_BUCKETS, ACTIVITY_SUMMARY_DAYS, ROSTER_ACTIVITY_WINDOWS, rosterActivityCounts, tierActivityCoverage } from '../../utils/tieredAccountActivity';
+import { makeMyCdmContactGate } from '../../utils/myCdmContacts';
+import { useAuth } from '../../contexts/AuthContext';
+import { useOpps2Data } from '../../hooks/useOpps2Data';
+import { useRosterGates } from '../../hooks/useRosterTagCoverage';
 import { activeFirmsChartRows, activeFirmsHistorySnapshot, parseActiveFirmsHistory, subscribeActiveFirmsHistory } from '../../utils/activeFirmsHistory';
 import { coverageChartRows, coverageHistorySnapshot, parseCoverageHistory, subscribeCoverageHistory } from '../../utils/tieredCoverageHistory';
 import {
@@ -171,6 +175,61 @@ function Stat({ label, value, sub }) {
   );
 }
 
+// The three contact rosters, each with how many of its people had a HubSpot
+// email, call or contact in the last 30, 60 and 120 days. Today's reading,
+// not a recorded series: the windows already look back over time.
+const ROSTER_BAR_COLOR = PROGRESS_COLOR;
+
+function RosterActivityTooltip({ active, payload, total }) {
+  const row = active && payload?.[0]?.payload;
+  if (!row) return null;
+  return (
+    <TooltipBox>
+      <div style={{ fontWeight: 700 }}>Last {row.days} days</div>
+      <div>{row.active} of {total} had activity{row.pct != null ? ` (${row.pct}%)` : ''}</div>
+    </TooltipBox>
+  );
+}
+
+function RosterActivityChart({ roster }) {
+  const data = roster.windows.map(w => ({ ...w, label: `${w.days} days` }));
+  return (
+    <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#1E293B' }}>{roster.label}</div>
+        <div style={{ fontSize: '0.68rem', color: '#64748B' }}>{roster.total} on the list</div>
+      </div>
+      {roster.total === 0 ? (
+        <div style={{ fontSize: '0.7rem', color: '#94A3B8', padding: '2.5rem 0', textAlign: 'center' }}>Nobody on this list yet.</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={200}>
+          <BarChart data={data} margin={{ top: 22, right: 8, left: -18, bottom: 0 }} barCategoryGap="28%">
+            <CartesianGrid vertical={false} stroke="#EEF2F6" />
+            <XAxis dataKey="label" tick={AXIS_TICK} tickLine={false} axisLine={{ stroke: '#CBD5E1' }} />
+            <YAxis allowDecimals={false} domain={[0, roster.total]} tick={AXIS_TICK} tickLine={false} axisLine={false} />
+            <Tooltip content={<RosterActivityTooltip total={roster.total} />} cursor={{ fill: 'rgba(148, 163, 184, 0.12)' }} />
+            <Bar dataKey="active" name="Had activity" fill={ROSTER_BAR_COLOR} radius={[4, 4, 0, 0]} maxBarSize={48} isAnimationActive={false}>
+              <LabelList
+                dataKey="active"
+                content={({ x, y, width, value, index }) => {
+                  if (value == null || x == null || y == null) return null;
+                  const pct = data[index]?.pct;
+                  return (
+                    <text x={x + width / 2} y={y - 6} textAnchor="middle" fontSize={11} fill="#1E293B">
+                      <tspan fontWeight={700}>{value}</tspan>
+                      {pct != null ? <tspan fill="#64748B">{` (${pct}%)`}</tspan> : null}
+                    </text>
+                  );
+                }}
+              />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
 export function ProspectingHistory({ today, maxWidth, prospects = null, settings = null, cdmName = '' }) {
   const raw = useSyncExternalStore(subscribeHistory, historySnapshot);
   const history = useMemo(() => parseHistory(raw), [raw]);
@@ -199,6 +258,20 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
   }, [accounts, activity, hiddenKey, windowDays]);
   useRecordTieredCoverage({ coverage, windowDays, contacts, noIndex, accounts });
   useRecordActiveFirms({ prospects, cdmName, contacts, outreachIndex, noIndex, localFields, links, exclusions });
+
+  // Dan Key Target, Dan Key Prospect and Decision Makers, counted the way
+  // the contacts pages list them (their own gates and client exclusions).
+  const { user } = useAuth() || {};
+  const oppsRecords = useOpps2Data(user?.uid)?.records ?? null;
+  const rosterGates = useRosterGates({ prospects, cdmName, oppsRecords, userId: user?.uid });
+  const myCdmGate = useMemo(
+    () => makeMyCdmContactGate({ prospects: prospects || [], cdmName, localFields }),
+    [prospects, cdmName, localFields],
+  );
+  const rosterActivity = useMemo(
+    () => (contacts ? rosterActivityCounts({ contacts, gates: rosterGates, myCdmGate, outreachIndex, localFields }) : null),
+    [contacts, rosterGates, myCdmGate, outreachIndex, localFields],
+  );
 
   const rawFirms = useSyncExternalStore(subscribeActiveFirmsHistory, activeFirmsHistorySnapshot);
   const firmsHistory = useMemo(() => parseActiveFirmsHistory(rawFirms), [rawFirms]);
@@ -435,6 +508,23 @@ export function ProspectingHistory({ today, maxWidth, prospects = null, settings
             </Line>
           </ComposedChart>
         </ResponsiveContainer>
+      </div>
+
+      <div style={CARD}>
+        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Contacts with activity</div>
+        <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: 6 }}>
+          How many people on each list had a HubSpot email, call or contact in the last{' '}
+          {ROSTER_ACTIVITY_WINDOWS.slice(0, -1).join(', ')} and {ROSTER_ACTIVITY_WINDOWS[ROSTER_ACTIVITY_WINDOWS.length - 1]} days,
+          as of today. The lists are the Contacts pages&apos; own: Key Targets, Key Prospects, and Decision Makers at your accounts.
+          {noIndex ? ' HubSpot emails and calls count once the Activity tab has loaded its feed; until then only Last Contacted dates do.' : ''}
+        </div>
+        {!rosterActivity ? (
+          <div style={{ fontSize: '0.7rem', color: '#94A3B8', padding: '1rem 0' }}>Loading contacts...</div>
+        ) : (
+          <div style={{ display: 'flex', gap: '1.25rem', flexWrap: 'wrap' }}>
+            {rosterActivity.map(r => <RosterActivityChart key={r.key} roster={r} />)}
+          </div>
+        )}
       </div>
 
       <div>
