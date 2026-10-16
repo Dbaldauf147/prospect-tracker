@@ -24,7 +24,7 @@
 import { TIERS } from '../data/enums.js';
 import { matchesCdm } from './cdmMatch.js';
 import { applyCompanyOverride, isSchneiderContact, rosterCompaniesMatch } from './contactRosters.js';
-import { makeAccountContactIndex } from './decisionMakerCoverage.js';
+import { isDecisionMakerContact, makeAccountContactIndex } from './decisionMakerCoverage.js';
 import { splitPeOwners } from './peOwners.js';
 
 const MS_PER_DAY = 86400000;
@@ -262,4 +262,82 @@ export function activeFirmsByBucket({
     if (a && inWindow(a.tsMs)) slot.active += 1;
   }
   return out;
+}
+
+// ── Contact rosters: who has had activity lately ────────────────────────
+//
+// Prospecting > History charts, for three lists of people, how many have
+// had activity in the last 30, 60 and 120 days. "Activity" is the same
+// outreach the account-level reading above counts, taken per contact: a
+// HubSpot email or call from the outreach index, or HubSpot's Last
+// Contacted date - whichever is newest.
+
+export const ROSTER_ACTIVITY_WINDOWS = [30, 60, 120];
+
+/** The newest outreach to one contact, in ms, or null when there's none. */
+export function contactLastOutreachMs(c, outreachIndex = null) {
+  let best = null;
+  const take = (ms) => { if (ms != null && (best == null || ms > best)) best = ms; };
+  const em = String(c?.email || '').trim().toLowerCase();
+  const hitE = em ? outreachIndex?.emails?.[em] : null;
+  if (hitE) take(hitE.tsMs ?? parseWhen(hitE.ts));
+  for (const ph of [c?.phone, c?.mobilephone]) {
+    const n = normalizePhone(ph);
+    const hitP = n ? outreachIndex?.phones?.[n] : null;
+    if (hitP) take(hitP.tsMs ?? parseWhen(hitP.ts));
+  }
+  take(parseWhen(c?.notes_last_contacted));
+  return best;
+}
+
+/**
+ * Per roster, how many contacts had activity within each window:
+ * [{ key, label, total, windows: [{ days, active, pct }] }] for Dan Key
+ * Target, Dan Key Prospect and Decision Makers, in that order.
+ *
+ * The lists are the contacts pages' own: `gates` is makeRosterGates (the
+ * Key and Key Prospect gates, and the cancelling / Don't Track client
+ * exclusion every roster applies), `myCdmGate` is the Decision Makers
+ * page's "at one of my accounts" gate. `pct` is a whole percentage, null
+ * for a roster with nobody on it.
+ */
+export function rosterActivityCounts({
+  contacts, gates, myCdmGate = null, outreachIndex = null, localFields = null,
+  windows = ROSTER_ACTIVITY_WINDOWS, nowMs = Date.now(),
+} = {}) {
+  const rosters = [
+    { key: 'keyTarget', label: 'Dan Key Target', on: (c) => gates.gateFor.key(c) },
+    { key: 'keyProspect', label: 'Dan Key Prospect', on: (c) => gates.gateFor.keyProspect(c) },
+    { key: 'decisionMakers', label: 'Decision Makers', on: (c, raw) => isDecisionMakerContact(raw) && (!myCdmGate || myCdmGate(raw)) },
+  ];
+  const tally = rosters.map(() => ({ total: 0, active: windows.map(() => 0) }));
+  if (!gates) return finish();
+  const cutoffs = windows.map(d => nowMs - d * MS_PER_DAY);
+  for (const raw of (contacts || [])) {
+    const c = localFields ? applyCompanyOverride(raw, localFields) : raw;
+    let ts;
+    let excluded;
+    rosters.forEach((r, i) => {
+      if (!r.on(c, raw)) return;
+      if (excluded === undefined) excluded = !!gates.clientExclusionOf(c);
+      if (excluded) return;
+      if (ts === undefined) ts = contactLastOutreachMs(c, outreachIndex);
+      tally[i].total += 1;
+      cutoffs.forEach((cut, w) => { if (ts != null && ts >= cut) tally[i].active[w] += 1; });
+    });
+  }
+  return finish();
+
+  function finish() {
+    return rosters.map((r, i) => ({
+      key: r.key,
+      label: r.label,
+      total: tally[i].total,
+      windows: windows.map((days, w) => ({
+        days,
+        active: tally[i].active[w],
+        pct: tally[i].total ? Math.round((tally[i].active[w] / tally[i].total) * 100) : null,
+      })),
+    }));
+  }
 }
