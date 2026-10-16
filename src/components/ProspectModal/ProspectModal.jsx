@@ -5752,6 +5752,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     if (!prospect?.id) return;
     updateSettings({ targetMap: { ...(settings?.targetMap || {}), [prospect.id]: names } });
   }
+  // Every account on the Targets list, for mapping this card to one by hand
+  // when the name match suggests nothing (or the wrong thing).
+  const targetRowNames = useMemo(
+    () => (targetRows ? [...new Set(targetRows.map(r => r.name).filter(Boolean))].sort((a, b) => a.localeCompare(b)) : []),
+    [targetRows],
+  );
 
   const targetsVertical = useMemo(() => (targetAccountsData
     ? targetVerticalFor({
@@ -10051,6 +10057,24 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             {/* The Targets list row this company is. Hidden for a new
                 company (nothing to map yet) and until the list loads. */}
+            {targetRows && prospect?.id && !isNew && mappedRows.length === 0 && targetSuggestions.length === 0 && (
+              // Nothing mapped and nothing that looks like it: say so, and
+              // let the account be picked off the list by hand.
+              <div style={{ gridColumn: '1 / -1', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.35rem 0.75rem', border: '1px solid var(--color-border)', borderRadius: 6, padding: '0.45rem 0.6rem', background: 'var(--color-surface)', fontSize: '0.72rem' }}>
+                <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)' }}>
+                  Targets list: not mapped
+                </div>
+                <div style={{ flex: '1 1 260px', maxWidth: 420 }}>
+                  <SearchableSelect
+                    options={targetRowNames}
+                    value=""
+                    onChange={v => { if (v) setTargetMapping([v]); }}
+                    placeholder="Map to a Target Company..."
+                    allowCustom={false}
+                  />
+                </div>
+              </div>
+            )}
             {targetRows && prospect?.id && !isNew && (mappedRows.length > 0 || targetSuggestions.length > 0) && (
               // An unmapped suggestion is in red so it can't be missed: it is
               // a Targets list account this card isn't tied to yet. Once
@@ -10175,6 +10199,20 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     >Ignore</button>
                   </div>
                 ))}
+                {mappedRows.length === 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.35rem 0.75rem', marginTop: 6 }}>
+                    <span>Or pick another:</span>
+                    <div style={{ flex: '1 1 260px', maxWidth: 420 }}>
+                      <SearchableSelect
+                        options={targetRowNames}
+                        value=""
+                        onChange={v => { if (v) setTargetMapping([v]); }}
+                        placeholder="Map to a Target Company..."
+                        allowCustom={false}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
