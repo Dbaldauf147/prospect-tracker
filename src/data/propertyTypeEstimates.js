@@ -352,6 +352,25 @@ export function propertyTypeEquipment(rawType) {
   return Number.isFinite(n) ? n : null;
 }
 
+// A whole portfolio's equipment when every site is taken to be one
+// property type: the company popup's quick estimate, for a company whose
+// sites are all (or near enough all) the same kind of building and that has
+// no site list to estimate site by site. Null when there's no site count or
+// the type doesn't resolve, so the caller leaves the field alone rather than
+// writing a zero it can't stand behind.
+export function portfolioEquipmentEstimate(sites, rawType) {
+  const n = Number(sites);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const each = propertyTypeEquipment(rawType);
+  if (each == null) return null;
+  return { each, total: Math.round(n * each) };
+}
+
+// The property types the quick estimate offers: every reference type that
+// has a building to put equipment in, so not Land or Debt.
+export const EQUIPMENT_ESTIMATE_TYPES = Object.keys(EQUIPMENT_ESTIMATES)
+  .filter(t => EQUIPMENT_ESTIMATES[t] > 0);
+
 // Estimate a site's annual electric / gas usage from its property
 // type + optional Size_ft2. When a size is provided we scale by
 // (actualSize / referenceSize) — labs at 40,000 sf get half the

@@ -60,6 +60,7 @@ import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { withoutParenNotes, parenAliases } from '../../utils/companyIndex';
 import { reportingStatus, REPORTED_COLORS, NOT_REPORTED_COLORS } from '../../utils/reportingFrameworks';
 import { splitPeOwners, joinPeOwners } from '../../utils/peOwners';
+import { EQUIPMENT_ESTIMATE_TYPES, portfolioEquipmentEstimate, propertyTypeEquipment } from '../../data/propertyTypeEstimates';
 import { companyDedupeKey } from '../../utils/companyKey';
 import { isTryingAgain, tryingAgainTitle, TRYING_AGAIN, TRYING_AGAIN_COLORS } from '../../utils/tryingAgain';
 import { serviceStatusColor, serviceStatusBucket, serviceBucket } from '../../utils/serviceStatusColors';
@@ -758,6 +759,9 @@ const EMPTY = {
   // Opts this company into the weekly acquisition-news digest
   // (api/company-news-scheduler). Off unless explicitly ticked.
   trackAcquisitionNews: false,
+  // The one property type the Equipment estimate was last worked out from
+  // (Sites x that type's per-site count). Blank until someone picks one.
+  equipmentPropertyType: '',
   // Contacts tab reads only people whose HubSpot Company is this name
   // exactly (case, spacing and punctuation aside), with no fuzzy or
   // email-domain matches. For a business unit named after its parent,
@@ -3410,6 +3414,59 @@ function SubVerticalField({ vertical, value, onChange, map, onSaveMap }) {
         </div>
       )}
       </div>
+    </div>
+  );
+}
+
+// Under the Equipment box: pick the one property type the company's sites
+// are, and Equipment becomes Sites x that type's per-site count from the
+// reference table (data/propertyTypeEstimates EQUIPMENT_ESTIMATES). For a
+// company with a site list the Master Analysis estimates site by site; this
+// is the quick version for one that's all student housing, all offices.
+//
+// The chosen type is kept on the record so the line under the picker can say
+// what the number was worked out from, and offer to redo it once Sites has
+// changed or the box has been typed over.
+function EquipmentByPropertyType({ sites, propertyType, equipment, onPick }) {
+  const est = propertyType ? portfolioEquipmentEstimate(sites, propertyType) : null;
+  const current = equipment === '' || equipment == null ? null : Number(equipment);
+  const stale = est != null && current !== est.total;
+  const hasSites = Number(sites) > 0;
+  return (
+    <div style={{ marginTop: 4 }}>
+      <select
+        value={propertyType}
+        disabled={!hasSites}
+        onChange={e => {
+          const type = e.target.value;
+          onPick(type, type ? portfolioEquipmentEstimate(sites, type)?.total ?? null : null);
+        }}
+        title={hasSites
+          ? 'Treat every site as this property type and set Equipment to Sites x its typical equipment count.'
+          : 'Fill in Sites first: the estimate is Sites x the typical equipment count for one property type.'}
+        style={{ width: '100%', fontSize: '0.7rem', padding: '0.15rem 0.3rem', border: '1px solid #CBD5E1', borderRadius: 4, background: '#F8FAFC', color: '#475569', fontFamily: 'inherit' }}
+      >
+        <option value="">{hasSites ? 'Estimate from one property type...' : 'Estimate from one property type (needs Sites)'}</option>
+        {EQUIPMENT_ESTIMATE_TYPES.map(t => (
+          <option key={t} value={t}>{t} ({propertyTypeEquipment(t)} per site)</option>
+        ))}
+      </select>
+      {est && (
+        <div style={{ fontSize: '0.6rem', color: 'var(--color-text-muted)', marginTop: 2, lineHeight: 1.3 }}>
+          {Number(sites).toLocaleString()} sites x {est.each} ({propertyType}) = {est.total.toLocaleString()}
+          {stale && (
+            <>
+              {' '}
+              <button
+                type="button"
+                onClick={() => onPick(propertyType, est.total)}
+                title="Equipment no longer matches this estimate (Sites changed, or the box was typed over). Set it back to the estimate."
+                style={{ padding: 0, border: 'none', background: 'none', color: '#2563EB', fontSize: 'inherit', fontFamily: 'inherit', cursor: 'pointer', textDecoration: 'underline' }}
+              >Apply</button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -10629,7 +10686,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 className={styles.label}
                 title="How many pieces of equipment - chillers, boilers, EV chargers - are in scope. Priced against by any per-equipment service. Filled in from the Utility Lookup page's per-site estimate when a Master Analysis is saved against the company, and typed over here if you know better."
               >Equipment</label>
-              <CommitOnBlurInput className={styles.input} grouped value={fields.equipmentCount ?? ''} onCommit={v => set('equipmentCount', v)} />
+              <div>
+                <CommitOnBlurInput className={styles.input} grouped value={fields.equipmentCount ?? ''} onCommit={v => set('equipmentCount', v)} />
+                <EquipmentByPropertyType
+                  sites={fields.numberOfSites}
+                  propertyType={fields.equipmentPropertyType || ''}
+                  equipment={fields.equipmentCount}
+                  onPick={(type, total) => {
+                    set('equipmentPropertyType', type);
+                    if (total != null) set('equipmentCount', total);
+                  }}
+                />
+              </div>
             </div>
 
             <div>
