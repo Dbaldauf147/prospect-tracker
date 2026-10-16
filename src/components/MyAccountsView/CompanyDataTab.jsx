@@ -9,6 +9,7 @@ import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, titleSearchesForComp
 import { readWorkKey, ZOOM_SEARCH_LOG_EVENT } from '../../utils/mirroredWorkKeys';
 import { buildZoomExcludedMatcher, zoomExcludedLabel } from '../../utils/zoomExportExclude';
 import { ZoomExcludedCell } from './ZoomExcludedCell';
+import { buildZoomCsv, downloadZoomCsv } from '../../utils/zoomCsv';
 
 // My Accounts > Company Data: which of the accounts have their size numbers
 // (sites, utility accounts, meters, equipment, electric MWh) and their
@@ -237,6 +238,19 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
     XLSX.writeFile(wb, `Company data missing ${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
+  // The companies with no Zoom Company ID, as the four-column CSV ZoomInfo
+  // takes (utils/zoomCsv). The same set the Zoom Company ID card counts:
+  // companies excluded from ZoomInfo, or with a decision maker on every
+  // tag, don't owe one and are left out.
+  const zoomIdField = COMPANY_DATA_FIELDS.find(f => f.key === 'zoomCompanyId');
+  const noZoomId = useMemo(() => rows.filter(r => isMissing(r, zoomIdField)), [rows, zoomIdField]);
+  function exportNoZoomId() {
+    if (noZoomId.length === 0) { alert('Every company here already has a Zoom Company ID.'); return; }
+    const { csv, kept } = buildZoomCsv(noZoomId, prospects);
+    if (kept === 0) { alert('Every company without a Zoom Company ID is excluded from ZoomInfo exports, so there is nothing to download.'); return; }
+    downloadZoomCsv(csv, `my-accounts-no-zoom-id-${new Date().toISOString().slice(0, 10)}.csv`);
+  }
+
   const btn = { padding: '0.3rem 0.7rem', borderRadius: 6, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' };
 
   return (
@@ -259,6 +273,12 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
           title="Download the companies listed that are missing a value, as an Excel sheet to fill in. Paste the filled-in rows back with Paste values."
           style={{ ...btn, border: '1px solid #16A34A', background: '#F0FDF4', color: '#166534' }}
         >{`Export missing (${shown.filter(r => r.missingCount > 0).length})`}</button>
+        <button
+          type="button"
+          onClick={exportNoZoomId}
+          title="Download the companies with no Zoom Company ID as a CSV to take into ZoomInfo (Company, Zoom Company ID, Zoom Company Name, Company URL)"
+          style={{ ...btn, border: '1px solid #7C3AED', background: '#F5F3FF', color: '#5B21B6' }}
+        >{`Zoom export, no Zoom ID (${noZoomId.length})`}</button>
         <button
           type="button"
           onClick={() => setPasteOpen(true)}
