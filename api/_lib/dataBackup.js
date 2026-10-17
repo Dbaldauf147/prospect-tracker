@@ -17,6 +17,11 @@ const SINGLE_DOC_COLLECTIONS = ['userSettings', 'targetAccounts', 'progressHisto
 // Mirrors peOpps.loadPeFirms / firestoreSync.getCol.
 const SHARED_PROSPECTS_EMAIL = 'baldaufdan@gmail.com';
 
+// A saved earlier version of a mirrored key (utils/localMirrorSync keeps
+// them as sibling documents named `<key>__v<n>`), or the index listing
+// them. Backed up like the rest, but not counted as a store of its own.
+export const isMirrorVersionId = (id) => /__v\d+$|__versions$/.test(String(id || ''));
+
 function msg(e) { return String(e?.message || e).slice(0, 200); }
 
 // Reassemble opps2Data/{uid}, joining the chunked JSON when present.
@@ -95,6 +100,34 @@ export async function collectUserBackup(db, uid, email) {
     summary.counts.companySiteLists = snap.size;
     if (snap.size) summary.captured.push('companySiteLists');
   } catch (e) { summary.errors.push(`companySiteLists: ${msg(e)}`); }
+
+  // The browser stores mirrored to Firestore (utils/localMirrorSync):
+  // `userSettings/{uid}/localMirrors/{id}`, one document per localStorage
+  // key or IndexedDB record, joined from its chunks when it has them. These
+  // are the only cloud copy of the Commissions roster, the Deals roster, the
+  // Clients-tab fields and the chart histories, and they weren't in the
+  // nightly backup at all until the Commissions roster was lost and there
+  // was nothing to restore it from. Each is kept by its document id, parsed
+  // when it parses. A list-shaped store also gets a row count, so the
+  // day-over-day check flags it the morning after it is wiped.
+  try {
+    const col = db.collection('userSettings').doc(uid).collection('localMirrors');
+    const refs = await col.listDocuments();
+    const mirrors = {};
+    for (const ref of refs) {
+      try {
+        const json = await readChunkedJson(ref, { field: 's' });
+        if (json == null) { mirrors[ref.id] = null; continue; }
+        let value;
+        try { value = JSON.parse(json); } catch { value = { _unparseableJson: json }; }
+        mirrors[ref.id] = value;
+        if (Array.isArray(value) && !isMirrorVersionId(ref.id)) summary.counts[`${ref.id} rows`] = value.length;
+      } catch (e) { summary.errors.push(`localMirrors/${ref.id}: ${msg(e)}`); }
+    }
+    backup.collections.localMirrors = mirrors;
+    summary.counts.localMirrors = Object.keys(mirrors).length;
+    if (refs.length) summary.captured.push('localMirrors');
+  } catch (e) { summary.errors.push(`localMirrors: ${msg(e)}`); }
 
   // Prospects
   try {
