@@ -19,6 +19,23 @@
 // or a roster replaced wholesale by an upload. Two devices editing
 // DIFFERENT clients between hydrations will keep only the later save.
 //
+// Whole-key last-write-wins is guarded, though: a browser may only replace
+// the cloud copy it last synced with. Each key remembers the cloud stamp
+// its local value is based on (BASE_SUFFIX). If the cloud has moved on
+// since (another tab or machine saved), this browser's copy is stale, and
+// pushing it would erase that other save; that is how the Commissions
+// roster was lost on Oct 16 2026. So the push is refused, the newer cloud
+// copy is taken instead, and this browser's unsaved copy is kept as an
+// earlier version (below) rather than thrown away. A stale browser can no
+// longer overwrite anything.
+//
+// Every replacement of a cloud copy also keeps what it replaced first: the
+// last VERSIONS_KEEP versions of each key, as sibling documents
+// `<key>__v<slot>` with an index `<key>__versions` (listMirrorVersions /
+// readMirrorVersion). A save that removes data (fewer rows, a much smaller
+// value, a clear) always keeps one; routine edits keep one at most every
+// VERSION_THROTTLE_MS, so typing in a cell doesn't fill the history.
+//
 // The exception is a key registered with a `merge` (the day-by-day chart
 // histories, see mergeDayHistories). Those are written automatically by
 // every open tab, so whole-key replacement let a tab left open since
@@ -72,6 +89,29 @@ const PUSH_DEBOUNCE_MS = 1500;
 // reads as 0, so the cloud copy always wins there — which is the whole
 // point of this module.
 const AT_SUFFIX = ':__mirroredAt';
+
+// The cloud stamp this browser's local value is based on: the updatedAt of
+// the cloud copy it last pulled or pushed. A push is only allowed while the
+// cloud still carries that stamp (see the header).
+const BASE_SUFFIX = ':__mirroredBase';
+
+// Earlier versions kept per key, and how often a routine edit keeps one.
+export const VERSIONS_KEEP = 20;
+const VERSION_THROTTLE_MS = 10 * 60 * 1000;
+
+// Fired on the window (detail: { key, versionSlot }) when this browser's
+// copy of a key was out of date and its unsaved change was set aside as an
+// earlier version instead of being pushed.
+export const MIRROR_CONFLICT_EVENT = 'local-mirror-conflict';
+
+const readStamp = (key, suffix) => Number(userLsGet(key + suffix)) || 0;
+// After a pull or a push: the local value IS the cloud copy stamped `at`.
+function markSynced(key, at) {
+  try {
+    userLsSet(key + AT_SUFFIX, String(at));
+    userLsSet(key + BASE_SUFFIX, String(at));
+  } catch { /* quota */ }
+}
 
 // key → change event to dispatch after hydration writes a newer cloud value
 // into localStorage. Stores register themselves at import time so the key
@@ -350,17 +390,42 @@ const timers = new Map();
 // marks a deliberate clear (the Deals tab's Clear button): without it a key
 // with no local value is never pushed, so a browser that has lost its
 // localStorage can't wipe the cloud copy on its way to hydrating from it.
-export function queueMirrorPush(key, { allowEmpty = false } = {}) {
+// `keepVersion` always keeps the copy this save replaces as an earlier
+// version, even inside the routine-edit throttle (a restore uses it, so
+// the restore itself can be undone).
+export function queueMirrorPush(key, { allowEmpty = false, keepVersion = false } = {}) {
   const at = Date.now();
-  try { userLsSet(key + AT_SUFFIX, String(at)); } catch { /* quota — the push still carries `at` */ }
+  try {
+    // A browser from before the base was tracked: the stamp it holds is the
+    // cloud copy it last synced with (hydration and pushes both set it to
+    // the cloud's), so that is what this edit is based on.
+    if (userLsGet(key + BASE_SUFFIX) == null) userLsSet(key + BASE_SUFFIX, String(readStamp(key, AT_SUFFIX)));
+    userLsSet(key + AT_SUFFIX, String(at));
+  } catch { /* quota — the push still carries `at` */ }
   clearTimeout(timers.get(key));
   timers.set(key, setTimeout(() => {
     timers.delete(key);
-    void pushNow(key, { allowEmpty });
+    void pushNow(key, { allowEmpty, keepVersion });
   }, PUSH_DEBOUNCE_MS));
 }
 
-async function pushNow(key, { allowEmpty = false } = {}) {
+// One push per key at a time. Two overlapping pushes from this browser
+// would otherwise race: the second could read the cloud copy the first had
+// just written, before the first recorded it as this browser's base, and
+// take this browser's own save for someone else's.
+const pushChains = new Map();
+function pushNow(key, opts) {
+  const prev = pushChains.get(key) || Promise.resolve();
+  const next = prev.catch(() => {}).then(() => pushNowSerial(key, opts));
+  pushChains.set(key, next);
+  next.finally(() => { if (pushChains.get(key) === next) pushChains.delete(key); }).catch(() => {});
+  return next;
+}
+
+// `force` skips the stale check, for a deliberate overwrite: restoring a
+// backup or an earlier version. What it replaces is still kept as an
+// earlier version.
+async function pushNowSerial(key, { allowEmpty = false, force = false, keepVersion = false } = {}) {
   if (!_userId) return; // signed out: nothing to push to
   const entry = registry.get(key);
   if (!entry) return;
@@ -385,19 +450,126 @@ async function pushNow(key, { allowEmpty = false } = {}) {
       if (merged === remote.json) return; // the cloud already has all of it
     }
   }
+  const userId = _userId;
+  const json = raw == null ? '' : raw;
+  // A whole-key push replaces the cloud copy, so first check this browser
+  // is replacing the copy it last synced with (see the header). If the
+  // cloud can't be read, don't push (the next change retries) rather than
+  // overwrite something unseen.
+  if (!entry.mergeAlways) {
+    let remote;
+    try { remote = await readMirror(userId, key); }
+    catch (err) { console.warn(`localMirror: couldn't read "${key}" before saving; will retry on the next change`, err); return; }
+    if (remote && !force && remote.updatedAt > readStamp(key, BASE_SUFFIX)) {
+      await setAsideStale(userId, key, entry, json, remote);
+      return;
+    }
+    if (remote && remote.json !== json) {
+      await archiveVersion(userId, key, remote.json, {
+        updatedAt: remote.updatedAt,
+        reason: force || keepVersion ? 'before-restore' : (removesData(remote.json, json) ? 'before-delete' : 'auto'),
+      });
+    }
+  }
   // A push with no stamp yet is data this browser held from before mirroring
   // existed. Stamp it as it goes up, so the next hydration compares it like
   // any other value instead of re-adopting (and re-pushing) it every signin.
-  let at = Number(userLsGet(key + AT_SUFFIX)) || 0;
-  if (!at) {
-    at = Date.now();
-    try { userLsSet(key + AT_SUFFIX, String(at)); } catch { /* quota */ }
-  }
+  let at = readStamp(key, AT_SUFFIX);
+  if (!at) at = Date.now();
   try {
-    await writeMirror(_userId, key, raw == null ? '' : raw, at);
+    await writeMirror(userId, key, json, at);
+    markSynced(key, at);
   } catch (err) {
     console.warn(`localMirror: failed to save "${key}" to Firestore`, err);
   }
+}
+
+// This browser's copy of `key` is out of date: another tab or machine has
+// saved since this one last synced. Keep this browser's unsaved copy as an
+// earlier version, take the cloud's, and tell the page.
+async function setAsideStale(userId, key, entry, localJson, remote) {
+  let versionSlot = null;
+  if (localJson !== remote.json && localJson !== '') {
+    versionSlot = await archiveVersion(userId, key, localJson, { updatedAt: readStamp(key, AT_SUFFIX), reason: 'not-saved' });
+  }
+  if (remote.json === '') await removeLocal(key, entry);
+  else await writeLocal(key, entry, remote.json);
+  markSynced(key, remote.updatedAt);
+  fire(entry.eventName);
+  console.warn(`localMirror: "${key}" was out of date on this device; took the newer copy${versionSlot != null ? ' and kept this device\'s as an earlier version' : ''}`);
+  try { window.dispatchEvent(new CustomEvent(MIRROR_CONFLICT_EVENT, { detail: { key, versionSlot } })); } catch { /* no window */ }
+}
+
+// ---------------------------------------------------------------------
+// Earlier versions
+
+const versionsIndexId = (key) => `${key}__versions`;
+const versionSlotId = (key, slot) => `${key}__v${slot}`;
+
+function rowCount(json) {
+  try { const v = JSON.parse(json); return Array.isArray(v) ? v.length : (v && typeof v === 'object' ? Object.keys(v).length : null); }
+  catch { return null; }
+}
+
+// Whether replacing `before` with `after` loses data: a clear, fewer rows
+// or entries, or a value at least a tenth smaller.
+export function removesData(before, after) {
+  if (!before) return false;
+  if (!after) return true;
+  const a = rowCount(before);
+  const b = rowCount(after);
+  if (a != null && b != null && b < a) return true;
+  return after.length < before.length * 0.9;
+}
+
+async function readVersionIndex(userId, key) {
+  const doc = await readMirror(userId, versionsIndexId(key));
+  try {
+    const v = doc?.json ? JSON.parse(doc.json) : null;
+    return { next: Number(v?.next) || 0, list: Array.isArray(v?.list) ? v.list : [] };
+  } catch { return { next: 0, list: [] }; }
+}
+
+// Keep `json` (a copy of `key` stamped `updatedAt`) as an earlier version.
+// Returns the slot it went into, or null when it wasn't kept: empty, the
+// same copy already kept, or a routine edit inside the throttle window.
+// Never throws: failing to keep a version must not block the save.
+async function archiveVersion(userId, key, json, { updatedAt = 0, reason = 'auto', now = Date.now() } = {}) {
+  if (!json) return null;
+  try {
+    const index = await readVersionIndex(userId, key);
+    if (index.list.some(v => v.updatedAt === updatedAt && v.bytes === json.length)) return null;
+    if (reason === 'auto' && index.list[0] && now - (Number(index.list[0].archivedAt) || 0) < VERSION_THROTTLE_MS) return null;
+    const slot = index.next % VERSIONS_KEEP;
+    await writeMirror(userId, versionSlotId(key, slot), json, now);
+    const entry = { slot, archivedAt: now, updatedAt, reason, bytes: json.length, rows: rowCount(json) };
+    const list = [entry, ...index.list.filter(v => v.slot !== slot)].slice(0, VERSIONS_KEEP);
+    await writeMirror(userId, versionsIndexId(key), JSON.stringify({ next: slot + 1, list }), now);
+    return slot;
+  } catch (err) {
+    console.warn(`localMirror: couldn't keep an earlier version of "${key}"`, err);
+    return null;
+  }
+}
+
+/**
+ * The kept earlier versions of a mirrored key, newest first:
+ * [{ slot, archivedAt, updatedAt, reason, bytes, rows }]. `reason` is
+ * 'auto' (a routine save), 'before-delete' (a save that removed data),
+ * 'before-restore', or 'not-saved' (this device's change, set aside
+ * because its copy was out of date).
+ */
+export async function listMirrorVersions(key) {
+  if (!_userId) return [];
+  const { list } = await readVersionIndex(_userId, key);
+  return [...list].sort((a, b) => (b.archivedAt || 0) - (a.archivedAt || 0));
+}
+
+/** One kept version's value, as the JSON string the key holds, or null. */
+export async function readMirrorVersion(key, slot) {
+  if (!_userId) return null;
+  const doc = await readMirror(_userId, versionSlotId(key, slot));
+  return doc?.json || null;
 }
 
 // ---------------------------------------------------------------------
@@ -432,47 +604,60 @@ async function hydrateKey(userId, key, entry) {
     return changed;
   }
 
-  // Data this browser had before mirroring existed carries no stamp, so its
-  // age is unknown. Adopt it and stamp it now rather than letting the cloud
-  // copy win: on the first signin after this ships, every device is in that
-  // state, and the alternative would let whichever device happened to sign
-  // in first overwrite a more current roster on the machine actually in use.
-  // The restore case is untouched — a cleared browser has no local value at
-  // all, so it falls through to the cloud copy below.
+  // A value with no stamp: data this browser had before mirroring existed,
+  // or written without going through queueMirrorPush. Its age is unknown,
+  // so it must not replace the cloud copy (it used to be adopted and pushed
+  // over it, which only made sense the first time mirroring shipped). With
+  // a merge, both sides are combined; otherwise the cloud copy is taken and
+  // this browser's is kept as an earlier version.
   if (localAt === 0 && localRaw != null) {
+    if (remote.json === localRaw) { markSynced(key, remote.updatedAt); return false; }
     if (entry.merge && remote.json) {
       let merged = null;
       try { merged = JSON.stringify(entry.merge(JSON.parse(localRaw), JSON.parse(remote.json))); }
-      catch (err) { console.warn(`localMirror: merge failed for "${key}", keeping this browser's copy`, err); }
-      if (merged != null && merged !== localRaw) {
+      catch (err) { console.warn(`localMirror: merge failed for "${key}", keeping the cloud copy`, err); }
+      if (merged != null) {
         await writeLocal(key, entry, merged);
-        await pushNow(key);
+        markSynced(key, remote.updatedAt);
+        if (merged !== remote.json) {
+          try { userLsSet(key + AT_SUFFIX, String(Date.now())); } catch { /* quota */ }
+          await pushNow(key);
+        }
         fire(eventName);
-        return true;
+        return merged !== localRaw;
       }
     }
-    await pushNow(key);   // stamps as it goes, so this happens once
-    return false;
+    await setAsideStale(userId, key, entry, localRaw, remote);
+    return true;
   }
 
   if (remote.updatedAt > localAt) {
+    // This browser had a change it never got to save (made after its last
+    // sync, so stamped past its base): the cloud copy wins, but this
+    // browser's is kept as an earlier version rather than overwritten.
+    const base = userLsGet(key + BASE_SUFFIX) == null ? localAt : readStamp(key, BASE_SUFFIX);
+    if (localRaw != null && localRaw !== remote.json && localAt > base) {
+      await setAsideStale(userId, key, entry, localRaw, remote);
+      return true;
+    }
     // An empty payload is a clear that happened on another device.
     if (remote.json === '') {
       if (localRaw == null) return false;
       await removeLocal(key, entry);
-      userLsSet(key + AT_SUFFIX, String(remote.updatedAt));
+      markSynced(key, remote.updatedAt);
       fire(eventName);
       return true;
     }
-    if (remote.json === localRaw) return false;
+    if (remote.json === localRaw) { markSynced(key, remote.updatedAt); return false; }
     await writeLocal(key, entry, remote.json);
-    userLsSet(key + AT_SUFFIX, String(remote.updatedAt));
+    markSynced(key, remote.updatedAt);
     fire(eventName);
     return true;
   }
 
-  // This browser is ahead (an edit made while the cloud copy was stale, or
-  // an older cloud stamp) — send it up.
+  // This browser is ahead (an edit made here that hasn't reached the
+  // cloud) — send it up. pushNow refuses if the cloud has moved on since
+  // this browser's base, so a stale copy can't go up this way either.
   if (localAt > remote.updatedAt && localRaw != null) await pushNow(key);
   return false;
 }
@@ -534,7 +719,9 @@ export async function pushMirrorNow(key) {
   try { userLsSet(key + AT_SUFFIX, String(at)); } catch { /* quota */ }
   // allowEmpty stays off: a key with nothing behind it locally must not
   // travel up as a deliberate clear and take the cloud copy with it.
-  await pushNow(key);
+  // Forced: a restore is a deliberate overwrite (what it replaces is kept
+  // as an earlier version).
+  await pushNow(key, { force: true });
 }
 
 // Pull every mirrored key for this user, newest-wins, firing each store's

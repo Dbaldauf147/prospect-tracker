@@ -136,10 +136,18 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const K = 'test-plain-key';
   registerMirroredKey(K, 'test-plain-key-changed');
   putCloud(K, { a: 1 }, 10);
+  // A browser that last synced with that copy (stamp 10) edits it: newest wins.
+  userLsSet(K + ':__mirroredAt', '10');
   userLsSet(K, JSON.stringify({ b: 2 }));
   queueMirrorPush(K);
   await sleep(1800);
-  assert.deepEqual(cloud(K), { b: 2 }, 'a plain key still replaces the cloud copy');
+  assert.deepEqual(cloud(K), { b: 2 }, 'a plain key synced with the cloud still replaces it');
+  // One that never saw the cloud's copy may not (scripts/mirrorStaleGuard.test.mjs).
+  putCloud(K, { c: 3 }, 99999999999999);
+  userLsSet(K, JSON.stringify({ d: 4 }));
+  queueMirrorPush(K);
+  await sleep(1800);
+  assert.deepEqual(cloud(K), { c: 3 }, 'a stale plain key is refused');
 }
 
 console.log('mirrorDayMerge: all assertions passed');
