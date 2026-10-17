@@ -13,6 +13,7 @@ const REASONS = {
   'before-restore': 'Before a restore',
   'not-saved': 'A change on a device whose copy was out of date (not saved)',
   recovered: 'Recovered from the database history',
+  'restored-backup': 'Copied from a restored backup',
 };
 
 const fmtWhen = (ms) => (ms
@@ -39,6 +40,36 @@ export function CommissionsVersionsModal({ currentRows = 0, onClose }) {
   // (api/mirror-recover).
   const [searching, setSearching] = useState(false);
   const [searchNote, setSearchNote] = useState('');
+  // A Firestore scheduled backup restores into a NEW database (never over
+  // the live one); this copies just the roster out of it as a version here.
+  const [restoredDb, setRestoredDb] = useState('commissions-recovery');
+  const [copying, setCopying] = useState(false);
+  async function copyFromRestoredDatabase() {
+    setCopying(true);
+    setSearchNote('');
+    setError('');
+    try {
+      const resp = await apiFetch('/api/mirror-recover', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: COMMISSIONS_MIRROR_KEY, fromDatabase: restoredDb.trim() }),
+      });
+      const out = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(out.error || `The copy failed (${resp.status}).`);
+      if (!out.found?.length) {
+        setSearchNote(`The database "${restoredDb.trim()}" has no commissions roster for your account.`);
+      } else {
+        const f = out.found[0];
+        setSearchNote(`Found the roster in "${restoredDb.trim()}" (${f.rows} rows, last saved ${fmtWhen(f.asOf)})${out.added ? ' and added it below' : ', already listed below'}. Click Restore beside it.`);
+        setReloadTick(t => t + 1);
+      }
+    } catch (err) {
+      setError(String(err?.message || err));
+    } finally {
+      setCopying(false);
+    }
+  }
+
   async function lookForOlderCopies() {
     setSearching(true);
     setSearchNote('');
@@ -111,6 +142,23 @@ export function CommissionsVersionsModal({ currentRows = 0, onClose }) {
               style={{ padding: '0.3rem 0.7rem', border: '1px solid #16A34A', background: '#F0FDF4', color: '#166534', borderRadius: 6, fontSize: '0.75rem', fontWeight: 600, cursor: searching ? 'wait' : 'pointer', fontFamily: 'inherit' }}
             >{searching ? 'Searching the last 7 days...' : 'Look for older copies'}</button>
             <span style={{ fontSize: '0.7rem', color: '#64748B' }}>Searches the database&apos;s history for copies from before they were replaced. Can take a minute.</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.2rem 0 0.4rem', flexWrap: 'wrap' }}>
+            <input
+              value={restoredDb}
+              onChange={e => setRestoredDb(e.target.value)}
+              aria-label="Restored database ID"
+              placeholder="restored database ID"
+              style={{ padding: '0.28rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 6, fontSize: '0.75rem', fontFamily: 'inherit', width: 190 }}
+            />
+            <button
+              type="button"
+              onClick={copyFromRestoredDatabase}
+              disabled={copying || !restoredDb.trim()}
+              title="Copy the roster out of a database restored from a Firestore scheduled backup, as an earlier version here. Nothing else is read or changed."
+              style={{ padding: '0.3rem 0.7rem', border: '1px solid #2563EB', background: '#EFF6FF', color: '#1D4ED8', borderRadius: 6, fontSize: '0.75rem', fontWeight: 600, cursor: copying ? 'wait' : 'pointer', fontFamily: 'inherit' }}
+            >{copying ? 'Copying...' : 'Copy from restored database'}</button>
+            <span style={{ fontSize: '0.7rem', color: '#64748B' }}>For a Firestore backup restored into its own database.</span>
           </div>
           {searchNote && <div style={{ color: '#166534', fontSize: '0.75rem', padding: '0.2rem 0 0.4rem' }}>{searchNote}</div>}
           {error && <div style={{ color: '#B91C1C', fontSize: '0.75rem', padding: '0.4rem 0' }}>{error}</div>}

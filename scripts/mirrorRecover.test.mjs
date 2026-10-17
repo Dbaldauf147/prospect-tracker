@@ -4,7 +4,7 @@
 // over an in-memory Firestore that keeps each document's history. Plain
 // Node:  node scripts/mirrorRecover.test.mjs
 import assert from 'node:assert/strict';
-import { recoverMirror, isTooOldError } from '../api/_lib/mirrorRecover.js';
+import { recoverMirror, isTooOldError, copyMirrorFromDatabase } from '../api/_lib/mirrorRecover.js';
 
 const H = 3600000;
 const NOW = Date.UTC(2026, 9, 17, 17, 0, 0);
@@ -107,6 +107,39 @@ function seed(db) {
   db.write(P, { chunkCount: 0, updatedAt: 2, json: '[]' }, NOW - 10 * H);
   const r = await recoverMirror(db, UID, 'commissions-list-override', { now: NOW });
   assert.ok(r.found.some(f => f.rows === 4000), 'a chunked copy is read whole');
+}
+
+// 5. Copying the roster out of a database restored from a scheduled backup.
+{
+  const restored = makeDb({ pitr: false });
+  const live = makeDb({ pitr: false });
+  restored.write(P, { chunkCount: 0, updatedAt: NOW - 40 * H, json: roster(120) });
+  restored.write(`userSettings/${UID}/localMirrors/deals-list`, { chunkCount: 0, updatedAt: 1, json: '[1]' });
+  live.write(P, { chunkCount: 0, updatedAt: NOW - 30 * H, json: roster(3, 'stale') });
+  const r = await copyMirrorFromDatabase(restored, live, UID, 'commissions-list-override', { now: NOW });
+  assert.deepEqual(r.found.map(f => [f.rows, f.asOf]), [[120, NOW - 40 * H]]);
+  assert.equal(r.added, 1);
+  const idx = JSON.parse((await live.collection('userSettings').doc(UID).collection('localMirrors').doc('commissions-list-override__versions').get()).data().json);
+  assert.deepEqual(idx.list.map(v => [v.rows, v.reason]), [[120, 'restored-backup']], 'filed as an earlier version');
+  const v = await live.collection('userSettings').doc(UID).collection('localMirrors').doc(`commissions-list-override__v${idx.list[0].slot}`).get();
+  assert.equal(JSON.parse(v.data().json).length, 120);
+  assert.equal(JSON.parse((await live.collection('userSettings').doc(UID).collection('localMirrors').doc('commissions-list-override').get()).data().json).length, 3, 'the live roster itself is untouched until Restore');
+  assert.equal(live.history.has(`userSettings/${UID}/localMirrors/deals-list`), false, 'nothing else is copied');
+  const again = await copyMirrorFromDatabase(restored, live, UID, 'commissions-list-override', { now: NOW });
+  assert.equal(again.added, 0, 'copying twice files it once');
+  // A chunked copy in the restored database is joined.
+  const r2 = makeDb({ pitr: false });
+  const big = roster(3000);
+  r2.write(P, { chunkCount: 2, updatedAt: 9, json: '' });
+  r2.write(`${P}/chunks/0`, { s: big.slice(0, 50000) });
+  r2.write(`${P}/chunks/1`, { s: big.slice(50000) });
+  const live2 = makeDb({ pitr: false });
+  assert.equal((await copyMirrorFromDatabase(r2, live2, UID, 'commissions-list-override', { now: NOW })).found[0].rows, 3000);
+  // Not in the restored database: nothing found, nothing written.
+  const empty = makeDb({ pitr: false });
+  const live3 = makeDb({ pitr: false });
+  assert.deepEqual(await copyMirrorFromDatabase(empty, live3, UID, 'commissions-list-override', { now: NOW }), { found: [], added: 0 });
+  assert.equal(live3.history.size, 0);
 }
 
 // 4. The too-old check only matches the read-time refusal.
