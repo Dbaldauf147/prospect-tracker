@@ -117,8 +117,17 @@ export async function recoverMirror(db, uid, id, { now = Date.now(), hours = REC
   });
   const found = [...seen.entries()].map(([json, asOf]) => ({ json, asOf, rows: rowCount(json), bytes: json.length }));
 
-  // File them as earlier versions, oldest first so the newest ends up on top,
-  // skipping any copy already kept.
+  const added = await fileVersions(db, uid, id, found, { now, reason: 'recovered' });
+
+  return { pitr: true, found: found.map(({ asOf, rows, bytes }) => ({ asOf, rows, bytes })), added, checked: times.length };
+}
+
+// File `copies` ([{ json, asOf, rows, bytes }], newest first) as earlier
+// versions of mirror `id`: the `<id>__v<slot>` documents and `<id>__versions`
+// index utils/localMirrorSync keeps and Commissions > Earlier versions lists.
+// Oldest filed first so the newest ends up on top; a copy already among the
+// versions isn't filed twice. Returns how many were filed.
+async function fileVersions(db, uid, id, copies, { now = Date.now(), reason = 'recovered' } = {}) {
   const indexRef = mirrors(db, uid).doc(`${id}__versions`);
   const indexSnap = await indexRef.get();
   let index = { next: 0, list: [] };
@@ -134,17 +143,48 @@ export async function recoverMirror(db, uid, id, { now = Date.now(), hours = REC
   let added = 0;
   // At most the newest VERSIONS_KEEP copies, so filing them can't push out
   // each other.
-  const toFile = found.filter(f => !kept.has(f.json)).slice(0, VERSIONS_KEEP).reverse();
+  const toFile = copies.filter(f => !kept.has(f.json)).slice(0, VERSIONS_KEEP).reverse();
   for (const f of toFile) {
     const slot = index.next % VERSIONS_KEEP;
     await writeMirrorDoc(db, mirrors(db, uid).doc(`${id}__v${slot}`), f.json, now);
     index = {
       next: slot + 1,
-      list: [{ slot, archivedAt: f.asOf, updatedAt: f.asOf, reason: 'recovered', bytes: f.bytes, rows: f.rows }, ...index.list.filter(v => v.slot !== slot)].slice(0, VERSIONS_KEEP),
+      list: [{ slot, archivedAt: f.asOf, updatedAt: f.asOf, reason, bytes: f.bytes, rows: f.rows }, ...index.list.filter(v => v.slot !== slot)].slice(0, VERSIONS_KEEP),
     };
     added++;
   }
   if (added) await indexRef.set({ chunkCount: 0, updatedAt: now, json: JSON.stringify(index) }, { merge: true });
+  return added;
+}
 
-  return { pitr: true, found: found.map(({ asOf, rows, bytes }) => ({ asOf, rows, bytes })), added, checked: times.length };
+/**
+ * Copy mirror `id` for user `uid` out of `sourceDb` (a database restored
+ * from a Firestore backup, which can only be restored into a new database,
+ * never over the live one) into `liveDb` as an earlier version. Reads
+ * nothing else from the source and writes nothing but the version.
+ *
+ * Returns { found: [{ asOf, rows, bytes }], added }: `asOf` is the copy's
+ * own updatedAt stamp, when it was last saved before the backup.
+ */
+export async function copyMirrorFromDatabase(sourceDb, liveDb, uid, id, { now = Date.now() } = {}) {
+  const ref = mirrors(sourceDb, uid).doc(id);
+  const snap = await ref.get();
+  if (!snap.exists) return { found: [], added: 0 };
+  const raw = snap.data() || {};
+  const count = Number(raw.chunkCount) || 0;
+  let json = null;
+  if (count > 0) {
+    const parts = new Array(count).fill('');
+    for (let i = 0; i < count; i++) {
+      const c = await ref.collection('chunks').doc(String(i)).get();
+      parts[i] = String(c.exists ? (c.data()?.s || '') : '');
+    }
+    json = parts.join('') || null;
+  } else if (typeof raw.json === 'string' && raw.json) {
+    json = raw.json;
+  }
+  if (!json) return { found: [], added: 0 };
+  const copy = { json, asOf: Number(raw.updatedAt) || now, rows: rowCount(json), bytes: json.length };
+  const added = await fileVersions(liveDb, uid, id, [copy], { now, reason: 'restored-backup' });
+  return { found: [{ asOf: copy.asOf, rows: copy.rows, bytes: copy.bytes }], added };
 }
