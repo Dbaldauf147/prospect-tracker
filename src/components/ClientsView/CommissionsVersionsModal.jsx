@@ -4,6 +4,7 @@
 // roster it replaces as a version too, so it can itself be undone.
 import { useEffect, useState } from 'react';
 import { listMirrorVersions, readMirrorVersion } from '../../utils/localMirrorSync';
+import { apiFetch } from '../../utils/apiFetch';
 import { COMMISSIONS_MIRROR_KEY, restoreCommissions } from '../../utils/commissionsStore';
 
 const REASONS = {
@@ -11,6 +12,7 @@ const REASONS = {
   'before-delete': 'Before rows were removed or cleared',
   'before-restore': 'Before a restore',
   'not-saved': 'A change on a device whose copy was out of date (not saved)',
+  recovered: 'Recovered from the database history',
 };
 
 const fmtWhen = (ms) => (ms
@@ -22,13 +24,48 @@ export function CommissionsVersionsModal({ currentRows = 0, onClose }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(null);
 
+  const [reloadTick, setReloadTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
     listMirrorVersions(COMMISSIONS_MIRROR_KEY)
       .then(v => { if (!cancelled) setVersions(v); })
       .catch(err => { if (!cancelled) { setError(String(err?.message || err)); setVersions([]); } });
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadTick]);
+
+  // Firestore point-in-time recovery, when the database has it on, keeps 7
+  // days of every document's history. The server reads the roster back
+  // through it hour by hour and files each copy it finds as a version here
+  // (api/mirror-recover).
+  const [searching, setSearching] = useState(false);
+  const [searchNote, setSearchNote] = useState('');
+  async function lookForOlderCopies() {
+    setSearching(true);
+    setSearchNote('');
+    setError('');
+    try {
+      const resp = await apiFetch('/api/mirror-recover', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: COMMISSIONS_MIRROR_KEY }),
+      });
+      const out = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(out.error || `The search failed (${resp.status}).`);
+      if (!out.pitr) {
+        setSearchNote('The database does not keep a history of past copies (point-in-time recovery is off), so there is nothing older to find. It can be turned on in Google Cloud, under Firestore > Disaster recovery.');
+      } else if (!out.found?.length) {
+        setSearchNote('No copies of the roster in the last 7 days of history.');
+      } else {
+        const biggest = Math.max(...out.found.map(f => f.rows || 0));
+        setSearchNote(`Found ${out.found.length} cop${out.found.length === 1 ? 'y' : 'ies'} in the last 7 days (largest ${biggest} rows)${out.added ? `; ${out.added} added below` : ', already listed below'}. Restore the one you want.`);
+        setReloadTick(t => t + 1);
+      }
+    } catch (err) {
+      setError(String(err?.message || err));
+    } finally {
+      setSearching(false);
+    }
+  }
 
   async function restore(v) {
     const n = v.rows ?? '?';
@@ -65,12 +102,23 @@ export function CommissionsVersionsModal({ currentRows = 0, onClose }) {
           </div>
         </div>
         <div style={{ overflow: 'auto', padding: '0.4rem 1.1rem 0.8rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.4rem 0', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={lookForOlderCopies}
+              disabled={searching}
+              title="Search the database's own history (the last 7 days, if point-in-time recovery is on) for earlier copies of the roster"
+              style={{ padding: '0.3rem 0.7rem', border: '1px solid #16A34A', background: '#F0FDF4', color: '#166534', borderRadius: 6, fontSize: '0.75rem', fontWeight: 600, cursor: searching ? 'wait' : 'pointer', fontFamily: 'inherit' }}
+            >{searching ? 'Searching the last 7 days...' : 'Look for older copies'}</button>
+            <span style={{ fontSize: '0.7rem', color: '#64748B' }}>Searches the database&apos;s history for copies from before they were replaced. Can take a minute.</span>
+          </div>
+          {searchNote && <div style={{ color: '#166534', fontSize: '0.75rem', padding: '0.2rem 0 0.4rem' }}>{searchNote}</div>}
           {error && <div style={{ color: '#B91C1C', fontSize: '0.75rem', padding: '0.4rem 0' }}>{error}</div>}
           {versions == null ? (
             <div style={{ color: '#94A3B8', fontSize: '0.75rem', padding: '0.8rem 0' }}>Loading...</div>
           ) : versions.length === 0 ? (
             <div style={{ color: '#64748B', fontSize: '0.75rem', padding: '0.8rem 0' }}>
-              No earlier versions yet. They are kept from now on, each time the roster is replaced.
+              No earlier versions yet. They are kept from now on, each time the roster is replaced. To look further back, use Look for older copies above.
             </div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
