@@ -103,6 +103,19 @@ export function saveCommissionsOverride(arr) {
   dispatchStoreEvent(COMMISSIONS_LIST_EVENT);
 }
 
+// Put an earlier version of the roster back (Commissions > Earlier
+// versions). Saved like any edit, so it can't overwrite a newer roster
+// from another device, and the roster it replaces is kept as an earlier
+// version first, so the restore can be undone.
+export function restoreCommissions(arr) {
+  if (!Array.isArray(arr)) throw new Error('Commissions override must be an array');
+  userLsSet(KEY, JSON.stringify(arr));
+  queueMirrorPush(KEY, { keepVersion: true });
+  dispatchStoreEvent(COMMISSIONS_LIST_EVENT);
+}
+
+export const COMMISSIONS_MIRROR_KEY = KEY;
+
 export function clearCommissionsOverride() {
   userLsRemove(KEY);
   // allowEmpty: this is the user clearing the roster on purpose, so the

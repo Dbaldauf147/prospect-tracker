@@ -6,6 +6,9 @@ import {
   COMMISSION_MONTH_NAMES, COMMISSIONS_LIST_EVENT,
 } from '../../utils/commissionsStore';
 import { CommissionsPasteImportModal, COMMISSIONS_CANONICAL } from './CommissionsPasteImportModal';
+import { CommissionsVersionsModal } from './CommissionsVersionsModal';
+import { MIRROR_CONFLICT_EVENT } from '../../utils/localMirrorSync';
+import { COMMISSIONS_MIRROR_KEY } from '../../utils/commissionsStore';
 import {
   planCommissionsPaste, describeCommissionsPaste, normProjectName,
 } from '../../utils/commissionsPasteMerge';
@@ -975,6 +978,8 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     return () => { cancelled = true; window.removeEventListener('focus', refresh); };
   }, []);
 
+  const [conflictNote, setConflictNote] = useState(false);
+  const [showVersions, setShowVersions] = useState(false);
   useEffect(() => {
     function onStorage(e) {
       if (e.key === 'commissions-list-override') setStore(loadCommissions());
@@ -982,11 +987,17 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     // Same-window change event — also fires when the Firestore mirror
     // hydrates a newer roster at signin.
     const onChanged = () => setStore(loadCommissions());
+    // This device's copy was out of date when it tried to save: the save
+    // was refused, the newer roster taken, and this device's change kept
+    // as an earlier version. Say so, rather than letting the edit vanish.
+    const onConflict = (e) => { if (e?.detail?.key === COMMISSIONS_MIRROR_KEY) setConflictNote(true); };
     window.addEventListener('storage', onStorage);
     window.addEventListener(COMMISSIONS_LIST_EVENT, onChanged);
+    window.addEventListener(MIRROR_CONFLICT_EVENT, onConflict);
     return () => {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(COMMISSIONS_LIST_EVENT, onChanged);
+      window.removeEventListener(MIRROR_CONFLICT_EVENT, onConflict);
     };
   }, []);
 
@@ -1468,6 +1479,12 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
               style={{ padding: '0.4rem 0.8rem', border: '1px solid #3B82F6', background: 'white', color: '#2563EB', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
             >Fill Account Names from BFO</button>
           )}
+          <button
+            type="button"
+            onClick={() => setShowVersions(true)}
+            title="The roster as it stood before each time it was replaced (the last 20), with a Restore beside each"
+            style={{ padding: '0.4rem 0.8rem', border: '1px solid #CBD5E1', background: 'white', color: '#334155', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+          >Earlier versions</button>
           {source === 'override' && (
             <button
               type="button"
@@ -1481,6 +1498,19 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
       {/* What the last paste import actually changed. A merge fills cells
           scattered through a long table, so the counts are the only way to
           see it happened — dismissible, since it's a receipt, not a task. */}
+      {conflictNote && (
+        <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
+          <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.45rem 0.6rem', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 6, color: '#92400E', fontSize: '0.75rem' }}>
+            <span style={{ flex: 1 }}>
+              Another device changed the commissions roster after this one last loaded it, so your last change here was not saved over it.
+              This page now shows the latest roster. Your change is kept under Earlier versions.
+            </span>
+            <button type="button" onClick={() => { setShowVersions(true); setConflictNote(false); }} style={{ padding: '0.2rem 0.55rem', border: '1px solid #D97706', background: '#fff', color: '#92400E', borderRadius: 6, fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>Earlier versions</button>
+            <button type="button" onClick={() => setConflictNote(false)} aria-label="Dismiss" style={{ background: 'transparent', border: 'none', color: '#92400E', cursor: 'pointer', fontSize: '0.9rem', lineHeight: 1, padding: '0 4px' }}>×</button>
+          </div>
+        </div>
+      )}
+      {showVersions && <CommissionsVersionsModal currentRows={rows.length} onClose={() => setShowVersions(false)} />}
       {pasteNote && (
         <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0.6rem', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6, color: '#166534', fontSize: '0.75rem' }}>
