@@ -26,6 +26,7 @@ import { matchesCdm } from './cdmMatch.js';
 import { applyCompanyOverride, isSchneiderContact, rosterCompaniesMatch } from './contactRosters.js';
 import { isDecisionMakerContact, makeAccountContactIndex } from './decisionMakerCoverage.js';
 import { splitPeOwners } from './peOwners.js';
+import { reportingTier } from './tierSource.js';
 
 const MS_PER_DAY = 86400000;
 
@@ -53,11 +54,14 @@ function parseWhen(raw) {
   return Number.isFinite(t) ? t : null;
 }
 
-/** This CDM's accounts that carry Tier 1, 2 or 3, in tier then name order. */
+/**
+ * This CDM's accounts that carry Tier 1, 2 or 3, in tier then name order.
+ * An own target (Not on tier list, but Dan target) counts as Tier 3.
+ */
 export function myTieredAccounts(prospects, cdmName) {
   return (prospects || [])
-    .filter(p => p?.company && matchesCdm(p.cdm, cdmName) && TIERS.includes(String(p.tier || '').trim()))
-    .sort((a, b) => TIERS.indexOf(String(a.tier).trim()) - TIERS.indexOf(String(b.tier).trim())
+    .filter(p => p?.company && matchesCdm(p.cdm, cdmName) && TIERS.includes(reportingTier(p)))
+    .sort((a, b) => TIERS.indexOf(reportingTier(a)) - TIERS.indexOf(reportingTier(b))
       || String(a.company).localeCompare(String(b.company)));
 }
 
@@ -185,7 +189,7 @@ export const ACTIVITY_SUMMARY_DAYS = 60;
  */
 export function tierActivityCoverage(accounts, activity, { days = ACTIVITY_SUMMARY_DAYS, nowMs = Date.now() } = {}) {
   return TIERS.map((tier) => {
-    const inTier = (accounts || []).filter(p => String(p?.tier || '').trim() === tier);
+    const inTier = (accounts || []).filter(p => reportingTier(p) === tier);
     const active = inTier.filter((p) => {
       const a = activity?.get(p.id || p.company);
       const d = a ? daysSince(a.tsMs, nowMs) : null;
@@ -214,7 +218,7 @@ export const ACTIVE_FIRM_BUCKETS = [...TIERS, NOT_TIERED];
 
 /** Which ACTIVE_FIRM_BUCKETS entry an account counts under. */
 export function firmBucket(p) {
-  const t = String(p?.tier || '').trim();
+  const t = reportingTier(p);
   return TIERS.includes(t) ? t : NOT_TIERED;
 }
 

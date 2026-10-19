@@ -43,7 +43,7 @@ export { NEW_OPPS_ACTIVE_STAGES, NEW_OPPS_MAX_STAGE_AGE_DAYS };
 // leaves the cells blank (or N/A) rather than failing the send.
 const ADMIN_EMAIL = 'baldaufdan@gmail.com';
 // The company fields the columns read: vertical, tier, the aligned box.
-const PROSPECT_FIELDS = ['company', 'vertical', 'tier', 'tierSource', 'cdmAligned'];
+const PROSPECT_FIELDS = ['company', 'vertical', 'tier', 'tierSource', 'tierOwnTarget', 'cdmAligned'];
 export async function addVerticalCoverage(db, uid, email, records) {
   const list = Array.isArray(records) ? records : [];
   if (list.length === 0 || list.every((r) => OPP_SALESPERSON_KEY in (r || {}) && NEW_OPPS_CDMS_ALIGNED_KEY in (r || {}))) return list;

@@ -22,6 +22,7 @@ import { toggleContactInEvents } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
 import { buildEmailFormatIndex, predictEmailForContact } from '../../utils/emailFormat';
 import { matchesCdm } from '../../utils/cdmMatch';
+import { reportingTier } from '../../utils/tierSource';
 import { checkCity, checkState } from '../../utils/locationStandardize';
 import { getStateForCity, lookupStateForCity, CITY_OPTIONS, matchCities } from '../../data/cities';
 import { useDraftCampaignQueue, setQueuedContactIds } from '../../utils/draftCampaignQueue';
@@ -3116,7 +3117,7 @@ function KeyContactsViewInner({
         aum,
         type: p?.type || '',
         status: p?.status || '',
-        tier: String(p?.tier || '').trim(),
+        tier: reportingTier(p),
         vertical: String(p?.vertical || '').trim(),
         locations: contactLocations(row.contacts),
         decisionMakerEntries: dmEntries,

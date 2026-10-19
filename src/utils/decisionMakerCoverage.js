@@ -28,6 +28,7 @@ import { applyCompanyOverride, collectClientDomains, isSchneiderContact, rosterM
 import { matchesCdm } from './cdmMatch.js';
 import { findTagRecord, isLocalTagVerdict, tagAnswerFrom } from './contactTagReview.js';
 import { TIERS } from '../data/enums.js';
+import { reportingTier } from './tierSource.js';
 
 const tagsOf = (c) => String(c?.dans_tags || c?.dan_s_tags || c?.dans_tag || '').toLowerCase();
 
@@ -366,7 +367,7 @@ export function tierAccounts(prospects, cdmName, tier) {
   return (prospects || []).filter(p => {
     if (!matchesCdm(p?.cdm, cdmName)) return false;
     if (isColdOutreachExcluded(p)) return false;
-    return String(p.tier || '').toLowerCase().trim() === want;
+    return reportingTier(p).toLowerCase() === want;
   });
 }
 

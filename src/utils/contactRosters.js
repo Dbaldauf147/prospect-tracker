@@ -19,6 +19,7 @@
 import { matchesCdm } from './cdmMatch.js';
 import { tagReviewScore } from './contactTagReview.js';
 import { isCancellingForSure } from './serviceCoverage.js';
+import { reportingTier } from './tierSource.js';
 
 // Personal-mail domains are nobody's account domain, so they never stand in
 // for a company — a gmail address is matched by company name or not at all.
@@ -436,7 +437,7 @@ export function makeRosterGates({
     if (!matchesCdm(p.cdm, cdmName)) return false;
     // Clients aren't prospects — keep them out of the Key Prospect bucket.
     if (p.status === 'Client') return false;
-    const t = String(p.tier || '').toLowerCase();
+    const t = reportingTier(p).toLowerCase();
     return t === 'tier 1' || t === 'tier 2' || t === 'tier 3';
   });
   const allOppAccounts = new Set();
@@ -458,7 +459,7 @@ export function makeRosterGates({
         if (rosterKeysMatch(pk, acct)) { hasOpp = true; break; }
       }
     }
-    tierAccountStatus.set(lc, { tier: p.tier, hasOpp });
+    tierAccountStatus.set(lc, { tier: reportingTier(p), hasOpp });
   }
   // Also a function of the company name alone; remembered per set of gates
   // for the same reason as hasActiveOppByName above.

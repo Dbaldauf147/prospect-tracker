@@ -15,6 +15,7 @@ import { matchesCdm } from '../../utils/cdmMatch';
 import { KeyContactsView, useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { reportingStatus } from '../../utils/reportingStatus';
+import { reportingTier } from '../../utils/tierSource';
 import { accountHasDecisionMaker, decisionMakerCompanies, makeAccountContactIndex } from '../../utils/decisionMakerCoverage';
 
 const SCHNEIDER_COMPANY_RE = /\bschneider\s*electric\b/i;
@@ -76,7 +77,7 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
       if (!matchesCdm(p.cdm, cdmName)) return false;
       // Clients aren't prospects — keep them off the warm-but-untouched list.
       if (p.status === 'Client') return false;
-      const t = (p.tier || '').toLowerCase();
+      const t = reportingTier(p).toLowerCase();
       return t === 'tier 1' || t === 'tier 2' || t === 'tier 3';
     });
   }, [prospects, cdmName]);
@@ -111,7 +112,7 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
           if (companiesMatch(p.company, acct)) { hasOpp = true; break; }
         }
       }
-      map.set(lc, { tier: p.tier, hasOpp });
+      map.set(lc, { tier: reportingTier(p), hasOpp });
     }
     return map;
   }, [myTierAccounts, accountsWithOpps, oppAccountsArr]);
@@ -186,8 +187,8 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
       out.push({ ...p, _hasOpp: !!status?.hasOpp });
     }
     out.sort((a, b) => {
-      const tierA = (a.tier || '').toLowerCase();
-      const tierB = (b.tier || '').toLowerCase();
+      const tierA = reportingTier(a).toLowerCase();
+      const tierB = reportingTier(b).toLowerCase();
       if (tierA !== tierB) return tierA.localeCompare(tierB);
       return String(a.company || '').localeCompare(String(b.company || ''));
     });
@@ -211,8 +212,8 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
       out.push(p);
     }
     out.sort((a, b) => {
-      const tierA = (a.tier || '').toLowerCase();
-      const tierB = (b.tier || '').toLowerCase();
+      const tierA = reportingTier(a).toLowerCase();
+      const tierB = reportingTier(b).toLowerCase();
       if (tierA !== tierB) return tierA.localeCompare(tierB);
       return String(a.company || '').localeCompare(String(b.company || ''));
     });

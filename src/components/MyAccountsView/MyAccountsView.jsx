@@ -20,7 +20,7 @@ import { userLsGet, userLsSet } from '../../utils/userLs';
 import { saveMyAccountsFlags } from '../../utils/myAccountsFlagsStore';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadList } from '../../utils/uploadedListStore';
-import { tierPreferringTargetsList } from '../../utils/tierSource';
+import { tierPreferringTargetsList, isOwnTarget, OWN_TARGET_REPORTING_TIER } from '../../utils/tierSource';
 import { companyDedupeKey } from '../../utils/companyKey';
 import { MASTER_FIELDS, CANONICAL_HEADERS } from '../MasterSiteListView/masterSiteFields';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
@@ -2323,7 +2323,11 @@ Fix that now?
       if (isDismissed(p.company)) continue;
       // Use Firestore tier if explicitly set, otherwise fall back to map/target accounts
       let tier;
-      if (p.tier === 'Tier 1' || p.tier === 'Tier 2' || p.tier === 'Tier 3' || p.tier === NOT_ON_TIER_LIST) {
+      if (isOwnTarget(p)) {
+        // Not on tier list, but Dan target: worked like a tiered account,
+        // so it sits in Tier 3 here and in every tier count built from it.
+        tier = OWN_TARGET_REPORTING_TIER;
+      } else if (p.tier === 'Tier 1' || p.tier === 'Tier 2' || p.tier === 'Tier 3' || p.tier === NOT_ON_TIER_LIST) {
         // Any explicitly-chosen tier wins — including Tier 3. Previously
         // Tier 3 fell through to the hardcoded map below, so setting a
         // mapped account (e.g. one the map lists as Tier 2) to Tier 3 got
@@ -2484,7 +2488,7 @@ Fix that now?
       // "Not on tier list" means not on THIS CDM's list, so another rep
       // tiering the company (e.g. Triumph Group at Tier 3 under someone
       // else) agrees with it rather than contradicting it.
-      const otherRepOnly = tier === NOT_ON_TIER_LIST && targetTierFromOtherRep;
+      const otherRepOnly = (tier === NOT_ON_TIER_LIST || isOwnTarget(p)) && targetTierFromOtherRep;
       const tierMismatch = targetTier && targetTier !== tier && !otherRepOnly && !p.ignoreTierMismatch;
       // Check for decision maker — fuzzy match across parent + divisions
       let dmNames = null;
