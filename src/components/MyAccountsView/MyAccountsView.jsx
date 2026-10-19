@@ -2634,7 +2634,9 @@ Fix that now?
       // to drop them even once the book above started including Tier 3.
       const isStrategicTier = tier === 'Tier 1' || tier === 'Tier 2';
       const onTargetList = (targetNames || []).length > 0;
-      const keepForDan = isBaldauf && (isStrategicTier || onTargetList || p.status === 'Client');
+      // A "Not on tier list, but Dan target" company is on the list by
+      // choice, so it stays without an open opp like a Targets-list one.
+      const keepForDan = isBaldauf && (isStrategicTier || onTargetList || isOwnTarget(p) || p.status === 'Client');
       if (!keepForDan && (!oppsCount || oppsCount === 0)) continue;
       // Master Site List count for this account — summed across the parent
       // company and any division names, matched on the normalized name.
