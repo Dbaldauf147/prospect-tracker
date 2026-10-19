@@ -5114,8 +5114,11 @@ const TAG_PRESET_FIELD = '_tagPreset';
 
 const BULK_TAG_ANSWERS = [
   { mode: 'yes', label: 'Yes', tagModes: ['replace'], help: 'Also records Yes for each tag above on every selected contact.' },
-  { mode: 'no', label: 'No', tagModes: ['remove'], help: 'Also records No for each tag above on every selected contact.' },
-  { mode: 'unsure', label: 'Not sure', tagModes: ['remove'], help: 'Also records Not sure for each tag above on every selected contact.' },
+  // No and Not sure take the tag off, so under Replace they act as a remove
+  // of just these tags - replacing the list and then dropping every tag in
+  // it would leave each contact with no tags at all.
+  { mode: 'no', label: 'No', tagModes: ['replace', 'remove'], help: 'Also records No for each tag above on every selected contact.' },
+  { mode: 'unsure', label: 'Not sure', tagModes: ['replace', 'remove'], help: 'Also records Not sure for each tag above on every selected contact.' },
 ];
 
 export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null, cdmName = '', initialEditContact = null, onSelectProspect = null, onAddProspect = null }) {
@@ -8525,7 +8528,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         // also drops the other, and a contact with nothing to change is
         // left alone rather than rewritten.
         const before = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
-        const plan = planTagEdit(bulkMode, (bulkValue || '').split(';'), before);
+        const tagMode = verdict && verdict.mode !== 'yes' ? 'remove' : bulkMode;
+        const plan = planTagEdit(tagMode, (bulkValue || '').split(';'), before);
         let cur = plan.action === 'write' ? plan.tags : before;
         let dirty = plan.action === 'write';
         // With an answer, the tag then follows the record it leaves behind,
@@ -14870,7 +14874,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         style={{ padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.8rem', fontFamily: 'inherit' }}
                       />
                       <div style={{ fontSize: '0.68rem', color: '#64748B' }}>
-                        {bulkMode === 'remove'
+                        {bulkMode === 'remove' || (bulkVerdict && bulkVerdict.mode !== 'yes')
                           ? 'Removes the tags above from each contact, keeping the rest. Contacts without them are left alone.'
                           : 'Replaces every existing tag on each contact with the list above.'}
                         {bulkVerdict && ` ${bulkVerdict.help}`}
