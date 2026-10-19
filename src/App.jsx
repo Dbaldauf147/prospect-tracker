@@ -602,7 +602,7 @@ function App() {
         onCreateCompany={handleCreateCompany}
       />
       <div className="main">
-        {(view === 'accounts' || view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'missingHistory' || view === 'table' || view === 'kanban') && (
+        {(view === 'accounts' || view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'dealSize' || view === 'missingHistory' || view === 'table' || view === 'kanban') && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderBottom: '1px solid #E2E8F0', padding: '0 0.25rem' }}>
             {[
               { key: 'accounts', label: 'My Accounts', active: view === 'accounts' },
@@ -617,6 +617,9 @@ function App() {
               // accounts / meters / equipment / MWh, with an export of the
               // gaps and a paste to fill them back in.
               { key: 'companyData', label: 'Company Data', active: view === 'companyData' },
+              // Same My Accounts set: each account's tier and its biggest
+              // deal, largest first.
+              { key: 'dealSize', label: 'Deal Size', active: view === 'dealSize' },
               // The Company Data gaps summed, day by day.
               { key: 'missingHistory', label: 'All Missing History', active: view === 'missingHistory' },
               // Pipeline (kanban) is a mode of the Table experience, so the
@@ -756,9 +759,9 @@ function App() {
             <OppsView2 settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} prospects={prospects} updateProspect={updateProspect} addProspect={addProspect} onSelectProspect={handleSelect} targetAccountsData={targetAccountsData} cdmName={cdmName} />
           ) : view === 'dropdowns' ? (
             <DropdownsView settings={settings} updateSettings={updateSettings} />
-          ) : view === 'accounts' || view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'missingHistory' ? (
+          ) : view === 'accounts' || view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'dealSize' || view === 'missingHistory' ? (
             <MyAccountsView
-              mode={view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'missingHistory' ? view : 'table'}
+              mode={view === 'companyType' || view === 'dmTags' || view === 'dmTagsHistory' || view === 'companyData' || view === 'dealSize' || view === 'missingHistory' ? view : 'table'}
               prospects={prospects}
               onSelect={handleSelect}
               onUpdate={updateProspect}
