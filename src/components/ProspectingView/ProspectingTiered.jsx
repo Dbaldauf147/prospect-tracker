@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { STATUSES, STATUS_COLORS, TIERS } from '../../data/enums.js';
+import { reportingTier } from '../../utils/tierSource.js';
 import { SUBSTATUS_HOLD_STATUS } from '../../utils/reportingStatus';
 import { DataTable } from '../common/DataTable';
 import { formatDateDisplay } from '../../utils/isoDate';
@@ -169,7 +170,7 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
         return {
           id: p.id || p.company,
           company: String(p.company).trim(),
-          tier: String(p.tier).trim(),
+          tier: reportingTier(p),
           status: statusOf(p),
           // Set when the row reads Hold Off because of its Substatus.
           substatus: substatusOf(p),
@@ -411,7 +412,7 @@ export function ProspectingTiered({ prospects, settings, updateSettings = null, 
   const unreached = useMemo(() => {
     if (!unreachedTier || !activity) return [];
     return shown
-      .filter(p => String(p.tier || '').trim() === unreachedTier)
+      .filter(p => reportingTier(p) === unreachedTier)
       .map((p) => {
         const a = activity.get(p.id || p.company) || null;
         return { p, a, days: a ? daysSince(a.tsMs, now) : null };

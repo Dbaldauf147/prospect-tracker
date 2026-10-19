@@ -39,7 +39,7 @@
 import { STAGE_BANDS } from './stageBands.js';
 import { splitPeOwners, joinPeOwners } from './peOwners.js';
 import { companiesMatch } from './listFlags.js';
-import { tierPreferringTargetsList } from './tierSource.js';
+import { tierPreferringTargetsList, reportingTier } from './tierSource.js';
 
 const PE_TYPES = new Set(['private equity', 'portfolio company']);
 
@@ -161,7 +161,8 @@ export function accountTier(row, prospects = [], targetTierFor = null) {
   const list = Array.isArray(prospects) ? prospects : [];
   const account = text(row?.['Account']);
   const company = findCompany(account, list);
-  const own = text(company?.tier);
+  // An own target (Not on tier list, but Dan target) reads as Tier 3.
+  const own = company ? reportingTier(company) : '';
   const tier = own && own !== '-' ? own : '';
   const targetTier = typeof targetTierFor === 'function'
     ? text(targetTierFor(company || { company: account })?.tier)

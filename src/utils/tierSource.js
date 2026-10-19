@@ -44,3 +44,24 @@ export function clearImportedTierOnEdit(patch) {
   if (Object.prototype.hasOwnProperty.call(patch, 'tierSource')) return patch;
   return { ...patch, tierSource: '' };
 }
+
+// A company marked "Not on tier list, but Dan target" (the checkbox under
+// Tier on the company card, `tierOwnTarget`) is not on the shared tier
+// list, but it is worked like a tiered account. Everything that reports on
+// tiered accounts (My Accounts, the Tiered tab, decision-maker coverage,
+// Progress) reads it as Tier 3. The card itself still says Not on tier
+// list, and the comparison with the Target Accounts list still treats it
+// as untiered, because that is what the list says.
+export const OWN_TARGET_REPORTING_TIER = 'Tier 3';
+
+export function isOwnTarget(record) {
+  return record?.tierOwnTarget === true
+    && String(record?.tier || '').trim().toLowerCase() === 'not on tier list';
+}
+
+// The tier a record counts under in tier reporting: its own tier, or
+// Tier 3 for an own target. Trimmed, '' when there is none.
+export function reportingTier(record) {
+  if (isOwnTarget(record)) return OWN_TARGET_REPORTING_TIER;
+  return String(record?.tier || '').trim();
+}

@@ -10,6 +10,7 @@ import { userLsGet } from '../../utils/userLs';
 import { getOppsSheetCsvUrl } from '../../utils/oppsSheetUrl';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { matchesCdm } from '../../utils/cdmMatch';
+import { reportingTier } from '../../utils/tierSource';
 import { peStageOf } from '../../utils/peStages';
 import { readWorkKey, writeWorkKey } from '../../utils/mirroredWorkKeys';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
@@ -811,9 +812,10 @@ export function ProgressView({ prospects, settings, cdmName }) {
     const targetMap = settings?.targetMap || {};
     // Only count the configured user's accounts (same filter as My Accounts)
     const myProspects = prospects.filter(p => matchesCdm(p.cdm, cdmName));
-    const t1 = myProspects.filter(p => p.tier === 'Tier 1');
-    const t2 = myProspects.filter(p => p.tier === 'Tier 2');
-    const t3 = myProspects.filter(p => p.tier === 'Tier 3');
+    // An own target (Not on tier list, but Dan target) counts as Tier 3.
+    const t1 = myProspects.filter(p => reportingTier(p) === 'Tier 1');
+    const t2 = myProspects.filter(p => reportingTier(p) === 'Tier 2');
+    const t3 = myProspects.filter(p => reportingTier(p) === 'Tier 3');
 
     // Load HubSpot cache for contact data (loaded async into hubspotContactsState)
     const hubspotContacts = hubspotContactsState;
