@@ -28,6 +28,65 @@
   padding: 0.25rem 1.25rem 0.75rem;
 }
 
+.pricingProgress {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0 1.25rem 0.75rem;
+}
+
+.pricingProgressTrack {
+  flex: 1;
+  display: flex;
+  height: 10px;
+  min-width: 120px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #E2E8F0;
+}
+
+.pricingProgressPriced {
+  background: #059669;
+}
+
+/* A thin white edge keeps the two greens apart where they meet. */
+.pricingProgressNoFee {
+  background: #6EE7B7;
+  box-shadow: inset 1px 0 0 #fff;
+}
+
+.pricingProgressLabel {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.pricingProgressLabel strong {
+  color: var(--color-text);
+}
+
+.pricingProgressKey {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+
+.pricingProgressSwatchPriced,
+.pricingProgressSwatchNoFee,
+.pricingProgressSwatchOpen {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.pricingProgressSwatchPriced { background: #059669; }
+.pricingProgressSwatchNoFee { background: #6EE7B7; }
+.pricingProgressSwatchOpen { background: #E2E8F0; }
+
 .subtabs {
   display: flex;
   gap: 0.25rem;
