@@ -10,6 +10,9 @@ import { readWorkKey, ZOOM_SEARCH_LOG_EVENT } from '../../utils/mirroredWorkKeys
 import { buildZoomExcludedMatcher, zoomExcludedLabel } from '../../utils/zoomExportExclude';
 import { ZoomExcludedCell } from './ZoomExcludedCell';
 import { buildZoomCsv, downloadZoomCsv } from '../../utils/zoomCsv';
+import { useBiggestDeals } from '../../hooks/useBiggestDeals';
+import { dealMid } from '../../utils/prospectingDeals.js';
+import { formatMoney, formatMoneyRange } from '../../utils/servicePricing';
 
 // My Accounts > Company Data: which of the accounts have their size numbers
 // (sites, utility accounts, meters, equipment, electric MWh) and their
@@ -67,6 +70,14 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
     return () => window.removeEventListener(ZOOM_SEARCH_LOG_EVENT, reload);
   }, []);
 
+  // Each company's Biggest Deal, the same reading as the Deal Size subtab
+  // and the company card (hooks/useBiggestDeals).
+  const dealRecords = useMemo(
+    () => accounts.map(a => prospectById.get(a.id)).filter(Boolean),
+    [accounts, prospectById],
+  );
+  const deals = useBiggestDeals(dealRecords, settings);
+
   // One row per account with a company record behind it (Qualifying ones
   // left out, see isQualifyingCompany), its numbers read
   // off that record so an edit made anywhere shows here at once.
@@ -93,10 +104,11 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       row.stepsDetail = steps ? steps.perBucket.map(b => `${b.bucket.label}: ${b.left}`).join('\n') : '';
       row.missingData = STEP_FIELDS.filter(f => row[f.key] === null).length;
       row.allMissingSteps = steps ? steps.allMissingSteps : null;
+      row.deal = deals.get(p.id) || null;
       out.push(row);
     }
     return { rows: out, noRecord: missing, qualifying: qualifyingCount };
-  }, [accounts, prospectById, dmLookup, tagReview, isZoomExcluded, zoomLog]);
+  }, [accounts, prospectById, dmLookup, tagReview, isZoomExcluded, zoomLog, deals]);
 
   const missingCounts = useMemo(() => {
     const m = {};
@@ -130,6 +142,23 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
     { key: 'tier', label: 'Tier', defaultWidth: 80 },
     { key: 'status', label: 'Status', defaultWidth: 120 },
     { key: 'cdm', label: 'CDM', defaultWidth: 130 },
+    {
+      // One figure, the middle of the range, as on the Prospecting lists'
+      // Biggest Deal column. The range stays on hover.
+      key: 'avgDeal', label: 'Avg Biggest Deal', defaultWidth: 160,
+      headerTitle: 'The biggest service still open on the company, first-year fee, shown as the average of the low and high ends of its range. The same deal as Largest Deal Size on the Deal Size subtab and Biggest Deal on the company card; hover a figure for the range and the service.',
+      getSortValue: (row) => (row.deal ? dealMid(row.deal) : null),
+      getFilterValue: (row) => (row.deal ? formatMoney(dealMid(row.deal)) : ''),
+      exportValue: (row) => (row.deal ? Math.round(dealMid(row.deal)) : ''),
+      render: (row) => (row.deal
+        ? (
+          <span
+            title={`Average of ${formatMoneyRange(row.deal.fee, row.deal.feeHigh)}\n${row.deal.name}${row.deal.adds.length ? ` + ${row.deal.adds.join(', ')}` : ''}`}
+            style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}
+          >{formatMoney(dealMid(row.deal))}</span>
+        )
+        : <span style={{ color: '#94A3B8' }} title="Nothing still open on this company can be priced">-</span>),
+    },
     {
       key: 'zoomExcluded', label: 'ZoomInfo', defaultWidth: 110,
       headerTitle: 'Whether the company is excluded from ZoomInfo exports (the Exclude from ZoomInfo button on its company popup)',
