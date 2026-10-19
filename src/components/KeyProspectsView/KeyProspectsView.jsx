@@ -11,11 +11,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { matchesCdm } from '../../utils/cdmMatch';
 import { KeyContactsView, useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { reportingStatus } from '../../utils/reportingStatus';
-import { reportingTier } from '../../utils/tierSource';
+import { onMyBook, reportingTier } from '../../utils/tierSource';
 import { accountHasDecisionMaker, decisionMakerCompanies, makeAccountContactIndex } from '../../utils/decisionMakerCoverage';
 
 const SCHNEIDER_COMPANY_RE = /\bschneider\s*electric\b/i;
@@ -74,7 +73,7 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
   // a contact's company has to live in to qualify.
   const myTierAccounts = useMemo(() => {
     return (prospects || []).filter(p => {
-      if (!matchesCdm(p.cdm, cdmName)) return false;
+      if (!onMyBook(p, cdmName)) return false;
       // Clients aren't prospects — keep them off the warm-but-untouched list.
       if (p.status === 'Client') return false;
       const t = reportingTier(p).toLowerCase();

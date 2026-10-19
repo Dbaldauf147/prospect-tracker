@@ -25,10 +25,9 @@
 // COLD_OUTREACH_EXCLUDED_STATUSES). Only this step reads that rule.
 
 import { applyCompanyOverride, collectClientDomains, isSchneiderContact, rosterMatchKey, rosterKeysMatch } from './contactRosters.js';
-import { matchesCdm } from './cdmMatch.js';
 import { findTagRecord, isLocalTagVerdict, tagAnswerFrom } from './contactTagReview.js';
 import { TIERS } from '../data/enums.js';
-import { reportingTier } from './tierSource.js';
+import { onMyBook, reportingTier } from './tierSource.js';
 
 const tagsOf = (c) => String(c?.dans_tags || c?.dan_s_tags || c?.dans_tag || '').toLowerCase();
 
@@ -365,7 +364,7 @@ export function isColdOutreachExcluded(prospect) {
 export function tierAccounts(prospects, cdmName, tier) {
   const want = String(tier || '').toLowerCase();
   return (prospects || []).filter(p => {
-    if (!matchesCdm(p?.cdm, cdmName)) return false;
+    if (!onMyBook(p, cdmName)) return false;
     if (isColdOutreachExcluded(p)) return false;
     return reportingTier(p).toLowerCase() === want;
   });

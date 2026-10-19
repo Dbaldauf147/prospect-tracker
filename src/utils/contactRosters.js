@@ -19,7 +19,7 @@
 import { matchesCdm } from './cdmMatch.js';
 import { tagReviewScore } from './contactTagReview.js';
 import { isCancellingForSure } from './serviceCoverage.js';
-import { reportingTier } from './tierSource.js';
+import { onMyBook, reportingTier } from './tierSource.js';
 
 // Personal-mail domains are nobody's account domain, so they never stand in
 // for a company — a gmail address is matched by company name or not at all.
@@ -434,7 +434,7 @@ export function makeRosterGates({
   // A contact is a "Key Prospect" when it's tagged Decision Maker at a
   // Tier 1 / Tier 2 / Tier 3 account on this CDM whose company has no opps yet.
   const myTierAccounts = rows.filter(p => {
-    if (!matchesCdm(p.cdm, cdmName)) return false;
+    if (!onMyBook(p, cdmName)) return false;
     // Clients aren't prospects — keep them out of the Key Prospect bucket.
     if (p.status === 'Client') return false;
     const t = reportingTier(p).toLowerCase();

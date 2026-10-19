@@ -13,6 +13,8 @@
 // tier an import supplied defers to the Targets list, which is where
 // tiering is actually maintained.
 
+import { matchesCdm } from './cdmMatch.js';
+
 export const IMPORTED_TIER = 'import';
 
 // Stamped by the importers onto records they CREATE. Deliberately not
@@ -64,4 +66,10 @@ export function isOwnTarget(record) {
 export function reportingTier(record) {
   if (isOwnTarget(record)) return OWN_TARGET_REPORTING_TIER;
   return String(record?.tier || '').trim();
+}
+
+// Whether a record is on this CDM's book for tier reporting: its CDM is
+// them, or it is an own target, which counts whoever its CDM is.
+export function onMyBook(record, cdmName) {
+  return matchesCdm(record?.cdm, cdmName) || isOwnTarget(record);
 }
