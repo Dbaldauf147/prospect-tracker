@@ -11,7 +11,7 @@
 // the same counts and records today's reading too.
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis, useYAxisScale } from 'recharts';
 import {
   historyChartRows,
   historySnapshot,
@@ -222,6 +222,36 @@ function RosterActivityTooltip({ active, payload }) {
   );
 }
 
+// The "None" share printed in the middle of its band, in white on the red.
+// The band runs from 100% down to 100% minus its share, so its middle comes
+// off the y scale; a band too thin to hold the text goes unlabelled (the
+// header and tooltip still give it). A day at either end of a run of
+// recorded days sits on the band's edge, so its text is anchored inward
+// rather than spilling off the colour; a day standing alone has no band to
+// sit in and goes unlabelled.
+function NoneBandLabel({ x, row, show, edge }) {
+  const yScale = useYAxisScale();
+  const v = row?.bNone;
+  if (!show || v == null || x == null || !yScale || edge === 'alone') return null;
+  const top = yScale(100);
+  const bottom = yScale(100 - v);
+  if (bottom - top < 16) return null;
+  return (
+    <text
+      x={edge === 'first' ? x + 4 : edge === 'last' ? x - 4 : x}
+      y={(top + bottom) / 2}
+      textAnchor={edge === 'first' ? 'start' : edge === 'last' ? 'end' : 'middle'}
+      dominantBaseline="central"
+      fontSize={11}
+      fontWeight={700}
+      fill="#fff"
+      pointerEvents="none"
+    >
+      {fmtPct(v)}
+    </text>
+  );
+}
+
 // One roster's chart, as a full-width card of its own like the charts above.
 // Clicking a day hands that chart row to `onPick`, which downloads the
 // roster's raw data for it in Excel.
@@ -236,6 +266,9 @@ function RosterActivityChart({ label, data, note = '', onPick = null }) {
     if (cx == null || cy == null || !drawn(index) || drawn(index - 1) || drawn(index + 1)) return null;
     return <circle key={`${color}-${index}`} cx={cx} cy={cy} r={4} fill={color} stroke="#fff" strokeWidth={2} />;
   };
+  // Every day's "None" share is printed while there's room for it; on the
+  // longer ranges only the latest one is, so the numbers don't overlap.
+  const labelEveryDay = data.length <= 22;
   return (
     <div style={CARD}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
@@ -292,7 +325,21 @@ function RosterActivityChart({ label, data, note = '', onPick = null }) {
               // that reads like a reading.
               connectNulls={false}
               isAnimationActive={false}
-            />
+            >
+              {b.key === 'bNone' && (
+                <LabelList
+                  dataKey={b.key}
+                  content={({ x, index }) => (
+                    <NoneBandLabel
+                      x={x}
+                      row={data[index]}
+                      show={labelEveryDay || data[index]?.iso === latest?.iso}
+                      edge={!drawn(index - 1) && !drawn(index + 1) ? 'alone' : !drawn(index - 1) ? 'first' : !drawn(index + 1) ? 'last' : null}
+                    />
+                  )}
+                />
+              )}
+            </Area>
           ))}
         </AreaChart>
       </ResponsiveContainer>
