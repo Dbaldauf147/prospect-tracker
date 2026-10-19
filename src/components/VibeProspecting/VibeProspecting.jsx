@@ -1,7 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
-import { matchesCdm } from '../../utils/cdmMatch';
-import { reportingTier } from '../../utils/tierSource';
+import { onMyBook, reportingTier } from '../../utils/tierSource';
 import { userLsGet } from '../../utils/userLs';
 import styles from './VibeProspecting.module.css';
 import { writeWorkKey } from '../../utils/mirroredWorkKeys';
@@ -965,7 +964,7 @@ export function VibeProspecting({ prospects = [], onUpdate, cdmName }) {
               onClick={() => {
                 const myAccounts = prospects.filter(p => {
                   if (!p.company) return false;
-                  if (!matchesCdm(p.cdm, cdmName)) return false;
+                  if (!onMyBook(p, cdmName)) return false;
                   const t = reportingTier(p);
                   return t === 'Tier 1' || t === 'Tier 2' || t === 'Tier 3';
                 }).sort((a, b) => (a.company || '').localeCompare(b.company || ''));

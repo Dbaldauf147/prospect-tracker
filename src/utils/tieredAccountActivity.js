@@ -22,11 +22,10 @@
 // activity on the account.
 
 import { TIERS } from '../data/enums.js';
-import { matchesCdm } from './cdmMatch.js';
 import { applyCompanyOverride, isSchneiderContact, rosterCompaniesMatch } from './contactRosters.js';
 import { isDecisionMakerContact, makeAccountContactIndex } from './decisionMakerCoverage.js';
 import { splitPeOwners } from './peOwners.js';
-import { reportingTier } from './tierSource.js';
+import { onMyBook, reportingTier } from './tierSource.js';
 
 const MS_PER_DAY = 86400000;
 
@@ -56,11 +55,12 @@ function parseWhen(raw) {
 
 /**
  * This CDM's accounts that carry Tier 1, 2 or 3, in tier then name order.
- * An own target (Not on tier list, but Dan target) counts as Tier 3.
+ * An own target (Not on tier list, but Dan target) counts as Tier 3, and
+ * is included whoever its CDM is.
  */
 export function myTieredAccounts(prospects, cdmName) {
   return (prospects || [])
-    .filter(p => p?.company && matchesCdm(p.cdm, cdmName) && TIERS.includes(reportingTier(p)))
+    .filter(p => p?.company && onMyBook(p, cdmName) && TIERS.includes(reportingTier(p)))
     .sort((a, b) => TIERS.indexOf(reportingTier(a)) - TIERS.indexOf(reportingTier(b))
       || String(a.company).localeCompare(String(b.company)));
 }
@@ -222,9 +222,9 @@ export function firmBucket(p) {
   return TIERS.includes(t) ? t : NOT_TIERED;
 }
 
-/** Every account on this CDM, tiered or not. */
+/** Every account on this CDM, tiered or not, plus own targets under any CDM. */
 export function myAccounts(prospects, cdmName) {
-  return (prospects || []).filter(p => p?.company && matchesCdm(p.cdm, cdmName));
+  return (prospects || []).filter(p => p?.company && onMyBook(p, cdmName));
 }
 
 /**

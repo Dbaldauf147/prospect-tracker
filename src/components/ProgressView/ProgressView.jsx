@@ -9,8 +9,7 @@ import { dbGet } from '../../utils/db';
 import { userLsGet } from '../../utils/userLs';
 import { getOppsSheetCsvUrl } from '../../utils/oppsSheetUrl';
 import { loadOppsFromCache } from '../../utils/oppsCache';
-import { matchesCdm } from '../../utils/cdmMatch';
-import { reportingTier } from '../../utils/tierSource';
+import { onMyBook, reportingTier } from '../../utils/tierSource';
 import { peStageOf } from '../../utils/peStages';
 import { readWorkKey, writeWorkKey } from '../../utils/mirroredWorkKeys';
 import { useClientFlagMaps } from '../../utils/rosterHooks';
@@ -811,7 +810,8 @@ export function ProgressView({ prospects, settings, cdmName }) {
   const currentSnapshot = useMemo(() => {
     const targetMap = settings?.targetMap || {};
     // Only count the configured user's accounts (same filter as My Accounts)
-    const myProspects = prospects.filter(p => matchesCdm(p.cdm, cdmName));
+    // Own targets (Not on tier list, but Dan target) count whoever their CDM is.
+    const myProspects = prospects.filter(p => onMyBook(p, cdmName));
     // An own target (Not on tier list, but Dan target) counts as Tier 3.
     const t1 = myProspects.filter(p => reportingTier(p) === 'Tier 1');
     const t2 = myProspects.filter(p => reportingTier(p) === 'Tier 2');

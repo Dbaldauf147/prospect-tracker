@@ -2,8 +2,8 @@
 // under Tier on the company card, `tierOwnTarget`): tier reporting reads
 // such a company as Tier 3. Plain Node, no framework. Run:
 //   node scripts/ownTargetTier.test.mjs
-import { isOwnTarget, reportingTier } from '../src/utils/tierSource.js';
-import { myTieredAccounts, tierActivityCoverage, firmBucket } from '../src/utils/tieredAccountActivity.js';
+import { isOwnTarget, reportingTier, onMyBook } from '../src/utils/tierSource.js';
+import { myTieredAccounts, tierActivityCoverage, firmBucket, myAccounts } from '../src/utils/tieredAccountActivity.js';
 import { tierAccounts } from '../src/utils/decisionMakerCoverage.js';
 import { accountTier } from '../src/utils/keithPeDeals.js';
 
@@ -37,6 +37,18 @@ eq(firmBucket(plainNot), 'Not tiered', 'plain Not on tier list stays Not tiered'
 eq(tierAccounts(prospects, 'Dan Baldauf', 'Tier 3').map(p => p.id), ['m'], 'decision-maker coverage includes it in Tier 3');
 eq(accountTier({ Account: 'Maymont Homes' }, prospects), 'Tier 3', 'opp digests read its account as Tier 3');
 eq(accountTier({ Account: 'Nope' }, prospects), 'Not on tier list', 'plain Not on tier list unchanged in digests');
+
+// An own target counts on Dan's book whoever its CDM is; a plain account
+// under another CDM does not.
+const otherCdmOwn = { id: 'o', company: 'Amherst Group', cdm: 'Someone Else', tier: 'Not on tier list', tierOwnTarget: true };
+const otherCdmT1 = { id: 'x', company: 'Other T1', cdm: 'Someone Else', tier: 'Tier 1' };
+const book = [...prospects, otherCdmOwn, otherCdmT1];
+eq(onMyBook(otherCdmOwn, 'Dan Baldauf'), true, 'own target under another CDM: on my book');
+eq(onMyBook(otherCdmT1, 'Dan Baldauf'), false, 'another CDM, plain tier: not on my book');
+eq(onMyBook(t1, 'Dan Baldauf'), true, 'my CDM: on my book');
+eq(myTieredAccounts(book, 'Dan Baldauf').map(p => p.id), ['a', 's', 'o', 'm'], 'Tiered tab includes own targets under any CDM');
+eq(myAccounts(book, 'Dan Baldauf').map(p => p.id).sort(), ['a', 'm', 'n', 'o', 's'], 'active-firms chart includes them too');
+eq(tierAccounts(book, 'Dan Baldauf', 'Tier 3').map(p => p.id), ['m', 'o'], 'decision-maker coverage includes them in Tier 3');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
