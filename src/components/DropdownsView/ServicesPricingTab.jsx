@@ -129,8 +129,22 @@ function nameList(names, max = 3) {
 // `scenario` is that estimate, passed in read-only: the service panel shows
 // what each rate comes to under it, which is the arithmetic that makes a
 // rate checkable. Nothing on this tab writes to it.
+// The coverage figures the header and the progress bar's key filter on.
+// `keep` reads a tracked service's answer (see coverage.status); a service
+// that isn't tracked has none, so every filter leaves it out.
+const STATUS_FILTERS = {
+  tracked:  { label: 'tracked',               keep: s => !!s },
+  priced:   { label: 'priced',                keep: s => s === 'priced' },
+  noFee:    { label: 'no fee',                keep: s => s === 'noFee' },
+  unpriced: { label: 'unpriced',              keep: s => s === 'unpriced' },
+  answered: { label: 'priced or no fee',      keep: s => s === 'priced' || s === 'noFee' },
+};
+
 export function ServicesPricingTab({ settings, updateSettings, serviceRows = [], scenario }) {
   const [search, setSearch] = useState('');
+  // The coverage figures double as filters: click "34 priced" and the table
+  // shows those 34. One of STATUS_FILTERS' keys, or '' for every service.
+  const [statusFilter, setStatusFilter] = useState('');
 
   const pricing = useMemo(() => getServicePricing(settings), [settings?.servicePricing]);
   // The Pricing Basis vocabulary in force: the edited list when there is
@@ -252,9 +266,17 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   const coverage = useMemo(() => {
     const counts = exploredCountTest(settings);
     const tracked = serviceRows.filter(r => counts(r.name));
+    // Each tracked service's answer, read the same way pricingCoverage
+    // counts it, so a filter always leaves exactly the number it was
+    // clicked on.
+    const status = new Map(tracked.map(r => {
+      const est = allEstimates.get(r.name);
+      return [r.name, est?.noFee ? 'noFee' : est?.priced ? 'priced' : 'unpriced'];
+    }));
     return {
       ...pricingCoverage(tracked.map(r => allEstimates.get(r.name))),
       untracked: serviceRows.length - tracked.length,
+      status,
     };
   }, [serviceRows, allEstimates, settings]);
 
@@ -359,13 +381,29 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
     }),
   [serviceRows, pricing, bases, allEstimates, inScope, serviceUnits]);
 
-  const rows = useMemo(
-    () => (term
-      ? allRows.filter(r => [r.name, r.serviceBucket, r.basisLabel, r.notes, r._impactLabel]
-        .some(v => String(v).toLowerCase().includes(term)))
-      : allRows),
-    [allRows, term],
-  );
+  const rows = useMemo(() => {
+    const keep = STATUS_FILTERS[statusFilter]?.keep;
+    return allRows.filter(r => {
+      if (keep && !keep(coverage.status.get(r.name))) return false;
+      return !term || [r.name, r.serviceBucket, r.basisLabel, r.notes, r._impactLabel]
+        .some(v => String(v).toLowerCase().includes(term));
+    });
+  }, [allRows, term, statusFilter, coverage]);
+
+  // A coverage figure as a button that filters the table to it; clicking
+  // the one already on clears it.
+  function filterButton(key, children, className = styles.coverageFilter) {
+    const on = statusFilter === key;
+    return (
+      <button
+        type="button"
+        className={`${className}${on ? ` ${styles.coverageFilterOn}` : ''}`}
+        aria-pressed={on}
+        onClick={() => setStatusFilter(on ? '' : key)}
+        title={on ? 'Show every service again' : `Show only the ${STATUS_FILTERS[key].label} services`}
+      >{children}</button>
+    );
+  }
 
   // The selection as names the Solutions list still has. Held as names
   // because that is what the rate card is keyed on, and intersected with
@@ -782,11 +820,14 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
                 ? `${coverage.untracked} more ${coverage.untracked === 1 ? 'is' : 'are'} left out because ${coverage.untracked === 1 ? 'it doesn\'t' : 'they don\'t'} count toward the % of services explored (Broader SE, Renewables, retired, or switched off on the service's popup).`
                 : '')}
         >
-          {term ? `${rows.length} of ${serviceRows.length} services` : `${serviceRows.length} services`}
-          {coverage.total > 0 && ` · ${coverage.total} tracked`}
-          {coverage.total > 0 && ` · ${coverage.priced} priced`}
-          {coverage.noFee > 0 && ` · ${coverage.noFee} no fee`}
-          {coverage.total > 0 && ` · ${coverage.answeredPct}% of tracked priced or no fee`}
+          {term || statusFilter ? `${rows.length} of ${serviceRows.length} services` : `${serviceRows.length} services`}
+          {coverage.total > 0 && <> · {filterButton('tracked', `${coverage.total} tracked`)}</>}
+          {coverage.total > 0 && <> · {filterButton('priced', `${coverage.priced} priced`)}</>}
+          {coverage.noFee > 0 && <> · {filterButton('noFee', `${coverage.noFee} no fee`)}</>}
+          {coverage.total > 0 && <> · {filterButton('answered', `${coverage.answeredPct}% of tracked priced or no fee`)}</>}
+          {statusFilter && (
+            <> · <button type="button" className={styles.coverageFilter} onClick={() => setStatusFilter('')}>Clear filter</button></>
+          )}
         </span>
       </div>
 
@@ -807,26 +848,30 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           >
             <div
               className={styles.pricingProgressPriced}
-              style={{ width: `${(coverage.priced / coverage.total) * 100}%` }}
-              title={`${coverage.priced} priced`}
+              style={{ width: `${(coverage.priced / coverage.total) * 100}%`, cursor: 'pointer' }}
+              title={`${coverage.priced} priced - click to show them`}
+              onClick={() => setStatusFilter(f => (f === 'priced' ? '' : 'priced'))}
             />
             <div
               className={styles.pricingProgressNoFee}
-              style={{ width: `${(coverage.noFee / coverage.total) * 100}%` }}
-              title={`${coverage.noFee} no fee`}
+              style={{ width: `${(coverage.noFee / coverage.total) * 100}%`, cursor: 'pointer' }}
+              title={`${coverage.noFee} no fee - click to show them`}
+              onClick={() => setStatusFilter(f => (f === 'noFee' ? '' : 'noFee'))}
+            />
+            <div
+              style={{ flex: 1, cursor: 'pointer' }}
+              title={`${coverage.unpriced} unpriced - click to show them`}
+              onClick={() => setStatusFilter(f => (f === 'unpriced' ? '' : 'unpriced'))}
             />
           </div>
           <span className={styles.pricingProgressLabel}>
-            <strong>{coverage.answeredPct}%</strong> priced or no fee ({coverage.answered} of {coverage.total})
-            <span className={styles.pricingProgressKey}>
-              <span className={styles.pricingProgressSwatchPriced} /> Priced {coverage.priced}
-            </span>
-            <span className={styles.pricingProgressKey}>
-              <span className={styles.pricingProgressSwatchNoFee} /> No fee {coverage.noFee}
-            </span>
-            <span className={styles.pricingProgressKey}>
-              <span className={styles.pricingProgressSwatchOpen} /> Unpriced {coverage.unpriced}
-            </span>
+            {filterButton('answered', <><strong>{coverage.answeredPct}%</strong> priced or no fee ({coverage.answered} of {coverage.total})</>)}
+            {filterButton('priced', <><span className={styles.pricingProgressSwatchPriced} /> Priced {coverage.priced}</>,
+              `${styles.coverageFilter} ${styles.pricingProgressKey}`)}
+            {filterButton('noFee', <><span className={styles.pricingProgressSwatchNoFee} /> No fee {coverage.noFee}</>,
+              `${styles.coverageFilter} ${styles.pricingProgressKey}`)}
+            {filterButton('unpriced', <><span className={styles.pricingProgressSwatchOpen} /> Unpriced {coverage.unpriced}</>,
+              `${styles.coverageFilter} ${styles.pricingProgressKey}`)}
           </span>
         </div>
       )}
