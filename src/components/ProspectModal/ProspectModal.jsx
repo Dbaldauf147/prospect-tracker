@@ -10085,10 +10085,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             {targetRows && prospect?.id && !isNew && (mappedRows.length > 0 || targetSuggestions.length > 0) && (
               // An unmapped suggestion is in red so it can't be missed: it is
               // a Targets list account this card isn't tied to yet. Once
-              // mapped, the box goes back to the quiet look.
+              // mapped, the box goes back to the quiet look. display: block
+              // overrides the grid's label/value columns (.grid > div), which
+              // would otherwise squeeze the header and every other mapped row
+              // into the 150px label column.
               <div style={mappedRows.length > 0
-                ? { gridColumn: '1 / -1', border: '1px solid var(--color-border)', borderRadius: 6, padding: '0.45rem 0.6rem', background: 'var(--color-surface)', fontSize: '0.72rem' }
-                : { gridColumn: '1 / -1', border: '2px solid #DC2626', borderRadius: 6, padding: '0.45rem 0.6rem', background: '#FEF2F2', color: '#991B1B', fontSize: '0.72rem' }}
+                ? { gridColumn: '1 / -1', display: 'block', border: '1px solid var(--color-border)', borderRadius: 6, padding: '0.45rem 0.6rem', background: 'var(--color-surface)', fontSize: '0.72rem' }
+                : { gridColumn: '1 / -1', display: 'block', border: '2px solid #DC2626', borderRadius: 6, padding: '0.45rem 0.6rem', background: '#FEF2F2', color: '#991B1B', fontSize: '0.72rem' }}
               >
                 <div style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: mappedRows.length > 0 ? 'var(--color-text-muted)' : '#B91C1C', marginBottom: 4 }}>
                   {mappedRows.length > 0 ? 'Targets list: mapped' : 'Targets list: suggested match'}
