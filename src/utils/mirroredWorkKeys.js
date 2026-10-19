@@ -127,6 +127,15 @@ export function writeWorkKey(key, value) {
 }
 
 /**
+ * Put an earlier version back. Saved like an edit, except the copy it
+ * replaces is always kept as a version too, so a restore can be undone.
+ */
+export function restoreWorkKey(key, value) {
+  userLsSet(key, value);
+  queueMirrorPush(key, { keepVersion: true });
+}
+
+/**
  * Clear one. `allowEmpty` matters: an empty payload is how the mirror says
  * "cleared on another device" — without it the clear would stay local and
  * the other machine would push the old value straight back.

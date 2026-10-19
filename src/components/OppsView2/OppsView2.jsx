@@ -136,7 +136,8 @@ import { FRAMEWORKS, SERVICE_STATUSES } from '../../data/enums';
 import { buildTypeOptions } from '../../utils/prospectOptions';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
 import { STAGE_BANDS } from '../../utils/stageBands';
-import { writeWorkKey } from '../../utils/mirroredWorkKeys';
+import { writeWorkKey, clearWorkKey, restoreWorkKey, OPPS_TODO_EVENT } from '../../utils/mirroredWorkKeys';
+import { listMirrorVersions, readMirrorVersion } from '../../utils/localMirrorSync';
 import {
   TRACKED_STAGES,
   TRACKED_STAGES_SET,
@@ -13763,17 +13764,94 @@ function NfatScheduleModal({ schedules, onSave, onClearNow, onClose }) {
   );
 }
 
+// The To do list's earlier versions: the copies the cloud kept each time
+// the list was replaced (utils/localMirrorSync keeps the last 20, and always
+// keeps the one a clear or a shrink replaced), each with a preview and a
+// Restore.
+const TODO_KEY = 'opps2:todo';
+
+const TODO_VERSION_REASONS = {
+  auto: 'Saved',
+  'before-delete': 'Before it was cleared or cut down',
+  'before-restore': 'Before a restore',
+  'not-saved': 'A device whose copy was out of date (not saved)',
+};
+
+function TodoVersions({ current, onRestore }) {
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await listMirrorVersions(TODO_KEY);
+        const withText = await Promise.all(list.map(async v => ({ ...v, text: await readMirrorVersion(TODO_KEY, v.slot) })));
+        if (!cancelled) setRows(withText.filter(v => v.text));
+      } catch (err) {
+        if (!cancelled) { setError(String(err?.message || err)); setRows([]); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const when = (ms) => (ms ? new Date(ms).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '-');
+  return (
+    <div style={{ padding: '0.5rem 0.6rem', borderBottom: '1px solid var(--color-border-light)', fontSize: '0.75rem', maxHeight: 360, overflowY: 'auto' }}>
+      {rows === null && <div style={{ color: 'var(--color-text-muted)' }}>Loading earlier versions...</div>}
+      {error && <div style={{ color: '#DC2626' }}>Couldn&rsquo;t read the earlier versions: {error}</div>}
+      {rows && !rows.length && !error && <div style={{ color: 'var(--color-text-muted)' }}>No earlier versions kept yet.</div>}
+      {rows && rows.map(v => (
+        <div key={v.slot} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '0.35rem 0', borderTop: '1px solid var(--color-border-light)' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>
+              {when(v.archivedAt)} <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}>{TODO_VERSION_REASONS[v.reason] || v.reason}</span>
+            </div>
+            <div style={{ whiteSpace: 'pre-wrap', color: 'var(--color-text-muted)', maxHeight: 72, overflow: 'hidden' }}>{v.text}</div>
+          </div>
+          <button
+            type="button"
+            disabled={v.text === current}
+            onClick={() => {
+              if (current.trim() && !window.confirm('Replace the current To do list with this version? The current one is kept as an earlier version.')) return;
+              onRestore(v.text);
+            }}
+            style={{ border: '1px solid #2563EB', background: v.text === current ? 'transparent' : '#2563EB', color: v.text === current ? 'var(--color-text-muted)' : '#fff', borderRadius: 6, fontSize: '0.68rem', fontWeight: 600, padding: '0.2rem 0.55rem', cursor: v.text === current ? 'default' : 'pointer', fontFamily: 'inherit' }}
+          >{v.text === current ? 'Current' : 'Restore'}</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // Free-form "To do" scratchpad pinned to the top of the Opportunities
 // tab. Pressing Enter starts a new bullet so the box reads like a
 // checklist (Shift+Enter still inserts a plain newline inside a bullet).
 // The text and the collapsed state persist per-user in localStorage so
-// they survive reloads.
+// they survive reloads, and the text has a cloud copy (mirroredWorkKeys).
+//
+// The text is saved only when the user changes it, never on mount, and
+// the box re-reads it whenever the cloud copy lands (OPPS_TODO_EVENT).
+// It used to read localStorage once and write its state back on every
+// render of a new value: on a browser that hadn't synced yet the box
+// showed empty while the cloud copy arrived underneath, and the next
+// keystroke (or Clear) saved the empty box over the real list.
 function TodoBox() {
   const BULLET = '• ';
-  const [text, setText] = useState(() => userLsGet('opps2:todo') ?? '');
+  const [text, setTextState] = useState(() => userLsGet(TODO_KEY) ?? '');
   const [collapsed, setCollapsed] = useState(() => userLsGet('opps2:todoCollapsed') === '1');
+  const [showVersions, setShowVersions] = useState(false);
   const taRef = useRef(null);
-  useEffect(() => { try { writeWorkKey('opps2:todo', text); } catch { /* quota — ignore */ } }, [text]);
+  function setText(v) {
+    setTextState(v);
+    try {
+      if (v) writeWorkKey(TODO_KEY, v);
+      else clearWorkKey(TODO_KEY);
+    } catch { /* quota — ignore */ }
+  }
+  useEffect(() => {
+    const reload = () => setTextState(userLsGet(TODO_KEY) ?? '');
+    window.addEventListener(OPPS_TODO_EVENT, reload);
+    return () => window.removeEventListener(OPPS_TODO_EVENT, reload);
+  }, []);
   useEffect(() => { try { userLsSet('opps2:todoCollapsed', collapsed ? '1' : '0'); } catch { /* ignore */ } }, [collapsed]);
 
   // Grow the textarea to fit its content so there's no dead space below
@@ -13821,6 +13899,12 @@ function TodoBox() {
           style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--color-text-muted)', padding: 0, width: 14, lineHeight: 1 }}
         >{collapsed ? '▸' : '▾'}</button>
         <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--color-text)', flex: 1 }}>To do</span>
+        <button
+          type="button"
+          onClick={() => setShowVersions(v => !v)}
+          title="Earlier saved copies of this list, to bring one back"
+          style={{ border: '1px solid var(--color-border)', background: 'var(--color-bg)', borderRadius: 6, fontSize: '0.68rem', fontWeight: 600, color: 'var(--color-text-muted)', padding: '0.15rem 0.5rem', cursor: 'pointer', fontFamily: 'inherit' }}
+        >Earlier versions</button>
         {text.trim() && (
           <button
             type="button"
@@ -13830,6 +13914,17 @@ function TodoBox() {
           >Clear</button>
         )}
       </div>
+      {showVersions && (
+        <TodoVersions
+          current={text}
+          onRestore={(v) => {
+            setTextState(v);
+            try { restoreWorkKey(TODO_KEY, v); } catch { /* quota — ignore */ }
+            setShowVersions(false);
+            setCollapsed(false);
+          }}
+        />
+      )}
       {!collapsed && (
         <textarea
           ref={taRef}
