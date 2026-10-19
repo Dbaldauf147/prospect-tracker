@@ -33,7 +33,7 @@ import {
 } from '../../utils/listAccountMapping';
 import { loadList as loadUploadedList } from '../../utils/uploadedListStore';
 import { STRATEGIC_STORAGE_KEY, strategicMatches } from '../../utils/strategicAccounts';
-import { STATUSES, STATUS_COLORS, TIER_OPTIONS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
+import { STATUSES, STATUS_COLORS, TIER_OPTIONS, NOT_ON_TIER_LIST, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { peStageOf } from '../../utils/peStages';
 import ServiceBucketPopup from './ServiceBucketPopup';
 import { isGraveyardBucket } from '../../utils/servicePricing';
@@ -771,6 +771,10 @@ const EMPTY = {
   // Ticked once this user has squared the account with the other CDM who
   // also covers it (the Coverage CDM checkbox). Off unless ticked.
   cdmAligned: false,
+  // Not on the tier list, but an account this user is targeting anyway
+  // (the checkbox under Tier). Ticking it sets Tier to Not on tier list;
+  // picking a real tier clears it. Off unless ticked.
+  tierOwnTarget: false,
   salesPartner: '',
 };
 
@@ -10358,10 +10362,37 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   </span>
                 )}
               </label>
-              <select className={styles.select} value={fields.tier} onChange={e => set('tier', e.target.value)}>
+              {/* The dropdown and what sits under it share the value column,
+                  the same way the CDM picker and its checkbox do. */}
+              <div style={{ minWidth: 0 }}>
+              <select
+                className={styles.select}
+                value={fields.tier}
+                onChange={e => {
+                  const tier = e.target.value;
+                  setFields(prev => ({ ...prev, tier, tierOwnTarget: tier === NOT_ON_TIER_LIST ? prev.tierOwnTarget : false }));
+                }}
+              >
                 <option value="">-</option>
                 {TIER_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
+              {/* Not on the shared tier list, but targeted anyway. Ticking
+                  it is the whole answer, so it sets the Tier too. */}
+              <label
+                title="Not on the tier list, but an account you're targeting anyway. Ticking this sets Tier to Not on tier list."
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', marginTop: 4, fontSize: '0.68rem', color: fields.tierOwnTarget === true ? '#1E3A8A' : 'var(--color-text-muted)', fontWeight: fields.tierOwnTarget === true ? 600 : 400, cursor: 'pointer', whiteSpace: 'nowrap' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={fields.tierOwnTarget === true}
+                  onChange={e => {
+                    const on = e.target.checked;
+                    setFields(prev => ({ ...prev, tierOwnTarget: on, ...(on ? { tier: NOT_ON_TIER_LIST } : {}) }));
+                  }}
+                  style={{ accentColor: '#2563EB', margin: 0 }}
+                />
+                {`Not on tier list, but ${String(cdmName || '').trim().split(/\s+/)[0] || 'Dan'} target`}
+              </label>
               {/* Same look as the Coverage CDM warning: the Targets list
                   is the shared record, so a disagreement is flagged, and a
                   click sets the card to what the list says. */}
@@ -10389,6 +10420,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   </span>
                 </button>
               )}
+              </div>
             </div>
 
             <div>
