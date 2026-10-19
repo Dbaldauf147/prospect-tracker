@@ -130,6 +130,10 @@ export async function collectUserBackup(db, uid, email) {
     }
     backup.collections.localMirrors = mirrors;
     summary.counts.localMirrors = Object.keys(mirrors).length;
+    // The Opps To do list is free text, not a list, so it gets no row count
+    // above. Its lines are counted instead, always (0 when it is missing),
+    // so a wipe trips the alert even when the cloud copy went with it.
+    summary.counts.oppsTodoItems = todoItemCount(mirrors[OPPS_TODO_MIRROR]);
     if (refs.length) summary.captured.push('localMirrors');
   } catch (e) { summary.errors.push(`localMirrors: ${msg(e)}`); }
 
@@ -188,11 +192,28 @@ export function serviceBoardCounts(settings) {
   return { serviceBuckets: cats.length, servicesInBuckets: filed.size };
 }
 
-// Counts where ANY drop is flagged, not just a 10% one. Fourteen services
-// falling out of their buckets on a board of ~150 is a 9% drop and would
-// have slipped under the general threshold, and a deliberate change to the
-// board is rare enough that being asked about it costs nothing.
-const STRICT_DROP_FIELDS = new Set(['serviceBuckets', 'servicesInBuckets']);
+// The Opps To do list's mirror id (src/utils/mirroredWorkKeys) and its item
+// count: the non-blank lines. The text isn't JSON, so the backup holds it
+// as { _unparseableJson: text }; a plain string is read too.
+export const OPPS_TODO_MIRROR = 'opps2:todo';
+export function todoItemCount(value) {
+  const text = typeof value === 'string' ? value : value?._unparseableJson;
+  if (typeof text !== 'string') return 0;
+  return text.split('\n').filter(line => line.replace(/^[\s•]+/, '').trim()).length;
+}
+
+// Counts with their own threshold instead of the general 10% one.
+//
+// The services board flags ANY drop. Fourteen services falling out of
+// their buckets on a board of ~150 is a 9% drop and would have slipped
+// under the general threshold, and a deliberate change to the board is
+// rare enough that being asked about it costs nothing.
+//
+// The To do list flags a drop of half or more (and a drop to empty, which
+// is always 100%). Ticking items off shrinks it every day, so flagging any
+// drop would raise a data-loss alert after every productive day and teach
+// everyone to ignore it; a wipe takes it to nothing.
+const DROP_THRESHOLDS = { serviceBuckets: 0, servicesInBuckets: 0, oppsTodoItems: 0.5 };
 
 // Compare today's counts against the previous run. Flags any count that
 // dropped by `dropFraction` or more — the early-warning a sudden Opps 2
@@ -205,7 +226,7 @@ export function detectAnomalies(prevCounts, counts, dropFraction = 0.10) {
     const cur = Number(counts[key]) || 0;
     if (prev > 0 && cur < prev) {
       const drop = (prev - cur) / prev;
-      if (drop >= dropFraction || STRICT_DROP_FIELDS.has(key)) {
+      if (drop >= (DROP_THRESHOLDS[key] ?? dropFraction)) {
         alerts.push({ field: key, prev, cur, dropPct: Math.round(drop * 100) });
       }
     }
