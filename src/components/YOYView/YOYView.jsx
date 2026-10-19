@@ -31,7 +31,7 @@ import {
 } from '../../utils/quotedMonthRebuild';
 import { loadYoyOverrides, saveYoyOverrides, YOY_OVERRIDES_EVENT } from '../../utils/yoyOverridesStore';
 import { loadHiddenCharts, saveHiddenCharts } from '../../utils/yoyHiddenChartsStore';
-import { reachedQualifying } from '../../utils/leadQualifying';
+import { qualifyingEvidence, reachedQualifying } from '../../utils/leadQualifying';
 import styles from './YOYView.module.css';
 
 const PIPELINE_STORE = 'pipeline-dashboard';
@@ -1602,8 +1602,38 @@ export function YOYView() {
     }
     const wb = XLSX.utils.book_new();
     appendSheet(wb, `${conf.sheet} ${rawKey}`, rows);
+    // The current year's Leads point carries the Reached Qualifying bar, so
+    // its download carries the analysis behind it.
+    if (chartId === 'leads' && rawKey === String(currentYear)) {
+      appendSheet(wb, `Qualifying ${currentYear}`, leadsQualifyingSheet());
+    }
     const tag = rawKey.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'point';
     XLSX.writeFile(wb, `yoy-${chartId}-${tag}-${todayStamp()}.xlsx`);
+  }
+
+  // The analysis tab behind the Leads chart's Reached Qualifying bar: every
+  // lead opened this year, whether it got to Qualifying, and what that
+  // answer went on. Reached first, then by account, so the two groups read
+  // as two lists.
+  function leadsQualifyingSheet() {
+    const out = [];
+    for (const r of records) {
+      if (parseYear(r['Open Year']) !== currentYear) continue;
+      const e = qualifyingEvidence(r);
+      out.push({
+        Account: String(r.Account || '').trim(),
+        Scope: String(r.Scope || '').trim(),
+        'Stage Today': String(r.Stage || '').trim(),
+        'Reached Qualifying': e.reached ? 'Yes' : 'No',
+        Basis: e.basis,
+        'Stage Path': e.path,
+        'Start Date': r['Start Date'] || '',
+        'Close Date': r['Close Date'] || '',
+      });
+    }
+    return out.sort((a, b) => (a['Reached Qualifying'] === b['Reached Qualifying']
+      ? a.Account.localeCompare(b.Account)
+      : (a['Reached Qualifying'] === 'Yes' ? -1 : 1)));
   }
 
   function downloadLeads() {
@@ -1616,6 +1646,7 @@ export function YOYView() {
     const wb = XLSX.utils.book_new();
     appendSheet(wb, 'Leads by Year', summary);
     appendSheet(wb, 'Contributing Opps', contributingRecords.leads);
+    appendSheet(wb, `Qualifying ${currentYear}`, leadsQualifyingSheet());
     XLSX.writeFile(wb, `yoy-leads-${todayStamp()}.xlsx`);
   }
   // One plotted month, as an export row.
