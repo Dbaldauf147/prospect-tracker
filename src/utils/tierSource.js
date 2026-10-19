@@ -48,24 +48,26 @@ export function clearImportedTierOnEdit(patch) {
 }
 
 // A company marked "Not on tier list, but Dan target" (the checkbox under
-// Tier on the company card, `tierOwnTarget`) is not on the shared tier
-// list, but it is worked like a tiered account. Everything that reports on
-// tiered accounts (My Accounts, the Tiered tab, decision-maker coverage,
-// Progress) reads it as Tier 3. The card itself still says Not on tier
-// list, and the comparison with the Target Accounts list still treats it
-// as untiered, because that is what the list says.
+// Tier on the company card, `tierOwnTarget`) is one Dan works whatever the
+// tier list or its CDM says. Everything that reports on tiered accounts
+// (My Accounts, the Tiered tab, decision-maker coverage, Progress) counts
+// it, under any CDM. The flag is what counts, not the tier beside it: the
+// card's "Targets list says Tier 3" fix sets the tier and leaves the box
+// ticked (Amherst Group), and that is still a Dan target.
 export const OWN_TARGET_REPORTING_TIER = 'Tier 3';
+const REAL_TIERS = ['Tier 1', 'Tier 2', 'Tier 3'];
 
 export function isOwnTarget(record) {
-  return record?.tierOwnTarget === true
-    && String(record?.tier || '').trim().toLowerCase() === 'not on tier list';
+  return record?.tierOwnTarget === true;
 }
 
-// The tier a record counts under in tier reporting: its own tier, or
-// Tier 3 for an own target. Trimmed, '' when there is none.
+// The tier a record counts under in tier reporting, trimmed, '' when there
+// is none. An own target keeps a real tier (Tier 1, 2 or 3) and otherwise
+// (Not on tier list, blank) counts as Tier 3.
 export function reportingTier(record) {
-  if (isOwnTarget(record)) return OWN_TARGET_REPORTING_TIER;
-  return String(record?.tier || '').trim();
+  const tier = String(record?.tier || '').trim();
+  if (isOwnTarget(record) && !REAL_TIERS.includes(tier)) return OWN_TARGET_REPORTING_TIER;
+  return tier;
 }
 
 // Whether a record is on this CDM's book for tier reporting: its CDM is

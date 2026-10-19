@@ -20,7 +20,7 @@ import { userLsGet, userLsSet } from '../../utils/userLs';
 import { saveMyAccountsFlags } from '../../utils/myAccountsFlagsStore';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadList } from '../../utils/uploadedListStore';
-import { tierPreferringTargetsList, isOwnTarget, OWN_TARGET_REPORTING_TIER } from '../../utils/tierSource';
+import { tierPreferringTargetsList, isOwnTarget, reportingTier } from '../../utils/tierSource';
 import { companyDedupeKey } from '../../utils/companyKey';
 import { MASTER_FIELDS, CANONICAL_HEADERS } from '../MasterSiteListView/masterSiteFields';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
@@ -2324,9 +2324,9 @@ Fix that now?
       // Use Firestore tier if explicitly set, otherwise fall back to map/target accounts
       let tier;
       if (isOwnTarget(p)) {
-        // Not on tier list, but Dan target: worked like a tiered account,
-        // so it sits in Tier 3 here and in every tier count built from it.
-        tier = OWN_TARGET_REPORTING_TIER;
+        // Not on tier list, but Dan target: worked like a tiered account.
+        // A real tier on the card is kept; anything else sits in Tier 3.
+        tier = reportingTier(p);
       } else if (p.tier === 'Tier 1' || p.tier === 'Tier 2' || p.tier === 'Tier 3' || p.tier === NOT_ON_TIER_LIST) {
         // Any explicitly-chosen tier wins — including Tier 3. Previously
         // Tier 3 fell through to the hardcoded map below, so setting a
