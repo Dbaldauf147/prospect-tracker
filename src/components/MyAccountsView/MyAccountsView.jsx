@@ -2361,7 +2361,10 @@ Fix that now?
       }
       const cdm = (p.cdm || '').toLowerCase().trim();
       const isBaldauf = matchesCdm(p.cdm, cdmName);
-      if (!isBaldauf) {
+      // A "Not on tier list, but Dan target" company is on My Accounts
+      // whoever its CDM is: ticking the box is the choice to work it.
+      const ownTarget = isOwnTarget(p);
+      if (!isBaldauf && !ownTarget) {
         // Still include if the company has an OPEN opp. Closed-only history
         // (Sold/Not Sold) on a non-CDM account isn't enough to keep it
         // in My Accounts — that's how JPMC was sneaking in.
@@ -2635,8 +2638,8 @@ Fix that now?
       const isStrategicTier = tier === 'Tier 1' || tier === 'Tier 2';
       const onTargetList = (targetNames || []).length > 0;
       // A "Not on tier list, but Dan target" company is on the list by
-      // choice, so it stays without an open opp like a Targets-list one.
-      const keepForDan = isBaldauf && (isStrategicTier || onTargetList || isOwnTarget(p) || p.status === 'Client');
+      // choice, so it stays without an open opp, and under any CDM.
+      const keepForDan = ownTarget || (isBaldauf && (isStrategicTier || onTargetList || p.status === 'Client'));
       if (!keepForDan && (!oppsCount || oppsCount === 0)) continue;
       // Master Site List count for this account — summed across the parent
       // company and any division names, matched on the normalized name.
