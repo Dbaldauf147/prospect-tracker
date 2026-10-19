@@ -51,6 +51,7 @@ import { auditablePeople, setQueuedAuditContacts } from '../../utils/tagAuditQue
 import { ProspectingHistory } from './ProspectingHistory';
 import { ProspectingCompanies } from './ProspectingCompanies';
 import { ProspectingTiered } from './ProspectingTiered';
+import { ProspectingLogic } from './ProspectingLogic';
 
 // The contact popup, loaded when one is actually opened. It lives in
 // ProspectModal, which is the largest module in the app — a static import
@@ -103,8 +104,9 @@ const ACTION_COL = 144;
 // page doesn't stretch to whatever the monitor happens to be.
 const PAGE_MAX = 1180;
 
-// The page's two subtabs: the ladder itself, and its day-by-day History.
-// The last one open is remembered, like the Contacts page's subtabs.
+// The page's subtabs: the ladder itself, its day-by-day History, the
+// company lists, and Logic, the rules all of them run on. The last one
+// open is remembered, like the Contacts page's subtabs.
 const SUBTAB_KEY = 'prospecting-view:active-subtab';
 const SUBTABS = [
   { key: 'ladder', label: 'Ladder' },
@@ -112,6 +114,7 @@ const SUBTABS = [
   { key: 'prospects', label: 'Prospects' },
   { key: 'pcs', label: 'PCs' },
   { key: 'tiered', label: 'Tiered Activity' },
+  { key: 'logic', label: 'Prospecting Logic' },
 ];
 function readSavedSubtab() {
   try {
@@ -1501,6 +1504,8 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
 
       {subtab === 'history' ? (
         <ProspectingHistory today={today} maxWidth={PAGE_MAX} prospects={prospects} settings={settings} cdmName={cdmName} />
+      ) : subtab === 'logic' ? (
+        <ProspectingLogic steps={steps} settings={settings} updateSettings={updateSettings} canEdit={canEdit} maxWidth={PAGE_MAX} />
       ) : subtab === 'tiered' ? (
         <ProspectingTiered
           prospects={prospects}
