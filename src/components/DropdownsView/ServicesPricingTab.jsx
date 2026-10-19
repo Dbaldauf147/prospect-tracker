@@ -790,6 +790,47 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         </span>
       </div>
 
+      {/* The same share as a bar, so how much of the card is settled reads
+          at a glance. Priced and no fee are two shades of one green: both
+          are settled, but they stay told apart like the counts above. The
+          widths come off the raw counts rather than the rounded %, so the
+          two segments always add up to the whole settled part. */}
+      {coverage.total > 0 && (
+        <div className={styles.pricingProgress}>
+          <div
+            className={styles.pricingProgressTrack}
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={coverage.answeredPct}
+            aria-label="Tracked services priced or marked no fee"
+          >
+            <div
+              className={styles.pricingProgressPriced}
+              style={{ width: `${(coverage.priced / coverage.total) * 100}%` }}
+              title={`${coverage.priced} priced`}
+            />
+            <div
+              className={styles.pricingProgressNoFee}
+              style={{ width: `${(coverage.noFee / coverage.total) * 100}%` }}
+              title={`${coverage.noFee} no fee`}
+            />
+          </div>
+          <span className={styles.pricingProgressLabel}>
+            <strong>{coverage.answeredPct}%</strong> priced or no fee ({coverage.answered} of {coverage.total})
+            <span className={styles.pricingProgressKey}>
+              <span className={styles.pricingProgressSwatchPriced} /> Priced {coverage.priced}
+            </span>
+            <span className={styles.pricingProgressKey}>
+              <span className={styles.pricingProgressSwatchNoFee} /> No fee {coverage.noFee}
+            </span>
+            <span className={styles.pricingProgressKey}>
+              <span className={styles.pricingProgressSwatchOpen} /> Unpriced {coverage.unpriced}
+            </span>
+          </span>
+        </div>
+      )}
+
       {bulkOn && (
         <div className={styles.bulkBar}>
           <label className={styles.bulkSelectAll} title="Select every service the search leaves on screen">
