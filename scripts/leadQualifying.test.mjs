@@ -2,7 +2,7 @@
 // Plain Node, no test framework. Run:
 //   node scripts/leadQualifying.test.mjs
 import assert from 'node:assert/strict';
-import { reachedQualifying } from '../src/utils/leadQualifying.js';
+import { qualifyingEvidence, reachedQualifying } from '../src/utils/leadQualifying.js';
 
 // At Qualifying or past it today.
 for (const Stage of ['Qualifying', 'Quoting', 'Quoted', 'Contracting', 'Agreement Sent', 'Sold', ' Quoted ']) {
@@ -27,3 +27,32 @@ assert.equal(reachedQualifying({ Stage: 'Lead', _stageHistory: 'nope' }), false)
 assert.equal(reachedQualifying({ Stage: 'Lead', _stageHistory: [null, {}] }), false);
 
 console.log('leadQualifying: all assertions passed');
+
+// The words behind each answer, for the export's analysis tab.
+{
+  const e = qualifyingEvidence({ Stage: 'Quoted', _stageHistory: [{ stage: 'Lead' }, { stage: 'Qualifying' }] });
+  assert.equal(e.reached, true);
+  assert.equal(e.basis, 'Stage today is Quoted');
+  assert.equal(e.path, 'Lead > Qualifying > Quoted');
+}
+{
+  const e = qualifyingEvidence({ Stage: 'Not Sold', _stageHistory: [{ stage: 'Lead' }, { stage: 'Qualifying', enteredAt: '2026-02-01', exitedAt: '2026-03-01' }] });
+  assert.equal(e.reached, true);
+  assert.equal(e.basis, 'Stage history shows Qualifying from 2026-02-01 to 2026-03-01');
+}
+{
+  const e = qualifyingEvidence({ Stage: 'Lead' });
+  assert.equal(e.reached, false);
+  assert.equal(e.basis, 'Stage today is Lead, no stage moves recorded');
+  assert.equal(e.path, 'Lead');
+}
+{
+  const e = qualifyingEvidence({ Stage: 'Not Sold', _stageHistory: [{ stage: 'Lead' }] });
+  assert.equal(e.reached, false);
+  assert.equal(e.basis, 'Stage today is Not Sold, history never shows Qualifying or later');
+}
+// The two functions never disagree.
+for (const r of [{ Stage: 'Lead', _stageHistory: [{ stage: 'Quoting' }] }, { Stage: 'Sold' }, { Stage: '' }, null]) {
+  assert.equal(qualifyingEvidence(r).reached, reachedQualifying(r));
+}
+console.log('leadQualifying evidence: all assertions passed');

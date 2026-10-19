@@ -21,3 +21,25 @@ export function reachedQualifying(record) {
   const history = Array.isArray(record?._stageHistory) ? record._stageHistory : [];
   return history.some(h => QUALIFYING_OR_LATER.has(String(h?.stage ?? '').trim()));
 }
+
+// Why reachedQualifying said what it did, in words for the export's
+// analysis tab: the evidence it went on, and the path of stages the opp is
+// known to have taken (history in order, then where it sits today).
+export function qualifyingEvidence(record) {
+  const stage = String(record?.Stage ?? '').trim();
+  const history = (Array.isArray(record?._stageHistory) ? record._stageHistory : [])
+    .filter(h => h && String(h.stage ?? '').trim());
+  const path = [...history.map(h => String(h.stage).trim()), stage || '(blank)'].join(' > ');
+  if (QUALIFYING_OR_LATER.has(stage)) {
+    return { reached: true, basis: `Stage today is ${stage}`, path };
+  }
+  const hit = history.find(h => QUALIFYING_OR_LATER.has(String(h.stage).trim()));
+  if (hit) {
+    const when = hit.enteredAt ? ` from ${hit.enteredAt}${hit.exitedAt ? ` to ${hit.exitedAt}` : ''}` : '';
+    return { reached: true, basis: `Stage history shows ${String(hit.stage).trim()}${when}`, path };
+  }
+  const basis = history.length === 0
+    ? `Stage today is ${stage || '(blank)'}, no stage moves recorded`
+    : `Stage today is ${stage || '(blank)'}, history never shows Qualifying or later`;
+  return { reached: false, basis, path };
+}
