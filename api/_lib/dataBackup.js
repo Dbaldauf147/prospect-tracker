@@ -78,6 +78,10 @@ export async function collectUserBackup(db, uid, email) {
       }
       backup.collections[col] = data;
       if (s.exists) summary.captured.push(col);
+      // The services board (which bucket each service is filed in) is a key
+      // on the settings document, so it is in the snapshot already. Counted
+      // so a morning email flags it when services fall out of their buckets.
+      if (col === 'userSettings') Object.assign(summary.counts, serviceBoardCounts(data));
       // Counted so the day-over-day check flags a wiped Weekly Progress
       // history the same way it flags a shrunken Opps 2.
       if (col === 'progressHistory') {
@@ -168,6 +172,28 @@ export async function collectUserBackup(db, uid, email) {
   return { backup, summary };
 }
 
+// The services board's counts: how many buckets, and how many services are
+// filed in one. {} when the board was never saved (it is the seed then, and
+// counting the seed would flag the first save as a change).
+export function serviceBoardCounts(settings) {
+  const cats = settings?.customServiceCategories;
+  if (!Array.isArray(cats) || !cats.length) return {};
+  const filed = new Set();
+  for (const c of cats) {
+    for (const item of c?.items || []) {
+      const key = String(item || '').trim().toLowerCase();
+      if (key) filed.add(key);
+    }
+  }
+  return { serviceBuckets: cats.length, servicesInBuckets: filed.size };
+}
+
+// Counts where ANY drop is flagged, not just a 10% one. Fourteen services
+// falling out of their buckets on a board of ~150 is a 9% drop and would
+// have slipped under the general threshold, and a deliberate change to the
+// board is rare enough that being asked about it costs nothing.
+const STRICT_DROP_FIELDS = new Set(['serviceBuckets', 'servicesInBuckets']);
+
 // Compare today's counts against the previous run. Flags any count that
 // dropped by `dropFraction` or more — the early-warning a sudden Opps 2
 // shrink (1447 → 1200) would have given on this incident.
@@ -179,7 +205,7 @@ export function detectAnomalies(prevCounts, counts, dropFraction = 0.10) {
     const cur = Number(counts[key]) || 0;
     if (prev > 0 && cur < prev) {
       const drop = (prev - cur) / prev;
-      if (drop >= dropFraction) {
+      if (drop >= dropFraction || STRICT_DROP_FIELDS.has(key)) {
         alerts.push({ field: key, prev, cur, dropPct: Math.round(drop * 100) });
       }
     }
