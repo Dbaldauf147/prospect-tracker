@@ -37,6 +37,7 @@ import { DecisionMakerTagsTable } from './DecisionMakerTagsTable';
 import { DmTagHistoryView } from './DmTagHistoryView';
 import { isQualifyingCompany } from '../../utils/companyDataFields';
 import { CompanyDataTab } from './CompanyDataTab';
+import { DealSizeTab } from './DealSizeTab';
 import { MissingHistoryView } from './MissingHistoryView';
 import { missingStepsReading, recordMissingDay, dayKey } from '../../utils/missingHistory';
 import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, titleSearchesForCompany } from '../../utils/zoomSearchLog';
@@ -3846,6 +3847,47 @@ Fix that now?
           onSelect={onSelect}
           settings={settings}
           updateSettings={updateSettings}
+          filterBar={(
+            <>
+              <input
+                className={styles.searchInput}
+                type="text"
+                placeholder="Search accounts..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+              <button
+                onClick={() => setInactiveMode(prev => prev === 'hide' ? 'only' : prev === 'only' ? 'show' : 'hide')}
+                title="Cycle how inactive accounts (Old Client / Hold Off / Lost - Not Sold) are shown: hidden → only → all"
+                style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
+              >
+                {inactiveMode === 'only' ? 'Inactive only' : inactiveMode === 'show' ? 'Showing all' : 'Inactive hidden'}
+              </button>
+            </>
+          )}
+        />
+      </div>
+    );
+  }
+
+  // Deal Size subtab - the same accounts with their tier and biggest deal,
+  // largest first. Honours the inactive toggle and the search box.
+  if (mode === 'dealSize') {
+    let rows = allAccounts;
+    if (inactiveMode === 'hide') rows = rows.filter(a => !isInactive(a));
+    else if (inactiveMode === 'only') rows = rows.filter(a => isInactive(a));
+    if (search.trim()) {
+      const term = search.toLowerCase();
+      rows = rows.filter(a => [a.company, a.type, a.status, a.myTier].filter(Boolean).join(' ').toLowerCase().includes(term));
+    }
+    return (
+      <div className={styles.wrapper}>
+        <DealSizeTab
+          accounts={rows}
+          prospects={prospects}
+          settings={settings}
+          updateSettings={updateSettings}
+          onSelect={onSelect}
           filterBar={(
             <>
               <input
