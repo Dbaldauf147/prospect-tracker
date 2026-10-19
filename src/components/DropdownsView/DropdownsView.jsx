@@ -9,6 +9,8 @@ import {
   renameServiceInCategories,
   UNGROUPED_SERVICES,
   renameBucketCounted,
+  serviceExploredState,
+  setServiceCounted,
 } from '../../utils/serviceCategoriesStore';
 import {
   boardOnlyServiceCount,
@@ -1353,6 +1355,14 @@ export function DropdownsView({ settings, updateSettings }) {
     () => autoNaedByMap(serviceRows.map(r => r.name), serviceOverrides),
     [serviceRows, serviceOverrides],
   );
+  // Whether one service counts toward a company's % of services explored,
+  // answered from its popup over whatever its box says.
+  const toggleExploredCounted = useCallback((name) => {
+    updateSettings?.(s => ({
+      serviceExploredCounted: setServiceCounted(s, name, !serviceExploredState(s, name).counted),
+    }));
+  }, [updateSettings]);
+
   const toggleHideService = useCallback((name) => {
     const current = settings?.hiddenServices || [];
     const next = current.includes(name)
@@ -2029,6 +2039,8 @@ export function DropdownsView({ settings, updateSettings }) {
               service={detailService}
               url={serviceLinks[detailService.name] || ''}
               hidden={hiddenServices.has(detailService.name)}
+              explored={serviceExploredState(settings, detailService.name)}
+              onToggleExploredCounted={toggleExploredCounted}
               dependents={dependentsByService.get(detailService.name.trim().toLowerCase()) || []}
               autoAddedBy={autoAddedBy.get(detailService.name.trim().toLowerCase()) || []}
               autoNaedBy={autoNaedBy.get(detailService.name.trim().toLowerCase()) || []}

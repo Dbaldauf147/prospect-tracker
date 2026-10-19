@@ -4,7 +4,7 @@
 //
 // Broader SE, Renewables and the graveyard are on the board but left out of
 // the percentage, on both sides of it.
-import { exploredCountTest, isUncountedBucket, setBucketCounted, renameBucketCounted } from '../src/utils/serviceCategoriesStore.js';
+import { exploredCountTest, isUncountedBucket, setBucketCounted, renameBucketCounted, setServiceCounted } from '../src/utils/serviceCategoriesStore.js';
 
 let passed = 0, failed = 0;
 function check(name, actual, expected) {
@@ -42,6 +42,20 @@ check('an answer matching the default is not stored', setBucketCounted({ service
 check('an answer against the default is stored', setBucketCounted({}, 'Renewables', true), { Renewables: true });
 check('rename carries the answer', renameBucketCounted({ serviceBucketCounted: { Targets: false } }, 'Targets', 'Goals'), { Goals: false });
 check('rename with nothing to carry', renameBucketCounted({}, 'Targets', 'Goals'), null);
+
+// One service's own answer, from its popup on Dropdowns, over its box's.
+const perService = exploredCountTest({
+  serviceExploredCounted: { ev: true, 'sbt av': false, irem: true },
+});
+check('a service switched on counts despite its box', perService('EV'), true);
+check('a service switched off is left out of a counted box', perService('SBT AV'), false);
+check('matched case-insensitively', perService(' sbt av '), false);
+check('a retired service stays out whatever it says', perService('IREM'), false);
+check('its box neighbours are untouched', perService('PPA/VPPA'), false);
+check('beats the box answer too', exploredCountTest({ serviceBucketCounted: { Targets: false }, serviceExploredCounted: { 'sbt av': true } })('SBT AV'), true);
+check('a per-service answer against the box is stored', setServiceCounted({}, 'EV', true), { ev: true });
+check('a per-service answer matching the box is dropped', setServiceCounted({ serviceExploredCounted: { ev: true } }, 'EV', false), {});
+check('switching off a counted service is stored', setServiceCounted({}, 'SBT AV', false), { 'sbt av': false });
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

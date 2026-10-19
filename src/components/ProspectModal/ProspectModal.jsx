@@ -7002,18 +7002,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   //
   // Broader SE, Renewables and graveyard services are left out of both
   // sides (exploredCountTest): they are still on the board, but exploring
-  // them isn't what the percentage measures.
+  // them isn't what the percentage measures. So is any single service the
+  // user switched off on its Dropdowns popup, and one switched on counts
+  // even in a box that doesn't.
   const servicesExploredCount = useMemo(() => {
     const svc = fields.servicesExplored || {};
     const hidden = new Set(settings.hiddenServices || []);
+    // counts() already leaves out the uncounted boxes, and also answers a
+    // service switched in or out on its own from its Dropdowns popup.
     const counts = exploredCountTest(settings);
-    const uncountedBoxed = new Set(
-      serviceBoard.filter(cat => isUncountedBucket(cat.name, settings)).flatMap(cat => cat.items || []),
-    );
-    const inScope = (i) => !hidden.has(i) && !uncountedBoxed.has(i) && counts(i);
-    const universe = new Set(
-      serviceBoard.flatMap(cat => (isUncountedBucket(cat.name, settings) ? [] : cat.items.filter(inScope)))
-    );
+    const inScope = (i) => !hidden.has(i) && counts(i);
+    const universe = new Set(serviceBoard.flatMap(cat => (cat.items || []).filter(inScope)));
     const total = universe.size;
     const explored = new Set();
     for (const [item, val] of Object.entries(svc)) {

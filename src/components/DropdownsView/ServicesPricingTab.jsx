@@ -30,6 +30,7 @@ import {
   setPricingLineNa,
 } from '../../utils/servicePricing';
 import { IMPACT_SOURCES, impactLabel, impactTitle } from '../../utils/serviceImpact';
+import { exploredCountTest, serviceExploredState, setServiceCounted } from '../../utils/serviceCategoriesStore';
 import styles from './DropdownsView.module.css';
 
 // Where this table's column widths, order and visibility are remembered,
@@ -242,10 +243,27 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
   // Always over every service, never over what the search left on screen:
   // it is a progress figure for the card, and one that moved when you typed
   // in the search box would be a different number every keystroke.
-  const coverage = useMemo(
-    () => pricingCoverage(serviceRows.map(r => allEstimates.get(r.name))),
-    [serviceRows, allEstimates],
-  );
+  //
+  // And only over the tracked services: the ones that count toward a
+  // company's % of services explored (exploredCountTest - not Broader SE,
+  // Renewables, retired, or switched off on the service's popup). A rate
+  // card is finished when the services anybody is measured on are priced;
+  // the rest drag the share down without being work anyone owes.
+  const coverage = useMemo(() => {
+    const counts = exploredCountTest(settings);
+    const tracked = serviceRows.filter(r => counts(r.name));
+    return {
+      ...pricingCoverage(tracked.map(r => allEstimates.get(r.name))),
+      untracked: serviceRows.length - tracked.length,
+    };
+  }, [serviceRows, allEstimates, settings]);
+
+  // The popup's switch for the same rule, over whatever the box says.
+  function toggleExploredCounted(name) {
+    updateSettings?.(s => ({
+      serviceExploredCounted: setServiceCounted(s, name, !serviceExploredState(s, name).counted),
+    }));
+  }
 
   const term = search.trim().toLowerCase();
   // Every service as a table row, before the search box has its say. The
@@ -756,15 +774,19 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         <span
           className={styles.resultCount}
           title={coverage.total === 0 ? undefined
-            : `${coverage.answered} of ${coverage.total} services are settled (${coverage.answeredPct}%): `
+            : `${coverage.answered} of ${coverage.total} tracked services are settled (${coverage.answeredPct}%): `
               + `${coverage.priced} carry a rate and ${coverage.noFee} are marked no fee - priced at zero on purpose. `
               + `${coverage.unpriced} still unpriced. `
-              + `Counting only the ones with a rate on them, ${coverage.pricedPct}%.`}
+              + `Counting only the ones with a rate on them, ${coverage.pricedPct}%. `
+              + (coverage.untracked
+                ? `${coverage.untracked} more ${coverage.untracked === 1 ? 'is' : 'are'} left out because ${coverage.untracked === 1 ? 'it doesn\'t' : 'they don\'t'} count toward the % of services explored (Broader SE, Renewables, retired, or switched off on the service's popup).`
+                : '')}
         >
           {term ? `${rows.length} of ${serviceRows.length} services` : `${serviceRows.length} services`}
+          {coverage.total > 0 && ` · ${coverage.total} tracked`}
           {coverage.total > 0 && ` · ${coverage.priced} priced`}
           {coverage.noFee > 0 && ` · ${coverage.noFee} no fee`}
-          {coverage.total > 0 && ` · ${coverage.answeredPct}% priced or no fee`}
+          {coverage.total > 0 && ` · ${coverage.answeredPct}% of tracked priced or no fee`}
         </span>
       </div>
 
@@ -949,6 +971,8 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             // The same write the bulk bar makes, on one service: marking
             // clears the rates, so it asks first when there are any.
             onToggleNoFee={() => toggleNoFee(row.name, !row.noFee)}
+            explored={serviceExploredState(settings, row.name)}
+            onToggleExploredCounted={() => toggleExploredCounted(row.name)}
             onClose={() => setPricingPanelFor(null)}
           />
         );
