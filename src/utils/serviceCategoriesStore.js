@@ -137,25 +137,68 @@ export function renameBucketCounted(settings, oldName, newName) {
   return setBucketCounted({ serviceBucketCounted: next }, newName, counted);
 }
 
-/**
- * A test for "does this service count toward a company's % of services
- * explored", built once against settings. Broader SE and Renewables are
- * not part of what the percentage measures, and a retired service
- * (graveyardTest) can't be explored any more, so none of them is in the
- * count or the total.
- */
-export function exploredCountTest(settings) {
-  const isDead = graveyardTest(settings);
+// One service can be answered on its own, either way, over its box's
+// answer: a Renewables service somebody does sell can be counted, a service
+// in a counted box that nobody is measured on can be left out. Kept in
+// settings.serviceExploredCounted as { [name trimmed + lowercased]: bool },
+// and like the box map it only holds answers that differ from the box.
+// Set from the service's own popup on Dropdowns (Services and Services
+// Pricing).
+function serviceCountedMap(settings) {
+  const map = settings?.serviceExploredCounted;
+  return map && typeof map === 'object' ? map : {};
+}
+
+// The names whose box leaves them out, before any per-service answer.
+function uncountedBoxedSet(settings) {
   const skipped = new Set();
   for (const cat of getServiceCategories(settings)) {
     if (!isUncountedBucket(cat.name, settings)) continue;
     for (const item of cat.items || []) skipped.add(String(item).trim().toLowerCase());
   }
+  return skipped;
+}
+
+/**
+ * A test for "does this service count toward a company's % of services
+ * explored", built once against settings. Broader SE and Renewables are
+ * not part of what the percentage measures, and a retired service
+ * (graveyardTest) can't be explored any more, so none of them is in the
+ * count or the total. A per-service answer (serviceExploredCounted) beats
+ * the box's; nothing brings a retired service back.
+ */
+export function exploredCountTest(settings) {
+  const isDead = graveyardTest(settings);
+  const skipped = uncountedBoxedSet(settings);
+  const overrides = serviceCountedMap(settings);
   return (name) => {
     const key = String(name || '').trim().toLowerCase();
-    if (!key || skipped.has(key)) return false;
-    return !isDead(name);
+    if (!key || isDead(name)) return false;
+    if (typeof overrides[key] === 'boolean') return overrides[key];
+    return !skipped.has(key);
   };
+}
+
+// What a service's popup says about it: whether it counts toward the %
+// of services explored, and whether it is retired (and so can't be
+// switched on at all).
+export function serviceExploredState(settings, name) {
+  return {
+    counted: exploredCountTest(settings)(name),
+    retired: graveyardTest(settings)(name),
+  };
+}
+
+// settings.serviceExploredCounted with `name` set to count (true) or not
+// (false). An answer that matches what its box already says is dropped,
+// so moving the service to another box later isn't fought by a stale entry.
+export function setServiceCounted(settings, name, counted) {
+  const key = String(name ?? '').trim().toLowerCase();
+  const next = { ...serviceCountedMap(settings) };
+  if (!key) return next;
+  if (!!counted === !uncountedBoxedSet(settings).has(key)) delete next[key];
+  else next[key] = !!counted;
+  return next;
 }
 
 /**

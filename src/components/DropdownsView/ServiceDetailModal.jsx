@@ -1482,6 +1482,11 @@ export function ServiceDetailModal({
   onEditFieldOption,
   onSaveUrl,
   onToggleHide,
+  // { counted, retired }: whether the service counts toward a company's %
+  // of services explored (serviceExploredState), and the switch for it.
+  // Omitted, there is no button.
+  explored,
+  onToggleExploredCounted,
   // Takes the service off the Solutions list (and its box on the board).
   // The modal asks for confirmation first; omitted, there is no button.
   onDelete,
@@ -1547,6 +1552,9 @@ export function ServiceDetailModal({
               )}
               {hidden && (
                 <span className={styles.detailBadgeMuted} title="Hidden from this list, the company card's services board, and the Opps Scope picker">Hidden</span>
+              )}
+              {explored && !explored.counted && (
+                <span className={styles.detailBadgeMuted} title="Left out of every company's % of services explored, and of the Services Pricing tracked figure">Not in % explored</span>
               )}
               {meta?.bfoTag && meta.bfoTag !== '-' && (
                 <span className={styles.detailBadge}>{meta.bfoTag}</span>
@@ -1700,6 +1708,19 @@ export function ServiceDetailModal({
               ? 'Show it again here, on the company card\'s services board, and in the Opps Scope picker'
               : 'Take it out of this list, the company card\'s services board, and the Opps Scope picker'}
           >{hidden ? 'Show service' : 'Hide service'}</button>
+          {onToggleExploredCounted && explored && (
+            <button
+              type="button"
+              className={styles.detailFooterBtn}
+              onClick={() => onToggleExploredCounted(name)}
+              disabled={explored.retired}
+              title={explored.retired
+                ? 'A retired service can\'t be explored any more, so it never counts toward the %'
+                : explored.counted
+                  ? 'Leave it out of every company\'s % of services explored'
+                  : 'Count it in every company\'s % of services explored, whatever its bucket says'}
+            >{explored.counted ? 'Remove from % explored' : 'Include in % explored'}</button>
+          )}
           {onDelete && (
             <button
               type="button"

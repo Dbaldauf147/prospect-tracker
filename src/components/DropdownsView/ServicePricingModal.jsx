@@ -315,6 +315,11 @@ export function ServicePricingModal({
   onSaveLineNa,
   onToggleScope,
   onToggleNoFee,
+  // { counted, retired } (serviceExploredState) and its switch: whether
+  // the service counts toward a company's % of services explored, which is
+  // also what decides whether the rate card's tracked share counts it.
+  explored,
+  onToggleExploredCounted,
   onClose,
 }) {
   const panelRef = useRef(null);
@@ -345,6 +350,9 @@ export function ServicePricingModal({
               {row.serviceType && <span className={styles.detailBadgeMuted}>{row.serviceType}</span>}
               {row.years && <span className={styles.detailBadgeMuted}>{row.years}</span>}
               {row._scoped && <span className={styles.detailBadge}>In scope</span>}
+              {explored && !explored.counted && (
+                <span className={styles.detailBadgeMuted} title="Left out of every company's % of services explored, and of the tracked share on this tab">Not in % explored</span>
+              )}
             </div>
             <div className={styles.oppPickerSub}>
               What this service is charged on, and what that comes to under the estimate open on the
@@ -456,6 +464,22 @@ export function ServicePricingModal({
                 onChange={onToggleNoFee}
               />
               No fee
+            </label>
+          )}
+          {onToggleExploredCounted && explored && (
+            <label
+              className={styles.pricingModalScope}
+              title={explored.retired
+                ? 'A retired service can\'t be explored any more, so it never counts toward the %.'
+                : 'Count this service in every company\'s % of services explored, and in the tracked share at the top of this tab. Overrides what its bucket says.'}
+            >
+              <input
+                type="checkbox"
+                checked={!!explored.counted}
+                disabled={!!explored.retired}
+                onChange={onToggleExploredCounted}
+              />
+              Include in % explored
             </label>
           )}
           <span className={styles.basesFooterSpacer} />
