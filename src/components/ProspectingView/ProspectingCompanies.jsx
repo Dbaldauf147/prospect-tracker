@@ -42,10 +42,10 @@ import { serviceStatusColor } from '../../utils/serviceStatusColors.js';
 import { withServiceStatus } from '../../utils/clientDealSizing.js';
 import { planProspectingBulkStatus } from '../../utils/prospectingBulkStatus.js';
 import { allPcRows, myProspectRows, sumFigures, rowTypeLabel, typesOnRows, withoutTypes, typeLabel } from '../../utils/prospectingPortfolio.js';
-import { biggestDealFor, dealHasStatus, excludedServiceSet, withoutExcludedServices, PROSPECTING_EXCLUDED_KEY } from '../../utils/prospectingDeals.js';
+import { biggestDealFor, dealHasStatus, dealMid, excludedServiceSet, withoutExcludedServices, PROSPECTING_EXCLUDED_KEY } from '../../utils/prospectingDeals.js';
 import { useSavedAnalyses, formatAnalysisDate } from '../../hooks/useSavedAnalyses';
 import { pricedServiceRows } from '../../utils/serviceRows';
-import { formatMoneyRange, getServicePricing, resolvePricingBases } from '../../utils/servicePricing';
+import { formatMoney, formatMoneyRange, getServicePricing, resolvePricingBases } from '../../utils/servicePricing';
 import { buildOppStagesByClient } from '../../utils/serviceCoverage';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { useAuth } from '../../contexts/AuthContext';
@@ -397,9 +397,9 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
   const shown = onScreen || searched;
   const totals = useMemo(() => {
     const t = sumFigures(shown);
-    t.dealLow = 0; t.dealHigh = 0; t.analyses = 0;
+    t.dealLow = 0; t.dealHigh = 0; t.dealMid = 0; t.analyses = 0;
     for (const r of shown) {
-      if (r.deal) { t.dealLow += r.deal.fee; t.dealHigh += r.deal.feeHigh; }
+      if (r.deal) { t.dealLow += r.deal.fee; t.dealHigh += r.deal.feeHigh; t.dealMid += dealMid(r.deal); }
       if (r.analysis) t.analyses += 1;
     }
     return t;
@@ -614,16 +614,17 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
       },
       {
         key: 'deal', label: 'Biggest Deal', defaultWidth: 190,
-        headerTitle: 'The biggest service still open on the company, first-year fee, priced off its Sites, Accounts and other Scale figures through the Services Pricing rate card. The same figure as Biggest Deal on the company card.',
-        // Ranked by the top of the range: the most this company could be
-        // worth, which is what the list is opened to find.
-        getSortValue: r => (r.deal ? r.deal.feeHigh : null),
-        getFilterValue: r => (r.deal ? formatMoneyRange(r.deal.fee, r.deal.feeHigh) : ''),
-        exportValue: r => (r.deal ? formatMoneyRange(r.deal.fee, r.deal.feeHigh) : ''),
+        headerTitle: 'The biggest service still open on the company, first-year fee, priced off its Sites, Accounts and other Scale figures through the Services Pricing rate card. Shown as the average of the low and high ends of its range; hover a figure for the range. The same deal as Biggest Deal on the company card.',
+        // One figure, the middle of the range: the same reading the account
+        // potential ranking picks the biggest deal by, and one number reads
+        // down a column where two never did. The range stays on hover.
+        getSortValue: r => (r.deal ? dealMid(r.deal) : null),
+        getFilterValue: r => (r.deal ? formatMoney(dealMid(r.deal)) : ''),
+        exportValue: r => (r.deal ? Math.round(dealMid(r.deal)) : ''),
         render: r => (
           <div style={{ textAlign: 'left', width: '100%', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
             {r.deal
-              ? formatMoneyRange(r.deal.fee, r.deal.feeHigh)
+              ? <span title={`Average of ${formatMoneyRange(r.deal.fee, r.deal.feeHigh)}`}>{formatMoney(dealMid(r.deal))}</span>
               : <span title={r.prospect ? 'Nothing still open on this company can be priced' : 'Not in the tracker yet'} style={{ color: '#CBD5E1' }}>-</span>}
           </div>
         ),
@@ -693,7 +694,7 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
     <div style={{ padding: '0.25rem 1.25rem 1.25rem', maxWidth }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.6rem' }}>
         <div style={{ fontSize: '0.72rem', color: '#64748B', flex: '1 1 320px' }}>
-          {intro} Sites, accounts and energy come from each company Master Analysis save, Biggest Deal is the same figure as on the company card, and Decision Makers lists who is tagged Decision Maker there and also carries a contact tag of the Biggest Deal service, or is answered Not sure on one, marked (Not sure) (hover for titles). Service Status is that service's status on the company card: only services with no status yet are listed, so picking one here takes the row off the list{hiddenWorked > 0 ? ` (${hiddenWorked.toLocaleString()} ${hiddenWorked === 1 ? 'company is' : 'companies are'} hidden now for having one)` : ''}. Grey italic figures are stand-ins until one is saved: hover them for where they came from. Drag a header edge to resize a column, type under a header to filter it, and star your standard columns in the Columns menu.
+          {intro} Sites, accounts and energy come from each company Master Analysis save, Biggest Deal is the average of the low and high ends of the company card's Biggest Deal range (hover it for the range), and Decision Makers lists who is tagged Decision Maker there and also carries a contact tag of the Biggest Deal service, or is answered Not sure on one, marked (Not sure) (hover for titles). Service Status is that service's status on the company card: only services with no status yet are listed, so picking one here takes the row off the list{hiddenWorked > 0 ? ` (${hiddenWorked.toLocaleString()} ${hiddenWorked === 1 ? 'company is' : 'companies are'} hidden now for having one)` : ''}. Grey italic figures are stand-ins until one is saved: hover them for where they came from. Drag a header edge to resize a column, type under a header to filter it, and star your standard columns in the Columns menu.
         </div>
         <ExcludedServicesPicker
           names={serviceRows.map(r => r.name)}
@@ -847,7 +848,7 @@ export function ProspectingCompanies({ mode, prospects, settings, updateSettings
             <span>Accounts <span style={totalCell}>{totals.accounts > 0 ? Math.round(totals.accounts).toLocaleString() : '-'}</span></span>
             <span>Energy <span style={totalCell}>{totals.energyMwh > 0 ? `${Math.round(totals.energyMwh).toLocaleString()} MWh` : '-'}</span></span>
             <span>Master Analysis <span style={totalCell}>{totals.analyses.toLocaleString()} saved</span></span>
-            <span>Biggest Deal <span style={totalCell}>{totals.dealHigh > 0 ? formatMoneyRange(totals.dealLow, totals.dealHigh) : '-'}</span></span>
+            <span title={totals.dealHigh > 0 ? `Sum of each row's average; the ranges add up to ${formatMoneyRange(totals.dealLow, totals.dealHigh)}` : undefined}>Biggest Deal <span style={totalCell}>{totals.dealHigh > 0 ? formatMoney(totals.dealMid) : '-'}</span></span>
           </div>
         </div>
       )}
