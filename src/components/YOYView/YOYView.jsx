@@ -31,6 +31,7 @@ import {
 } from '../../utils/quotedMonthRebuild';
 import { loadYoyOverrides, saveYoyOverrides, YOY_OVERRIDES_EVENT } from '../../utils/yoyOverridesStore';
 import { loadHiddenCharts, saveHiddenCharts } from '../../utils/yoyHiddenChartsStore';
+import { reachedQualifying } from '../../utils/leadQualifying';
 import styles from './YOYView.module.css';
 
 const PIPELINE_STORE = 'pipeline-dashboard';
@@ -530,19 +531,29 @@ export function YOYView() {
   const leadsBase = useMemo(() => {
     if (records.length === 0) return [];
     const byYear = new Map();
+    // This year's leads that made it to Qualifying or past it. Only this
+    // year: stage moves weren't recorded before, so an older lead that died
+    // at Qualifying left no trace and the count would read low.
+    let qualified = 0;
     let minYear = currentYear;
     let maxYear = currentYear;
     for (const r of records) {
       const y = parseYear(r['Open Year']);
       if (y === null) continue;
       byYear.set(y, (byYear.get(y) || 0) + 1);
+      if (y === currentYear && reachedQualifying(r)) qualified += 1;
       if (y < minYear) minYear = y;
       if (y > maxYear) maxYear = y;
     }
     if (byYear.size === 0) return [];
     const rows = [];
     for (let y = minYear; y <= maxYear; y++) {
-      rows.push({ year: String(y), count: byYear.get(y) || 0, isProjected: false });
+      rows.push({
+        year: String(y),
+        count: byYear.get(y) || 0,
+        isProjected: false,
+        ...(y === currentYear ? { qualified } : {}),
+      });
     }
     const ytdCount = byYear.get(currentYear) || 0;
     const frac = yearElapsedFraction(currentYear);
@@ -1599,6 +1610,7 @@ export function YOYView() {
     const summary = leadsData.map(r => ({
       Year: r.year,
       'Lead Count': r.count,
+      'Reached Qualifying': r.qualified ?? '',
       Type: r.isProjected ? 'Projected (annualized YTD)' : 'Actual',
     }));
     const wb = XLSX.utils.book_new();
@@ -2510,8 +2522,19 @@ function CalcTooltip({
   return <div className={styles.calcTip}>{body}</div>;
 }
 
+// Reached Qualifying as a whole-number share of the year's leads.
+function qualifiedPct(row) {
+  return row?.count ? Math.round((row.qualified / row.count) * 100) : 0;
+}
+
 function LeadsCard({ data, hasOpps, onDownload, onExportPoint }) {
   const { hidden, legendProps } = useInteractiveLegend();
+  const hasQualified = data.some(r => r.qualified != null);
+  // The share rides on the row so the bar's label reads it by key: a
+  // label's index counts only the bars actually drawn, not the years.
+  const chartData = hasQualified
+    ? data.map(r => (r.qualified != null ? { ...r, _qPct: qualifiedPct(r) } : r))
+    : data;
   return (
     <div className={styles.chartCard}>
       <ChartHeader title="Leads" chartId="leads" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
@@ -2521,9 +2544,13 @@ function LeadsCard({ data, hasOpps, onDownload, onExportPoint }) {
         <div className={styles.empty}>No opps with an Open Year value.</div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
-          <BarChart data={data} margin={{ top: 18, right: 8, left: 0, bottom: 4 }}>
+          <BarChart data={chartData} margin={{ top: 18, right: 8, left: 0, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
             <XAxis dataKey="year" interval={0} tick={{ fontSize: 12 }} />
+            {/* A second, hidden axis over the same years, so the Reached
+                Qualifying bar draws on top of its year's Leads bar instead
+                of beside it, as the share of that bar it is. */}
+            <XAxis xAxisId="qualified" dataKey="year" hide />
             <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
@@ -2539,19 +2566,45 @@ function LeadsCard({ data, hasOpps, onDownload, onExportPoint }) {
                         { label: 'Projected', value: (row.count ?? 0).toLocaleString('en-US') },
                       ],
                     }
-                  : {
-                      formula: 'Count of Opps rows whose Open Year equals this year.',
-                      inputs: [{ label: 'Leads counted', value: (row.count ?? 0).toLocaleString('en-US') }],
-                    }}
+                  : row.qualified != null
+                    ? {
+                        formula: 'Count of Opps rows whose Open Year equals this year. Reached Qualifying: the ones at Qualifying or a later stage today, or whose stage history shows them passing through one.',
+                        inputs: [
+                          { label: 'Leads counted', value: (row.count ?? 0).toLocaleString('en-US') },
+                          { label: 'Reached Qualifying', value: `${row.qualified.toLocaleString('en-US')} (${qualifiedPct(row)}%)` },
+                        ],
+                        note: 'Only this year: stage moves were not recorded before, so earlier years would undercount.',
+                      }
+                    : {
+                        formula: 'Count of Opps rows whose Open Year equals this year.',
+                        inputs: [{ label: 'Leads counted', value: (row.count ?? 0).toLocaleString('en-US') }],
+                      }}
               />
             } />
             <Legend {...legendProps} />
             <Bar dataKey="count" name="Leads" fill="#3b82f6" isAnimationActive={false} hide={hidden.count}>
-              {data.map((row, i) => (
+              {chartData.map((row, i) => (
                 <Cell key={i} fill={row.isProjected ? '#facc15' : '#3b82f6'} />
               ))}
               <LabelList dataKey="count" position="top" style={{ fontSize: 11, fontWeight: 600, fill: '#1f2937' }} />
             </Bar>
+            {hasQualified && (
+              <Bar xAxisId="qualified" dataKey="qualified" name="Reached Qualifying" fill="#16a34a" isAnimationActive={false} hide={hidden.qualified}>
+                {/* Count over share, two lines, so it fits a narrow bar. */}
+                <LabelList
+                  dataKey="qualified"
+                  content={({ x, y, width, height, value }) => (value == null || height < 16 ? null : (
+                    <text x={x + width / 2} y={y + 13} textAnchor="middle" fontSize={11} fontWeight={700} fill="#fff">{value}</text>
+                  ))}
+                />
+                <LabelList
+                  dataKey="_qPct"
+                  content={({ x, y, width, height, value }) => (value == null || height < 30 ? null : (
+                    <text x={x + width / 2} y={y + 26} textAnchor="middle" fontSize={10} fontWeight={600} fill="#fff">{value}%</text>
+                  ))}
+                />
+              </Bar>
+            )}
           </BarChart>
         </ResponsiveContainer>
       )}
