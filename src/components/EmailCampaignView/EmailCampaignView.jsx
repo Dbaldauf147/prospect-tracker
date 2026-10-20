@@ -43,7 +43,7 @@ import {
 } from '../../utils/campaignContactLookup';
 import { contactName } from '../../utils/contactSuggest';
 import { mergeCampaignContacts, adoptedCount, withoutInternalRows, isInternalAddress } from '../../utils/campaignRoster';
-import { addTargetCompany, removeTargetCompany, targetCompanyStatus, campaignTargetCompanies } from '../../utils/campaignTargetCompanies';
+import { addTargetCompany, removeTargetCompany, targetCompanyStatus, campaignTargetCompanies, patchTargetCompany, targetOutreachFor } from '../../utils/campaignTargetCompanies';
 import { buildCampaignTierLookup, tierRank } from '../../utils/campaignTier';
 
 // The contact table's columns, and how wide each one starts.
@@ -731,6 +731,9 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
       if (!key || existing.has(key) || seen.has(key) || isInternalAddress(key)) continue;
       seen.add(key);
       const hint = known.get(key);
+      // Hold off / Avoid set on the company's "Contact missing" row before
+      // anybody there was picked carries over to whoever is added from it.
+      const carried = targetOutreachFor(results, hint?.company);
       additions.push({
         email: e,
         name: String(hint?.name || '').trim(),
@@ -741,6 +744,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
         sentDate: '', replied: false, eventStatus: '', recipientCount: 1,
         // Contactable, with nothing recorded against them yet.
         outreach: '', holdUntil: '', notes: '',
+        ...carried,
       });
     }
     if (additions.length === 0) {
@@ -816,6 +820,26 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
         ? { ...c, targetCompanies: campaign.targetCompanies }
         : c)));
     }
+  }
+
+  // Hold off / Avoid on a company placeholder, before anybody there is on
+  // the roster. Same fields and hold default as a contact's (outreachPatch);
+  // the contacts later added from the company start with it.
+  function patchCompanyTarget(name, patch) {
+    if (!results) return;
+    const campaign = patchTargetCompany(results, name, patch);
+    setResults(campaign);
+    if (viewingSaved != null) {
+      saveCampaigns(savedCampaigns.map((c, i) => (i === viewingSaved
+        ? { ...c, targetCompanies: campaign.targetCompanies }
+        : c)));
+    }
+  }
+  function setCompanyTargetOutreach(t, state) {
+    patchCompanyTarget(t.company, outreachPatch(t, state));
+  }
+  function setCompanyTargetHoldUntil(t, value) {
+    patchCompanyTarget(t.company, { outreach: 'hold', holdUntil: value || '' });
   }
 
   function removeCompanyTarget(name) {
@@ -1765,6 +1789,61 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     window.addEventListener('mouseup', onUp);
   }
 
+  // The Outreach cell: Contact / Hold off / Avoid, and the hold's end date.
+  // `c` is a roster contact, or a company placeholder on a "Contact missing"
+  // row (same outreach / holdUntil fields).
+  function outreachControl(c, onState, onHoldUntil) {
+    // The dropdown shows what is STORED; the colour shows what is true
+    // today. A hold whose date has passed still reads "Hold off" with the
+    // date that lapsed — greyed, and saying so — because "why is this
+    // person back on the list?" is answered by the date that ran out, not
+    // by a cell that quietly emptied itself.
+    const stored = c.outreach === 'hold' || c.outreach === 'avoid' ? c.outreach : '';
+    const live = contactOutreach(c);
+    const TONE = {
+      hold: { background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' },
+      avoid: { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' },
+      open: { background: 'var(--color-surface)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' },
+    };
+    const lapsed = stored === 'hold' && live === 'open';
+    return (
+      <>
+        <select
+          value={stored}
+          onChange={e => onState(e.target.value)}
+          title={live === 'avoid'
+            ? 'Never contact: left out of every draft this campaign queues until you clear it.'
+            : live === 'hold'
+              ? `On hold${c.holdUntil ? ` until ${fmtDate(c.holdUntil)}` : ' until you clear it'} - left out of "Add unsent to Draft". A dated hold lifts on its own.`
+              : lapsed
+                ? 'This hold has run out - the contact is back in "Add unsent to Draft", but stays out of % Sent until switched back to Contact. Pick a later date to hold them again.'
+                : `Contact freely. "Hold off" parks them for ${CONTACT_HOLD_DAYS} days by default; "Avoid" keeps them off every send until you clear it.`}
+          style={{ width: '100%', padding: '2px 4px', borderRadius: '6px', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', ...TONE[live] }}
+        >
+          <option value="">Contact</option>
+          <option value="hold">Hold off</option>
+          <option value="avoid">Avoid</option>
+        </select>
+        {stored === 'hold' && (
+          <input
+            type="date"
+            value={String(c.holdUntil || '').slice(0, 10)}
+            onChange={e => onHoldUntil(e.target.value)}
+            title={lapsed
+              ? 'The day this hold ran out. Pick a later one to hold them again.'
+              : 'The last day this contact is held. It lifts on its own the morning after - clear the box to hold them until you say otherwise.'}
+            style={{
+              width: '100%', marginTop: '2px', padding: '1px 3px', borderRadius: '4px',
+              border: '1px solid var(--color-border)', background: 'var(--color-surface)',
+              color: lapsed ? 'var(--color-text-muted)' : 'var(--color-text-secondary)',
+              fontSize: '0.62rem', fontFamily: 'inherit',
+            }}
+          />
+        )}
+      </>
+    );
+  }
+
   // One cell, by column key. The markup is the same it has always been —
   // this only moves it behind a key so a column can be hidden, moved or
   // resized without the row and the header drifting out of step.
@@ -1867,57 +1946,8 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
           >{label}</span>
         );
       }
-      case 'outreach': {
-        // The dropdown shows what is STORED; the colour shows what is true
-        // today. A hold whose date has passed still reads "Hold off" with the
-        // date that lapsed — greyed, and saying so — because "why is this
-        // person back on the list?" is answered by the date that ran out, not
-        // by a cell that quietly emptied itself.
-        const stored = c.outreach === 'hold' || c.outreach === 'avoid' ? c.outreach : '';
-        const live = contactOutreach(c);
-        const TONE = {
-          hold: { background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' },
-          avoid: { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' },
-          open: { background: 'var(--color-surface)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' },
-        };
-        const lapsed = stored === 'hold' && live === 'open';
-        return (
-          <>
-            <select
-              value={stored}
-              onChange={e => setContactOutreach(i, e.target.value)}
-              title={live === 'avoid'
-                ? 'Never contact: left out of every draft this campaign queues until you clear it.'
-                : live === 'hold'
-                  ? `On hold${c.holdUntil ? ` until ${fmtDate(c.holdUntil)}` : ' until you clear it'} - left out of "Add unsent to Draft". A dated hold lifts on its own.`
-                  : lapsed
-                    ? 'This hold has run out - the contact is back in "Add unsent to Draft", but stays out of % Sent until switched back to Contact. Pick a later date to hold them again.'
-                    : `Contact freely. "Hold off" parks them for ${CONTACT_HOLD_DAYS} days by default; "Avoid" keeps them off every send until you clear it.`}
-              style={{ width: '100%', padding: '2px 4px', borderRadius: '6px', fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', ...TONE[live] }}
-            >
-              <option value="">Contact</option>
-              <option value="hold">Hold off</option>
-              <option value="avoid">Avoid</option>
-            </select>
-            {stored === 'hold' && (
-              <input
-                type="date"
-                value={String(c.holdUntil || '').slice(0, 10)}
-                onChange={e => setContactHoldUntil(i, e.target.value)}
-                title={lapsed
-                  ? 'The day this hold ran out. Pick a later one to hold them again.'
-                  : 'The last day this contact is held. It lifts on its own the morning after - clear the box to hold them until you say otherwise.'}
-                style={{
-                  width: '100%', marginTop: '2px', padding: '1px 3px', borderRadius: '4px',
-                  border: '1px solid var(--color-border)', background: 'var(--color-surface)',
-                  color: lapsed ? 'var(--color-text-muted)' : 'var(--color-text-secondary)',
-                  fontSize: '0.62rem', fontFamily: 'inherit',
-                }}
-              />
-            )}
-          </>
-        );
-      }
+      case 'outreach':
+        return outreachControl(c, v => setContactOutreach(i, v), v => setContactHoldUntil(i, v));
       case 'notes':
         return (
           <NoteCell
@@ -2974,6 +3004,10 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                             <span style={{ color: 'var(--color-text)' }}>{t.company}</span>
                           ) : col.key === 'tier' ? (
                             <TierBadge tier={tierFor(t.company)} />
+                          ) : col.key === 'outreach' ? (
+                            // Set before anybody is picked; carried to the
+                            // contacts added from this company.
+                            outreachControl(t, v => setCompanyTargetOutreach(t, v), v => setCompanyTargetHoldUntil(t, v))
                           ) : (
                             <span style={{ color: 'var(--color-text-muted)' }}>-</span>
                           )}
