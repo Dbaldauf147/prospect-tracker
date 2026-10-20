@@ -145,7 +145,8 @@ import { BUCKETS, contactHasTag, contactIsHidden } from './contactTags.js';
 import { DM_STEPS, bucketStepsLeft, dmBucketAnswer } from '../../utils/dmSteps.js';
 import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, titleSearchesForCompany } from '../../utils/zoomSearchLog';
 import { readWorkKey, ZOOM_SEARCH_LOG_EVENT } from '../../utils/mirroredWorkKeys';
-import { ContactsTable } from './ContactsTable.jsx';
+import { ContactsTable, OwnedContactsSection } from './ContactsTable.jsx';
+import { ownedCompanyList, ownedCompanyContacts } from '../../utils/ownedCompanyContacts';
 import { ContactPasteModal } from './ContactPasteModal.jsx';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCachePreservingManual } from '../../utils/hubspotContactsCache';
 import { slimHubspotContact, withoutUnknownBlanks } from '../../utils/hubspotContactFields';
@@ -7399,6 +7400,44 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const ids = new Set(companyContacts.map(c => String(c.id || c.vid || '')));
     return [...companyContacts, ...ownerContacts.filter(c => !ids.has(String(c.id || c.vid || '')))];
   }, [companyContacts, ownerContacts]);
+
+  // The other direction from contactOwners: what this company owns. Its
+  // divisions (the whole chart under it, sub-divisions included) and the
+  // companies on its Sites & Holdings table, resolved to their tracker
+  // record's name where they have one so the match reads the same name
+  // that company's own card does.
+  const ownedCompanies = useMemo(() => {
+    if (isNew || !fields.company || !prospect?.id) return [];
+    const entries = [];
+    const nameById = new Map((prospects || []).map(p => [p.id, p.company]));
+    const walk = (node) => {
+      for (const child of (node.children || [])) {
+        entries.push({ name: child.company, kind: 'division' });
+        walk(child);
+      }
+    };
+    walk(buildDivisionTree(settings, prospect.id, fields.company, nameById));
+    for (const row of (fields.portfolioCompanies || [])) {
+      const p = findPortfolioProspect(row, prospectByName, prospectById);
+      entries.push({ name: p?.company || row?.companyName, kind: 'holding' });
+    }
+    return ownedCompanyList(entries, fields.company);
+  }, [isNew, fields.company, fields.portfolioCompanies, prospect?.id, prospects, settings, prospectByName, prospectById]);
+
+  // The people at those companies, minus anyone already on the roster or
+  // in the owner bucket above it. Only worked out on the Contacts tab:
+  // it walks every cached HubSpot contact.
+  const ownedContactRows = useMemo(() => {
+    if (activeTab !== 'contacts' || ownedCompanies.length === 0) return [];
+    const skipIds = new Set(selectableContacts.map(c => String(c.id || c.vid || '')));
+    return ownedCompanyContacts(hubspotContacts, ownedCompanies, {
+      skipIds,
+      showHidden: showHiddenContacts,
+      isHidden: contactIsHidden,
+      links: settings.companyContactLinks || {},
+      exclusions: settings.companyContactExclusions || {},
+    });
+  }, [activeTab, ownedCompanies, selectableContacts, hubspotContacts, showHiddenContacts, settings.companyContactLinks, settings.companyContactExclusions]);
 
   // Remove a contact from this company's roster only. Non-destructive -
   // the contact stays in HubSpot and on every other company it matches.
@@ -14685,6 +14724,26 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   </div>
                 );
               })()}
+              {/* The people at what this company owns, collapsed under the
+                  roster. No select column: the bulk bar above acts on the
+                  roster's own selection. No remove-from-company either,
+                  since these people were never on this company. */}
+              {contactView !== 'orgchart' && (
+                <OwnedContactsSection
+                  rows={ownedContactRows}
+                  owned={ownedCompanies}
+                  company={fields.company}
+                  settings={settings}
+                  updateSettings={updateSettings}
+                  onHideContact={toggleContactHideTag}
+                  hidingContact={hidingContact}
+                  onEditContact={setEditingContact}
+                  onDeleteContact={handleDeleteContact}
+                  deletingContact={deletingContact}
+                  emailCountsFor={getContactEmailCounts}
+                  sourceOf={getContactSource}
+                />
+              )}
               </div>
             </div>
           )}

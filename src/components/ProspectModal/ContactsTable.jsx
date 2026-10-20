@@ -109,6 +109,12 @@ function RosterTable({
   // give it more.
   height = 440,
   emptyMessage = 'No contacts for this company yet.',
+  // The owned-companies table lists people from several companies, so it
+  // names each one's company in a column of its own, and keeps its layout
+  // under its own tableId: the roster's saved order would otherwise push
+  // that column, which it has never seen, to the far right.
+  companyOf = null,
+  tableId = TABLE_ID,
 }) {
   // Without a selection to write to there is no select column, and without
   // an exclude or delete handler there is no Actions column: a read-only
@@ -210,6 +216,18 @@ function RosterTable({
             )}
           </span>
         );
+      },
+    },
+    companyOf && {
+      key: 'company',
+      label: 'Company',
+      defaultWidth: 200,
+      getSortValue: (c) => String(companyOf(c) || '').toLowerCase(),
+      getFilterValue: (c) => companyOf(c) || '',
+      exportValue: (c) => companyOf(c) || '',
+      render: (c) => {
+        const name = companyOf(c);
+        return name ? <span style={{ color: '#334155', fontWeight: 600 }} title={name}>{name}</span> : dash;
       },
     },
     {
@@ -529,7 +547,7 @@ function RosterTable({
     },
   ].filter(Boolean), [selectable, actionable, settings, bulkSelected, setBulkSelected, excludedContactIds, onExclude, onUnexclude,
     onHideContact, hidingContact, onDeleteContact, deletingContact, emailCountsFor, sourceOf, company,
-    allSelected, someSelected, selectableIds]);
+    allSelected, someSelected, selectableIds, companyOf]);
 
   // The row's own tints, which say two things at a glance and have to
   // survive every sort: a decision maker is the row you came for, and a
@@ -569,10 +587,10 @@ function RosterTable({
     // push the ones under it off the page.
     <div style={{ height, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'hidden' }}>
       <DataTable
-        tableId={TABLE_ID}
+        tableId={tableId}
         columns={columns}
         rows={contacts}
-        alwaysVisible={['__select__', 'name', 'actions']}
+        alwaysVisible={companyOf ? ['__select__', 'name', 'company', 'actions'] : ['__select__', 'name', 'actions']}
         rowGroup={leftLast}
         rowStyle={rowStyle}
         onRowClick={onEditContact}
@@ -651,6 +669,52 @@ export function ContactsTable({
           {...rest}
         />
       </div>
+    </div>
+  );
+}
+
+// The people at the companies this one owns (its divisions and its
+// holdings), under the roster. Collapsed until clicked: on a parent with a
+// big portfolio it can run to hundreds of rows, and the roster above is
+// what the card is usually opened for. The header says how many are behind
+// it either way, so a closed section still answers "is anyone there".
+export function OwnedContactsSection({ rows = [], owned = [], height = 440, ...rest }) {
+  const [open, setOpen] = useState(false);
+  const contacts = useMemo(() => rows.map(r => r.contact), [rows]);
+  const companyOf = useMemo(() => {
+    const byId = new Map(rows.map(r => [String(r.contact.id || r.contact.vid || ''), r.company]));
+    return (c) => byId.get(String(c.id || c.vid || '')) || c.company || '';
+  }, [rows]);
+  if (owned.length === 0) return null;
+  const divisions = owned.filter(o => o.kind === 'division').length;
+  const holdings = owned.filter(o => o.kind === 'holding').length;
+  const ownedNote = [
+    divisions > 0 && `${divisions} division${divisions === 1 ? '' : 's'}`,
+    holdings > 0 && `${holdings} holding${holdings === 1 ? '' : 's'}`,
+  ].filter(Boolean).join(', ');
+  return (
+    <div style={{ marginTop: '0.75rem' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        aria-expanded={open}
+        title={open ? 'Hide the contacts at owned companies' : 'Show the contacts at the companies this one owns'}
+        style={{ ...sectionHeadStyle, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}
+      >
+        <span aria-hidden="true">{open ? '▾' : '▸'}</span>
+        Owned company contacts ({contacts.length})
+        <span style={sectionNoteStyle}>people at its {ownedNote}</span>
+      </button>
+      {open && (
+        <RosterTable
+          contacts={contacts}
+          height={Math.min(height, 130 + Math.max(contacts.length, 1) * 42)}
+          companyOf={companyOf}
+          tableId={`${TABLE_ID}-owned`}
+          emptyMessage="No contacts at the companies this one owns."
+          {...rest}
+        />
+      )}
     </div>
   );
 }
