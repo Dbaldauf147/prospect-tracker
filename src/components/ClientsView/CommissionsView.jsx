@@ -13,6 +13,8 @@ import {
   planCommissionsPaste, describeCommissionsPaste, normProjectName,
 } from '../../utils/commissionsPasteMerge';
 import { loadOppsFromCache, findOppByBfoLink } from '../../utils/oppsCache';
+import { buildOppIndex, suggestOpps, fieldsFromOpp, commissionProjectName } from '../../utils/commissionOppMatch';
+import { CommissionOppPicker } from './CommissionOppPicker';
 
 // Lookup columns the user adds at the front of the table. Account Name
 // is an autocomplete against the Table View prospect roster; BFO Name is
@@ -420,7 +422,34 @@ function duplicateIdsFrom(data) {
 // roster: Account Name (autocomplete from prospects), BFO Name (free
 // text — the BFO Opportunity Name the user pastes), and Scope (read-only
 // lookup that resolves BFO Name against the cached Opps records).
-function buildFrontColumns(oppsCache) {
+// The button in each BFO Name cell that opens the opp picker. On a row
+// with no BFO Name yet it names the best-matching opp, so the suggestion
+// is on screen before anyone clicks; on a linked row it's a small "change".
+function PickOppButton({ row, oppIndex }) {
+  const linked = !!String(row[BFO_NAME_KEY] || '').trim();
+  const top = linked ? null : suggestOpps(oppIndex, commissionProjectName(row), { limit: 1 })[0];
+  const open = (e) => { e.stopPropagation(); row.__onPickOpp?.(row.id); };
+  const base = {
+    flexShrink: 0, border: '1px solid #BFDBFE', background: '#EFF6FF', color: '#1D4ED8', borderRadius: 4,
+    fontSize: '0.62rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', padding: '1px 6px', lineHeight: 1.4,
+  };
+  if (linked) {
+    return <button type="button" onClick={open} title="Pick a different opp from the Opps tab" style={base}>change</button>;
+  }
+  if (!top) {
+    return <button type="button" onClick={open} title="No opp name is close to this project: search the Opps tab" style={base}>Pick opp</button>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={open}
+      title={`Suggested from the BFO opportunity name: ${top.name} (${top.opp.Account || 'no account'}, ${Math.round(top.score * 100)}% match). Click to review and pick.`}
+      style={{ ...base, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', textAlign: 'left' }}
+    >Suggested: {top.name}</button>
+  );
+}
+
+function buildFrontColumns(oppsCache, oppIndex) {
   return [
     {
       key: ACCOUNT_NAME_KEY,
@@ -441,14 +470,24 @@ function buildFrontColumns(oppsCache) {
       key: BFO_NAME_KEY,
       label: BFO_NAME_KEY,
       defaultWidth: defaultWidth(BFO_NAME_KEY),
-      render: (row) => (
-        <EditableCell
-          value={row[BFO_NAME_KEY]}
-          render={plainTextRender}
-          onSave={(v) => row.__onUpdate?.(row.id, BFO_NAME_KEY, v)}
-          listId={BFO_NAME_LIST_ID}
-        />
-      ),
+      render: (row) => {
+        const linked = !!String(row[BFO_NAME_KEY] || '').trim();
+        return (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+            {linked && (
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                <EditableCell
+                  value={row[BFO_NAME_KEY]}
+                  render={plainTextRender}
+                  onSave={(v) => row.__onUpdate?.(row.id, BFO_NAME_KEY, v)}
+                  listId={BFO_NAME_LIST_ID}
+                />
+              </span>
+            )}
+            <PickOppButton row={row} oppIndex={oppIndex} />
+          </span>
+        );
+      },
       exportValue: (row) => row[BFO_NAME_KEY] ?? '',
     },
     {
@@ -622,8 +661,8 @@ function buildSelectCol(renderHeader) {
   };
 }
 
-function buildColumns(oppsCache, selectCol) {
-  const front = buildFrontColumns(oppsCache);
+function buildColumns(oppsCache, selectCol, oppIndex) {
+  const front = buildFrontColumns(oppsCache, oppIndex);
   // Account Name and BFO Name live in COMMISSIONS_CANONICAL too (they're
   // pasteable destinations), but the front lookup columns already render them
   // as the interactive, autocompleted versions. Drop the canonical duplicates
@@ -1091,14 +1130,20 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     );
   };
 
+  // The Opps rows the BFO Name suggestions are drawn from, tokenized once
+  // per Opps cache rather than once per cell.
+  const oppIndex = useMemo(() => buildOppIndex(oppsCache?.records), [oppsCache]);
+  // The commission row the opp picker is open for, or null.
+  const [pickerRowId, setPickerRowId] = useState(null);
+
   const columns = useMemo(
-    () => buildColumns(oppsCache, buildSelectCol(selectColHeader)),
+    () => buildColumns(oppsCache, buildSelectCol(selectColHeader), oppIndex),
     // selectColHeader closes over selectedIds. tableId depends only on
     // the column keys (stable), so re-creating the array on every
     // selection toggle re-renders the header without remounting the
     // table.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [oppsCache, selectedIds]
+    [oppsCache, oppIndex, selectedIds]
   );
   // Stable — see the note on DealsView's tableId.
   const tableId = 'commissions';
@@ -1215,6 +1260,24 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     });
   }
 
+  // Link a row to the opp picked for it: its Account and BFO Opportunity
+  // Name, in one save. An opp with no Account leaves the row's own Account
+  // Name alone rather than blanking it.
+  function applyOppToRow(rowId, opp) {
+    const idx = Number(rowId);
+    if (!Number.isFinite(idx) || !opp) return;
+    const fields = fieldsFromOpp(opp);
+    setStore(prev => {
+      const next = [...prev.data];
+      const current = { ...(next[idx] || {}) };
+      for (const [k, v] of Object.entries(fields)) if (v) current[k] = v;
+      current[UPDATED_AT_KEY] = nowStamp();
+      next[idx] = current;
+      try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
+      return { data: next, source: 'override' };
+    });
+  }
+
   // Drop a single row from the roster. Triggered by the trailing × cell
   // on each row; a confirm() prompt keeps a stray click from nuking a
   // project. Row ids are the raw array index so we splice the original
@@ -1274,6 +1337,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
       __onToggleDupeOk: toggleDupeOk,
       __isSelected: selectedIds.has(i),
       __onToggleSelect: toggleSelect,
+      __onPickOpp: setPickerRowId,
       __isDupeCandidate: duplicateIds.has(i),
       __isDuplicate: flaggedDuplicateIds.has(i),
     })),
@@ -1511,6 +1575,15 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
         </div>
       )}
       {showVersions && <CommissionsVersionsModal currentRows={rows.length} onClose={() => setShowVersions(false)} />}
+      {pickerRowId != null && data[pickerRowId] && (
+        <CommissionOppPicker
+          projectName={commissionProjectName(data[pickerRowId])}
+          current={data[pickerRowId]}
+          index={oppIndex}
+          onPick={(opp) => { applyOppToRow(pickerRowId, opp); setPickerRowId(null); }}
+          onClose={() => setPickerRowId(null)}
+        />
+      )}
       {pasteNote && (
         <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0.6rem', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6, color: '#166534', fontSize: '0.75rem' }}>
