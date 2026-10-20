@@ -642,6 +642,8 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   const [bulkEditField, setBulkEditField] = useState('company');
   const [bulkEditValue, setBulkEditValue] = useState('');
   const [bulkEditMode, setBulkEditMode] = useState('replace'); // 'replace' | 'append'
+  // Narrows the Bulk Edit popup's company list.
+  const [bulkEditCompanyFilter, setBulkEditCompanyFilter] = useState('');
   // "Add a contact by name" mini-form: type first/last/title/company and the
   // email is guessed from the company's recorded naming pattern. manualEmail is
   // kept editable; manualEmailTouched tracks whether the user has overridden the
@@ -4517,19 +4519,123 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
         );
       })()}
 
-      {bulkEditOpen && (
+      {bulkEditOpen && (() => {
+        // Every company in the Bulk Add grid, so the edit's selection can be
+        // built a company at a time: ticking a company selects all of its
+        // rows in the grid, unticking deselects them. Only grid rows are
+        // touched; HubSpot contacts at the company that aren't in this
+        // batch are never listed or edited here.
+        const byCompany = new Map();
+        for (const r of rows) {
+          const p = (r._matchedProspectId && prospects.find(pp => pp.id === r._matchedProspectId))
+            || matchProspectByCompanyName(r.company);
+          const label = String(p?.company || r.company || '').trim();
+          const key = p ? `id:${p.id}` : `name:${label.toLowerCase()}`;
+          let g = byCompany.get(key);
+          if (!g) { g = { key, label: label || '(no company)', prospect: p, emails: [], tags: new Set(), buckets: { new: 0, update: 0, hubspot: 0 } }; byCompany.set(key, g); }
+          g.emails.push(r.email);
+          for (const t of String(r.dans_tags || '').split(/[;\n,]+/)) if (t.trim()) g.tags.add(t.trim());
+          g.buckets[rowBucket(r)] += 1;
+        }
+        const needle = bulkEditCompanyFilter.trim().toLowerCase();
+        const companies = [...byCompany.values()]
+          .sort((a, b) => a.label.localeCompare(b.label))
+          .filter(g => !needle || [g.label, [...g.tags].join(' '), g.prospect?.status || ''].some(v => v.toLowerCase().includes(needle)));
+        const pickedIn = (g) => g.emails.filter(e => bulkSelected.has(e)).length;
+        const setCompanyPicked = (groups, on) => setBulkSelected(prev => {
+          const next = new Set(prev);
+          for (const g of groups) for (const e of g.emails) { if (on) next.add(e); else next.delete(e); }
+          return next;
+        });
+        const allShownPicked = companies.length > 0 && companies.every(g => pickedIn(g) === g.emails.length);
+        const smallBtn = (enabled) => ({
+          padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#fff',
+          color: enabled ? 'var(--color-text)' : '#94A3B8', fontSize: '0.72rem', fontWeight: 600,
+          cursor: enabled ? 'pointer' : 'default', fontFamily: 'inherit', whiteSpace: 'nowrap',
+        });
+        const chip = (text, color, bg, title) => (
+          <span key={text} title={title} style={{ fontSize: '0.66rem', fontWeight: 600, padding: '1px 6px', borderRadius: 999, color, background: bg, whiteSpace: 'nowrap' }}>{text}</span>
+        );
+        return (
         <div
           style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: '1.25rem' }}
           onClick={() => setBulkEditOpen(false)}
         >
           <div
-            style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', width: 'min(440px, 100%)', display: 'flex', flexDirection: 'column' }}
+            style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', width: 'min(900px, 100%)', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }}
             onClick={e => e.stopPropagation()}
           >
             <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-border)' }}>
               <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Bulk Edit {bulkSelected.size} contact{bulkSelected.size === 1 ? '' : 's'}</div>
               <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '0.25rem' }}>
                 Updates the selected rows in the grid only: push them to HubSpot via Send to HubSpot afterwards.
+              </div>
+            </div>
+            <div style={{ padding: '0.75rem 1.25rem 0.5rem', borderBottom: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', minHeight: 0, flex: '1 1 auto' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.45rem' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-text)' }}>Companies in this batch ({byCompany.size})</span>
+                <span style={{ fontSize: '0.72rem', color: '#64748B' }}>Tick a company to add all of its Bulk Add contacts to this edit, untick to remove them.</span>
+                <span style={{ flex: 1 }} />
+                <input
+                  type="text"
+                  value={bulkEditCompanyFilter}
+                  onChange={e => setBulkEditCompanyFilter(e.target.value)}
+                  placeholder="Filter by company, tag or status"
+                  style={{ width: 210, padding: '0.28rem 0.45rem', fontSize: '0.74rem', border: '1px solid var(--color-border)', borderRadius: 6, fontFamily: 'inherit' }}
+                />
+                <button type="button" disabled={companies.length === 0 || allShownPicked} onClick={() => setCompanyPicked(companies, true)} style={smallBtn(companies.length > 0 && !allShownPicked)}>+ Add all{needle ? ' shown' : ''}</button>
+                <button type="button" disabled={!companies.some(pickedIn)} onClick={() => setCompanyPicked(companies, false)} style={smallBtn(companies.some(pickedIn))}>- Remove all{needle ? ' shown' : ''}</button>
+              </div>
+              <div style={{ overflowY: 'auto', maxHeight: '42vh', border: '1px solid var(--color-border)', borderRadius: 6 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem' }}>
+                  <thead>
+                    <tr style={{ background: '#F8FAFC', position: 'sticky', top: 0, zIndex: 1 }}>
+                      {['', 'Company', 'Contacts in edit', "Dan's Tags", 'Status', ''].map((h, i) => (
+                        <th key={i} style={{ textAlign: 'left', padding: '0.35rem 0.5rem', fontSize: '0.68rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {companies.length === 0 && (
+                      <tr><td colSpan={6} style={{ padding: '0.7rem', color: '#64748B' }}>{byCompany.size ? 'No company matches that filter.' : 'No contacts in the Bulk Add grid yet.'}</td></tr>
+                    )}
+                    {companies.map(g => {
+                      const n = pickedIn(g);
+                      const all = n === g.emails.length;
+                      const tvStatus = String(g.prospect?.status || '').trim();
+                      return (
+                        <tr key={g.key} style={{ borderBottom: '1px solid #F1F5F9', background: n ? '#F0F9FF' : 'transparent' }}>
+                          <td style={{ padding: '0.3rem 0.5rem', width: 24 }}>
+                            <input
+                              type="checkbox"
+                              checked={all}
+                              ref={el => { if (el) el.indeterminate = n > 0 && !all; }}
+                              onChange={() => setCompanyPicked([g], !all)}
+                              aria-label={`${all ? 'Remove' : 'Add'} the contacts at ${g.label}`}
+                            />
+                          </td>
+                          <td style={{ padding: '0.3rem 0.5rem', fontWeight: 600, color: 'var(--color-text)' }}>{g.label}</td>
+                          <td style={{ padding: '0.3rem 0.5rem', whiteSpace: 'nowrap', color: n ? 'var(--color-text)' : '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>{n} of {g.emails.length}</td>
+                          <td style={{ padding: '0.3rem 0.5rem' }}>
+                            <span style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                              {g.tags.size ? [...g.tags].sort().map(t => chip(t, '#1E3A8A', '#DBEAFE')) : <span style={{ color: '#94A3B8' }}>-</span>}
+                            </span>
+                          </td>
+                          <td style={{ padding: '0.3rem 0.5rem' }}>
+                            <span style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                              {tvStatus && chip(tvStatus, '#334155', '#E2E8F0', 'Company status in Table View')}
+                              {BULK_BUCKETS.filter(b => g.buckets[b.key]).map(b => chip(`${g.buckets[b.key]} ${b.label}`, b.color, '#F8FAFC', b.hint))}
+                            </span>
+                          </td>
+                          <td style={{ padding: '0.3rem 0.5rem', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                            <button type="button" disabled={all} onClick={() => setCompanyPicked([g], true)} style={{ ...smallBtn(!all), padding: '0.15rem 0.45rem', marginRight: 4 }}>+ Add</button>
+                            <button type="button" disabled={!n} onClick={() => setCompanyPicked([g], false)} style={{ ...smallBtn(!!n), padding: '0.15rem 0.45rem' }}>- Remove</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
             <div style={{ padding: '0.85rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
@@ -4599,12 +4705,14 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
               <button
                 type="button"
                 onClick={applyBulkEdit}
-                style={{ padding: '0.45rem 0.9rem', border: 'none', background: 'var(--color-accent)', color: '#fff', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                disabled={bulkSelected.size === 0}
+                style={{ padding: '0.45rem 0.9rem', border: 'none', background: bulkSelected.size === 0 ? '#CBD5E1' : 'var(--color-accent)', color: '#fff', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: bulkSelected.size === 0 ? 'default' : 'pointer', fontFamily: 'inherit' }}
               >Apply to {bulkSelected.size}</button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {companyContacts && (() => {
         const norm = (v) => String(v || '').trim().toLowerCase();
