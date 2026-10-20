@@ -18,6 +18,7 @@ import {
   tagMatrixRows,
   tagMatrixCoverage,
   zoomExportRowsForTag,
+  decisionMakersSaleStatus,
 } from '../src/utils/decisionMakerTagMatrix.js';
 import { makeDecisionMakerLookup } from '../src/utils/decisionMakerCoverage.js';
 
@@ -112,13 +113,31 @@ const contact = (id, company, tags) => ({ id, company, firstname: id, dans_tags:
     tagMatrixRows(accounts, makeDecisionMakerLookup(contacts), ['ESG'])[1].maybeByTag[esg], []);
 }
 
+// --- Sold / Not sold, untagged ---------------------------------------------
+{
+  const dms = [contact('k', 'Realterm', 'Decision Maker;ESG'), contact('s', 'Realterm', 'Decision Maker'),
+    contact('u', 'Realterm', 'Decision Maker'), contact('t', 'Realterm', 'Decision Maker;Procurement')];
+  const review = {
+    k: { Procurement: { answer: 'yes', status: 'notsold' } }, // Kelly Johnson
+    s: { procurement: 'sold' },                               // old record shape, other spelling
+    u: { Procurement: { answer: 'unsure' } },
+    t: { Procurement: { answer: 'yes', status: 'sold' } },    // tagged: in byTag, not here
+  };
+  check('Sold or Not sold, untagged, is a sale status', decisionMakersSaleStatus(dms, 'Procurement', review).map(c => c.id), ['k', 's']);
+  check('no review, none', decisionMakersSaleStatus(dms, 'Procurement', null), []);
+  const rows = tagMatrixRows([{ id: '1', company: 'Realterm', myTier: 'Tier 1' }], makeDecisionMakerLookup(dms.slice(0, 1)), ['Procurement'], review);
+  check('rows carry saleByTag', rows[0].saleByTag[tagColumnKey('Procurement')].map(c => c.id), ['k']);
+  check('not counted as mapped', tagMatrixCoverage(rows, ['Procurement'])[tagColumnKey('Procurement')]['Tier 1'].mapped, 0);
+}
+
 // --- Zoom export by tag ---------------------------------------------------
-// Every Inside Sales, Qualifying and Client account with no contact who is
-// both a Decision Maker and a Yes for the tag, plus any with a Not sure for
-// it even beside a confirmed one. No decision maker at all keeps it in.
+// Every Inside Sales, Qualifying and Client account with no decision maker
+// covered for the tag: carrying it, or marked Sold / Not sold for it. A Not
+// sure beside a covered one no longer pulls it in. No decision maker at all
+// keeps it in.
 {
   const k = tagColumnKey('Solar');
-  const row = (company, status, confirmed, maybe, dmCount = 1) => ({ company, status, dmCount, byTag: { [k]: confirmed }, maybeByTag: { [k]: maybe } });
+  const row = (company, status, confirmed, maybe, dmCount = 1, sale = []) => ({ company, status, dmCount, byTag: { [k]: confirmed }, maybeByTag: { [k]: maybe }, saleByTag: { [k]: sale } });
   const rows = [
     row('Gap', 'Inside Sales', [], []),
     row('NoDms', 'Inside Sales', [], [], 0),
@@ -135,9 +154,11 @@ const contact = (id, company, tags) => ({ id, company, firstname: id, dans_tags:
     row('OldClientMaybe', 'Old Client', [], [{ id: 9 }]),
     { company: 'NoMaybeMap', status: 'Inside Sales', dmCount: 1, byTag: { [k]: [{ id: 7 }] } },
     { company: 'NoCount', status: 'Inside Sales', byTag: { [k]: [] }, maybeByTag: { [k]: [] } },
+    row('NotSold', 'Client', [], [{ id: 12 }], 2, [{ id: 13 }]),
+    row('Sold', 'Inside Sales', [], [], 1, [{ id: 14 }]),
   ];
-  check('zoom export: no Decision Maker who is a Yes, Inside Sales / Qualifying / Client',
-    zoomExportRowsForTag(rows, k).map(r => r.company), ['Gap', 'NoDms', 'OnlyMaybe', 'ConfirmedAndMaybe', 'ClientGap', 'ClientMaybe', 'QualifyingGap', 'QualifyingNoDms', 'NoCount']);
+  check('zoom export: no covered Decision Maker, Inside Sales / Qualifying / Client',
+    zoomExportRowsForTag(rows, k).map(r => r.company), ['Gap', 'NoDms', 'OnlyMaybe', 'ClientGap', 'QualifyingGap', 'QualifyingNoDms', 'NoCount']);
   // The status comes from a sheet: a trailing space or other casing is
   // still Client (Ettinger Engineering was dropped on an exact match).
   check('zoom export: status read ignoring spacing and case',
