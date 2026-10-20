@@ -141,6 +141,9 @@ export const ZOOM_TAG_EXPORT_STATUSES = ['Inside Sales', 'Qualifying', 'Client']
 const statusKey = (s) => String(s || '').trim().toLowerCase();
 const ZOOM_TAG_EXPORT_STATUS_KEYS = new Set(ZOOM_TAG_EXPORT_STATUSES.map(statusKey));
 
+/** Whether a row's status reads as Qualifying, however the sheet spelled it. */
+export const isQualifyingStatus = (status) => statusKey(status) === 'qualifying';
+
 /**
  * The rows one tag's Zoom export holds: every Inside Sales, Qualifying and
  * Client account that has no contact who is both a Decision Maker and a

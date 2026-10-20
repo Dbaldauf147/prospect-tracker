@@ -15,13 +15,14 @@
 // and Client account with no contact who is both a Decision Maker and a Yes
 // for the tag, or with someone marked Not sure for it, ready to take into
 // ZoomInfo. A tick in the picker also leaves out the accounts whose title
-// search for that tag is already logged on Bulk Add > Zoom Search Log.
+// search for that tag is already logged on Bulk Add > Zoom Search Log, and
+// another leaves out the Qualifying accounts.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { Badge } from '../common/Badge';
 import { statusColor } from '../../utils/formatters';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
-import { tagMatrixColumns, tagColumnKey, tagMatrixRows, tagMatrixCoverage, zoomExportRowsForTag } from '../../utils/decisionMakerTagMatrix';
+import { tagMatrixColumns, tagColumnKey, tagMatrixRows, tagMatrixCoverage, zoomExportRowsForTag, isQualifyingStatus } from '../../utils/decisionMakerTagMatrix';
 import { TIERS } from '../../data/enums';
 import { buildZoomExcludedMatcher, zoomExcludedLabel } from '../../utils/zoomExportExclude';
 import { ZoomExcludedCell } from './ZoomExcludedCell';
@@ -65,8 +66,8 @@ function TierCoverage({ coverage }) {
 
 // Pick a tag, get its Zoom CSV. Each tag shows how many accounts its file
 // would hold, and a tag with none can't be picked. `rowsFor(tag)` is the
-// file for a tag, already cut by the skip-searched tick.
-function ZoomByTagPicker({ tags, rowsFor, skippedFor, skipSearched, onSkipSearched, onPick, onClose }) {
+// file for a tag, already cut by the skip-searched and skip-Qualifying ticks.
+function ZoomByTagPicker({ tags, rowsFor, skippedFor, skipSearched, onSkipSearched, skipQualifying, onSkipQualifying, onPick, onClose }) {
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
       <div style={{ background: '#fff', borderRadius: 10, padding: '1rem 1.1rem', width: 380, maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 10px 30px rgba(0,0,0,0.2)' }} onClick={e => e.stopPropagation()}>
@@ -80,6 +81,10 @@ function ZoomByTagPicker({ tags, rowsFor, skippedFor, skipSearched, onSkipSearch
         <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: '0.75rem', color: '#334155', marginBottom: '0.6rem', cursor: 'pointer', lineHeight: 1.35 }}>
           <input type="checkbox" checked={skipSearched} onChange={e => onSkipSearched(e.target.checked)} style={{ marginTop: 2 }} />
           <span>Leave out companies whose title search for the tag is already logged (Bulk Add &gt; Zoom Search Log)</span>
+        </label>
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: '0.75rem', color: '#334155', marginBottom: '0.6rem', cursor: 'pointer', lineHeight: 1.35 }}>
+          <input type="checkbox" checked={skipQualifying} onChange={e => onSkipQualifying(e.target.checked)} style={{ marginTop: 2 }} />
+          <span>Leave out companies with a Qualifying status</span>
         </label>
         {tags.map(tag => {
           const n = rowsFor(tag).length;
@@ -115,6 +120,7 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
   const [onScreen, setOnScreen] = useState(null);
   const [zoomOpen, setZoomOpen] = useState(false);
   const [skipSearched, setSkipSearched] = useState(true);
+  const [skipQualifying, setSkipQualifying] = useState(false);
   // The Zoom Search Log, re-read when it changes elsewhere.
   const [zoomLog, setZoomLog] = useState(() => readZoomSearchLog(readWorkKey(ZOOM_SEARCH_LOG_KEY)));
   useEffect(() => {
@@ -222,12 +228,14 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
 
   const zoomSource = onScreen || rows;
   const prospectById = useMemo(() => new Map((prospects || []).map(p => [p.id, p])), [prospects]);
-  // Per tag: the accounts the file would hold before the skip-searched tick,
-  // and how many of them have that tag's title search logged.
+  // Per tag: the accounts the file would hold before the skip-searched tick
+  // (Qualifying already dropped when that box is ticked), and how many of
+  // them have that tag's title search logged.
   const zoomByTag = useMemo(() => {
     const out = new Map();
     for (const tag of tags) {
-      const all = zoomExportRowsForTag(zoomSource, tagColumnKey(tag));
+      const all = zoomExportRowsForTag(zoomSource, tagColumnKey(tag))
+        .filter(r => !skipQualifying || !isQualifyingStatus(r.status));
       const searched = buildTitleSearchedMatcher(zoomLog.searches, tag);
       const fresh = all.filter(r => {
         const p = prospectById.get(r.id);
@@ -240,7 +248,7 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
       out.set(tag, { all, fresh });
     }
     return out;
-  }, [tags, zoomSource, zoomLog, prospectById]);
+  }, [tags, zoomSource, zoomLog, prospectById, skipQualifying]);
   const rowsFor = (tag) => {
     const e = zoomByTag.get(tag);
     return (skipSearched ? e?.fresh : e?.all) || [];
@@ -255,6 +263,8 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
     if (picked.length === 0) {
       alert(skipSearched && skippedFor(tag)
         ? `Every account left for ${tag} already has its ${tag} title search logged. Untick the box to include them.`
+        : skipQualifying
+        ? `Every Inside Sales and Client account shown here already has a Decision Maker tagged ${tag}, and nobody marked Not sure for it. Untick the Qualifying box to include Qualifying accounts.`
         : `Every Inside Sales, Qualifying and Client account shown here already has a Decision Maker tagged ${tag}, and nobody marked Not sure for it.`);
       return;
     }
@@ -296,6 +306,8 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
         skippedFor={skippedFor}
         skipSearched={skipSearched}
         onSkipSearched={setSkipSearched}
+        skipQualifying={skipQualifying}
+        onSkipQualifying={setSkipQualifying}
         onPick={exportTag}
         onClose={() => setZoomOpen(false)}
       />
