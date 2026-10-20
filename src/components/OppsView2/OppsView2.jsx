@@ -12466,8 +12466,15 @@ function escapeHtml(v) {
 // Owners come out in the order their first service appears in Scope, which
 // is the order the user put them in; the unassigned bucket is forced last
 // so the copied email leads with the people who actually have work.
+//
+// The default contact (KTM_DEFAULT_CONTACT) is on every deal whatever the
+// Scope says: seeded first so they lead the list, and any services the KTM
+// column does name against them still land under that same heading.
 function groupByKtm(rows) {
   const byKey = new Map();
+  byKey.set(KTM_DEFAULT_CONTACT.toLowerCase(), {
+    ktm: KTM_DEFAULT_CONTACT, assigned: true, isDefault: true, services: [],
+  });
   for (const r of rows) {
     const key = r.ktm ? r.ktm.toLowerCase() : '\u0000unassigned';
     if (!byKey.has(key)) byKey.set(key, { ktm: r.ktm, assigned: !!r.ktm, services: [] });
@@ -12479,6 +12486,8 @@ function groupByKtm(rows) {
 }
 
 const KTM_UNASSIGNED_LABEL = 'No KTM named yet';
+const KTM_DEFAULT_CONTACT = 'Megan Jones';
+const KTM_DEFAULT_NOTE = 'Default contact on every deal';
 
 // The clipboard payload: the same owner-then-bullets shape the popup shows,
 // as real <ul>/<li> markup so pasting into Outlook lands a bulleted list
@@ -12489,14 +12498,19 @@ function buildKtmCopy(groups) {
     '<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:11pt;color:#1F2937">',
     ...groups.map(g => (
       `<div style="font-weight:700;margin:0 0 2px">${escapeHtml(g.assigned ? g.ktm : KTM_UNASSIGNED_LABEL)}</div>`
-      + '<ul style="margin:0 0 12px 0;padding-left:22px">'
-      + g.services.map(n => `<li style="margin:0 0 2px">${escapeHtml(n)}</li>`).join('')
-      + '</ul>'
+      + (g.services.length
+        ? '<ul style="margin:0 0 12px 0;padding-left:22px">'
+          + g.services.map(n => `<li style="margin:0 0 2px">${escapeHtml(n)}</li>`).join('')
+          + '</ul>'
+        : `<div style="margin:0 0 12px 0;color:#6B7280;font-style:italic">${escapeHtml(KTM_DEFAULT_NOTE)}</div>`)
     )),
     '</div>',
   ].join('');
   const plain = groups
-    .map(g => [g.assigned ? g.ktm : KTM_UNASSIGNED_LABEL, ...g.services.map(n => `\u2022 ${n}`)].join('\n'))
+    .map(g => [
+      g.assigned ? g.ktm : KTM_UNASSIGNED_LABEL,
+      ...(g.services.length ? g.services.map(n => `\u2022 ${n}`) : [KTM_DEFAULT_NOTE]),
+    ].join('\n'))
     .join('\n\n');
   return { html, plain };
 }
@@ -12585,7 +12599,7 @@ function KtmMappingModal({ account, inScope, serviceOverrides, onClose }) {
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-            {rows.length > 0 && (
+            {groups.length > 0 && (
               <button
                 type="button"
                 onClick={copy}
@@ -12613,41 +12627,44 @@ function KtmMappingModal({ account, inScope, serviceOverrides, onClose }) {
         </div>
 
         <div style={{ padding: '0.85rem 1rem', overflow: 'auto' }}>
-          {rows.length === 0 ? (
+          {/* Real headings + <ul> rather than a styled table, so a manual
+              select-and-copy pastes as a bulleted list too, not just the
+              Copy button. */}
+          <div ref={listRef} style={{ fontSize: '0.85rem', color: 'var(--color-text)' }}>
+            {groups.map(g => (
+              <div key={g.assigned ? g.ktm : '__unassigned'} style={{ marginBottom: '0.9rem' }}>
+                <div style={{
+                  fontWeight: 700,
+                  color: g.assigned ? 'var(--color-text)' : 'var(--color-text-muted)',
+                  wordBreak: 'break-word',
+                }}>{g.assigned ? g.ktm : KTM_UNASSIGNED_LABEL}</div>
+                {g.services.length > 0 ? (
+                  <ul style={{ margin: '2px 0 0', paddingLeft: '1.35rem' }}>
+                    {g.services.map(n => (
+                      <li key={n} style={{ margin: '0 0 2px' }}>{n}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', fontStyle: 'italic', marginTop: 2 }}>
+                    {KTM_DEFAULT_NOTE}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          {rows.length === 0 && (
             <div style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
               Nothing in Scope yet - pick the deal’s services and their KTMs show up here.
             </div>
-          ) : (
-            <>
-              {/* Real headings + <ul> rather than a styled table, so a manual
-                  select-and-copy pastes as a bulleted list too, not just the
-                  Copy button. */}
-              <div ref={listRef} style={{ fontSize: '0.85rem', color: 'var(--color-text)' }}>
-                {groups.map(g => (
-                  <div key={g.assigned ? g.ktm : '__unassigned'} style={{ marginBottom: '0.9rem' }}>
-                    <div style={{
-                      fontWeight: 700,
-                      color: g.assigned ? 'var(--color-text)' : 'var(--color-text-muted)',
-                      wordBreak: 'break-word',
-                    }}>{g.assigned ? g.ktm : KTM_UNASSIGNED_LABEL}</div>
-                    <ul style={{ margin: '2px 0 0', paddingLeft: '1.35rem' }}>
-                      {g.services.map(n => (
-                        <li key={n} style={{ margin: '0 0 2px' }}>{n}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-              </div>
-              {unmapped > 0 && (
-                <div style={{
-                  fontSize: '0.72rem', color: 'var(--color-text-muted)', lineHeight: 1.4,
-                  borderTop: '1px solid var(--color-border-light)', paddingTop: '0.6rem',
-                }}>
-                  {unmapped} of {rows.length} {unmapped === 1 ? 'has' : 'have'} no KTM named yet.
-                  Set them in the KTM column on Dropdowns › Services and they’ll move up into the list.
-                </div>
-              )}
-            </>
+          )}
+          {unmapped > 0 && (
+            <div style={{
+              fontSize: '0.72rem', color: 'var(--color-text-muted)', lineHeight: 1.4,
+              borderTop: '1px solid var(--color-border-light)', paddingTop: '0.6rem',
+            }}>
+              {unmapped} of {rows.length} {unmapped === 1 ? 'has' : 'have'} no KTM named yet.
+              Set them in the KTM column on Dropdowns › Services and they’ll move up into the list.
+            </div>
           )}
         </div>
       </div>
