@@ -232,6 +232,32 @@ function TitleSearches({ settings, updateSettings }) {
     [searches],
   );
 
+  // Title terms that more than one search carries, each with the names of
+  // the searches that do, so a chip can say where else it is used. Only
+  // the title groups count: the Not lists repeat the same terms across
+  // every card on purpose, and marking those would mark everything.
+  const sharedTitles = useMemo(() => {
+    const byTerm = new Map();
+    searches.forEach((entry, si) => {
+      for (const g of entry.groups) {
+        if (g.kind === 'exclude') continue;
+        for (const t of g.terms) {
+          const k = t.trim().toLowerCase();
+          if (!k) continue;
+          if (!byTerm.has(k)) byTerm.set(k, new Map());
+          byTerm.get(k).set(si, entry.name.trim() || 'Untitled search');
+        }
+      }
+    });
+    for (const [k, owners] of byTerm) if (owners.size < 2) byTerm.delete(k);
+    return byTerm;
+  }, [searches]);
+  // The other searches carrying this title term, by name; empty when none.
+  const alsoIn = (t, si) => {
+    const owners = sharedTitles.get(t.trim().toLowerCase());
+    return owners ? [...owners].filter(([i]) => i !== si).map(([, name]) => name) : [];
+  };
+
   async function copy(entry, group, gi) {
     const id = `${entry.key}:${gi}`;
     const terms = group.kind === 'exclude' ? [...group.terms, ...inheritedFor(group)] : group.terms;
@@ -361,13 +387,17 @@ function TitleSearches({ settings, updateSettings }) {
                         >{copied === id ? 'Copied' : 'Copy'}</button>
                       </div>
                       <div className={styles.terms}>
-                        {group.terms.map((t, ti) => (
+                        {group.terms.map((t, ti) => {
+                          const others = exclude ? [] : alsoIn(t, si);
+                          return (
                           <span
                             key={ti}
                             className={[
                               exclude ? styles.termEditExclude : styles.termEdit,
+                              others.length ? styles.termShared : '',
                               hits(t, needle) ? styles.termHit : '',
                             ].filter(Boolean).join(' ')}
+                            title={others.length ? `Also in ${others.join(', ')}` : undefined}
                           >
                             <input
                               type="text"
@@ -384,8 +414,14 @@ function TitleSearches({ settings, updateSettings }) {
                               onClick={() => removeTerm(si, gi, ti)}
                               title={`Remove “${t}”`}
                             >×</button>
+                            {others.length > 0 && (
+                              <span className={styles.sharedCount} aria-label={`Also in ${others.length} other search${others.length === 1 ? '' : 'es'}`}>
+                                +{others.length}
+                              </span>
+                            )}
                           </span>
-                        ))}
+                          );
+                        })}
                         {inherited.map((t, ti) => (
                           <span
                             key={`general-${ti}`}
