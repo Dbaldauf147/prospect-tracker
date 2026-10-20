@@ -38,6 +38,19 @@ export function suggestionMatches(values = [], query = '') {
 }
 
 /**
+ * The two words a box can hold that aren't text to look for: "(Blanks)"
+ * keeps the rows with nothing in that column, "(Non-blanks)" the rows with
+ * anything. Bracketed so they can't collide with a real value, matched in
+ * any case, and offered as suggestions so nobody has to know they exist.
+ * A typed substring can't ask for an empty cell, and "which contacts have
+ * no title / no country" is half of what a filter row gets used for.
+ */
+export const BLANKS_FILTER = '(Blanks)';
+export const NON_BLANKS_FILTER = '(Non-blanks)';
+const BLANKS_KEY = BLANKS_FILTER.toLowerCase();
+const NON_BLANKS_KEY = NON_BLANKS_FILTER.toLowerCase();
+
+/**
  * Does one cell pass one column's filter? A blank filter passes everything.
  *
  * Substring rather than equality on purpose: the boxes are typed into as
@@ -47,6 +60,9 @@ export function suggestionMatches(values = [], query = '') {
 export function cellMatches(value, query) {
   const q = String(query ?? '').trim().toLowerCase();
   if (!q) return true;
+  const blank = String(value ?? '').trim() === '';
+  if (q === BLANKS_KEY) return blank;
+  if (q === NON_BLANKS_KEY) return !blank;
   return String(value ?? '').toLowerCase().includes(q);
 }
 

@@ -7,6 +7,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { BULK_ADD_LEAD_SOURCE, LEAD_SOURCE_OPTIONS, leadSourceFor } from '../../utils/contactLeadSource';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
+import { cellMatches, BLANKS_FILTER, NON_BLANKS_FILTER } from '../../utils/columnFilter';
 import { getQueuedContactIds, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
 import { buildEmailFromPattern, estimateEmailDomain, estimateEmailDomainCandidates } from '../../utils/emailDomainPattern';
@@ -2452,7 +2453,9 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       if (!columnFilters[field]) continue;
       out = out.filter(r => !!suggestionFor(r._matchedProspectId, field));
     }
-    // Per-column text filter — substring, case-insensitive.
+    // Per-column text filter — substring, case-insensitive, or (Blanks) /
+    // (Non-blanks) for the rows with nothing / anything in that column
+    // (see columnFilter.cellMatches).
     const activeText = Object.entries(bulkColTextFilters).filter(([, v]) => v && v.trim());
     if (activeText.length > 0) {
       const valueFor = (r, key) => {
@@ -2486,17 +2489,19 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
             if (matchesCdm(p.cdm, cdmName)) return 'Tier 3';
             return '';
           }
+          // What the cell prints: the CDM and the other reps, or nothing
+          // when the company match was dismissed.
+          case 'cdmReps': {
+            if (dismissedSuggestedCompanies.has(r.email)) return '';
+            const p = r._matchedProspectId ? prospects.find(pp => pp.id === r._matchedProspectId) : null;
+            if (!p) return '';
+            const reps = (otherRepsByProspect.get(p.id) || []).map(x => x.rep);
+            return [String(p.cdm || '').trim(), ...reps].filter(Boolean).join(' ');
+          }
           default:                 return '';
         }
       };
-      out = out.filter(r => {
-        for (const [key, needle] of activeText) {
-          const n = needle.toLowerCase();
-          const hay = String(valueFor(r, key)).toLowerCase();
-          if (!hay.includes(n)) return false;
-        }
-        return true;
-      });
+      out = out.filter(r => activeText.every(([key, needle]) => cellMatches(valueFor(r, key), needle)));
     }
     if (sortKey) {
       const dir = sortDir === 'asc' ? 1 : -1;
@@ -2537,7 +2542,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
       out = [...out].sort((a, b) => String(sortValue(a)).localeCompare(String(sortValue(b))) * dir);
     }
     return out;
-  }, [rows, tvMissingOnly, columnFilters, sortKey, sortDir, rowTableViewState, lookupMatch, suggestionFor, dismissedSuggestedCompanies, hubspotByEmail, results, prospects, bulkColTextFilters, rowLeadSource]);
+  }, [rows, tvMissingOnly, columnFilters, sortKey, sortDir, rowTableViewState, lookupMatch, suggestionFor, dismissedSuggestedCompanies, hubspotByEmail, results, prospects, bulkColTextFilters, rowLeadSource, otherRepsByProspect, cdmName]);
 
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState(null);
@@ -3615,16 +3620,27 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
                   })}
                 </tr>
                 <tr>
-                  {effectiveBulkCols.map(c => {
+                  {effectiveBulkCols.map((c, ci) => {
                     const isAction = c.key.startsWith('_');
                     return (
                       <th key={c.key} style={{ padding: '2px 4px', background: 'var(--color-surface)', borderBottom: '1px solid var(--color-border-light)' }}>
+                        {/* What every filter box offers on focus: the two
+                            blank filters, so they don't have to be known
+                            to be used. One list, shared by every box. */}
+                        {ci === 0 && (
+                          <datalist id="bulk-col-filter-blanks">
+                            <option value={BLANKS_FILTER} />
+                            <option value={NON_BLANKS_FILTER} />
+                          </datalist>
+                        )}
                         {isAction ? null : (
                           <input
                             type="text"
                             value={bulkColTextFilters[c.key] || ''}
                             onChange={e => setBulkColTextFilters(prev => ({ ...prev, [c.key]: e.target.value }))}
                             placeholder="Filter..."
+                            list="bulk-col-filter-blanks"
+                            title={`Type to filter, or pick ${BLANKS_FILTER} / ${NON_BLANKS_FILTER} for the rows with nothing / anything in this column`}
                             style={{ width: '100%', padding: '2px 6px', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.68rem', fontFamily: 'inherit', boxSizing: 'border-box' }}
                           />
                         )}
