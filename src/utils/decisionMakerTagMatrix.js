@@ -18,10 +18,15 @@
 // but whose tag review (the contact popup's Yes / No / Not sure) says Not
 // sure for it. They sit in `maybeByTag`, apart from `byTag`, so they show
 // in the cell without counting as mapped - the percentages and the History
-// snapshots stay on confirmed tags only. The Zoom export is the one place a
-// maybe pulls an account IN: see zoomExportRowsForTag.
+// snapshots stay on confirmed tags only.
+//
+// Rows also carry `saleByTag`: decision makers who don't carry the tag but
+// are marked Sold or Not sold for it. A Not sold is the hold-off (the tag is
+// kept off HubSpot on purpose, the area is still theirs), so it isn't shown
+// or counted here, but the Zoom export treats the account as covered: see
+// zoomExportRowsForTag.
 
-import { tagKey, tagVocabulary, TAG_OPTIONS, findTagRecord, isLocalTagVerdict, tagAnswerFrom } from './contactTagReview.js';
+import { tagKey, tagVocabulary, TAG_OPTIONS, findTagRecord, isLocalTagVerdict, tagAnswerFrom, tagRecordFrom } from './contactTagReview.js';
 import { TIERS } from '../data/enums.js';
 
 // Tags that are never a column. Decision Maker is the gate every cell
@@ -78,9 +83,27 @@ export function decisionMakersMaybe(dms, tag, review) {
 }
 
 /**
+ * The decision makers in `dms` who don't carry `tag` but are marked Sold or
+ * Not sold for it in the tag review. Kelly Johnson at Realterm: Procurement
+ * Yes + Not sold, so the tag is off her and she isn't in byTag, but her
+ * company is not a gap for Procurement.
+ */
+export function decisionMakersSaleStatus(dms, tag, review) {
+  if (!review || typeof review !== 'object') return [];
+  const k = tagKey(tag);
+  return (dms || []).filter((c) => {
+    if (contactTagList(c).some(t => tagKey(t) === k)) return false;
+    const cid = c?.id ?? c?.vid;
+    if (cid == null) return false;
+    return !!tagRecordFrom(findTagRecord(review[cid], tag)).status;
+  });
+}
+
+/**
  * One row per account: the account itself plus `byTag`, keyed by
  * tagColumnKey, each the list of tagged decision makers there, and
- * `maybeByTag`, the Not sure ones (empty without a `review`).
+ * `maybeByTag`, the Not sure ones, and `saleByTag`, the untagged Sold / Not
+ * sold ones (both empty without a `review`).
  * `dmLookup` is makeDecisionMakerLookup's result.
  */
 export function tagMatrixRows(accounts, dmLookup, tags, review = null) {
@@ -88,12 +111,14 @@ export function tagMatrixRows(accounts, dmLookup, tags, review = null) {
     const dms = dmLookup ? dmLookup.forAccount(a) : [];
     const byTag = {};
     const maybeByTag = {};
+    const saleByTag = {};
     for (const tag of (tags || [])) {
       const key = tagColumnKey(tag);
       byTag[key] = decisionMakersTagged(dms, tag);
       maybeByTag[key] = decisionMakersMaybe(dms, tag, review);
+      saleByTag[key] = decisionMakersSaleStatus(dms, tag, review);
     }
-    return { ...a, dmCount: dms.length, byTag, maybeByTag };
+    return { ...a, dmCount: dms.length, byTag, maybeByTag, saleByTag };
   });
 }
 
@@ -146,14 +171,15 @@ export const isQualifyingStatus = (status) => statusKey(status) === 'qualifying'
 
 /**
  * The rows one tag's Zoom export holds: every Inside Sales, Qualifying and
- * Client account that has no contact who is both a Decision Maker and a
- * Yes for the tag (carries it), plus any with somebody marked Not sure for
- * it even beside a confirmed one: an unsettled answer is still worth a
- * ZoomInfo pull. On the DM Tags tab that is every cell except one holding
- * confirmed names and no "(maybe)". No decision maker at all is in.
+ * Client account with no decision maker who is covered for the tag. Covered
+ * is carrying it (a Yes, or a Sold) or being marked Sold or Not sold for it
+ * (saleByTag). A Not sure no longer pulls an account in beside a covered
+ * one: PNC has Robert Lincoln on Procurement, so a maybe next to him is not
+ * a reason to search PNC again. An account with only maybes is still in,
+ * because nobody there is covered. No decision maker at all is in.
  * `key` is tagColumnKey(tag).
  */
 export function zoomExportRowsForTag(rows, key) {
   return (rows || []).filter(r => ZOOM_TAG_EXPORT_STATUS_KEYS.has(statusKey(r.status))
-    && (!(r.byTag?.[key] || []).length || (r.maybeByTag?.[key] || []).length > 0));
+    && !(r.byTag?.[key] || []).length && !(r.saleByTag?.[key] || []).length);
 }

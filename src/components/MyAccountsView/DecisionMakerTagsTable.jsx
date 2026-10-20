@@ -12,9 +12,9 @@
 //
 // Zoom Export by Tag mirrors the My Accounts tab's Zoom Export (same four
 // columns, rows on screen) cut to one tag: every Inside Sales, Qualifying
-// and Client account with no contact who is both a Decision Maker and a Yes
-// for the tag, or with someone marked Not sure for it, ready to take into
-// ZoomInfo. A tick in the picker also leaves out the accounts whose title
+// and Client account with no Decision Maker who is a Yes, Sold or Not sold
+// for the tag, ready to take into ZoomInfo. A Not sure only pulls an account
+// in when nobody there is covered. A tick in the picker also leaves out the accounts whose title
 // search for that tag is already logged on Bulk Add > Zoom Search Log, and
 // another leaves out the Qualifying accounts.
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -76,7 +76,7 @@ function ZoomByTagPicker({ tags, rowsFor, skippedFor, skipSearched, onSkipSearch
           <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer' }}>&times;</button>
         </div>
         <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.6rem', lineHeight: 1.4 }}>
-          Downloads the Inside Sales, Qualifying and Client accounts shown here that have no contact who is both a Decision Maker and a Yes for the tag, or have someone marked Not sure for it. Columns: Company, Zoom Company ID, Zoom Company Name, Company URL.
+          Downloads the Inside Sales, Qualifying and Client accounts shown here that have no Decision Maker who is a Yes, Sold or Not sold for the tag. Columns: Company, Zoom Company ID, Zoom Company Name, Company URL.
         </div>
         <label style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: '0.75rem', color: '#334155', marginBottom: '0.6rem', cursor: 'pointer', lineHeight: 1.35 }}>
           <input type="checkbox" checked={skipSearched} onChange={e => onSkipSearched(e.target.checked)} style={{ marginTop: 2 }} />
@@ -264,8 +264,8 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
       alert(skipSearched && skippedFor(tag)
         ? `Every account left for ${tag} already has its ${tag} title search logged. Untick the box to include them.`
         : skipQualifying
-        ? `Every Inside Sales and Client account shown here already has a Decision Maker tagged ${tag}, and nobody marked Not sure for it. Untick the Qualifying box to include Qualifying accounts.`
-        : `Every Inside Sales, Qualifying and Client account shown here already has a Decision Maker tagged ${tag}, and nobody marked Not sure for it.`);
+        ? `Every Inside Sales and Client account shown here already has a Decision Maker who is a Yes, Sold or Not sold for ${tag}. Untick the Qualifying box to include Qualifying accounts.`
+        : `Every Inside Sales, Qualifying and Client account shown here already has a Decision Maker who is a Yes, Sold or Not sold for ${tag}.`);
       return;
     }
     const slug = tag.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -290,7 +290,7 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
       toolbarActions={onZoomExport ? [{
         key: 'zoom-export-by-tag',
         label: 'Zoom Export by Tag',
-        title: 'Pick a tag and download a CSV of the Inside Sales, Qualifying and Client accounts shown here with no contact who is both a Decision Maker and a Yes for it, or someone marked Not sure for it: Company, Zoom Company ID, Zoom Company Name, Company URL',
+        title: 'Pick a tag and download a CSV of the Inside Sales, Qualifying and Client accounts shown here with no Decision Maker who is a Yes, Sold or Not sold for it: Company, Zoom Company ID, Zoom Company Name, Company URL',
         onClick: () => setZoomOpen(true),
       }] : undefined}
       gridLines
