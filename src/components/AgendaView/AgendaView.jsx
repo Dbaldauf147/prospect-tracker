@@ -567,7 +567,116 @@ function ensureProtocol(url) {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
+// The contacts behind the "N contacts have no email" banner: who they are,
+// with a box to type each one's address (kept once it is a valid email, which
+// takes the row off this list) or a button to take them out of the grid.
+function NoEmailContactsModal({ rows, companyOf, onSetEmail, onRemove, onClose }) {
+  const [drafts, setDrafts] = useState({});
+  const commit = (key) => {
+    const v = String(drafts[key] || '').trim().toLowerCase();
+    if (!isRealEmail(v)) return;
+    onSetEmail(key, v);
+    setDrafts(prev => { const next = { ...prev }; delete next[key]; return next; });
+  };
+  const th = { textAlign: 'left', padding: '0.35rem 0.5rem', fontSize: '0.68rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)', background: '#F8FAFC', position: 'sticky', top: 0 };
+  const td = { padding: '0.4rem 0.5rem', fontSize: '0.76rem', borderBottom: '1px solid #F1F5F9', verticalAlign: 'middle' };
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: '1.25rem' }}
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-label="Contacts with no email"
+        style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', width: 'min(820px, 100%)', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>
+              {rows.length} contact{rows.length === 1 ? '' : 's'} with no email
+            </div>
+            <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '0.25rem' }}>
+              Type an address and press Enter to keep it, or remove the contact. Nothing goes to HubSpot until you import.
+            </div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', fontSize: '1.3rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>&times;</button>
+        </div>
+        <div style={{ overflowY: 'auto', padding: '0 1.25rem' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={th}>Name</th>
+                <th style={th}>Company</th>
+                <th style={th}>Job Title</th>
+                <th style={th}>Email</th>
+                <th style={th} aria-label="Remove" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => {
+                const name = [r.firstname, r.lastname].filter(Boolean).join(' ').trim();
+                const draft = drafts[r.email] ?? '';
+                const ok = isRealEmail(draft);
+                return (
+                  <tr key={r.email}>
+                    <td style={{ ...td, fontWeight: 600 }}>{name || <span style={{ color: '#94A3B8' }}>No name</span>}</td>
+                    <td style={td}>{companyOf(r) || <span style={{ color: '#94A3B8' }}>-</span>}</td>
+                    <td style={{ ...td, color: '#475569' }}>{r.jobtitle || <span style={{ color: '#94A3B8' }}>-</span>}</td>
+                    <td style={td}>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <input
+                          type="email"
+                          value={draft}
+                          placeholder="name@company.com"
+                          aria-label={`Email for ${name || 'this contact'}`}
+                          onChange={e => setDrafts(prev => ({ ...prev, [r.email]: e.target.value }))}
+                          onKeyDown={e => { if (e.key === 'Enter') commit(r.email); }}
+                          style={{ flex: 1, minWidth: 0, padding: '0.25rem 0.4rem', border: `1px solid ${draft && !ok ? '#FCA5A5' : '#CBD5E1'}`, borderRadius: 5, fontSize: '0.75rem', fontFamily: 'inherit' }}
+                        />
+                        <button
+                          type="button"
+                          disabled={!ok}
+                          onClick={() => commit(r.email)}
+                          style={{ padding: '0.2rem 0.55rem', borderRadius: 5, border: '1px solid var(--color-accent)', background: ok ? 'var(--color-accent)' : '#fff', color: ok ? '#fff' : 'var(--color-text-muted)', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: ok ? 'pointer' : 'default', opacity: ok ? 1 : 0.6 }}
+                        >Save</button>
+                      </div>
+                    </td>
+                    <td style={{ ...td, textAlign: 'center' }}>
+                      <button
+                        type="button"
+                        onClick={() => onRemove([r.email])}
+                        title="Remove this contact from the grid"
+                        aria-label={`Remove ${name || 'this contact'}`}
+                        style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '1rem', cursor: 'pointer', lineHeight: 1 }}
+                      >&times;</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', gap: '0.5rem' }}>
+          <button
+            type="button"
+            onClick={() => { if (window.confirm(`Remove all ${rows.length} contact${rows.length === 1 ? '' : 's'} with no email from the grid?`)) onRemove(rows.map(r => r.email)); }}
+            style={{ padding: '0.35rem 0.8rem', borderRadius: 6, border: '1px solid #FCA5A5', background: '#FEF2F2', color: '#991B1B', fontSize: '0.75rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+          >Remove all {rows.length}</button>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ padding: '0.35rem 0.8rem', borderRadius: 6, border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text)', fontSize: '0.75rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+          >Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect, cdmName, settings, updateSettings, updateSettingsPath, targetAccountsData }) {
+  // The "N contacts have no email" banner's list of who they are.
+  const [noEmailOpen, setNoEmailOpen] = useState(false);
   const { user } = useAuth();
   const [rows, setRows] = useState(() => loadCache());
   // Latest-rows ref so callbacks (e.g. toggleSuggestedCompanyDismiss)
@@ -2259,7 +2368,11 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
 
   // Rows with no usable address (couldn't be estimated from a company pattern).
   // They stay in the grid for review but are blocked from the HubSpot push.
-  const missingEmailCount = rows.filter(r => !isRealEmail(r.email)).length;
+  const missingEmailRows = rows.filter(r => !isRealEmail(r.email));
+  const missingEmailCount = missingEmailRows.length;
+  // Fixed or removed the last one: close the list, so the next paste with
+  // a gap doesn't open it on its own.
+  useEffect(() => { if (missingEmailCount === 0) setNoEmailOpen(false); }, [missingEmailCount]);
   const newCount = rows.filter(r => isRealEmail(r.email) && !hubspotByEmail.has(r.email)).length;
   const updateCount = rows.filter(r => {
     if (!isRealEmail(r.email)) return false;
@@ -3287,11 +3400,30 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           <>
           {missingEmailCount > 0 && (
             <div style={{ margin: '0.75rem 0 0', padding: '0.5rem 0.7rem', background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B', borderRadius: 6, fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              <strong>{missingEmailCount}</strong> contact{missingEmailCount === 1 ? '' : 's'} {missingEmailCount === 1 ? 'has' : 'have'} no email{emailGuesses.length > 0
+              <button
+                type="button"
+                onClick={() => setNoEmailOpen(true)}
+                title="See which contacts these are"
+                style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', cursor: 'pointer', textDecoration: 'underline' }}
+              ><strong>{missingEmailCount}</strong> contact{missingEmailCount === 1 ? '' : 's'}</button> {missingEmailCount === 1 ? 'has' : 'have'} no email{emailGuesses.length > 0
                 ? <>. <strong>{emailGuesses.length}</strong> of them can be guessed from a saved company email format: hit <strong>✉ Guess {emailGuesses.length === 1 ? 'email' : 'emails'}</strong> below.</>
                 : ': no address could be estimated from the company’s pattern.'}
               {' '}Add an email in the <strong>Email</strong> column or remove {missingEmailCount === 1 ? 'it' : 'them'} before importing to HubSpot.
+              <button
+                type="button"
+                onClick={() => setNoEmailOpen(true)}
+                style={{ marginLeft: 'auto', flexShrink: 0, padding: '0.2rem 0.6rem', borderRadius: 6, border: '1px solid #FCA5A5', background: '#fff', color: '#991B1B', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+              >Show {missingEmailCount === 1 ? 'contact' : 'contacts'}</button>
             </div>
+          )}
+          {noEmailOpen && missingEmailCount > 0 && (
+            <NoEmailContactsModal
+              rows={missingEmailRows}
+              companyOf={effectiveRowCompany}
+              onSetEmail={(key, email) => updateRow(key, { email, _emailStatus: 'provided' })}
+              onRemove={keys => removeRows(keys)}
+              onClose={() => setNoEmailOpen(false)}
+            />
           )}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', margin: '0.75rem 0 0.25rem', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
