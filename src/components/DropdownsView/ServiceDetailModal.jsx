@@ -1511,19 +1511,6 @@ export function ServiceDetailModal({
 
   if (!service) return null;
   const { name, meta } = service;
-  const save = (field) => (value) => onSaveField(name, field, value);
-  // A field with a menu when the caller supplied one, a plain box otherwise.
-  const pick = (field, label) => (fieldOptions && onEditFieldOption ? (
-    <OptionField
-      label={label}
-      value={meta?.[field]}
-      options={fieldOptions[field] || []}
-      onCommit={save(field)}
-      onEditOption={(kind, a, b) => onEditFieldOption(kind, field, a, b)}
-    />
-  ) : (
-    <TextField label={label} value={meta?.[field]} onCommit={save(field)} />
-  ));
 
   return createPortal(
     <div
@@ -1571,132 +1558,24 @@ export function ServiceDetailModal({
         </div>
 
         <div className={styles.detailBody}>
-          {/* The service name itself isn't editable here for the same reason
-              it isn't in the table: it's the key every override, link and
-              dependency is stored under. Renaming happens on the Lists tab,
-              which owns the Solutions vocabulary. */}
-          <div className={styles.detailGrid}>
-            <LinkField name={name} url={url} onSaveUrl={onSaveUrl} />
-            {/* One field, not two: BFO Tag and Local Project Name always
-                held the same tag, and the catalog now derives the Local
-                Project Name from this value. */}
-            {pick('bfoTag', 'BFO Tag / Local Project Name')}
-            <SelectField
-              label="Service Bucket"
-              value={bucket || UNGROUPED_SERVICES}
-              options={[...bucketOptions, UNGROUPED_SERVICES]}
-              onCommit={(v) => onSaveBucket?.(name, v)}
-            />
-            {pick('region', 'Region')}
-            {pick('years', 'Years')}
-            {pick('serviceType', 'Service Type')}
-            {pick('productLine', 'Product Line')}
-            <YesNoField label="Timeline Driven" value={meta?.timelineDriven} onCommit={save('timelineDriven')} />
-            <WeeksField label="Rollout Time" value={meta?.rolloutTime} onCommit={save('rolloutTime')} />
-            {pick('sme', 'SME')}
-            {pick('ktm', 'KTM')}
-            <ContactTagsField value={meta?.contactTags} onCommit={save('contactTags')} />
-            <NotesField value={meta?.notes} onCommit={save('notes')} />
-          </div>
-
-          {/* The steps of this service's own timeline. Sits above the
-              service-level dependency sections because it's the finer grain:
-              what happens inside this service, before what has to happen
-              around it. */}
-          {onSaveTemplates && (
-            <TimelineStepsEditor
-              serviceName={name}
-              templates={templates}
-              onSaveTemplates={onSaveTemplates}
-              onOpenTimelines={onOpenTimelines}
-            />
-          )}
-
-          <DependsEditor
-            value={meta?.dependsOn}
+          <ServiceDetailFields
+            service={service}
+            url={url}
+            dependents={dependents}
+            autoAddedBy={autoAddedBy}
+            autoNaedBy={autoNaedBy}
             options={options}
-            selfName={name}
             templates={templates}
-            onCommit={save('dependsOn')}
+            bucket={bucket}
+            bucketOptions={bucketOptions}
+            onSaveBucket={onSaveBucket}
+            onSaveField={onSaveField}
+            fieldOptions={fieldOptions}
+            onEditFieldOption={onEditFieldOption}
+            onSaveUrl={onSaveUrl}
+            onSaveTemplates={onSaveTemplates}
+            onOpenTimelines={onOpenTimelines}
           />
-
-          {/* The other direction. No column holds it — it's derived from
-              every other row's dependency list — so removing or retiring a
-              service is otherwise done blind. */}
-          <div className={styles.detailSection}>
-            <div className={styles.detailSectionHead}>
-              <span className={styles.detailSectionTitle}>Waiting on this one</span>
-              <span className={styles.detailSectionCount}>{dependents.length}</span>
-            </div>
-            {dependents.length === 0 ? (
-              <p className={styles.detailEmpty}>No service lists {name} as a dependency.</p>
-            ) : (
-              <div className={styles.detailChips}>
-                {dependents.map(dep => (
-                  <span key={dep} className={styles.serviceDepChip} title={`${dep} can't start until ${name} is rolled out`}>{dep}</span>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <ImpliedServicesEditor
-            value={meta?.autoAdd}
-            options={options}
-            selfName={name}
-            onCommit={save('autoAdd')}
-            title="Added to Scope with this one"
-            emptyText={`Picking ${name} on the Opps Scope board adds nothing else.`}
-            chipTitle={(other) => `${other} goes into Scope whenever ${name} does`}
-          />
-
-          {/* The other direction again, and the one that explains a tick
-              nobody made: this service arriving in Scope on its own. */}
-          <div className={styles.detailSection}>
-            <div className={styles.detailSectionHead}>
-              <span className={styles.detailSectionTitle}>Comes into Scope with</span>
-              <span className={styles.detailSectionCount}>{autoAddedBy.length}</span>
-            </div>
-            {autoAddedBy.length === 0 ? (
-              <p className={styles.detailEmpty}>Nothing adds {name} to Scope automatically.</p>
-            ) : (
-              <div className={styles.detailChips}>
-                {autoAddedBy.map(src => (
-                  <span key={src} className={styles.serviceDepChip} title={`Picking ${src} on the Opps Scope board adds ${name} too`}>{src}</span>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* What selling this service settles. Nothing is written to any
-              account: the status boards read the list and show the N/A,
-              under anything the account actually says. */}
-          <ImpliedServicesEditor
-            value={meta?.autoNa}
-            options={options}
-            selfName={name}
-            onCommit={save('autoNa')}
-            title="Marked N/A once this one is sold"
-            emptyText={`Selling ${name} leaves every other service as it was.`}
-            chipTitle={(other) => `${other} shows as N/A on an account that has bought ${name}, unless its own status says otherwise`}
-          />
-
-          {/* The other direction of that one: the sales that would grey THIS
-              service out, which is what explains an N/A nobody typed. */}
-          <div className={styles.detailSection}>
-            <div className={styles.detailSectionHead}>
-              <span className={styles.detailSectionTitle}>Marked N/A by selling</span>
-              <span className={styles.detailSectionCount}>{autoNaedBy.length}</span>
-            </div>
-            {autoNaedBy.length === 0 ? (
-              <p className={styles.detailEmpty}>No sale marks {name} N/A on its own.</p>
-            ) : (
-              <div className={styles.detailChips}>
-                {autoNaedBy.map(src => (
-                  <span key={src} className={styles.serviceDepChip} title={`An account that has bought ${src} shows ${name} as N/A`}>{src}</span>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
 
         <div className={styles.detailFooter}>
@@ -1741,5 +1620,176 @@ export function ServiceDetailModal({
       </div>
     </div>,
     document.body,
+  );
+}
+
+// Everything the panel shows between its header and its footer: the fields,
+// the timeline steps, and the dependency and auto-add sections. Split out so
+// another panel can carry the same edits as a tab of its own (the Services
+// Pricing popup's "Service details") without a second copy of any of it.
+// Takes the modal's props of the same names.
+export function ServiceDetailFields({
+  service,
+  url,
+  dependents = [],
+  autoAddedBy = [],
+  autoNaedBy = [],
+  options,
+  templates = [],
+  bucket,
+  bucketOptions = [],
+  onSaveBucket,
+  onSaveField,
+  fieldOptions,
+  onEditFieldOption,
+  onSaveUrl,
+  onSaveTemplates,
+  onOpenTimelines,
+}) {
+  if (!service) return null;
+  const { name, meta } = service;
+  const save = (field) => (value) => onSaveField(name, field, value);
+  // A field with a menu when the caller supplied one, a plain box otherwise.
+  const pick = (field, label) => (fieldOptions && onEditFieldOption ? (
+    <OptionField
+      label={label}
+      value={meta?.[field]}
+      options={fieldOptions[field] || []}
+      onCommit={save(field)}
+      onEditOption={(kind, a, b) => onEditFieldOption(kind, field, a, b)}
+    />
+  ) : (
+    <TextField label={label} value={meta?.[field]} onCommit={save(field)} />
+  ));
+
+  return (
+    <>
+    {/* The service name itself isn't editable here for the same reason
+        it isn't in the table: it's the key every override, link and
+        dependency is stored under. Renaming happens on the Lists tab,
+        which owns the Solutions vocabulary. */}
+    <div className={styles.detailGrid}>
+      <LinkField name={name} url={url} onSaveUrl={onSaveUrl} />
+      {/* One field, not two: BFO Tag and Local Project Name always
+          held the same tag, and the catalog now derives the Local
+          Project Name from this value. */}
+      {pick('bfoTag', 'BFO Tag / Local Project Name')}
+      <SelectField
+        label="Service Bucket"
+        value={bucket || UNGROUPED_SERVICES}
+        options={[...bucketOptions, UNGROUPED_SERVICES]}
+        onCommit={(v) => onSaveBucket?.(name, v)}
+      />
+      {pick('region', 'Region')}
+      {pick('years', 'Years')}
+      {pick('serviceType', 'Service Type')}
+      {pick('productLine', 'Product Line')}
+      <YesNoField label="Timeline Driven" value={meta?.timelineDriven} onCommit={save('timelineDriven')} />
+      <WeeksField label="Rollout Time" value={meta?.rolloutTime} onCommit={save('rolloutTime')} />
+      {pick('sme', 'SME')}
+      {pick('ktm', 'KTM')}
+      <ContactTagsField value={meta?.contactTags} onCommit={save('contactTags')} />
+      <NotesField value={meta?.notes} onCommit={save('notes')} />
+    </div>
+
+    {/* The steps of this service's own timeline. Sits above the
+        service-level dependency sections because it's the finer grain:
+        what happens inside this service, before what has to happen
+        around it. */}
+    {onSaveTemplates && (
+      <TimelineStepsEditor
+        serviceName={name}
+        templates={templates}
+        onSaveTemplates={onSaveTemplates}
+        onOpenTimelines={onOpenTimelines}
+      />
+    )}
+
+    <DependsEditor
+      value={meta?.dependsOn}
+      options={options}
+      selfName={name}
+      templates={templates}
+      onCommit={save('dependsOn')}
+    />
+
+    {/* The other direction. No column holds it — it's derived from
+        every other row's dependency list — so removing or retiring a
+        service is otherwise done blind. */}
+    <div className={styles.detailSection}>
+      <div className={styles.detailSectionHead}>
+        <span className={styles.detailSectionTitle}>Waiting on this one</span>
+        <span className={styles.detailSectionCount}>{dependents.length}</span>
+      </div>
+      {dependents.length === 0 ? (
+        <p className={styles.detailEmpty}>No service lists {name} as a dependency.</p>
+      ) : (
+        <div className={styles.detailChips}>
+          {dependents.map(dep => (
+            <span key={dep} className={styles.serviceDepChip} title={`${dep} can't start until ${name} is rolled out`}>{dep}</span>
+          ))}
+        </div>
+      )}
+    </div>
+
+    <ImpliedServicesEditor
+      value={meta?.autoAdd}
+      options={options}
+      selfName={name}
+      onCommit={save('autoAdd')}
+      title="Added to Scope with this one"
+      emptyText={`Picking ${name} on the Opps Scope board adds nothing else.`}
+      chipTitle={(other) => `${other} goes into Scope whenever ${name} does`}
+    />
+
+    {/* The other direction again, and the one that explains a tick
+        nobody made: this service arriving in Scope on its own. */}
+    <div className={styles.detailSection}>
+      <div className={styles.detailSectionHead}>
+        <span className={styles.detailSectionTitle}>Comes into Scope with</span>
+        <span className={styles.detailSectionCount}>{autoAddedBy.length}</span>
+      </div>
+      {autoAddedBy.length === 0 ? (
+        <p className={styles.detailEmpty}>Nothing adds {name} to Scope automatically.</p>
+      ) : (
+        <div className={styles.detailChips}>
+          {autoAddedBy.map(src => (
+            <span key={src} className={styles.serviceDepChip} title={`Picking ${src} on the Opps Scope board adds ${name} too`}>{src}</span>
+          ))}
+        </div>
+      )}
+    </div>
+
+    {/* What selling this service settles. Nothing is written to any
+        account: the status boards read the list and show the N/A,
+        under anything the account actually says. */}
+    <ImpliedServicesEditor
+      value={meta?.autoNa}
+      options={options}
+      selfName={name}
+      onCommit={save('autoNa')}
+      title="Marked N/A once this one is sold"
+      emptyText={`Selling ${name} leaves every other service as it was.`}
+      chipTitle={(other) => `${other} shows as N/A on an account that has bought ${name}, unless its own status says otherwise`}
+    />
+
+    {/* The other direction of that one: the sales that would grey THIS
+        service out, which is what explains an N/A nobody typed. */}
+    <div className={styles.detailSection}>
+      <div className={styles.detailSectionHead}>
+        <span className={styles.detailSectionTitle}>Marked N/A by selling</span>
+        <span className={styles.detailSectionCount}>{autoNaedBy.length}</span>
+      </div>
+      {autoNaedBy.length === 0 ? (
+        <p className={styles.detailEmpty}>No sale marks {name} N/A on its own.</p>
+      ) : (
+        <div className={styles.detailChips}>
+          {autoNaedBy.map(src => (
+            <span key={src} className={styles.serviceDepChip} title={`An account that has bought ${src} shows ${name} as N/A`}>{src}</span>
+          ))}
+        </div>
+      )}
+    </div>
+    </>
   );
 }

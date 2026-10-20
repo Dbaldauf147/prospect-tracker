@@ -2880,6 +2880,15 @@
   max-height: min(860px, 94vh);
 }
 
+/* Pricing | Service details, under the panel's header. The buttons are the
+   Dropdowns page's own subtabs, so the two read as the same control. */
+.pricingModalTabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.35rem 0.9rem 0;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
 /* --- The fee breakdown (FeeBreakdown, in ServicePricingModal) ----------
    One row per pricing basis, setup and recurring side by side, because a service is very
    often sold on more than one of them at once: a per-site fee and a cut of

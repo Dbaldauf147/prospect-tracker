@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { DataTable } from '../common/DataTable';
 import { PricingBasesModal } from './PricingBasesModal';
 import { ServicePricingModal } from './ServicePricingModal';
+import { ServiceDetailTab } from '../common/ServiceDetailPopup';
 import { BasisCell, ImpactCell, NotesCell, NumberCell } from './pricingCells';
 import {
   PRICING_BASES,
@@ -1059,6 +1060,9 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
             onToggleNoFee={() => toggleNoFee(row.name, !row.noFee)}
             explored={serviceExploredState(settings, row.name)}
             onToggleExploredCounted={() => toggleExploredCounted(row.name)}
+            detailsTab={(
+              <ServiceDetailTab name={row.name} settings={settings} updateSettings={updateSettings} />
+            )}
             onClose={() => setPricingPanelFor(null)}
           />
         );
