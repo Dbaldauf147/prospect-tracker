@@ -9,7 +9,12 @@
 // Nothing is written when it fills; it is worked out from the roster each
 // time, so taking that contact off again opens the placeholder back up.
 //
-//   campaign.targetCompanies = [{ company: 'Acme', addedAt: ISO string }]
+//   campaign.targetCompanies = [{ company: 'Acme', addedAt: ISO string,
+//                                 outreach?: '' | 'hold' | 'avoid', holdUntil?: 'YYYY-MM-DD' }]
+//
+// The outreach fields are set from the "Contact missing" row before anybody
+// at the company is picked (Hold off, Avoid), and the first contacts added
+// from that company start with them (targetOutreachFor).
 //
 // Pure (scripts/campaignTargetCompanies.test.mjs).
 import { companiesMatch } from './listFlags.js';
@@ -60,4 +65,30 @@ export function targetCompanyStatus(campaign, companyOf = (c) => c?.company) {
     const matches = contacts.filter(c => companiesMatch(String(companyOf(c) || ''), t.company));
     return { ...t, contacts: matches, open: matches.length === 0 };
   });
+}
+
+/**
+ * Merge `patch` (outreach / holdUntil) into the named target. Matched the
+ * way removeTargetCompany matches: exact name, case-insensitive.
+ */
+export function patchTargetCompany(campaign, company, patch) {
+  const key = String(company || '').trim().toLowerCase();
+  return {
+    ...campaign,
+    targetCompanies: campaignTargetCompanies(campaign).map(t => (
+      String(t.company).trim().toLowerCase() === key ? { ...t, ...patch } : t
+    )),
+  };
+}
+
+/**
+ * The outreach a contact at `company` should start with: the one set on the
+ * campaign's matching target, or null when there is none to carry over.
+ */
+export function targetOutreachFor(campaign, company) {
+  const name = String(company || '').trim();
+  if (!name) return null;
+  const t = campaignTargetCompanies(campaign).find(x => companiesMatch(x.company, name));
+  if (!t || (t.outreach !== 'hold' && t.outreach !== 'avoid')) return null;
+  return { outreach: t.outreach, holdUntil: t.outreach === 'hold' ? String(t.holdUntil || '') : '' };
 }

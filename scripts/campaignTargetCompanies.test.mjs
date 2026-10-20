@@ -3,6 +3,7 @@
 // Run: node scripts/campaignTargetCompanies.test.mjs
 import {
   addTargetCompany, removeTargetCompany, targetCompanyStatus, campaignHasTargetCompany, campaignTargetCompanies,
+  patchTargetCompany, targetOutreachFor,
 } from '../src/utils/campaignTargetCompanies.js';
 
 let passed = 0, failed = 0;
@@ -65,6 +66,21 @@ check('blank', addTargetCompany(camp, '   ', NOW).status, 'blank');
   c = addTargetCompany(c, 'Globex', NOW).campaign;
   check('remove', campaignTargetCompanies(removeTargetCompany(c, 'acme')).map(t => t.company), ['Globex']);
   check('remove missing is a no-op', campaignTargetCompanies(removeTargetCompany(c, 'Nope')).length, 2);
+}
+
+// Outreach set on a placeholder, carried to the first contact added there.
+{
+  let c = addTargetCompany(camp, 'Globex Inc', NOW).campaign;
+  c = addTargetCompany(c, 'Initech', NOW).campaign;
+  check('no outreach yet', targetOutreachFor(c, 'Globex'), null);
+  c = patchTargetCompany(c, 'globex inc', { outreach: 'hold', holdUntil: '2026-11-03' });
+  check('patched one target', campaignTargetCompanies(c).map(t => t.outreach || ''), ['hold', '']);
+  check('carried over, fuzzy name', targetOutreachFor(c, 'Globex'), { outreach: 'hold', holdUntil: '2026-11-03' });
+  check('other company untouched', targetOutreachFor(c, 'Initech'), null);
+  c = patchTargetCompany(c, 'Initech', { outreach: 'avoid', holdUntil: '' });
+  check('avoid', targetOutreachFor(c, 'Initech'), { outreach: 'avoid', holdUntil: '' });
+  check('blank company', targetOutreachFor(c, ''), null);
+  check('roster untouched by patch', c.contacts, camp.contacts);
 }
 
 check('no targets', targetCompanyStatus(camp), []);
