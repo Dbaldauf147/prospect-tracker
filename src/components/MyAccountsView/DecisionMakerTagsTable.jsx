@@ -120,7 +120,7 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
   const [onScreen, setOnScreen] = useState(null);
   const [zoomOpen, setZoomOpen] = useState(false);
   const [skipSearched, setSkipSearched] = useState(true);
-  const [skipQualifying, setSkipQualifying] = useState(false);
+  const [skipQualifying, setSkipQualifying] = useState(true);
   // The Zoom Search Log, re-read when it changes elsewhere.
   const [zoomLog, setZoomLog] = useState(() => readZoomSearchLog(readWorkKey(ZOOM_SEARCH_LOG_KEY)));
   useEffect(() => {
