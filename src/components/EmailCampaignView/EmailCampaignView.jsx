@@ -44,6 +44,7 @@ import {
 import { contactName } from '../../utils/contactSuggest';
 import { mergeCampaignContacts, adoptedCount, withoutInternalRows, isInternalAddress } from '../../utils/campaignRoster';
 import { addTargetCompany, removeTargetCompany, targetCompanyStatus, campaignTargetCompanies } from '../../utils/campaignTargetCompanies';
+import { buildCampaignTierLookup, tierRank } from '../../utils/campaignTier';
 
 // The contact table's columns, and how wide each one starts.
 //
@@ -63,6 +64,13 @@ const CONTACT_COLUMNS = [
     sortKey: 'company',
     width: 180,
     title: 'The company on the recipient\u2019s HubSpot contact. Where HubSpot has none, the brand read off their email domain stands in, greyed.',
+  },
+  {
+    key: 'tier',
+    label: 'Tier',
+    sortKey: 'tier',
+    width: 90,
+    title: 'The account tier of the company in the Company column, read off the account list the way the Agenda page reads it: the account\u2019s own Tier 1 or Tier 2, else Tier 3 for any other account you cover as CDM. Blank when the company is not one of the accounts.',
   },
   { key: 'sentDate', label: 'Sent Date', sortKey: 'sentDate', width: 110 },
   {
@@ -201,10 +209,24 @@ function NoteCell({ value, onCommit, placeholder }) {
   );
 }
 
+// A Tier cell: the tier as a pill in the colours the HubSpot and upload
+// views give it, a muted dash for none.
+const TIER_TONE = {
+  'Tier 1': { background: '#FEE2E2', color: '#991B1B' },
+  'Tier 2': { background: '#DBEAFE', color: '#1E40AF' },
+  'Tier 3': { background: '#F1F5F9', color: '#334155' },
+};
+function TierBadge({ tier }) {
+  if (!tier) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
+  return (
+    <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '0.68rem', fontWeight: 600, whiteSpace: 'nowrap', ...TIER_TONE[tier] }}>{tier}</span>
+  );
+}
+
 // `openSubject` lets a sibling tab (Email Tracking) ask for a saved campaign
 // to be opened by its subject line; `onOpened` acknowledges the request so
 // the same campaign can be asked for again.
-export function EmailCampaignView({ openSubject, onOpened }) {
+export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = '' }) {
   const { user } = useAuth();
   const [subject, setSubject] = useState('');
   const [loading, setLoading] = useState(false);
@@ -1270,6 +1292,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       // Sorted on what the cell shows, the domain fallback included, so the
       // order on screen matches the column that was clicked.
       case 'company': return companyFor(c).name.toLowerCase();
+      case 'tier': return tierRank(tierFor(companyFor(c).name));
       default: return '';
     }
   }
@@ -1384,6 +1407,10 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     }
     return { name: '', source: 'none' };
   }, [companyByEmail]);
+
+  // A company's account tier (Tier 1, 2 or 3, '' for none), off the
+  // account list. See campaignTier.
+  const tierFor = useMemo(() => buildCampaignTierLookup(prospects, cdmName), [prospects, cdmName]);
 
   // The open campaign's company placeholders, each with the roster rows at
   // that company (read the way the Company column reads them).
@@ -1512,6 +1539,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     const csv = campaignContactsCsv(displayResults, sortedContacts.map(({ c }) => c), {
       deliveryFor: (c) => DELIVERY_LABEL[deliveryFor(c)] || '',
       trackingFor: (c) => lookupTracking(c.email),
+      tierFor: (c) => tierFor(companyFor(c).name),
     });
     downloadCsv(csvFilename(`Email campaign - ${displayResults.title || displayResults.subject || 'untitled'}`), csv);
   }
@@ -1568,6 +1596,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
     switch (key) {
       case 'email': return String(c?.email || '');
       case 'company': return companyFor(c).name;
+      case 'tier': return tierFor(companyFor(c).name);
       case 'sentDate': return c?.sentDate ? fmtDate(c.sentDate) : '';
       case 'followUp': return followUpLabel(c);
       case 'delivery': return DELIVERY_LABEL[deliveryFor(c)] || '';
@@ -1583,7 +1612,7 @@ export function EmailCampaignView({ openSubject, onOpened }) {
       case 'notes': return String(c?.notes || '');
       default: return '';
     }
-  }, [companyFor, deliveryFor, lookupTracking]);
+  }, [companyFor, tierFor, deliveryFor, lookupTracking]);
 
   // Only the columns on screen can be filtered, and a filter left running on
   // a column that has just been hidden is dropped: rows disappearing with no
@@ -1767,6 +1796,8 @@ export function EmailCampaignView({ openSubject, onOpened }) {
           >{name}</span>
         );
       }
+      case 'tier':
+        return <TierBadge tier={tierFor(companyFor(c).name)} />;
       case 'sentDate':
         return <span style={{ color: 'var(--color-text-secondary)' }}>{fmtDate(c.sentDate)}</span>;
       case 'followUp': {
@@ -2941,6 +2972,8 @@ export function EmailCampaignView({ openSubject, onOpened }) {
                             </span>
                           ) : col.key === 'company' ? (
                             <span style={{ color: 'var(--color-text)' }}>{t.company}</span>
+                          ) : col.key === 'tier' ? (
+                            <TierBadge tier={tierFor(t.company)} />
                           ) : (
                             <span style={{ color: 'var(--color-text-muted)' }}>-</span>
                           )}
