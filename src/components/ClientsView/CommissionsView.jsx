@@ -424,18 +424,19 @@ function duplicateIdsFrom(data) {
 // lookup that resolves BFO Name against the cached Opps records).
 // The button in each BFO Name cell that opens the opp picker. On a row
 // with no BFO Name yet it names the best-matching opp, so the suggestion
-// is on screen before anyone clicks; on a linked row it's a small "change".
+// is on screen before anyone clicks. A linked row shows no button: its BFO
+// Name is already set, and double-clicking the name still edits it.
+const SUGGEST_BUTTON_STYLE = {
+  flexShrink: 0, border: '1px solid #BFDBFE', background: '#EFF6FF', color: '#1D4ED8', borderRadius: 4,
+  fontSize: '0.62rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', padding: '1px 6px', lineHeight: 1.4,
+};
+
 function PickOppButton({ row, oppIndex }) {
   const linked = !!String(row[BFO_NAME_KEY] || '').trim();
-  const top = linked ? null : suggestOpps(oppIndex, commissionProjectName(row), { limit: 1 })[0];
+  if (linked) return null;
+  const top = suggestOpps(oppIndex, commissionProjectName(row), { limit: 1 })[0];
   const open = (e) => { e.stopPropagation(); row.__onPickOpp?.(row.id); };
-  const base = {
-    flexShrink: 0, border: '1px solid #BFDBFE', background: '#EFF6FF', color: '#1D4ED8', borderRadius: 4,
-    fontSize: '0.62rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', padding: '1px 6px', lineHeight: 1.4,
-  };
-  if (linked) {
-    return <button type="button" onClick={open} title="Pick a different opp from the Opps tab" style={base}>change</button>;
-  }
+  const base = SUGGEST_BUTTON_STYLE;
   if (!top) {
     return <button type="button" onClick={open} title="No opp name is close to this project: search the Opps tab" style={base}>Pick opp</button>;
   }
@@ -449,6 +450,19 @@ function PickOppButton({ row, oppIndex }) {
   );
 }
 
+// The Account the row's BFO Name points at in Opps, when it differs from
+// the row's own Account Name (blank included); '' when there's nothing to
+// suggest. Drives the per-row "Suggested" button and the mass approval.
+function suggestedAccountFor(oppsCache, row) {
+  const bfo = String(row?.[BFO_NAME_KEY] || '').trim();
+  if (!bfo) return '';
+  const opp = findOppByBfoLink(oppsCache, bfo);
+  const account = opp ? String(opp['Account'] || '').trim() : '';
+  if (!account) return '';
+  const current = String(row?.[ACCOUNT_NAME_KEY] || '').trim();
+  return current.toLowerCase() === account.toLowerCase() ? '' : account;
+}
+
 function buildFrontColumns(oppsCache, oppIndex) {
   return [
     {
@@ -456,14 +470,34 @@ function buildFrontColumns(oppsCache, oppIndex) {
       label: ACCOUNT_NAME_KEY,
       defaultWidth: defaultWidth(ACCOUNT_NAME_KEY),
       sticky: true,
-      render: (row) => (
-        <EditableCell
-          value={row[ACCOUNT_NAME_KEY]}
-          render={plainTextRender}
-          onSave={(v) => row.__onUpdate?.(row.id, ACCOUNT_NAME_KEY, v)}
-          listId={ACCOUNT_NAME_LIST_ID}
-        />
-      ),
+      render: (row) => {
+        const suggested = suggestedAccountFor(oppsCache, row);
+        const hasAccount = !!String(row[ACCOUNT_NAME_KEY] || '').trim();
+        return (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+            {(hasAccount || !suggested) && (
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                <EditableCell
+                  value={row[ACCOUNT_NAME_KEY]}
+                  render={plainTextRender}
+                  onSave={(v) => row.__onUpdate?.(row.id, ACCOUNT_NAME_KEY, v)}
+                  listId={ACCOUNT_NAME_LIST_ID}
+                />
+              </span>
+            )}
+            {suggested && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); row.__onUpdate?.(row.id, ACCOUNT_NAME_KEY, suggested); }}
+                title={hasAccount
+                  ? `The opp for this BFO Name is under "${suggested}" in Opps, not "${row[ACCOUNT_NAME_KEY]}". Click to use "${suggested}".`
+                  : `From the opp this BFO Name points at in Opps. Click to set the Account Name to "${suggested}".`}
+                style={{ ...SUGGEST_BUTTON_STYLE, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: hasAccount ? '60%' : '100%', textAlign: 'left' }}
+              >Suggested: {suggested}</button>
+            )}
+          </span>
+        );
+      },
       exportValue: (row) => row[ACCOUNT_NAME_KEY] ?? '',
     },
     {
@@ -1001,7 +1035,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   // One-line report of what the last paste import did. A merge fills cells
   // scattered through a long table, so without this it's invisible.
   const [pasteNote, setPasteNote] = useState('');
-  // Transient result banner for the "Fill Account Names from BFO" action.
+  // Transient result banner for the "Approve suggested accounts" action.
   const [fillStatus, setFillStatus] = useState('');
   // Cached Opps records, used by the Scope lookup column. Refreshes on
   // mount and when the window regains focus so pasting on the Opps tab
@@ -1471,34 +1505,40 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     setStore({ data: [], source: 'empty' });
   }
 
-  // Populate the Account Name column from each row's BFO Name by resolving
-  // it against the cached Opps records — the same BFO → Opp lookup the
-  // Scope column uses, reading the matched Opp's Account. Only fills rows
-  // whose Account Name is still blank so a manually-entered account is
-  // never overwritten. Reports a short summary of what happened.
-  function fillAccountNamesFromBfo() {
+  // Every row whose BFO Name points at an opp filed under a different
+  // Account (or the row has none yet): the suggestions the Account Name
+  // cells show, which "Approve suggested accounts" applies in one save.
+  const accountSuggestions = useMemo(() => {
+    const out = [];
+    data.forEach((row, i) => {
+      const account = suggestedAccountFor(oppsCache, row);
+      if (account) out.push({ idx: i, account, replaces: String(row[ACCOUNT_NAME_KEY] || '').trim() });
+    });
+    return out;
+  }, [data, oppsCache]);
+
+  function approveAccountSuggestions() {
     if (!oppsCache?.records?.length) {
-      setFillStatus('Opps data isn’t loaded yet: open the Opps tab once so the BFO → Account lookup has data, then try again.');
+      setFillStatus('Opps data isn\u2019t loaded yet: open the Opps tab once so the BFO → Account lookup has data, then try again.');
       return;
     }
-    let filled = 0, alreadySet = 0, noMatch = 0;
-    const next = data.map(row => {
-      const bfo = String(row[BFO_NAME_KEY] || '').trim();
-      if (!bfo) return row;
-      const opp = findOppByBfoLink(oppsCache, bfo);
-      const account = opp ? String(opp['Account'] || '').trim() : '';
-      if (!account) { noMatch++; return row; }
-      if (String(row[ACCOUNT_NAME_KEY] || '').trim()) { alreadySet++; return row; }
-      filled++;
-      return { ...row, [ACCOUNT_NAME_KEY]: account };
-    });
-    if (filled > 0) {
-      try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
-      setStore({ data: next, source: 'override' });
-    }
-    const parts = [`Filled ${filled} account name${filled === 1 ? '' : 's'} from BFO matches`];
-    if (alreadySet > 0) parts.push(`${alreadySet} row${alreadySet === 1 ? '' : 's'} already had an account`);
-    if (noMatch > 0) parts.push(`${noMatch} BFO name${noMatch === 1 ? '' : 's'} had no Opps match`);
+    const n = accountSuggestions.length;
+    if (n === 0) return;
+    const replacing = accountSuggestions.filter(s => s.replaces).length;
+    const blank = n - replacing;
+    const msg = [`Set the Account Name on ${n} row${n === 1 ? '' : 's'} to the Account its BFO Name is linked to in Opps?`];
+    if (blank) msg.push(`${blank} ${blank === 1 ? 'is' : 'are'} blank now.`);
+    if (replacing) msg.push(`${replacing} already ${replacing === 1 ? 'has a different account, which' : 'have a different account, which'} will be replaced.`);
+    if (!window.confirm(msg.join(' '))) return;
+    const byIdx = new Map(accountSuggestions.map(s => [s.idx, s.account]));
+    const stamp = nowStamp();
+    const next = data.map((row, i) => (byIdx.has(i)
+      ? { ...row, [ACCOUNT_NAME_KEY]: byIdx.get(i), [UPDATED_AT_KEY]: stamp }
+      : row));
+    try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
+    setStore({ data: next, source: 'override' });
+    const parts = [`Approved ${n} suggested account${n === 1 ? '' : 's'} from the BFO Name`];
+    if (replacing) parts.push(`${replacing} replaced a different account`);
     setFillStatus(parts.join(' · ') + '.');
   }
 
@@ -1538,10 +1578,13 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           {rows.length > 0 && (
             <button
               type="button"
-              onClick={fillAccountNamesFromBfo}
-              title="Look up each row's BFO Name against the cached Opps records and fill in the matching Opp's Account for any row whose Account Name is still blank."
-              style={{ padding: '0.4rem 0.8rem', border: '1px solid #3B82F6', background: 'white', color: '#2563EB', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-            >Fill Account Names from BFO</button>
+              onClick={approveAccountSuggestions}
+              disabled={accountSuggestions.length === 0}
+              title={accountSuggestions.length === 0
+                ? 'Every row with a BFO Name already carries the Account it is linked to in Opps.'
+                : 'Set every suggested Account Name at once: each row takes the Account its BFO Name is linked to in Opps.'}
+              style={{ padding: '0.4rem 0.8rem', border: '1px solid #3B82F6', background: 'white', color: '#2563EB', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: accountSuggestions.length === 0 ? 'default' : 'pointer', opacity: accountSuggestions.length === 0 ? 0.5 : 1, fontFamily: 'inherit' }}
+            >Approve suggested accounts ({accountSuggestions.length})</button>
           )}
           <button
             type="button"
