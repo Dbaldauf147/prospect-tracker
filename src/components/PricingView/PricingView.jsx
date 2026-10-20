@@ -51,6 +51,7 @@ import { servicesByFeeName } from '../../utils/siaScopeCompare';
 import { getServicePricing, pricingFor, resolvePricingBases } from '../../utils/servicePricing';
 import { rateCardCheck, siaCountsFor, priceCheckCounts, feeUnitCountsFor, componentForFeeUnit, lineFeeCounts, priceCheckCountsWithLines } from '../../utils/serviceRateCheck';
 import { saveOppSourceFile, sourceFileMeta } from '../../utils/oppPricingSourceFile';
+import { priceCheckExcludedIds, setPriceCheckExcluded as nextPriceCheckExcluded } from '../../utils/priceCheckExclusions';
 import {
   loadOptionLinks,
   setOppOptionLink,
@@ -5277,8 +5278,8 @@ export function PricingView({ settings } = {}) {
     // Saved by the line's description (priceCheckExcluded), with the
     // older per-option picks by line id still read.
     const ignoredIds = new Set(opt.priceCheckIgnored?.[want] || []);
-    const ignoredLines = new Set(priceCheckExcluded[want] || []);
-    items.forEach(it => { it.ignored = ignoredIds.has(it.id) || ignoredLines.has(norm(it.description)); });
+    const ignoredLines = priceCheckExcludedIds(items, priceCheckExcluded[want]);
+    items.forEach(it => { it.ignored = ignoredIds.has(it.id) || ignoredLines.has(it.id); });
     // The fee component each cost line was pointed at on the Services
     // subtab, for a rate card that prices a part on more than one.
     // Saved by the line's description, the older per-option picks by id
@@ -5427,18 +5428,20 @@ export function PricingView({ settings } = {}) {
 
   // Leave a cost line out of (or put it back into) one service's price
   // check. Saved by the line's description, so it holds on every option
-  // and on the next SIA that carries the same line.
+  // and on the next SIA that carries the same line; two lines on the
+  // service with the same description are told apart (see
+  // priceCheckExclusions), so ticking one leaves the other alone.
   function setPriceCheckIgnored(serviceName, itemId, ignored) {
     const k = String(serviceName ?? '').trim().toLowerCase();
     const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
-    const item = (opt?.sections || []).flatMap(sec => sec.items || []).find(it => it.id === itemId);
-    const line = String(item?.description ?? '').trim().toLowerCase();
-    if (!k || !line) return;
+    if (!k || !opt) return;
+    const allItems = (opt.sections || []).flatMap(sec => sec.items || []);
+    const items = costItemsForService(allItems, servicesOnOption(opt), serviceName);
     setPriceCheckExcluded(prev => {
-      const lines = new Set(prev[k] || []);
-      if (ignored) lines.add(line); else lines.delete(line);
+      const lines = nextPriceCheckExcluded(items, prev[k], itemId, ignored);
+      if (!lines) return prev;
       const next = { ...prev };
-      if (lines.size) next[k] = [...lines]; else delete next[k];
+      if (lines.length) next[k] = lines; else delete next[k];
       return next;
     });
     // Older picks were kept per option by line id; putting a line back
