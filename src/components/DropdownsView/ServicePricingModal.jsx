@@ -320,9 +320,14 @@ export function ServicePricingModal({
   // also what decides whether the rate card's tracked share counts it.
   explored,
   onToggleExploredCounted,
+  // The service's own fields (common/ServiceDetailPopup's ServiceDetailTab),
+  // shown on a "Service details" tab beside the pricing. Omitted, the panel
+  // is the pricing alone, with no tab strip.
+  detailsTab,
   onClose,
 }) {
   const panelRef = useRef(null);
+  const [tab, setTab] = useState('pricing');
   useEffect(() => { panelRef.current?.focus(); }, []);
   useEffect(() => {
     if (!escapeCloses) return undefined;
@@ -363,6 +368,27 @@ export function ServicePricingModal({
           <button type="button" className={styles.detailClose} onClick={onClose} aria-label="Close">×</button>
         </div>
 
+        {/* Pricing and the service it prices, one panel apart: the fee is
+            read against the SME, timeline and dependencies more often than
+            not, and the Services subtab is a page away. */}
+        {detailsTab && (
+          <div className={styles.pricingModalTabs} role="tablist">
+            {[['pricing', 'Pricing'], ['details', 'Service details']].map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={tab === key}
+                className={tab === key ? styles.subtabActive : styles.subtab}
+                onClick={() => setTab(key)}
+              >{label}</button>
+            ))}
+          </div>
+        )}
+
+        {detailsTab && tab === 'details' ? (
+          <div className={styles.basesBody}>{detailsTab}</div>
+        ) : (
         <div className={styles.basesBody}>
           {/* Said above the grid the mark emptied, because otherwise this
               panel is a screen of blank rate boxes with no reason on it. */}
@@ -433,6 +459,7 @@ export function ServicePricingModal({
               when it was last checked — and a rate outlives the memory of them. */}
           <NotesField value={row.notes} onCommit={(v) => onSaveField('notes', v)} />
         </div>
+        )}
 
         <div className={styles.basesFooter}>
           {/* Only where the scope is actually editable. Opened off the rate

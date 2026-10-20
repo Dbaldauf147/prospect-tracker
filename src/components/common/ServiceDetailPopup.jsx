@@ -11,7 +11,7 @@
 // open it: the fields would take typing and store none of it.
 
 import { useMemo } from 'react';
-import { ServiceDetailModal } from '../DropdownsView/ServiceDetailModal';
+import { ServiceDetailModal, ServiceDetailFields } from '../DropdownsView/ServiceDetailModal';
 import { buildServiceDetail } from '../../utils/serviceDetailProps';
 import { getServiceCategories, moveServiceToBucket } from '../../utils/serviceCategoriesStore';
 import { deleteServiceUpdates } from '../../utils/serviceDelete';
@@ -33,9 +33,72 @@ export function ServiceDetailPopup({
   const detail = useMemo(() => buildServiceDetail(settings, name), [settings, name]);
   const fieldOptions = useMemo(() => serviceFieldOptions(settings), [settings]);
 
-  // Plain functions rather than useCallback, as on the Services subtab: the
-  // popup isn't memoized, so a stable identity buys nothing, and the compiler
-  // reads a `settings?.x` dependency as one it can't verify.
+  const h = serviceDetailHandlers(settings, updateSettings, onClose);
+
+  if (!detail) return null;
+
+  return (
+    <ServiceDetailModal
+      service={detail.service}
+      url={detail.url}
+      hidden={detail.hidden}
+      dependents={detail.dependents}
+      autoAddedBy={detail.autoAddedBy}
+      autoNaedBy={detail.autoNaedBy}
+      options={detail.options}
+      templates={detail.templates}
+      bucket={detail.bucket}
+      bucketOptions={detail.bucketOptions}
+      onSaveBucket={h.onSaveBucket}
+      onSaveField={h.onSaveField}
+      fieldOptions={fieldOptions}
+      onEditFieldOption={h.onEditFieldOption}
+      onSaveUrl={h.onSaveUrl}
+      onToggleHide={h.onToggleHide}
+      // Only offered for a name that is on the list: an unlisted one (typed
+      // straight into a Scope cell) has nothing to delete.
+      onDelete={deleteServiceUpdates(settings, detail.service.name) ? h.onDelete : undefined}
+      onSaveTemplates={h.onSaveTemplates}
+      zIndex={zIndex}
+      onClose={onClose}
+    />
+  );
+}
+
+// The popup's fields as a tab inside another panel: the Services Pricing
+// popup's "Service details". Same derived props, same writes; no overlay,
+// header or footer of its own, since the panel carrying it has those.
+export function ServiceDetailTab({ name, settings, updateSettings }) {
+  const detail = useMemo(() => buildServiceDetail(settings, name), [settings, name]);
+  const fieldOptions = useMemo(() => serviceFieldOptions(settings), [settings]);
+  const h = serviceDetailHandlers(settings, updateSettings);
+  if (!detail) return null;
+  return (
+    <ServiceDetailFields
+      service={detail.service}
+      url={detail.url}
+      dependents={detail.dependents}
+      autoAddedBy={detail.autoAddedBy}
+      autoNaedBy={detail.autoNaedBy}
+      options={detail.options}
+      templates={detail.templates}
+      bucket={detail.bucket}
+      bucketOptions={detail.bucketOptions}
+      onSaveBucket={h.onSaveBucket}
+      onSaveField={h.onSaveField}
+      fieldOptions={fieldOptions}
+      onEditFieldOption={h.onEditFieldOption}
+      onSaveUrl={h.onSaveUrl}
+      onSaveTemplates={h.onSaveTemplates}
+    />
+  );
+}
+
+// The writes behind both, each one a settings key. Plain functions rather
+// than useCallback, as on the Services subtab: neither caller is memoized, so
+// a stable identity buys nothing, and the compiler reads a `settings?.x`
+// dependency as one it can't verify.
+function serviceDetailHandlers(settings, updateSettings, onClose) {
   function onSaveField(service, field, value) {
     const current = (settings?.serviceOverrides && typeof settings.serviceOverrides === 'object')
       ? settings.serviceOverrides
@@ -94,32 +157,8 @@ export function ServiceDetailPopup({
     updateSettings?.({ timelineTemplates: next });
   }
 
-  if (!detail) return null;
-
-  return (
-    <ServiceDetailModal
-      service={detail.service}
-      url={detail.url}
-      hidden={detail.hidden}
-      dependents={detail.dependents}
-      autoAddedBy={detail.autoAddedBy}
-      autoNaedBy={detail.autoNaedBy}
-      options={detail.options}
-      templates={detail.templates}
-      bucket={detail.bucket}
-      bucketOptions={detail.bucketOptions}
-      onSaveBucket={onSaveBucket}
-      onSaveField={onSaveField}
-      fieldOptions={fieldOptions}
-      onEditFieldOption={onEditFieldOption}
-      onSaveUrl={onSaveUrl}
-      onToggleHide={onToggleHide}
-      // Only offered for a name that is on the list: an unlisted one (typed
-      // straight into a Scope cell) has nothing to delete.
-      onDelete={deleteServiceUpdates(settings, detail.service.name) ? onDelete : undefined}
-      onSaveTemplates={onSaveTemplates}
-      zIndex={zIndex}
-      onClose={onClose}
-    />
-  );
+  return {
+    onSaveField, onSaveUrl, onSaveBucket, onToggleHide, onDelete,
+    onEditFieldOption, onSaveTemplates,
+  };
 }
