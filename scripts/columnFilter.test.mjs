@@ -9,7 +9,7 @@
 // with nothing on screen to explain it.
 import {
   suggestionMatches, cellMatches, collectSuggestions, rowMatchesFilters,
-  activeFilterCount, clearFilter, filtersForColumns,
+  activeFilterCount, clearFilter, filtersForColumns, BLANKS_FILTER, NON_BLANKS_FILTER,
 } from '../src/utils/columnFilter.js';
 
 let passed = 0, failed = 0;
@@ -52,6 +52,18 @@ check('a miss is a miss', cellMatches('Replied', 'bounce'), false);
 // Asking for a value must never hand back the rows that have none.
 check('a blank cell fails a set box', cellMatches('', 'acme'), false);
 check('a missing cell fails a set box', cellMatches(undefined, 'acme'), false);
+
+// --- asking for the empty cells --------------------------------------------
+check('(Blanks) keeps an empty cell', cellMatches('', BLANKS_FILTER), true);
+check('(Blanks) keeps a missing cell', cellMatches(undefined, BLANKS_FILTER), true);
+check('(Blanks) keeps a whitespace-only cell', cellMatches('   ', BLANKS_FILTER), true);
+check('(Blanks) drops a filled cell', cellMatches('Acme', BLANKS_FILTER), false);
+check('(Non-blanks) keeps a filled cell', cellMatches('Acme', NON_BLANKS_FILTER), true);
+check('(Non-blanks) drops an empty cell', cellMatches('', NON_BLANKS_FILTER), false);
+check('typed in any case', cellMatches('', ' (blanks) '), true);
+check('half typed is still text', cellMatches('', '(bla'), false);
+check('a blank filter narrows with the others',
+  rowMatchesFilters({ company: 'Acme', country: '' }, { company: 'acme', country: BLANKS_FILTER }), true);
 
 // --- a row against the whole row of boxes ---------------------------------
 const row = { email: 'eric.pan@warburgpincus.com', company: 'Warburg Pincus', status: 'No Reply' };
