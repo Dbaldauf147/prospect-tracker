@@ -87,7 +87,7 @@ check('a replied contact', campaignContactRow({
   '2026-09-01', '2026-09-01', 1, 'No', 'Confirmed', 'Replied',
   1, '2026-09-01 14:05 UTC', '2026-09-01 14:06 UTC',
   'Sam Reed', '2026-09-02', '', '', 'Going',
-  '', '', '',
+  '', '', '', '',
 ]);
 
 // An untracked send leaves the three tracking cells empty. A 0 there would
@@ -117,7 +117,7 @@ check('a scanned-only click has no time', cells(campaignContactRow(
 check('an unsent roster member', campaignContactRow({ email: 'new@acme.com' }, { campaign }), [
   'September market update', 'Power prices, September', 'new@acme.com', '', '', 1,
   '', '', '', '', '', 'Not Sent', '', '', '', '', '', '', '', '',
-  '', '', '',
+  '', '', '', '',
 ]);
 
 // --- hold / avoid / notes -----------------------------------------------
@@ -142,7 +142,7 @@ check('a note with a comma survives', campaignContactsCsv(
   campaign,
   [{ email: 'sam@acme.com', notes: 'Wants pricing, then a call' }],
   { nowMs: NOW_HOLD },
-).split('\r\n')[1].endsWith(',"Wants pricing, then a call"'), true);
+).split('\r\n')[1].endsWith(',"Wants pricing, then a call",'), true);
 
 // --- follow-ups -------------------------------------------------------
 // A contact who has been chased: the count is every email that went to that
@@ -211,6 +211,11 @@ check('several subject lines', campaignContactRow({ email: 'a@x.com' }, {
 // The export goes out with every column whether or not the table is showing
 // it — this is the data, not a screenshot.
 check('every column ships', CAMPAIGN_CONTACT_HEADERS.length, campaignContactRow({}, { campaign }).length);
+// The account tier rides last, read by the view and handed in.
+check('tier column', cells(campaignContactRow({ email: 'a@x.com' }, { campaign, tier: 'Tier 2' }), 'Tier'), ['Tier 2']);
+check('no tier is blank', cells(campaignContactRow({ email: 'a@x.com' }, { campaign }), 'Tier'), ['']);
+check('csv passes tierFor through',
+  campaignContactsCsv(campaign, [{ email: 'a@x.com' }], { tierFor: () => 'Tier 1' }).split('\n')[1].endsWith(',Tier 1'), true);
 
 // --- the saved-campaign summary --------------------------------------
 const NOW = Date.parse('2026-09-08T12:00:00Z');

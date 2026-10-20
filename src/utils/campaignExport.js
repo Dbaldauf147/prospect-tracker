@@ -71,6 +71,7 @@ export const CAMPAIGN_CONTACT_HEADERS = [
   // Last, so every column that was here keeps its place — anybody's saved
   // spreadsheet formula reads these by position.
   'Outreach', 'Hold Until', 'Notes',
+  'Tier',
 ];
 
 /**
@@ -95,7 +96,7 @@ export const CAMPAIGN_CONTACT_HEADERS = [
  * security gateway's link scan carries a time but counts zero — on screen a
  * tooltip explains that, in a spreadsheet it just reads as a contradiction.
  */
-export function campaignContactRow(c, { campaign = {}, delivery = '', tracking = null, nowMs = Date.now() } = {}) {
+export function campaignContactRow(c, { campaign = {}, delivery = '', tracking = null, tier = '', nowMs = Date.now() } = {}) {
   const followUp = followUpInfo(c);
   return [
     campaignOutreachLabel(campaign),
@@ -132,6 +133,9 @@ export function campaignContactRow(c, { campaign = {}, delivery = '', tracking =
     contactOutreachLabel(c, nowMs),
     contactOutreach(c, nowMs) === 'hold' ? csvDate(c?.holdUntil) : '',
     c?.notes || '',
+    // The account tier the view read off the account list (see
+    // campaignTier); passed in, since the list has no business in here.
+    tier || '',
   ];
 }
 
@@ -143,11 +147,12 @@ export function campaignContactRow(c, { campaign = {}, delivery = '', tracking =
  * you get — while every column comes along regardless of which ones are
  * hidden: this is the data, not a screenshot.
  */
-export function campaignContactsCsv(campaign, contacts, { deliveryFor, trackingFor, nowMs = Date.now() } = {}) {
+export function campaignContactsCsv(campaign, contacts, { deliveryFor, trackingFor, tierFor, nowMs = Date.now() } = {}) {
   const rows = (contacts || []).map(c => campaignContactRow(c, {
     campaign: campaign || {},
     delivery: deliveryFor ? deliveryFor(c) : '',
     tracking: trackingFor ? trackingFor(c) : null,
+    tier: tierFor ? tierFor(c) : '',
     nowMs,
   }));
   return toCsv(CAMPAIGN_CONTACT_HEADERS, rows);
