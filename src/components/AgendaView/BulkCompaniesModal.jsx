@@ -42,22 +42,118 @@ function cellText(c, key) {
   return c[key] || '';
 }
 
-export function BulkCompaniesModal({ companies, rowCount, onClose, onOpenCompany, onRemoveContacts }) {
+// The colour each Bulk Add status reads in, matching the grid's groups.
+const STATUS_TONES = {
+  'New':            ['#1D4ED8', '#DBEAFE'],
+  'Update pending': ['#92400E', '#FEF3C7'],
+  'In HubSpot':     ['#475569', '#F1F5F9'],
+  'Added':          ['#15803D', '#DCFCE7'],
+  'Updated':        ['#15803D', '#DCFCE7'],
+  'Error':          ['#B91C1C', '#FEE2E2'],
+};
+
+// One company's Bulk Add rows, opened from its Contacts count. Each row's
+// x takes that contact out of the batch, the same as the grid's x.
+function CompanyContactsModal({ company, statusOf, onClose, onRemove }) {
+  const th = { textAlign: 'left', padding: '0.45rem 0.6rem', fontSize: '0.68rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em', background: '#F8FAFC', borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 0, whiteSpace: 'nowrap' };
+  const td = { padding: '0.4rem 0.6rem', fontSize: '0.78rem', borderBottom: '1px solid #F1F5F9', verticalAlign: 'middle' };
+  const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
+  const sorted = [...company.rows].sort((a, b) =>
+    `${a.lastname || ''} ${a.firstname || ''} ${a.email}`.localeCompare(`${b.lastname || ''} ${b.firstname || ''} ${b.email}`));
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1110, padding: '2rem' }}
+      onClick={(e) => { e.stopPropagation(); onClose(); }}
+    >
+      <div
+        style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', width: 'min(1200px, 100%)', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>
+              {company.name || 'No company'}: {company.count} contact{company.count === 1 ? '' : 's'} in this batch
+            </div>
+            <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '0.25rem' }}>
+              Only this company&apos;s rows in Bulk Add Contacts. The x takes a contact out of the batch; nothing in HubSpot changes.
+            </div>
+          </div>
+          <button type="button" onClick={onClose} title="Back to companies" style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '1.2rem', padding: 0, lineHeight: 1 }}>×</button>
+        </div>
+        <div style={{ overflow: 'auto', minHeight: 0 }}>
+          <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
+            <thead>
+              <tr>
+                <th style={th}>Name</th>
+                <th style={th}>Email</th>
+                <th style={th}>Job title</th>
+                <th style={th}>Status</th>
+                <th style={th}>Location</th>
+                <th style={{ ...th, width: 36 }} />
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map(r => {
+                const name = [r.firstname, r.lastname].filter(Boolean).join(' ');
+                const location = [r.city, r.state, r.country].map(v => String(v || '').trim()).filter(Boolean).join(', ');
+                const status = statusOf ? statusOf(r) : '';
+                const [fg, bg] = STATUS_TONES[status] || ['#475569', '#F1F5F9'];
+                return (
+                  <tr key={r.email}>
+                    <td style={{ ...td, fontWeight: 600 }}>{name || blank}</td>
+                    <td style={{ ...td, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.74rem' }}>{r.email}</td>
+                    <td style={td}>{r.jobtitle || blank}</td>
+                    <td style={td}>
+                      {status ? <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '1px 8px', borderRadius: 999, color: fg, background: bg, whiteSpace: 'nowrap' }}>{status}</span> : blank}
+                    </td>
+                    <td style={td}>{location || blank}</td>
+                    <td style={{ ...td, textAlign: 'center' }}>
+                      <button
+                        type="button"
+                        onClick={() => onRemove([r.email])}
+                        title="Remove this contact from the batch"
+                        style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '0.95rem', padding: '0 4px', lineHeight: 1 }}
+                        onMouseEnter={e => { e.currentTarget.style.color = '#DC2626'; }}
+                        onMouseLeave={e => { e.currentTarget.style.color = '#94A3B8'; }}
+                      >×</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function BulkCompaniesModal({ companies, rowCount, onClose, onOpenCompany, onRemoveContacts, statusOf }) {
   const [widths, setWidths] = useState(() => loadJson(WIDTHS_KEY, {}));
   const [hidden, setHidden] = useState(() => new Set(loadJson(HIDDEN_KEY, [])));
   const [filters, setFilters] = useState({});
   const [selected, setSelected] = useState(() => new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
+  // The company whose contacts are open on top, by key. Looked up in the
+  // live list, so removing its last contact closes it.
+  const [drillKey, setDrillKey] = useState(null);
+  const drillCompany = drillKey ? companies.find(c => c.key === drillKey) : null;
   const pickerRef = useRef(null);
 
   useEffect(() => { saveJson(WIDTHS_KEY, widths); }, [widths]);
   useEffect(() => { saveJson(HIDDEN_KEY, [...hidden]); }, [hidden]);
 
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    // With a company's contacts open on top, Escape steps back to the
+    // companies rather than shutting both.
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      if (drillCompany) setDrillKey(null);
+      else onClose();
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, drillCompany]);
 
   useEffect(() => {
     if (!pickerOpen) return;
@@ -172,7 +268,14 @@ export function BulkCompaniesModal({ companies, rowCount, onClose, onOpenCompany
         const color = STATUS_COLORS[c.status];
         return <span style={{ fontSize: '0.7rem', fontWeight: 600, padding: '1px 8px', borderRadius: 999, color: color || '#475569', background: color ? `${color}1A` : '#F1F5F9' }}>{c.status}</span>;
       }
-      case 'count': return c.count;
+      case 'count': return (
+        <button
+          type="button"
+          onClick={() => setDrillKey(c.key)}
+          title={`Show the ${c.count} Bulk Add contact${c.count === 1 ? '' : 's'} at ${c.name || 'no company'}`}
+          style={{ background: 'none', border: 'none', padding: 0, color: 'var(--color-accent)', fontWeight: 600, fontSize: 'inherit', cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline', textUnderlineOffset: 2 }}
+        >{c.count}</button>
+      );
       default: return c[col.key] ? <span title={c[col.key]}>{c[col.key]}</span> : blank;
     }
   }
@@ -328,6 +431,14 @@ export function BulkCompaniesModal({ companies, rowCount, onClose, onOpenCompany
           </table>
         </div>
       </div>
+      {drillCompany && (
+        <CompanyContactsModal
+          company={drillCompany}
+          statusOf={statusOf}
+          onClose={() => setDrillKey(null)}
+          onRemove={onRemoveContacts}
+        />
+      )}
     </div>
   );
 }
