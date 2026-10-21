@@ -28,6 +28,9 @@ import { formatMoney, formatMoneyRange } from '../../utils/servicePricing';
 
 const MISSING_ANY = '__any';
 
+// The Biggest Deal's service, and any priced in with it.
+const dealServiceLabel = (deal) => `${deal.name}${deal.adds?.length ? ` + ${deal.adds.join(', ')}` : ''}`;
+
 // A blank field the company isn't owed (a Zoom field on a company excluded
 // from ZoomInfo) is not missing.
 const isMissing = (row, f) => row[f.key] === null && !fieldNotNeeded(f, row);
@@ -164,6 +167,18 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
             style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}
           >{formatMoney(dealMid(row.deal))}</span>
         )
+        : <span style={{ color: '#94A3B8' }} title="Nothing still open on this company can be priced">-</span>),
+    },
+    {
+      // The service the Avg Biggest Deal figure is for, plus any services
+      // priced in with it.
+      key: 'dealService', label: 'Biggest Deal Service', defaultWidth: 200,
+      headerTitle: 'The service behind the Avg Biggest Deal figure, with any services priced in alongside it.',
+      getSortValue: (row) => (row.deal ? dealServiceLabel(row.deal).toLowerCase() : null),
+      getFilterValue: (row) => (row.deal ? dealServiceLabel(row.deal) : ''),
+      exportValue: (row) => (row.deal ? dealServiceLabel(row.deal) : ''),
+      render: (row) => (row.deal
+        ? <span title={dealServiceLabel(row.deal)}>{dealServiceLabel(row.deal)}</span>
         : <span style={{ color: '#94A3B8' }} title="Nothing still open on this company can be priced">-</span>),
     },
     {
