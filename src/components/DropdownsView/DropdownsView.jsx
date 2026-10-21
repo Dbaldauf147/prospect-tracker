@@ -21,6 +21,7 @@ import { QuestionsTab } from './QuestionsTab';
 import { CoaItemsTab } from './CoaItemsTab';
 import { loadCoaItemOptions, COA_ITEM_OPTIONS_EVENT } from '../../utils/coaItemOptions';
 import { ServicesPricingTab } from './ServicesPricingTab';
+import { ServicePricingHistoryTab } from './ServicePricingHistoryTab';
 import { buildServiceRows } from '../../utils/serviceRows';
 import { TimelinesTab } from './TimelinesTab';
 import ServiceBucketsPanel from './ServiceBucketsPanel';
@@ -1808,6 +1809,11 @@ export function DropdownsView({ settings, updateSettings }) {
         >Services Pricing <span className={styles.subtabCount}>{pricingServiceRows.length}</span></button>
         <button
           type="button"
+          className={activeTab === 'pricingHistory' ? styles.subtabActive : styles.subtab}
+          onClick={() => setActiveTab('pricingHistory')}
+        >Service Pricing History</button>
+        <button
+          type="button"
           className={activeTab === 'timelines' ? styles.subtabActive : styles.subtab}
           onClick={() => setActiveTab('timelines')}
         >Timelines <span className={styles.subtabCount}>{timelineCount}</span></button>
@@ -2079,6 +2085,8 @@ export function DropdownsView({ settings, updateSettings }) {
           // the deal open next door, but only that tab edits it.
           scenario={pricingScenario}
         />
+      ) : activeTab === 'pricingHistory' ? (
+        <ServicePricingHistoryTab settings={settings} />
       ) : activeTab === 'timelines' ? (
         <TimelinesTab settings={settings} updateSettings={updateSettings} serviceOptions={serviceRows.map(r => r.name)} />
       ) : activeTab === 'coa' ? (
