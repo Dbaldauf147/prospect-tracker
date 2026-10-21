@@ -3164,15 +3164,17 @@ export function PricingView({ settings } = {}) {
   // (1-based). Setup / One Time charges land in the year containing
   // their start month. Recurring (monthly) bills every month from
   // startMonth through termMonths, escalated each year.
-  function altFeeYearRevenue(row, yearIndex) {
+  // `forOpt`: the row is on another option than the active one (see
+  // autoFeePerUnitFor).
+  function altFeeYearRevenue(row, yearIndex, forOpt = null) {
     const manualFee = Number(row.fee);
     const hasManualFee = row.fee != null && row.fee !== '' && Number.isFinite(manualFee) && manualFee >= 0;
-    const fee = hasManualFee ? manualFee : (autoFeePerUnitFor(row) ?? 0);
+    const fee = hasManualFee ? manualFee : (autoFeePerUnitFor(row, forOpt) ?? 0);
     const uc = Number(row.unitCount);
     if (!Number.isFinite(fee) || fee <= 0 || !Number.isFinite(uc) || uc <= 0) return 0;
     const manualSm = Number(row.startMonth);
     const hasManualSm = row.startMonth != null && row.startMonth !== '' && Number.isFinite(manualSm) && manualSm > 0;
-    const startMonth = Math.max(1, Math.round(hasManualSm ? manualSm : (autoStartMonthFor(row) || 1)));
+    const startMonth = Math.max(1, Math.round(hasManualSm ? manualSm : (autoStartMonthFor(row, forOpt) || 1)));
     const yearStart = (yearIndex - 1) * 12 + 1;
     const yearEnd = yearIndex * 12;
     const isRecurring = /recurring/i.test(row.type || '');
@@ -3199,12 +3201,12 @@ export function PricingView({ settings } = {}) {
 
   // The month an alt-fee row starts billing: its own typed value, else the
   // derived one (the fee's saved default, else the linked CTS rows).
-  function altFeeRowStartMonth(row) {
+  function altFeeRowStartMonth(row, forOpt = null) {
     const manual = Number(row?.startMonth);
     if (row?.startMonth != null && row.startMonth !== '' && Number.isFinite(manual) && manual > 0) {
       return Math.max(1, Math.round(manual));
     }
-    return Math.max(1, Math.round(autoStartMonthFor(row) || 1));
+    return Math.max(1, Math.round(autoStartMonthFor(row, forOpt) || 1));
   }
 
   // Per-unit fee auto-computed from the marked-up prices of CTS rows
@@ -3275,7 +3277,7 @@ export function PricingView({ settings } = {}) {
       const perUnit = recurringFeePerUnit({
         recurringCosts,
         rolledCosts,
-        feeStartMonth: altFeeRowStartMonth(row),
+        feeStartMonth: altFeeRowStartMonth(row, forOpt),
         annualEscalator,
         costEscalator,
         termMonths,
@@ -3295,7 +3297,7 @@ export function PricingView({ settings } = {}) {
   // month of the upfront CTS lines and a Recurring row picks up the
   // monthly ones. Returns null if no linked rows carry a usable start
   // month.
-  function autoStartMonthFor(row) {
+  function autoStartMonthFor(row, forOpt = null) {
     const target = feeDefaultKey(row?.altItem);
     if (!target) return null;
     // A Fee Start Month saved for this fee on the Linked To page speaks for
@@ -3304,7 +3306,7 @@ export function PricingView({ settings } = {}) {
     const defSm = Number(feeDefaults[target]?.startMonth);
     if (Number.isFinite(defSm) && defSm > 0) return Math.round(defSm);
     if (!workbook) return null;
-    const opt = workbook.options.find(o => o.optionNumber === activeOption);
+    const opt = forOpt || workbook.options.find(o => o.optionNumber === activeOption);
     if (!opt) return null;
     const rowType = String(row?.type || '').trim();
     const isRecurringRow = /recurring/i.test(rowType);
@@ -4539,9 +4541,9 @@ export function PricingView({ settings } = {}) {
     const { numYears, costByYear, passThroughByYear, passFeeCostByYear } = optionCostBreakdown(opt, scheduleRows, feeNameOverrides);
     const rows = scheduleRows || (opt ? (altFees[opt.optionNumber] || []) : []);
     const feeByYear = Array.from({ length: numYears }, (_, i) =>
-      rows.reduce((s, r) => s + altFeeYearRevenue(r, i + 1), 0));
+      rows.reduce((s, r) => s + altFeeYearRevenue(r, i + 1, opt), 0));
     const altPassByYear = Array.from({ length: numYears }, (_, i) =>
-      rows.reduce((s, r) => (r.passThrough ? s + altFeeYearRevenue(r, i + 1) : s), 0));
+      rows.reduce((s, r) => (r.passThrough ? s + altFeeYearRevenue(r, i + 1, opt) : s), 0));
     const hasCost = costByYear.some(v => v > 0);
     if (!hasCost) {
       return { marginByYear: null, finalMargin: null, termRevenue: null, termCost: null };
@@ -5163,8 +5165,11 @@ export function PricingView({ settings } = {}) {
   // `structureOverride`: the fee structure the price check's fee
   // components follow, when not the service's standard one (the one open
   // on the Services subtab).
-  function serviceDetailFor(serviceName, structureOverride = null) {
-    const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
+  //
+  // `forOpt`: read the service off another option than the active one
+  // (the Fee Builder's Draft email builds every option).
+  function serviceDetailFor(serviceName, structureOverride = null, forOpt = null) {
+    const opt = forOpt || workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
     if (!opt) return { items: [], fees: [] };
     const norm = (v) => String(v ?? '').trim().toLowerCase();
     const want = norm(serviceName);
@@ -5244,7 +5249,7 @@ export function PricingView({ settings } = {}) {
     const view = (row, onSchedule) => {
       const manual = Number(row.fee);
       const feeIsManual = row.fee != null && row.fee !== '' && Number.isFinite(manual) && manual >= 0;
-      const auto = feeIsManual ? null : autoFeePerUnitFor(row);
+      const auto = feeIsManual ? null : autoFeePerUnitFor(row, opt);
       const margin = typeof row.feeGmPct === 'number' ? row.feeGmPct : (altFeeMarginFor(row.altItem)?.marginPct ?? null);
       return {
         name: row.altItem,
@@ -5256,8 +5261,8 @@ export function PricingView({ settings } = {}) {
         manualGmPct: typeof row.feeGmPct === 'number' ? row.feeGmPct : null,
         unit: row.unit || '',
         unitCount: row.unitCount === '' || row.unitCount == null ? '' : row.unitCount,
-        startMonth: altFeeRowStartMonth(row),
-        years: Array.from({ length: numYears }, (_, yi) => altFeeYearRevenue(row, yi + 1)),
+        startMonth: altFeeRowStartMonth(row, opt),
+        years: Array.from({ length: numYears }, (_, yi) => altFeeYearRevenue(row, yi + 1, opt)),
         gmPct: margin,
         passThrough: row.passThrough === true,
         sharedWith: (byFee.get(norm(row.altItem)) || []).filter(x => norm(x) !== want),
@@ -5832,19 +5837,28 @@ export function PricingView({ settings } = {}) {
   // structure of every service, as the Services subtab's Apply would write
   // each one (blank fees filled with the standard fee, the service's
   // current fee rows replaced), plus the option's totals before and after.
-  function feeBuilderPlan() {
-    const opt = workbook?.options?.find(o => o.optionNumber === activeOption) || workbook?.options?.[0];
+  //
+  // `optionNumber`: plan another option than the active one, from its own
+  // picks, scope and cost lines (the Draft email fills every option).
+  function feeBuilderPlan(optionNumber = activeOption) {
+    const opt = workbook?.options?.find(o => o.optionNumber === optionNumber) || workbook?.options?.[0];
     if (!opt) return null;
+    const isActive = opt.optionNumber === activeOption;
+    const serviceList = isActive ? pricingServiceList : buildPricingServiceList({
+      serviceRows: buildServiceRows(settings),
+      hiddenServices: settings?.hiddenServices || [],
+      scopeServices: pricingOptionServices[opt.sheetName] || [],
+    });
     const numYears = Math.max(1, Math.ceil(termMonths / 12));
     const sia = siaCountsFor(workbook, opt);
     const picks = [];
     const services = [];
-    for (const svc of pricingServiceList) {
+    for (const svc of serviceList) {
       const k = serviceKey(svc.name);
       const saved = serviceFeeStructures[k];
       if (!svc.inScope && !(saved?.structures?.length)) continue;
       const structure = feeBuilderPickFor(svc, opt.optionNumber);
-      const detail = serviceDetailFor(svc.name);
+      const detail = serviceDetailFor(svc.name, null, opt);
       const costCts = detail.items.reduce((s, it) => s + (typeof it.cts === 'number' ? it.cts : 0), 0);
       services.push({
         name: svc.name,
@@ -5865,7 +5879,7 @@ export function PricingView({ settings } = {}) {
         accountCount: svcCounts.accountCount ?? opt.accountCount,
         kwhCount: svcCounts.kwhCount,
         dthCount: svcCounts.dthCount,
-        startMonthFor: autoStartMonthFor,
+        startMonthFor: (r) => autoStartMonthFor(r, opt),
         feeEscalator: annualEscalator,
         costEscalator,
       });
@@ -5923,7 +5937,7 @@ export function PricingView({ settings } = {}) {
       const unitsTyped = typeof u === 'number' && Number.isFinite(u) && u > 0 && Number(r.unitCount) !== u;
       if (unitsTyped) {
         const hasFee = next.fee !== '' && next.fee != null && Number.isFinite(Number(next.fee));
-        const pinned = hasFee ? null : autoFeePerUnitFor(next);
+        const pinned = hasFee ? null : autoFeePerUnitFor(next, opt);
         next = { ...next, unitCount: u, ...(typeof pinned === 'number' ? { fee: pinned } : {}) };
       }
       if (next !== r) {
@@ -5940,7 +5954,7 @@ export function PricingView({ settings } = {}) {
     // carries costIds), so the exports can compare the two.
     const itemById = new Map();
     for (const sec of opt.sections || []) for (const item of sec.items || []) itemById.set(item.id, item);
-    const termOf = (r) => Array.from({ length: numYears }, (_, yi) => altFeeYearRevenue(r, yi + 1)).reduce((a, b) => a + b, 0);
+    const termOf = (r) => Array.from({ length: numYears }, (_, yi) => altFeeYearRevenue(r, yi + 1, opt)).reduce((a, b) => a + b, 0);
     const rowsOf = (list) => {
       const claimed = new Set(list.flatMap(r => r.costIds || []));
       const nameCost = new Map();
@@ -5969,14 +5983,14 @@ export function PricingView({ settings } = {}) {
       .map(r => {
         const manual = Number(r.fee);
         const feeIsManual = r.fee != null && r.fee !== '' && Number.isFinite(manual) && manual >= 0;
-        const auto = feeIsManual ? null : autoFeePerUnitFor(r);
-        const years = Array.from({ length: numYears }, (_, yi) => altFeeYearRevenue(r, yi + 1));
+        const auto = feeIsManual ? null : autoFeePerUnitFor(r, opt);
+        const years = Array.from({ length: numYears }, (_, yi) => altFeeYearRevenue(r, yi + 1, opt));
         const typedAt = rowKeyOf.get(r);
         const builtFee = (() => {
           if (!typedAt?.overridden) return null;
           const f = Number(typedAt.src.fee);
           if (typedAt.src.fee != null && typedAt.src.fee !== '' && Number.isFinite(f) && f >= 0) return f;
-          const au = autoFeePerUnitFor(typedAt.src);
+          const au = autoFeePerUnitFor(typedAt.src, opt);
           return typeof au === 'number' ? au : null;
         })();
         return {
@@ -5989,7 +6003,7 @@ export function PricingView({ settings } = {}) {
           } : {}),
           unit: r.unit || '',
           unitCount: r.unitCount,
-          startMonth: altFeeRowStartMonth(r),
+          startMonth: altFeeRowStartMonth(r, opt),
           passThrough: r.passThrough === true,
           years,
           term: years.reduce((a, b) => a + b, 0),
@@ -6044,7 +6058,7 @@ export function PricingView({ settings } = {}) {
     });
     const totals = (list, nameOverrides) => {
       const { costByYear } = optionCostBreakdown(opt, list, nameOverrides);
-      const feeByYear = Array.from({ length: numYears }, (_, yi) => list.reduce((s, r) => s + altFeeYearRevenue(r, yi + 1), 0));
+      const feeByYear = Array.from({ length: numYears }, (_, yi) => list.reduce((s, r) => s + altFeeYearRevenue(r, yi + 1, opt), 0));
       return { feeByYear, costByYear, margin: dealMarginForOption(opt, list, nameOverrides) };
     };
     return {
@@ -6066,12 +6080,16 @@ export function PricingView({ settings } = {}) {
   }
 
   // The options the Fee Builder's Draft email fills besides the one being
-  // built, read off their Alternative Fee schedules as saved: services,
-  // fee rows and Deal margin, with the slot each takes among the
-  // workbook's options (see buildFeeEmail).
+  // built, each as the Fee Builder would build it from its own picks (the
+  // same plan its option tab shows), with the slot each takes among the
+  // workbook's options (see buildFeeEmail). An option the picks build no
+  // fees on is read off its Alternative Fee schedule as saved: services,
+  // fee rows and Deal margin.
   function marginEmailOtherOptions(skipOptionNumber) {
     return (workbook?.options || []).map((opt, idx) => {
       if (opt.optionNumber === skipOptionNumber) return null;
+      const plan = feeBuilderPlan(opt.optionNumber);
+      if (plan?.rows?.some(r => String(r?.name || '').trim())) return { slot: idx + 1, plan };
       const rows = (altFees[opt.optionNumber] || [])
         .filter(r => String(r?.altItem || '').trim())
         .map(r => {
