@@ -17,12 +17,14 @@ import { findTagRecord, tagKey, tagStateFrom } from './contactTagReview.js';
 // over; the rest live in dmSearchSteps, keyed by bucket then step.
 // 'zoomFailed' kept its key when it became "Zoom search ran", so old ticks
 // still count; it is also done, tick or not, once a Zoom title search is
-// logged for that category (Bulk Add > Zoom Search Log).
+// logged for that category (Bulk Add > Zoom Search Log). Likewise 'manual'
+// and 'manualFailed' kept their keys when they became Google search and
+// LinkedIn search.
 export const DM_STEPS = [
   { key: 'zoom',         label: 'No DM, but company Zoom ID' },
   { key: 'zoomFailed',   label: 'Zoom search ran' },
-  { key: 'manual',       label: 'Manual search' },
-  { key: 'manualFailed', label: "Manual search didn't work" },
+  { key: 'manual',       label: 'Google search' },
+  { key: 'manualFailed', label: 'LinkedIn search' },
   { key: 'closeOut',     label: 'Close out' },
 ];
 
