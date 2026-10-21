@@ -85,6 +85,51 @@ function TextField({ label, value, placeholder, onCommit }) {
   );
 }
 
+// The popup's title, editable in place: click the name, type, Enter (or
+// click away) to rename the service everywhere it is stored. Escape puts the
+// name back without closing the popup. A blank name is refused by snapping
+// back, since a service has to be called something.
+function TitleField({ value, onCommit }) {
+  const [draft, setDraft] = useState(value || '');
+  const [seen, setSeen] = useState(value || '');
+  // Re-sync when the name changes under us (the rename landing, or another
+  // device's), adjusted during render as TextField does.
+  if ((value || '') !== seen) {
+    setSeen(value || '');
+    setDraft(value || '');
+  }
+
+  function commit() {
+    const trimmed = draft.trim();
+    if (!trimmed || trimmed === (value || '')) { setDraft(value || ''); return; }
+    // The parent may decline (a name that's taken, then cancelled), in which
+    // case the old name comes back.
+    if (onCommit(trimmed) === false) setDraft(value || '');
+  }
+
+  return (
+    <input
+      type="text"
+      className={`${styles.detailTitle} ${styles.detailTitleInput}`}
+      value={draft}
+      title="Click to rename this service"
+      aria-label="Service name"
+      onChange={e => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => {
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          setDraft(value || '');
+          // Blurring commits, so put the old name back first.
+          setTimeout(() => e.target.blur(), 0);
+        }
+      }}
+    />
+  );
+}
+
 // Notes. A rich-text box spanning the grid: bold, italic, underline,
 // strike, lists and links through Quill, the same editor the opportunity
 // notes use. It commits when focus leaves the whole box (toolbar included,
@@ -1445,6 +1490,9 @@ function LinkField({ name, url, onSaveUrl }) {
  *                 BFO Tag, Region, Years, Service Type, Product Line, SME, KTM
  *   onSaveUrl   - (name, url) => void
  *   onToggleHide- (name) => void
+ *   onRename    - (from, to) => boolean, optional; renames the service
+ *                 everywhere its name is stored. Returns false when it
+ *                 didn't happen. Omitted, the title is plain text
  *   onSaveTemplates - (next) => void, the Timelines tab's own save path
  *   onOpenTimelines - (templateId) => void, optional; hands the user to the
  *                 full stage table for dates, format and marker artwork
@@ -1482,6 +1530,7 @@ export function ServiceDetailModal({
   onEditFieldOption,
   onSaveUrl,
   onToggleHide,
+  onRename,
   // { counted, retired }: whether the service counts toward a company's %
   // of services explored (serviceExploredState), and the switch for it.
   // Omitted, there is no button.
@@ -1532,7 +1581,9 @@ export function ServiceDetailModal({
       >
         <div className={styles.detailHeader}>
           <div className={styles.detailTitleWrap}>
-            <h3 className={styles.detailTitle} title={name}>{name}</h3>
+            {onRename
+              ? <TitleField value={name} onCommit={(to) => onRename(name, to)} />
+              : <h3 className={styles.detailTitle} title={name}>{name}</h3>}
             <div className={styles.detailBadges}>
               {meta?.graveyard && (
                 <span className={styles.detailBadgeMuted} title="Retired in the seed catalog">Retired</span>

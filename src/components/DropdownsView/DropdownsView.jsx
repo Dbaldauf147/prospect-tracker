@@ -5,8 +5,6 @@ import { rolloutWeeks } from '../../data/serviceCatalog';
 import {
   getServiceCategories,
   moveServiceToBucket,
-  pruneServicesFromCategories,
-  renameServiceInCategories,
   UNGROUPED_SERVICES,
   renameBucketCounted,
   serviceExploredState,
@@ -26,9 +24,7 @@ import { buildServiceRows } from '../../utils/serviceRows';
 import { TimelinesTab } from './TimelinesTab';
 import ServiceBucketsPanel from './ServiceBucketsPanel';
 import { getTimelineTemplates } from '../../utils/timelineTemplatesStore';
-import { getServicePricing, renameServicePricing, isGraveyardBucket } from '../../utils/servicePricing';
-import { LIBRARY_KEY, getTreeLibrary, hasSavedTrees, renameServiceInLibrary } from '../../utils/treeLibrary';
-import { SERVICE_RENAME_LOG_KEY, serviceRenameLogEntry } from '../../utils/serviceNameMerges';
+import { isGraveyardBucket } from '../../utils/servicePricing';
 import { loadPricingEstimate } from '../../utils/pricingEstimateStore';
 import { parseServiceRefs, formatServiceRef } from '../../utils/serviceStepDeps';
 import { DataTable } from '../common/DataTable';
@@ -42,6 +38,7 @@ import { splitServiceNames } from '../../utils/serviceNameList';
 import { splitPastedCells, newOptionsFromPaste } from '../../utils/pasteOptions';
 import { notesPlainText } from '../../utils/richNotes';
 import { deleteServiceUpdates } from '../../utils/serviceDelete';
+import { solutionsListUpdates, renameServiceFromPopup } from '../../utils/serviceRename';
 import styles from './DropdownsView.module.css';
 
 // Key the Services table's column prefs (widths, visibility, order) are
@@ -1656,50 +1653,11 @@ export function DropdownsView({ settings, updateSettings }) {
   // preserved (the user explicitly emptied it).
   function saveList(key, options, edit) {
     const current = settings?.dropdownLists || {};
-    const updates = { dropdownLists: { ...current, [key]: options } };
-    // Solutions is served unioned with the services board (see
-    // mergeBoardServices), so a name taken off this list has to leave its box
-    // as well — otherwise the union files it straight back and the delete
-    // reads as broken. A rename is the same story with the old name.
-    if (key === 'solutions') {
-      let categories = getServiceCategories(settings);
-      let moved = false;
-      if (edit?.renamedFrom && edit?.renamedTo && edit.renamedFrom !== edit.renamedTo) {
-        const renamed = renameServiceInCategories(categories, edit.renamedFrom, edit.renamedTo);
-        if (renamed) { categories = renamed; moved = true; }
-      }
-      const pruned = pruneServicesFromCategories(categories, options);
-      if (pruned) { categories = pruned; moved = true; }
-      if (moved) updates.customServiceCategories = categories;
-      // The rate card is keyed by service name, so a rename has to take the
-      // price with it — otherwise renaming a service silently un-prices it.
-      if (edit?.renamedFrom && edit?.renamedTo) {
-        const repriced = renameServicePricing(getServicePricing(settings), edit.renamedFrom, edit.renamedTo);
-        if (repriced) updates.servicePricing = repriced;
-        // Same story for the steps of the Efficiency Decision Tree tagged
-        // with the service: the tag is the name, so without this a rename
-        // leaves every step pointing at a service nothing lists. Every tree
-        // on that page, not just the open one — a subtab nobody has looked
-        // at this month is exactly where a stale tag would sit unnoticed.
-        // Only written when a step somewhere actually carried the old name.
-        if (hasSavedTrees(settings)) {
-          const retagged = renameServiceInLibrary(getTreeLibrary(settings), edit.renamedFrom, edit.renamedTo);
-          if (retagged) updates[LIBRARY_KEY] = retagged;
-        }
-        // Everywhere else the name is stored (the Opps, open and closed,
-        // the Pricing page, Deal Sizing, company cards, timelines, …) is
-        // moved by the rename pass in App.jsx, which reads this log: logged
-        // rather than done here so browsers other than this one carry the
-        // rename into their own local stores too.
-        // A change of case only is the same service to every comparison in
-        // the app, so there is nothing to carry.
-        const lc = (v) => String(v ?? '').trim().toLowerCase();
-        if (lc(edit.renamedTo) && lc(edit.renamedFrom) !== lc(edit.renamedTo)) {
-          const log = Array.isArray(settings?.[SERVICE_RENAME_LOG_KEY]) ? settings[SERVICE_RENAME_LOG_KEY] : [];
-          updates[SERVICE_RENAME_LOG_KEY] = [...log, serviceRenameLogEntry(edit.renamedFrom, edit.renamedTo)];
-        }
-      }
-    }
+    // Solutions edits carry to the services board, the rate card and
+    // everywhere else the name is stored (utils/serviceRename.js).
+    const updates = key === 'solutions'
+      ? solutionsListUpdates(settings, options, edit)
+      : { dropdownLists: { ...current, [key]: options } };
     updateSettings?.(updates);
   }
 
@@ -2062,6 +2020,13 @@ export function DropdownsView({ settings, updateSettings }) {
               )}
               onSaveUrl={saveServiceLink}
               onToggleHide={toggleHideService}
+              onRename={(from, to) => {
+                const renamed = renameServiceFromPopup(settings, updateSettings, from, to);
+                if (!renamed) return false;
+                // The popup follows the service to its new name.
+                setDetailName(renamed);
+                return true;
+              }}
               onDelete={(name) => {
                 const updates = deleteServiceUpdates(settings, name);
                 if (updates) updateSettings?.(updates);
