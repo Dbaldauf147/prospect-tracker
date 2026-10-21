@@ -1105,11 +1105,13 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           cdm: String(p?.cdm || '').trim(),
           count: 0,
           emails: [],
+          rows: [],
         };
         byKey.set(key, entry);
       }
       entry.count++;
       entry.emails.push(r.email);
+      entry.rows.push(r);
     }
     return [...byKey.values()].sort((a, b) => {
       if (!a.name !== !b.name) return a.name ? -1 : 1;
@@ -4498,6 +4500,13 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           onClose={() => setCompaniesOpen(false)}
           onOpenCompany={onSelectProspect ? (p) => { setCompaniesOpen(false); onSelectProspect(p); } : null}
           onRemoveContacts={removeRows}
+          statusOf={(r) => {
+            const outcome = results[r.email];
+            if (outcome === 'added') return 'Added';
+            if (outcome === 'updated') return 'Updated';
+            if (typeof outcome === 'string' && outcome.startsWith('error')) return 'Error';
+            return BULK_BUCKETS.find(b => b.key === rowBucket(r))?.label || '';
+          }}
         />
       )}
 
