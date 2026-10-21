@@ -193,6 +193,38 @@ export function effectiveLineItemServices(items, lineItemServices, lineItemPrior
   return out;
 }
 
+// Line items whose services on one option differ from what the Linked To
+// mapping alone gives them, because the option carries its own picks
+// (Move to, a cost line's menu or the Pick services popup on the Services
+// subtab). Keyed like the mapping (lowercased line item); each value is the
+// services the option's cost lines of that line item resolve to, in the
+// order they come up. The Linked To subtab reads the mapping, so without
+// this it would show a line as one service while the option counts it as
+// another.
+export function lineItemOptionOverrides(option, lineItemServices, lineItemPriority) {
+  const out = new Map();
+  const own = option?.costLineServices;
+  if (!own || typeof own !== 'object' || Object.keys(own).length === 0) return out;
+  const items = (option?.sections || []).flatMap(sec => sec?.items || []);
+  const withPicks = effectiveLineItemServices(items, lineItemServicesOnOption(option, lineItemServices), lineItemPriority);
+  const mappingOnly = effectiveLineItemServices(items, sharedLineItemServices(lineItemServices), lineItemPriority);
+  const resolved = new Map();
+  const differs = new Set();
+  for (const item of items) {
+    const k = norm(item?.description);
+    if (!k) continue;
+    const a = servicesForCostLine(withPicks, item);
+    const b = servicesForCostLine(mappingOnly, item);
+    const list = Array.isArray(a) ? a : [];
+    if (sharedSignature(list) !== sharedSignature(Array.isArray(b) ? b : [])) differs.add(k);
+    const acc = resolved.get(k) || [];
+    for (const sv of list) if (norm(sv) && !acc.some(x => norm(x) === norm(sv))) acc.push(String(sv).trim());
+    resolved.set(k, acc);
+  }
+  for (const k of differs) out.set(k, resolved.get(k) || []);
+  return out;
+}
+
 // Services the given cost lines are mapped to, deduped case-insensitively,
 // first casing wins.
 export function servicesForItems(items, lineItemServices) {

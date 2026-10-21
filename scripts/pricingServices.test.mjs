@@ -21,7 +21,7 @@ import {
   passThroughFeeRows, addPassThroughFees, sharedLineItemsToSplit, setCostLineService, sharedSignature,
   lineItemServicesOnOption, setOptionCostLineService, setOptionItemService, clearOptionItemPicks,
   moveOptionCostLineService, moveOptionItemService, sharedLineItemServices,
-  costKeysFor, allocationFor, feeStructureCostInputs,
+  costKeysFor, allocationFor, feeStructureCostInputs, lineItemOptionOverrides,
 } from '../src/utils/pricingServices.js';
 
 let failed = 0;
@@ -743,6 +743,29 @@ test('Pick services: rows sharing a description and type go to different service
   const cleared = setOptionCostLineService(clearOptionItemPicks(typed, items), mapping, items[0], 'C');
   on = lineItemServicesOnOption({ costLineServices: cleared }, mapping);
   assert.deepEqual(items.map(i => servicesForCostLine(on, i)), [['C'], ['C'], ['C']]);
+});
+
+test('lineItemOptionOverrides: names the lines an option sends elsewhere than the mapping', () => {
+  // Enterprise Data is shared, first in scope only: Invoice collection - lite,
+  // then AP upload. Another line ties Invoice collection - lite in, so the
+  // mapping alone gives it the cost (what Linked To highlights).
+  const map = {
+    'enterprise data': ['Invoice collection - lite', 'AP upload (indirect payment)'],
+    'invoice scanning': ['Invoice collection - lite'],
+  };
+  const prio = { 'enterprise data': true };
+  const ed = { id: 'r7', description: 'Enterprise Data', type: 'Setup Project Mngd' };
+  const scan = { id: 'r8', description: 'Invoice Scanning', type: 'Recurring' };
+  const base = { sheetName: 'Option 1', sections: [{ items: [ed, scan] }] };
+  assert.equal(lineItemOptionOverrides(base, map, prio).size, 0, 'no own picks, nothing to call out');
+  // Move to on the Services subtab sent this one cost line to AP upload.
+  const moved = { ...base, costLineServices: setOptionItemService({}, map, ed, 'AP upload (indirect payment)') };
+  const out = lineItemOptionOverrides(moved, map, prio);
+  assert.deepEqual([...out.keys()], ['enterprise data']);
+  assert.deepEqual(out.get('enterprise data'), ['AP upload (indirect payment)']);
+  // An own pick that matches the mapping changes nothing, so isn't flagged.
+  const same = { ...base, costLineServices: setOptionItemService({}, map, ed, 'Invoice collection - lite') };
+  assert.equal(lineItemOptionOverrides(same, map, prio).size, 0);
 });
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
