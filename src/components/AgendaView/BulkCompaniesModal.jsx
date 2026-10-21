@@ -52,14 +52,41 @@ const STATUS_TONES = {
   'Error':          ['#B91C1C', '#FEE2E2'],
 };
 
-// One company's Bulk Add rows, opened from its Contacts count. Each row's
-// x takes that contact out of the batch, the same as the grid's x.
+// The contact popup's columns, and the text each one shows, filters on and
+// suggests.
+const CONTACT_COLS = [
+  { key: 'name',     label: 'Name',      text: (r) => [r.firstname, r.lastname].filter(Boolean).join(' ') },
+  { key: 'email',    label: 'Email',     text: (r) => r.email || '' },
+  { key: 'jobtitle', label: 'Job title', text: (r) => r.jobtitle || '' },
+  { key: 'status',   label: 'Status',    text: (r, statusOf) => (statusOf ? statusOf(r) : '') },
+  { key: 'location', label: 'Location',  text: (r) => [r.city, r.state, r.country].map(v => String(v || '').trim()).filter(Boolean).join(', ') },
+];
+
+// One company's Bulk Add rows, opened from its Contacts count. Every column
+// filters; each row's x takes that contact out of the batch, the same as
+// the grid's x, and Remove shown takes out every row the filters leave.
 function CompanyContactsModal({ company, statusOf, onClose, onRemove }) {
-  const th = { textAlign: 'left', padding: '0.45rem 0.6rem', fontSize: '0.68rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em', background: '#F8FAFC', borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 0, whiteSpace: 'nowrap' };
+  const [filters, setFilters] = useState({});
+  const th = { textAlign: 'left', padding: '0.45rem 0.6rem', fontSize: '0.68rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em', background: '#F8FAFC', whiteSpace: 'nowrap' };
   const td = { padding: '0.4rem 0.6rem', fontSize: '0.78rem', borderBottom: '1px solid #F1F5F9', verticalAlign: 'middle' };
+  const btn = { padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#fff', color: 'var(--color-text-secondary)', fontSize: '0.74rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' };
   const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
   const sorted = [...company.rows].sort((a, b) =>
     `${a.lastname || ''} ${a.firstname || ''} ${a.email}`.localeCompare(`${b.lastname || ''} ${b.firstname || ''} ${b.email}`));
+  const active = CONTACT_COLS.filter(c => String(filters[c.key] || '').trim());
+  const shown = active.length
+    ? sorted.filter(r => active.every(c => cellMatches(c.text(r, statusOf), filters[c.key])))
+    : sorted;
+  const suggestions = Object.fromEntries(CONTACT_COLS.map(c => [c.key, collectSuggestions(sorted.map(r => c.text(r, statusOf)))]));
+
+  function removeShown() {
+    if (!shown.length) return;
+    const what = active.length ? `the ${shown.length} contact${shown.length === 1 ? '' : 's'} these filters show` : `all ${shown.length} contact${shown.length === 1 ? '' : 's'}`;
+    if (!window.confirm(`Remove ${what} at ${company.name || 'no company'} from Bulk Add Contacts?\n\nThis only takes them out of this batch. Nothing in HubSpot changes.`)) return;
+    onRemove(shown.map(r => r.email));
+    setFilters({});
+  }
+
   return (
     <div
       style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1110, padding: '2rem' }}
@@ -80,23 +107,62 @@ function CompanyContactsModal({ company, statusOf, onClose, onRemove }) {
           </div>
           <button type="button" onClick={onClose} title="Back to companies" style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '1.2rem', padding: 0, lineHeight: 1 }}>×</button>
         </div>
+        <div style={{ padding: '0.6rem 1.25rem', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={removeShown}
+            disabled={!shown.length}
+            title="Take every contact the filters leave showing out of the batch"
+            style={shown.length
+              ? { ...btn, background: '#DC2626', borderColor: '#DC2626', color: '#fff' }
+              : { ...btn, color: '#94A3B8', cursor: 'default' }}
+          >
+            {active.length ? `Remove ${shown.length} shown` : `Remove all ${shown.length}`}
+          </button>
+          {active.length > 0 && (
+            <>
+              <span style={{ fontSize: '0.74rem', color: '#64748B' }}>Showing {shown.length} of {sorted.length}</span>
+              <button type="button" style={btn} onClick={() => setFilters({})}>Clear filters</button>
+            </>
+          )}
+        </div>
         <div style={{ overflow: 'auto', minHeight: 0 }}>
           <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
-            <thead>
+            <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
               <tr>
-                <th style={th}>Name</th>
-                <th style={th}>Email</th>
-                <th style={th}>Job title</th>
-                <th style={th}>Status</th>
-                <th style={th}>Location</th>
+                {CONTACT_COLS.map(c => <th key={c.key} style={th}>{c.label}</th>)}
                 <th style={{ ...th, width: 36 }} />
+              </tr>
+              <tr>
+                {CONTACT_COLS.map(c => (
+                  <th key={c.key} style={{ padding: '2px 4px 6px', background: '#F8FAFC', borderBottom: '1px solid var(--color-border)' }}>
+                    <input
+                      type="text"
+                      value={filters[c.key] || ''}
+                      onChange={e => setFilters(prev => ({ ...prev, [c.key]: e.target.value }))}
+                      placeholder="Filter..."
+                      list={`bulk-company-contacts-filter-${c.key}`}
+                      title={`Type to filter, or pick ${BLANKS_FILTER} / ${NON_BLANKS_FILTER}`}
+                      style={{ width: '100%', padding: '2px 6px', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.7rem', fontFamily: 'inherit', boxSizing: 'border-box', fontWeight: 400 }}
+                    />
+                    <datalist id={`bulk-company-contacts-filter-${c.key}`}>
+                      <option value={BLANKS_FILTER} />
+                      <option value={NON_BLANKS_FILTER} />
+                      {suggestions[c.key].map(v => <option key={v} value={v} />)}
+                    </datalist>
+                  </th>
+                ))}
+                <th style={{ background: '#F8FAFC', borderBottom: '1px solid var(--color-border)' }} />
               </tr>
             </thead>
             <tbody>
-              {sorted.map(r => {
-                const name = [r.firstname, r.lastname].filter(Boolean).join(' ');
-                const location = [r.city, r.state, r.country].map(v => String(v || '').trim()).filter(Boolean).join(', ');
-                const status = statusOf ? statusOf(r) : '';
+              {shown.length === 0 && (
+                <tr>
+                  <td colSpan={CONTACT_COLS.length + 1} style={{ ...td, textAlign: 'center', color: '#94A3B8', fontStyle: 'italic', padding: '1.25rem' }}>No contacts match these filters.</td>
+                </tr>
+              )}
+              {shown.map(r => {
+                const [name, , , status, location] = CONTACT_COLS.map(c => c.text(r, statusOf));
                 const [fg, bg] = STATUS_TONES[status] || ['#475569', '#F1F5F9'];
                 return (
                   <tr key={r.email}>
