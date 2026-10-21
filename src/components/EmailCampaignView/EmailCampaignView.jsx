@@ -1882,6 +1882,25 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   // One cell, by column key. The markup is the same it has always been —
   // this only moves it behind a key so a column can be hidden, moved or
   // resized without the row and the header drifting out of step.
+  // A company name in the table, clickable through to the company popup
+  // (the same one the contact popup's Company link opens). Plain text when
+  // this page wasn't handed a way to open it.
+  function companyLink(name, color, title) {
+    if (!onSelectProspect) {
+      return <span style={{ color, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }} title={title}>{name}</span>;
+    }
+    return (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); openCompanyFromContact(name); }}
+        title={title ? `${title}\nClick to open the company popup.` : `Open the company popup for ${name}`}
+        style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color, cursor: 'pointer', textAlign: 'left', display: 'block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        onMouseEnter={e => { e.currentTarget.style.color = 'var(--color-accent)'; e.currentTarget.style.textDecoration = 'underline'; }}
+        onMouseLeave={e => { e.currentTarget.style.color = color; e.currentTarget.style.textDecoration = 'none'; }}
+      >{name}</button>
+    );
+  }
+
   function renderContactCell(key, c, i, isDup) {
     switch (key) {
       case 'email':
@@ -1917,13 +1936,12 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
       case 'company': {
         const { name, source } = companyFor(c);
         if (!name) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
-        return (
-          <span
-            style={{ color: source === 'domain' ? 'var(--color-text-muted)' : 'var(--color-text)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}
-            title={source === 'domain'
-              ? 'No company on the HubSpot contact - this is the brand read off the email domain. Set the company in HubSpot Contacts and it shows here instead.'
-              : name}
-          >{name}</span>
+        return companyLink(
+          name,
+          source === 'domain' ? 'var(--color-text-muted)' : 'var(--color-text)',
+          source === 'domain'
+            ? 'No company on the HubSpot contact - this is the brand read off the email domain. Set the company in HubSpot Contacts and it shows here instead.'
+            : '',
         );
       }
       case 'tier':
@@ -3052,7 +3070,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                               >Add someone</button>
                             </span>
                           ) : col.key === 'company' ? (
-                            <span style={{ color: 'var(--color-text)' }}>{t.company}</span>
+                            companyLink(t.company, 'var(--color-text)', '')
                           ) : col.key === 'tier' ? (
                             <TierBadge tier={tierFor(t.company)} />
                           ) : col.key === 'outreach' ? (
