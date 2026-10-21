@@ -15,10 +15,11 @@ export const STEP_FIELDS = COMPANY_DATA_FIELDS.filter(f => ['numberOfSites', 'nu
  * { stepsRemaining, perBucket, allDms, missingData, missingDataFields, allMissingSteps }
  * for one company record. `dms` is its decision makers (the shared
  * decision-maker lookup's forAccount), `titleSearches` its logged Zoom
- * title searches (titleSearchesForCompany).
+ * title searches (titleSearchesForCompany), `closedBuckets` the categories
+ * its services close out (bucketServices.companyClosedBuckets).
  */
-export function allMissingStepsFor({ record = {}, dms = [], tagReview = null, titleSearches = [] } = {}) {
-  const steps = companyStepsRemaining({ dms, record, tagReview, titleSearches });
+export function allMissingStepsFor({ record = {}, dms = [], tagReview = null, titleSearches = [], closedBuckets = null } = {}) {
+  const steps = companyStepsRemaining({ dms, record, tagReview, titleSearches, closedBuckets });
   const missingDataFields = STEP_FIELDS.filter(f => !fieldHasValue(f, record?.[f.key]));
   return {
     stepsRemaining: steps.total,

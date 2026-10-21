@@ -142,6 +142,7 @@ import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { SENTIMENT_OPTIONS, sentimentFor, sentimentMark } from '../../utils/contactSentiment';
 import { LEAD_SOURCE_OPTIONS, leadSourceFor } from '../../utils/contactLeadSource';
 import { BUCKETS, contactHasTag, contactIsHidden } from './contactTags.js';
+import { bucketServiceState, isClosingStatus, setServiceBucket } from '../../utils/bucketServices';
 import { DM_STEPS, bucketStepsLeft, dmBucketAnswer } from '../../utils/dmSteps.js';
 import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, titleSearchesForCompany } from '../../utils/zoomSearchLog';
 import { readWorkKey, ZOOM_SEARCH_LOG_EVENT } from '../../utils/mirroredWorkKeys';
@@ -444,7 +445,7 @@ function getOrgKey(company) {
   return `orgchart-${(company || '').toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 }
 
-function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '', searchRun = {}, onToggleSearchRun, searchSteps = {}, onToggleSearchStep, company = '', zoomCompanyName = '' }) {
+function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '', searchRun = {}, onToggleSearchRun, searchSteps = {}, onToggleSearchStep, company = '', zoomCompanyName = '', serviceNames = [], serviceOverrides = {}, serviceStatusOf = null, onSetServiceBucket = null }) {
   // The Zoom title searches logged for this company on Bulk Add > Zoom
   // Search Log, for the bottom row: per category, which titles have
   // already been pulled and when. Re-read when the log changes elsewhere.
@@ -485,13 +486,16 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
         if (a === 'yes') yes.push({ c, answer: 'yes' });
         else if (a === 'unsure') unsure.push({ c, answer: 'unsure' });
       }
-      return { bucket: b, dms: [...yes, ...unsure] };
+      // The services tagged to this category (their Contact Tags) and this
+      // company's status on each; every one Not Sold or N/A closes it out.
+      const svc = bucketServiceState({ bucket: b, serviceNames, overrides: serviceOverrides, statusOf: serviceStatusOf });
+      return { bucket: b, dms: [...yes, ...unsure], services: svc.services, servicesClosed: svc.closed };
     });
   // Steps left per category and in all (src/utils/dmSteps.js, the same rule
   // My Accounts > Company Data counts with).
-  const stepsLeftFor = ({ bucket, dms }) => bucketStepsLeft({
+  const stepsLeftFor = ({ bucket, dms, servicesClosed }) => bucketStepsLeft({
     bucket, hasYesDm: dms.some(d => d.answer === 'yes'), zoomCompanyId, searchRun, searchSteps,
-    titleSearched: titleSearchesFor(bucket).length > 0,
+    titleSearched: titleSearchesFor(bucket).length > 0, servicesClosed,
   });
   const stepsLeft = dmColumns.map(col => ({ bucket: col.bucket, left: stepsLeftFor(col) }));
   const stepsLeftTotal = stepsLeft.reduce((sum, s) => sum + s.left, 0);
@@ -518,7 +522,7 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
               {dmColumns.map(({ bucket }, i) => (
                 <th key={bucket.key} style={{ ...headCell, ...colLine(i) }} title={bucket.label}>{bucket.label}</th>
               ))}
-              <th style={{ ...headCell, ...colLine(1), width: 120, textAlign: 'center' }} title="Steps left across every category: 0 for a category with a Yes decision maker, otherwise the steps below the furthest one done">Steps remaining</th>
+              <th style={{ ...headCell, ...colLine(1), width: 120, textAlign: 'center' }} title="Steps left across every category: 0 for a category with a Yes decision maker or whose services are all Not Sold or N/A, otherwise the steps below the furthest one done">Steps remaining</th>
             </tr>
           </thead>
           <tbody>
@@ -547,7 +551,7 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                 </td>
               ))}
               <td
-                rowSpan={DM_STEPS.length + 1}
+                rowSpan={DM_STEPS.length + 2}
                 data-dm-steps-remaining={stepsLeftTotal}
                 style={{ padding: '0.6rem', verticalAlign: 'top', textAlign: 'center', ...colLine(1), background: '#F8FAFC' }}
               >
@@ -561,6 +565,60 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                 ))}
               </td>
             </tr>
+            {/* The services tagged to each category (a service's Contact
+                Tags) with this company's status on each. Tagging one here
+                writes the service's Contact Tags, so it holds for every
+                company. A category whose services are all Not Sold or N/A
+                is closed out: nobody left to find. */}
+            <tr data-dm-services style={{ borderTop: '1px solid #E2E8F0' }}>
+              {dmColumns.map(({ bucket, services, servicesClosed }, i) => {
+                const tagged = new Set(services.map(sv => sv.name));
+                const offer = serviceNames.filter(n => !tagged.has(n));
+                return (
+                  <td key={bucket.key} data-dm-services-closed={servicesClosed ? 'true' : undefined} style={{ padding: '0.45rem 0.6rem', verticalAlign: 'top', fontSize: '0.7rem', ...colLine(i), ...(servicesClosed ? { background: '#F1F5F9' } : {}) }}>
+                    <div style={{ fontSize: '0.6rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.2rem' }}>Services</div>
+                    {servicesClosed && (
+                      <div style={{ fontWeight: 700, color: '#475569', marginBottom: '0.25rem' }} title={`Every service tagged ${bucket.label} is Not Sold or N/A here, so ${bucket.label} is closed out`}>
+                        Closed out: all Not Sold or N/A
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.2rem' }}>
+                      {services.map(({ name, status }) => {
+                        const dead = isClosingStatus(status);
+                        return (
+                          <span
+                            key={name}
+                            data-bucket-service={name}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 3, maxWidth: '100%', padding: '1px 6px', borderRadius: 4, border: `1px solid ${dead ? '#CBD5E1' : bucket.border}`, background: dead ? '#F1F5F9' : bucket.bg, color: dead ? '#64748B' : '#1E293B' }}
+                            title={`${name}: ${status || 'no status'} at this company`}
+                          >
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: dead ? 'line-through' : 'none' }}>{name}</span>
+                            <span style={{ fontSize: '0.6rem', fontWeight: 700, color: dead ? '#64748B' : '#475569', whiteSpace: 'nowrap' }}>{status || '-'}</span>
+                            {onSetServiceBucket && (
+                              <button
+                                type="button"
+                                onClick={() => onSetServiceBucket(name, bucket, false)}
+                                title={`Untag ${name} from ${bucket.label} (for every company)`}
+                                aria-label={`Untag ${name} from ${bucket.label}`}
+                                style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: '#94A3B8', font: 'inherit', lineHeight: 1 }}
+                              >×</button>
+                            )}
+                          </span>
+                        );
+                      })}
+                      {services.length === 0 && <span style={{ color: '#CBD5E1' }} title={`No service is tagged ${bucket.label}`}>-</span>}
+                    </div>
+                    {onSetServiceBucket && (
+                      <BucketServicePicker
+                        bucket={bucket}
+                        options={offer}
+                        onPick={(name) => onSetServiceBucket(name, bucket, true)}
+                      />
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
             {/* A category nobody is a Yes decision maker for (a Not sure
                 alone still gets it) is worked down a ladder, one row per
                 step: the company's Zoom Company ID search, then whether that
@@ -572,7 +630,7 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                 count for nothing in Steps remaining (bucketStepsLeft). */}
             {DM_STEPS.map((step, i) => (
               <tr key={step.key} data-dm-step={step.key} style={{ borderTop: '1px solid #E2E8F0', background: i % 2 === 0 ? '#FAFAF9' : '#fff' }}>
-                {dmColumns.map(({ bucket, dms }, i) => {
+                {dmColumns.map(({ bucket, dms, servicesClosed }, i) => {
                   const dmFound = dms.some(d => d.answer === 'yes');
                   const ranAt = step.key === 'zoom' ? searchRun?.[bucket.key] : searchSteps?.[bucket.key]?.[step.key];
                   // The Zoom step is done once the company HAS a Zoom
@@ -584,7 +642,10 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                   // once a title search for this category is in the Zoom
                   // Search Log: the logged search is the proof it ran.
                   const loggedSearch = step.key === 'zoomFailed' ? titleSearchesFor(bucket)[0] : null;
-                  const lockedOn = foundById || !!loggedSearch;
+                  // And Close out is done once every service tagged to the
+                  // category is Not Sold or N/A here (the Services row).
+                  const closedByServices = step.key === 'closeOut' && servicesClosed;
+                  const lockedOn = foundById || !!loggedSearch || closedByServices;
                   const done = !!ranAt || lockedOn;
                   const canToggle = !dmFound && !lockedOn && (step.key === 'zoom' ? !!onToggleSearchRun : !!onToggleSearchStep);
                   const toggle = (on) => step.key === 'zoom'
@@ -595,6 +656,7 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                       <label
                         style={{ display: 'flex', alignItems: 'flex-start', gap: '0.3rem', color: dmFound ? '#64748B' : done ? '#166534' : '#475569', fontWeight: done ? 600 : 400, cursor: canToggle ? 'pointer' : 'default' }}
                         title={dmFound ? `${bucket.label} has a decision maker, so this step is not needed and is not counted${done ? ' (it was done)' : ''}`
+                          : closedByServices ? `Checked: every service tagged ${bucket.label} is Not Sold or N/A here`
                           : foundById ? `Checked: the company has a Zoom Company ID (${zoomCompanyId})`
                           : loggedSearch ? `Checked: a ${bucket.label} Zoom title search is logged (${fmtSearchDate(loggedSearch.date)})`
                           : ranAt ? `${step.label}: ticked ${new Date(ranAt).toLocaleDateString()}` : `Tick once "${step.label}" applies to ${bucket.label} at this company`}
@@ -675,6 +737,42 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
   );
 }
 
+
+// The "+ service" box under a category's services: type or pick a service
+// off the list and it is tagged to that category.
+function BucketServicePicker({ bucket, options, onPick }) {
+  const [draft, setDraft] = useState('');
+  const listId = `bucket-services-${bucket.key}`;
+  const pick = (v) => {
+    const hit = options.find(o => o.toLowerCase() === String(v || '').trim().toLowerCase());
+    setDraft('');
+    if (hit) onPick(hit);
+  };
+  return (
+    <>
+      <input
+        type="text"
+        list={listId}
+        value={draft}
+        placeholder="+ service"
+        aria-label={`Tag a service to ${bucket.label}`}
+        title={`Tag a service to ${bucket.label}. This sets the service's Contact Tags, so it applies to every company.`}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (options.includes(v)) pick(v); else setDraft(v);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); pick(draft); }
+          if (e.key === 'Escape') { e.preventDefault(); setDraft(''); }
+        }}
+        style={{ marginTop: '0.3rem', width: '100%', boxSizing: 'border-box', padding: '1px 6px', fontSize: '0.68rem', border: '1px dashed #CBD5E1', borderRadius: 4, background: 'transparent' }}
+      />
+      <datalist id={listId}>
+        {options.map(o => <option key={o} value={o} />)}
+      </datalist>
+    </>
+  );
+}
 
 // The card's pages, in the order the bar shows them.
 //
@@ -7182,6 +7280,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       canonical: (n) => byLower.get(String(n || '').trim().toLowerCase()) || n,
     });
   }, [allServiceItems, fields.servicesExplored, scopeMatchedServices, settings.serviceOverrides]);
+
+  // A service's status at this company as the Services board paints it:
+  // the manual status, else a matching opp's stage, else an auto N/A. The
+  // Contacts > By Category Services row reads it.
+  const effectiveServiceStatus = useCallback((item) => {
+    const manual = (fields.servicesExplored || {})[item];
+    if (manual && manual !== '-') return manual;
+    const opp = scopeMatchedServices.get(item);
+    if (opp) return opp;
+    return autoNaServices.get(item) ? 'N/A' : '';
+  }, [fields.servicesExplored, scopeMatchedServices, autoNaServices]);
 
   const [onePagerBusy, setOnePagerBusy] = useState(false);
 
@@ -14622,6 +14731,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   zoomCompanyId={String(fields.zoomCompanyId || '').trim()}
                   company={fields.company || ''}
                   zoomCompanyName={fields.zoomCompanyName || ''}
+                  serviceNames={allServiceItems}
+                  serviceOverrides={settings.serviceOverrides || {}}
+                  serviceStatusOf={effectiveServiceStatus}
+                  onSetServiceBucket={(name, bucket, on) => updateSettings(s => ({
+                    serviceOverrides: setServiceBucket(s?.serviceOverrides, name, bucket, on),
+                  }))}
                   searchRun={fields.dmSearchRun || {}}
                   onToggleSearchRun={(key, on) => setFields(prev => {
                     const next = { ...(prev.dmSearchRun || {}) };

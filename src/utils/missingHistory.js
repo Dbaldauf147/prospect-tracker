@@ -81,7 +81,7 @@ export const isStepsDay = (row) => row?.basis === MISSING_HISTORY_BASIS;
 
 /**
  * Today's All Missing Steps reading. `entries` is one { record, dms,
- * titleSearches, zoomExcluded } per company, read the way the Company Data subtab reads
+ * titleSearches, zoomExcluded, closedBuckets } per company, read the way the Company Data subtab reads
  * them; `tagReview` is settings.contactTagReview. Null when there is
  * nothing to count.
  */
@@ -92,7 +92,7 @@ export function missingStepsReading(entries, { tagReview = null, fields = COMPAN
   let missingData = 0;
   const allDms = [];
   for (const e of list) {
-    const s = allMissingStepsFor({ record: e.record, dms: e.dms || [], tagReview, titleSearches: e.titleSearches || [] });
+    const s = allMissingStepsFor({ record: e.record, dms: e.dms || [], tagReview, titleSearches: e.titleSearches || [], closedBuckets: e.closedBuckets || null });
     stepsRemaining += s.stepsRemaining;
     missingData += s.missingData;
     allDms.push(!!s.allDms);

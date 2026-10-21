@@ -5,6 +5,8 @@ import { COMPANY_DATA_FIELDS, fieldNotNeeded, fieldNotNeededReason, fieldValue, 
 import { sanitizeSheetJsWorkbook } from '../../utils/exportSanitize';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { allMissingStepsFor, STEP_FIELDS } from '../../utils/allMissingSteps';
+import { companyClosedBuckets, serviceBucketContext } from '../../utils/bucketServices';
+import { BUCKETS } from '../ProspectModal/contactTags';
 import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, titleSearchesForCompany } from '../../utils/zoomSearchLog';
 import { readWorkKey, ZOOM_SEARCH_LOG_EVENT } from '../../utils/mirroredWorkKeys';
 import { buildZoomExcludedMatcher, zoomExcludedLabel } from '../../utils/zoomExportExclude';
@@ -70,6 +72,10 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
     return () => window.removeEventListener(ZOOM_SEARCH_LOG_EVENT, reload);
   }, []);
 
+  // The services tagged to each contact category, for closing a category
+  // out once all of them are Not Sold or N/A (utils/bucketServices).
+  const bucketCtx = useMemo(() => serviceBucketContext(settings), [settings]);
+
   // Each company's Biggest Deal, the same reading as the Deal Size subtab
   // and the company card (hooks/useBiggestDeals).
   const dealRecords = useMemo(
@@ -95,6 +101,7 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       const steps = dmLookup ? allMissingStepsFor({
         dms: dmLookup.forAccount(p), record: p, tagReview,
         titleSearches: titleSearchesForCompany(zoomLog.searches, { company: p.company || a.company, zoomCompanyId: p.zoomCompanyId, zoomCompanyName: p.zoomCompanyName }),
+        closedBuckets: companyClosedBuckets(p, bucketCtx, BUCKETS),
       }) : null;
       // A decision maker on every tag waives the Zoom id (fieldNotNeeded).
       row.allDms = !!steps?.allDms;
@@ -108,7 +115,7 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       out.push(row);
     }
     return { rows: out, noRecord: missing, qualifying: qualifyingCount };
-  }, [accounts, prospectById, dmLookup, tagReview, isZoomExcluded, zoomLog, deals]);
+  }, [accounts, prospectById, dmLookup, tagReview, isZoomExcluded, zoomLog, deals, bucketCtx]);
 
   const missingCounts = useMemo(() => {
     const m = {};
