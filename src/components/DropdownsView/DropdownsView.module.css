@@ -1401,6 +1401,30 @@
   white-space: nowrap;
 }
 
+/* The title as an input: reads as the heading until hovered or focused. */
+.detailTitleInput {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 0 -6px;
+  padding: 2px 6px;
+  font-family: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  outline: none;
+}
+
+.detailTitleInput:hover {
+  border-color: var(--color-border);
+}
+
+.detailTitleInput:focus {
+  border-color: var(--color-accent);
+  background: var(--color-surface);
+  text-overflow: clip;
+}
+
 .detailBadges {
   display: flex;
   flex-wrap: wrap;

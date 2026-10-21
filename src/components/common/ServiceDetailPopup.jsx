@@ -10,11 +10,12 @@
 // It edits, so it wants an updateSettings. A caller without one shouldn't
 // open it: the fields would take typing and store none of it.
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { ServiceDetailModal, ServiceDetailFields } from '../DropdownsView/ServiceDetailModal';
 import { buildServiceDetail } from '../../utils/serviceDetailProps';
 import { getServiceCategories, moveServiceToBucket } from '../../utils/serviceCategoriesStore';
 import { deleteServiceUpdates } from '../../utils/serviceDelete';
+import { renameServiceFromPopup } from '../../utils/serviceRename';
 import { serviceFieldOptions, serviceFieldOptionUpdates } from '../../utils/serviceFieldOptions';
 
 export function ServiceDetailPopup({
@@ -30,7 +31,12 @@ export function ServiceDetailPopup({
   // the DOM, which is not something a board should have to rely on.
   zIndex,
 }) {
-  const detail = useMemo(() => buildServiceDetail(settings, name), [settings, name]);
+  // A rename made in the popup, so it follows the service to its new name
+  // without the caller having to know. Keyed to the name it was opened on:
+  // opening another service drops it.
+  const [renamed, setRenamed] = useState(null);
+  const shownName = renamed && renamed.from === name ? renamed.to : name;
+  const detail = useMemo(() => buildServiceDetail(settings, shownName), [settings, shownName]);
   const fieldOptions = useMemo(() => serviceFieldOptions(settings), [settings]);
 
   const h = serviceDetailHandlers(settings, updateSettings, onClose);
@@ -55,6 +61,14 @@ export function ServiceDetailPopup({
       onEditFieldOption={h.onEditFieldOption}
       onSaveUrl={h.onSaveUrl}
       onToggleHide={h.onToggleHide}
+      // Only offered for a listed name, like Delete below: an unlisted one
+      // has no row to rename.
+      onRename={deleteServiceUpdates(settings, detail.service.name) ? (from, to) => {
+        const next = renameServiceFromPopup(settings, updateSettings, from, to);
+        if (!next) return false;
+        setRenamed({ from: name, to: next });
+        return true;
+      } : undefined}
       // Only offered for a name that is on the list: an unlisted one (typed
       // straight into a Scope cell) has nothing to delete.
       onDelete={deleteServiceUpdates(settings, detail.service.name) ? h.onDelete : undefined}
