@@ -564,8 +564,8 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
             {/* A category nobody is a Yes decision maker for (a Not sure
                 alone still gets it) is worked down a ladder, one row per
                 step: the company's Zoom Company ID search, then whether that
-                came up empty, then a manual search, whether that came up
-                empty too, and finally closing the category out. Each step is
+                came up empty, then a Google search, then a LinkedIn search,
+                and finally closing the category out. Each step is
                 a tick saved on the record with the date. A category with a
                 Yes decision maker has nothing to work, so its cells stay
                 blank. */}
