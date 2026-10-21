@@ -1,4 +1,8 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import { ContactEditModal } from '../ProspectModal/ProspectModal';
+import { useContactEditSettings } from '../../hooks/useContactEditSettings';
+import { companyPopupTarget } from '../../utils/companyLookup';
 import { apiFetch } from '../../utils/apiFetch';
 import { ColumnToggle } from '../common/ColumnToggle';
 import { ColumnFilterCombo } from '../common/ColumnFilterCombo';
@@ -226,7 +230,7 @@ function TierBadge({ tier }) {
 // `openSubject` lets a sibling tab (Email Tracking) ask for a saved campaign
 // to be opened by its subject line; `onOpened` acknowledges the request so
 // the same campaign can be asked for again.
-export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = '' }) {
+export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = '', settings, updateSettings, onSelectProspect }) {
   const { user } = useAuth();
   const [subject, setSubject] = useState('');
   const [loading, setLoading] = useState(false);
@@ -1384,6 +1388,37 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     }
     return map;
   }, [hubspotContacts]);
+  // The contact popup, opened by clicking an address in Sent To. Holds the
+  // raw HubSpot record when the cache has one; an address HubSpot doesn't
+  // hold yet opens a bare record (email and company) the popup can create
+  // the contact from on save, the same as Draft Emails does.
+  const [editingContact, setEditingContact] = useState(null);
+  const contactEditSettings = useContactEditSettings({ settings, updateSettings });
+  const openContactByEmail = (email, company) => {
+    const e = normEmail(email);
+    if (!e) return;
+    setEditingContact(hubspotByEmail.get(e) || { email: e, company: company || '' });
+  };
+  const openCompanyFromContact = useCallback((name) => {
+    const target = companyPopupTarget(prospects, name);
+    if (!target || !onSelectProspect) return;
+    setEditingContact(null);
+    onSelectProspect(target);
+  }, [prospects, onSelectProspect]);
+  const editCompanyKey = String(editingContact?.company || '').trim().toLowerCase();
+  const editCompanyContacts = useMemo(
+    () => (editCompanyKey ? hubspotContacts.filter(c => String(c?.company || '').trim().toLowerCase() === editCompanyKey) : []),
+    [editCompanyKey, hubspotContacts],
+  );
+  const editEmailDomains = useMemo(() => {
+    if (!editCompanyKey) return [];
+    const matched = (prospects || []).find(p => String(p.company || '').trim().toLowerCase() === editCompanyKey);
+    return matched?.emailDomain
+      ? String(matched.emailDomain).split(/[\n;,]+/).map(x => x.trim()).filter(Boolean)
+      : [];
+  }, [editCompanyKey, prospects]);
+  const editCompanyNames = useMemo(() => (prospects || []).map(p => p.company).filter(Boolean), [prospects]);
+
   // Who the lookup box offers: only people actually on a campaign, since a
   // search for anybody else has one answer and it is "no rows".
   const lookupContacts = useMemo(
@@ -1853,7 +1888,23 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
         return (
           <>
             <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem', minWidth: 0 }}>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.email}>{c.email}</span>
+              {/* Each address opens its contact popup. A row sent to
+                  several people carries them all, split on ';'. */}
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.email}>
+                {String(c.email || '').split(';').map(x => x.trim()).filter(Boolean).map((addr, k) => (
+                  <span key={addr}>
+                    {k > 0 && '; '}
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); openContactByEmail(addr, companyFor(c).name); }}
+                      title={`Open the contact popup for ${addr}`}
+                      style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 600, color: 'inherit', cursor: 'pointer', textAlign: 'left' }}
+                      onMouseEnter={e => { e.currentTarget.style.color = 'var(--color-accent)'; e.currentTarget.style.textDecoration = 'underline'; }}
+                      onMouseLeave={e => { e.currentTarget.style.color = 'inherit'; e.currentTarget.style.textDecoration = 'none'; }}
+                    >{addr}</button>
+                  </span>
+                ))}
+              </span>
               {isDup && <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: '#FDE68A', color: '#92400E', flexShrink: 0 }} title="This contact appears more than once in this campaign">Duplicate</span>}
               {/* Nobody added this row - the campaign found it. Said quietly,
                   because it is provenance rather than a problem, and the
@@ -3303,6 +3354,21 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
             </table>
           </div>
         </div>
+      )}
+
+      {editingContact && createPortal(
+        <ContactEditModal
+          contact={editingContact}
+          onSave={(_updated, opts) => { if (!opts?.silent) setEditingContact(null); }}
+          onClose={() => setEditingContact(null)}
+          onOpenCompany={onSelectProspect ? openCompanyFromContact : null}
+          {...contactEditSettings}
+          companyContacts={editCompanyContacts}
+          allContacts={hubspotContacts}
+          emailDomains={editEmailDomains}
+          companyNames={editCompanyNames}
+        />,
+        document.body,
       )}
     </div>
   );
