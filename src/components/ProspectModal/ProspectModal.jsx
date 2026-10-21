@@ -500,6 +500,39 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
   });
   const stepsLeft = dmColumns.map(col => ({ bucket: col.bucket, left: stepsLeftFor(col) }));
   const stepsLeftTotal = stepsLeft.reduce((sum, s) => sum + s.left, 0);
+  // Why a category stands where it does, for its column heading: a Yes
+  // decision maker, its services all Not Sold or N/A, or Close out ticked by
+  // hand - in that order, the first that applies - else the steps still
+  // left. `full` is the tooltip, naming the people or services behind it.
+  const closedReason = (col, left) => {
+    const yes = col.dms.filter(d => d.answer === 'yes')
+      .map(({ c }) => [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unnamed contact');
+    if (yes.length) {
+      return {
+        closed: true,
+        text: `Closed: decision maker${yes.length > 1 ? 's' : ''} found`,
+        full: `${col.bucket.label} is done: ${yes.join(', ')} answered Yes as the decision maker.`,
+      };
+    }
+    if (col.servicesClosed) {
+      return {
+        closed: true,
+        text: 'Closed: services Not Sold or N/A',
+        full: `${col.bucket.label} is closed out because every service tagged to it is Not Sold or N/A here: ${col.services.map(sv => `${sv.name} (${sv.status})`).join(', ')}.`,
+      };
+    }
+    const closedAt = searchSteps?.[col.bucket.key]?.closeOut;
+    if (closedAt) {
+      const when = new Date(closedAt);
+      const day = Number.isNaN(when.getTime()) ? '' : when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      return {
+        closed: true,
+        text: `Closed out by hand${day ? ` ${day}` : ''}`,
+        full: `${col.bucket.label} was closed out by ticking Close out${day ? ` on ${when.toLocaleDateString()}` : ''}.`,
+      };
+    }
+    return { closed: false, text: `Open: ${left} step${left === 1 ? '' : 's'} left`, full: `${col.bucket.label} has ${left} step${left === 1 ? '' : 's'} left on the ladder below.` };
+  };
   const DM_ANSWER_STYLE = {
     yes: { background: '#DCFCE7', borderLeft: '3px solid #22C55E', name: '#166534', title: '#15803D', label: 'Yes' },
     unsure: { background: '#FEF3C7', borderLeft: '3px solid #F59E0B', name: '#92400E', title: '#B45309', label: 'Not sure' },
@@ -520,9 +553,18 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
         <table data-dm-by-category style={{ width: '100%', minWidth: dmColumns.length * 130 + 120, tableLayout: 'fixed', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
-              {dmColumns.map(({ bucket }, i) => (
-                <th key={bucket.key} style={{ ...headCell, ...colLine(i) }} title={bucket.label}>{bucket.label}</th>
-              ))}
+              {dmColumns.map((col, i) => {
+                const reason = closedReason(col, stepsLeft[i].left);
+                return (
+                  <th key={col.bucket.key} style={{ ...headCell, ...colLine(i) }} title={`${col.bucket.label}\n${reason.full}`}>
+                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{col.bucket.label}</div>
+                    <div
+                      data-dm-closed-reason={reason.closed ? 'closed' : 'open'}
+                      style={{ marginTop: 2, fontSize: '0.62rem', fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: reason.closed ? '#166534' : '#94A3B8', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                    >{reason.closed ? '✓ ' : ''}{reason.text}</div>
+                  </th>
+                );
+              })}
               <th style={{ ...headCell, ...colLine(1), width: 120, textAlign: 'center' }} title="Steps left across every category: 0 for a category with a Yes decision maker or whose services are all Not Sold or N/A, otherwise the steps below the furthest one done">Steps remaining</th>
             </tr>
           </thead>
