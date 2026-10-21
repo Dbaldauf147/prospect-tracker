@@ -43,9 +43,11 @@ export function dmBucketAnswer(c, bucket, tagReview = null) {
 // has all five left, one with a Zoom Company ID (the company has one, or the
 // tick is on) has four, and one closed out has none. `titleSearched` says a
 // Zoom title search is logged for this category, which does the Zoom search
-// ran step on its own.
-export function bucketStepsLeft({ bucket, hasYesDm, zoomCompanyId = '', searchRun = null, searchSteps = null, titleSearched = false }) {
-  if (hasYesDm) return 0;
+// ran step on its own. `servicesClosed` says every service tagged to this
+// category is Not Sold or N/A at the company (utils/bucketServices), which
+// closes the category out with nothing left to do.
+export function bucketStepsLeft({ bucket, hasYesDm, zoomCompanyId = '', searchRun = null, searchSteps = null, titleSearched = false, servicesClosed = false }) {
+  if (hasYesDm || servicesClosed) return 0;
   let reached = 0;
   DM_STEPS.forEach((step, i) => {
     const done = step.key === 'zoom'
@@ -61,17 +63,22 @@ export function bucketStepsLeft({ bucket, hasYesDm, zoomCompanyId = '', searchRu
 // Every category for one company. `dms` is the company's decision makers
 // (already gated on the Decision Maker tag); the company record supplies
 // the Zoom Company ID and the ticks; `titleSearches` is the company's logged
-// Zoom title searches ([{ tag }], from titleSearchesForCompany). Returns { total, max, perBucket:
-// [{ bucket, left, hasYesDm }], allDms } with the buckets A to Z; allDms is
-// a Yes decision maker on every category (closed-out ones don't count).
-export function companyStepsRemaining({ dms = [], record = {}, tagReview = null, titleSearches = [] } = {}) {
+// Zoom title searches ([{ tag }], from titleSearchesForCompany);
+// `closedBuckets` the keys of the categories its services close out
+// (companyClosedBuckets). Returns { total, max, perBucket:
+// [{ bucket, left, hasYesDm, servicesClosed }], allDms } with the buckets A
+// to Z; allDms is a Yes decision maker on every category (closed-out ones
+// don't count).
+export function companyStepsRemaining({ dms = [], record = {}, tagReview = null, titleSearches = [], closedBuckets = null } = {}) {
   const perBucket = [...BUCKETS]
     .sort((a, b) => a.label.localeCompare(b.label))
     .map((bucket) => {
       const hasYesDm = (dms || []).some(c => dmBucketAnswer(c, bucket, tagReview) === 'yes');
+      const servicesClosed = !!closedBuckets?.has(bucket.key);
       return {
         bucket,
         hasYesDm,
+        servicesClosed,
         left: bucketStepsLeft({
           bucket,
           hasYesDm,
@@ -79,6 +86,7 @@ export function companyStepsRemaining({ dms = [], record = {}, tagReview = null,
           searchRun: record?.dmSearchRun,
           searchSteps: record?.dmSearchSteps,
           titleSearched: (titleSearches || []).some(t => tagKey(t?.tag) === tagKey(bucket.label)),
+          servicesClosed,
         }),
       };
     });

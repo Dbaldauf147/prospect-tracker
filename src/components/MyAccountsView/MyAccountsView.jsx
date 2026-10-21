@@ -40,6 +40,8 @@ import { CompanyDataTab } from './CompanyDataTab';
 import { DealSizeTab } from './DealSizeTab';
 import { MissingHistoryView } from './MissingHistoryView';
 import { missingStepsReading, recordMissingDay, dayKey } from '../../utils/missingHistory';
+import { companyClosedBuckets, serviceBucketContext } from '../../utils/bucketServices';
+import { BUCKETS } from '../ProspectModal/contactTags';
 import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, titleSearchesForCompany } from '../../utils/zoomSearchLog';
 import { readWorkKey } from '../../utils/mirroredWorkKeys';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
@@ -3216,6 +3218,7 @@ Fix that now?
         const zoomSearches = readZoomSearchLog(readWorkKey(ZOOM_SEARCH_LOG_KEY)).searches;
         const byId = new Map(prospects.map(p => [p.id, p]));
         const isZoomExcluded = buildZoomExcludedMatcher(prospects);
+        const bucketCtx = serviceBucketContext(settings);
         const entries = allAccounts.filter(a => !isInactive(a)).map((a) => {
           const p = byId.get(a.id);
           if (!p || isQualifyingCompany(p)) return null;
@@ -3224,6 +3227,7 @@ Fix that now?
             zoomExcluded: isZoomExcluded({ id: p.id, company: p.company || a.company, zoomId: p.zoomCompanyId }),
             dms: lookup.forAccount(p),
             titleSearches: titleSearchesForCompany(zoomSearches, { company: p.company || a.company, zoomCompanyId: p.zoomCompanyId, zoomCompanyName: p.zoomCompanyName }),
+            closedBuckets: companyClosedBuckets(p, bucketCtx, BUCKETS),
           };
         }).filter(Boolean);
         const reading = missingStepsReading(entries, { tagReview: missingTagReview });
@@ -3231,7 +3235,7 @@ Fix that now?
       } catch { /* a missed reading just leaves a gap in the chart */ }
     }, 3000);
     return () => clearTimeout(timer);
-  }, [hubspotCache, allAccounts, prospects, dmTagLocalFields, dmTagLinks, dmTagExclusions, missingTagReview]);
+  }, [hubspotCache, allAccounts, prospects, dmTagLocalFields, dmTagLinks, dmTagExclusions, missingTagReview, settings]);
 
   const dmTagAccounts = useMemo(() => {
     let rows = allAccounts;
