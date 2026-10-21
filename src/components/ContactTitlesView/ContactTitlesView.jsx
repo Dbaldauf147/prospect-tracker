@@ -203,6 +203,19 @@ function TitleSearches({ settings, updateSettings }) {
     patchTerms(si, gi, [...searches[si].groups[gi].terms, v]);
   }
 
+  // A Not term typed into a card that only shows the general list so far.
+  // The card gets a Not group of its own, put first so its Not block stays
+  // where it was, and the general terms carry on riding along after it.
+  // The new group's add box takes the focus over so a second term can be
+  // typed straight after the first.
+  const [focusAdd, setFocusAdd] = useState('');
+  function addOwnNot(si, value) {
+    const v = String(value || '').trim();
+    if (!v) return;
+    setFocusAdd(searches[si].key);
+    patchSearch(si, { groups: [{ label: 'Not', kind: 'exclude', terms: [v] }, ...searches[si].groups] });
+  }
+
   function setTermAt(si, gi, ti, value) {
     patchTerms(si, gi, searches[si].groups[gi].terms.map((t, i) => (i === ti ? value : t)));
   }
@@ -354,6 +367,7 @@ function TitleSearches({ settings, updateSettings }) {
                           title="From the Not list that applies to every search. Edit it in the box at the top."
                         >{t}</span>
                       ))}
+                      <AddTerm onAdd={v => addOwnNot(si, v)} />
                     </div>
                   </div>
                 )}
@@ -429,7 +443,11 @@ function TitleSearches({ settings, updateSettings }) {
                             title="From the Not list that applies to every search. Edit it in the box at the top."
                           >{t}</span>
                         ))}
-                        <AddTerm onAdd={v => addTerm(si, gi, v)} />
+                        <AddTerm
+                          onAdd={v => addTerm(si, gi, v)}
+                          focusNow={gi === firstExclude && focusAdd === entry.key}
+                          onFocus={() => setFocusAdd('')}
+                        />
                       </div>
                     </div>
                   );
@@ -923,8 +941,12 @@ function GeneralNot({ settings, updateSettings, needle }) {
 // The add box at the end of a group. Its own component so the text it is
 // holding belongs to the group it sits in - one piece of state up in the
 // page would put half-typed text in whichever group was touched last.
-function AddTerm({ onAdd, placeholder = '+ term' }) {
+function AddTerm({ onAdd, placeholder = '+ term', focusNow = false, onFocus }) {
   const [value, setValue] = useState('');
+  // An effect rather than autoFocus: the box asked to take the focus can be
+  // one that was already mounted under another group's key.
+  const inputRef = useRef(null);
+  useEffect(() => { if (focusNow) inputRef.current?.focus(); }, [focusNow]);
   const submit = () => { onAdd(value); setValue(''); };
   return (
     <input
@@ -934,6 +956,8 @@ function AddTerm({ onAdd, placeholder = '+ term' }) {
       size={inputSize(value) + 4}
       placeholder={placeholder}
       aria-label="Add a term"
+      ref={inputRef}
+      onFocus={onFocus}
       onChange={e => setValue(e.target.value)}
       onKeyDown={e => {
         if (e.key === 'Enter') { e.preventDefault(); submit(); }
