@@ -82,6 +82,9 @@ export function DraftEmailsPage({ prospects, settings, updateSettings, updateSet
           onOpened={() => setOpenCampaignSubject(null)}
           prospects={prospects}
           cdmName={cdmName}
+          settings={settings}
+          updateSettings={updateSettings}
+          onSelectProspect={onSelectProspect}
         />
       )}
       {tab === 'tracking' && <EmailTrackingView onOpenCampaign={openCampaign} />}
