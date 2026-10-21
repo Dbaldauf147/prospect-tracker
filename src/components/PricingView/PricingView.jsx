@@ -42,7 +42,7 @@ import { SiaHistoryTab } from './SiaHistoryTab';
 import { buildSiaHistoryEntry, siaKeyFacts } from '../../utils/siaHistoryEntry';
 import { saveSiaHistoryEntry } from '../../utils/siaLoadHistory';
 import { buildServiceRows } from '../../utils/serviceRows';
-import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, sharedLineItemServices, servicesForCostLine, isCostLineServiceKey, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices, sharedLineItemsToSplit, sharedSignature, lineItemServicesOnOption, setOptionCostLineService, setOptionItemService, moveOptionItemService, clearOptionItemPicks, roundFee } from '../../utils/pricingServices';
+import { buildPricingServiceList, costItemsForService, applyFeeStructureToSchedule, feeStructureRowToAltRow, addServiceToLineItem, sharedLineItemServices, servicesForCostLine, isCostLineServiceKey, serviceKey, standardFeeContext, buildScheduleFromStructures, repriceLinkedFees, effectiveLineItemServices, lineItemOptionOverrides, sharedLineItemsToSplit, sharedSignature, lineItemServicesOnOption, setOptionCostLineService, setOptionItemService, moveOptionItemService, clearOptionItemPicks, roundFee } from '../../utils/pricingServices';
 import { SetupFeeFloorPanel } from './SetupFeeFloorPanel';
 import { isSetupFeeType } from '../../utils/setupFeeFloor';
 import { buildPricingOptionSnapshot, cumulativeDealMargins } from '../../utils/pricingOptionCalc';
@@ -898,7 +898,7 @@ function isKnownService(service, solutionsOptions) {
 // matches case-insensitively. Rows come from two sources combined:
 // every line item in the current workbook option plus every saved
 // mapping (so entries stay reachable after the workbook is cleared).
-function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemServices, lineItemPriority, setLineItemPriority, lineItemIgnored, setLineItemIgnored, solutionsOptions }) {
+function LineItemServicesSection({ workbookItems, option, lineItemServices, setLineItemServices, lineItemPriority, setLineItemPriority, lineItemIgnored, setLineItemIgnored, solutionsOptions }) {
   const [draftItem, setDraftItem] = useState('');
   const [filter, setFilter] = useState('');
 
@@ -932,10 +932,20 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
   }
 
   // Which service takes each priority line's cost on the active option.
+  // Read with the option's own picks laid over the mapping, the way the
+  // Services subtab reads it, so the two subtabs name the same service.
   const onOption = useMemo(
-    () => effectiveLineItemServices(workbookItems, lineItemServices, lineItemPriority),
-    [workbookItems, lineItemServices, lineItemPriority],
+    () => effectiveLineItemServices(workbookItems, lineItemServicesOnOption(option, lineItemServices), lineItemPriority),
+    [workbookItems, option, lineItemServices, lineItemPriority],
   );
+  // Line items the active option sends somewhere other than this mapping
+  // says (its own picks on the Services subtab). Called out per row, since
+  // editing the mapping here doesn't move them.
+  const optionOverrides = useMemo(
+    () => lineItemOptionOverrides(option, lineItemServices, lineItemPriority),
+    [option, lineItemServices, lineItemPriority],
+  );
+  const optionName = option?.sheetName || 'This option';
 
   function toggleIgnore(key) {
     const next = { ...(lineItemIgnored || {}) };
@@ -1055,6 +1065,7 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
               const ignored = !!lineItemIgnored?.[row.key];
               const ordered = !!lineItemPriority?.[row.key] && services.length > 1;
               const winner = ordered ? (onOption?.[row.key]?.[0] || null) : null;
+              const override = optionOverrides.get(row.key);
               return (
                 <tr key={row.key} style={ignored ? { opacity: 0.5 } : undefined}>
                   <td>{row.name}</td>
@@ -1076,6 +1087,14 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
                         <input type="checkbox" checked={!!lineItemPriority?.[row.key]} onChange={() => togglePriority(row.key)} />
                         First in scope only
                       </label>
+                    )}
+                    {override && (
+                      <div
+                        style={{ marginTop: 4, fontSize: '0.72rem', color: '#92400E' }}
+                        title="Set on the Services subtab with Move to, the cost line's menu or the Pick services popup. It applies to this option only. Set the line back to Shared by all there to follow the mapping above."
+                      >
+                        {optionName} has its own pick: {override.length ? override.join(', ') : 'no service'}. Change it on the Services subtab.
+                      </div>
                     )}
                   </td>
                   <td style={{ textAlign: 'center' }}>
@@ -1939,6 +1958,7 @@ function LinkedToPanel({
 
       <LineItemServicesSection
         workbookItems={flatItems}
+        option={opt}
         lineItemServices={lineItemServices}
         setLineItemServices={setLineItemServices}
         lineItemPriority={lineItemPriority}
