@@ -530,5 +530,26 @@ const run = (client, oppStages = null) => accountPotential({
     decidedCounts([{ statusBucket: 'nonsense' }]).sold, 0);
 }
 
+// ---- auto-N/A: what a sold service retires is not on offer --------------
+// The services board shows these as N/A (Auto-N/A Services on Dropdowns ›
+// Services). A service it greys out must not come back as the biggest deal.
+{
+  const overrides = { 'GHG reporting': { autoNa: 'Bill payment' } };
+  const client = { servicesExplored: { 'GHG reporting': 'Sold' } };
+  const { open, decided } = splitByDecision(client, ROWS, null, overrides);
+  const bp = decided.find(r => r.name === 'Bill payment');
+  check('a service a sale retires is decided', !!bp, true);
+  check('as N/A', bp?.statusBucket, 'na');
+  check('naming the sale that retired it', bp?.autoNa?.join(','), 'GHG reporting');
+  check('and is off the open list', open.some(r => r.name === 'Bill payment'), false);
+  check('without overrides nothing is retired',
+    splitByDecision(client, ROWS).open.some(r => r.name === 'Bill payment'), true);
+  const typed = splitByDecision({ servicesExplored: { 'GHG reporting': 'Sold', 'Bill payment': 'Quoting' } }, ROWS, null, overrides);
+  check('a status somebody picked outranks the auto N/A',
+    typed.open.some(r => r.name === 'Bill payment'), true);
+  const unsold = splitByDecision({ servicesExplored: { 'GHG reporting': 'Quoting' } }, ROWS, null, overrides);
+  check('only a sale retires anything', unsold.open.some(r => r.name === 'Bill payment'), true);
+}
+
 console.log(`\n${failures ? `${failures} FAILED` : 'All passed'}`);
 process.exit(failures ? 1 : 0);

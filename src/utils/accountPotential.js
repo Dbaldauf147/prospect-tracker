@@ -44,6 +44,7 @@
 // outranks what) can be read and tested without a browser.
 
 import { autoAddListFor, collectAutoAdds } from './serviceAutoAdd.js';
+import { collectAutoNa, isSoldStatus } from './serviceAutoNa.js';
 import { exploredStatus } from './clientDealSizing.js';
 import { serviceStatusBucket } from './serviceStatusColors.js';
 import { basisFor, estimateScope, pricingFor, pricingLines } from './servicePricing.js';
@@ -98,14 +99,39 @@ export function serviceDecision(client, name, oppStages = null) {
  * With no client this returns everything as open, which is what the page
  * shows before a company is picked.
  */
-export function splitByDecision(client, serviceRows = [], oppStages = null) {
+export function splitByDecision(client, serviceRows = [], oppStages = null, overrides = null) {
+  const rows = serviceRows.map(row => ({ row, d: serviceDecision(client, row.name, oppStages) }));
+  // The N/As the services board shows without anybody typing them: what the
+  // account's sold services retire (Auto-N/A Services on Dropdowns ›
+  // Services, src/utils/serviceAutoNa.js). The board lays them under a
+  // manual status and an opp's stage, so only a service with nothing to say
+  // takes one - and a service the board greys out as N/A must not then be
+  // priced as the biggest thing left to sell.
+  const autoNa = overrides
+    ? autoNaFor(rows.filter(({ d }) => isSoldStatus(d.status)).map(({ row }) => row.name), overrides, serviceRows.map(r => r.name))
+    : null;
   const open = [];
   const decided = [];
-  for (const row of serviceRows) {
-    const d = serviceDecision(client, row.name, oppStages);
+  for (const { row, d } of rows) {
+    const status = String(d.status ?? '').trim();
+    const reasons = autoNa && (!status || status === '-') ? autoNa.get(row.name.trim().toLowerCase()) : null;
+    if (reasons) {
+      decided.push({ ...row, ...d, status: 'N/A', statusBucket: 'na', decided: true, inFlight: false, fromOpp: false, autoNa: reasons });
+      continue;
+    }
     (d.decided ? decided : open).push({ ...row, ...d });
   }
   return { open, decided };
+}
+
+// Service (lowercased) → the sold services that retire it.
+function autoNaFor(sold, overrides, names) {
+  const out = new Map();
+  if (!sold.length) return out;
+  for (const [name, reasons] of collectAutoNa(sold, overrides, { names })) {
+    out.set(String(name).trim().toLowerCase(), reasons);
+  }
+  return out;
 }
 
 /**
@@ -377,7 +403,7 @@ export function accountPotential({
   // which is what this page did before bundling existed.
   overrides = null,
 } = {}) {
-  const { open, decided } = splitByDecision(client, serviceRows, oppStages);
+  const { open, decided } = splitByDecision(client, serviceRows, oppStages, overrides);
   const price = (dealSizeByService) => estimateScope({
     rows: open,
     services: open.map(r => r.name),

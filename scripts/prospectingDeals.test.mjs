@@ -38,6 +38,16 @@ const ctx = { serviceRows, pricing, bases: PRICING_BASES };
   eq(excludedServiceSet({ prospectingExcludedServices: 'oops' }).size, 0, 'a malformed setting excludes nothing');
 }
 
+// A service the account's sales retire (Auto-N/A Services) shows as N/A on
+// the card, so it is never the biggest deal: the next one is.
+{
+  const rows = [...serviceRows, { name: 'Platform', bucket: 'DATA', meta }];
+  const overrides = { Platform: { autoNa: 'Bill payment' } };
+  const record = { company: 'Big Co', numberOfSites: 200, servicesExplored: { Platform: 'Sold' } };
+  eq(biggestDealFor(record, { ...ctx, serviceRows: rows, overrides })?.name, 'GHG reporting', 'an auto-N/A service is never the biggest deal');
+  eq(biggestDealFor(record, { ...ctx, serviceRows: rows })?.name, 'Bill payment', 'with no Auto-N/A cell it still is');
+}
+
 {
   const deal = biggestDealFor({ company: 'Big Co', numberOfSites: 200 }, ctx);
   eq([deal?.name, deal?.fee], ['Bill payment', 20000], 'per-site service on a big estate is the biggest deal');
