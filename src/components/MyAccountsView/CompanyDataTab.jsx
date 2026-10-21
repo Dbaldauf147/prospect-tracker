@@ -363,7 +363,7 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
           columns={columns}
           rows={shown}
           alwaysVisible={['company']}
-          defaultSort={{ key: 'missingCount', direction: 'desc' }}
+          defaultSort={{ key: 'avgDeal', direction: 'desc' }}
           enableColumnFilters
           emptyMessage={show === '' ? 'No companies to show.' : 'Nothing missing here.'}
           exportFileName="my_accounts_company_data"
