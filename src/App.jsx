@@ -37,6 +37,8 @@ import { BackupHealthBanner } from './components/BackupHealthBanner';
 import { SyncPanel } from './components/SyncPanel';
 import { DailySuccessManager } from './components/DailySuccess/DailySuccessManager';
 import { DailySuccessLogModal } from './components/DailySuccess/DailySuccessLogModal';
+import { DailyWeatherPopup } from './components/DailyWeather/DailyWeatherPopup';
+import { WEATHER_SEEN_SETTINGS_KEY, localDateKey, shouldShowWeather } from './utils/dailyWeather';
 import { UTILITY_LOOKUP_HANDOFF_EVENT } from './utils/utilityLookupHandoff';
 import './App.css';
 
@@ -243,6 +245,21 @@ function App() {
   const [showSync, setShowSync] = useState(false);
   const [showBackups, setShowBackups] = useState(false);
   const [showCdmName, setShowCdmName] = useState(false);
+  // Morning weather popup: once per local day, the first time the app is
+  // opened. The seen date lives in userSettings so a second device doesn't
+  // pop it again. `weatherDay` is re-read when the tab comes back into view
+  // so a tab left open overnight still greets the next morning.
+  const [weatherDay, setWeatherDay] = useState(() => localDateKey());
+  const [weatherDismissedDay, setWeatherDismissedDay] = useState(null);
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState === 'visible') setWeatherDay(localDateKey()); };
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('focus', refresh);
+    };
+  }, []);
   const [showDailyLog, setShowDailyLog] = useState(false);
   const [hubspotContacts, setHubspotContacts] = useState([]);
 
@@ -866,6 +883,14 @@ function App() {
         user={user}
       />
       {isAdmin && whatToDoTodayEnabled && <DailySuccessManager user={user} />}
+      <DailyWeatherPopup
+        open={isAdmin && settingsLoaded && weatherDismissedDay !== weatherDay
+          && shouldShowWeather(settings[WEATHER_SEEN_SETTINGS_KEY], weatherDay)}
+        onClose={() => {
+          setWeatherDismissedDay(weatherDay);
+          updateSettings({ [WEATHER_SEEN_SETTINGS_KEY]: weatherDay });
+        }}
+      />
       <UpdateBanner />
       <OtherTabBanner />
       <BackupHealthBanner user={user} />
