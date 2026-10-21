@@ -623,6 +623,32 @@ test('a first-in-scope line item goes to the first service another line ties to'
   assert.deepEqual(costItemsForService(items, withBp, 'Invoice collection').map(i => i.description), ['Collections']);
 });
 
+test('a first-in-scope line moved on one option still goes to one service', () => {
+  // The Linked To list, ticked First in scope only, then Move to on one
+  // option swapped its first service for another in place: the option's
+  // own pick lists several services, still in priority order.
+  const shared = {
+    'setup project mngd': ['Client sends invoices', 'Invoice recalculation - light', 'Invoice collection', 'AP upload', 'Bill payment'],
+    'invoice collection - lite': ['Invoice collection - light'],
+    'direct bill payment': ['Bill payment'],
+  };
+  const prio = { 'setup project mngd': true };
+  const setup = { id: 7, description: 'Setup Project Mngd', type: 'Setup' };
+  const items = [setup, { id: 8, description: 'Invoice Collection - LITE', type: 'Setup' }, { id: 9, description: 'Direct Bill Payment', type: 'Setup' }];
+  const own = moveOptionCostLineService({}, shared, setup, 'Client sends invoices', 'Invoice collection - light', [setup]);
+  const onOption = effectiveLineItemServices(items, lineItemServicesOnOption({ costLineServices: own }, shared), prio);
+  // The first of its services another line ties to takes the cost...
+  assert.deepEqual(servicesForCostLine(onOption, setup), ['Invoice collection - light']);
+  // ...and AP upload, further down the list, does not.
+  assert.deepEqual(costItemsForService(items, onOption, 'AP upload'), []);
+  // A row pick naming several services narrows the same way.
+  const row = effectiveLineItemServices(items, { ...shared, '#item:7': ['AP upload', 'Bill payment'] }, prio);
+  assert.deepEqual(servicesForCostLine(row, setup), ['Bill payment']);
+  // A line that isn't First in scope only keeps sharing.
+  const plain = effectiveLineItemServices(items, lineItemServicesOnOption({ costLineServices: own }, shared), {});
+  assert.equal(servicesForCostLine(plain, setup).length, 5);
+});
+
 test('pass-through lines each get a fee row of their own, at cost', () => {
   const costs = [
     { description: 'Invoice - Data', type: 'Recurring (monthly)', cts: 227.84, startMonth: 4 },

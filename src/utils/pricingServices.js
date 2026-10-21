@@ -176,7 +176,7 @@ const STATUS_RANK = {
 export function effectiveLineItemServices(items, lineItemServices, lineItemPriority) {
   const map = lineItemServices || {};
   const prio = lineItemPriority || {};
-  if (!Object.keys(prio).some(k => prio[k] && Array.isArray(map[k]) && map[k].length > 1)) return map;
+  if (!Object.keys(prio).some(k => prio[k])) return map;
   const anchored = new Set();
   for (const item of items || []) {
     const k = norm(item?.description);
@@ -185,10 +185,21 @@ export function effectiveLineItemServices(items, lineItemServices, lineItemPrior
     for (const s of Array.isArray(mapped) ? mapped : []) if (norm(s)) anchored.add(norm(s));
   }
   const out = { ...map };
-  for (const k of Object.keys(prio)) {
+  const narrow = (k) => {
     const list = Array.isArray(map[k]) ? map[k].filter(s => norm(s)) : [];
-    if (!prio[k] || list.length < 2) continue;
+    if (list.length < 2) return;
     out[k] = [list.find(s => anchored.has(norm(s))) || list[0]];
+  };
+  for (const k of Object.keys(prio)) if (prio[k]) narrow(k);
+  // A cost line on a priority line item can carry a list of its own on the
+  // option: Move to swaps one service for another in place and keeps the
+  // rest, so the line still lists several. Still the same priority order,
+  // so it narrows the same way rather than going back to being shared.
+  for (const item of items || []) {
+    if (!prio[norm(item?.description)]) continue;
+    for (const k of [costLineItemKey(item?.id), costLineServiceKey(item?.description, item?.type)]) {
+      if (k && k in map) narrow(k);
+    }
   }
   return out;
 }
