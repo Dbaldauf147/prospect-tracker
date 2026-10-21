@@ -18,6 +18,7 @@ import { useAgentsRunDue } from './hooks/useAgentsRunDue';
 import { useOppsCallInDue } from './hooks/useOppsCallInDue';
 import { useProspectingTagDebt } from './hooks/useProspectingTagDebt';
 import { useRosterActivityRecorder } from './hooks/useRosterActivityRecorder';
+import { useServicePricingRecorder } from './hooks/useServicePricingRecorder';
 import { useContactCountRecorder } from './hooks/useContactCountRecorder';
 import { useProspectingLadder } from './hooks/useProspectingLadder';
 import { useDecisionMakerCoverage } from './hooks/useDecisionMakerCoverage';
@@ -151,6 +152,8 @@ function App() {
     oppsRecords: tagDebt.oppsRecords,
     prospectsReady: !dataLoading && (prospects || []).length > 0,
   });
+  // Dropdowns > Service Pricing History's % priced or no fee, once a day.
+  useServicePricingRecorder({ settings, settingsLoaded, userId: user?.uid });
   const { issues, openCount: openIssuesCount, serviceGaps } = useIssues({ prospects, cdmName, user, marketingLeads: settings.marketingLeads, serviceOverrides: settings.serviceOverrides, settings });
   // The Prospecting page's renewal step counts these rows, and its Top PC
   // step reads the prospects directly. While the prospects are still
