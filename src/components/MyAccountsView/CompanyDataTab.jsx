@@ -13,6 +13,8 @@ import { buildZoomExcludedMatcher, zoomExcludedLabel } from '../../utils/zoomExp
 import { ZoomExcludedCell } from './ZoomExcludedCell';
 import { buildZoomCsv, downloadZoomCsv } from '../../utils/zoomCsv';
 import { useBiggestDeals } from '../../hooks/useBiggestDeals';
+import { ExcludedServicesPicker } from '../common/ExcludedServicesPicker';
+import { pricedServiceRows } from '../../utils/serviceRows';
 import { dealMid } from '../../utils/prospectingDeals.js';
 import { formatMoney, formatMoneyRange } from '../../utils/servicePricing';
 
@@ -37,6 +39,8 @@ function MissingChip() {
     <span style={{ padding: '1px 7px', borderRadius: 999, fontSize: '0.66rem', fontWeight: 700, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C' }}>Missing</span>
   );
 }
+
+const COMPANY_DATA_EXCLUDED_KEY = 'companyDataExcludedServices';
 
 export function CompanyDataTab({ accounts = [], prospects = [], contacts = null, onUpdate, onSelect, settings, updateSettings, filterBar }) {
   const [show, setShow] = useState(MISSING_ANY);
@@ -82,7 +86,16 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
     () => accounts.map(a => prospectById.get(a.id)).filter(Boolean),
     [accounts, prospectById],
   );
-  const deals = useBiggestDeals(dealRecords, settings);
+  // Services left out of Avg Biggest Deal on this subtab only, picked with
+  // the Services button above the table (settings.companyDataExcludedServices).
+  // The company card and the Deal Size subtab still price the whole card.
+  const excludedRaw = settings?.[COMPANY_DATA_EXCLUDED_KEY];
+  const dealExcluded = useMemo(
+    () => new Set(Array.isArray(excludedRaw) ? excludedRaw.map(n => String(n || '').trim()).filter(Boolean) : []),
+    [excludedRaw],
+  );
+  const pricedNames = useMemo(() => pricedServiceRows(settings).map(r => r.name), [settings]);
+  const deals = useBiggestDeals(dealRecords, settings, { excluded: dealExcluded });
 
   // One row per account with a company record behind it (Qualifying ones
   // left out, see isQualifyingCompany), its numbers read
@@ -153,7 +166,7 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       // One figure, the middle of the range, as on the Prospecting lists'
       // Biggest Deal column. The range stays on hover.
       key: 'avgDeal', label: 'Avg Biggest Deal', defaultWidth: 160,
-      headerTitle: 'The biggest service still open on the company, first-year fee, shown as the average of the low and high ends of its range. The same deal as Largest Deal Size on the Deal Size subtab and Biggest Deal on the company card; hover a figure for the range and the service.',
+      headerTitle: 'The biggest service still open on the company, first-year fee, shown as the average of the low and high ends of its range. The same deal as Largest Deal Size on the Deal Size subtab and Biggest Deal on the company card, less any services left out with the Services button above; hover a figure for the range and the service.',
       getSortValue: (row) => (row.deal ? dealMid(row.deal) : null),
       getFilterValue: (row) => (row.deal ? formatMoney(dealMid(row.deal)) : ''),
       exportValue: (row) => (row.deal ? Math.round(dealMid(row.deal)) : ''),
@@ -303,6 +316,15 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
           {COMPANY_DATA_FIELDS.map(f => <option key={f.key} value={f.key}>{`Missing ${f.label} (${missingCounts[f.key]})`}</option>)}
           <option value="">{`All companies (${rows.length})`}</option>
         </select>
+        <ExcludedServicesPicker
+          title="Leave services out of Avg Biggest Deal on this subtab. An excluded service is never a company's biggest deal and is never bundled in with one, so the next biggest open service leads instead. The company card and the Deal Size subtab are unchanged."
+          hint="Untick a service to leave it out of Avg Biggest Deal here."
+          names={pricedNames}
+          excluded={dealExcluded}
+          onChange={typeof updateSettings === 'function'
+            ? (next) => updateSettings({ [COMPANY_DATA_EXCLUDED_KEY]: [...next].sort((a, b) => a.localeCompare(b)) })
+            : null}
+        />
         <button
           type="button"
           onClick={exportMissing}

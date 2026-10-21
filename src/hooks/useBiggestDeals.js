@@ -1,14 +1,15 @@
 // Each tracker record's Biggest Deal - the company card's own reading (see
 // utils/prospectingDeals.js) - for a list of records, keyed by record id.
 //
-// Priced against the whole rate card: unlike the Prospecting lists, which
-// can leave services out of their analysis, this answers exactly what each
-// company card says. The user's opportunities are read once so a service an
+// Priced against the whole rate card, so it answers exactly what each
+// company card says, unless `excluded` (a Set of service names) is passed:
+// those are taken off the card first (withoutExcludedServices), the way the
+// Prospecting lists and My Accounts > Company Data leave services out. The user's opportunities are read once so a service an
 // opp's Scope names counts as explored, as it does on the card; until they
 // arrive the deals are priced off the service statuses alone.
 
 import { useEffect, useMemo, useState } from 'react';
-import { biggestDealFor } from '../utils/prospectingDeals.js';
+import { biggestDealFor, withoutExcludedServices } from '../utils/prospectingDeals.js';
 import { pricedServiceRows } from '../utils/serviceRows';
 import { getServicePricing, resolvePricingBases } from '../utils/servicePricing';
 import { buildOppStagesByClient } from '../utils/serviceCoverage';
@@ -29,7 +30,7 @@ function cachedDeal(prospect, ctx, oppRecords) {
   return deal;
 }
 
-export function useBiggestDeals(records, settings) {
+export function useBiggestDeals(records, settings, { excluded = null } = {}) {
   const uid = useAuth()?.user?.uid;
   const [oppRecords, setOppRecords] = useState(null);
   useEffect(() => {
@@ -56,11 +57,11 @@ export function useBiggestDeals(records, settings) {
     settings?.hiddenServices, settings?.customServiceCategories, settings?.dropdownCustomLists,
     settings?.dropdownListLabels, settings?.dropdownLists, settings?.dropdownListsHidden]);
   const ctx = useMemo(() => ({
-    serviceRows: pricedServiceRows(pricingSettings),
+    serviceRows: withoutExcludedServices(pricedServiceRows(pricingSettings), excluded),
     pricing: getServicePricing(pricingSettings),
     bases: resolvePricingBases(pricingSettings),
     overrides: pricingSettings.serviceOverrides || null,
-  }), [pricingSettings]);
+  }), [pricingSettings, excluded]);
 
   return useMemo(() => {
     const m = new Map();
