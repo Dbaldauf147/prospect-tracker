@@ -48,7 +48,7 @@ check('option escalator', o.escalator, '3%');
 check('no escalator reads N/A', feeEmailOption(plan, { annualEscalator: 0 }).escalator, 'N/A');
 check('odd term in months', feeEmailOption(plan, { termMonths: 18 }).term, 'Recurring 18 month term');
 check('fee line', o.feeLines[0], 'Electric sourcing: $0.00152 Per kWh');
-check('pass-through fee line', o.feeLines[2], 'Postage: $10.00 Per Account (pass-through)');
+check('pass-through fee line', o.feeLines[2], 'Postage: $10 Per Account (pass-through)');
 
 const { subject, html } = buildFeeEmail(plan, { dealLabel: 'Acme & Co', termMonths: 24, annualEscalator: 0.03, optionSlot: 2 });
 check('subject', subject, 'MARGIN APPROVAL: Acme & Co (Scope)');
@@ -84,7 +84,8 @@ const like = marginOptionFigures({
   margin: 0.594,
   termMonths: 36,
 });
-check('like fees combined', like.feeLines, ['Per account monthly: $3.00 Per Account', 'Per account setup - Cass: $21.22 Per Account (pass-through)']);
+check('cents kept', marginOptionFigures({ rows: [{ name: 'Per account monthly', type: 'Setup', feePerUnit: 2.15, unit: 'Per Account' }, { name: 'Half', type: 'Setup', feePerUnit: 0.5, unit: 'Per Site' }] }).feeLines, ['Per account monthly: $2.15 Per Account', 'Half: $0.50 Per Site']);
+check('like fees combined', like.feeLines, ['Per account monthly: $3 Per Account', 'Per account setup - Cass: $21.22 Per Account (pass-through)']);
 check('services once each, in order', like.services, ['Bill payment', 'GHG']);
 check('margin whole percent', like.margin, '59%');
 
@@ -100,7 +101,7 @@ const all = buildFeeEmail(plan, {
 check('plan wins its own slot', all.includes('Ignored'), false);
 check('six and up dropped', all.includes('Out of range'), false);
 has('option 2 services', all, 'GHG, ESPM link');
-has('option 2 fee summary', all, 'Program monthly: $2,963.00 Fixed');
+has('option 2 fee summary', all, 'Program monthly: $2,963 Fixed');
 has('option 2 margin', all, '>55%<');
 check('option 2 lands after its strip', all.indexOf('GHG, ESPM link') > all.indexOf('Option 2') && all.indexOf('GHG, ESPM link') < all.indexOf('Option 3'), true);
 has('table spans three quarters of the body', all, '<table width="75%"');
@@ -114,7 +115,7 @@ const otherPlan = {
 };
 const fromPlans = buildFeeEmail(plan, { termMonths: 24, optionSlot: 1, otherOptions: [{ slot: 3, plan: otherPlan }] }).html;
 has('plan option services', fromPlans, '>Cat 15<');
-has('plan option fee summary', fromPlans, 'Cat 15 monthly: $800.00 Fixed');
+has('plan option fee summary', fromPlans, 'Cat 15 monthly: $800 Fixed');
 has('plan option margin', fromPlans, '>46%<');
 check('plan option in its own block', fromPlans.indexOf('Cat 15 monthly') > fromPlans.indexOf('Option 3') && fromPlans.indexOf('Cat 15 monthly') < fromPlans.indexOf('Option 4'), true);
 

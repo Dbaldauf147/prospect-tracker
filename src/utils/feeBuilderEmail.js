@@ -57,10 +57,11 @@ function termText(rows, termMonths) {
   return `${recurring ? 'Recurring ' : ''}${span} term`;
 }
 
-// A summary line: "Per account monthly: $3.00 Per Account", with
-// " (pass-through)" on a fee billed at cost.
+// A summary line: "Per account monthly: $3 Per Account", with
+// " (pass-through)" on a fee billed at cost. A whole-dollar fee drops its
+// ".00" ($1,200, not $1,200.00); one with cents keeps them ($2.15).
 function feeLine(r) {
-  const fee = fmtFeePerUnit(r.feePerUnit, r.unit);
+  const fee = fmtFeePerUnit(r.feePerUnit, r.unit).replace(/\.00$/, '');
   const unit = String(r.unit || '').trim();
   const main = [r.name, fee ? `${fee}${unit ? ` ${unit}` : ''}` : ''].filter(Boolean).join(': ');
   return r.passThrough ? `${main} (pass-through)` : main;
