@@ -7,6 +7,7 @@ import {
   servicePricingCoverage, servicePricingHistoryRows,
 } from '../src/utils/servicePricingHistory.js';
 import { pricingCoverage } from '../src/utils/servicePricing.js';
+import { mergeDayHistories } from '../src/utils/localMirrorSync.js';
 
 const cov = (priced, noFee, total = 142) => pricingCoverage([
   ...Array.from({ length: priced }, () => ({ priced: true })),
@@ -34,10 +35,22 @@ assert.equal(h1['2026-10-20'].answeredPct, 39);
 assert.ok(!h1['2026-10-21'].seeded);
 // Unchanged: same object, no write.
 assert.equal(withServicePricingReading(h1, '2026-10-21', readingFromCoverage(cov(38, 18)), 200), h1);
-// The seed follows the day's reading while it is the only real one.
+// The seed is frozen once written: later readings that day move today only.
 const h2 = withServicePricingReading(h1, '2026-10-21', readingFromCoverage(cov(40, 18)), 300);
 assert.equal(h2['2026-10-21'].priced, 40);
-assert.equal(h2['2026-10-20'].priced, 40);
+assert.equal(h2['2026-10-20'].priced, 38, 'the seeded day holds still');
+assert.equal(h2['2026-10-20'].at, 0, 'and is stamped 0, so a saved row wins the merge');
+// An existing seed (as Oct 20 2026 is) is never rewritten either.
+const seededOnly = { '2026-10-20': { ...r, seeded: true, at: 50 } };
+const h2b = withServicePricingReading(seededOnly, '2026-10-21', readingFromCoverage(cov(44, 18)), 60);
+assert.equal(h2b['2026-10-20'], seededOnly['2026-10-20']);
+assert.equal(h2b['2026-10-21'].priced, 44);
+// A browser that seeds before the cloud copy arrives can't overwrite it.
+const cloud = { '2026-10-20': { ...r, seeded: true, at: 50 }, '2026-10-21': { ...r, at: 60 } };
+const fresh = withServicePricingReading({}, '2026-10-22', readingFromCoverage(cov(50, 20)), 900);
+const merged = mergeDayHistories(fresh, cloud);
+assert.equal(merged['2026-10-21'].at, 60, 'the saved Oct 21 survives a fresh seed');
+assert.equal(merged['2026-10-20'].at, 50);
 // Next day: a real earlier day exists, so yesterday is left as it was.
 const h3 = withServicePricingReading(h2, '2026-10-22', readingFromCoverage(cov(45, 20)), 400);
 assert.equal(h3['2026-10-21'].priced, 40);

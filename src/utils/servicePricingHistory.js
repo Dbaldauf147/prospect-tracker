@@ -12,6 +12,7 @@
 //   total, priced, noFee, answered, answeredPct, pricedPct
 //   at        wall-clock ms of the reading
 //   seeded    true on the one day backfilled from the first reading
+//             (stamped at 0 and never rewritten)
 //
 // The latest reading of a day wins. Stored in localStorage under the
 // user's key and mirrored to Firestore, merged day by day.
@@ -78,18 +79,21 @@ export function previousDay(day) {
 
 // The history with `reading` under `day`, oldest days past the cap dropped.
 // The same object back when nothing changes, so the caller can skip a write.
-// While no real (not seeded) earlier day is on record, the reading is also
-// written as the day before, so the chart starts with a line rather than a
-// lone dot, and that seed keeps following the day's reading until a real
-// earlier day exists.
+// When nothing earlier is on record, the first reading is also written as
+// the day before, so the chart starts with a line rather than a lone dot.
+// That seed is written once and then left alone: it used to follow the
+// day's reading until a real earlier day existed, which kept rewriting Oct
+// 20 2026 all through Oct 21 and Dan asked for it to hold still.
 export function withServicePricingReading(history, day, reading, now = Date.now()) {
   const prev = (history && typeof history === 'object') ? history : {};
   if (!day || !reading) return prev;
-  const seedYesterday = !Object.keys(prev).some(k => k < day && !prev[k]?.seeded);
+  const seedYesterday = !Object.keys(prev).some(k => k < day);
   const yesterday = previousDay(day);
-  if (sameReading(prev[day], reading) && (!seedYesterday || sameReading(prev[yesterday], reading))) return prev;
+  if (sameReading(prev[day], reading) && !seedYesterday) return prev;
   const next = { ...prev, [day]: { ...reading, at: now } };
-  if (seedYesterday) next[yesterday] = { ...reading, seeded: true, at: now };
+  // Stamped 0 so the cross-device merge (newest stamp wins) never lets a
+  // seed from a browser that hadn't synced yet replace a row already saved.
+  if (seedYesterday) next[yesterday] = { ...reading, seeded: true, at: 0 };
   const keys = Object.keys(next).sort();
   if (keys.length <= SERVICE_PRICING_MAX_DAYS) return next;
   const out = {};
