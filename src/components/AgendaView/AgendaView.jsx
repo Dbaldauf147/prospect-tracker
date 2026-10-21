@@ -27,7 +27,7 @@ import { applyTagPresetToContact, presetSummary } from '../../utils/tagPresets';
 import { tagVocabulary, planTagEdit } from '../../utils/contactTagReview';
 import { useContactEditSettings } from '../../hooks/useContactEditSettings';
 import { companyPopupTarget } from '../../utils/companyLookup';
-import { STATUS_COLORS } from '../../data/enums';
+import { BulkCompaniesModal } from './BulkCompaniesModal';
 import styles from './AgendaView.module.css';
 
 // The contact popup, for a name clicked in the Company cell's contacts
@@ -1104,10 +1104,12 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
           status: String(p?.status || '').trim(),
           cdm: String(p?.cdm || '').trim(),
           count: 0,
+          emails: [],
         };
         byKey.set(key, entry);
       }
       entry.count++;
+      entry.emails.push(r.email);
     }
     return [...byKey.values()].sort((a, b) => {
       if (!a.name !== !b.name) return a.name ? -1 : 1;
@@ -4489,78 +4491,15 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
         )}
       </div>
 
-      {companiesOpen && (() => {
-        const th = { textAlign: 'left', padding: '0.4rem 0.6rem', fontSize: '0.68rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)', background: '#F8FAFC', position: 'sticky', top: 0 };
-        const td = { padding: '0.4rem 0.6rem', fontSize: '0.78rem', borderBottom: '1px solid #F1F5F9', verticalAlign: 'middle' };
-        const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
-        return (
-          <div
-            style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: '1.25rem' }}
-            onClick={() => setCompaniesOpen(false)}
-          >
-            <div
-              style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', width: 'min(820px, 100%)', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}
-              onClick={e => e.stopPropagation()}
-            >
-              <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>
-                    Companies in this batch ({batchCompanies.length})
-                  </div>
-                  <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '0.25rem' }}>
-                    Every company across the {rows.length} Bulk Add contact{rows.length === 1 ? '' : 's'}, most contacts first.
-                  </div>
-                </div>
-                <button type="button" onClick={() => setCompaniesOpen(false)} title="Close" style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '1.2rem', padding: 0, lineHeight: 1 }}>×</button>
-              </div>
-              <div style={{ overflowY: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr>
-                      <th style={th}>Company</th>
-                      <th style={th}>Tier</th>
-                      <th style={th}>Company Status</th>
-                      <th style={th}>CDM</th>
-                      <th style={{ ...th, textAlign: 'right' }}>Contacts</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {batchCompanies.map(c => {
-                      const canOpen = !!(c.prospect && onSelectProspect);
-                      const statusColor = STATUS_COLORS[c.status];
-                      return (
-                        <tr key={c.key}>
-                          <td style={{ ...td, fontWeight: 600 }}>
-                            {!c.name ? <span style={{ color: '#94A3B8', fontStyle: 'italic', fontWeight: 400 }}>No company</span>
-                              : canOpen ? (
-                                <button
-                                  type="button"
-                                  onClick={() => { setCompaniesOpen(false); onSelectProspect(c.prospect); }}
-                                  title="Open this company"
-                                  style={{ background: 'none', border: 'none', padding: 0, color: 'var(--color-accent)', fontWeight: 600, fontSize: 'inherit', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
-                                >{c.name}</button>
-                              ) : (
-                                <span title="Not matched to a company in the tracker">{c.name}</span>
-                              )}
-                          </td>
-                          <td style={td}>{c.tier || blank}</td>
-                          <td style={td}>
-                            {c.status ? (
-                              <span style={{ fontSize: '0.7rem', fontWeight: 600, padding: '1px 8px', borderRadius: 999, color: statusColor || '#475569', background: statusColor ? `${statusColor}1A` : '#F1F5F9', whiteSpace: 'nowrap' }}>{c.status}</span>
-                            ) : blank}
-                          </td>
-                          <td style={td}>{c.cdm || blank}</td>
-                          <td style={{ ...td, textAlign: 'right', color: '#475569' }}>{c.count}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {companiesOpen && (
+        <BulkCompaniesModal
+          companies={batchCompanies}
+          rowCount={rows.length}
+          onClose={() => setCompaniesOpen(false)}
+          onOpenCompany={onSelectProspect ? (p) => { setCompaniesOpen(false); onSelectProspect(p); } : null}
+          onRemoveContacts={removeRows}
+        />
+      )}
 
       {applyPreview && (() => {
         const FIELD_LABELS = { website: 'Website', zoomCompanyId: 'Zoom ID', zoomCompanyName: 'Zoom Name', emailDomain: 'Email Domain' };
