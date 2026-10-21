@@ -567,12 +567,13 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                 came up empty, then a Google search, then a LinkedIn search,
                 and finally closing the category out. Each step is
                 a tick saved on the record with the date. A category with a
-                Yes decision maker has nothing to work, so its cells stay
-                blank. */}
+                Yes decision maker has nothing left to work: its cells still
+                show which steps were ticked, greyed out and locked, and
+                count for nothing in Steps remaining (bucketStepsLeft). */}
             {DM_STEPS.map((step, i) => (
               <tr key={step.key} data-dm-step={step.key} style={{ borderTop: '1px solid #E2E8F0', background: i % 2 === 0 ? '#FAFAF9' : '#fff' }}>
                 {dmColumns.map(({ bucket, dms }, i) => {
-                  if (dms.some(d => d.answer === 'yes')) return <td key={bucket.key} style={colLine(i)} />;
+                  const dmFound = dms.some(d => d.answer === 'yes');
                   const ranAt = step.key === 'zoom' ? searchRun?.[bucket.key] : searchSteps?.[bucket.key]?.[step.key];
                   // The Zoom step is done once the company HAS a Zoom
                   // Company ID, tick or no tick - the same rule the Steps
@@ -585,15 +586,16 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                   const loggedSearch = step.key === 'zoomFailed' ? titleSearchesFor(bucket)[0] : null;
                   const lockedOn = foundById || !!loggedSearch;
                   const done = !!ranAt || lockedOn;
-                  const canToggle = !lockedOn && (step.key === 'zoom' ? !!onToggleSearchRun : !!onToggleSearchStep);
+                  const canToggle = !dmFound && !lockedOn && (step.key === 'zoom' ? !!onToggleSearchRun : !!onToggleSearchStep);
                   const toggle = (on) => step.key === 'zoom'
                     ? onToggleSearchRun?.(bucket.key, on)
                     : onToggleSearchStep?.(bucket.key, step.key, on);
                   return (
-                    <td key={bucket.key} style={{ padding: '0.45rem 0.6rem', verticalAlign: 'top', fontSize: '0.7rem', ...colLine(i), ...(done ? { background: '#F0FDF4' } : {}) }}>
+                    <td key={bucket.key} style={{ padding: '0.45rem 0.6rem', verticalAlign: 'top', fontSize: '0.7rem', ...colLine(i), ...(done && !dmFound ? { background: '#F0FDF4' } : {}), ...(dmFound ? { opacity: 0.45 } : {}) }}>
                       <label
-                        style={{ display: 'flex', alignItems: 'flex-start', gap: '0.3rem', color: done ? '#166534' : '#475569', fontWeight: done ? 600 : 400, cursor: canToggle ? 'pointer' : 'default' }}
-                        title={foundById ? `Checked: the company has a Zoom Company ID (${zoomCompanyId})`
+                        style={{ display: 'flex', alignItems: 'flex-start', gap: '0.3rem', color: dmFound ? '#64748B' : done ? '#166534' : '#475569', fontWeight: done ? 600 : 400, cursor: canToggle ? 'pointer' : 'default' }}
+                        title={dmFound ? `${bucket.label} has a decision maker, so this step is not needed and is not counted${done ? ' (it was done)' : ''}`
+                          : foundById ? `Checked: the company has a Zoom Company ID (${zoomCompanyId})`
                           : loggedSearch ? `Checked: a ${bucket.label} Zoom title search is logged (${fmtSearchDate(loggedSearch.date)})`
                           : ranAt ? `${step.label}: ticked ${new Date(ranAt).toLocaleDateString()}` : `Tick once "${step.label}" applies to ${bucket.label} at this company`}
                       >
@@ -603,10 +605,10 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                           // Not disabled when locked on (by ID or a logged
                           // search), so it draws as a green tick rather than
                           // a greyed-out one.
-                          disabled={!canToggle && !lockedOn}
+                          disabled={dmFound || (!canToggle && !lockedOn)}
                           onChange={e => { if (canToggle) toggle(e.target.checked); }}
                           aria-label={`${bucket.label}: ${step.label}`}
-                          style={{ marginTop: 1, flexShrink: 0, accentColor: '#16A34A' }}
+                          style={{ marginTop: 1, flexShrink: 0, accentColor: dmFound ? '#64748B' : '#16A34A' }}
                         />
                         <span style={{ minWidth: 0 }}>
                           {step.label}
@@ -614,7 +616,7 @@ function OrgChart({ contacts, onEditContact, tagReview = {}, zoomCompanyId = '',
                         </span>
                       </label>
                       {step.key === 'zoom' && (zoomCompanyId
-                        ? <div style={{ marginTop: '0.2rem', marginLeft: '1.2rem', fontWeight: 600, color: '#166534', userSelect: 'all', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Zoom Company ID ${zoomCompanyId}`}>{zoomCompanyId}</div>
+                        ? <div style={{ marginTop: '0.2rem', marginLeft: '1.2rem', fontWeight: 600, color: dmFound ? '#64748B' : '#166534', userSelect: 'all', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Zoom Company ID ${zoomCompanyId}`}>{zoomCompanyId}</div>
                         : <div style={{ marginTop: '0.2rem', marginLeft: '1.2rem', color: '#94A3B8', fontStyle: 'italic' }}>Zoom ID not set</div>)}
                     </td>
                   );
