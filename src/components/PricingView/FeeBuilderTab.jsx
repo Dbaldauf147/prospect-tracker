@@ -832,7 +832,7 @@ export function FeeBuilderTab({
                   const eml = feeBuilderEmailEml(plan, { ...draftOpts, optionSlot, otherOptions });
                   downloadDrafts([{ fileName: `${safeFileName(`Margin Approval ${emailDraft.dealLabel || ''} ${plan.optionName || ''}`.trim())}.eml`, eml }]);
                 }}
-                title="Download the Margin Approval email for Keith (Cc Gabe, Bcc HubSpot) with every option's services, fee summary, margin, term and escalator filled into the Margin Request Template (this option as built, the others as saved). Open the file to edit and send it from Outlook."
+                title="Download the Margin Approval email for Keith (Cc Gabe, Bcc HubSpot) with every option's services, fee summary, margin, term and escalator filled into the Margin Request Template (this option as built, the others from their own Fee Builder picks, or as saved when the picks build nothing). Open the file to edit and send it from Outlook."
               >
                 Draft email
               </button>

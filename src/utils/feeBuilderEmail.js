@@ -128,7 +128,8 @@ const validSlot = (n) => Number.isInteger(n) && n >= 1 && n <= MARGIN_REQUEST_OP
 // optionSlot: which of the template's five Option blocks the plan fills
 // (1-based, its place among the workbook's options). otherOptions fills
 // the rest: [{ slot, services, rows, margin }], rows as the plan's
-// ({ name, type, feePerUnit, unit, unitCount, startMonth, passThrough }).
+// ({ name, type, feePerUnit, unit, unitCount, startMonth, passThrough }),
+// or [{ slot, plan }] for an option filled from a plan of its own.
 export function buildFeeEmail(plan, { dealLabel = '', termMonths, annualEscalator, optionSlot = 1, otherOptions = [], bucketOf = null } = {}) {
   const f = feeEmailFigures(plan, { termMonths });
   const deal = String(dealLabel || '').trim();
@@ -136,7 +137,9 @@ export function buildFeeEmail(plan, { dealLabel = '', termMonths, annualEscalato
   const filled = [];
   for (const other of otherOptions || []) {
     if (!validSlot(other?.slot) || other.slot === slot) continue;
-    filled[other.slot - 1] = marginOptionFigures({ ...other, termMonths: f.termMonths, annualEscalator, bucketOf });
+    filled[other.slot - 1] = other.plan
+      ? feeEmailOption(other.plan, { termMonths, annualEscalator, bucketOf })
+      : marginOptionFigures({ ...other, termMonths: f.termMonths, annualEscalator, bucketOf });
   }
   filled[slot - 1] = feeEmailOption(plan, { termMonths, annualEscalator, bucketOf });
   // The scope is left as "(Scope)" to word by hand.

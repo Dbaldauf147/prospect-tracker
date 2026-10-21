@@ -105,6 +105,19 @@ has('option 2 margin', all, '>55%<');
 check('option 2 lands after its strip', all.indexOf('GHG, ESPM link') > all.indexOf('Option 2') && all.indexOf('GHG, ESPM link') < all.indexOf('Option 3'), true);
 has('table spans three quarters of the body', all, '<table width="75%"');
 
+// An option filled from a plan of its own (its Fee Builder picks).
+const otherPlan = {
+  numYears: 2,
+  rows: [{ name: 'Cat 15 monthly', type: 'Recurring (monthly)', feePerUnit: 800, unit: 'Fixed', unitCount: 1, startMonth: 1, term: 19200, cost: 10000 }],
+  perService: [{ service: 'Cat 15', structureName: 'Cat 15 monthly' }],
+  after: { feeByYear: [9600, 9600], costByYear: [5000, 5000], margin: { finalMargin: 0.462 } },
+};
+const fromPlans = buildFeeEmail(plan, { termMonths: 24, optionSlot: 1, otherOptions: [{ slot: 3, plan: otherPlan }] }).html;
+has('plan option services', fromPlans, '>Cat 15<');
+has('plan option fee summary', fromPlans, 'Cat 15 monthly: $800.00 Fixed');
+has('plan option margin', fromPlans, '>46%<');
+check('plan option in its own block', fromPlans.indexOf('Cat 15 monthly') > fromPlans.indexOf('Option 3') && fromPlans.indexOf('Cat 15 monthly') < fromPlans.indexOf('Option 4'), true);
+
 // Services summarized as their buckets; an unfiled one keeps its name.
 const BUCKETS = { 'strategic sourcing': 'Traditional Energy Management', 'bill payment': 'DATA', 'invoice recalculation': 'DATA' };
 const bucketOf = (n) => BUCKETS[String(n).toLowerCase()] || '';
