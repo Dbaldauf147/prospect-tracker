@@ -449,31 +449,100 @@ export function oppSlideShapes(content) {
 }
 
 // The at-a-glance table that opens a deck with more than one opp.
-const OVERVIEW_ROWS = 9;
-function overviewTable(entries) {
+//
+// Scope is written out rather than cut to one line: a line per Services
+// board bucket ("Bill Pay: Bill payment, Invoice variance testing and
+// Invoice recalculation"), wrapping as far as it needs to. Rows are as tall
+// as their text, so the table pages by height rather than by a fixed count.
+const OVERVIEW = {
+  y: 1.2,
+  maxH: 3.95, // to just above the template's footer
+  headH: 0.32,
+  minRowH: 0.32,
+  lineH: 0.155, // one 9pt line
+  padH: 0.1,
+  sz: 900,
+};
+const OVERVIEW_COLS = [
   // No Opportunity column: the BFO name is an internal label and stays
-  // off the deck, as it does on the opp slides.
-  const cols = [
-    { label: 'Account', w: 2.4, get: c => c.account },
-    { label: 'Stage', w: 1.35, get: c => c.stage },
-    { label: 'Scope', w: 5.385, get: c => c.scopeItems.join(', ') },
-  ];
-  const rowH = 0.32;
-  const tc = (text, { head = false, shade = false } = {}) => {
+  // off the deck, as it does on the opp slides. Account and Stage are kept
+  // narrow so Scope gets the width.
+  { label: 'Account', w: 1.95 },
+  { label: 'Stage', w: 1.0 },
+  { label: 'Scope', w: 6.185 },
+];
+
+// "a", "a and b", "a, b and c".
+function listJoin(items) {
+  if (items.length <= 1) return items.join('');
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+// The scope as written lines: [{ label, text }], one per bucket. A scope
+// whose services no bucket claims is written without a label.
+export function scopeSummary(scopeGroups) {
+  const groups = scopeGroups || [];
+  const solo = groups.length === 1 && groups[0].bucket === 'Other services';
+  return groups.map(g => ({ label: solo ? '' : g.bucket, text: listJoin(g.items) }));
+}
+
+const cellLines = (text, w) => linesFor(text, w - 0.16, OVERVIEW.sz / 100);
+
+function overviewRow(c) {
+  const [wAccount, wStage, wScope] = OVERVIEW_COLS.map(col => col.w);
+  const scope = scopeSummary(c.scopeGroups);
+  const scopeLines = scope.reduce((n, l) => n + cellLines(`${l.label ? `${l.label}: ` : ''}${l.text}`, wScope), 0);
+  const lines = Math.max(1, cellLines(c.account, wAccount), cellLines(c.stage, wStage), scopeLines);
+  return { c, scope, h: Math.max(OVERVIEW.minRowH, lines * OVERVIEW.lineH + OVERVIEW.padH) };
+}
+
+// The opps split into pages of rows that fit under the header.
+function overviewPages(contents) {
+  const pages = [];
+  let page = [];
+  let used = OVERVIEW.headH;
+  for (const row of contents.map(overviewRow)) {
+    if (page.length && used + row.h > OVERVIEW.maxH) {
+      pages.push(page);
+      page = [];
+      used = OVERVIEW.headH;
+    }
+    page.push(row);
+    used += row.h;
+  }
+  if (page.length) pages.push(page);
+  return pages;
+}
+
+function overviewTable(rows) {
+  const p = (runs) => `<a:p><a:pPr algn="l"/>${runs.join('')}</a:p>`;
+  const tc = (parasXml, { head = false, shade = false } = {}) => {
     const fill = head ? C.quartz : shade ? C.mist : C.white;
-    const color = head ? C.white : C.body;
-    return `<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:pPr algn="l"/>${run(clip(String(text || ''), 70), { sz: head ? 1000 : 900, b: head, color })}</a:p></a:txBody>`
+    return `<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>${parasXml}</a:txBody>`
       + `<a:tcPr marL="${emu(0.08)}" marR="${emu(0.08)}" marT="${emu(0.04)}" marB="${emu(0.04)}" anchor="ctr">`
       + `<a:lnL w="0"><a:noFill/></a:lnL><a:lnR w="0"><a:noFill/></a:lnR><a:lnT w="0"><a:noFill/></a:lnT><a:lnB w="6350"><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill></a:lnB>`
       + `<a:solidFill><a:srgbClr val="${fill}"/></a:solidFill></a:tcPr></a:tc>`;
   };
-  const head = `<a:tr h="${emu(rowH)}">${cols.map(c => tc(c.label, { head: true })).join('')}</a:tr>`;
-  const body = entries.map((e, i) => `<a:tr h="${emu(rowH)}">${cols.map(c => tc(c.get(e), { shade: i % 2 === 1 })).join('')}</a:tr>`).join('');
-  const totalW = cols.reduce((s, c) => s + c.w, 0);
+  const sz = OVERVIEW.sz;
+  const text = (t) => p([run(String(t || ''), { sz })]);
+  const scopeCell = (scope) => (scope.length
+    ? scope.map(l => p([
+      ...(l.label ? [run(`${l.label}: `, { sz, b: true })] : []),
+      run(l.text, { sz }),
+    ])).join('')
+    : p([run('Scope not set on the opp', { sz, i: true, color: C.lightGrey })]));
+  const head = `<a:tr h="${emu(OVERVIEW.headH)}">${OVERVIEW_COLS.map(col => tc(p([run(col.label, { sz: 1000, b: true, color: C.white })]), { head: true })).join('')}</a:tr>`;
+  const body = rows.map(({ c, scope, h }, i) => `<a:tr h="${emu(h)}">${[
+    tc(text(c.account), { shade: i % 2 === 1 }),
+    tc(text(c.stage), { shade: i % 2 === 1 }),
+    tc(scopeCell(scope), { shade: i % 2 === 1 }),
+  ].join('')}</a:tr>`).join('');
+  const totalW = OVERVIEW_COLS.reduce((s2, col) => s2 + col.w, 0);
+  const totalH = OVERVIEW.headH + rows.reduce((s2, r) => s2 + r.h, 0);
   return `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="20" name="Opportunities table"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>`
-    + `<p:xfrm><a:off x="${emu(L.left)}" y="${emu(1.2)}"/><a:ext cx="${emu(totalW)}" cy="${emu(rowH * (entries.length + 1))}"/></p:xfrm>`
+    + `<p:xfrm><a:off x="${emu(L.left)}" y="${emu(OVERVIEW.y)}"/><a:ext cx="${emu(totalW)}" cy="${emu(totalH)}"/></p:xfrm>`
     + `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblPr firstRow="1" bandRow="1"/>`
-    + `<a:tblGrid>${cols.map(c => `<a:gridCol w="${emu(c.w)}"/>`).join('')}</a:tblGrid>${head}${body}</a:tbl></a:graphicData></a:graphic></p:graphicFrame>`;
+    + `<a:tblGrid>${OVERVIEW_COLS.map(col => `<a:gridCol w="${emu(col.w)}"/>`).join('')}</a:tblGrid>${head}${body}</a:tbl></a:graphicData></a:graphic></p:graphicFrame>`;
 }
 
 function overviewShapes(entries, company, part, parts) {
@@ -544,11 +613,10 @@ export async function buildOppDeck({ JSZip, template, company, entries, contactI
   // The slides to write, in order: the overview (in pages) then one per opp.
   const slides = [];
   if (contents.length > 1) {
-    const parts = Math.ceil(contents.length / OVERVIEW_ROWS);
-    for (let p = 0; p < parts; p += 1) {
-      const chunk = contents.slice(p * OVERVIEW_ROWS, (p + 1) * OVERVIEW_ROWS);
-      slides.push({ title: 'Open opportunities at a glance', body: overviewShapes(chunk, company, p + 1, parts) });
-    }
+    const pages = overviewPages(contents);
+    pages.forEach((rows, p) => {
+      slides.push({ title: 'Open opportunities at a glance', body: overviewShapes(rows, company, p + 1, pages.length) });
+    });
   }
   for (const c of contents) slides.push({ title: c.title, body: oppSlideShapes(c) });
 
