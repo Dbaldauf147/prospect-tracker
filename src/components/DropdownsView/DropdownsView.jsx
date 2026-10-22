@@ -1173,6 +1173,9 @@ export function DropdownsView({ settings, updateSettings }) {
       || { company: '', services: [], counts: {}, serviceUnits: {} },
   );
   const [serviceSearch, setServiceSearch] = useState('');
+  // Rows left after the table's own header filters, for the count beside
+  // the search box. null until the table first reports.
+  const [columnFilteredServices, setColumnFilteredServices] = useState(null);
   const lists = useMemo(() => getEffectiveDropdownLists(settings), [
     settings?.dropdownLists,
     settings?.dropdownListLabels,
@@ -1644,6 +1647,11 @@ export function DropdownsView({ settings, updateSettings }) {
     ...(col.key === 'rolloutTime'
       ? { getSortValue: (row) => rolloutWeeks(row.rolloutTime) }
       : {}),
+    // The Hide column holds a button, not a value, so its header filter
+    // reads what the button means.
+    ...(col.key === 'hide'
+      ? { getFilterValue: (row) => (row._hidden ? 'Hidden' : 'Shown') }
+      : {}),
   }));
 
   // Save a list's full options array back to settings. We always
@@ -1879,7 +1887,9 @@ export function DropdownsView({ settings, updateSettings }) {
               onChange={e => setServiceSearch(e.target.value)}
             />
             <span className={styles.resultCount}>
-              {serviceSearch.trim()
+              {columnFilteredServices && columnFilteredServices.length !== serviceTableRows.length
+                ? `${columnFilteredServices.length} of ${serviceRows.length} services`
+                : serviceSearch.trim()
                 ? `${filteredServiceRows.length} of ${serviceRows.length} services`
                 : `${serviceRows.length - (showHiddenServices ? 0 : hiddenCount)} services`}
               {hiddenCount > 0 && ` · ${hiddenCount} hidden`}
@@ -1979,6 +1989,10 @@ export function DropdownsView({ settings, updateSettings }) {
               columns={serviceColumns}
               rows={serviceTableRows}
               alwaysVisible={['name', 'hide']}
+              // A filter box under each header, the same combobox other
+              // tables use: pick values from the column or type to match.
+              enableColumnFilters
+              onFilteredRowsChange={setColumnFilteredServices}
               // Anything in a cell that responds to a click swallows it
               // first (see swallowClick), so this fires for the row itself
               // — the padding around the cells, and any cell whose editor
@@ -1994,7 +2008,9 @@ export function DropdownsView({ settings, updateSettings }) {
               updateSettings={updateSettings}
               emptyMessage={serviceRows.length === 0
                 ? 'The Solutions dropdown list is empty. Use "+ Add service" above to start it off.'
-                : `No services match "${serviceSearch}".`}
+                : serviceSearch.trim()
+                  ? `No services match "${serviceSearch}".`
+                  : 'No services match the column filters.'}
             />
           </div>
 
