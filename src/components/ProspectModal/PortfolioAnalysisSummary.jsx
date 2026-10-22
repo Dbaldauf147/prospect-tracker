@@ -16,6 +16,7 @@ import { loadIndicativeAnalysis } from '../../utils/firestoreSync';
 import { formatAnalysisDate } from '../../hooks/useSavedAnalyses';
 import { siteListScreeningRows } from '../../utils/siteListFacts';
 import { marketsFromWorkbook, summariseMarkets, complianceSummary } from '../../utils/portfolioAnalysisSummary';
+import { downloadPortfolioAnalysisSummary } from '../../utils/portfolioAnalysisSummaryXlsx';
 
 // prospect id + savedAt -> { markets, siteList } read out of that save.
 const workbookCache = new Map();
@@ -173,6 +174,27 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
     indicative: t.indicative + c.indicative,
   }), { electric: 0, gas: 0, low: 0, high: 0, indicative: 0 }), [savings]);
 
+  const [exporting, setExporting] = useState('');
+  async function exportExcel() {
+    if (loading || exporting === 'busy') return;
+    setExporting('busy');
+    try {
+      await downloadPortfolioAnalysisSummary({
+        firmName,
+        savings,
+        savedAt: new Map(loaded.map(c => [c.company, c.meta?.savedAt])),
+        compliance,
+        categories: (mandates?.CATEGORIES || []).map(key => ({ key, label: mandates.CATEGORY_LABEL[key] })),
+        analysed: companies.length,
+        totalCompanies,
+      });
+      setExporting('');
+    } catch (err) {
+      console.error('Master Analysis summary export failed:', err);
+      setExporting(err?.message || 'Export failed.');
+    }
+  }
+
   const failed = loaded.filter(c => c.error);
   const noMarkets = loaded.filter(c => !c.error && c.markets.length === 0);
   const tabBtn = (k, label) => (
@@ -213,6 +235,13 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
               {loading && ` Reading ${progress.done + 1} of ${progress.total}...`}
             </div>
           </div>
+          <button
+            type="button"
+            onClick={exportExcel}
+            disabled={loading || exporting === 'busy'}
+            title={loading ? 'Available once every saved analysis has been read' : (exporting && exporting !== 'busy' ? `Could not export: ${exporting}` : 'Download both tabs as an Excel workbook in Schneider Electric formatting')}
+            style={{ padding: '0.3rem 0.7rem', border: '1px solid #009530', borderRadius: 5, background: loading ? '#F1F5F9' : '#009530', color: loading ? '#94A3B8' : '#fff', fontSize: '0.7rem', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap', alignSelf: 'center' }}
+          >{exporting === 'busy' ? 'Exporting...' : (exporting ? '⚠ Retry export' : '↓ Export to Excel')}</button>
           <button type="button" onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', fontSize: '1.3rem', lineHeight: 1, color: '#94A3B8', cursor: 'pointer' }}>×</button>
         </div>
         <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border, #E2E8F0)', padding: '0 0.5rem' }}>

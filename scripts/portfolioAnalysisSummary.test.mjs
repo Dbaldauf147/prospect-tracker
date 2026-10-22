@@ -9,6 +9,7 @@
 import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
 import { marketsFromWorkbook, summariseMarkets, complianceSummary } from '../src/utils/portfolioAnalysisSummary.js';
+import { buildPortfolioAnalysisSummary } from '../src/utils/portfolioAnalysisSummaryXlsx.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -147,6 +148,45 @@ eq(marketsFromWorkbook({ SheetNames: ['Summary'], Sheets: { Summary: {} } }), []
   eq([c.categories.bbs, c.categories.bps, c.exposure], [{ sites: 2, penalty: 4000 }, { sites: 1, penalty: 50000 }, 54000], 'per-category sites and fines');
   eq(c.byJurisdiction.map(j => [j.government, j.sites, j.penalty]), [['New York City', 2, 54000]],
     'a site with two mandates counts once; jurisdictions with nothing owed are left out');
+}
+
+// --- markets with nothing in them are left out ------------------------------
+{
+  const mk = (market, dereg, high, indicative = 0) => ({ commodity: 'electric', market, country: 'United States', totalSites: 3, deregulatedSites: dereg, spend: 0, lowPct: null, highPct: null, low: high ? high / 2 : null, high: high || null, indicative });
+  const s = summariseMarkets([{ company: 'Acme', markets: [mk('TX', 2, 1000), mk('AL', 0, 0), mk('FL', 0, 0, 50), mk('UK', 3, 0)] }]);
+  eq(s.byCompany[0].markets.map(m => m.market).sort(), ['FL', 'TX', 'UK'], 'a market with no deregulated site and no savings is dropped');
+  eq(s.byMarket.some(m => m.market === 'AL'), false, 'and is not in the portfolio roll-up either');
+}
+
+// --- the Excel export --------------------------------------------------------
+{
+  const savings = summariseMarkets([
+    { company: 'Acme', markets: [{ commodity: 'electric', market: 'TX', country: 'United States', totalSites: 4, deregulatedSites: 4, spend: 100_000, lowPct: 0.05, highPct: 0.1, low: 5000, high: 10_000, indicative: 7000 }] },
+  ]);
+  const compliance = {
+    rows: [
+      { company: 'Acme', source: 'card', sitesScreened: 4, sitesWithMandate: 1, jurisdictions: 1, jurisdictionIds: ['NYC'], exposure: 2000, categories: { bbs: { sites: 1, penalty: 2000 }, audits: { sites: 0, penalty: 0 }, bps: { sites: 0, penalty: 0 } } },
+      { company: 'Beta', none: true },
+    ],
+    byJurisdiction: [{ government: 'New York City', sites: 1, penalty: 2000, companies: ['Acme'], bbs: { sites: 1, penalty: 2000 }, audits: { sites: 0, penalty: 0 }, bps: { sites: 0, penalty: 0 } }],
+  };
+  const wb = await buildPortfolioAnalysisSummary({
+    firmName: 'SVP', savings, compliance, analysed: 2, totalCompanies: 5,
+    savedAt: new Map([['Acme', '2026-08-31']]),
+    categories: [{ key: 'bbs', label: 'BBS' }, { key: 'audits', label: 'Energy Audits' }, { key: 'bps', label: 'BPS' }],
+  });
+  eq(wb.worksheets.map(w => w.name), ['Savings Summary', 'Savings by Company', 'Compliance Summary'], 'three sheets');
+  const read = XLSX.read(new Uint8Array(await wb.xlsx.writeBuffer()), { type: 'array' });
+  const rows = (name) => XLSX.utils.sheet_to_json(read.Sheets[name], { header: 1, defval: null });
+  const ss = rows('Savings Summary');
+  const acme = ss.find(r => r[0] === 'Acme');
+  eq([acme[2], acme[5], acme[6], acme[7]], [4, 5000, 10_000, 7000], 'company row writes sites and the range as numbers');
+  eq(ss.some(r => r[0] === 'United States') && ss.some(r => r[0] === 'TX'), true, 'country heading with its states under it');
+  const cs = rows('Compliance Summary');
+  eq(cs.find(r => r[0] === 'Beta').at(-1), 'No site list to screen', 'a company with nothing to screen says so');
+  eq(cs.find(r => r[0] === 'New York City')[1], 1, 'jurisdiction table');
+  const text = JSON.stringify([ss, rows('Savings by Company'), cs]);
+  eq(text.includes('—'), false, 'no em dashes in the export');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
