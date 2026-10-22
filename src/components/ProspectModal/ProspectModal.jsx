@@ -172,6 +172,8 @@ import { isClientWedged, isClientWedgedError, wedgedClientMessage } from '../../
 import styles from './ProspectModal.module.css';
 import { PeOwnerField } from './PeOwnerField';
 import { recipientMapSaver } from '../../utils/recipientMaps';
+import { selectDeckOpps } from '../../utils/oppDeck';
+import oppDeckTemplateUrl from '../../assets/se-opps-template.pptx?url';
 
 // The notes editor is fetched the first time an opportunity's notes open,
 // not with the card (see QuillEditor.js).
@@ -7636,6 +7638,60 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return ownedCompanyList(entries, fields.company);
   }, [isNew, fields.company, fields.portfolioCompanies, prospect?.id, prospects, settings, prospectByName, prospectById]);
 
+  // The opps the "Download PPT" button on the Opps tab puts in its deck:
+  // the live ones at this company and at everything it owns, so a PE
+  // firm's deck walks its portfolio. Only worked out on the Opps tab.
+  const deckEntries = useMemo(() => {
+    if (activeTab !== 'opps' || isNew || !oppsCache || !fields.company?.trim()) return [];
+    return selectDeckOpps(oppsCache, { company: fields.company.trim(), owned: ownedCompanies, prospects });
+  }, [activeTab, isNew, oppsCache, fields.company, ownedCompanies, prospects]);
+  const [deckBusy, setDeckBusy] = useState(false);
+
+  async function downloadOppDeck() {
+    if (deckBusy || deckEntries.length === 0) return;
+    setDeckBusy(true);
+    try {
+      const [{ buildOppDeck, oppDeckFilename }, { default: JSZip }, res] = await Promise.all([
+        import('../../utils/oppDeck'),
+        import('jszip'),
+        fetch(oppDeckTemplateUrl),
+      ]);
+      if (!res.ok) throw new Error(`The SE template didn't load (${res.status})`);
+      // Tagged contacts are names on the opp; their titles come off the
+      // HubSpot roster, preferring someone at the opp's own account when
+      // two people share a name.
+      const byName = new Map();
+      for (const c of (hubspotContacts || [])) {
+        const name = `${c.firstname || ''} ${c.lastname || ''}`.trim().toLowerCase();
+        if (!name) continue;
+        if (!byName.has(name)) byName.set(name, []);
+        byName.get(name).push(c);
+      }
+      const contactInfo = (name, account) => {
+        const hits = byName.get(String(name || '').trim().toLowerCase()) || [];
+        const hit = hits.find(c => account && companiesMatch(c.company, account)) || hits[0];
+        return hit ? { title: hit.jobtitle || '' } : null;
+      };
+      const bytes = await buildOppDeck({
+        JSZip, template: await res.arrayBuffer(), company: fields.company.trim(), entries: deckEntries, contactInfo,
+      });
+      const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = oppDeckFilename(fields.company.trim());
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      console.error('Opps deck failed', err);
+      alert(`Couldn't build the PowerPoint: ${err?.message || err}`);
+    } finally {
+      setDeckBusy(false);
+    }
+  }
+
   // The people at those companies, minus anyone already on the roster or
   // in the owner bucket above it. Only worked out on the Contacts tab:
   // it walks every cached HubSpot contact.
@@ -11196,6 +11252,32 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       companyOppsSummary.closed ? `${companyOppsSummary.closed} closed` : '',
                     ].filter(Boolean).join(' · ')}
                 </span>
+                {(() => {
+                  const fromOwned = deckEntries.filter(e => e.via !== 'direct').length;
+                  const title = !oppsCache
+                    ? 'Opps aren\'t loaded in this browser yet - open the Opps tab once first.'
+                    : deckEntries.length === 0
+                      ? 'No open opps here or at the companies it owns.'
+                      : `PowerPoint in the SE Advisory Services template: one slide per open opp (contacts, scope, stage, next steps)${fromOwned ? `, including ${fromOwned} at companies ${fields.company.trim()} owns` : ''}.`;
+                  return (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); downloadOppDeck(); }}
+                      disabled={deckBusy || deckEntries.length === 0}
+                      title={title}
+                      style={{
+                        marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                        padding: '0.25rem 0.6rem', fontSize: '0.72rem', fontWeight: 600, borderRadius: 6,
+                        border: '1px solid #00552E', background: deckEntries.length ? '#00552E' : '#F1F5F9',
+                        color: deckEntries.length ? '#fff' : '#94A3B8',
+                        borderColor: deckEntries.length ? '#00552E' : '#E2E8F0',
+                        cursor: deckBusy || deckEntries.length === 0 ? 'default' : 'pointer',
+                      }}
+                    >
+                      {deckBusy ? 'Building...' : `Download PPT${deckEntries.length ? ` (${deckEntries.length})` : ''}`}
+                    </button>
+                  );
+                })()}
               </div>
               {oppListOpen && (
                 <div style={{ marginTop: '0.6rem' }}>
