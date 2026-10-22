@@ -84,6 +84,10 @@ for (const t of targets) {
   if (/\{\{|<!--/.test(xml)) leftovers += 1;
 }
 check('deck: no tokens left behind', leftovers, 0);
+const overview = await out.file(`ppt/${targets[1]}`).async('string');
+check('deck: overview table is Account, Stage, Scope only',
+  [overview.includes('>Account<'), overview.includes('>Stage<'), overview.includes('>Scope<'), overview.includes('>Opportunity<'), overview.includes('>Deal size<')],
+  [true, true, true, false, false]);
 
 console.log(`${failed ? 'FAILED' : 'PASS'} oppDeck: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

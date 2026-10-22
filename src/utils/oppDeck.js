@@ -98,7 +98,6 @@ export function oppSlideContent(entry, { contactInfo = () => null } = {}) {
   const r = entry.record || {};
   const account = entry.account || cell(r, 'Account');
   const scope = cell(r, 'Scope');
-  const name = cell(r, 'BFO Link');
 
   const contacts = String(r.Contact ?? '')
     .split(/[,;\n]/)
@@ -136,7 +135,6 @@ export function oppSlideContent(entry, { contactInfo = () => null } = {}) {
     // Titled by the company. The BFO opportunity name is an internal
     // label (business unit, offer codes) and doesn't go on the slide.
     title: account || scope || 'Unnamed opportunity',
-    name,
     account,
     via: entry.via,
     owner: entry.owner || '',
@@ -378,14 +376,12 @@ export function oppSlideShapes(content) {
 // The at-a-glance table that opens a deck with more than one opp.
 const OVERVIEW_ROWS = 9;
 function overviewTable(entries) {
-  // The Opportunity column only when something has a BFO name; otherwise
-  // it would just repeat the Scope column.
-  const named = entries.some(c => c.name);
+  // No Opportunity column: the BFO name is an internal label and stays
+  // off the deck, as it does on the opp slides.
   const cols = [
-    { label: 'Account', w: 1.9, get: c => c.account },
-    ...(named ? [{ label: 'Opportunity', w: 2.6, get: c => c.name }] : []),
-    { label: 'Stage', w: 1.15, get: c => c.stage },
-    { label: 'Scope', w: named ? 3.485 : 6.085, get: c => c.scopeItems.join(', ') },
+    { label: 'Account', w: 2.4, get: c => c.account },
+    { label: 'Stage', w: 1.35, get: c => c.stage },
+    { label: 'Scope', w: 5.385, get: c => c.scopeItems.join(', ') },
   ];
   const rowH = 0.32;
   const tc = (text, { head = false, shade = false } = {}) => {
