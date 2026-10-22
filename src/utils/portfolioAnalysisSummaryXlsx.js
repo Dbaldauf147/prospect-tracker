@@ -4,8 +4,8 @@
 // section bands, and dark green column headers.
 //
 // Three sheets, mirroring the popup:
-//   Savings Summary      by portfolio company, then by country / state
-//                        across the portfolio
+//   Summary              savings by portfolio company, then compliance
+//                        fines by portfolio company
 //   Savings by Company   every company's markets, grouped under it
 //   Compliance Summary   by portfolio company, then by jurisdiction
 //
@@ -200,9 +200,9 @@ export async function buildPortfolioAnalysisSummary({
   const today = new Date();
   const subtitle = `Master Analysis Summary  ·  ${analysed} of ${totalCompanies} portfolio companies analysed  ·  ${today.toLocaleDateString()}`;
 
-  // ---- Savings Summary ---------------------------------------------------
+  // ---- Summary ----------------------------------------------------------
   {
-    const ws = wb.addWorksheet('Savings Summary', {
+    const ws = wb.addWorksheet('Summary', {
       properties: { tabColor: { argb: SE_GREEN } },
       views: [{ showGridLines: false, state: 'frozen', ySplit: 2 }],
     });
@@ -242,34 +242,43 @@ export async function buildPortfolioAnalysisSummary({
     r = dataRow(ws, r, companyCols, [`Total (${savings.byCompany.length})`, '', t.e, t.g, savings.byMarket.length, ...usageValues(t), t.low, t.high, t.ind, ''], { kind: 'total' });
     r += 2;
 
-    // Same widths as the table above, so the two read as one sheet.
-    const marketCols = [
-      { label: 'Country / ST / Prov' },
-      { label: 'Country' },
-      { label: 'Electric Deregulated Sites', fmt: INT },
-      { label: 'Gas Deregulated Sites', fmt: INT },
-      { label: 'Portfolio Companies', fmt: INT },
-      ...USAGE_COLS.map(({ label, fmt }) => ({ label, fmt })),
-      { label: 'Annual Savings Low', fmt: MONEY },
-      { label: 'Annual Savings High', fmt: MONEY },
-      { label: 'Indicative Year 1 Savings', fmt: MONEY },
-      { label: 'Portfolio Company Names', wrap: true },
+    // Compliance fines by company, so the first tab reads as the whole
+    // story. Shares the column widths above; the full breakdown (sites per
+    // mandate, by jurisdiction) stays on the Compliance Summary tab.
+    const fineCols = [
+      { label: 'Portfolio Company' },
+      { label: 'Sites Screened', fmt: INT },
+      { label: 'Sites with a Mandate', fmt: INT },
+      { label: 'Jurisdictions', fmt: INT },
+      ...categories.map(k => ({ label: `${k.label} Est. Max Fine / yr`, fmt: MONEY })),
+      { label: 'Est. Max Yearly Exposure', fmt: MONEY },
     ];
-    r = sectionBand(ws, r, span, 'By Country / State (all portfolio companies)', 'A site in a dual-fuel market counts once under electric and once under gas. Italic amber values include estimated data (see the note above).');
-    r = headerRow(ws, r, marketCols);
-    for (const c of savings.byCountry) {
-      r = dataRow(ws, r, marketCols, [
-        c.country, c.country, n(c.electricDeregulatedSites), n(c.gasDeregulatedSites), c.companies.length,
-        ...usageValues(c),
-        n(c.low), n(c.high), c.indicative, c.companies.join(', '),
-      ], { kind: 'group' });
-      for (const m of savings.byMarket.filter(x => x.country === c.country && x.market !== c.country)) {
-        r = dataRow(ws, r, marketCols, [
-          m.market, m.country, n(m.electricDeregulatedSites), n(m.gasDeregulatedSites), m.companies.length,
-          ...usageValues(m),
-          n(m.low), n(m.high), m.indicative, m.companies.join(', '),
-        ], { indent: true });
+    r = sectionBand(ws, r, span, 'Compliance Fines by Portfolio Company',
+      'Estimated max fine per year under the benchmarking (BBS), energy audit and building performance (BPS) ordinances. See the Compliance Summary tab for the detail.');
+    r = headerRow(ws, r, fineCols);
+    const fineRows = compliance?.rows || [];
+    const liveFines = fineRows.filter(c => !c.none);
+    for (const c of fineRows) {
+      if (c.none) {
+        r = dataRow(ws, r, fineCols, [c.company, 'No site list to screen']);
+        continue;
       }
+      r = dataRow(ws, r, fineCols, [
+        c.company, c.sitesScreened, n(c.sitesWithMandate), n(c.jurisdictions),
+        ...categories.map(k => n(c.categories[k.key].penalty)),
+        c.exposure,
+      ]);
+    }
+    if (!fineRows.length) {
+      dataRow(ws, r, fineCols, ['No compliance screening yet.']);
+    } else {
+      const fsum = (f) => liveFines.reduce((a, c) => a + (f(c) || 0), 0);
+      dataRow(ws, r, fineCols, [
+        `Total (${liveFines.length})`, fsum(c => c.sitesScreened), fsum(c => c.sitesWithMandate),
+        new Set(liveFines.flatMap(c => c.jurisdictionIds || [])).size,
+        ...categories.map(k => fsum(c => c.categories[k.key].penalty)),
+        fsum(c => c.exposure),
+      ], { kind: 'total' });
     }
   }
 

@@ -226,21 +226,25 @@ eq(marketsFromWorkbook({ SheetNames: ['Summary'], Sheets: { Summary: {} } }), []
     savedAt: new Map([['Acme', '2026-08-31']]),
     categories: [{ key: 'bbs', label: 'BBS' }, { key: 'audits', label: 'Energy Audits' }, { key: 'bps', label: 'BPS' }],
   });
-  eq(wb.worksheets.map(w => w.name), ['Savings Summary', 'Savings by Company', 'Compliance Summary'], 'three sheets');
+  eq(wb.worksheets.map(w => w.name), ['Summary', 'Savings by Company', 'Compliance Summary'], 'three sheets');
   const read = XLSX.read(new Uint8Array(await wb.xlsx.writeBuffer()), { type: 'array' });
   const rows = (name) => XLSX.utils.sheet_to_json(read.Sheets[name], { header: 1, defval: null });
-  const ss = rows('Savings Summary');
+  const ss = rows('Summary');
   const acme = ss.find(r => r[0] === 'Acme');
   eq([acme[2], acme[11], acme[12], acme[13]], [4, 5000, 10_000, 7000], 'company row writes sites and the range as numbers');
   eq([acme[5], acme[6], acme[9], acme[10]], [2000, 0.25, 100_000, 0], 'usage in MWh with its estimated share, spend with its own');
   const back = new ExcelJS.Workbook();
   await back.xlsx.load(await wb.xlsx.writeBuffer());
-  const sheet = back.getWorksheet('Savings Summary');
+  const sheet = back.getWorksheet('Summary');
   let acmeRow = null;
   sheet.eachRow((row) => { if (row.getCell(1).value === 'Acme' && !acmeRow) acmeRow = row; });
   eq([!!acmeRow.getCell(6).font.italic, acmeRow.getCell(6).font.color.argb, !!acmeRow.getCell(10).font.italic], [true, 'FFB45309', false],
     'estimated usage is italic amber; spend from uploaded data is not');
-  eq(ss.some(r => r[0] === 'United States') && ss.some(r => r[0] === 'TX'), true, 'country heading with its states under it');
+  eq(ss.some(r => r[0] === 'United States' || r[0] === 'TX'), false, 'no country / state table on the Summary tab');
+  const fines = ss.filter(r => r[0] === 'Acme')[1];
+  eq([fines[1], fines[2], fines[4], fines[7]], [4, 1, 2000, 2000], 'compliance fines by company under the savings table');
+  eq(ss.find(r => r[0] === 'Beta')[1], 'No site list to screen', 'a company with nothing to screen says so on the Summary');
+  eq(ss.filter(r => r[0] === 'Total (1)').at(-1)[7], 2000, 'fines total');
   const cs = rows('Compliance Summary');
   eq(cs.find(r => r[0] === 'Beta').at(-1), 'No site list to screen', 'a company with nothing to screen says so');
   eq(cs.find(r => r[0] === 'New York City')[1], 1, 'jurisdiction table');
