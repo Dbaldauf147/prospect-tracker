@@ -6148,6 +6148,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     let finesUnchanged = 0;
     const noFigure = [];
     const failed = [];
+    const failReasons = new Set();
     for (let i = 0; i < targets.length; i++) {
       const t = targets[i];
       if (portfolioSavedAnalyses.get(t.id)) {
@@ -6169,6 +6170,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         } catch (err) {
           console.error('Portfolio savings refresh failed for', t.company, err);
           failed.push(t.company);
+          if (err?.message) failReasons.add(err.message);
         }
       }
       // The unasked pass only fills blanks, fines included: a figure already
@@ -6220,6 +6222,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     }
     if (noFigure.length) note += ` No savings headline in the analysis for ${noFigure.join(', ')}.`;
     if (failed.length) note += ` Could not read ${failed.join(', ')}.`;
+    if (failReasons.size) note += ` Reason: ${[...failReasons].slice(0, 2).join(' / ')}`;
     setPortfolioSavingsRefresh({ running: false, note: note.trim() });
   }
 
