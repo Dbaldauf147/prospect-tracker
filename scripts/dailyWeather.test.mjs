@@ -40,7 +40,7 @@ eq(clockLabel('2026-10-21T18:05'), '6:05 PM', 'sunset clock');
 eq(clockLabel('2026-10-21T00:30'), '12:30 AM', 'midnight hour');
 
 const parsed = parseForecast({
-  current: { temperature_2m: 54.4, apparent_temperature: 51.6, relative_humidity_2m: 70, weather_code: 2, wind_speed_10m: 8.2, wind_direction_10m: 270 },
+  current: { temperature_2m: 54.4, apparent_temperature: 51.6, relative_humidity_2m: 70, weather_code: 2, wind_speed_10m: 8.2, wind_direction_10m: 270, wind_gusts_10m: 17.6 },
   daily: {
     time: ['2026-10-21', '2026-10-22', '2026-10-23'],
     weather_code: [2, 61, 0],
@@ -68,6 +68,8 @@ eq(parsed.days[1].windDir, 'NE', 'dominant wind direction');
 eq(parsed.days[1].gustMph, 32, 'gusts');
 eq(parsed.current.temp, 54, 'current temp');
 eq(parsed.current.windDir, 'W', 'current wind direction');
+eq(parsed.current.gustMph, 18, 'current gusts');
+eq(parsed.current.windMph, 8, 'current wind speed');
 eq(parseForecast(null), { current: null, days: [] }, 'bad payload is empty, not a crash');
 
 console.log(`\n${passed} passed, ${failed} failed`);
