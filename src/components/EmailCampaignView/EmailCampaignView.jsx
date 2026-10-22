@@ -73,8 +73,8 @@ const CONTACT_COLUMNS = [
     key: 'tier',
     label: 'Tier',
     sortKey: 'tier',
-    width: 90,
-    title: 'The account tier of the company in the Company column, read off the account list the way the Agenda page reads it: the account\u2019s own Tier 1 or Tier 2, else Tier 3 for any other account you cover as CDM. Blank when the company is not one of the accounts.',
+    width: 125,
+    title: 'The account tier of the company in the Company column, read off the account list the way the Agenda page reads it: the account\u2019s own Tier 1 or Tier 2, else Strategic target for an account ticked Not on tier list, but a target, else Tier 3 for any other account you cover as CDM. Blank when the company is not one of the accounts.',
   },
   { key: 'sentDate', label: 'Sent Date', sortKey: 'sentDate', width: 110 },
   {
@@ -219,6 +219,7 @@ const TIER_TONE = {
   'Tier 1': { background: '#FEE2E2', color: '#991B1B' },
   'Tier 2': { background: '#DBEAFE', color: '#1E40AF' },
   'Tier 3': { background: '#F1F5F9', color: '#334155' },
+  'Strategic target': { background: '#EDE9FE', color: '#5B21B6' },
 };
 function TierBadge({ tier }) {
   if (!tier) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
