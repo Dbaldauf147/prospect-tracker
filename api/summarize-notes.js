@@ -1,18 +1,21 @@
 // Summarise opps' running notes (the Next Steps field) into a few bullets
 // each. Powers the Notes column on the New Opps and PE Opps subtabs. With
 // `kind: 'scope'` it summarises each opp's Scope into one line instead, for
-// the Scope column on New Opps and its email. Read only: a summary is shown
+// the Scope column on New Opps and its email, and with `kind: 'scope-deck'`
+// into a sentence or two for the Opps PPT. Read only: a summary is shown
 // beside what it summarises, never written over it.
 import Anthropic from '@anthropic-ai/sdk';
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 import { MAX_ITEMS, buildRequest, cleanItems, readSummaries } from './_lib/summarizeNotes.js';
-import { buildScopeRequest, readScopeSummaries } from './_lib/summarizeScope.js';
+import { buildScopeRequest, readScopeSummaries, buildDeckScopeRequest, readDeckScopeSummaries } from './_lib/summarizeScope.js';
 
 // Each kind's request and reader. Both answer { [id]: string[] }.
 const KINDS = {
   notes: { build: buildRequest, read: readSummaries, what: 'notes' },
   scope: { build: buildScopeRequest, read: readScopeSummaries, what: 'scopes' },
+  // A sentence or two of plain English per opp, for the Opps PPT.
+  'scope-deck': { build: buildDeckScopeRequest, read: readDeckScopeSummaries, what: 'scopes' },
 };
 
 async function handler(req, res, auth) {

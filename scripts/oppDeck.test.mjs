@@ -11,7 +11,7 @@
 // Set OPP_DECK_OUT=path.pptx to keep the built deck for a visual check.
 import { readFile, writeFile } from 'node:fs/promises';
 import JSZip from 'jszip';
-import { selectDeckOpps, oppSlideContent, buildOppDeck, oppDeckFilename, xmlEscape, deckStage, deckServiceName, groupScope, scopeSummary } from '../src/utils/oppDeck.js';
+import { selectDeckOpps, oppSlideContent, buildOppDeck, oppDeckFilename, xmlEscape, deckStage, deckServiceName, groupScope, scopeSummary, deckScopeTexts } from '../src/utils/oppDeck.js';
 import { getServiceCategories } from '../src/utils/serviceCategoriesStore.js';
 
 let passed = 0, failed = 0;
@@ -138,6 +138,35 @@ check('scope summary: services no bucket claims read without a label',
   check('overview: long scopes page onto another slide', glance.length >= 2, true);
   check('overview: every page fits above the footer', heights.every(h => h <= 3.95 + 1e-6), true);
   check('overview: every opp appears once', glance.reduce((n, xml) => n + (xml.match(/>Holding \d+</g) || []).length, 0), 12);
+}
+
+check('service names: the pull through label is dropped',
+  ['EAC procurement - pull through', 'EAC procurement (pull through)', 'EAC procurement pull-through'].map(deckServiceName), ['EAC procurement', 'EAC procurement', 'EAC procurement']);
+{
+  // The overview reads Claude's plain-English summary where there is one,
+  // and lists by bucket where there isn't.
+  const two = [
+    { _id: 201, Account: 'One Co', Stage: 'Lead', Scope: 'EAC procurement - pull through, Bill payment' },
+    { _id: 202, Account: 'Two Co', Stage: 'Lead', Scope: 'Strategic sourcing, Peak Alerts' },
+  ];
+  const entries = selectDeckOpps(two, { company: 'One Co', owned: [{ name: 'Two Co' }] });
+  const texts = deckScopeTexts(entries);
+  check('deck scope texts: one per distinct scope, pull through gone', texts, ['EAC procurement, Bill payment', 'Strategic sourcing, Peak Alerts']);
+  check('deck scope texts: none for a one-opp deck (no overview)', deckScopeTexts(entries.slice(0, 1)), []);
+  const deck = await buildOppDeck({ JSZip, template, company: 'One Co', entries,
+    scopeSummaries: { 'EAC procurement, Bill payment': 'Buy energy attribute certificates and pay utility bills on time.' } });
+  const z = await JSZip.loadAsync(deck);
+  let glance = '';
+  let all = '';
+  for (const f of Object.keys(z.files).filter(f => /^ppt\/slides\/slide\d+\.xml$/.test(f))) {
+    const xml = await z.file(f).async('string');
+    all += xml;
+    if (xml.includes('Opportunities table')) glance = xml;
+  }
+  check('overview: the summary stands in for the list',
+    [glance.includes('Buy energy attribute certificates and pay utility bills on time.'), glance.includes('>EAC procurement')], [true, false]);
+  check('overview: a scope with no summary is still listed', glance.includes('Strategic sourcing and Peak Alerts'), true);
+  check('deck: pull through appears on no slide', /pull[\s-]*through/i.test(all), false);
 }
 
 console.log(`${failed ? 'FAILED' : 'PASS'} oppDeck: ${passed} passed, ${failed} failed`);

@@ -6,7 +6,7 @@
 // stored scope when there isn't.
 //
 // Run: node scripts/summarizeScope.test.mjs
-import { MAX_ITEMS, MAX_SUMMARY_CHARS, buildScopeRequest, cleanItems, readScopeSummaries } from '../api/_lib/summarizeScope.js';
+import { MAX_ITEMS, MAX_SUMMARY_CHARS, MAX_DECK_SUMMARY_CHARS, buildScopeRequest, buildDeckScopeRequest, cleanItems, readScopeSummaries, readDeckScopeSummaries } from '../api/_lib/summarizeScope.js';
 import { addScopeSummaries } from '../api/_lib/newOpps.js';
 import { needsScopeSummary, oppScopeText } from '../src/utils/scopeSummary.js';
 import { NEW_OPPS_DIGEST_COLUMNS, buildNewOppsDigestTableHtml, withScopeSummaries } from '../src/utils/newOppsDigestEmail.js';
@@ -36,6 +36,16 @@ check('server-side fallback is on', [req.fallbacks, req.betas], ['default', ['se
 check('prompt carries each scope under its id', req.messages[0].content.includes('<opp id="b">\nBill pay, Procurement, Budgets\n</opp>'), true);
 check('system prompt has no em dash', req.system.includes('—'), false);
 check('batch size matches notes', MAX_ITEMS, 25);
+
+// The Opps PPT's variant: same request shape, its own prompt, prose kept.
+const deckReq = buildDeckScopeRequest(items);
+check('deck request: own prompt, same structured output', [deckReq.system !== req.system, deckReq.output_config.format.type, deckReq.model], [true, 'json_schema', req.model]);
+check('deck prompt asks for plain English and has no em dash', [/plain English/.test(deckReq.system), deckReq.system.includes('—')], [true, false]);
+check('deck summary keeps its full stop and its length',
+  readDeckScopeSummaries(JSON.stringify({ summaries: [{ id: 'a', summary: 'Build the GHG inventory and report it to CDP and CSRD. Then verify it.' }] }), items),
+  { a: ['Build the GHG inventory and report it to CDP and CSRD. Then verify it.'] });
+check('a runaway deck summary is capped',
+  readDeckScopeSummaries(JSON.stringify({ summaries: [{ id: 'a', summary: 'y'.repeat(900) }] }), items).a[0].length <= MAX_DECK_SUMMARY_CHARS, true);
 
 check('two services need no summary', needsScopeSummary('GHG, CDP'), false);
 check('three services do', needsScopeSummary('GHG, CDP, CSRD'), true);
