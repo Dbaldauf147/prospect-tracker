@@ -259,6 +259,7 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
   }
 
   const failed = loaded.filter(c => c.error);
+  const failedReasons = [...failed.reduce((m, c) => m.set(c.error, [...(m.get(c.error) || []), c.company]), new Map())];
   const noMarkets = loaded.filter(c => !c.error && c.markets.length === 0);
   const tabBtn = (k, label) => (
     <button
@@ -316,6 +317,13 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
           {(failed.length > 0 || noMarkets.length > 0) && (
             <div style={{ fontSize: '0.68rem', color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 5, padding: '0.35rem 0.6rem', marginBottom: '0.7rem' }}>
               {failed.length > 0 && <div>Could not read the analysis for {failed.map(c => c.company).join(', ')}.</div>}
+              {/* Why, grouped: the same cause (an unreachable database, a
+                  corrupt save) usually hits every company at once. */}
+              {failedReasons.map(([reason, names]) => (
+                <div key={reason} style={{ marginTop: 2 }}>
+                  {failedReasons.length > 1 ? `${names.join(', ')}: ` : 'Reason: '}{reason}
+                </div>
+              ))}
               {tab === 'savings' && noMarkets.length > 0 && <div>No Indicative Savings tables in the analysis for {noMarkets.map(c => c.company).join(', ')}: re-save it from Utility Lookup.</div>}
             </div>
           )}
