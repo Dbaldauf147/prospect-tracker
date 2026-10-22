@@ -102,6 +102,9 @@ check('deck: prototype slide removed', [!!out.file('ppt/slides/slide2.xml'), rel
 check('deck: every slide has a content type', targets.every(t => types.includes(`/ppt/${t}"`)), true);
 const cover = await out.file('ppt/slides/slide1.xml').async('string');
 check('deck: cover names the company, escaped', cover.includes('Harbor Peak Capital &amp; Co'), true);
+check('deck: cover subtitle and its own date line',
+  [cover.includes('>Overview of Current Engagements<'), cover.includes('>October 22, 2026<'), /OPEN OPPS/i.test(cover)],
+  [true, true, false]);
 let leftovers = 0;
 for (const t of targets) {
   const xml = await out.file(`ppt/${t}`).async('string');

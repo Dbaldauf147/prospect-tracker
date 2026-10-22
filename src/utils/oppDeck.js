@@ -533,13 +533,18 @@ export async function buildOppDeck({ JSZip, template, company, entries, contactI
   ]);
 
   const contents = entries.map(e => oppSlideContent(e, { contactInfo, categories, renames }));
-  const accounts = new Set(contents.map(c => c.account.toLowerCase()).filter(Boolean));
-  const when = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  const count = `${contents.length} open ${contents.length === 1 ? 'opp' : 'opps'}`;
-  const across = accounts.size > 1 ? ` | ${accounts.size} companies` : '';
+  // Cover: the company, the deck's name in the subtitle slot, and today's
+  // date as its own line under it (the layout has no date placeholder).
+  const when = date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const dateBox = shape(40, 'Date', {
+    x: 0.939, y: 3.42, w: 4.42, h: 0.24, textBox: true,
+    paras: [para([run(when, { sz: 1000, color: C.grey })], { after: 0, sz: 1000 })
+      .replace('<a:rPr lang="en-US" sz="1000"', '<a:rPr lang="en-US" sz="1000" spc="200"')],
+  });
   zip.file('ppt/slides/slide1.xml', cover
     .replace('<a:r><a:rPr lang="en-US"/><a:t>{{COVER_TITLE}}</a:t></a:r>', coverTitleRun(company))
-    .replace('{{COVER_SUBTITLE}}', xmlEscape(`${count}${across} | ${when}`.toUpperCase())));
+    .replace('{{COVER_SUBTITLE}}', 'Overview of Current Engagements')
+    .replace('</p:spTree>', `${dateBox}</p:spTree>`));
 
   // The slides to write, in order: the overview (in pages) then one per opp.
   const slides = [];
