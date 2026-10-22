@@ -222,8 +222,7 @@ eq(marketsFromWorkbook({ SheetNames: ['Summary'], Sheets: { Summary: {} } }), []
     byJurisdiction: [{ government: 'New York City', sites: 1, penalty: 2000, companies: ['Acme'], bbs: { sites: 1, penalty: 2000 }, audits: { sites: 0, penalty: 0 }, bps: { sites: 0, penalty: 0 } }],
   };
   const wb = await buildPortfolioAnalysisSummary({
-    firmName: 'SVP', savings, compliance, analysed: 2, totalCompanies: 5,
-    savedAt: new Map([['Acme', '2026-08-31']]),
+    firmName: 'SVP', savings, compliance,
     categories: [{ key: 'bbs', label: 'BBS' }, { key: 'audits', label: 'Energy Audits' }, { key: 'bps', label: 'BPS' }],
   });
   eq(wb.worksheets.map(w => w.name), ['Summary', 'Savings by Company', 'Compliance Summary'], 'three sheets');
@@ -231,15 +230,18 @@ eq(marketsFromWorkbook({ SheetNames: ['Summary'], Sheets: { Summary: {} } }), []
   const rows = (name) => XLSX.utils.sheet_to_json(read.Sheets[name], { header: 1, defval: null });
   const ss = rows('Summary');
   const acme = ss.find(r => r[0] === 'Acme');
-  eq([acme[2], acme[11], acme[12], acme[13]], [4, 5000, 10_000, 7000], 'company row writes sites and the range as numbers');
-  eq([acme[5], acme[6], acme[9], acme[10]], [2000, 0.25, 100_000, 0], 'usage in MWh with its estimated share, spend with its own');
+  eq([acme[1], acme[3], acme[10], acme[11], acme[12]], [4, 4, 5000, 10_000, 7000], 'company row writes sites, total deregulated sites and the range as numbers');
+  eq([acme[4], acme[5], acme[8], acme[9]], [2000, 0.25, 100_000, 0], 'usage in MWh with its estimated share, spend with its own');
   const back = new ExcelJS.Workbook();
   await back.xlsx.load(await wb.xlsx.writeBuffer());
   const sheet = back.getWorksheet('Summary');
   let acmeRow = null;
   sheet.eachRow((row) => { if (row.getCell(1).value === 'Acme' && !acmeRow) acmeRow = row; });
-  eq([!!acmeRow.getCell(6).font.italic, acmeRow.getCell(6).font.color.argb, !!acmeRow.getCell(10).font.italic], [true, 'FFB45309', false],
+  eq([!!acmeRow.getCell(5).font.italic, acmeRow.getCell(5).font.color.argb, !!acmeRow.getCell(9).font.italic], [true, 'FFB45309', false],
     'estimated usage is italic amber; spend from uploaded data is not');
+  eq([acmeRow.getCell(2).alignment.horizontal, sheet.getRow(acmeRow.number - 1).getCell(2).alignment.horizontal], ['left', 'left'], 'figures and their headers are left-aligned');
+  eq(ss.some(r => String(r[0] || '').startsWith('Master Analysis Summary') || String(r[0] || '').startsWith('Savings Low')), false, 'no subtitle or note rows');
+  eq(ss.some(r => r.includes('Analysis Saved')), false, 'no Analysis Saved column');
   eq(ss.some(r => r[0] === 'United States' || r[0] === 'TX'), false, 'no country / state table on the Summary tab');
   const fines = ss.filter(r => r[0] === 'Acme')[1];
   eq([fines[1], fines[2], fines[4], fines[7]], [4, 1, 2000, 2000], 'compliance fines by company under the savings table');

@@ -245,11 +245,8 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
       await downloadPortfolioAnalysisSummary({
         firmName,
         savings,
-        savedAt: new Map(loaded.map(c => [c.company, c.meta?.savedAt])),
         compliance,
         categories: (mandates?.CATEGORIES || []).map(key => ({ key, label: mandates.CATEGORY_LABEL[key] })),
-        analysed: companies.length,
-        totalCompanies,
       });
       setExporting('');
     } catch (err) {
