@@ -7685,6 +7685,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       };
       const bytes = await buildOppDeck({
         JSZip, template: await res.arrayBuffer(), company: fields.company.trim(), entries: deckEntries, contactInfo,
+        // Scope is grouped by the same buckets the Services board uses.
+        categories: getServiceCategories(settings), renames: settings.serviceRenames || {},
       });
       const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
       const url = URL.createObjectURL(blob);

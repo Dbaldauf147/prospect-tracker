@@ -88,13 +88,74 @@ export function selectDeckOpps(records, { company, owned = [], prospects = [] } 
 
 // The pipeline drawn across the top of each slide, in the order the
 // Days-in-Stage board uses. Repricing is a re-quote, so it lights Quoted.
-export const DECK_STAGES = ['Not Started', 'Lead', 'Qualifying', 'Quoting', 'Quoted', 'Contracting', 'Agreement Sent'];
+// Not Started isn't a step on the deck: an opp that hasn't started reads
+// as a Lead (see deckStage).
+export const DECK_STAGES = ['Lead', 'Qualifying', 'Quoting', 'Quoted', 'Contracting', 'Agreement Sent'];
+
+/** The stage as the deck shows it: Not Started is presented as Lead. */
+export function deckStage(stage) {
+  const s = String(stage || '').trim();
+  return s === 'Not Started' ? 'Lead' : s;
+}
+
+/**
+ * A scope service's name as the deck shows it: the "SUCON" offer tag is
+ * dropped along with the separator that hangs it on ("ECLR - SUCON",
+ * "Materiality assessment SUCON", "UN PRI - SUCON" read "ECLR",
+ * "Materiality assessment", "UN PRI").
+ */
+export function deckServiceName(name) {
+  return String(name || '')
+    .replace(/\s*[-:/|]?\s*\bSUCON\b\s*[-:/|]?\s*/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * The opp's scope grouped into the Services board's buckets, in board
+ * order, each bucket's services in the order the opp lists them. A service
+ * no bucket claims goes under "Other services" at the end. Matched on the
+ * service's own name or its renamed label (settings.serviceRenames), the
+ * whole name and case-insensitively, as serviceBucketOf does.
+ *
+ *   items       the scope's services, as stored on the opp
+ *   categories  getServiceCategories(settings): [{ name, items }]
+ *   renames     settings.serviceRenames
+ *
+ * Returns [{ bucket, items }] with display names (deckServiceName), deduped.
+ */
+export function groupScope(items, { categories = [], renames = {} } = {}) {
+  const bucketOf = new Map();
+  (categories || []).forEach((cat, order) => {
+    for (const item of (cat.items || [])) {
+      for (const label of [item, renames?.[item]]) {
+        const key = String(label || '').trim().toLowerCase();
+        if (key && !bucketOf.has(key)) bucketOf.set(key, { name: cat.name, order });
+      }
+    }
+  });
+  const groups = new Map();
+  for (const raw of (items || [])) {
+    const display = deckServiceName(raw);
+    if (!display) continue;
+    const hit = bucketOf.get(String(raw).trim().toLowerCase());
+    const bucket = hit ? hit.name : 'Other services';
+    const order = hit ? hit.order : Number.MAX_SAFE_INTEGER;
+    if (!groups.has(bucket)) groups.set(bucket, { bucket, order, items: [] });
+    const g = groups.get(bucket);
+    if (!g.items.some(i => i.toLowerCase() === display.toLowerCase())) g.items.push(display);
+  }
+  return [...groups.values()]
+    .sort((a, b) => a.order - b.order)
+    .map(({ bucket, items: list }) => ({ bucket, items: list }));
+}
 
 /**
  * One opp as the fields its slide shows. `contactInfo(name, account)`
- * returns { title } for a tagged contact when the caller knows one.
+ * returns { title } for a tagged contact when the caller knows one;
+ * `categories` and `renames` bucket the scope (see groupScope).
  */
-export function oppSlideContent(entry, { contactInfo = () => null } = {}) {
+export function oppSlideContent(entry, { contactInfo = () => null, categories = [], renames = {} } = {}) {
   const r = entry.record || {};
   const account = entry.account || cell(r, 'Account');
   const scope = cell(r, 'Scope');
@@ -124,12 +185,13 @@ export function oppSlideContent(entry, { contactInfo = () => null } = {}) {
     nextSteps.push({ text: `Waiting on ${legacyWaiting}`, waitingOn: '', onHold: false });
   }
 
-  // Deal size, type, sales partner and follow-up date are left off the
-  // slide on purpose (asked for when the deck was first used).
+  // Deal size, type, sales partner, follow-up date and target close are
+  // left off the slide on purpose (asked for when the deck was first used).
   const facts = [
     ['Sites', cell(r, 'Sites')],
-    ['Target close', cell(r, 'Close Date')],
   ].filter(([, v]) => v);
+  const scopeList = scope.split(/[,;\n]/).map(s => s.trim()).filter(Boolean);
+  const scopeGroups = groupScope(scopeList, { categories, renames });
 
   return {
     // Titled by the company. The BFO opportunity name is an internal
@@ -138,8 +200,9 @@ export function oppSlideContent(entry, { contactInfo = () => null } = {}) {
     account,
     via: entry.via,
     owner: entry.owner || '',
-    stage: cell(r, 'Stage'),
-    scopeItems: scope.split(/[,;\n]/).map(s => s.trim()).filter(Boolean),
+    stage: deckStage(cell(r, 'Stage')),
+    scopeItems: scopeGroups.flatMap(g => g.items),
+    scopeGroups,
     contacts,
     nextSteps,
     facts,
@@ -334,14 +397,25 @@ export function oppSlideShapes(content) {
   }
   shapes.push(line(nextId(), 'Divider 1', { x: xScope - gap / 2, y: L.colY, h: L.bodyY + L.bodyH - L.colY }));
 
-  // Scope: what is being sold, then the deal's facts.
+  // Scope: what is being sold, under the Services board's buckets, then
+  // the deal's facts.
   shapes.push(columnPill(nextId(), 'Scope', xScope, wScope));
   {
-    const scopeItems = content.scopeItems.map(s => clip(s, 120));
+    const groups = content.scopeGroups.map(g => ({ bucket: clip(g.bucket, 60), items: g.items.map(s => clip(s, 120)) }));
     const factItems = content.facts.map(([k, v]) => `${k}: ${clip(v, 80)}`);
-    const items = [...scopeItems, ...factItems].map(t => [{ text: t }]);
-    const { sz } = fitList(items.length ? items : [[{ text: 'x' }]], textW(wScope) - 0.2, L.bodyH - 0.15);
-    const paras = scopeItems.map(s => para([run(s, { sz: sz * 100 })], { bullet: true, after: 300, sz: sz * 100 }));
+    const items = [
+      ...groups.flatMap(g => [[{ text: g.bucket, sz: 0.9 }], ...g.items.map(t => [{ text: t }])]),
+      ...factItems.map(t => [{ text: t }]),
+    ];
+    // The size estimate runs generous, and bucket labels are short, so
+    // the scope stays at 9pt or above rather than shrinking to fit.
+    const { sz } = fitList(items.length ? items : [[{ text: 'x' }]], textW(wScope) - 0.2, L.bodyH - groups.length * 0.06, [11, 10, 9]);
+    const paras = [];
+    groups.forEach((g, gi) => {
+      paras.push(para([run(g.bucket.toUpperCase(), { sz: Math.round(sz * 80), b: true, color: C.quartz })], { after: 200, sz: Math.round(sz * 80) })
+        .replace('<a:spcBef><a:spcPts val="0"/>', `<a:spcBef><a:spcPts val="${gi === 0 ? 0 : 700}"/>`));
+      for (const item of g.items) paras.push(para([run(item, { sz: sz * 100 })], { bullet: true, after: 200, sz: sz * 100 }));
+    });
     if (!paras.length) paras.push(para([run('Scope not set on the opp', { sz: sz * 100, i: true, color: C.lightGrey })]));
     content.facts.forEach(([k, v], i) => {
       paras.push(para([
@@ -440,9 +514,11 @@ function fillContentSlide(proto, title, bodyXml) {
  *   company     shown on the cover
  *   entries     selectDeckOpps output
  *   contactInfo see oppSlideContent
+ *   categories  getServiceCategories(settings), to bucket the scope
+ *   renames     settings.serviceRenames
  *   date        the date printed on the cover
  */
-export async function buildOppDeck({ JSZip, template, company, entries, contactInfo, date = new Date() }) {
+export async function buildOppDeck({ JSZip, template, company, entries, contactInfo, categories, renames, date = new Date() }) {
   const zip = await JSZip.loadAsync(template);
   const read = (p) => zip.file(p).async('string');
 
@@ -455,7 +531,7 @@ export async function buildOppDeck({ JSZip, template, company, entries, contactI
     read('ppt/slides/slide1.xml'),
   ]);
 
-  const contents = entries.map(e => oppSlideContent(e, { contactInfo }));
+  const contents = entries.map(e => oppSlideContent(e, { contactInfo, categories, renames }));
   const accounts = new Set(contents.map(c => c.account.toLowerCase()).filter(Boolean));
   const when = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   const count = `${contents.length} open ${contents.length === 1 ? 'opp' : 'opps'}`;

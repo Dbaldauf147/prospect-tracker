@@ -11,7 +11,8 @@
 // Set OPP_DECK_OUT=path.pptx to keep the built deck for a visual check.
 import { readFile, writeFile } from 'node:fs/promises';
 import JSZip from 'jszip';
-import { selectDeckOpps, oppSlideContent, buildOppDeck, oppDeckFilename, xmlEscape } from '../src/utils/oppDeck.js';
+import { selectDeckOpps, oppSlideContent, buildOppDeck, oppDeckFilename, xmlEscape, deckStage, deckServiceName, groupScope } from '../src/utils/oppDeck.js';
+import { getServiceCategories } from '../src/utils/serviceCategoriesStore.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -54,7 +55,27 @@ check('slide content: contacts, primary first, titles looked up', content.contac
 check('slide content: steps carry their own Waiting On', content.nextSteps,
   [{ text: 'Follow up on proposal', waitingOn: 'Sam', onHold: false }, { text: 'Schedule site walk', waitingOn: '', onHold: false }]);
 check('slide content: scope split into items', content.scopeItems, ['Energy Procurement', 'Utility Bill Management']);
-check('slide content: only sites and target close, and only when filled', content.facts, [['Target close', '12/15/2026']]);
+check('slide content: target close and the internal fields stay off', content.facts, []);
+
+// Not Started is shown as Lead; there is no Not Started step.
+check('stage: Not Started reads as Lead', [deckStage('Not Started'), deckStage('Quoted')], ['Lead', 'Quoted']);
+check('stage: Not Started opp content', oppSlideContent({ record: { Account: 'X', Stage: 'Not Started' } }).stage, 'Lead');
+
+// SUCON is dropped from service names, with its separator.
+check('SUCON stripped', ['ECLR - SUCON', 'Materiality assessment SUCON', 'UN PRI - SUCON', 'CSRD - DMA - SUCON', 'Strategic sourcing'].map(deckServiceName),
+  ['ECLR', 'Materiality assessment', 'UN PRI', 'CSRD - DMA', 'Strategic sourcing']);
+
+// Scope grouped by the Services board's buckets, board order, unknowns last.
+const categories = [
+  { name: 'Traditional Energy Management', items: ['Strategic sourcing', 'Rate optimization'] },
+  { name: 'Sustainability', items: ['Materiality assessment SUCON', 'Ziego Power'] },
+];
+check('scope buckets', groupScope(['Mystery service', 'Materiality assessment SUCON', 'Rate optimization', 'Strategic sourcing', 'Ziego'], { categories, renames: { 'Ziego Power': 'Ziego' } }), [
+  { bucket: 'Traditional Energy Management', items: ['Rate optimization', 'Strategic sourcing'] },
+  { bucket: 'Sustainability', items: ['Materiality assessment', 'Ziego'] },
+  { bucket: 'Other services', items: ['Mystery service'] },
+]);
+check('scope buckets: the real seed board files known services', groupScope(['Strategic sourcing'], { categories: getServiceCategories({}) })[0].bucket, 'Traditional Energy Management');
 
 check('xml escape', xmlEscape('A & B <x> "q"\u0001'), 'A &amp; B &lt;x&gt; &quot;q&quot;');
 check('filename', oppDeckFilename('Acme / Foods: "NA"', new Date(2026, 9, 22)), 'Acme Foods NA - Opps 2026-10-22.pptx');
