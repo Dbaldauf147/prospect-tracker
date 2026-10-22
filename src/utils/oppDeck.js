@@ -103,11 +103,13 @@ export function deckStage(stage) {
  * A scope service's name as the deck shows it: the "SUCON" offer tag is
  * dropped along with the separator that hangs it on ("ECLR - SUCON",
  * "Materiality assessment SUCON", "UN PRI - SUCON" read "ECLR",
- * "Materiality assessment", "UN PRI").
+ * "Materiality assessment", "UN PRI"), and so is the internal "pull
+ * through" label ("EAC procurement - pull through" reads "EAC procurement").
  */
 export function deckServiceName(name) {
   return String(name || '')
     .replace(/\s*[-:/|]?\s*\bSUCON\b\s*[-:/|]?\s*/gi, ' ')
+    .replace(/\s*[-:/|(]?\s*\bpull[\s-]*through\b\s*\)?/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -204,6 +206,9 @@ export function oppSlideContent(entry, { contactInfo = () => null, categories = 
     stage: deckStage(cell(r, 'Stage')),
     scopeItems: scopeGroups.flatMap(g => g.items),
     scopeGroups,
+    // The scope as the deck shows it, in one string: what the plain-English
+    // summary is asked for and keyed by (see deckScopeTexts).
+    scopeText: scopeGroups.flatMap(g => g.items).join(', '),
     contacts,
     nextSteps,
     facts,
@@ -488,20 +493,24 @@ export function scopeSummary(scopeGroups) {
 
 const cellLines = (text, w) => linesFor(text, w - 0.16, OVERVIEW.sz / 100);
 
-function overviewRow(c) {
+// `summaries` maps a scopeText to Claude's plain-English summary of it.
+// Without one (the call failed, or the scope is blank) the scope is listed
+// by bucket instead.
+function overviewRow(c, summaries = {}) {
   const [wAccount, wStage, wScope] = OVERVIEW_COLS.map(col => col.w);
-  const scope = scopeSummary(c.scopeGroups);
+  const prose = c.scopeText ? String(summaries[c.scopeText] || '').trim() : '';
+  const scope = prose ? [{ label: '', text: prose }] : scopeSummary(c.scopeGroups);
   const scopeLines = scope.reduce((n, l) => n + cellLines(`${l.label ? `${l.label}: ` : ''}${l.text}`, wScope), 0);
   const lines = Math.max(1, cellLines(c.account, wAccount), cellLines(c.stage, wStage), scopeLines);
   return { c, scope, h: Math.max(OVERVIEW.minRowH, lines * OVERVIEW.lineH + OVERVIEW.padH) };
 }
 
 // The opps split into pages of rows that fit under the header.
-function overviewPages(contents) {
+function overviewPages(contents, summaries) {
   const pages = [];
   let page = [];
   let used = OVERVIEW.headH;
-  for (const row of contents.map(overviewRow)) {
+  for (const row of contents.map(c => overviewRow(c, summaries))) {
     if (page.length && used + row.h > OVERVIEW.maxH) {
       pages.push(page);
       page = [];
@@ -576,6 +585,17 @@ function fillContentSlide(proto, title, bodyXml) {
 }
 
 /**
+ * The distinct scopes a deck of these opps shows, as the strings the
+ * overview's plain-English summaries are asked for and keyed by. Only
+ * worth asking for when the deck has an overview, i.e. more than one opp.
+ */
+export function deckScopeTexts(entries, { categories = [], renames = {} } = {}) {
+  if ((entries || []).length < 2) return [];
+  const texts = entries.map(e => oppSlideContent(e, { categories, renames }).scopeText).filter(Boolean);
+  return [...new Set(texts)];
+}
+
+/**
  * Builds the deck. Returns a Uint8Array of the .pptx.
  *
  *   JSZip       the jszip constructor (passed in so the browser can load it
@@ -586,9 +606,11 @@ function fillContentSlide(proto, title, bodyXml) {
  *   contactInfo see oppSlideContent
  *   categories  getServiceCategories(settings), to bucket the scope
  *   renames     settings.serviceRenames
+ *   scopeSummaries  { [scopeText]: plain-English summary } for the
+ *               overview's Scope column (see deckScopeTexts)
  *   date        the date printed on the cover
  */
-export async function buildOppDeck({ JSZip, template, company, entries, contactInfo, categories, renames, date = new Date() }) {
+export async function buildOppDeck({ JSZip, template, company, entries, contactInfo, categories, renames, scopeSummaries = {}, date = new Date() }) {
   const zip = await JSZip.loadAsync(template);
   const read = (p) => zip.file(p).async('string');
 
@@ -618,7 +640,7 @@ export async function buildOppDeck({ JSZip, template, company, entries, contactI
   // The slides to write, in order: the overview (in pages) then one per opp.
   const slides = [];
   if (contents.length > 1) {
-    const pages = overviewPages(contents);
+    const pages = overviewPages(contents, scopeSummaries);
     pages.forEach((rows, p) => {
       slides.push({ title: 'Open opportunities at a glance', body: overviewShapes(rows, company, p + 1, pages.length) });
     });
