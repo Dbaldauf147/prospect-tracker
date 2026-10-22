@@ -36,6 +36,7 @@ import { STRATEGIC_STORAGE_KEY, strategicMatches } from '../../utils/strategicAc
 import { STATUSES, STATUS_COLORS, TIER_OPTIONS, TIERS, NOT_ON_TIER_LIST, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { peStageOf } from '../../utils/peStages';
 import ServiceBucketPopup from './ServiceBucketPopup';
+import PortfolioAnalysisSummary from './PortfolioAnalysisSummary';
 import { isGraveyardBucket } from '../../utils/servicePricing';
 import { getServiceCategories, buildServiceBoard, exploredCountTest, isUncountedBucket, setBucketCounted, renameBucketCounted, moveServiceToBucket, serviceBucketOf, UNGROUPED_SERVICES, addServiceBox, renameServiceBox } from '../../utils/serviceCategoriesStore';
 import { isCoverageTracked } from '../../utils/pipelineDashboardStore';
@@ -6120,6 +6121,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const slug = String(p?.company || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
     const list = slug ? (settings.companySiteLists || {})[slug] : null;
     return (list?.rows || []).length ? list : null;
+  }
+  // "Master Analysis Summary": the portfolio companies with a saved
+  // analysis, snapshotted when the button is clicked so the popup reads a
+  // fixed list while the table under it keeps re-rendering.
+  const [analysisSummary, setAnalysisSummary] = useState(null); // { companies, total }
+  const portfolioAnalysedCount = portfolioLinkedProspects.filter(p => portfolioSavedAnalyses.get(p.id)).length;
+  function openAnalysisSummary() {
+    const companies = portfolioLinkedProspects
+      .filter(p => portfolioSavedAnalyses.get(p.id))
+      .map(p => ({ id: p.id, company: p.company, meta: portfolioSavedAnalyses.get(p.id), siteList: portfolioSiteListFor(p) }));
+    if (!companies.length) return;
+    setAnalysisSummary({ companies, total: (fields.portfolioCompanies || []).length });
   }
   async function runPortfolioSavingsRefresh(targets, { auto }) {
     setPortfolioSavingsRefresh({ running: true, done: 0, total: targets.length, note: '' });
@@ -13501,6 +13514,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             ? `Refreshing ${portfolioSavingsRefresh.done}/${portfolioSavingsRefresh.total}…`
                             : '↻ Refresh Savings & Fines'}
                         </button>
+                        <button
+                          type="button"
+                          onClick={openAnalysisSummary}
+                          disabled={portfolioAnalysedCount === 0}
+                          style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 5, background: '#fff', fontSize: '0.7rem', fontWeight: 600, cursor: portfolioAnalysedCount ? 'pointer' : 'not-allowed', opacity: portfolioAnalysedCount ? 1 : 0.6, fontFamily: 'inherit', color: '#166534' }}
+                          title={portfolioAnalysedCount
+                            ? `Savings ranges, deregulated sites by country / state, and the compliance summary across the ${portfolioAnalysedCount} portfolio ${portfolioAnalysedCount === 1 ? 'company' : 'companies'} with a saved Master Analysis.`
+                            : 'None of these portfolio companies has a Master Analysis saved yet.'}
+                        >
+                          Master Analysis Summary{portfolioAnalysedCount ? ` (${portfolioAnalysedCount})` : ''}
+                        </button>
+                        {analysisSummary && (
+                          <PortfolioAnalysisSummary
+                            firmName={fields.company}
+                            companies={analysisSummary.companies}
+                            totalCompanies={analysisSummary.total}
+                            onClose={() => setAnalysisSummary(null)}
+                          />
+                        )}
                         <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>
                           {(() => {
                             const total = PORTFOLIO_COL_DEFS.length;
