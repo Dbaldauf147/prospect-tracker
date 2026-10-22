@@ -6072,7 +6072,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [activeTab, fields.portfolioCompanies, prospectByName, prospectById]);
   const portfolioSavedAnalyses = useSavedAnalyses(portfolioLinkedProspects);
 
-  // "Refresh Indicative Savings" on the Portfolio Companies table. The
+  // "Refresh Savings & Fines" on the Portfolio Companies table. The
   // column reads indicativeAnnualSavings off each portfolio company's own
   // record, which the Utility Lookup save stamps - so an analysis saved
   // before that stamp existed (or before the savings changed) shows a dash
@@ -6080,12 +6080,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // workbook, the same way the company popup's "Refresh figures" does, and
   // writes it to the record when it moved. One company at a time: each
   // workbook is hundreds of kilobytes.
+  //
+  // The same click re-reads Est. Max Yearly Exposure too: it screens each
+  // company's saved site list against the ordinances, exactly as the
+  // company popup's "Refresh figures" does, so a fine figure stamped before
+  // an ordinance changed (or never stamped) catches up beside the savings.
   const [portfolioSavingsRefresh, setPortfolioSavingsRefresh] = useState(null); // { running, done, total, note }
   async function refreshPortfolioSavings() {
     if (portfolioSavingsRefresh?.running) return;
-    const targets = portfolioLinkedProspects.filter(p => portfolioSavedAnalyses.get(p.id));
+    const targets = portfolioLinkedProspects.filter(p => portfolioSavedAnalyses.get(p.id) || portfolioSiteListFor(p));
     if (!targets.length) {
-      setPortfolioSavingsRefresh({ running: false, note: 'None of these companies has a Master Analysis saved, so there is no savings figure to read. Save one from Utility Lookup first.' });
+      setPortfolioSavingsRefresh({ running: false, note: 'None of these companies has a Master Analysis or site list saved, so there are no savings or fines to read. Save one from Utility Lookup first.' });
       return;
     }
     await runPortfolioSavingsRefresh(targets, { auto: false });
@@ -6109,33 +6114,70 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     runPortfolioSavingsRefresh(targets, { auto: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, portfolioLinkedProspects, portfolioSavedAnalyses, portfolioSavingsRefresh?.running]);
+  // A portfolio company's saved site list, under the same slug the Site
+  // List column and the company's own popup read it by.
+  function portfolioSiteListFor(p) {
+    const slug = String(p?.company || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
+    const list = slug ? (settings.companySiteLists || {})[slug] : null;
+    return (list?.rows || []).length ? list : null;
+  }
   async function runPortfolioSavingsRefresh(targets, { auto }) {
     setPortfolioSavingsRefresh({ running: true, done: 0, total: targets.length, note: '' });
     const XLSX = await import('xlsx');
+    // Ordinance tables are a few hundred kilobytes, so only fetched when a
+    // target has a site list to screen.
+    const mandates = targets.some(t => portfolioSiteListFor(t))
+      ? await import('../../utils/complianceMandates')
+      : null;
     let updated = 0;
     let unchanged = 0;
+    let finesUpdated = 0;
+    let finesUnchanged = 0;
     const noFigure = [];
     const failed = [];
     for (let i = 0; i < targets.length; i++) {
       const t = targets[i];
-      try {
-        const saved = await loadIndicativeAnalysis(t.id);
-        if (!saved?.dataBase64) throw new Error('the saved analysis is empty');
-        const binary = atob(saved.dataBase64);
-        const bytes = new Uint8Array(binary.length);
-        for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
-        const savings = annualSavingsFromWorkbook(XLSX.read(bytes, { type: 'array' }));
-        if (savings == null) {
-          noFigure.push(t.company);
-        } else if (Number(t.indicativeAnnualSavings) === savings) {
-          unchanged++;
-        } else {
-          await onUpdateProspect?.(t.id, { indicativeAnnualSavings: savings });
-          updated++;
+      if (portfolioSavedAnalyses.get(t.id)) {
+        try {
+          const saved = await loadIndicativeAnalysis(t.id);
+          if (!saved?.dataBase64) throw new Error('the saved analysis is empty');
+          const binary = atob(saved.dataBase64);
+          const bytes = new Uint8Array(binary.length);
+          for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
+          const savings = annualSavingsFromWorkbook(XLSX.read(bytes, { type: 'array' }));
+          if (savings == null) {
+            noFigure.push(t.company);
+          } else if (Number(t.indicativeAnnualSavings) === savings) {
+            unchanged++;
+          } else {
+            await onUpdateProspect?.(t.id, { indicativeAnnualSavings: savings });
+            updated++;
+          }
+        } catch (err) {
+          console.error('Portfolio savings refresh failed for', t.company, err);
+          failed.push(t.company);
         }
-      } catch (err) {
-        console.error('Portfolio savings refresh failed for', t.company, err);
-        failed.push(t.company);
+      }
+      // The unasked pass only fills blanks, fines included: a figure already
+      // on the record is left for the button.
+      const exposureBlank = t.maxYearlyExposure === '' || t.maxYearlyExposure == null;
+      const list = mandates && (!auto || exposureBlank) && portfolioSiteListFor(t);
+      if (list) {
+        try {
+          const { screenSites, CATEGORIES, totalPenalty } = mandates;
+          const screening = screenSites(siteListScreeningRows(list));
+          const exposure = Math.round(CATEGORIES.reduce((sum, c) => sum + totalPenalty(screening, c), 0));
+          const before = t.maxYearlyExposure;
+          if (before !== '' && before != null && Number(before) === exposure) {
+            finesUnchanged++;
+          } else {
+            await onUpdateProspect?.(t.id, { maxYearlyExposure: exposure });
+            finesUpdated++;
+          }
+        } catch (err) {
+          console.error('Portfolio fine exposure refresh failed for', t.company, err);
+          if (!failed.includes(t.company)) failed.push(t.company);
+        }
       }
       setPortfolioSavingsRefresh(s => ({ ...s, done: i + 1 }));
     }
@@ -6146,10 +6188,22 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       note = updated
         ? `Filled in Indicative Savings for ${updated} ${updated === 1 ? 'company' : 'companies'} from ${updated === 1 ? 'its' : 'their'} saved Master Analysis.`
         : '';
+      if (finesUpdated) note += ` Filled in Est. Max Yearly Exposure for ${finesUpdated} ${finesUpdated === 1 ? 'company' : 'companies'} from ${finesUpdated === 1 ? 'its' : 'their'} site list.`;
     } else {
-      const parts = [`${updated} updated`];
-      if (unchanged) parts.push(`${unchanged} already current`);
-      note = `Indicative Savings refreshed from ${targets.length} saved ${targets.length === 1 ? 'analysis' : 'analyses'}: ${parts.join(', ')}.`;
+      const analysed = targets.filter(t => portfolioSavedAnalyses.get(t.id)).length;
+      const screened = finesUpdated + finesUnchanged;
+      const sentences = [];
+      if (analysed) {
+        const parts = [`${updated} updated`];
+        if (unchanged) parts.push(`${unchanged} already current`);
+        sentences.push(`Indicative Savings refreshed from ${analysed} saved ${analysed === 1 ? 'analysis' : 'analyses'}: ${parts.join(', ')}.`);
+      }
+      if (screened) {
+        const parts = [`${finesUpdated} updated`];
+        if (finesUnchanged) parts.push(`${finesUnchanged} already current`);
+        sentences.push(`Compliance fines re-screened from ${screened} site ${screened === 1 ? 'list' : 'lists'}: ${parts.join(', ')}.`);
+      }
+      note = sentences.join(' ');
     }
     if (noFigure.length) note += ` No savings headline in the analysis for ${noFigure.join(', ')}.`;
     if (failed.length) note += ` Could not read ${failed.join(', ')}.`;
@@ -13441,11 +13495,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           onClick={refreshPortfolioSavings}
                           disabled={!!portfolioSavingsRefresh?.running}
                           style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 5, background: '#fff', fontSize: '0.7rem', fontWeight: 600, cursor: portfolioSavingsRefresh?.running ? 'default' : 'pointer', fontFamily: 'inherit', color: 'var(--color-text-secondary)' }}
-                          title="Read the Indicative Savings headline out of the saved Master Analysis of each portfolio company and write it to that company, so the Indicative Savings column fills in. Companies with no saved analysis are skipped."
+                          title="Read the Indicative Savings headline out of the saved Master Analysis of each portfolio company, and re-screen its saved site list for Est. Max Yearly Exposure (compliance fines), and write both to that company. Companies with neither saved are skipped."
                         >
                           {portfolioSavingsRefresh?.running
-                            ? `Refreshing savings ${portfolioSavingsRefresh.done}/${portfolioSavingsRefresh.total}…`
-                            : '↻ Refresh Indicative Savings'}
+                            ? `Refreshing ${portfolioSavingsRefresh.done}/${portfolioSavingsRefresh.total}…`
+                            : '↻ Refresh Savings & Fines'}
                         </button>
                         <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>
                           {(() => {
