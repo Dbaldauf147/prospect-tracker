@@ -248,7 +248,16 @@ eq(marketsFromWorkbook({ SheetNames: ['Summary'], Sheets: { Summary: {} } }), []
   eq(ss.find(r => r[0] === 'Beta')[1], 'No site list to screen', 'a company with nothing to screen says so on the Summary');
   eq(ss.filter(r => r[0] === 'Total (1)').at(-1)[7], 2000, 'fines total');
   const cs = rows('Compliance Summary');
-  eq(cs.find(r => r[0] === 'Beta').at(-1), 'No site list to screen', 'a company with nothing to screen says so');
+  eq(cs.find(r => r[0] === 'Beta')[1], 'No site list to screen', 'a company with nothing to screen says so');
+  eq(cs.some(r => r.includes('Sites Screened From')), false, 'no Sites Screened From column');
+  const csSheet = back.getWorksheet('Compliance Summary');
+  let namesHeader = null;
+  csSheet.eachRow((row) => { row.eachCell((cell) => { if (cell.value === 'Portfolio Company Names') namesHeader = cell; }); });
+  const namesCell = csSheet.getRow(namesHeader.row + 1).getCell(namesHeader.col);
+  eq([namesCell.value, !!namesCell.alignment.wrapText], ['Acme', false], 'company names on one line, unwrapped');
+  const widths = Array.from({ length: 11 }, (_, i) => csSheet.getColumn(i + 1).width);
+  eq(widths.every(w => w >= 10), true, 'every column has a readable width');
+  eq(csSheet.getColumn(1).width >= 'Portfolio Company'.length, true, 'the first column fits its header');
   eq(cs.find(r => r[0] === 'New York City')[1], 1, 'jurisdiction table');
   const text = JSON.stringify([ss, rows('Savings by Company'), cs]);
   eq(text.includes('—'), false, 'no em dashes in the export');
