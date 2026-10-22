@@ -24,7 +24,7 @@ function check(label, actual, expected) {
 
 const records = [
   { _id: 1, Account: 'Harbor Peak Capital', Stage: 'Lead', Scope: 'Portfolio ESG Reporting', Contact: 'Jane Roe', 'Next Steps': 'Send overview deck' },
-  { _id: 2, Account: 'Acme Foods', Stage: 'Quoted', Scope: 'Energy Procurement, Utility Bill Management', Contact: 'Sam Lee, Pat Kim', 'Quoted Amount': '$120,000', 'Next Steps': 'Follow up on proposal\nSchedule site walk', _nextStepsWaiting: ['Sam', ''] },
+  { _id: 2, Account: 'Acme Foods', Stage: 'Quoted', Scope: 'Energy Procurement, Utility Bill Management', Contact: 'Sam Lee, Pat Kim', 'Quoted Amount': '$120,000', Type: 'Private equity', 'Sales Partner': 'Keith', 'Follow Up': '10/29/2026', 'Close Date': '12/15/2026', 'BFO Link': 'SB - SUSUP - New - Recurring', 'Next Steps': 'Follow up on proposal\nSchedule site walk', _nextStepsWaiting: ['Sam', ''] },
   { _id: 3, Account: 'Acme Foods', Stage: 'Sold', Scope: 'Old deal' },
   { _id: 4, Account: 'Blue Dock Logistics', 'PE Owner': 'Harbor Peak Capital', Stage: 'Agreement Sent', Scope: 'Carbon Accounting' },
   { _id: 5, Account: 'Cobalt Labs', Stage: 'Qualifying', Scope: 'Renewables' },
@@ -47,14 +47,14 @@ check('company with no holdings gets just its own open opps',
 check('no company, no opps', selectDeckOpps(records, { company: '' }), []);
 
 const content = oppSlideContent(picked[1], { contactInfo: (name) => (name === 'Sam Lee' ? { title: 'VP Energy' } : null) });
-check('slide content: unnamed opp is titled by its scope', content.title, 'Energy Procurement, Utility Bill Management');
+check('slide content: titled by the company, not the BFO name', content.title, 'Acme Foods');
 check('slide content: holdings credit their owner', [content.via, content.owner], ['owned', 'Harbor Peak Capital']);
 check('slide content: contacts, primary first, titles looked up', content.contacts,
   [{ name: 'Sam Lee', title: 'VP Energy', primary: true }, { name: 'Pat Kim', title: '', primary: false }]);
 check('slide content: steps carry their own Waiting On', content.nextSteps,
   [{ text: 'Follow up on proposal', waitingOn: 'Sam', onHold: false }, { text: 'Schedule site walk', waitingOn: '', onHold: false }]);
 check('slide content: scope split into items', content.scopeItems, ['Energy Procurement', 'Utility Bill Management']);
-check('slide content: facts keep only what is filled', content.facts, [['Deal size', '$120,000']]);
+check('slide content: only sites and target close, and only when filled', content.facts, [['Target close', '12/15/2026']]);
 
 check('xml escape', xmlEscape('A & B <x> "q"\u0001'), 'A &amp; B &lt;x&gt; &quot;q&quot;');
 check('filename', oppDeckFilename('Acme / Foods: "NA"', new Date(2026, 9, 22)), 'Acme Foods NA - Opps 2026-10-22.pptx');
