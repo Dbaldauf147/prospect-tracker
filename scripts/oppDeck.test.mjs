@@ -45,6 +45,9 @@ check('PE deck: own opps first, then holdings by name, furthest stage first; clo
 check('company with no holdings gets just its own open opps',
   selectDeckOpps(records, { company: 'Acme Foods' }).map(p => p.record._id), [2, 7]);
 check('no company, no opps', selectDeckOpps(records, { company: '' }), []);
+check('activeOnly: false keeps closed and broken opps, for the popup\'s opp list',
+  selectDeckOpps(records, { company: 'Harbor Peak Capital', owned: [{ name: 'Acme Foods' }], prospects, activeOnly: false })
+    .filter(p => p.via !== 'direct').map(p => p.record._id).sort((a, b) => a - b), [2, 3, 4, 5, 7, 8]);
 
 const content = oppSlideContent(picked[1], { contactInfo: (name) => (name === 'Sam Lee' ? { title: 'VP Energy' } : null) });
 check('slide content: titled by the company, not the BFO name', content.title, 'Acme Foods');

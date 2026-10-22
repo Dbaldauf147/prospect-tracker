@@ -40,7 +40,8 @@ const cell = (record, key) => {
  * An opp is in when its Account is the company or one it owns, or when the
  * company is its PE owner (named on the opp row, or on the Account's own
  * record). Only live stages count: Sold, Not Sold and broken cells are
- * history, not something to walk a client through.
+ * history, not something to walk a client through. `activeOnly: false`
+ * keeps them, for the popup's opp list, which shows history too.
  *
  * Returns [{ record, account, via, owner }] where via is 'direct', 'owned'
  * or 'pe', and owner is who to credit on the slide ("Owned by ...") for the
@@ -48,7 +49,7 @@ const cell = (record, key) => {
  * The company's own opps come first, then the owned companies' grouped by
  * company, each group furthest along first.
  */
-export function selectDeckOpps(records, { company, owned = [], prospects = [] } = {}) {
+export function selectDeckOpps(records, { company, owned = [], prospects = [], activeOnly = true } = {}) {
   const self = String(company || '').trim();
   if (!self) return [];
   const ownedNames = (owned || []).map(o => String(o?.name ?? o ?? '').trim()).filter(Boolean);
@@ -61,7 +62,7 @@ export function selectDeckOpps(records, { company, owned = [], prospects = [] } 
   for (const record of (records || [])) {
     if (!record || typeof record !== 'object') continue;
     const stage = cell(record, 'Stage');
-    if (!isActiveOppStage(stage)) continue;
+    if (activeOnly && !isActiveOppStage(stage)) continue;
     const account = cell(record, 'Account');
     let via = '';
     if (account && companiesMatch(account, self)) via = 'direct';
