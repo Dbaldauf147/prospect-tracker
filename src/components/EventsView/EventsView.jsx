@@ -17,15 +17,16 @@ import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContacts
 import { attendeeFromContact, cleanText, contactDisplayName } from '../../utils/eventsStore';
 import { companyDedupeKey } from '../../utils/firestoreSync';
 import { buildTypeOptions } from '../../utils/prospectOptions';
+import { TIER_OPTIONS } from '../../data/enums';
 import styles from './EventsView.module.css';
 
 // Inline Type dropdown for a matched Table View prospect — the same
 // options as the Table View's Type column, off the Dropdowns-tab list.
 // Commits immediately on change so the lookup list can set/correct Type
 // without leaving Events.
-function TypeCell({ prospect, options = [], onCommit }) {
+function TypeCell({ prospect, options = [], onCommit, field = 'type' }) {
   if (!prospect) return <span className={styles.tvMuted}>-</span>;
-  const value = prospect.type || '';
+  const value = prospect[field] || '';
   return (
     <select
       className={styles.cdmInput}
@@ -33,7 +34,7 @@ function TypeCell({ prospect, options = [], onCommit }) {
       onChange={e => onCommit(e.target.value)}
     >
       <option value="">-</option>
-      {/* A Type this company carries that has since left the list stays
+      {/* A value this company carries that has since left the list stays
           selectable, so opening the cell can't silently blank it. */}
       {value && !options.includes(value) && <option value={value}>{value}</option>}
       {options.map(t => <option key={t} value={t}>{t}</option>)}
@@ -182,7 +183,7 @@ function normalizeCompany(s) {
 // Filterable columns for the two Events tables (keys map to the value
 // pulled for each row in the filter predicates below).
 const ATT_FILTER_KEYS = ['name', 'originalTitle', 'title', 'company', 'email', 'tags'];
-const LOOKUP_FILTER_KEYS = ['name', 'title', 'company', 'tableView', 'type', 'cdm'];
+const LOOKUP_FILTER_KEYS = ['name', 'title', 'company', 'tableView', 'type', 'tier', 'tierList', 'cdm'];
 
 // HubSpot stores Dan's Tags as a single semicolon-separated string.
 // Split it into a clean list of individual tags.
@@ -2059,6 +2060,12 @@ export function EventsView({
     { key: 'type', label: 'Type', width: 150, filterable: true, render: (l, { prospect }) => (
       <TypeCell prospect={prospect} options={typeOptions} onCommit={v => onUpdateProspect(prospect.id, { type: v })} />
     ) },
+    { key: 'tier', label: 'Tier', width: 120, filterable: true, render: (l, { prospect }) => (
+      <TypeCell prospect={prospect} field="tier" options={TIER_OPTIONS} onCommit={v => onUpdateProspect(prospect.id, { tier: v })} />
+    ) },
+    { key: 'tierList', label: 'Tier List', width: 90, filterable: true, render: (l, { prospect }) => (
+      prospect?.tierList ? String(prospect.tierList) : <span className={styles.tvMuted}>-</span>
+    ) },
     { key: 'cdm', label: 'CDM', width: 140, filterable: true, render: (l, { prospect }) => (
       <CdmCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { cdm: v })} />
     ) },
@@ -2425,6 +2432,8 @@ export function EventsView({
                         company: l.company || '',
                         tableView: prospect?.company || '',
                         type: prospect?.type || '',
+                        tier: prospect?.tier || '',
+                        tierList: prospect?.tierList || '',
                         cdm: prospect?.cdm || '',
                       };
                       if (!LOOKUP_FILTER_KEYS.every(key => {
