@@ -188,14 +188,19 @@ const emptyTotals = () => ({
  * both, so adding them would count it twice.
  *
  * `entries` is [{ company, markets }] with markets from marketsFromWorkbook.
+ * Markets with no deregulated site and no savings are left out.
  */
 export function summariseMarkets(entries) {
   const byCompany = [];
   const countries = new Map();
   const markets = new Map();
-  for (const { company, markets: rows = [] } of entries || []) {
+  for (const { company, markets: all = [] } of entries || []) {
     const totals = emptyTotals();
     const own = new Map();
+    // A market with no deregulated site and no savings is a row of dashes:
+    // its sites are all unclassified or leased, and there is nothing in it
+    // to summarise.
+    const rows = all.filter(m => m.deregulatedSites > 0 || m.high > 0 || m.indicative > 0);
     for (const m of rows) {
       addInto(totals, m);
       const key = `${m.country}\u0000${m.market}`;
