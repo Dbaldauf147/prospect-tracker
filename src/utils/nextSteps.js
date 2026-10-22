@@ -3,10 +3,11 @@
 //
 // "Next Steps" is the column Opps 2 renders as **Notes** — the bulleted
 // checklist a rep works off. It is stored as one newline-joined string
-// (so search, sort, and export keep working on a plain field) with three
+// (so search, sort, and export keep working on a plain field) with four
 // parallel arrays, one entry per line, index-aligned: `_nextStepsWaiting`
 // holding each step's Waiting On, `_nextStepsDone` holding the day it
-// was last ticked off, and `_nextStepsHold` whether it is on hold. That
+// was last ticked off, `_nextStepsHold` whether it is on hold, and
+// `_nextStepsWait` when a "wait until afternoon" on it lifts. That
 // alignment is the whole reason this file exists: anything appending to
 // the list has to extend every part together, or every step below the insertion point starts showing
 // somebody else's Waiting On.
@@ -16,6 +17,7 @@
 // waiting to happen, so they live here and Opps 2 imports them.
 
 import { withLastCallStamp } from './lastCallOnOpp.js';
+import { easternDayParts, easternWallToUtcMs } from './nfatSchedules.js';
 
 // A hard line break typed INSIDE one step is stored as U+2028 (LINE
 // SEPARATOR) rather than "\n": steps are split on "\n", so a newline
@@ -104,6 +106,50 @@ export const NEXT_STEPS_HOLD_FIELD = '_nextStepsHold';
 export function readStepsHold(opp) {
   const raw = opp?.[NEXT_STEPS_HOLD_FIELD];
   return Array.isArray(raw) ? raw.map(v => v === true || v === 'true' || v === 1 || v === '1') : [];
+}
+
+// ---- wait until afternoon ---------------------------------------------
+
+/** The opp field holding each step's "wait until afternoon" expiry, index-aligned. */
+export const NEXT_STEPS_WAIT_FIELD = '_nextStepsWait';
+
+/** The Eastern hour a wait lifts at: 1 PM, the same time the Opps table's X marks clear. */
+export const STEP_WAIT_HOUR = 13;
+
+/**
+ * A step parked until the afternoon is stored as the INSTANT it lifts (UTC
+ * ms), not as a flag, for the same reason "done today" is a day: nothing has
+ * to come along at 1 PM and clear it. The step simply stops waiting once
+ * that moment has passed, on every device at once, whether or not the app
+ * was open.
+ *
+ * The instant is the next 1 PM Eastern after the tick: today's when ticked
+ * in the morning, tomorrow's when ticked after 1 PM, which is when an X put
+ * on an opp that afternoon would clear too.
+ */
+export function nextStepWaitEndMs(nowMs = Date.now()) {
+  const today = easternDayParts(nowMs);
+  const occ = easternWallToUtcMs(today.year, today.month, today.day, STEP_WAIT_HOUR, 0);
+  if (occ > nowMs) return occ;
+  const next = easternDayParts(nowMs + 24 * 60 * 60 * 1000);
+  return easternWallToUtcMs(next.year, next.month, next.day, STEP_WAIT_HOUR, 0);
+}
+
+/** Is a step with this stored expiry still waiting? */
+export function isStepWaiting(until, nowMs = Date.now()) {
+  const t = Number(until);
+  return Number.isFinite(t) && t > nowMs;
+}
+
+/** Tick a step to wait until the afternoon, or untick one that is waiting. */
+export function toggleStepWait(until, nowMs = Date.now()) {
+  return isStepWaiting(until, nowMs) ? 0 : nextStepWaitEndMs(nowMs);
+}
+
+/** A stored `_nextStepsWait` value as a plain array of expiries (0 = none). */
+export function readStepsWait(opp) {
+  const raw = opp?.[NEXT_STEPS_WAIT_FIELD];
+  return Array.isArray(raw) ? raw.map(v => (Number.isFinite(Number(v)) ? Number(v) : 0)) : [];
 }
 
 // ---- a call's follow-ups as next steps --------------------------------
