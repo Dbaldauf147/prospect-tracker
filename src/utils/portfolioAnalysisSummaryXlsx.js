@@ -21,9 +21,13 @@ const SE_GREEN_LIGHT = 'FFE6F7EC';
 const SE_TEXT_DARK = 'FF1E293B';
 const SE_SLATE = 'FF475569';
 const SE_BORDER = 'FFD4DDE1';
+// Italic amber marks an estimated value, as on the Master Analysis's Site
+// Detail sheet.
+const SE_EST = 'FFB45309';
 const FONT = 'Nunito Sans';
 const MONEY = '"$"#,##0';
 const INT = '#,##0';
+const PCT = '0%';
 
 const fill = (argb) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
 
@@ -76,8 +80,12 @@ function sectionBand(ws, r, span, label, note) {
     const n = ws.getCell(r, 1);
     n.value = note;
     n.font = { name: FONT, italic: true, size: 9, color: { argb: SE_SLATE } };
-    n.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
-    ws.getRow(r).height = 28;
+    n.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
+    // Tall enough for the note to wrap: roughly 1.2 characters of 9pt
+    // italic per unit of column width, 13 points a line.
+    const width = (ws.columns || []).slice(0, span).reduce((a, c) => a + (c.width || 10), 0);
+    const lines = Math.ceil(String(note).length / Math.max(40, width * 1.2));
+    ws.getRow(r).height = Math.max(18, lines * 13 + 4);
     r += 1;
   }
   return r;
@@ -103,14 +111,17 @@ function headerRow(ws, r, cols) {
 
 // One data row. `kind` is 'total' (bold, light green), 'group' (bold, a
 // subtotal heading over the rows below it) or plain. `indent` pushes the
-// first cell in under a group row.
+// first cell in under a group row. A value given as { v, est: true } is
+// written italic amber: estimated.
 function dataRow(ws, r, cols, values, { kind = '', indent = false } = {}) {
   const row = ws.getRow(r);
   cols.forEach((c, i) => {
     const cell = row.getCell(i + 1);
-    const v = values[i];
+    const raw = values[i];
+    const est = !!(raw && typeof raw === 'object' && raw.est);
+    const v = raw && typeof raw === 'object' && 'v' in raw ? raw.v : raw;
     cell.value = v === '' || v == null ? null : v;
-    cell.font = { name: FONT, size: 10, bold: kind === 'total' || kind === 'group', color: { argb: SE_TEXT_DARK } };
+    cell.font = { name: FONT, size: 10, bold: kind === 'total' || kind === 'group', italic: est, color: { argb: est ? SE_EST : SE_TEXT_DARK } };
     cell.alignment = { vertical: 'middle', horizontal: c.fmt ? 'right' : 'left', indent: i === 0 && indent ? 3 : 1, wrapText: !!c.wrap };
     if (c.fmt && typeof v === 'number') cell.numFmt = c.fmt;
     if (kind === 'total') {
@@ -130,7 +141,44 @@ const n = (v) => (v ? v : null);
 
 const SAVINGS_NOTE = 'Savings Low / High: each deregulated market\'s spend at its Low and High %, once every supply agreement is open. '
   + 'Indicative Year 1: the analysis\'s own figure, counting only spend already out of contract. '
-  + 'Markets priced TBD (no Low / High %) are not in the range.';
+  + 'Markets priced TBD (no Low / High %) are not in the range. '
+  + '† Usage and spend cover the deregulated sites. Italic amber values include estimated data: usage modeled from the property type where none was uploaded, '
+  + 'spend priced at the indicative rate where no actual cost was uploaded. The % Est. column beside each is the estimated share; '
+  + 'upright values are all from uploaded data. "Unknown" means the market\'s sites were not found on the analysis\'s Site Detail sheet; '
+  + 'a total over some such markets shows the share of the rest.';
+
+// Usage and spend: three figures, each followed by its estimated share.
+const USAGE_COLS = [
+  { label: 'Electric Usage (MWh/yr) †', fmt: INT, width: 14 },
+  { label: 'Electric Usage % Est.', fmt: PCT, width: 10 },
+  { label: 'Gas Usage (Dth/yr) †', fmt: INT, width: 14 },
+  { label: 'Gas Usage % Est.', fmt: PCT, width: 10 },
+  { label: 'Energy Spend/yr †', fmt: MONEY, width: 15 },
+  { label: 'Spend % Est.', fmt: PCT, width: 10 },
+];
+
+// The six cells for a row's usage and spend. Electric usage is written in
+// MWh; the workbook carries kWh.
+function usageValues(r) {
+  // "Unknown" only when none of the row's markets were found on Site
+  // Detail; a row with some found shows the share of those.
+  const unknown = r.estUnknown > 0 && !(r.estKnown > 0);
+  const pair = (value, est) => {
+    if (!value) return [null, null];
+    const share = est > 0 ? est / value : 0;
+    return [
+      { v: Math.round(value), est: share > 0 },
+      unknown ? { v: 'Unknown' } : { v: share, est: share > 0 },
+    ];
+  };
+  return [
+    ...pair((r.electricUsage || 0) / 1000, (r.electricUsageEst || 0) / 1000),
+    ...pair(r.gasUsage || 0, r.gasUsageEst || 0),
+    ...pair((r.electricCost || 0) + (r.gasCost || 0), (r.electricCostEst || 0) + (r.gasCostEst || 0)),
+  ];
+}
+
+const USAGE_KEYS = ['electricUsage', 'electricUsageEst', 'gasUsage', 'gasUsageEst', 'electricCost', 'electricCostEst', 'gasCost', 'gasCostEst', 'estUnknown', 'estKnown'];
 
 /**
  * Build the workbook (an ExcelJS Workbook).
@@ -164,6 +212,7 @@ export async function buildPortfolioAnalysisSummary({
       { label: 'Electric Deregulated Sites', fmt: INT, width: 14 },
       { label: 'Gas Deregulated Sites', fmt: INT, width: 14 },
       { label: 'Deregulated Markets', fmt: INT, width: 13 },
+      ...USAGE_COLS,
       { label: 'Annual Savings Low', fmt: MONEY, width: 16 },
       { label: 'Annual Savings High', fmt: MONEY, width: 16 },
       { label: 'Indicative Year 1 Savings', fmt: MONEY, width: 16 },
@@ -175,20 +224,22 @@ export async function buildPortfolioAnalysisSummary({
 
     r = sectionBand(ws, r, span, 'By Portfolio Company', SAVINGS_NOTE);
     r = headerRow(ws, r, companyCols);
-    const t = { e: 0, g: 0, low: 0, high: 0, ind: 0 };
+    const t = { e: 0, g: 0, low: 0, high: 0, ind: 0, ...Object.fromEntries(USAGE_KEYS.map(k => [k, 0])) };
     for (const c of savings.byCompany) {
       const d = savedAt.get(c.company) ? new Date(savedAt.get(c.company)) : null;
       r = dataRow(ws, r, companyCols, [
         c.company,
         d && !isNaN(d) ? d.toLocaleDateString() : '',
         n(c.electricDeregulatedSites), n(c.gasDeregulatedSites), c.markets.length,
+        ...usageValues(c),
         n(c.low), n(c.high), c.indicative,
         c.markets.slice(0, 6).map(m => m.market).join(', '),
       ]);
       t.e += c.electricDeregulatedSites; t.g += c.gasDeregulatedSites;
       t.low += c.low; t.high += c.high; t.ind += c.indicative;
+      for (const k of USAGE_KEYS) t[k] += c[k] || 0;
     }
-    r = dataRow(ws, r, companyCols, [`Total (${savings.byCompany.length})`, '', t.e, t.g, savings.byMarket.length, t.low, t.high, t.ind, ''], { kind: 'total' });
+    r = dataRow(ws, r, companyCols, [`Total (${savings.byCompany.length})`, '', t.e, t.g, savings.byMarket.length, ...usageValues(t), t.low, t.high, t.ind, ''], { kind: 'total' });
     r += 2;
 
     // Same widths as the table above, so the two read as one sheet.
@@ -198,21 +249,24 @@ export async function buildPortfolioAnalysisSummary({
       { label: 'Electric Deregulated Sites', fmt: INT },
       { label: 'Gas Deregulated Sites', fmt: INT },
       { label: 'Portfolio Companies', fmt: INT },
+      ...USAGE_COLS.map(({ label, fmt }) => ({ label, fmt })),
       { label: 'Annual Savings Low', fmt: MONEY },
       { label: 'Annual Savings High', fmt: MONEY },
       { label: 'Indicative Year 1 Savings', fmt: MONEY },
       { label: 'Portfolio Company Names', wrap: true },
     ];
-    r = sectionBand(ws, r, span, 'By Country / State (all portfolio companies)', 'A site in a dual-fuel market counts once under electric and once under gas.');
+    r = sectionBand(ws, r, span, 'By Country / State (all portfolio companies)', 'A site in a dual-fuel market counts once under electric and once under gas. Italic amber values include estimated data (see the note above).');
     r = headerRow(ws, r, marketCols);
     for (const c of savings.byCountry) {
       r = dataRow(ws, r, marketCols, [
         c.country, c.country, n(c.electricDeregulatedSites), n(c.gasDeregulatedSites), c.companies.length,
+        ...usageValues(c),
         n(c.low), n(c.high), c.indicative, c.companies.join(', '),
       ], { kind: 'group' });
       for (const m of savings.byMarket.filter(x => x.country === c.country && x.market !== c.country)) {
         r = dataRow(ws, r, marketCols, [
           m.market, m.country, n(m.electricDeregulatedSites), n(m.gasDeregulatedSites), m.companies.length,
+          ...usageValues(m),
           n(m.low), n(m.high), m.indicative, m.companies.join(', '),
         ], { indent: true });
       }
@@ -230,6 +284,7 @@ export async function buildPortfolioAnalysisSummary({
       { label: 'Country', width: 18 },
       { label: 'Electric Deregulated Sites', fmt: INT, width: 14 },
       { label: 'Gas Deregulated Sites', fmt: INT, width: 14 },
+      ...USAGE_COLS,
       { label: 'Annual Savings Low', fmt: MONEY, width: 16 },
       { label: 'Annual Savings High', fmt: MONEY, width: 16 },
       { label: 'Indicative Year 1 Savings', fmt: MONEY, width: 16 },
@@ -240,9 +295,9 @@ export async function buildPortfolioAnalysisSummary({
     r = headerRow(ws, r, cols);
     for (const c of savings.byCompany) {
       if (!c.markets.length) continue;
-      r = dataRow(ws, r, cols, [c.company, '', n(c.electricDeregulatedSites), n(c.gasDeregulatedSites), n(c.low), n(c.high), c.indicative], { kind: 'group' });
+      r = dataRow(ws, r, cols, [c.company, '', n(c.electricDeregulatedSites), n(c.gasDeregulatedSites), ...usageValues(c), n(c.low), n(c.high), c.indicative], { kind: 'group' });
       for (const m of c.markets) {
-        r = dataRow(ws, r, cols, [m.market, m.country, n(m.electricDeregulatedSites), n(m.gasDeregulatedSites), n(m.low), n(m.high), m.indicative], { indent: true });
+        r = dataRow(ws, r, cols, [m.market, m.country, n(m.electricDeregulatedSites), n(m.gasDeregulatedSites), ...usageValues(m), n(m.low), n(m.high), m.indicative], { indent: true });
       }
     }
   }
