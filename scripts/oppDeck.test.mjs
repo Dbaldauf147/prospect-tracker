@@ -11,7 +11,7 @@
 // Set OPP_DECK_OUT=path.pptx to keep the built deck for a visual check.
 import { readFile, writeFile } from 'node:fs/promises';
 import JSZip from 'jszip';
-import { selectDeckOpps, oppSlideContent, buildOppDeck, oppDeckFilename, xmlEscape, deckStage, deckServiceName, groupScope } from '../src/utils/oppDeck.js';
+import { selectDeckOpps, oppSlideContent, buildOppDeck, oppDeckFilename, xmlEscape, deckStage, deckServiceName, groupScope, scopeSummary } from '../src/utils/oppDeck.js';
 import { getServiceCategories } from '../src/utils/serviceCategoriesStore.js';
 
 let passed = 0, failed = 0;
@@ -112,6 +112,30 @@ const overview = await out.file(`ppt/${targets[1]}`).async('string');
 check('deck: overview table is Account, Stage, Scope only',
   [overview.includes('>Account<'), overview.includes('>Stage<'), overview.includes('>Scope<'), overview.includes('>Opportunity<'), overview.includes('>Deal size<')],
   [true, true, true, false, false]);
+
+check('overview: scope written out per bucket, not cut to one line',
+  [overview.includes('Energy Procurement'), overview.includes('Utility Bill Management'), overview.includes('...')], [true, true, false]);
+check('scope summary: a line per bucket, listed with "and"',
+  scopeSummary([{ bucket: 'Bill Pay', items: ['Bill payment', 'Invoice variance testing', 'Invoice recalculation'] }, { bucket: 'Reporting', items: ['CDP climate'] }]),
+  [{ label: 'Bill Pay', text: 'Bill payment, Invoice variance testing and Invoice recalculation' }, { label: 'Reporting', text: 'CDP climate' }]);
+check('scope summary: services no bucket claims read without a label',
+  scopeSummary([{ bucket: 'Other services', items: ['Strategic sourcing', 'Peak Alerts'] }]), [{ label: '', text: 'Strategic sourcing and Peak Alerts' }]);
+{
+  // Long scopes make tall rows, and the overview pages by height so none
+  // runs off the slide.
+  const many = Array.from({ length: 12 }, (_, i) => ({ _id: 100 + i, Account: `Holding ${i}`, Stage: 'Lead', Scope: Array.from({ length: 14 }, (_, k) => `Service number ${k}`).join(', ') }));
+  const deck = await buildOppDeck({ JSZip, template, company: 'Big Fund', entries: selectDeckOpps(many, { company: 'Big Fund', owned: many.map(r => ({ name: r.Account })) }) });
+  const z = await JSZip.loadAsync(deck);
+  const glance = [];
+  for (const f of Object.keys(z.files).filter(f => /^ppt\/slides\/slide\d+\.xml$/.test(f))) {
+    const xml = await z.file(f).async('string');
+    if (xml.includes('Opportunities table')) glance.push(xml);
+  }
+  const heights = glance.map(xml => Number(xml.match(/name="Opportunities table"[\s\S]*?<a:ext cx="\d+" cy="(\d+)"/)[1]) / 914400);
+  check('overview: long scopes page onto another slide', glance.length >= 2, true);
+  check('overview: every page fits above the footer', heights.every(h => h <= 3.95 + 1e-6), true);
+  check('overview: every opp appears once', glance.reduce((n, xml) => n + (xml.match(/>Holding \d+</g) || []).length, 0), 12);
+}
 
 console.log(`${failed ? 'FAILED' : 'PASS'} oppDeck: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
