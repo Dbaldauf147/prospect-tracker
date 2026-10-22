@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
+import { EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
 import { useContactEditSettings } from '../../hooks/useContactEditSettings';
 import { companyPopupTarget } from '../../utils/companyLookup';
 import { apiFetch } from '../../utils/apiFetch';
@@ -345,6 +346,49 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
       } catch (err) { console.error('Failed to load campaigns:', err); }
       setCampaignsLoaded(true);
     })();
+  }, [user]);
+
+  // The company and contact popups put people on a campaign by writing the
+  // saved doc themselves (ProspectModal/ContactCampaignAdd.jsx), and they can
+  // be opened from this very page while it stays mounted. Without a re-read
+  // the open campaign kept showing the roster from before the add, and the
+  // next write from here (an outreach change, the background refresh) saved
+  // that stale list back over the addition.
+  const viewingSavedRef = useRef(viewingSaved);
+  viewingSavedRef.current = viewingSaved;
+  const resultsRef = useRef(results);
+  resultsRef.current = results;
+  useEffect(() => {
+    if (!user?.uid) return undefined;
+    let live = true;
+    const reload = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'emailCampaigns', user.uid));
+        if (!live) return;
+        const fresh = (snap.exists() ? (snap.data().campaigns || []) : []).map(withoutInternal);
+        setSavedCampaigns(fresh);
+        const open = resultsRef.current;
+        if (viewingSavedRef.current == null || !open) return;
+        // Found again by subject: the indexes can shift if a campaign was
+        // added or deleted elsewhere in the meantime.
+        const key = primarySubject(open).toLowerCase();
+        const idx = fresh.findIndex(c => primarySubject(c).toLowerCase() === key);
+        if (idx === -1) return;
+        const c = fresh[idx];
+        setViewingSaved(idx);
+        setResults(r => (r ? {
+          ...r,
+          contacts: c.contacts || [],
+          removedEmails: c.removedEmails || [],
+          targetCompanies: c.targetCompanies,
+          ...deriveCounts(c.contacts),
+        } : r));
+      } catch (err) { console.error('Failed to reload campaigns:', err); }
+    };
+    window.addEventListener(EMAIL_CAMPAIGNS_UPDATED_EVENT, reload);
+    return () => { live = false; window.removeEventListener(EMAIL_CAMPAIGNS_UPDATED_EVENT, reload); };
+    // withoutInternal/deriveCounts are pure helpers recreated each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   // Honour an "open this campaign" request from the Email Tracking tab. Waits
