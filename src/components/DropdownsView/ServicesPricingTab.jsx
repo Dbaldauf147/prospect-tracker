@@ -419,7 +419,11 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
 
   // "Select all" means all the search left on screen, not all 150 — the
   // search box is how you narrow to the set you meant to pick.
-  const visibleNames = useMemo(() => rows.map(r => r.name), [rows]);
+  // The header filters narrow it further: the table reports what passes
+  // them, and that is what "on screen" means. null until it first reports.
+  const [columnFiltered, setColumnFiltered] = useState(null);
+  const shownRows = columnFiltered ?? rows;
+  const visibleNames = useMemo(() => shownRows.map(r => r.name), [shownRows]);
   const visibleSelectedCount = useMemo(
     () => visibleNames.filter(n => selected.has(n)).length,
     [visibleNames, selected],
@@ -628,6 +632,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           ...base,
           getSortValue: (row) => (row.noFee ? 1 : 0),
           exportValue: (row) => (row.noFee ? 'Yes' : ''),
+          getFilterValue: (row) => (row.noFee ? 'Yes' : 'No'),
           render: (row) => (
             /* The click stops here, the same as every other editor cell:
                ticking a row would otherwise open its pricing panel behind
@@ -687,6 +692,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         return {
           ...base,
           getSortValue: (row) => row.rate,
+          getFilterValue: (row) => (row.rate === null ? '' : (row._kind === 'percent' ? `${row.rate}%` : formatMoney(row.rate))),
           render: (row) => (
             <NumberCell
               value={row.rate}
@@ -708,6 +714,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
         return {
           ...base,
           getSortValue: (row) => row.rateHigh,
+          getFilterValue: (row) => (row.rateHigh === null ? '' : (row._kind === 'percent' ? `${row.rateHigh}%` : formatMoney(row.rateHigh))),
           render: (row) => (
             <NumberCell
               value={row.rateHigh}
@@ -736,6 +743,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           ...base,
           getSortValue: (row) => row._impactLabel,
           exportValue: (row) => row._impactLabel,
+          getFilterValue: (row) => row._impactLabel,
           render: (row) => (
             <ImpactCell value={row.impact} onCommit={(v) => savePricingField(row.name, 'impact', v)} />
           ),
@@ -821,7 +829,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
                 ? `${coverage.untracked} more ${coverage.untracked === 1 ? 'is' : 'are'} left out because ${coverage.untracked === 1 ? 'it doesn\'t' : 'they don\'t'} count toward the % of services explored (Broader SE, Renewables, retired, or switched off on the service's popup).`
                 : '')}
         >
-          {term || statusFilter ? `${rows.length} of ${serviceRows.length} services` : `${serviceRows.length} services`}
+          {term || statusFilter || shownRows.length !== rows.length ? `${shownRows.length} of ${serviceRows.length} services` : `${serviceRows.length} services`}
           {coverage.total > 0 && <> · {filterButton('tracked', `${coverage.total} tracked`)}</>}
           {coverage.total > 0 && <> · {filterButton('priced', `${coverage.priced} priced`)}</>}
           {coverage.noFee > 0 && <> · {filterButton('noFee', `${coverage.noFee} no fee`)}</>}
@@ -1003,6 +1011,10 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           // The rates are in the Columns menu rather than on screen: the
           // Year 1 columns carry the same money and say more about it.
           defaultHidden={DEFAULT_HIDDEN_COLUMNS}
+          // A filter box under each header, the same combobox the Services
+          // subtab uses: pick values from the column or type to match.
+          enableColumnFilters
+          onFilteredRowsChange={setColumnFiltered}
           // Every cell that does something with a click swallows it first,
           // so this fires for the row itself — the name, the read-only
           // cells, and the padding around the editors. While the mode is
@@ -1026,7 +1038,7 @@ export function ServicesPricingTab({ settings, updateSettings, serviceRows = [],
           updateSettings={updateSettings}
           emptyMessage={serviceRows.length === 0
             ? 'The Solutions dropdown list is empty. Add services on the Services subtab and they show up here.'
-            : `No services match "${search}".`}
+            : search.trim() ? `No services match "${search}".` : 'No services match the filters.'}
         />
       </div>
 
