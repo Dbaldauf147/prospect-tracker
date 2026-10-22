@@ -7131,7 +7131,40 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     if (isNew || !fields.company || !oppsCache) return [];
     return companyOppRows(oppsCache.filter(r => companiesMatch(r.Account, fields.company)));
   }, [fields.company, isNew, oppsCache]);
-  const companyOppsSummary = useMemo(() => summarizeCompanyOpps(companyOpps), [companyOpps]);
+  // The other direction from contactOwners: what this company owns. Its
+  // divisions (the whole chart under it, sub-divisions included) and the
+  // companies on its Sites & Holdings table, resolved to their tracker
+  // record's name where they have one so the match reads the same name
+  // that company's own card does.
+  const ownedCompanies = useMemo(() => {
+    if (isNew || !fields.company || !prospect?.id) return [];
+    const entries = [];
+    const nameById = new Map((prospects || []).map(p => [p.id, p.company]));
+    const walk = (node) => {
+      for (const child of (node.children || [])) {
+        entries.push({ name: child.company, kind: 'division' });
+        walk(child);
+      }
+    };
+    walk(buildDivisionTree(settings, prospect.id, fields.company, nameById));
+    for (const row of (fields.portfolioCompanies || [])) {
+      const p = findPortfolioProspect(row, prospectByName, prospectById);
+      entries.push({ name: p?.company || row?.companyName, kind: 'holding' });
+    }
+    return ownedCompanyList(entries, fields.company);
+  }, [isNew, fields.company, fields.portfolioCompanies, prospect?.id, prospects, settings, prospectByName, prospectById]);
+
+  // The opps at those companies, listed under the company's own on the Opps
+  // tab. Same matching the Download PPT deck uses (owned companies, and
+  // accounts this company is PE owner of), but closed opps too, since the
+  // list shows history.
+  const ownedOpps = useMemo(() => {
+    if (isNew || !oppsCache || !fields.company?.trim()) return [];
+    const entries = selectDeckOpps(oppsCache, { company: fields.company.trim(), owned: ownedCompanies, prospects, activeOnly: false })
+      .filter(e => e.via !== 'direct');
+    return companyOppRows(entries.map(e => e.record));
+  }, [isNew, oppsCache, fields.company, ownedCompanies, prospects]);
+  const companyOppsSummary = useMemo(() => summarizeCompanyOpps([...companyOpps, ...ownedOpps]), [companyOpps, ownedOpps]);
   // Collapsed on open: most cards are opened to read or edit the company
   // itself, and a company with a dozen opps would otherwise push the rest of
   // the card off the screen. The header carries the count, so it says whether
@@ -7625,29 +7658,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const ids = new Set(companyContacts.map(c => String(c.id || c.vid || '')));
     return [...companyContacts, ...ownerContacts.filter(c => !ids.has(String(c.id || c.vid || '')))];
   }, [companyContacts, ownerContacts]);
-
-  // The other direction from contactOwners: what this company owns. Its
-  // divisions (the whole chart under it, sub-divisions included) and the
-  // companies on its Sites & Holdings table, resolved to their tracker
-  // record's name where they have one so the match reads the same name
-  // that company's own card does.
-  const ownedCompanies = useMemo(() => {
-    if (isNew || !fields.company || !prospect?.id) return [];
-    const entries = [];
-    const nameById = new Map((prospects || []).map(p => [p.id, p.company]));
-    const walk = (node) => {
-      for (const child of (node.children || [])) {
-        entries.push({ name: child.company, kind: 'division' });
-        walk(child);
-      }
-    };
-    walk(buildDivisionTree(settings, prospect.id, fields.company, nameById));
-    for (const row of (fields.portfolioCompanies || [])) {
-      const p = findPortfolioProspect(row, prospectByName, prospectById);
-      entries.push({ name: p?.company || row?.companyName, kind: 'holding' });
-    }
-    return ownedCompanyList(entries, fields.company);
-  }, [isNew, fields.company, fields.portfolioCompanies, prospect?.id, prospects, settings, prospectByName, prospectById]);
 
   // The opps the "Download PPT" button on the Opps tab puts in its deck:
   // the live ones at this company and at everything it owns, so a PE
@@ -11239,8 +11249,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           </div>
           )}
 
-          {/* Opps — the Opps 2 rows whose Account matches this company. Read
-              only: the Opps tab is where an opp is worked, and a second
+          {/* Opps — the Opps 2 rows whose Account matches this company, then
+              the ones at companies it owns (ownedOpps). Read only: the Opps tab is where an opp is worked, and a second
               editor for the same row is a second place for it to be wrong.
               Above the Notes section on this page because it is the shorter
               answer to "where do we stand with these people". */}
@@ -11249,7 +11259,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <div
                 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
                 onClick={() => setOppListOpen(o => !o)}
-                title={`Opportunities on the Opps tab whose Account matches ${fields.company.trim()}. Read-only here.`}
+                title={`Opportunities on the Opps tab whose Account is ${fields.company.trim()} or a company it owns. Read-only here.`}
               >
                 <label className={styles.label} style={{ margin: 0, cursor: 'pointer' }}>
                   Opps
@@ -11300,9 +11310,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     <div style={{ fontSize: '0.75rem', color: '#94A3B8' }}>
                       Opps aren&rsquo;t loaded in this browser yet - open the Opps tab once and they&rsquo;ll show here.
                     </div>
-                  ) : companyOpps.length === 0 ? (
+                  ) : companyOpps.length + ownedOpps.length === 0 ? (
                     <div style={{ fontSize: '0.75rem', color: '#94A3B8' }}>
-                      No opps on the Opps tab have this company as their Account.
+                      No opps on the Opps tab have this company, or a company it owns, as their Account.
                     </div>
                   ) : (
                     <div style={{ overflowX: 'auto' }}>
@@ -11310,6 +11320,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         <thead>
                           <tr style={{ textAlign: 'left', color: '#64748B' }}>
                             <th style={oppTh}>Opportunity</th>
+                            {ownedOpps.length > 0 && <th style={oppTh}>Account</th>}
                             <th style={oppTh}>Stage</th>
                             <th style={oppTh}>Scope</th>
                             <th style={{ ...oppTh, textAlign: 'right' }}>Deal Size</th>
@@ -11318,16 +11329,33 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           </tr>
                         </thead>
                         <tbody>
-                          {companyOpps.map(opp => {
+                          {[
+                            ...companyOpps.map(opp => ({ opp, owned: false })),
+                            ...ownedOpps.map(opp => ({ opp, owned: true })),
+                          ].map(({ opp, owned }, i, all) => {
                             const colors = oppStageColors(opp.stage);
+                            // The owned companies' opps follow the company's
+                            // own under a heading row of their own.
+                            const firstOwned = owned && (i === 0 || !all[i - 1].owned);
                             return (
-                              <tr key={opp.id} style={{ borderTop: '1px solid var(--color-border-light)', opacity: opp.active ? 1 : 0.65 }}>
+                              <Fragment key={`${owned ? 'owned' : 'own'}-${opp.id}`}>
+                              {firstOwned && (
+                                <tr>
+                                  <td colSpan={7} style={{ ...oppTd, paddingTop: '0.6rem', fontSize: '0.68rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                                    At companies {fields.company.trim()} owns ({ownedOpps.length})
+                                  </td>
+                                </tr>
+                              )}
+                              <tr style={{ borderTop: '1px solid var(--color-border-light)', opacity: opp.active ? 1 : 0.65 }}>
                                 <td style={{ ...oppTd, fontWeight: 600, color: '#1E293B' }}>
                                   {/* An opp that was never named in BFO still
                                       has to be pickable out of a list, so it
                                       falls back to what it is about. */}
                                   {opp.name || opp.scope || <span style={{ color: '#94A3B8', fontWeight: 400 }}>Unnamed opp</span>}
                                 </td>
+                                {ownedOpps.length > 0 && (
+                                  <td style={{ ...oppTd, color: '#475569', whiteSpace: 'nowrap' }}>{opp.account || <span style={{ color: '#CBD5E1' }}>-</span>}</td>
+                                )}
                                 <td style={oppTd}>
                                   {opp.stage ? (
                                     <span style={{
@@ -11342,6 +11370,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                 <td style={{ ...oppTd, color: '#64748B', whiteSpace: 'nowrap' }}>{opp.startDate || <span style={{ color: '#CBD5E1' }}>-</span>}</td>
                                 <td style={{ ...oppTd, color: '#64748B', whiteSpace: 'nowrap' }}>{opp.closeDate || <span style={{ color: '#CBD5E1' }}>-</span>}</td>
                               </tr>
+                              </Fragment>
                             );
                           })}
                         </tbody>
