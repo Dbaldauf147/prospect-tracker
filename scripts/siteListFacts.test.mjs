@@ -275,6 +275,32 @@ function eq(actual, expected, name) {
   eq(siteListScreeningRows({ headers: ['Site Name'], rows: [{ 'Site Name': 'Unknown' }] }), [{
     id: 0, siteName: 'Unknown', city: '', state: '', country: '', sqft: null, propertyType: '',
   }], 'a list with nothing to place reads as a row with nothing on it');
+  // The city the Utility Lookup page screened on wins where the list has
+  // it, and a row saved before that column existed (blank there) falls
+  // back to the uploaded city rather than dropping out of the screening.
+  const cities = siteListScreeningRows({
+    headers: ['Site Name', 'City', 'City (analysis)'],
+    rows: [
+      { 'Site Name': 'New', City: 'Ft Lauderdale', 'City (analysis)': 'Fort Lauderdale' },
+      { 'Site Name': 'Old', City: 'Boston', 'City (analysis)': '' },
+    ],
+  });
+  eq(cities.map(r => r.city), ['Fort Lauderdale', 'Boston'], 'the analysis city wins, the uploaded one fills its gaps');
+
+  // Leased buildings are left out, as the page's compliance screening
+  // leaves them out by default; an unplaced value screens.
+  const tenure = siteListScreeningRows({
+    headers: ['Site Name', 'City', 'Ownership'],
+    rows: [
+      { 'Site Name': 'Own', City: 'Austin', Ownership: 'Owned' },
+      { 'Site Name': 'Lease', City: 'Austin', Ownership: 'Leased' },
+      { 'Site Name': 'Suite', City: 'Austin', Ownership: 'Leased – Suite' },
+      { 'Site Name': 'Unknown', City: 'Austin', Ownership: 'TBD' },
+      { 'Site Name': 'Blank', City: 'Austin', Ownership: '' },
+    ],
+  });
+  eq(tenure.map(r => r.siteName), ['Own', 'Unknown', 'Blank'], 'only the sites known to be leased are left out');
+
   eq(siteListScreeningRows(null), [], 'no list, no rows');
   eq(siteListScreeningRows({ headers: ['City'], rows: [] }), [], 'and no rows, no rows');
 }

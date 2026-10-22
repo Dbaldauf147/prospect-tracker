@@ -6095,6 +6095,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     // by — "which of our operating companies is this site" — and the
     // company popup had no way to answer it.
     ['Division', r => r.__division__ || ''],
+    // The city the Building Compliance screening matched each site on -
+    // the file's own, else the one its zip resolved to - and its canonical
+    // Ownership, which that screening leaves leased buildings out by. Saved
+    // so the company popup and the Portfolio tab re-screen the saved list
+    // on the same buildings in the same jurisdictions, rather than guessing
+    // a city out of whatever the upload called its columns.
+    ['City', r => r.__city__ || ''],
+    ['Ownership', r => r.__ownership__ || r.__ownershipRaw__ || ''],
     ['ST / Prov', r => r.__stateProvinceDisplay__ || r.__state__ || ''],
     ['Country', r => r.__country__ || ''],
     ['Zip', r => r.__zipNorm__ || ''],
