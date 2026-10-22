@@ -125,19 +125,17 @@ export function oppSlideContent(entry, { contactInfo = () => null } = {}) {
     nextSteps.push({ text: `Waiting on ${legacyWaiting}`, waitingOn: '', onHold: false });
   }
 
+  // Deal size, type, sales partner and follow-up date are left off the
+  // slide on purpose (asked for when the deck was first used).
   const facts = [
-    ['Deal size', cell(r, 'Quoted Amount')],
     ['Sites', cell(r, 'Sites')],
-    ['Type', cell(r, 'Type')],
-    ['Sales partner', cell(r, 'Sales Partner')],
-    ['Follow up', cell(r, 'Follow Up')],
     ['Target close', cell(r, 'Close Date')],
   ].filter(([, v]) => v);
 
   return {
-    // The account sits right under the title, so an opp never named in BFO
-    // is titled by what it is about rather than repeating the account.
-    title: name || scope || account || 'Unnamed opportunity',
+    // Titled by the company. The BFO opportunity name is an internal
+    // label (business unit, offer codes) and doesn't go on the slide.
+    title: account || scope || 'Unnamed opportunity',
     name,
     account,
     via: entry.via,
@@ -298,12 +296,11 @@ export function oppSlideShapes(content) {
   const nextId = () => { id += 1; return id; };
   const shapes = [];
 
-  // Under the title: whose deal it is.
-  const sub = [run(content.account || 'No account', { sz: 1200, b: true, color: C.quartz })];
+  // Under the title (the company): who owns it, for a portfolio company.
   if (content.via !== 'direct' && content.owner) {
-    sub.push(run(`   Owned by ${content.owner}`, { sz: 1100, color: C.grey }));
+    const sub = [run(`Owned by ${content.owner}`, { sz: 1200, color: C.grey })];
+    shapes.push(shape(nextId(), 'Owner', { x: L.left, y: L.subY, w: L.width, h: 0.28, paras: [para(sub, { after: 0, sz: 1200 })], textBox: true }));
   }
-  shapes.push(shape(nextId(), 'Account', { x: L.left, y: L.subY, w: L.width, h: 0.28, paras: [para(sub, { after: 0, sz: 1200 })], textBox: true }));
 
   shapes.push(...stageTrack(content, nextId));
   if (content.stage && !DECK_STAGES.includes(content.stage) && content.stage !== 'Repricing') {
@@ -388,8 +385,7 @@ function overviewTable(entries) {
     { label: 'Account', w: 1.9, get: c => c.account },
     ...(named ? [{ label: 'Opportunity', w: 2.6, get: c => c.name }] : []),
     { label: 'Stage', w: 1.15, get: c => c.stage },
-    { label: 'Scope', w: named ? 2.3 : 4.9, get: c => c.scopeItems.join(', ') },
-    { label: 'Deal size', w: 1.185, get: c => (c.facts.find(f => f[0] === 'Deal size') || [])[1] || '' },
+    { label: 'Scope', w: named ? 3.485 : 6.085, get: c => c.scopeItems.join(', ') },
   ];
   const rowH = 0.32;
   const tc = (text, { head = false, shade = false } = {}) => {
