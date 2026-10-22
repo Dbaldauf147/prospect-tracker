@@ -138,7 +138,7 @@ function Toggle({ value, options, onChange }) {
  * that resolve to a tracker record with a saved Master Analysis (`meta`)
  * and, when there is one, the site list saved to that record.
  */
-export default function PortfolioAnalysisSummary({ firmName, companies, totalCompanies, onClose }) {
+export default function PortfolioAnalysisSummary({ firmName, companies, totalCompanies, personalOrdinanceOverrides, onClose }) {
   const [tab, setTab] = useState('savings');
   const [marketView, setMarketView] = useState('combined');
   const [progress, setProgress] = useState({ done: 0, total: companies.length });
@@ -154,9 +154,12 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [XLSX, m, ExcelJS] = await Promise.all([import('xlsx'), import('../../utils/complianceMandates'), import('exceljs')]);
+      const [XLSX, m, ExcelJS, store] = await Promise.all([import('xlsx'), import('../../utils/complianceMandates'), import('exceljs'), import('../../utils/ordinanceOverrideStore')]);
+      // The ordinance corrections the Utility Lookup page screens with, so
+      // this table's exposure matches that page's and the Portfolio column.
+      const ordinances = await store.loadScreeningOrdinances(personalOrdinanceOverrides);
       if (cancelled) return;
-      setMandates(m);
+      setMandates({ ...m, ordinances });
       const countryOf = (label) => COUNTRY_NAMES[m.regionOf(label)?.country] || null;
       const out = [];
       for (let i = 0; i < companies.length; i++) {
@@ -198,6 +201,9 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
       }
     })();
     return () => { cancelled = true; };
+    // The corrections are read once, with the snapshot of companies; a
+    // correction saved while this is open must not re-download every workbook.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companies]);
 
   const loading = progress.done < progress.total;
@@ -210,7 +216,7 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
     const jur = new Map();
     for (const c of loaded) {
       if (!c.siteList) { rows.push({ company: c.company, none: true }); continue; }
-      const sum = complianceSummary(mandates.screenSites(siteListScreeningRows(c.siteList)), mandates);
+      const sum = complianceSummary(mandates.screenSites(siteListScreeningRows(c.siteList), { ordinances: mandates.ordinances }), mandates);
       rows.push({ company: c.company, source: c.siteListSource, ...sum });
       for (const j of sum.byJurisdiction) {
         if (!jur.has(j.government)) {

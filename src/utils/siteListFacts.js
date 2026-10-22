@@ -16,6 +16,7 @@
 
 import { propertyTypeEquipment, propertyTypeAccountTotal } from '../data/propertyTypeEstimates.js';
 import { isActiveSiteStatus, inactiveSiteNote, pickSiteStatusColumn } from './siteStatus.js';
+import { isLeasedTenure } from './ownershipEstimates.js';
 
 function findHeader(headers, patterns) {
   for (const pattern of patterns) {
@@ -244,7 +245,13 @@ export function siteListScreeningRows(entry) {
   const rows = statusCol ? listed.filter(r => isActiveSiteStatus(r[statusCol])) : listed;
   if (!rows.length) return [];
 
-  const cityCol = findHeader(headers, [/^city\s*\(analysis/i, /^city$/i, /\bcity\b/i, /^town$/i, /municipality/i]);
+  // The city the Utility Lookup page screened on (its file's city, else
+  // the one the zip resolved to) is saved as an analysis column. A list
+  // saved before that column existed has it blank on its older rows, so a
+  // row with nothing there falls back to the uploaded city rather than
+  // dropping out of the screening.
+  const analysisCityCol = findHeader(headers, [/^city\s*\(analysis/i]);
+  const uploadedCityCol = findHeader(headers.filter(h => h !== analysisCityCol), [/^city$/i, /\bcity\b/i, /^town$/i, /municipality/i]);
   // "ST / Prov" is what the Utility Lookup save writes; an uploaded column
   // called State keeps its own name, so both spellings are looked for.
   const stateCol = findHeader(headers, [
@@ -260,12 +267,20 @@ export function siteListScreeningRows(entry) {
     /^property\s*type\s*\(analysis\)$/i, /^property\s*type$/i, /property\s*type/i, /building\s*type/i, /asset\s*type/i,
   ]);
   const nameCol = findHeader(headers, [/^site\s*name$/i, /^site$/i, /^property\s*name$/i, /^building\s*name$/i, /^name$/i]);
+  // The page's Building Compliance screening leaves out the buildings known
+  // to be leased (their obligations fall on the owner), and the figures it
+  // stamps on the company are screened that way. The Ownership analysis
+  // column carries the canonical value it went by; an uploaded Ownership
+  // column's own wording ("Lease", "TBD") isn't canonical, and screens, as
+  // an unplaced value does on the page.
+  const ownershipCol = findHeader(headers, [/^ownership\s*\(analysis/i, /^ownership$/i]);
 
   const text = (row, col) => (col ? String(row[col] ?? '').trim() : '');
-  return rows.map((row, i) => ({
+  const owned = ownershipCol ? rows.filter(r => !isLeasedTenure(text(r, ownershipCol))) : rows;
+  return owned.map((row, i) => ({
     id: i,
     siteName: text(row, nameCol),
-    city: text(row, cityCol),
+    city: text(row, analysisCityCol) || text(row, uploadedCityCol),
     state: text(row, stateCol),
     country: text(row, countryCol),
     sqft: sizeCol ? toSqft(row[sizeCol]) : null,

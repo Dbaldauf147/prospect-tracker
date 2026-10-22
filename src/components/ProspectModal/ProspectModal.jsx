@@ -6142,6 +6142,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const mandates = targets.some(t => portfolioSiteListFor(t))
       ? await import('../../utils/complianceMandates')
       : null;
+    // With the ordinance corrections the Utility Lookup page screens with,
+    // so a figure refreshed here is the one that page shows.
+    const ordinances = mandates
+      ? await (await import('../../utils/ordinanceOverrideStore')).loadScreeningOrdinances(settings?.complianceOrdinanceOverrides)
+      : null;
     let updated = 0;
     let unchanged = 0;
     let finesUpdated = 0;
@@ -6180,7 +6185,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       if (list) {
         try {
           const { screenSites, CATEGORIES, totalPenalty } = mandates;
-          const screening = screenSites(siteListScreeningRows(list));
+          const screening = screenSites(siteListScreeningRows(list), { ordinances });
           const exposure = Math.round(CATEGORIES.reduce((sum, c) => sum + totalPenalty(screening, c), 0));
           const before = t.maxYearlyExposure;
           if (before !== '' && before != null && Number(before) === exposure) {
@@ -6752,8 +6757,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     }
     setAnalysisRefreshing(true);
     try {
-      const { screenSites, sitesWithMandate, CATEGORIES, totalPenalty } = await import('../../utils/complianceMandates');
-      const screening = screenSites(siteListScreeningRows(currentSiteList));
+      const [{ screenSites, sitesWithMandate, CATEGORIES, totalPenalty }, { loadScreeningOrdinances }] = await Promise.all([
+        import('../../utils/complianceMandates'),
+        import('../../utils/ordinanceOverrideStore'),
+      ]);
+      // Screened with the ordinance corrections the Utility Lookup page
+      // uses, so the two can't come out different on a corrected penalty.
+      const ordinances = await loadScreeningOrdinances(settings?.complianceOrdinanceOverrides);
+      const screening = screenSites(siteListScreeningRows(currentSiteList), { ordinances });
       const mandated = sitesWithMandate(screening);
       // What those mandates cost if none of them is met, off the same
       // screening. It goes stale exactly as the count beside it does - an
@@ -13533,6 +13544,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             firmName={fields.company}
                             companies={analysisSummary.companies}
                             totalCompanies={analysisSummary.total}
+                            personalOrdinanceOverrides={settings?.complianceOrdinanceOverrides}
                             onClose={() => setAnalysisSummary(null)}
                           />
                         )}

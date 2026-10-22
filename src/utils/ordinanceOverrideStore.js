@@ -24,6 +24,8 @@
 import { doc, getDoc, setDoc, collection, getDocs, deleteField, updateDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { CATEGORIES } from './complianceMandates.js';
+import MASTER_ORDINANCES from '../data/masterOrdinances.js';
+import { applyOrdinanceOverrides, mergeOverrideLayers } from './ordinanceOverrides.js';
 
 const COLLECTION = 'complianceOrdinances';
 
@@ -52,6 +54,19 @@ export async function loadSharedOrdinanceOverrides() {
     console.warn('complianceOrdinances: read failed', err);
     return { overrides: {}, ok: false, error: err?.message || String(err), code: err?.code || '' };
   }
+}
+
+/**
+ * The mandate data the Utility Lookup page screens with: the published
+ * seed with the shared corrections applied and the user's own laid over
+ * them (`personal` is settings.complianceOrdinanceOverrides). Anything that
+ * re-screens a saved site list away from that page passes this to
+ * screenSites, so a corrected penalty moves its figure the same way it
+ * moved the page's.
+ */
+export async function loadScreeningOrdinances(personal) {
+  const { overrides } = await loadSharedOrdinanceOverrides();
+  return applyOrdinanceOverrides(MASTER_ORDINANCES, mergeOverrideLayers(overrides, personal));
 }
 
 /**
