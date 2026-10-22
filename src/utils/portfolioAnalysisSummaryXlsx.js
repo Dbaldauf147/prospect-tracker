@@ -114,6 +114,37 @@ function dataRow(ws, r, cols, values, { kind = '', indent = false } = {}) {
   return r + 1;
 }
 
+// Column widths sized to what is written in them, for a sheet whose
+// columns hold more than one table. A figure is measured as its number
+// format shows it; a header, which wraps, needs its longest word on one
+// line and the whole label in no more than three. Widths are in Excel's
+// character units, plus room for the cell's one-step indent.
+class Fit {
+  constructor(min = 10) { this.min = min; this.w = []; }
+  bump(i, len) { this.w[i] = Math.max(this.w[i] || 0, len); }
+  headers(cols) {
+    cols.forEach((c, i) => {
+      const words = String(c.label).split(/\s+/);
+      this.bump(i, Math.max(...words.map(w => w.length), Math.ceil(String(c.label).length / 3)));
+    });
+  }
+  values(cols, values) {
+    cols.forEach((c, i) => {
+      const v = values[i];
+      if (v == null || v === '') return;
+      let text = String(v);
+      if (typeof v === 'number') {
+        const whole = Math.round(v).toLocaleString('en-US');
+        text = c.fmt === MONEY ? `$${whole}` : whole;
+      }
+      this.bump(i, text.length);
+    });
+  }
+  widths(span) {
+    return Array.from({ length: span }, (_, i) => Math.max(this.min, Math.ceil((this.w[i] || 0) * 1.1) + 3));
+  }
+}
+
 // A blank number reads better than a zero in a column of site counts.
 const n = (v) => (v ? v : null);
 
@@ -280,62 +311,72 @@ export async function buildPortfolioAnalysisSummary({
       views: [{ showGridLines: false, state: 'frozen', ySplit: 1 }],
     });
     const catCols = categories.flatMap(k => [
-      { label: `${k.label} Sites`, fmt: INT, width: 12 },
-      { label: `${k.label} Est. Max Fine / yr`, fmt: MONEY, width: 15 },
+      { label: `${k.label} Sites`, fmt: INT },
+      { label: `${k.label} Est. Max Fine / yr`, fmt: MONEY },
     ]);
     const companyCols = [
-      { label: 'Portfolio Company', width: 30 },
-      { label: 'Sites Screened', fmt: INT, width: 12 },
-      { label: 'Sites with a Mandate', fmt: INT, width: 12 },
-      { label: 'Jurisdictions', fmt: INT, width: 15 },
+      { label: 'Portfolio Company' },
+      { label: 'Sites Screened', fmt: INT },
+      { label: 'Sites with a Mandate', fmt: INT },
+      { label: 'Jurisdictions', fmt: INT },
       ...catCols,
-      { label: 'Est. Max Yearly Exposure', fmt: MONEY, width: 16 },
-      { label: 'Sites Screened From', width: 30, wrap: true },
+      { label: 'Est. Max Yearly Exposure', fmt: MONEY },
     ];
-    ws.columns = companyCols.map(c => ({ width: c.width }));
-    const span = companyCols.length;
-    let r = titleBand(wb, ws, span, 'Building Compliance Summary', firmName);
-    r = sectionBand(ws, r, span, 'By Portfolio Company');
-    r = headerRow(ws, r, companyCols);
-    const live = (compliance?.rows || []).filter(c => !c.none);
-    for (const c of compliance?.rows || []) {
-      if (c.none) {
-        r = dataRow(ws, r, companyCols, [c.company, ...companyCols.slice(1, -1).map(() => null), 'No site list to screen']);
-        continue;
-      }
-      r = dataRow(ws, r, companyCols, [
-        c.company, c.sitesScreened, n(c.sitesWithMandate), n(c.jurisdictions),
-        ...categories.flatMap(k => [n(c.categories[k.key].sites), n(c.categories[k.key].penalty)]),
-        c.exposure,
-        c.source === 'workbook' ? 'Master Analysis Site List tab' : 'Saved site list',
-      ]);
-    }
-    const sum = (f) => live.reduce((s, c) => s + (f(c) || 0), 0);
-    r = dataRow(ws, r, companyCols, [
-      `Total (${live.length})`, sum(c => c.sitesScreened), sum(c => c.sitesWithMandate),
-      new Set(live.flatMap(c => c.jurisdictionIds || [])).size,
-      ...categories.flatMap(k => [sum(c => c.categories[k.key].sites), sum(c => c.categories[k.key].penalty)]),
-      sum(c => c.exposure), '',
-    ], { kind: 'total' });
-    r += 2;
-
     const jurCols = [
       { label: 'Jurisdiction' },
       { label: 'Sites with a Mandate', fmt: INT },
       { label: 'Portfolio Companies', fmt: INT },
       ...catCols,
       { label: 'Est. Max Yearly Exposure', fmt: MONEY },
-      { label: 'Portfolio Company Names', wrap: true },
+      // One line, comma-separated: the column is sized to the longest list
+      // below rather than wrapped into a tall row.
+      { label: 'Portfolio Company Names' },
     ];
+    // The two tables share the sheet's columns, so each column is sized to
+    // whichever table needs it wider. `fit` collects that as rows are written.
+    const fit = new Fit();
+    fit.headers(companyCols);
+    fit.headers(jurCols);
+    const span = Math.max(companyCols.length, jurCols.length);
+    let r = titleBand(wb, ws, span, 'Building Compliance Summary', firmName);
+    r = sectionBand(ws, r, span, 'By Portfolio Company');
+    r = headerRow(ws, r, companyCols);
+    const live = (compliance?.rows || []).filter(c => !c.none);
+    const companyRow = (values, opts) => { fit.values(companyCols, values); r = dataRow(ws, r, companyCols, values, opts); };
+    for (const c of compliance?.rows || []) {
+      if (c.none) {
+        // Not measured: the note runs over the empty cells beside it.
+        fit.values(companyCols, [c.company]);
+        r = dataRow(ws, r, companyCols, [c.company, 'No site list to screen']);
+        continue;
+      }
+      companyRow([
+        c.company, c.sitesScreened, n(c.sitesWithMandate), n(c.jurisdictions),
+        ...categories.flatMap(k => [n(c.categories[k.key].sites), n(c.categories[k.key].penalty)]),
+        c.exposure,
+      ]);
+    }
+    const sum = (f) => live.reduce((s, c) => s + (f(c) || 0), 0);
+    companyRow([
+      `Total (${live.length})`, sum(c => c.sitesScreened), sum(c => c.sitesWithMandate),
+      new Set(live.flatMap(c => c.jurisdictionIds || [])).size,
+      ...categories.flatMap(k => [sum(c => c.categories[k.key].sites), sum(c => c.categories[k.key].penalty)]),
+      sum(c => c.exposure),
+    ], { kind: 'total' });
+    r += 2;
+
     r = sectionBand(ws, r, span, 'By Jurisdiction (all portfolio companies)');
     r = headerRow(ws, r, jurCols);
     for (const j of compliance?.byJurisdiction || []) {
-      r = dataRow(ws, r, jurCols, [
+      const values = [
         j.government, j.sites, j.companies.length,
         ...categories.flatMap(k => [n(j[k.key].sites), n(j[k.key].penalty)]),
         j.penalty, j.companies.join(', '),
-      ]);
+      ];
+      fit.values(jurCols, values);
+      r = dataRow(ws, r, jurCols, values);
     }
+    fit.widths(span).forEach((width, i) => { ws.getColumn(i + 1).width = width; });
     if (!(compliance?.byJurisdiction || []).length) dataRow(ws, r, jurCols, ['No site falls under a mandate.']);
   }
   return wb;
