@@ -1050,6 +1050,14 @@ export function EventsView({
     const key = companyDedupeKey(company);
     return key ? (prospectByCompanyKey.get(key) || null) : null;
   };
+  // Competitors aren't who an event is for, so both tables on this page list
+  // a company whose Table View Type is a competitor after everyone else,
+  // each group keeping its own order.
+  const isCompetitorCompany = (company) => /competitor/i.test(String(matchProspect(company)?.type || ''));
+  const competitorsLast = (rows, companyOf) => [
+    ...rows.filter(r => !isCompetitorCompany(companyOf(r))),
+    ...rows.filter(r => isCompetitorCompany(companyOf(r))),
+  ];
 
   // Pre-normalized prospect names for the fuzzy "Suggested" column —
   // built once per prospects change. Each entry keeps a normalized
@@ -1791,8 +1799,9 @@ export function EventsView({
       const val = key === 'tags' ? tagsOf(a) : (a[key] || '');
       return String(val).toLowerCase().includes(q);
     });
-    return attendees.map((a, i) => ({ a, i })).filter(({ a }) => matches(a));
-  }, [attendees, attFilters, contactsById]);
+    return competitorsLast(attendees.map((a, i) => ({ a, i })).filter(({ a }) => matches(a)), ({ a }) => a.company);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attendees, attFilters, contactsById, prospectByCompanyKey]);
   // Taggable subset of the currently-visible rows, so select-all and the
   // header checkbox operate on what the user can actually see.
   const visibleTaggable = visibleAttendees.filter(
@@ -2394,7 +2403,7 @@ export function EventsView({
                   trailing={LOOKUP_ACTIONS}
                 />
                 <tbody>
-                  {lookups.map((l, i) => {
+                  {competitorsLast(lookups.map((l, i) => ({ l, i })), ({ l }) => l.company).map(({ l, i }) => {
                     const prospect = matchProspect(l.company);
                     // Drop rows whose company already has a contact on the
                     // attendee list - they're done. Reappears if removed.
