@@ -14,6 +14,7 @@ import {
   textToBulletItems, encodeNoteLine, nextStepLinesFromCall, callOnOppPatch, NOTE_LINEBREAK,
   NEXT_STEPS_DONE_FIELD, readStepsDone, isStepDoneToday, toggleStepDone,
   NEXT_STEPS_HOLD_FIELD, readStepsHold,
+  NEXT_STEPS_WAIT_FIELD, readStepsWait, isStepWaiting, toggleStepWait,
 } from '../../utils/nextSteps';
 import { nextStepsCopyText, nextStepsCopyHtml } from '../../utils/nextStepsCopy';
 import { writeRichCopy } from '../../utils/clipboardCopy';
@@ -6747,23 +6748,29 @@ function NotSoldFollowUpModal({ opp, optionLink = null, reasonOptions, competiti
   // "done today".
   const storedDone = readStepsDone(opp);
   const storedHold = readStepsHold(opp);
+  const storedWait = readStepsWait(opp);
   const [rows, setRows] = useState(() => {
     const seed = noteLines.map((note, i) => ({
       note,
       waitingOn: String(storedWaiting[i] || ''),
       doneOn: String(storedDone[i] || ''),
       onHold: !!storedHold[i],
+      waitUntil: storedWait[i] || 0,
     }));
-    return seed.length > 0 ? seed : [{ note: '', waitingOn: '', doneOn: '', onHold: false }];
+    return seed.length > 0 ? seed : [{ note: '', waitingOn: '', doneOn: '', onHold: false, waitUntil: 0 }];
   });
   const updateRow = (idx, key, value) => setRows(prev => prev.map((r, i) => i === idx ? { ...r, [key]: value } : r));
-  const addRow = () => setRows(prev => [...prev, { note: '', waitingOn: '', doneOn: '', onHold: false }]);
+  const addRow = () => setRows(prev => [...prev, { note: '', waitingOn: '', doneOn: '', onHold: false, waitUntil: 0 }]);
   const deleteRow = (idx) => setRows(prev => {
     const next = prev.filter((_, i) => i !== idx);
-    return next.length > 0 ? next : [{ note: '', waitingOn: '', doneOn: '', onHold: false }];
+    return next.length > 0 ? next : [{ note: '', waitingOn: '', doneOn: '', onHold: false, waitUntil: 0 }];
   });
   // Saved with the rest on Save, like every other field on this screen.
   const toggleRowHold = (idx) => setRows(prev => prev.map((r, i) => (i === idx ? { ...r, onHold: !r.onHold } : r)));
+  const toggleRowWait = (idx) => {
+    const now = Date.now();
+    setRows(prev => prev.map((r, i) => (i === idx ? { ...r, waitUntil: toggleStepWait(r.waitUntil, now) } : r)));
+  };
 
   // Dependent options: only the Reason Not Sold values that have a
   // close-out rule for the chosen Competition (closeNotSoldRules).
@@ -6804,6 +6811,7 @@ function NotSoldFollowUpModal({ opp, optionLink = null, reasonOptions, competiti
       nextStepsWaiting: kept.map(r => (r.waitingOn || '').trim()),
       nextStepsDone: kept.map(r => (r.doneOn || '').trim()),
       nextStepsHold: kept.map(r => !!r.onHold),
+      nextStepsWait: kept.map(r => Number(r.waitUntil) || 0),
     });
   }
 
@@ -6960,6 +6968,7 @@ function NotSoldFollowUpModal({ opp, optionLink = null, reasonOptions, competiti
               onAddRow={addRow}
               onDeleteRow={deleteRow}
               onToggleHold={toggleRowHold}
+              onToggleWait={toggleRowWait}
               onCommit={() => {}}
             />
           </div>
@@ -8653,14 +8662,16 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
   const storedWaiting = Array.isArray(opp?._nextStepsWaiting) ? opp._nextStepsWaiting : [];
   const storedDone = readStepsDone(opp);
   const storedHold = readStepsHold(opp);
+  const storedWait = readStepsWait(opp);
   const [rows, setRows] = useState(() => {
     const seed = noteLines.map((note, i) => ({
       note,
       waitingOn: String(storedWaiting[i] || ''),
       doneOn: String(storedDone[i] || ''),
       onHold: !!storedHold[i],
+      waitUntil: storedWait[i] || 0,
     }));
-    return seed.length > 0 ? seed : [{ note: '', waitingOn: '', doneOn: '', onHold: false }];
+    return seed.length > 0 ? seed : [{ note: '', waitingOn: '', doneOn: '', onHold: false, waitUntil: 0 }];
   });
 
   function commit(nextRows) {
@@ -8669,6 +8680,7 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
     updateOppField(opp._id, '_nextStepsWaiting', kept.map(r => (r.waitingOn || '').trim()));
     updateOppField(opp._id, NEXT_STEPS_DONE_FIELD, kept.map(r => (r.doneOn || '').trim()));
     updateOppField(opp._id, NEXT_STEPS_HOLD_FIELD, kept.map(r => !!r.onHold));
+    updateOppField(opp._id, NEXT_STEPS_WAIT_FIELD, kept.map(r => Number(r.waitUntil) || 0));
   }
   const updateRow = (idx, key, value) => setRows(prev => prev.map((r, i) => i === idx ? { ...r, [key]: value } : r));
   // The three below build the next list from `rows` and then set it, rather
@@ -8678,13 +8690,13 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
   // rendering a different component" warning and, on a re-run, a second
   // write. These all fire from a click, where `rows` is already current.
   const addRow = () => {
-    const next = [...rows, { note: '', waitingOn: '', doneOn: '', onHold: false }];
+    const next = [...rows, { note: '', waitingOn: '', doneOn: '', onHold: false, waitUntil: 0 }];
     setRows(next);
     commit(next);
   };
   const deleteRow = (idx) => {
     const next = rows.filter((_, i) => i !== idx);
-    const safe = next.length > 0 ? next : [{ note: '', waitingOn: '', doneOn: '', onHold: false }];
+    const safe = next.length > 0 ? next : [{ note: '', waitingOn: '', doneOn: '', onHold: false, waitUntil: 0 }];
     setRows(safe);
     commit(safe);
   };
@@ -8699,6 +8711,14 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
   // On hold is a flag rather than a day, so it stays until it is unticked.
   const toggleRowHold = (idx) => {
     const next = rows.map((r, i) => (i === idx ? { ...r, onHold: !r.onHold } : r));
+    setRows(next);
+    commit(next);
+  };
+  // Wait until afternoon is the instant it lifts (the next 1 PM Eastern), so
+  // it clears itself with nobody having to come along and untick it.
+  const toggleRowWait = (idx) => {
+    const now = Date.now();
+    const next = rows.map((r, i) => (i === idx ? { ...r, waitUntil: toggleStepWait(r.waitUntil, now) } : r));
     setRows(next);
     commit(next);
   };
@@ -8973,6 +8993,7 @@ function FollowUpNotesModal({ opp, statusOptions, clientManager, solutionOptions
               onDeleteRow={deleteRow}
               onToggleDone={toggleRowDone}
               onToggleHold={toggleRowHold}
+              onToggleWait={toggleRowWait}
               onCommit={() => commit(rows)}
             />
           )}
@@ -12084,7 +12105,7 @@ function LastCallLine({ opp }) {
   );
 }
 
-function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onToggleDone, onToggleHold, onCommit }) {
+function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onToggleDone, onToggleHold, onToggleWait, onCommit }) {
   const inputStyle = {
     width: '100%', padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1',
     borderRadius: 4, fontSize: '0.85rem', fontFamily: 'inherit',
@@ -12109,6 +12130,27 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onToggl
   // answering the same question about the same day.
   const today = todayISO();
   const doneCount = rows.filter(r => isStepDoneToday(r?.doneOn, today)).length;
+  // A step waiting until the afternoon goes the light yellow the Opps table
+  // gives an X'd row, so the two read as the same "not yet today".
+  const waitInputStyle = {
+    ...inputStyle,
+    background: '#FEF9C3',
+    border: '1px solid #FDE68A',
+  };
+  // The clock the waits are measured against. Moved on by a timer set for
+  // the soonest wait to lift, so an open popup un-yellows its rows at 1 PM
+  // rather than on the next unrelated re-render.
+  const [now, setNow] = useState(() => Date.now());
+  const nextLift = rows.reduce((min, r) => {
+    const t = Number(r?.waitUntil) || 0;
+    return t > now && (min === 0 || t < min) ? t : min;
+  }, 0);
+  useEffect(() => {
+    if (!nextLift) return undefined;
+    // Capped so a far-off wait doesn't overflow setTimeout's 32-bit delay.
+    const t = setTimeout(() => setNow(Date.now()), Math.min(nextLift - Date.now() + 500, 6 * 60 * 60 * 1000));
+    return () => clearTimeout(t);
+  }, [nextLift]);
 
   // The table as something a spreadsheet will take. Built from the live
   // rows, so what is copied is what is on screen, including the note being
@@ -12142,6 +12184,14 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onToggl
             <th style={{ padding: '0.4rem 0.5rem', fontWeight: 600, width: '52%', borderBottom: '1px solid #E2E8F0' }}>Note</th>
             <th style={{ padding: '0.4rem 0.5rem', fontWeight: 600, width: '38%', borderBottom: '1px solid #E2E8F0' }}>Waiting On</th>
             <th
+              title="Ticked parks a step until the afternoon: the row goes yellow, like an X on the Opps table, and clears itself at 1 PM."
+              style={{
+                padding: '0.4rem 0.3rem', fontWeight: 600, width: 70,
+                textAlign: 'center', borderBottom: '1px solid #E2E8F0',
+                fontSize: '0.68rem', lineHeight: 1.2,
+              }}
+            >Wait until afternoon</th>
+            <th
               title="Ticked means you worked this step today. Every tick clears itself overnight, so tomorrow the list starts unticked again."
               style={{
                 padding: '0.4rem 0.3rem', fontWeight: 600, width: 62,
@@ -12166,11 +12216,14 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onToggl
             // Done today and on hold grey the row the same way: both say
             // "nothing to do here right now". Only the tick lapses overnight.
             const greyed = doneToday || !!row.onHold;
-            const boxStyle = greyed ? doneInputStyle : inputStyle;
+            // Done or on hold wins over the wait: either says there is
+            // nothing to do on the step at all, not just not yet.
+            const waiting = !greyed && isStepWaiting(row.waitUntil, now);
+            const boxStyle = greyed ? doneInputStyle : waiting ? waitInputStyle : inputStyle;
             return (
             <tr
               key={idx}
-              style={{ verticalAlign: 'top', background: greyed ? '#F8FAFC' : 'transparent' }}
+              style={{ verticalAlign: 'top', background: greyed ? '#F8FAFC' : waiting ? '#FEF9C3' : 'transparent' }}
             >
               <td style={{ padding: '0.3rem 0.4rem 0.3rem 0', borderBottom: '1px solid #F1F5F9' }}>
                 <AutoGrowTextarea
@@ -12189,6 +12242,33 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onToggl
                   onBlur={onCommit}
                   placeholder="Who / what?"
                 />
+              </td>
+              <td style={{ padding: '0.3rem', borderBottom: '1px solid #F1F5F9', textAlign: 'center' }}>
+                {(() => {
+                  const isWaiting = isStepWaiting(row.waitUntil, now);
+                  return (
+                    <label
+                      title={isWaiting
+                        ? `Waiting until ${new Date(Number(row.waitUntil)).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. Click to untick. It clears itself at 1 PM either way.`
+                        : 'Park this step until the afternoon. The row goes yellow and clears itself at 1 PM.'}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        width: '100%', height: 56, cursor: 'pointer',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isWaiting}
+                        onChange={() => { onToggleWait?.(idx); setNow(Date.now()); }}
+                        aria-label="Wait until afternoon"
+                        style={{
+                          width: 17, height: 17, margin: 0, cursor: 'pointer',
+                          accentColor: '#CA8A04',
+                        }}
+                      />
+                    </label>
+                  );
+                })()}
               </td>
               <td style={{ padding: '0.3rem', borderBottom: '1px solid #F1F5F9', textAlign: 'center' }}>
                 {(() => {
@@ -12277,7 +12357,7 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onToggl
         <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
           {doneCount > 0
             ? `${doneCount} done today. Ticks clear overnight, so tomorrow the list starts fresh.`
-            : 'Ticks in "Done today" clear overnight, so tomorrow the list starts fresh. "On hold" stays until you untick it.'}
+            : '"Wait until afternoon" clears at 1 PM. Ticks in "Done today" clear overnight, so tomorrow the list starts fresh. "On hold" stays until you untick it.'}
         </span>
         <button
           type="button"
@@ -18183,7 +18263,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             reasonOptions={listRegistry.get('reasonNotSold')?.options || []}
             competitionOptions={listRegistry.get('competition')?.options || []}
             solutionOptions={listRegistry.get('solutions')?.options || []}
-            onSave={({ closeDate, reason, finalMargin, competition, nextSteps, nextStepsWaiting, nextStepsDone, nextStepsHold }) => {
+            onSave={({ closeDate, reason, finalMargin, competition, nextSteps, nextStepsWaiting, nextStepsDone, nextStepsHold, nextStepsWait }) => {
               // Only push fields whose value actually changed so the
               // undo stack stays uncluttered with no-op snapshots.
               if (closeDate !== (toISODate(opp['Close Date']) || '')) {
@@ -18214,6 +18294,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               }
               if (JSON.stringify(nextStepsHold) !== JSON.stringify(readStepsHold(opp))) {
                 updateOppField(opp._id, NEXT_STEPS_HOLD_FIELD, nextStepsHold);
+              }
+              if (JSON.stringify(nextStepsWait) !== JSON.stringify(readStepsWait(opp))) {
+                updateOppField(opp._id, NEXT_STEPS_WAIT_FIELD, nextStepsWait);
               }
               setNotSoldPromptId(null);
             }}

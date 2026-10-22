@@ -16,6 +16,7 @@ import {
   nextStepLinesFromCall, callOnOppPatch,
   NEXT_STEPS_DONE_FIELD, readStepsDone, isStepDoneToday, toggleStepDone, countStepsDoneToday,
   NEXT_STEPS_HOLD_FIELD, readStepsHold,
+  NEXT_STEPS_WAIT_FIELD, readStepsWait, isStepWaiting, toggleStepWait, nextStepWaitEndMs,
 } from '../src/utils/nextSteps.js';
 
 let passed = 0, failed = 0;
@@ -233,6 +234,27 @@ function ok(value, name) { eq(!!value, true, name); }
   eq(waiting.length, done.length, 'and so do waiting-ons and done stamps');
   eq(done, ['2026-09-16', ''], 'the empty row is dropped from all three together');
   eq(countStepsDoneToday(done, '2026-09-16'), 1, 'leaving the surviving tick on the right step');
+}
+
+// ---- wait until afternoon ----
+{
+  // 9:15 AM EDT on Oct 22 2026 is 13:15Z; 1 PM EDT that day is 17:00Z.
+  const morning = Date.UTC(2026, 9, 22, 13, 15);
+  const onePm = Date.UTC(2026, 9, 22, 17, 0);
+  eq(nextStepWaitEndMs(morning), onePm, 'a morning tick waits until 1 PM Eastern the same day');
+  eq(isStepWaiting(onePm, morning), true, 'and is waiting in the morning');
+  eq(isStepWaiting(onePm, onePm), false, 'and stops waiting at 1 PM on its own');
+  eq(isStepWaiting(onePm, onePm + 60000), false, 'and stays cleared after');
+  // 3 PM EDT ticks wait until 1 PM the next day.
+  eq(nextStepWaitEndMs(Date.UTC(2026, 9, 22, 19, 0)), Date.UTC(2026, 9, 23, 17, 0), 'an afternoon tick waits until tomorrow 1 PM');
+  // Across the November DST change: 1 PM EST is 18:00Z.
+  eq(nextStepWaitEndMs(Date.UTC(2026, 10, 2, 14, 0)), Date.UTC(2026, 10, 2, 18, 0), '1 PM is Eastern wall time after DST ends');
+  eq(toggleStepWait(0, morning), onePm, 'ticking sets the next 1 PM');
+  eq(toggleStepWait(onePm, morning), 0, 'unticking a live wait clears it');
+  eq(toggleStepWait(onePm - 86400000, morning), onePm, 'a lapsed wait ticks fresh rather than unticking');
+  eq(NEXT_STEPS_WAIT_FIELD, '_nextStepsWait', 'stored on its own parallel field');
+  eq(JSON.stringify(readStepsWait({ _nextStepsWait: [onePm, 0, 'x', null] })), JSON.stringify([onePm, 0, 0, 0]), 'read back as numbers, junk as 0');
+  eq(JSON.stringify(readStepsWait({})), '[]', 'a field never written reads as no waits');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
