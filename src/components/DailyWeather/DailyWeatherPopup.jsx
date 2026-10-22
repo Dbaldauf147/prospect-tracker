@@ -49,9 +49,22 @@ export function DailyWeatherPopup({ open, onClose }) {
             <div className={styles.now} title="Current conditions">
               <span className={styles.nowIcon}>{data.current.icon}</span>
               <div>
-                <div className={styles.nowTemp}>{data.current.temp}°F</div>
+                <div className={styles.nowTemps}>
+                  <span className={styles.nowTemp}>{data.current.temp}°F</span>
+                  {data.current.feels != null && (
+                    <span className={styles.nowTemp}>
+                      <span className={styles.nowFeelsLabel}>Feels</span> {data.current.feels}°F
+                    </span>
+                  )}
+                </div>
                 <div className={styles.nowMeta}>
-                  Now: {data.current.condition}, feels {data.current.feels}°
+                  Now: {data.current.condition}
+                  {data.current.windMph != null && (
+                    <>
+                      {' · '}Wind {data.current.windMph} mph{data.current.windDir ? ` ${data.current.windDir}` : ''}
+                      {data.current.gustMph != null && `, gusts ${data.current.gustMph} mph`}
+                    </>
+                  )}
                 </div>
               </div>
             </div>

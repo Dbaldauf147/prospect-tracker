@@ -50,6 +50,8 @@
 
 .nowIcon { font-size: 2rem; line-height: 1; }
 .nowTemp { font-size: 1.3rem; font-weight: 700; color: var(--color-text, #0f172a); }
+.nowTemps { display: flex; align-items: baseline; gap: 0.9rem; }
+.nowFeelsLabel { font-size: 0.75rem; font-weight: 600; color: var(--color-text-muted, #64748b); }
 .nowMeta { font-size: 0.75rem; color: var(--color-text-muted, #64748b); }
 
 .body {

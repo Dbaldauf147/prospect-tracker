@@ -42,6 +42,7 @@ const CURRENT_FIELDS = [
   'weather_code',
   'wind_speed_10m',
   'wind_direction_10m',
+  'wind_gusts_10m',
 ];
 
 export function weatherUrl(loc = WEATHER_LOCATION, days = WEATHER_DAYS) {
@@ -173,6 +174,7 @@ export function parseForecast(json) {
     humidity: round(c.relative_humidity_2m),
     windMph: round(c.wind_speed_10m),
     windDir: compassPoint(c.wind_direction_10m),
+    gustMph: round(c.wind_gusts_10m),
     ...(() => { const { label, icon } = describeWeatherCode(c.weather_code); return { condition: label, icon }; })(),
   } : null;
   return { current, days };
