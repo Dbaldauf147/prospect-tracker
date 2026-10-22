@@ -38,6 +38,7 @@ import { splitServiceNames } from '../../utils/serviceNameList';
 import { splitPastedCells, newOptionsFromPaste } from '../../utils/pasteOptions';
 import { notesPlainText } from '../../utils/richNotes';
 import { deleteServiceUpdates } from '../../utils/serviceDelete';
+import { BULK_SERVICE_FIELDS, bulkServiceUpdates } from '../../utils/serviceBulkEdit';
 import { solutionsListUpdates, renameServiceFromPopup } from '../../utils/serviceRename';
 import styles from './DropdownsView.module.css';
 
@@ -1381,6 +1382,12 @@ export function DropdownsView({ settings, updateSettings }) {
   const [addingService, setAddingService] = useState(false);
   // The bucket editor above the table (see ServiceBucketsPanel).
   const [editingBuckets, setEditingBuckets] = useState(false);
+  // Bulk edit: one field set to one value on every service the table is
+  // showing (after the search box, hidden toggle and header filters).
+  const [bulkEditing, setBulkEditing] = useState(false);
+  const [bulkField, setBulkField] = useState('serviceBucket');
+  const [bulkValue, setBulkValue] = useState('');
+  const [bulkNote, setBulkNote] = useState('');
   const [newServiceName, setNewServiceName] = useState('');
   const [addServiceNote, setAddServiceNote] = useState('');
   const newServiceRef = useRef(null);
@@ -1919,7 +1926,102 @@ export function DropdownsView({ settings, updateSettings }) {
               onClick={() => setEditingBuckets(v => !v)}
               title="Add, rename, reorder or delete the buckets services are grouped into"
             >{editingBuckets ? 'Done with buckets' : 'Edit buckets'}</button>
+            <button
+              type="button"
+              className={styles.addServiceBtn}
+              onClick={() => { setBulkEditing(v => !v); setBulkNote(''); }}
+              title="Set one field to the same value on every service the table is showing"
+            >{bulkEditing ? 'Done bulk editing' : 'Bulk edit'}</button>
           </div>
+
+          {bulkEditing && (() => {
+            const visible = columnFilteredServices ?? serviceTableRows;
+            const def = BULK_SERVICE_FIELDS.find(f => f.key === bulkField) || BULK_SERVICE_FIELDS[0];
+            const menu = (serviceFieldMenus[def.key] || []).map(o => o.value);
+            const valueLabel = bulkValue.trim() ? `"${bulkValue.trim()}"` : 'blank';
+            function apply() {
+              const names = visible.map(r => r.name);
+              if (!names.length) return;
+              const verb = def.kind === 'hidden'
+                ? `${bulkValue === 'Hidden' ? 'Hide' : 'Show'} ${names.length} ${names.length === 1 ? 'service' : 'services'}?`
+                : `Set ${def.label} to ${valueLabel} on ${names.length} ${names.length === 1 ? 'service' : 'services'}?`;
+              if (!window.confirm(verb)) return;
+              const updates = bulkServiceUpdates(settings, names, def.key, bulkValue);
+              if (!updates) {
+                setBulkNote(def.kind === 'weeks' && bulkValue.trim() && !Number.isFinite(Number(bulkValue))
+                  ? 'Rollout time has to be a number of weeks.'
+                  : 'Nothing to change: every visible service already has that value.');
+                return;
+              }
+              updateSettings?.(updates);
+              setBulkNote(`Updated ${names.length} ${names.length === 1 ? 'service' : 'services'}.`);
+            }
+            return (
+              <div className={styles.addServiceRow}>
+                <span className={styles.addServiceNote} style={{ marginLeft: 0, fontWeight: 600 }}>
+                  Bulk edit {visible.length} visible {visible.length === 1 ? 'service' : 'services'}:
+                </span>
+                <select
+                  className={styles.addServiceInput}
+                  style={{ flex: '0 0 auto', width: 'auto' }}
+                  value={def.key}
+                  onChange={e => {
+                    const next = BULK_SERVICE_FIELDS.find(f => f.key === e.target.value);
+                    setBulkField(e.target.value);
+                    setBulkValue(next?.kind === 'hidden' ? 'Hidden' : '');
+                    setBulkNote('');
+                  }}
+                >
+                  {BULK_SERVICE_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+                </select>
+                {def.kind === 'bucket' ? (
+                  <select className={styles.addServiceInput} style={{ flex: '0 0 auto', width: 'auto' }} value={bulkValue} onChange={e => { setBulkValue(e.target.value); setBulkNote(''); }}>
+                    <option value="">Pick a bucket...</option>
+                    {serviceBucketNames.map(b => <option key={b} value={b}>{b}</option>)}
+                    {!serviceBucketNames.includes(UNGROUPED_SERVICES) && <option value={UNGROUPED_SERVICES}>{UNGROUPED_SERVICES}</option>}
+                  </select>
+                ) : def.kind === 'yesno' ? (
+                  <select className={styles.addServiceInput} style={{ flex: '0 0 auto', width: 'auto' }} value={bulkValue} onChange={e => { setBulkValue(e.target.value); setBulkNote(''); }}>
+                    <option value="">- (clear)</option>
+                    <option value="Yes">Yes</option>
+                    <option value="No">No</option>
+                  </select>
+                ) : def.kind === 'hidden' ? (
+                  <select className={styles.addServiceInput} style={{ flex: '0 0 auto', width: 'auto' }} value={bulkValue} onChange={e => { setBulkValue(e.target.value); setBulkNote(''); }}>
+                    <option value="Hidden">Hide them</option>
+                    <option value="Shown">Show them</option>
+                  </select>
+                ) : (
+                  <>
+                    <input
+                      type={def.kind === 'weeks' ? 'number' : 'text'}
+                      min={def.kind === 'weeks' ? 0 : undefined}
+                      className={styles.addServiceInput}
+                      placeholder={def.kind === 'weeks' ? 'Weeks (blank clears)' : 'New value (blank clears)'}
+                      list={menu.length ? 'bulk-service-values' : undefined}
+                      value={bulkValue}
+                      onChange={e => { setBulkValue(e.target.value); setBulkNote(''); }}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); apply(); } }}
+                    />
+                    {menu.length > 0 && (
+                      <datalist id="bulk-service-values">
+                        {menu.map(v => <option key={v} value={v} />)}
+                      </datalist>
+                    )}
+                  </>
+                )}
+                <button
+                  type="button"
+                  className={styles.addServiceSave}
+                  onClick={apply}
+                  disabled={!visible.length || (def.kind === 'bucket' && !bulkValue)}
+                  title={`Apply to the ${visible.length} services the table is showing now`}
+                >Apply to {visible.length}</button>
+                <button type="button" className={styles.showHiddenBtn} onClick={() => { setBulkEditing(false); setBulkNote(''); }}>Close</button>
+                {bulkNote && <span className={styles.addServiceNote}>{bulkNote}</span>}
+              </div>
+            );
+          })()}
 
           {editingBuckets && (
             <ServiceBucketsPanel
