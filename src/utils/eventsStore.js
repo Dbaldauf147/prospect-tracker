@@ -11,8 +11,14 @@
 // against each other. Manual (non-HubSpot) attendees have an empty
 // contactId.
 
+// Drop U+FFFD replacement characters (emoji or accents that were mangled
+// on the way into HubSpot show up as a run of them) and tidy spacing.
+export function cleanText(value) {
+  return String(value || '').replace(/\uFFFD+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 export function contactDisplayName(contact) {
-  const name = [contact?.firstname, contact?.lastname].filter(Boolean).join(' ').trim();
+  const name = [contact?.firstname, contact?.lastname].map(cleanText).filter(Boolean).join(' ').trim();
   return name || contact?.email || contact?.company || 'Unnamed contact';
 }
 
