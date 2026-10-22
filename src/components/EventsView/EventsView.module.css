@@ -457,18 +457,39 @@
   background: var(--color-bg);
 }
 
-/* Decision-maker suggestion sub-row under a lookup company */
-.dmRow td {
-  padding: 0.3rem 0.5rem 0.45rem 1.4rem;
-  background: #F0FDF4;
-  border-bottom: 1px solid var(--color-border);
+/* Lookup rows are grouped by company: each company is one shaded block
+   (alternating), with a firmer line where a new company starts and no
+   hairline between rows inside the same company. */
+.attendeeTable tr.lookupGroupRow td {
+  border-bottom: none;
+}
+
+.attendeeTable tr.lookupGroupStart td {
+  border-top: 2px solid var(--color-border);
+}
+
+.attendeeTable tr.lookupGroupAlt td {
+  background: var(--color-bg);
+}
+
+.attendeeTable tbody tr.lookupGroupRow:not(.dmRow):hover td {
+  background: #EFF6FF;
+}
+
+/* Decision-maker suggestions, shown once at the foot of a company block */
+.attendeeTable tr.dmRow td {
+  padding: 0.15rem 0.5rem 0.5rem 0.5rem;
 }
 
 .dmWrap {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  border-left: 3px solid #22C55E;
+  background: #F0FDF4;
+  border-radius: 0 6px 6px 0;
 }
 
 .dmLabel {
@@ -477,6 +498,7 @@
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: #166534;
+  margin-right: 0.2rem;
 }
 
 .dmChip {

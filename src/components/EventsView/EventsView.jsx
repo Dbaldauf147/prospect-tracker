@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
 import { apiFetch } from '../../utils/apiFetch';
 import { planTagEdit } from '../../utils/contactTagReview';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
-import { attendeeFromContact, contactDisplayName } from '../../utils/eventsStore';
+import { attendeeFromContact, cleanText, contactDisplayName } from '../../utils/eventsStore';
 import { companyDedupeKey } from '../../utils/firestoreSync';
 import { buildTypeOptions } from '../../utils/prospectOptions';
 import styles from './EventsView.module.css';
@@ -2394,103 +2394,133 @@ export function EventsView({
                   trailing={LOOKUP_ACTIONS}
                 />
                 <tbody>
-                  {lookups.map((l, i) => {
-                    const prospect = matchProspect(l.company);
-                    // Drop rows whose company already has a contact on the
-                    // attendee list - they're done. Reappears if removed.
-                    if (attendeeCompanies.has(normalizeCompany(l.company))) return null;
-                    // Apply the CDM filter (kept on original index i so
-                    // edit / remove still target the right row).
-                    if (cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter) return null;
-                    // Apply the per-column type-to-filter drafts.
-                    const lookupVals = {
-                      name: l.name || '',
-                      title: l.title || '',
-                      company: l.company || '',
-                      tableView: prospect?.company || '',
-                      type: prospect?.type || '',
-                      cdm: prospect?.cdm || '',
-                    };
-                    if (!LOOKUP_FILTER_KEYS.every(key => {
-                      const q = String(lookupFilters[key] || '').trim().toLowerCase();
-                      return !q || String(lookupVals[key]).toLowerCase().includes(q);
-                    })) return null;
-                    const suggestion = prospect ? null : suggestProspect(l.company);
-                    const adding = addingCompanies.has(String(l.company || '').trim());
-                    const ctx = { i, prospect, suggestion, adding };
-                    // Decision maker(s) on file for this row's company that
-                    // haven't already been added as attendees or ignored.
-                    const ignoredIds = Array.isArray(l.ignoredContactIds) ? l.ignoredContactIds : [];
-                    const dmSuggestions = decisionMakersForCompany(l.company).filter(c => {
-                      const id = String(c.id || c.vid || '');
-                      if (!id) return false;
-                      if (attendees.some(a => a.contactId && String(a.contactId) === id)) return false;
-                      return !ignoredIds.includes(id);
+                  {(() => {
+                    // Work out which rows survive the filters first, then
+                    // bucket them by company (first-appearance order) so
+                    // each company reads as one block and its decision
+                    // makers are suggested once, not under every row.
+                    const groups = [];
+                    const byCompany = new Map();
+                    lookups.forEach((l, i) => {
+                      const prospect = matchProspect(l.company);
+                      // Drop rows whose company already has a contact on the
+                      // attendee list - they're done. Reappears if removed.
+                      if (attendeeCompanies.has(normalizeCompany(l.company))) return;
+                      // Apply the CDM filter (kept on original index i so
+                      // edit / remove still target the right row).
+                      if (cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter) return;
+                      // Apply the per-column type-to-filter drafts.
+                      const lookupVals = {
+                        name: l.name || '',
+                        title: l.title || '',
+                        company: l.company || '',
+                        tableView: prospect?.company || '',
+                        type: prospect?.type || '',
+                        cdm: prospect?.cdm || '',
+                      };
+                      if (!LOOKUP_FILTER_KEYS.every(key => {
+                        const q = String(lookupFilters[key] || '').trim().toLowerCase();
+                        return !q || String(lookupVals[key]).toLowerCase().includes(q);
+                      })) return;
+                      const key = normalizeCompany(l.company) || `__row${i}`;
+                      let g = byCompany.get(key);
+                      if (!g) {
+                        g = { key, rows: [] };
+                        byCompany.set(key, g);
+                        groups.push(g);
+                      }
+                      g.rows.push({ l, i, prospect });
                     });
-                    return (
-                      <Fragment key={`${l.title}-${l.company}-${i}`}>
-                        <tr>
-                          {lookupCols.visible.map(c => (
-                            <td key={c.key} style={c.key === 'suggested' ? { verticalAlign: 'top' } : undefined}>
-                              {c.render(l, ctx)}
-                            </td>
-                          ))}
-                          <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                            <a
-                              href={linkedInSearchUrl(l.title, l.company)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className={styles.exportBtn}
-                              style={{ margin: 0, display: 'inline-block', textDecoration: 'none' }}
-                              title={`Search LinkedIn for "${[l.title, l.company].filter(Boolean).join(' at ')}"`}
-                            >
-                              🔍 LinkedIn
-                            </a>
-                            <button type="button" className={styles.removeBtn} style={{ marginLeft: 6 }} onClick={() => removeLookup(i)}>
-                              Remove
-                            </button>
-                          </td>
-                        </tr>
-                        {dmSuggestions.length > 0 && (
-                          <tr className={styles.dmRow}>
-                            <td colSpan={lookupColSpan}>
-                              <div className={styles.dmWrap}>
-                                <span className={styles.dmLabel}>
-                                  ★ Decision maker{dmSuggestions.length > 1 ? 's' : ''} at {l.company || 'this company'}
-                                </span>
-                                {dmSuggestions.map(c => {
-                                  const id = String(c.id || c.vid || '');
-                                  const name = contactDisplayName(c);
-                                  return (
-                                    <span key={id} className={styles.dmChip}>
-                                      <span className={styles.dmName}>{name}</span>
-                                      {c.jobtitle && <span className={styles.dmTitle}>{c.jobtitle}</span>}
-                                      <button
-                                        type="button"
-                                        className={styles.dmAdd}
-                                        onClick={() => addDecisionMaker(c, l)}
-                                        title={`Map ${name} to ${l.company || 'this company'} as an attendee`}
-                                      >
-                                        + Add
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className={styles.dmIgnore}
-                                        onClick={() => ignoreDecisionMaker(id, i)}
-                                        title="Hide this suggestion"
-                                      >
-                                        Ignore
-                                      </button>
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
+                    return groups.map((g, gi) => {
+                      const first = g.rows[0];
+                      // Decision maker(s) on file for this company that
+                      // haven't already been added as attendees or ignored
+                      // on any of the company's rows.
+                      const ignoredIds = new Set(g.rows.flatMap(r => (
+                        Array.isArray(r.l.ignoredContactIds) ? r.l.ignoredContactIds : []
+                      )));
+                      const dmSuggestions = decisionMakersForCompany(first.l.company).filter(c => {
+                        const id = String(c.id || c.vid || '');
+                        if (!id) return false;
+                        if (attendees.some(a => a.contactId && String(a.contactId) === id)) return false;
+                        return !ignoredIds.has(id);
+                      });
+                      const groupClass = `${styles.lookupGroupRow} ${gi % 2 ? styles.lookupGroupAlt : ''}`;
+                      return (
+                        <Fragment key={g.key}>
+                          {g.rows.map(({ l, i, prospect }, ri) => {
+                            const suggestion = prospect ? null : suggestProspect(l.company);
+                            const adding = addingCompanies.has(String(l.company || '').trim());
+                            const ctx = { i, prospect, suggestion, adding };
+                            return (
+                              <tr
+                                key={`${l.title}-${l.company}-${i}`}
+                                className={`${groupClass} ${ri === 0 ? styles.lookupGroupStart : ''}`}
+                              >
+                                {lookupCols.visible.map(c => (
+                                  <td key={c.key} style={c.key === 'suggested' ? { verticalAlign: 'top' } : undefined}>
+                                    {c.render(l, ctx)}
+                                  </td>
+                                ))}
+                                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                  <a
+                                    href={linkedInSearchUrl(l.title, l.company)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className={styles.exportBtn}
+                                    style={{ margin: 0, display: 'inline-block', textDecoration: 'none' }}
+                                    title={`Search LinkedIn for "${[l.title, l.company].filter(Boolean).join(' at ')}"`}
+                                  >
+                                    🔍 LinkedIn
+                                  </a>
+                                  <button type="button" className={styles.removeBtn} style={{ marginLeft: 6 }} onClick={() => removeLookup(i)}>
+                                    Remove
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          {dmSuggestions.length > 0 && (
+                            <tr className={`${groupClass} ${styles.dmRow}`}>
+                              <td colSpan={lookupColSpan}>
+                                <div className={styles.dmWrap}>
+                                  <span className={styles.dmLabel}>
+                                    ★ Decision maker{dmSuggestions.length > 1 ? 's' : ''} on file
+                                  </span>
+                                  {dmSuggestions.map(c => {
+                                    const id = String(c.id || c.vid || '');
+                                    const name = contactDisplayName(c);
+                                    return (
+                                      <span key={id} className={styles.dmChip}>
+                                        <span className={styles.dmName}>{name}</span>
+                                        {c.jobtitle && <span className={styles.dmTitle}>{cleanText(c.jobtitle)}</span>}
+                                        <button
+                                          type="button"
+                                          className={styles.dmAdd}
+                                          onClick={() => addDecisionMaker(c, first.l)}
+                                          title={`Map ${name} to ${first.l.company || 'this company'} as an attendee`}
+                                        >
+                                          + Add
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className={styles.dmIgnore}
+                                          onClick={() => ignoreDecisionMaker(id, first.i)}
+                                          title="Hide this suggestion"
+                                        >
+                                          Ignore
+                                        </button>
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>
