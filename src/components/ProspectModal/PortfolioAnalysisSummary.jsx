@@ -3,8 +3,10 @@
 //
 // Two tabs. Savings reads each company's saved workbook back (the
 // Indicative Savings sheet's per-market tables) and lays the deregulated
-// sites and the Low - High savings band out by company, then by country and
-// state. Compliance screens each company's sites against the ordinances,
+// sites, their usage and spend, and the Low - High savings band out by
+// company, then by country and state. Usage and spend the analysis had to
+// estimate (italic amber on its Site Detail sheet) is shown the same way
+// here, with the estimated share beside it. Compliance screens each company's sites against the ordinances,
 // the same screen behind the table's Est. Max Yearly Exposure column, and
 // lays the fines out by company and by jurisdiction.
 //
@@ -15,8 +17,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { loadIndicativeAnalysis } from '../../utils/firestoreSync';
 import { formatAnalysisDate } from '../../hooks/useSavedAnalyses';
 import { siteListScreeningRows } from '../../utils/siteListFacts';
-import { marketsFromWorkbook, summariseMarkets, complianceSummary } from '../../utils/portfolioAnalysisSummary';
+import { marketsFromWorkbook, summariseMarkets, complianceSummary, siteEstimatesFromWorkbook, applySiteEstimates } from '../../utils/portfolioAnalysisSummary';
 import { downloadPortfolioAnalysisSummary } from '../../utils/portfolioAnalysisSummaryXlsx';
+import { normalizeCountryName } from '../../data/countryDeregulation';
 
 // prospect id + savedAt -> { markets, siteList } read out of that save.
 const workbookCache = new Map();
@@ -32,6 +35,55 @@ function money(n) {
 }
 const range = (lo, hi) => (lo || hi ? `${money(lo)} – ${money(hi)}` : '-');
 const count = (n) => (n ? n.toLocaleString() : '-');
+// A usage figure: exact up to 100,000, then K / M so the column stays narrow.
+function qty(n) {
+  if (!n) return '-';
+  if (n >= 1e6) return `${(n / 1e6).toFixed(n >= 1e7 ? 1 : 2)}M`;
+  if (n >= 1e5) return `${Math.round(n / 1e3)}K`;
+  return Math.round(n).toLocaleString();
+}
+
+// The amber the Master Analysis's Site Detail sheet uses for estimated
+// values, so a figure reads the same way here as in the workbook.
+const EST = '#B45309';
+
+// A usage or spend figure, italic amber with its estimated share when any
+// of it was estimated. `unknown` is 'all' when none of the markets behind
+// the figure were found on Site Detail (so where it came from can't be
+// said) and 'some' when only part of them were.
+function EstValue({ value, est, format, unit, unknown }) {
+  if (!value) return '-';
+  const share = est > 0 ? est / value : 0;
+  const pct = Math.round(share * 100);
+  const title = unknown === 'all'
+    ? 'Could not tell how much of this is estimated: the market\'s sites were not found on the analysis\'s Site Detail sheet.'
+    : unknown === 'some'
+      ? `${pct || 0}% of this ${unit} is known to be estimated. Some of its markets were not found on the analysis's Site Detail sheet, so the real share may be higher.`
+      : share > 0
+      ? `${pct || '<1'}% of this ${unit} is estimated (${format(est)} of ${format(value)}).`
+      : `All of this ${unit} comes from the uploaded data.`;
+  return (
+    <span title={title} style={share > 0 ? { color: EST, fontStyle: 'italic' } : undefined}>
+      {format(value)}
+      {share > 0 && <span style={{ fontSize: '0.6rem', marginLeft: 4, fontWeight: 600 }}>{pct || '<1'}% est.</span>}
+      {unknown && <span style={{ fontSize: '0.6rem', marginLeft: 3, color: '#94A3B8' }}>?</span>}
+    </span>
+  );
+}
+
+// The three usage / spend cells, shared by every savings table. Electric
+// usage is shown in MWh; the workbook carries kWh.
+function UsageCells({ r }) {
+  const unknown = r.estUnknown > 0 ? (r.estKnown > 0 ? 'some' : 'all') : '';
+  return (
+    <>
+      <td style={tdR}><EstValue value={r.electricUsage / 1000} est={r.electricUsageEst / 1000} format={qty} unit="electric usage" unknown={unknown} /></td>
+      <td style={tdR}><EstValue value={r.gasUsage} est={r.gasUsageEst} format={qty} unit="gas usage" unknown={unknown} /></td>
+      <td style={tdR}><EstValue value={r.electricCost + r.gasCost} est={r.electricCostEst + r.gasCostEst} format={money} unit="spend" unknown={unknown} /></td>
+    </>
+  );
+}
+const USAGE_HEADS = [['Electric usage (MWh/yr)', 'Deregulated electric consumption'], ['Gas usage (Dth/yr)', 'Deregulated gas consumption'], ['Energy spend/yr', 'Deregulated electric + gas spend']];
 
 // The Site List tab of a saved workbook as a stored-list shape, for a
 // company whose site list was never saved to its card.
@@ -102,7 +154,7 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [XLSX, m] = await Promise.all([import('xlsx'), import('../../utils/complianceMandates')]);
+      const [XLSX, m, ExcelJS] = await Promise.all([import('xlsx'), import('../../utils/complianceMandates'), import('exceljs')]);
       if (cancelled) return;
       setMandates(m);
       const countryOf = (label) => COUNTRY_NAMES[m.regionOf(label)?.country] || null;
@@ -121,7 +173,18 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
             // cellStyles keeps each row's outline level, which is how the
             // United States roll-up row is told apart from its states.
             const wb = XLSX.read(bytes, { type: 'array', cellStyles: true });
-            entry = { markets: marketsFromWorkbook(wb, { countryOf }), siteList: siteListFromWorkbook(XLSX, wb) };
+            // The estimate flags are fonts, which only ExcelJS reads. A
+            // workbook it can't open still shows its figures, just without
+            // saying which are estimated.
+            let sites = [];
+            try {
+              const xwb = new (ExcelJS.Workbook || ExcelJS.default.Workbook)();
+              await xwb.xlsx.load(bytes);
+              sites = siteEstimatesFromWorkbook(xwb);
+            } catch (err) {
+              console.error('Master Analysis summary: could not read Site Detail for', c.company, err);
+            }
+            entry = { markets: applySiteEstimates(marketsFromWorkbook(wb, { countryOf }), sites, { normalizeCountry: normalizeCountryName }), siteList: siteListFromWorkbook(XLSX, wb) };
             workbookCache.set(key, entry);
           } catch (err) {
             console.error('Master Analysis summary: could not read', c.company, err);
@@ -166,13 +229,13 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
     return { rows, byJurisdiction: [...jur.values()].sort((a, b) => b.penalty - a.penalty || b.sites - a.sites) };
   }, [loaded, mandates]);
 
-  const totals = useMemo(() => savings.byCompany.reduce((t, c) => ({
-    electric: t.electric + c.electricDeregulatedSites,
-    gas: t.gas + c.gasDeregulatedSites,
-    low: t.low + c.low,
-    high: t.high + c.high,
-    indicative: t.indicative + c.indicative,
-  }), { electric: 0, gas: 0, low: 0, high: 0, indicative: 0 }), [savings]);
+  const totals = useMemo(() => {
+    const keys = ['electricDeregulatedSites', 'gasDeregulatedSites', 'low', 'high', 'indicative', 'estUnknown', 'estKnown',
+      'electricUsage', 'electricUsageEst', 'gasUsage', 'gasUsageEst', 'electricCost', 'electricCostEst', 'gasCost', 'gasCostEst'];
+    const t = Object.fromEntries(keys.map(k => [k, 0]));
+    for (const c of savings.byCompany) for (const k of keys) t[k] += c[k] || 0;
+    return t;
+  }, [savings]);
 
   const [exporting, setExporting] = useState('');
   async function exportExcel() {
@@ -259,6 +322,13 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
 
           {tab === 'savings' && (
             <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.66rem', color: '#475569', background: '#F8FAFC', border: '1px solid var(--color-border, #E2E8F0)', borderRadius: 5, padding: '0.35rem 0.6rem', marginBottom: '0.7rem' }}>
+                <span style={{ color: EST, fontStyle: 'italic', fontWeight: 600, whiteSpace: 'nowrap' }}>Italic amber = estimated</span>
+                <span>
+                  Usage and spend cover the deregulated sites. Where a site had no usage uploaded, the analysis modeled it from the property type; where it had no spend, it priced the usage at the indicative rate.
+                  The % est. is the share of the figure that came from those estimates. Upright figures are all from uploaded data.
+                </span>
+              </div>
               <Section title="By portfolio company" hint="Range is each market's spend at its Low and High %, once every supply agreement is open. Year 1 counts only spend already out of contract.">
                 <thead>
                   <tr>
@@ -267,6 +337,7 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
                     <th style={thR}>Electric dereg. sites</th>
                     <th style={thR}>Gas dereg. sites</th>
                     <th style={thR}>Markets</th>
+                    {USAGE_HEADS.map(([h, tip]) => <th key={h} style={thR} title={tip}>{h}</th>)}
                     <th style={thR}>Annual savings range</th>
                     <th style={thR}>Indicative Year 1</th>
                     <th style={th}>Top markets</th>
@@ -280,6 +351,7 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
                       <td style={tdR}>{count(c.electricDeregulatedSites)}</td>
                       <td style={tdR}>{count(c.gasDeregulatedSites)}</td>
                       <td style={tdR}>{count(c.markets.length)}</td>
+                      <UsageCells r={c} />
                       <td style={{ ...tdR, color: '#166534', fontWeight: 600 }} title={c.unpriced ? `${c.unpriced} deregulated ${c.unpriced === 1 ? 'market has' : 'markets have'} no Low / High % (TBD) and ${c.unpriced === 1 ? 'is' : 'are'} not in the range` : undefined}>
                         {range(c.low, c.high)}{c.unpriced ? ' *' : ''}
                       </td>
@@ -291,16 +363,17 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
                     <tr style={totalRow}>
                       <td style={td}>Total ({savings.byCompany.length})</td>
                       <td style={td} />
-                      <td style={tdR}>{count(totals.electric)}</td>
-                      <td style={tdR}>{count(totals.gas)}</td>
+                      <td style={tdR}>{count(totals.electricDeregulatedSites)}</td>
+                      <td style={tdR}>{count(totals.gasDeregulatedSites)}</td>
                       <td style={tdR}>{count(savings.byMarket.length)}</td>
+                      <UsageCells r={totals} />
                       <td style={tdR}>{range(totals.low, totals.high)}</td>
                       <td style={tdR}>{money(totals.indicative)}</td>
                       <td style={td} />
                     </tr>
                   )}
                   {savings.byCompany.length === 0 && (
-                    <tr><td style={{ ...td, color: '#94A3B8' }} colSpan={8}>{loading ? 'Reading the saved analyses...' : 'Nothing to show.'}</td></tr>
+                    <tr><td style={{ ...td, color: '#94A3B8' }} colSpan={11}>{loading ? 'Reading the saved analyses...' : 'Nothing to show.'}</td></tr>
                   )}
                 </tbody>
               </Section>
@@ -316,6 +389,7 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
                     {marketView === 'company' && <th style={th}>Country</th>}
                     <th style={thR}>Electric dereg. sites</th>
                     <th style={thR}>Gas dereg. sites</th>
+                    {USAGE_HEADS.map(([h, tip]) => <th key={h} style={thR} title={tip}>{h}</th>)}
                     <th style={thR}>Annual savings range</th>
                     <th style={thR}>Indicative Year 1</th>
                     {marketView === 'combined' && <th style={th}>Portfolio companies</th>}
@@ -328,6 +402,7 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
                       {marketView === 'company' && <td style={td} />}
                       <td style={tdR}>{count(g.head.electricDeregulatedSites)}</td>
                       <td style={tdR}>{count(g.head.gasDeregulatedSites)}</td>
+                      <UsageCells r={g.head} />
                       <td style={tdR}>{range(g.head.low, g.head.high)}</td>
                       <td style={tdR}>{money(g.head.indicative)}</td>
                       {marketView === 'combined' && <td style={{ ...td, fontWeight: 400, color: '#475569' }}>{g.head.companies.join(', ')}</td>}
@@ -338,6 +413,7 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
                         {marketView === 'company' && <td style={{ ...td, color: '#64748B' }}>{m.country}</td>}
                         <td style={tdR}>{count(m.electricDeregulatedSites)}</td>
                         <td style={tdR}>{count(m.gasDeregulatedSites)}</td>
+                        <UsageCells r={m} />
                         <td style={tdR}>{range(m.low, m.high)}</td>
                         <td style={tdR}>{money(m.indicative)}</td>
                         {marketView === 'combined' && <td style={{ ...td, color: '#475569' }}>{m.companies.join(', ')}</td>}
@@ -345,7 +421,7 @@ export default function PortfolioAnalysisSummary({ firmName, companies, totalCom
                     )),
                   ])}
                   {marketGroups.length === 0 && (
-                    <tr><td style={{ ...td, color: '#94A3B8' }} colSpan={6}>{loading ? 'Reading the saved analyses...' : 'No deregulated markets in the saved analyses.'}</td></tr>
+                    <tr><td style={{ ...td, color: '#94A3B8' }} colSpan={9}>{loading ? 'Reading the saved analyses...' : 'No deregulated markets in the saved analyses.'}</td></tr>
                   )}
                 </tbody>
               </Section>

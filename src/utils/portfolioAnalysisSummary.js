@@ -85,7 +85,7 @@ function commodityOf(label) {
  * markets outside North America.
  *
  * Returns [{ commodity, market, country, status, totalSites, deregulatedSites,
- * spend, lowPct, highPct, low, high, indicative }], or [] when the sheet
+ * spend, usage, cost, lowPct, highPct, low, high, indicative }], or [] when the sheet
  * isn't there. `low` / `high` are the market's spend at its Low and High %:
  * the run-rate band once every supply agreement is open. `indicative` is
  * the sheet's own Indicative Annual Savings, the Year 1 figure, which only
@@ -113,6 +113,7 @@ export function marketsFromWorkbook(wb, { countryOf = () => null } = {}) {
       else if (h === 'total sites' || h === 'sites') set('totalSites');
       else if (h === 'deregulated sites') set('deregulatedSites');
       else if (h === 'deregulated spend/yr') set('spend');
+      else if (/^deregulated consumption/.test(h)) set('usage');
       else if (h === 'savings-eligible spend/yr') set('eligibleSpend');
       else if (h === 'low %') set('lowPct');
       else if (h === 'high %') set('highPct');
@@ -143,6 +144,12 @@ export function marketsFromWorkbook(wb, { countryOf = () => null } = {}) {
         totalSites: numAt(sheet, d, cols.totalSites) || 0,
         deregulatedSites: numAt(sheet, d, cols.deregulatedSites) || 0,
         spend,
+        // Usage and cost of the market's deregulated sites: kWh on the
+        // electric table, Dth on the gas one. `cost` is the full
+        // deregulated spend, leased sites included, where `spend` above is
+        // the part the savings are taken off.
+        usage: numAt(sheet, d, cols.usage) || 0,
+        cost: spendFull ?? spendEligible ?? 0,
         lowPct,
         highPct,
         low: lowPct != null ? Math.round(spend * lowPct) : null,
@@ -154,6 +161,122 @@ export function marketsFromWorkbook(wb, { countryOf = () => null } = {}) {
   return out;
 }
 
+// ---- Estimated data --------------------------------------------------
+//
+// A Master Analysis fills gaps in the upload: a site with no consumption
+// gets one modeled from its property type, and a site with no spend gets
+// one priced at the indicative rate. The Site Detail sheet marks every
+// such value in italic amber, and that font is the only record of it in
+// the workbook. SheetJS doesn't read fonts, so this half reads an ExcelJS
+// workbook instead.
+
+// Site Detail headers, with the "†" the sheet puts on columns that can
+// hold estimates stripped off.
+const SITE_COLS = {
+  state: /^st\s*\/\s*prov$/i,
+  country: /^country$/i,
+  electricMarket: /^electric market$/i,
+  gasMarket: /^gas market$/i,
+  kwh: /^annual electric \(kwh\)$/i,
+  electricCost: /^total electric cost$/i,
+  dth: /^annual gas \(dth\)$/i,
+  gasCost: /^total natural gas cost$/i,
+};
+
+function excelValue(v) {
+  if (v && typeof v === 'object') {
+    if ('result' in v) return v.result;
+    if ('richText' in v) return v.richText.map(t => t.text).join('');
+    if ('text' in v) return v.text;
+  }
+  return v;
+}
+
+/**
+ * Every site on an ExcelJS workbook's Site Detail sheet, with its usage and
+ * cost per commodity and whether each was estimated:
+ *   [{ state, country, electric: { deregulated, usage, usageEst, cost, costEst }, gas: {...} }]
+ * [] when the sheet isn't there.
+ */
+export function siteEstimatesFromWorkbook(wb) {
+  const ws = wb?.getWorksheet?.('Site Detail');
+  if (!ws) return [];
+  const cols = {};
+  ws.getRow(1).eachCell((cell, col) => {
+    const label = String(excelValue(cell.value) ?? '').replace(/\s*†\s*$/, '').trim();
+    for (const [key, re] of Object.entries(SITE_COLS)) if (cols[key] == null && re.test(label)) cols[key] = col;
+  });
+  if (cols.state == null && cols.country == null) return [];
+  const out = [];
+  const read = (row, key) => {
+    if (cols[key] == null) return { value: null, est: false };
+    const cell = row.getCell(cols[key]);
+    const raw = excelValue(cell.value);
+    const n = typeof raw === 'number' ? raw : Number(raw);
+    return { value: raw === '' || raw == null || !Number.isFinite(n) ? null : n, est: !!cell.font?.italic };
+  };
+  const text = (row, key) => (cols[key] == null ? '' : String(excelValue(row.getCell(cols[key]).value) ?? '').trim());
+  ws.eachRow((row, n) => {
+    if (n === 1) return;
+    const state = text(row, 'state');
+    const country = text(row, 'country');
+    // The legend under the table is one long merged cell, not a site.
+    if (!state && !country) return;
+    const side = (marketKey, usageKey, costKey) => {
+      const u = read(row, usageKey);
+      const c = read(row, costKey);
+      return {
+        deregulated: /^deregulated$/i.test(text(row, marketKey)),
+        usage: u.value || 0, usageEst: u.value ? u.est : false,
+        cost: c.value || 0, costEst: c.value ? c.est : false,
+      };
+    };
+    out.push({
+      state, country,
+      electric: side('electricMarket', 'kwh', 'electricCost'),
+      gas: side('gasMarket', 'dth', 'gasCost'),
+    });
+  });
+  return out;
+}
+
+/**
+ * Stamp each market with how much of its usage and cost is estimated:
+ * `usageEst` / `costEst` are the estimated part of `usage` / `cost`, in the
+ * same units. The share is weighted by value across the market's
+ * deregulated sites on Site Detail (a site matches on its state, or on its
+ * country for a market that is a country), then applied to the market's own
+ * figures. A market no site matches keeps `estKnown: false`: its figures are
+ * shown, but nothing can be said about where they came from.
+ *
+ * `normalizeCountry` maps a site's Country cell to the name the savings
+ * table uses: Site Detail keeps the upload's own spelling ("UK"), the
+ * savings table the canonical one ("United Kingdom").
+ */
+export function applySiteEstimates(markets, sites, { normalizeCountry = (c) => c } = {}) {
+  const norm = (v) => String(v || '').trim().toLowerCase();
+  return (markets || []).map(m => {
+    const key = norm(m.market);
+    // A market that is its own country ("Germany") matches on Country;
+    // a state or province matches on ST / Prov.
+    const isCountry = norm(m.country) === key;
+    const mine = (sites || []).filter(s => s[m.commodity]?.deregulated
+      && (isCountry ? norm(normalizeCountry(s.country) || s.country) === key : norm(s.state) === key));
+    if (!mine.length) return { ...m, estKnown: false, usageEst: 0, costEst: 0 };
+    const share = (val, est) => {
+      const tot = mine.reduce((a, s) => a + s[m.commodity][val], 0);
+      const e = mine.reduce((a, s) => a + (s[m.commodity][est] ? s[m.commodity][val] : 0), 0);
+      return tot > 0 ? e / tot : 0;
+    };
+    return {
+      ...m,
+      estKnown: true,
+      usageEst: Math.round((m.usage || 0) * share('usage', 'usageEst')),
+      costEst: Math.round((m.cost || 0) * share('cost', 'costEst')),
+    };
+  });
+}
+
 // Adds a market row's figures onto a running total. A null Low / High
 // (a market priced "TBD") adds nothing but is remembered, so a total that
 // left one out can say so.
@@ -163,6 +286,15 @@ function addInto(t, m) {
   if (m.commodity === 'gas') t.gasSites += m.totalSites;
   else t.electricSites += m.totalSites;
   t.spend += m.spend;
+  const side = m.commodity === 'gas' ? 'gas' : 'electric';
+  t[`${side}Usage`] += m.usage || 0;
+  t[`${side}UsageEst`] += m.usageEst || 0;
+  t[`${side}Cost`] += m.cost || 0;
+  t[`${side}CostEst`] += m.costEst || 0;
+  if ((m.usage || 0) > 0 || (m.cost || 0) > 0) {
+    if (m.estKnown === false) t.estUnknown += 1;
+    else t.estKnown += 1;
+  }
   if (m.low != null) t.low += m.low;
   if (m.high != null) t.high += m.high;
   if ((m.low == null || m.high == null) && m.deregulatedSites > 0) t.unpriced += 1;
@@ -174,6 +306,13 @@ const emptyTotals = () => ({
   electricSites: 0, gasSites: 0,
   electricDeregulatedSites: 0, gasDeregulatedSites: 0,
   spend: 0, low: 0, high: 0, indicative: 0, unpriced: 0,
+  // Usage in kWh (electric) and Dth (gas), cost in dollars, each with the
+  // part of it that is estimated.
+  electricUsage: 0, electricUsageEst: 0, gasUsage: 0, gasUsageEst: 0,
+  electricCost: 0, electricCostEst: 0, gasCost: 0, gasCostEst: 0,
+  // Markets whose estimate share could / couldn't be worked out. A total
+  // with some of each shows the share of the ones that could.
+  estUnknown: 0, estKnown: 0,
 });
 
 /**

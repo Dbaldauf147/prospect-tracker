@@ -8,7 +8,7 @@
 // apart by their outline level and that only survives a real file.
 import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
-import { marketsFromWorkbook, summariseMarkets, complianceSummary } from '../src/utils/portfolioAnalysisSummary.js';
+import { marketsFromWorkbook, summariseMarkets, complianceSummary, siteEstimatesFromWorkbook, applySiteEstimates } from '../src/utils/portfolioAnalysisSummary.js';
 import { buildPortfolioAnalysisSummary } from '../src/utils/portfolioAnalysisSummaryXlsx.js';
 
 let passed = 0, failed = 0;
@@ -150,6 +150,57 @@ eq(marketsFromWorkbook({ SheetNames: ['Summary'], Sheets: { Summary: {} } }), []
     'a site with two mandates counts once; jurisdictions with nothing owed are left out');
 }
 
+// --- usage and cost, and how much of it is estimated ------------------------
+{
+  // Indicative Savings carries the market's deregulated usage and spend.
+  const wb = await roundTrip((wb) => {
+    const ws = wb.addWorksheet('Indicative Savings');
+    section(ws, 3, 'Electric Power', ELECTRIC_HEAD, [
+      { market: 'TX', sites: 3, dereg: 3, spend: 900, low: 0.05, high: 0.1, annual: 60 },
+      { market: 'Germany', sites: 1, dereg: 1, spend: 100, low: 0.05, high: 0.1, annual: 5 },
+    ]);
+  });
+  const markets = marketsFromWorkbook(wb, { countryOf });
+  eq([markets[0].usage, markets[0].cost], [1000, 900], 'usage is Deregulated Consumption, cost is Deregulated Spend');
+
+  // Site Detail marks estimated values in italic, read back with ExcelJS.
+  const xw = new ExcelJS.Workbook();
+  const sd = xw.addWorksheet('Site Detail');
+  sd.addRow(['Site Name', 'ST / Prov', 'Country', 'Electric Market', 'Annual Electric (kWh) †', 'Total Electric Cost †', 'Gas Market', 'Annual Gas (Dth) †', 'Total Natural Gas Cost †']);
+  const site = (name, st, country, market, kwh, kwhEst, cost, costEst) => {
+    const r = sd.addRow([name, st, country, market, kwh, cost, 'Regulated', null, null]);
+    if (kwhEst) r.getCell(5).font = { italic: true, color: { argb: 'FFB45309' } };
+    if (costEst) r.getCell(6).font = { italic: true, color: { argb: 'FFB45309' } };
+  };
+  site('A', 'TX', 'United States', 'Deregulated', 300, true, 300, true);
+  site('B', 'TX', 'United States', 'Deregulated', 700, false, 600, false);
+  site('C', 'TX', 'United States', 'Regulated', 5000, true, 5000, true);
+  site('D', '', 'Germany', 'Deregulated', 50, false, 100, true);
+  sd.addRow(['† Columns that can contain estimated data...']);
+  const loaded = new ExcelJS.Workbook();
+  await loaded.xlsx.load(await xw.xlsx.writeBuffer());
+  const sites = siteEstimatesFromWorkbook(loaded);
+  eq(sites.length, 4, 'one entry per site; the legend line is not a site');
+  eq([sites[0].electric.usageEst, sites[1].electric.usageEst, sites[3].electric.costEst], [true, false, true], 'italic means estimated');
+
+  const est = applySiteEstimates(markets, sites);
+  eq([est[0].estKnown, est[0].usageEst, est[0].costEst], [true, 300, 300],
+    'TX: estimated share weighted by value over its deregulated sites only (30% of usage, 33% of cost)');
+  eq([est[1].usageEst, est[1].costEst], [0, 100], 'a country market matches sites on Country');
+  eq(applySiteEstimates(markets, [])[0].estKnown, false, 'no Site Detail: the share is unknown, not zero');
+  const uk = [{ commodity: 'electric', market: 'United Kingdom', country: 'United Kingdom', usage: 100, cost: 50, deregulatedSites: 1 }];
+  const ukSite = [{ state: 'London', country: 'UK', electric: { deregulated: true, usage: 10, usageEst: true, cost: 5, costEst: false } }];
+  eq(applySiteEstimates(uk, ukSite)[0].estKnown, false, 'an upload spelling of the country does not match on its own');
+  eq(applySiteEstimates(uk, ukSite, { normalizeCountry: (c) => (c === 'UK' ? 'United Kingdom' : c) })[0].usageEst, 100,
+    'the country normalizer lines the two sheets up');
+  const partial = summariseMarkets([{ company: 'Acme', markets: [...applySiteEstimates(markets, sites).slice(0, 1), { ...markets[1], estKnown: false, usageEst: 0, costEst: 0 }] }]).byCompany[0];
+  eq([partial.estKnown, partial.estUnknown], [1, 1], 'a total remembers how many of its markets were and were not matched');
+
+  const s = summariseMarkets([{ company: 'Acme', markets: est }]);
+  const acme = s.byCompany[0];
+  eq([acme.electricUsage, acme.electricUsageEst, acme.electricCost, acme.electricCostEst], [2000, 300, 1000, 400], 'company totals carry usage, cost and the estimated part of each');
+}
+
 // --- markets with nothing in them are left out ------------------------------
 {
   const mk = (market, dereg, high, indicative = 0) => ({ commodity: 'electric', market, country: 'United States', totalSites: 3, deregulatedSites: dereg, spend: 0, lowPct: null, highPct: null, low: high ? high / 2 : null, high: high || null, indicative });
@@ -161,7 +212,7 @@ eq(marketsFromWorkbook({ SheetNames: ['Summary'], Sheets: { Summary: {} } }), []
 // --- the Excel export --------------------------------------------------------
 {
   const savings = summariseMarkets([
-    { company: 'Acme', markets: [{ commodity: 'electric', market: 'TX', country: 'United States', totalSites: 4, deregulatedSites: 4, spend: 100_000, lowPct: 0.05, highPct: 0.1, low: 5000, high: 10_000, indicative: 7000 }] },
+    { company: 'Acme', markets: [{ commodity: 'electric', market: 'TX', country: 'United States', totalSites: 4, deregulatedSites: 4, spend: 100_000, usage: 2_000_000, usageEst: 500_000, cost: 100_000, costEst: 0, estKnown: true, lowPct: 0.05, highPct: 0.1, low: 5000, high: 10_000, indicative: 7000 }] },
   ]);
   const compliance = {
     rows: [
@@ -180,7 +231,15 @@ eq(marketsFromWorkbook({ SheetNames: ['Summary'], Sheets: { Summary: {} } }), []
   const rows = (name) => XLSX.utils.sheet_to_json(read.Sheets[name], { header: 1, defval: null });
   const ss = rows('Savings Summary');
   const acme = ss.find(r => r[0] === 'Acme');
-  eq([acme[2], acme[5], acme[6], acme[7]], [4, 5000, 10_000, 7000], 'company row writes sites and the range as numbers');
+  eq([acme[2], acme[11], acme[12], acme[13]], [4, 5000, 10_000, 7000], 'company row writes sites and the range as numbers');
+  eq([acme[5], acme[6], acme[9], acme[10]], [2000, 0.25, 100_000, 0], 'usage in MWh with its estimated share, spend with its own');
+  const back = new ExcelJS.Workbook();
+  await back.xlsx.load(await wb.xlsx.writeBuffer());
+  const sheet = back.getWorksheet('Savings Summary');
+  let acmeRow = null;
+  sheet.eachRow((row) => { if (row.getCell(1).value === 'Acme' && !acmeRow) acmeRow = row; });
+  eq([!!acmeRow.getCell(6).font.italic, acmeRow.getCell(6).font.color.argb, !!acmeRow.getCell(10).font.italic], [true, 'FFB45309', false],
+    'estimated usage is italic amber; spend from uploaded data is not');
   eq(ss.some(r => r[0] === 'United States') && ss.some(r => r[0] === 'TX'), true, 'country heading with its states under it');
   const cs = rows('Compliance Summary');
   eq(cs.find(r => r[0] === 'Beta').at(-1), 'No site list to screen', 'a company with nothing to screen says so');
