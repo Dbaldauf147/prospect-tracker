@@ -1865,14 +1865,29 @@ export function EventsView({
     }
     return set;
   }, [attendees]);
-  // A row is hidden as done when its company has an attendee, unless the
-  // row carries a name: that name is the answer the row was asking for,
-  // and hiding it the moment + Add fills it in reads as nothing happening.
-  const isLookupDone = (l) => attendeeCompanies.has(normalizeCompany(l.company)) && !String(l.name || '').trim();
+  // Lowercased names on the attendee list, so a lookup row whose name has
+  // been mapped to an attendee can drop out too.
+  const attendeeNames = useMemo(() => {
+    const set = new Set();
+    for (const a of attendees) {
+      const n = String(a.name || '').trim().toLowerCase();
+      if (n) set.add(n);
+    }
+    return set;
+  }, [attendees]);
+  // A row is hidden as done when it's been mapped: its name is on the
+  // attendee list (already shown above, no need to repeat it here), or it
+  // has no name and its company already has an attendee. A name typed in
+  // that isn't an attendee yet keeps the row visible.
+  const isLookupDone = (l) => {
+    const name = String(l.name || '').trim().toLowerCase();
+    if (name) return attendeeNames.has(name);
+    return attendeeCompanies.has(normalizeCompany(l.company));
+  };
   const lookupDoneCount = useMemo(
     () => lookups.reduce((n, l) => n + (isLookupDone(l) ? 1 : 0), 0),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [lookups, attendeeCompanies],
+    [lookups, attendeeCompanies, attendeeNames],
   );
   const lookupMatchCount = useMemo(
     () => lookups.reduce((n, l) => n + (matchProspect(l.company) ? 1 : 0), 0),
@@ -2476,8 +2491,8 @@ export function EventsView({
                     lookups.forEach((l, i) => {
                       const prospect = matchProspect(l.company);
                       // Drop rows whose company already has a contact on the
-                      // attendee list - they're done. Reappears if removed.
-                      // A row with a name stays (see isLookupDone).
+                      // attendee list, or whose name is already an attendee -
+                      // they're done. Reappears if removed (see isLookupDone).
                       if (isLookupDone(l)) return;
                       // Apply the CDM filter (kept on original index i so
                       // edit / remove still target the right row).
