@@ -2621,7 +2621,13 @@ export function EventsView({
                                     }
                                     return (
                                       <span key={id} className={styles.dmChip}>
-                                        <span className={styles.dmName}>{name}</span>
+                                        <span
+                                          className={styles.dmName}
+                                          title={c.company ? `HubSpot company: ${cleanText(c.company)}` : 'No company on this HubSpot contact'}
+                                          style={{ cursor: 'help' }}
+                                        >
+                                          {name}
+                                        </span>
                                         {c.jobtitle && <span className={styles.dmTitle}>{cleanText(c.jobtitle)}</span>}
                                         <button
                                           type="button"
