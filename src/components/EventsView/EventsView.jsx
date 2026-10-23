@@ -68,22 +68,119 @@ function CdmCell({ prospect, onCommit }) {
 // Inline-editable Name cell for a lookup row. The name isn't usually in
 // the pasted title/company data, so this lets the user record the person
 // they find on LinkedIn. Commits on blur / Enter back onto the row.
-function LookupNameCell({ value, onCommit }) {
+//
+// Focusing it opens a picker of the contacts on file for the row's
+// company, decision makers first, filtered as you type. Picking one
+// saves them as an attendee for this row (onPick); the "+ Add new
+// contact" button saves the typed name as a manual attendee instead
+// (onAddManual). The list is portalled with fixed positioning so the
+// table's scroll container can't clip it.
+function LookupNameCell({ value, company, contacts = [], onCommit, onPick, onAddManual }) {
   const [val, setVal] = useState(value || '');
+  const [open, setOpen] = useState(false);
+  const [rect, setRect] = useState(null);
+  const inputRef = useRef(null);
   useEffect(() => { setVal(value || ''); }, [value]);
+
+  const companyNorm = useMemo(() => normalizeCompany(company), [company]);
+  // The company's roster, decision makers on top, then by name.
+  const roster = useMemo(() => {
+    if (!companyNorm) return [];
+    const out = [];
+    for (const c of contacts) {
+      const cn = normalizeCompany(c.company);
+      if (cn && (cn === companyNorm || cn.includes(companyNorm) || companyNorm.includes(cn))) out.push(c);
+    }
+    return out
+      .map(c => ({ c, dm: isDecisionMaker(c), name: contactDisplayName(c) }))
+      .sort((a, b) => (a.dm === b.dm ? a.name.localeCompare(b.name) : a.dm ? -1 : 1));
+  }, [contacts, companyNorm]);
+
+  const matches = useMemo(() => {
+    const q = val.trim().toLowerCase();
+    // The box still holding the saved name shows the full roster, so
+    // reopening a filled row lets you swap the person.
+    if (!q || q === String(value || '').trim().toLowerCase()) return roster;
+    return roster.filter(({ c, name }) => (
+      name.toLowerCase().includes(q)
+      || String(c.jobtitle || '').toLowerCase().includes(q)
+      || String(c.email || '').toLowerCase().includes(q)
+    ));
+  }, [roster, val, value]);
+
+  useEffect(() => {
+    if (!open) return;
+    const place = () => { if (inputRef.current) setRect(inputRef.current.getBoundingClientRect()); };
+    place();
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => {
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [open]);
+
   const commit = () => {
     const next = val.trim();
     if (next !== String(value || '').trim()) onCommit(next);
   };
+  const pick = (c) => { setOpen(false); setVal(contactDisplayName(c)); onPick(c); };
+  const addManual = () => {
+    const name = val.trim();
+    if (!name) { inputRef.current?.focus(); return; }
+    setOpen(false);
+    onAddManual(name);
+  };
+
   return (
-    <input
-      className={styles.cdmInput}
-      value={val}
-      placeholder="Name…"
-      onChange={e => setVal(e.target.value)}
-      onBlur={commit}
-      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
-    />
+    <>
+      <input
+        ref={inputRef}
+        className={styles.cdmInput}
+        value={val}
+        placeholder="Name…"
+        onFocus={() => setOpen(true)}
+        onClick={() => setOpen(true)}
+        onChange={e => { setVal(e.target.value); setOpen(true); }}
+        onBlur={() => { setOpen(false); commit(); }}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); e.currentTarget.blur(); }
+        }}
+      />
+      {open && rect && createPortal(
+        <div
+          className={styles.namePicker}
+          style={{ top: rect.bottom + 3, left: rect.left, width: Math.max(rect.width, 300) }}
+          // Keep focus in the input so clicking an option doesn't blur (and close) first.
+          onMouseDown={e => e.preventDefault()}
+        >
+          {matches.length === 0 ? (
+            <div className={styles.namePickerEmpty}>
+              {roster.length === 0
+                ? `No contacts on file for ${company || 'this company'} yet.`
+                : 'No contacts match.'}
+            </div>
+          ) : matches.map(({ c, dm, name }) => (
+            <button key={String(c.id || c.vid)} type="button" className={styles.option} onClick={() => pick(c)}>
+              <div className={styles.optionName}>
+                {name}
+                {dm && <span className={styles.namePickerDm}>Decision maker</span>}
+              </div>
+              <div className={styles.optionMeta}>{[c.jobtitle, c.email].filter(Boolean).join(' · ') || '-'}</div>
+            </button>
+          ))}
+          <button
+            type="button"
+            className={`${styles.option} ${styles.addManual}`}
+            onClick={addManual}
+            title={val.trim() ? '' : 'Type the person\'s name above first'}
+          >
+            {val.trim() ? `+ Add "${val.trim()}" as a new contact` : '+ Add new contact (type a name above)'}
+          </button>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
 
@@ -100,7 +197,6 @@ function SuggestedCell({ rejected, suggestion, prospectCompanies, onAccept, onRe
   useEffect(() => {
     if (!searching) return;
     function onDown(e) { if (!wrapRef.current?.contains(e.target)) { setSearching(false); setQuery(''); } }
-    document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [searching]);
 
@@ -388,7 +484,6 @@ function AttendeePicker({ contacts, existingIds, onAdd }) {
   useEffect(() => {
     if (!open) return;
     function onDown(e) { if (!wrapRef.current?.contains(e.target)) setOpen(false); }
-    document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
 
@@ -429,6 +524,7 @@ function AttendeePicker({ contacts, existingIds, onAdd }) {
         placeholder="Search contacts by name, email, or company to add…"
         onChange={e => { setQuery(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
+        onClick={() => setOpen(true)}
         onKeyDown={e => {
           if (e.key === 'Enter') {
             e.preventDefault();
@@ -907,7 +1003,6 @@ function ColumnsMenu({ columns, visibleKeys, onToggle, onReset }) {
   useEffect(() => {
     if (!open) return;
     function onDown(e) { if (!ref.current?.contains(e.target)) setOpen(false); }
-    document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
   return (
@@ -1492,6 +1587,18 @@ export function EventsView({
     const nextAttendees = attendeeExists(list, attendee) ? list : [...list, attendee];
     const lookups = Array.isArray(selected.lookups) ? selected.lookups : [];
     const nextLookups = lookups.map((r, i) => (i === target.i ? { ...r, name: contactDisplayName(contact) } : r));
+    updateEvent(selected.id, { attendees: nextAttendees, lookups: nextLookups });
+  }
+  // Name-cell "+ Add new contact": save the typed name as a manual
+  // attendee at the row's company and tag it to the row, the same single
+  // write as addDecisionMaker.
+  function addManualForLookup(name, target) {
+    if (!selected || !target || !name) return;
+    const attendee = { contactId: '', name, email: '', company: target.l.company || '', title: target.l.title || '', originalTitle: target.l.title || '' };
+    const list = Array.isArray(selected.attendees) ? selected.attendees : [];
+    const nextAttendees = attendeeExists(list, attendee) ? list : [...list, attendee];
+    const lookups = Array.isArray(selected.lookups) ? selected.lookups : [];
+    const nextLookups = lookups.map((r, i) => (i === target.i ? { ...r, name } : r));
     updateEvent(selected.id, { attendees: nextAttendees, lookups: nextLookups });
   }
   // Hide a suggested decision maker for one lookup row without adding
@@ -2089,7 +2196,14 @@ export function EventsView({
 
   const lookupColumns = [
     { key: 'name', label: 'Name', width: 150, filterable: true, render: (l, { i }) => (
-      <LookupNameCell value={l.name} onCommit={v => updateLookup(i, { name: v })} />
+      <LookupNameCell
+        value={l.name}
+        company={l.company}
+        contacts={searchableContacts}
+        onCommit={v => updateLookup(i, { name: v })}
+        onPick={c => addDecisionMaker(c, { l, i })}
+        onAddManual={name => addManualForLookup(name, { l, i })}
+      />
     ) },
     { key: 'title', label: 'Title', width: 150, filterable: true, render: (l) => l.title || '-' },
     { key: 'company', label: 'Company', width: 160, filterable: true, render: (l) => l.company || '-' },
