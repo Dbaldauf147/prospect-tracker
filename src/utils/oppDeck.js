@@ -493,24 +493,73 @@ export function scopeSummary(scopeGroups) {
 
 const cellLines = (text, w) => linesFor(text, w - 0.16, OVERVIEW.sz / 100);
 
+const tp = (runs) => `<a:p><a:pPr algn="l"/>${runs.join('')}</a:p>`;
+const rowH = (lines) => Math.max(OVERVIEW.minRowH, lines * OVERVIEW.lineH + OVERVIEW.padH);
+
 // `summaries` maps a scopeText to Claude's plain-English summary of it.
 // Without one (the call failed, or the scope is blank) the scope is listed
-// by bucket instead.
+// by bucket instead. Returns { h, cells } with each cell's paragraphs.
 function overviewRow(c, summaries = {}) {
   const [wAccount, wStage, wScope] = OVERVIEW_COLS.map(col => col.w);
   const prose = c.scopeText ? String(summaries[c.scopeText] || '').trim() : '';
   const scope = prose ? [{ label: '', text: prose }] : scopeSummary(c.scopeGroups);
   const scopeLines = scope.reduce((n, l) => n + cellLines(`${l.label ? `${l.label}: ` : ''}${l.text}`, wScope), 0);
   const lines = Math.max(1, cellLines(c.account, wAccount), cellLines(c.stage, wStage), scopeLines);
-  return { c, scope, h: Math.max(OVERVIEW.minRowH, lines * OVERVIEW.lineH + OVERVIEW.padH) };
+  const sz = OVERVIEW.sz;
+  const scopeCell = scope.length
+    ? scope.map(l => tp([
+      ...(l.label ? [run(`${l.label}: `, { sz, b: true })] : []),
+      run(l.text, { sz }),
+    ])).join('')
+    : tp([run('Scope not set on the opp', { sz, i: true, color: C.lightGrey })]);
+  return {
+    h: rowH(lines),
+    cells: [tp([run(c.account, { sz })]), tp([run(c.stage, { sz })]), scopeCell],
+  };
 }
 
-// The opps split into pages of rows that fit under the header.
-function overviewPages(contents, summaries) {
+// The next-steps slide: what happens next on each opp, and who it is with.
+// The step shown is the opp's first one that isn't on hold; an opp whose
+// steps are all on hold shows its first, tagged ON HOLD.
+const NEXT_COLS = [
+  { label: 'Account', w: 1.95 },
+  { label: 'Stage', w: 1.0 },
+  { label: 'Next step', w: 4.585 },
+  { label: 'Waiting on', w: 1.6 },
+];
+// Waiting on us reads green, on the client amber.
+const OURS = /\b(schneider|seas|se advisory)\b/i;
+export function deckNextStep(c) {
+  const steps = c.nextSteps || [];
+  return steps.find(s => !s.onHold) || steps[0] || null;
+}
+function nextStepRow(c) {
+  const [wAccount, wStage, wStep, wWaiting] = NEXT_COLS.map(col => col.w);
+  const sz = OVERVIEW.sz;
+  const step = deckNextStep(c);
+  const waiting = step?.waitingOn || '';
+  const stepText = step ? `${step.onHold ? 'ON HOLD  ' : ''}${step.text}` : '';
+  const lines = Math.max(1, cellLines(c.account, wAccount), cellLines(c.stage, wStage), cellLines(stepText, wStep), cellLines(waiting, wWaiting));
+  const stepCell = !step
+    ? tp([run('No next steps recorded', { sz, i: true, color: C.lightGrey })])
+    : step.onHold
+      ? tp([run('ON HOLD  ', { sz: 800, b: true, color: 'B91C1C' }), run(step.text, { sz, i: true, color: C.grey })])
+      : tp([run(step.text, { sz })]);
+  const waitingCell = waiting
+    ? tp([run(waiting, { sz, b: true, color: OURS.test(waiting) ? C.quartzGreen : 'B45309' })])
+    : tp([run('-', { sz, color: C.lightGrey })]);
+  return {
+    h: rowH(lines),
+    cells: [tp([run(c.account, { sz, b: true })]), tp([run(c.stage, { sz })]), stepCell, waitingCell],
+  };
+}
+
+// Rows split into pages that fit under the header.
+function tablePages(rows) {
   const pages = [];
   let page = [];
   let used = OVERVIEW.headH;
-  for (const row of contents.map(c => overviewRow(c, summaries))) {
+  for (const row of rows) {
     if (page.length && used + row.h > OVERVIEW.maxH) {
       pages.push(page);
       page = [];
@@ -523,8 +572,7 @@ function overviewPages(contents, summaries) {
   return pages;
 }
 
-function overviewTable(rows) {
-  const p = (runs) => `<a:p><a:pPr algn="l"/>${runs.join('')}</a:p>`;
+function glanceTable(cols, rows, name) {
   const tc = (parasXml, { head = false, shade = false } = {}) => {
     const fill = head ? C.quartz : shade ? C.mist : C.white;
     return `<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>${parasXml}</a:txBody>`
@@ -532,35 +580,25 @@ function overviewTable(rows) {
       + `<a:lnL w="0"><a:noFill/></a:lnL><a:lnR w="0"><a:noFill/></a:lnR><a:lnT w="0"><a:noFill/></a:lnT><a:lnB w="6350"><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill></a:lnB>`
       + `<a:solidFill><a:srgbClr val="${fill}"/></a:solidFill></a:tcPr></a:tc>`;
   };
-  const sz = OVERVIEW.sz;
-  const text = (t) => p([run(String(t || ''), { sz })]);
-  const scopeCell = (scope) => (scope.length
-    ? scope.map(l => p([
-      ...(l.label ? [run(`${l.label}: `, { sz, b: true })] : []),
-      run(l.text, { sz }),
-    ])).join('')
-    : p([run('Scope not set on the opp', { sz, i: true, color: C.lightGrey })]));
-  const head = `<a:tr h="${emu(OVERVIEW.headH)}">${OVERVIEW_COLS.map(col => tc(p([run(col.label, { sz: 1000, b: true, color: C.white })]), { head: true })).join('')}</a:tr>`;
-  const body = rows.map(({ c, scope, h }, i) => `<a:tr h="${emu(h)}">${[
-    tc(text(c.account), { shade: i % 2 === 1 }),
-    tc(text(c.stage), { shade: i % 2 === 1 }),
-    tc(scopeCell(scope), { shade: i % 2 === 1 }),
-  ].join('')}</a:tr>`).join('');
-  const totalW = OVERVIEW_COLS.reduce((s2, col) => s2 + col.w, 0);
+  const head = `<a:tr h="${emu(OVERVIEW.headH)}">${cols.map(col => tc(tp([run(col.label, { sz: 1000, b: true, color: C.white })]), { head: true })).join('')}</a:tr>`;
+  const body = rows.map(({ cells, h }, i) => `<a:tr h="${emu(h)}">${cells.map(x => tc(x, { shade: i % 2 === 1 })).join('')}</a:tr>`).join('');
+  const totalW = cols.reduce((s2, col) => s2 + col.w, 0);
   const totalH = OVERVIEW.headH + rows.reduce((s2, r) => s2 + r.h, 0);
-  return `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="20" name="Opportunities table"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>`
+  return `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="20" name="${xmlEscape(name)}"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>`
     + `<p:xfrm><a:off x="${emu(L.left)}" y="${emu(OVERVIEW.y)}"/><a:ext cx="${emu(totalW)}" cy="${emu(totalH)}"/></p:xfrm>`
     + `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblPr firstRow="1" bandRow="1"/>`
-    + `<a:tblGrid>${OVERVIEW_COLS.map(col => `<a:gridCol w="${emu(col.w)}"/>`).join('')}</a:tblGrid>${head}${body}</a:tbl></a:graphicData></a:graphic></p:graphicFrame>`;
+    + `<a:tblGrid>${cols.map(col => `<a:gridCol w="${emu(col.w)}"/>`).join('')}</a:tblGrid>${head}${body}</a:tbl></a:graphicData></a:graphic></p:graphicFrame>`;
 }
 
-function overviewShapes(entries, company, part, parts) {
+// One page of a summary table under the company line.
+function glanceShapes(table, company, part, parts, note = '') {
   const runs = [run(company, { sz: 1200, b: true, color: C.quartz })];
+  if (note) runs.push(run(`   ${note}`, { sz: 1100, color: C.grey }));
   if (parts > 1) runs.push(run(`   (${part} of ${parts})`, { sz: 1100, color: C.grey }));
   return shape(11, 'Account', {
     x: L.left, y: L.subY, w: L.width, h: 0.28, textBox: true,
     paras: [para(runs, { after: 0, sz: 1200 })],
-  }) + overviewTable(entries);
+  }) + table;
 }
 
 // ---- the package --------------------------------------------------------
@@ -637,12 +675,18 @@ export async function buildOppDeck({ JSZip, template, company, entries, contactI
     .replace('{{COVER_SUBTITLE}}', 'Overview of Current Engagements')
     .replace('</p:spTree>', `${dateBox}</p:spTree>`));
 
-  // The slides to write, in order: the overview (in pages) then one per opp.
+  // The slides to write, in order: the overview and the next steps (each
+  // in pages), then one per opp.
   const slides = [];
   if (contents.length > 1) {
-    const pages = overviewPages(contents, scopeSummaries);
+    const pages = tablePages(contents.map(c => overviewRow(c, scopeSummaries)));
     pages.forEach((rows, p) => {
-      slides.push({ title: 'Open opportunities at a glance', body: overviewShapes(rows, company, p + 1, pages.length) });
+      slides.push({ title: 'Open opportunities at a glance', body: glanceShapes(glanceTable(OVERVIEW_COLS, rows, 'Opportunities table'), company, p + 1, pages.length) });
+    });
+    // Then what happens next on each, and who it is with.
+    const nextPages = tablePages(contents.map(nextStepRow));
+    nextPages.forEach((rows, p) => {
+      slides.push({ title: new Set(contents.map(c => c.account.toLowerCase()).filter(Boolean)).size > 1 ? 'Next steps across the portfolio' : 'Next steps', body: glanceShapes(glanceTable(NEXT_COLS, rows, 'Next steps table'), company, p + 1, nextPages.length, 'What happens next, and who it is with') });
     });
   }
   for (const c of contents) slides.push({ title: c.title, body: oppSlideShapes(c) });
