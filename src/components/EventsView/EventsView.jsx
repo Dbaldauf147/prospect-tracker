@@ -221,10 +221,10 @@ function LookupNameCell({ value, company, title, contacts = [], onCommit, onPick
   );
 }
 
-// "Who is it?" cell: asks /api/find-person (Claude with web search) who
-// holds this row's title at its company. The answer is saved on the row
-// (`found`) so it survives a reload and isn't paid for twice; Use puts the
-// name in the row's Name box. Only suggests - nothing is added until then.
+// "Who is it?" cell: Find opens a Google search for this row's title at
+// its company in a new tab. Rows searched earlier through /api/find-person
+// (Claude with web search) keep their saved answer (`found`), ↻ re-runs
+// that, and Use puts the name in the row's Name box. Nothing is added until then.
 function FindPersonCell({ row, onFound, onUse }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -248,6 +248,13 @@ function FindPersonCell({ row, onFound, onUse }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  // Find opens a plain Google search for the title at the company in a new
+  // tab, so the results can be read directly instead of waiting on the API.
+  function googleSearch() {
+    const q = `"${String(row.title).trim()}" "${String(row.company).trim()}"`;
+    window.open(`https://www.google.com/search?q=${encodeURIComponent(q)}`, '_blank', 'noopener,noreferrer');
   }
 
   if (busy) return <span className={styles.tvMuted}>Searching…</span>;
@@ -289,9 +296,17 @@ function FindPersonCell({ row, onFound, onUse }) {
     <div>
       {found && <div className={styles.tvMuted} style={{ fontSize: '0.72rem' }} title={found.reason || ''}>No match found</div>}
       {error && <div style={{ color: '#B91C1C', fontSize: '0.7rem' }}>{error}</div>}
-      {searchBtn(found || error ? '↻ Retry' : '🔎 Find', canSearch
-        ? `Search the web for who is "${row.title}" at ${row.company}`
-        : 'Needs a title and a company to search')}
+      <button
+        type="button"
+        className={styles.suggestSearchBtn}
+        onClick={googleSearch}
+        disabled={!canSearch}
+        title={canSearch
+          ? `Google who is "${row.title}" at ${row.company} (opens a new tab)`
+          : 'Needs a title and a company to search'}
+      >
+        🔎 Find
+      </button>
     </div>
   );
 }
