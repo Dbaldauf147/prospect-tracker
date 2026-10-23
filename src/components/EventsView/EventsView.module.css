@@ -509,6 +509,34 @@
   color: var(--color-text);
 }
 
+/* A decision maker suggested in a lookup row's Name cell because their
+   title matches the row's. Hover shows the details, ✓ adds them. */
+.nameSuggest {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  max-width: 100%;
+  padding: 0.1rem 0.25rem 0.1rem 0.4rem;
+  border: 1px dashed #86EFAC;
+  border-radius: 6px;
+  background: #F0FDF4;
+  cursor: help;
+}
+
+.nameSuggestName {
+  font-weight: 600;
+  font-size: 0.78rem;
+  color: #166534;
+}
+
+.nameSuggestBtns {
+  display: inline-flex;
+  gap: 0.2rem;
+  white-space: nowrap;
+}
+
 .dmTitle {
   color: var(--color-text-muted);
   font-size: 0.72rem;
