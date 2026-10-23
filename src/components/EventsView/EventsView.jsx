@@ -17,7 +17,10 @@ import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContacts
 import { attendeeFromContact, cleanText, contactDisplayName } from '../../utils/eventsStore';
 import { companyDedupeKey } from '../../utils/firestoreSync';
 import { buildTypeOptions } from '../../utils/prospectOptions';
-import { TIER_OPTIONS } from '../../data/enums';
+import { buildCompanyIndex, findStrictMatchesInIndex } from '../../utils/companyIndex';
+import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
+import { normalizeTierText } from '../../utils/tierText';
+import { STATUSES, TIER_OPTIONS } from '../../data/enums';
 import styles from './EventsView.module.css';
 
 // Inline Type dropdown for a matched Table View prospect — the same
@@ -375,7 +378,7 @@ function normalizeCompany(s) {
 // Filterable columns for the two Events tables (keys map to the value
 // pulled for each row in the filter predicates below).
 const ATT_FILTER_KEYS = ['name', 'originalTitle', 'title', 'company', 'email', 'tags'];
-const LOOKUP_FILTER_KEYS = ['name', 'title', 'company', 'tableView', 'type', 'tier', 'tierList', 'cdm'];
+const LOOKUP_FILTER_KEYS = ['name', 'title', 'company', 'tableView', 'type', 'status', 'tier', 'tierList', 'targetList', 'cdm'];
 
 // HubSpot stores Dan's Tags as a single semicolon-separated string.
 // Split it into a clean list of individual tags.
@@ -1299,6 +1302,7 @@ export function EventsView({
   onAddProspect = () => {},
   onUpdateProspect = () => {},
   cdmName = '',
+  targetAccountsData = null,
 }) {
   const events = useMemo(
     () => (Array.isArray(settings?.events) ? settings.events : []),
@@ -1379,6 +1383,74 @@ export function EventsView({
     const key = companyDedupeKey(company);
     return key ? (prospectByCompanyKey.get(key) || null) : null;
   };
+  // Target Accounts workbook (Lists -> Target Accounts), every sheet and
+  // every CDM, so a company another rep owns still reads as on the list.
+  const targetList = useMemo(() => {
+    const byName = new Map();
+    const data = targetAccountsData;
+    if (!data?.sheets) return { loaded: false, byName, index: buildCompanyIndex([]) };
+    const findCol = (r, keywords) => {
+      for (const key of Object.keys(r)) {
+        const lower = key.toLowerCase();
+        if (keywords.some(kw => lower.includes(kw))) return String(r[key] || '').trim();
+      }
+      return '';
+    };
+    const cdmCol = settings?.targetRepColumn || settings?.targetCdmColumn;
+    for (const sheetName of data.sheetNames || []) {
+      const records = data.sheets[sheetName]?.records;
+      if (!records) continue;
+      for (const r of records) {
+        const company = findCol(r, ['account', 'company', 'client', 'name']);
+        const k = company.toLowerCase();
+        if (!k || byName.has(k)) continue;
+        byName.set(k, { company, tier: normalizeTierText(findCol(r, ['tier'])), cdm: resolveTargetAccountCdm(r, cdmCol) });
+      }
+    }
+    return { loaded: true, byName, index: buildCompanyIndex([...byName.values()].map(t => t.company)) };
+  }, [targetAccountsData, settings?.targetRepColumn, settings?.targetCdmColumn]);
+  // Is this company mapped to the target list? A mapping set on My
+  // Accounts (settings.targetMap, keyed by prospect id) wins, including
+  // one the user cleared; otherwise fall back to a strict name match
+  // against the workbook. Returns { names, explicit, entry }.
+  const targetListFor = (company, prospect) => {
+    const raw = prospect ? settings?.targetMap?.[prospect.id] : undefined;
+    if (raw !== undefined) {
+      const names = (Array.isArray(raw) ? raw : (raw ? [raw] : [])).filter(Boolean);
+      return { names, explicit: true, entry: names.length ? targetList.byName.get(String(names[0]).toLowerCase().trim()) || null : null };
+    }
+    for (const q of [company, prospect?.company]) {
+      if (!q) continue;
+      const hit = [...findStrictMatchesInIndex(targetList.index, q)][0];
+      if (hit) return { names: [hit], explicit: false, entry: targetList.byName.get(hit.toLowerCase().trim()) || null };
+    }
+    return { names: [], explicit: false, entry: null };
+  };
+  const renderTargetListCell = (company, prospect) => {
+    const { names, explicit, entry } = targetListFor(company, prospect);
+    if (names.length) {
+      const detail = [entry?.tier, entry?.cdm && `CDM: ${entry.cdm}`].filter(Boolean).join(', ');
+      const how = explicit ? 'Mapped on My Accounts' : 'Matched by company name';
+      return (
+        <span className={styles.hsYes} title={`${how} to "${names.join('", "')}"${detail ? ` (${detail})` : ''}`}>
+          {names.join(', ')}
+        </span>
+      );
+    }
+    if (!targetList.loaded && !explicit) {
+      return <span className={styles.tvMuted} title="Target Accounts list isn't loaded yet">-</span>;
+    }
+    return (
+      <span className={styles.hsNo} title={explicit ? 'Mapping was cleared on My Accounts' : 'No company on the target list matches this one'}>
+        Not mapped
+      </span>
+    );
+  };
+  const targetListText = (company, prospect) => {
+    const { names } = targetListFor(company, prospect);
+    return names.length ? names.join(', ') : 'Not mapped';
+  };
+
   // Competitors aren't who an event is for: the job on this page is mapping
   // everyone else. So both tables hold a company whose Table View Type is a
   // competitor out of the list by default, behind one "Show competitors"
@@ -2458,6 +2530,17 @@ export function EventsView({
         <span className={styles.hsNo} title="Not found in the synced HubSpot contacts">Not added</span>
       )
     ) },
+    // Off the exact Table View match only: a fuzzy guess could be the
+    // wrong company, and Status here edits that prospect.
+    { key: 'status', label: 'Status', width: 140, render: (a) => {
+      const { prospect, fuzzy } = attendeeProspect(a);
+      const p = fuzzy ? null : prospect;
+      return <TypeCell prospect={p} field="status" options={STATUSES} onCommit={v => onUpdateProspect(p.id, { status: v })} />;
+    } },
+    { key: 'targetList', label: 'Target List', width: 150, render: (a) => {
+      const { prospect, fuzzy } = attendeeProspect(a);
+      return renderTargetListCell(a.company || a.lookupCompany, fuzzy ? null : prospect);
+    } },
     // Read off the live HubSpot record's Dan's Tags, same as the Tags
     // column. A manual or not-synced attendee has no tags to read.
     { key: 'decisionMaker', label: 'Decision Maker', width: 120, render: (a, { taggable, tags }) => (
@@ -2539,12 +2622,16 @@ export function EventsView({
     { key: 'type', label: 'Type', width: 150, filterable: true, render: (l, { prospect }) => (
       <TypeCell prospect={prospect} options={typeOptions} onCommit={v => onUpdateProspect(prospect.id, { type: v })} />
     ) },
+    { key: 'status', label: 'Status', width: 140, filterable: true, render: (l, { prospect }) => (
+      <TypeCell prospect={prospect} field="status" options={STATUSES} onCommit={v => onUpdateProspect(prospect.id, { status: v })} />
+    ) },
     { key: 'tier', label: 'Tier', width: 120, filterable: true, render: (l, { prospect }) => (
       <TypeCell prospect={prospect} field="tier" options={TIER_OPTIONS} onCommit={v => onUpdateProspect(prospect.id, { tier: v })} />
     ) },
     { key: 'tierList', label: 'Tier List', width: 90, filterable: true, render: (l, { prospect }) => (
       prospect?.tierList ? String(prospect.tierList) : <span className={styles.tvMuted}>-</span>
     ) },
+    { key: 'targetList', label: 'Target List', width: 150, filterable: true, render: (l, { prospect }) => renderTargetListCell(l.company, prospect) },
     { key: 'cdm', label: 'CDM', width: 140, filterable: true, render: (l, { prospect }) => (
       <CdmCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { cdm: v })} />
     ) },
@@ -2945,8 +3032,10 @@ export function EventsView({
                         company: l.company || '',
                         tableView: prospect?.company || '',
                         type: prospect?.type || '',
+                        status: prospect?.status || '',
                         tier: prospect?.tier || '',
                         tierList: prospect?.tierList || '',
+                        targetList: targetListText(l.company, prospect),
                         cdm: prospect?.cdm || '',
                       };
                       if (!LOOKUP_FILTER_KEYS.every(key => {
