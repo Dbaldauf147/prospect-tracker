@@ -11,7 +11,7 @@
 // Set OPP_DECK_OUT=path.pptx to keep the built deck for a visual check.
 import { readFile, writeFile } from 'node:fs/promises';
 import JSZip from 'jszip';
-import { selectDeckOpps, oppSlideContent, buildOppDeck, oppDeckFilename, xmlEscape, deckStage, deckServiceName, groupScope, scopeSummary, deckScopeTexts } from '../src/utils/oppDeck.js';
+import { selectDeckOpps, oppSlideContent, buildOppDeck, oppDeckFilename, xmlEscape, deckStage, deckServiceName, groupScope, scopeSummary, deckScopeTexts, deckNextStep } from '../src/utils/oppDeck.js';
 import { getServiceCategories } from '../src/utils/serviceCategoriesStore.js';
 
 let passed = 0, failed = 0;
@@ -96,8 +96,8 @@ const rels = await out.file('ppt/_rels/presentation.xml.rels').async('string');
 const types = await out.file('[Content_Types].xml').async('string');
 const ids = [...pres.matchAll(/<p:sldId id="\d+" r:id="(rId\d+)"\/>/g)].map(m => m[1]);
 const targets = ids.map(rid => rels.match(new RegExp(`Id="${rid}"[^>]*Target="([^"]+)"`))?.[1]);
-check('deck: cover, one overview, five opps, closing', targets,
-  ['slides/slide1.xml', 'slides/slide4.xml', 'slides/slide5.xml', 'slides/slide6.xml', 'slides/slide7.xml', 'slides/slide8.xml', 'slides/slide9.xml', 'slides/slide3.xml']);
+check('deck: cover, one overview, one next steps, five opps, closing', targets,
+  ['slides/slide1.xml', 'slides/slide4.xml', 'slides/slide5.xml', 'slides/slide6.xml', 'slides/slide7.xml', 'slides/slide8.xml', 'slides/slide9.xml', 'slides/slide10.xml', 'slides/slide3.xml']);
 check('deck: prototype slide removed', [!!out.file('ppt/slides/slide2.xml'), rels.includes('slide2.xml'), types.includes('slide2.xml')], [false, false, false]);
 check('deck: every slide has a content type', targets.every(t => types.includes(`/ppt/${t}"`)), true);
 const cover = await out.file('ppt/slides/slide1.xml').async('string');
@@ -167,6 +167,22 @@ check('service names: the pull through label is dropped',
     [glance.includes('Buy energy attribute certificates and pay utility bills on time.'), glance.includes('>EAC procurement')], [true, false]);
   check('overview: a scope with no summary is still listed', glance.includes('Strategic sourcing and Peak Alerts'), true);
   check('deck: pull through appears on no slide', /pull[\s-]*through/i.test(all), false);
+}
+
+{
+  // The next-steps slide: each opp's first step that isn't on hold, and
+  // who it is waiting on; no Due column and no tally line.
+  const next = await out.file(`ppt/${targets[2]}`).async('string');
+  check('next steps: its own slide, after the overview', [next.includes('Next steps table'), next.includes('Next steps across the portfolio')], [true, true]);
+  check('next steps: Account, Stage, Next step, Waiting on only',
+    ['>Account<', '>Stage<', '>Next step<', '>Waiting on<', '>Due<'].map(h => next.includes(h)), [true, true, true, true, false]);
+  check('next steps: the step and who it waits on', [next.includes('Follow up on proposal'), next.includes('>Sam<')], [true, true]);
+  check('next steps: no tally line', /waiting on .*team|with Schneider/i.test(next), false);
+  check('next step: first not on hold, else the first, else none', [
+    deckNextStep({ nextSteps: [{ text: 'a', onHold: true }, { text: 'b', onHold: false }] }).text,
+    deckNextStep({ nextSteps: [{ text: 'a', onHold: true }] }).text,
+    deckNextStep({ nextSteps: [] }),
+  ], ['b', 'a', null]);
 }
 
 console.log(`${failed ? 'FAILED' : 'PASS'} oppDeck: ${passed} passed, ${failed} failed`);
