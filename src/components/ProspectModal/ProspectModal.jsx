@@ -7668,46 +7668,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [activeTab, isNew, oppsCache, fields.company, ownedCompanies, prospects]);
   const [deckBusy, setDeckBusy] = useState(false);
 
-  // The overview slide's Scope column reads as a sentence or two of plain
-  // English per opp, written by Claude (/api/summarize-notes, kind
-  // 'scope-deck'). Best effort: { [scopeText]: summary } for what came
-  // back, and a scope with no summary is listed by service bucket instead,
-  // so a slow or failed call never stops the download.
-  async function deckScopeSummaries(texts) {
-    const out = {};
-    if (!texts.length) return out;
-    const batches = [];
-    for (let i = 0; i < texts.length; i += 25) batches.push(texts.slice(i, i + 25));
-    await Promise.all(batches.map(async (batch) => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 60000);
-      try {
-        const r = await apiFetch('/api/summarize-notes', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ kind: 'scope-deck', items: batch.map((text, i) => ({ id: String(i), text })) }),
-          signal: controller.signal,
-        });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const got = (await r.json())?.summaries || {};
-        batch.forEach((text, i) => {
-          const line = Array.isArray(got[String(i)]) ? got[String(i)][0] : '';
-          if (line) out[text] = line;
-        });
-      } catch (err) {
-        console.warn('Opps deck: scope summaries unavailable, listing services instead', err);
-      } finally {
-        clearTimeout(timer);
-      }
-    }));
-    return out;
-  }
-
   async function downloadOppDeck() {
     if (deckBusy || deckEntries.length === 0) return;
     setDeckBusy(true);
     try {
-      const [{ buildOppDeck, oppDeckFilename, deckScopeTexts }, { default: JSZip }, res] = await Promise.all([
+      const [{ buildOppDeck, oppDeckFilename }, { default: JSZip }, res] = await Promise.all([
         import('../../utils/oppDeck'),
         import('jszip'),
         fetch(oppDeckTemplateUrl),
@@ -7716,7 +7681,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       // Scope is grouped by the same buckets the Services board uses.
       const categories = getServiceCategories(settings);
       const renames = settings.serviceRenames || {};
-      const scopeSummaries = await deckScopeSummaries(deckScopeTexts(deckEntries, { categories, renames }));
       // Tagged contacts are names on the opp; their titles come off the
       // HubSpot roster, preferring someone at the opp's own account when
       // two people share a name.
@@ -7734,7 +7698,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       };
       const bytes = await buildOppDeck({
         JSZip, template: await res.arrayBuffer(), company: fields.company.trim(), entries: deckEntries, contactInfo,
-        categories, renames, scopeSummaries,
+        categories, renames,
       });
       const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
       const url = URL.createObjectURL(blob);

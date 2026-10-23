@@ -206,9 +206,6 @@ export function oppSlideContent(entry, { contactInfo = () => null, categories = 
     stage: deckStage(cell(r, 'Stage')),
     scopeItems: scopeGroups.flatMap(g => g.items),
     scopeGroups,
-    // The scope as the deck shows it, in one string: what the plain-English
-    // summary is asked for and keyed by (see deckScopeTexts).
-    scopeText: scopeGroups.flatMap(g => g.items).join(', '),
     contacts,
     nextSteps,
     facts,
@@ -453,12 +450,9 @@ export function oppSlideShapes(content) {
   return shapes.join('');
 }
 
-// The at-a-glance table that opens a deck with more than one opp.
-//
-// Scope is written out rather than cut to one line: a line per Services
-// board bucket ("Bill Pay: Bill payment, Invoice variance testing and
-// Invoice recalculation"), wrapping as far as it needs to. Rows are as tall
-// as their text, so the table pages by height rather than by a fixed count.
+// The summary table that opens a deck with more than one opp. Rows are as
+// tall as their text, so the table pages by height rather than by a fixed
+// count.
 const OVERVIEW = {
   y: 1.2,
   maxH: 3.95, // to just above the template's footer
@@ -468,55 +462,10 @@ const OVERVIEW = {
   padH: 0.1,
   sz: 900,
 };
-const OVERVIEW_COLS = [
-  // No Opportunity column: the BFO name is an internal label and stays
-  // off the deck, as it does on the opp slides. Account and Stage are kept
-  // narrow so Scope gets the width.
-  { label: 'Account', w: 1.95 },
-  { label: 'Stage', w: 1.0 },
-  { label: 'Scope', w: 6.185 },
-];
-
-// "a", "a and b", "a, b and c".
-function listJoin(items) {
-  if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
-}
-
-// The scope as written lines: [{ label, text }], one per bucket. A scope
-// whose services no bucket claims is written without a label.
-export function scopeSummary(scopeGroups) {
-  const groups = scopeGroups || [];
-  const solo = groups.length === 1 && groups[0].bucket === 'Other services';
-  return groups.map(g => ({ label: solo ? '' : g.bucket, text: listJoin(g.items) }));
-}
-
 const cellLines = (text, w) => linesFor(text, w - 0.16, OVERVIEW.sz / 100);
 
 const tp = (runs) => `<a:p><a:pPr algn="l"/>${runs.join('')}</a:p>`;
 const rowH = (lines) => Math.max(OVERVIEW.minRowH, lines * OVERVIEW.lineH + OVERVIEW.padH);
-
-// `summaries` maps a scopeText to Claude's plain-English summary of it.
-// Without one (the call failed, or the scope is blank) the scope is listed
-// by bucket instead. Returns { h, cells } with each cell's paragraphs.
-function overviewRow(c, summaries = {}) {
-  const [wAccount, wStage, wScope] = OVERVIEW_COLS.map(col => col.w);
-  const prose = c.scopeText ? String(summaries[c.scopeText] || '').trim() : '';
-  const scope = prose ? [{ label: '', text: prose }] : scopeSummary(c.scopeGroups);
-  const scopeLines = scope.reduce((n, l) => n + cellLines(`${l.label ? `${l.label}: ` : ''}${l.text}`, wScope), 0);
-  const lines = Math.max(1, cellLines(c.account, wAccount), cellLines(c.stage, wStage), scopeLines);
-  const sz = OVERVIEW.sz;
-  const scopeCell = scope.length
-    ? scope.map(l => tp([
-      ...(l.label ? [run(`${l.label}: `, { sz, b: true })] : []),
-      run(l.text, { sz }),
-    ])).join('')
-    : tp([run('Scope not set on the opp', { sz, i: true, color: C.lightGrey })]);
-  return {
-    h: rowH(lines),
-    cells: [tp([run(c.account, { sz })]), tp([run(c.stage, { sz })]), scopeCell],
-  };
-}
 
 // The next-steps slide: what happens next on each opp, and who it is with.
 // The step shown is the opp's first one that isn't on hold; an opp whose
@@ -623,17 +572,6 @@ function fillContentSlide(proto, title, bodyXml) {
 }
 
 /**
- * The distinct scopes a deck of these opps shows, as the strings the
- * overview's plain-English summaries are asked for and keyed by. Only
- * worth asking for when the deck has an overview, i.e. more than one opp.
- */
-export function deckScopeTexts(entries, { categories = [], renames = {} } = {}) {
-  if ((entries || []).length < 2) return [];
-  const texts = entries.map(e => oppSlideContent(e, { categories, renames }).scopeText).filter(Boolean);
-  return [...new Set(texts)];
-}
-
-/**
  * Builds the deck. Returns a Uint8Array of the .pptx.
  *
  *   JSZip       the jszip constructor (passed in so the browser can load it
@@ -644,11 +582,9 @@ export function deckScopeTexts(entries, { categories = [], renames = {} } = {}) 
  *   contactInfo see oppSlideContent
  *   categories  getServiceCategories(settings), to bucket the scope
  *   renames     settings.serviceRenames
- *   scopeSummaries  { [scopeText]: plain-English summary } for the
- *               overview's Scope column (see deckScopeTexts)
  *   date        the date printed on the cover
  */
-export async function buildOppDeck({ JSZip, template, company, entries, contactInfo, categories, renames, scopeSummaries = {}, date = new Date() }) {
+export async function buildOppDeck({ JSZip, template, company, entries, contactInfo, categories, renames, date = new Date() }) {
   const zip = await JSZip.loadAsync(template);
   const read = (p) => zip.file(p).async('string');
 
@@ -675,15 +611,12 @@ export async function buildOppDeck({ JSZip, template, company, entries, contactI
     .replace('{{COVER_SUBTITLE}}', 'Overview of Current Engagements')
     .replace('</p:spTree>', `${dateBox}</p:spTree>`));
 
-  // The slides to write, in order: the overview and the next steps (each
-  // in pages), then one per opp.
+  // The slides to write, in order: the next steps (in pages), then one
+  // per opp.
   const slides = [];
   if (contents.length > 1) {
-    const pages = tablePages(contents.map(c => overviewRow(c, scopeSummaries)));
-    pages.forEach((rows, p) => {
-      slides.push({ title: 'Open opportunities at a glance', body: glanceShapes(glanceTable(OVERVIEW_COLS, rows, 'Opportunities table'), company, p + 1, pages.length) });
-    });
-    // Then what happens next on each, and who it is with.
+    // The "Open opportunities at a glance" scope table that used to come
+    // first was dropped when asked; the next steps carry the summary.
     const nextPages = tablePages(contents.map(nextStepRow));
     nextPages.forEach((rows, p) => {
       slides.push({ title: new Set(contents.map(c => c.account.toLowerCase()).filter(Boolean)).size > 1 ? 'Next steps across the portfolio' : 'Next steps', body: glanceShapes(glanceTable(NEXT_COLS, rows, 'Next steps table'), company, p + 1, nextPages.length, 'What happens next, and who it is with') });
