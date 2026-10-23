@@ -315,6 +315,26 @@
   max-width: 100%;
 }
 
+/* The attendee and lookup tables: capped to the window so the sideways
+   scrollbar stays on screen instead of sitting under the last row, with
+   the header (and its filter row) pinned while the rows scroll. */
+.tableScrollTall {
+  overflow: auto;
+  max-height: calc(100vh - 180px);
+}
+
+.tableScrollTall > table > thead {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--color-bg);
+  box-shadow: 0 1px 0 var(--color-border);
+}
+
+.tableScrollTall > table > thead th {
+  background: var(--color-bg);
+}
+
 /* Resizable variant: fixed layout so the explicit column widths set via
    the <colgroup> are honored, with clipped headers and a drag handle. */
 .resizable {
