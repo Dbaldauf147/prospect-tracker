@@ -1038,6 +1038,11 @@ const LS_PREFIX = 'events-view';
 function colsLsGet(key) { try { return localStorage.getItem(`${LS_PREFIX}:${key}`); } catch { return null; } }
 function colsLsSet(key, val) { try { localStorage.setItem(`${LS_PREFIX}:${key}`, val); } catch { /* ignore */ } }
 
+// Events list (left) width bounds, in px.
+const SIDEBAR_DEFAULT = 200;
+const SIDEBAR_MIN = 140;
+const SIDEBAR_MAX = 420;
+
 // Manage which columns are shown and how wide they are for one table.
 // `columns` is the full ordered definition ([{ key, label, width }…]);
 // the returned `visible` is the subset to render (in definition order).
@@ -1232,6 +1237,33 @@ export function EventsView({
   // Dropdowns-tab list every other Type picker reads.
   const typeOptions = useMemo(() => buildTypeOptions(prospects, settings), [prospects, settings]);
   const [selectedId, setSelectedId] = useState(null);
+  // Width of the events list on the left, dragged from the divider beside
+  // it and remembered per browser like the table column widths.
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const n = Number(colsLsGet('sidebarWidth'));
+    return Number.isFinite(n) && n >= SIDEBAR_MIN && n <= SIDEBAR_MAX ? n : SIDEBAR_DEFAULT;
+  });
+  function startSidebarResize(e) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+    let last = startWidth;
+    const onMove = (ev) => {
+      last = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startWidth + (ev.clientX - startX)));
+      setSidebarWidth(last);
+    };
+    const onUp = () => {
+      colsLsSet('sidebarWidth', String(last));
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+  function resetSidebarWidth() {
+    setSidebarWidth(SIDEBAR_DEFAULT);
+    colsLsSet('sidebarWidth', String(SIDEBAR_DEFAULT));
+  }
   // Draft text for the "Find people on LinkedIn" import box.
   const [lookupDraft, setLookupDraft] = useState('');
   // Parsed grid awaiting column mapping (null = mapping popup closed).
@@ -2461,7 +2493,7 @@ export function EventsView({
 
   return (
     <div className={styles.wrapper}>
-      <div className={styles.sidebar}>
+      <div className={styles.sidebar} style={{ width: sidebarWidth }}>
         <div className={styles.sidebarHeader}>
           <span className={styles.sidebarTitle}>Events</span>
           <button type="button" className={styles.newBtn} onClick={createEvent}>+ New</button>
@@ -2490,6 +2522,15 @@ export function EventsView({
           })}
         </div>
       </div>
+      <div
+        className={styles.sidebarResizer}
+        onMouseDown={startSidebarResize}
+        onDoubleClick={resetSidebarWidth}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize the events list"
+        title="Drag to resize, double-click to reset"
+      />
 
       {!selected ? (
         <div className={styles.empty}>
