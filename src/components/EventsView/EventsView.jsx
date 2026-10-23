@@ -1461,8 +1461,27 @@ export function EventsView({
 
   // Map a suggested decision maker to its company by saving them as an
   // attendee (de-duped by HubSpot id), keeping the lookup row in place.
-  function addDecisionMaker(contact, lookupRow) {
-    addAttendee({ ...contactToAttendee(contact), originalTitle: lookupRow.title || '' });
+  //
+  // The name also goes into the Name box of one of the company's lookup
+  // rows, which is what the user sees change: the row without a name whose
+  // title shares the most words with the contact's job title, else the
+  // first row without a name, else the company's first row. Attendee and
+  // lookup are written in one updateEvent so neither clobbers the other.
+  function addDecisionMaker(contact, rows) {
+    if (!selected || !rows?.length) return;
+    const words = (t) => new Set(String(t || '').toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 2));
+    const want = words(contact.jobtitle);
+    const overlap = (t) => [...words(t)].filter(w => want.has(w)).length;
+    const unnamed = rows.filter(r => !String(r.l.name || '').trim());
+    const pool = unnamed.length ? unnamed : rows;
+    const target = pool.reduce((best, r) => (overlap(r.l.title) > overlap(best.l.title) ? r : best), pool[0]);
+
+    const attendee = { ...contactToAttendee(contact), originalTitle: target.l.title || '' };
+    const list = Array.isArray(selected.attendees) ? selected.attendees : [];
+    const nextAttendees = attendeeExists(list, attendee) ? list : [...list, attendee];
+    const lookups = Array.isArray(selected.lookups) ? selected.lookups : [];
+    const nextLookups = lookups.map((r, i) => (i === target.i ? { ...r, name: contactDisplayName(contact) } : r));
+    updateEvent(selected.id, { attendees: nextAttendees, lookups: nextLookups });
   }
   // Hide a suggested decision maker for one lookup row without adding
   // them. The ignore list is stored on the row so it persists.
@@ -2503,9 +2522,6 @@ export function EventsView({
                             <tr className={`${groupClass} ${styles.dmRow}`}>
                               <td colSpan={lookupColSpan}>
                                 <div className={styles.dmWrap}>
-                                  <span className={styles.dmLabel}>
-                                    ★ Decision maker{dmSuggestions.length > 1 ? 's' : ''} on file
-                                  </span>
                                   {dmSuggestions.map(c => {
                                     const id = String(c.id || c.vid || '');
                                     const name = contactDisplayName(c);
@@ -2516,7 +2532,7 @@ export function EventsView({
                                         <button
                                           type="button"
                                           className={styles.dmAdd}
-                                          onClick={() => addDecisionMaker(c, first.l)}
+                                          onClick={() => addDecisionMaker(c, g.rows)}
                                           title={`Map ${name} to ${first.l.company || 'this company'} as an attendee`}
                                         >
                                           + Add

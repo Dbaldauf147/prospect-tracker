@@ -492,15 +492,6 @@
   border-radius: 0 6px 6px 0;
 }
 
-.dmLabel {
-  font-size: 0.66rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: #166534;
-  margin-right: 0.2rem;
-}
-
 .dmChip {
   display: inline-flex;
   align-items: center;
