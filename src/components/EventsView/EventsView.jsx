@@ -1865,8 +1865,13 @@ export function EventsView({
     }
     return set;
   }, [attendees]);
+  // A row is hidden as done when its company has an attendee, unless the
+  // row carries a name: that name is the answer the row was asking for,
+  // and hiding it the moment + Add fills it in reads as nothing happening.
+  const isLookupDone = (l) => attendeeCompanies.has(normalizeCompany(l.company)) && !String(l.name || '').trim();
   const lookupDoneCount = useMemo(
-    () => lookups.reduce((n, l) => n + (attendeeCompanies.has(normalizeCompany(l.company)) ? 1 : 0), 0),
+    () => lookups.reduce((n, l) => n + (isLookupDone(l) ? 1 : 0), 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [lookups, attendeeCompanies],
   );
   const lookupMatchCount = useMemo(
@@ -2472,7 +2477,8 @@ export function EventsView({
                       const prospect = matchProspect(l.company);
                       // Drop rows whose company already has a contact on the
                       // attendee list - they're done. Reappears if removed.
-                      if (attendeeCompanies.has(normalizeCompany(l.company))) return;
+                      // A row with a name stays (see isLookupDone).
+                      if (isLookupDone(l)) return;
                       // Apply the CDM filter (kept on original index i so
                       // edit / remove still target the right row).
                       if (cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter) return;
