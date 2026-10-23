@@ -1020,6 +1020,9 @@ export function EventsView({
   // Company names currently being pushed to the Table View, so the
   // "+ Add" button can show progress until the prospects list updates.
   const [addingCompanies, setAddingCompanies] = useState(() => new Set());
+  // Decision-maker chip whose + Add is asking which lookup row to tag the
+  // person to (company has several rows): `${groupKey}|${contactId}`.
+  const [dmPicking, setDmPicking] = useState(null);
   const [bulkAdding, setBulkAdding] = useState(false);
   // Attendee whose contact details popup is open (null = closed).
   const [contactPopup, setContactPopup] = useState(null);
@@ -1475,21 +1478,14 @@ export function EventsView({
   }
 
   // Map a suggested decision maker to its company by saving them as an
-  // attendee (de-duped by HubSpot id), keeping the lookup row in place.
+  // attendee (de-duped by HubSpot id).
   //
-  // The name also goes into the Name box of one of the company's lookup
-  // rows, which is what the user sees change: the row without a name whose
-  // title shares the most words with the contact's job title, else the
-  // first row without a name, else the company's first row. Attendee and
-  // lookup are written in one updateEvent so neither clobbers the other.
-  function addDecisionMaker(contact, rows) {
-    if (!selected || !rows?.length) return;
-    const words = (t) => new Set(String(t || '').toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 2));
-    const want = words(contact.jobtitle);
-    const overlap = (t) => [...words(t)].filter(w => want.has(w)).length;
-    const unnamed = rows.filter(r => !String(r.l.name || '').trim());
-    const pool = unnamed.length ? unnamed : rows;
-    const target = pool.reduce((best, r) => (overlap(r.l.title) > overlap(best.l.title) ? r : best), pool[0]);
+  // The name also goes into the Name box of the lookup row `target` (the
+  // row the user picked when the company has several), which then drops
+  // out as done. Attendee and lookup are written in one updateEvent so
+  // neither clobbers the other.
+  function addDecisionMaker(contact, target) {
+    if (!selected || !target) return;
 
     const attendee = { ...contactToAttendee(contact), originalTitle: target.l.title || '' };
     const list = Array.isArray(selected.attendees) ? selected.attendees : [];
@@ -1854,17 +1850,29 @@ export function EventsView({
   );
   const allTaggableSelected = visibleTaggable.length > 0
     && visibleTaggable.every(({ a }) => selectedContactIds.has(String(a.contactId)));
-  const lookups = selected && Array.isArray(selected.lookups) ? selected.lookups : [];
+  const lookups = useMemo(
+    () => (selected && Array.isArray(selected.lookups) ? selected.lookups : []),
+    [selected],
+  );
   // Normalized companies that already have a contact on the attendee
   // list - their lookup rows are "done" and drop out of the worklist.
+  // An attendee tagged to a specific lookup row (their name is in that
+  // row's Name box) only accounts for that row, so the company's other
+  // rows stay on the worklist.
   const attendeeCompanies = useMemo(() => {
+    const rowNames = new Set();
+    for (const l of lookups) {
+      const n = String(l.name || '').trim().toLowerCase();
+      if (n) rowNames.add(n);
+    }
     const set = new Set();
     for (const a of attendees) {
+      if (rowNames.has(String(a.name || '').trim().toLowerCase())) continue;
       const n = normalizeCompany(a.company);
       if (n) set.add(n);
     }
     return set;
-  }, [attendees]);
+  }, [attendees, lookups]);
   // Lowercased names on the attendee list, so a lookup row whose name has
   // been mapped to an attendee can drop out too.
   const attendeeNames = useMemo(() => {
@@ -2587,6 +2595,30 @@ export function EventsView({
                                   {dmSuggestions.map(c => {
                                     const id = String(c.id || c.vid || '');
                                     const name = contactDisplayName(c);
+                                    const pickKey = `${g.key}|${id}`;
+                                    if (dmPicking === pickKey) {
+                                      // Several rows for this company: the
+                                      // user picks which one this person is.
+                                      return (
+                                        <span key={id} className={styles.dmChip}>
+                                          <span className={styles.dmName}>Tag {name} to:</span>
+                                          {g.rows.map(r => (
+                                            <button
+                                              key={r.i}
+                                              type="button"
+                                              className={styles.dmAdd}
+                                              onClick={() => { setDmPicking(null); addDecisionMaker(c, r); }}
+                                              title={`Put ${name} on the "${r.l.title || 'untitled'}" row`}
+                                            >
+                                              {String(r.l.name || '').trim() || r.l.title || 'Untitled row'}
+                                            </button>
+                                          ))}
+                                          <button type="button" className={styles.dmIgnore} onClick={() => setDmPicking(null)}>
+                                            Cancel
+                                          </button>
+                                        </span>
+                                      );
+                                    }
                                     return (
                                       <span key={id} className={styles.dmChip}>
                                         <span className={styles.dmName}>{name}</span>
@@ -2594,8 +2626,10 @@ export function EventsView({
                                         <button
                                           type="button"
                                           className={styles.dmAdd}
-                                          onClick={() => addDecisionMaker(c, g.rows)}
-                                          title={`Map ${name} to ${first.l.company || 'this company'} as an attendee`}
+                                          onClick={() => (g.rows.length > 1 ? setDmPicking(pickKey) : addDecisionMaker(c, first))}
+                                          title={g.rows.length > 1
+                                            ? `Choose which ${first.l.company || 'company'} row ${name} belongs to`
+                                            : `Map ${name} to ${first.l.company || 'this company'} as an attendee`}
                                         >
                                           + Add
                                         </button>
