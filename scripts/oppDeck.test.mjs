@@ -11,7 +11,7 @@
 // Set OPP_DECK_OUT=path.pptx to keep the built deck for a visual check.
 import { readFile, writeFile } from 'node:fs/promises';
 import JSZip from 'jszip';
-import { selectDeckOpps, oppSlideContent, buildOppDeck, oppDeckFilename, xmlEscape, deckStage, deckServiceName, groupScope, scopeSummary, deckScopeTexts, deckNextStep } from '../src/utils/oppDeck.js';
+import { selectDeckOpps, oppSlideContent, buildOppDeck, oppDeckFilename, xmlEscape, deckStage, deckServiceName, groupScope, deckNextStep } from '../src/utils/oppDeck.js';
 import { getServiceCategories } from '../src/utils/serviceCategoriesStore.js';
 
 let passed = 0, failed = 0;
@@ -96,8 +96,8 @@ const rels = await out.file('ppt/_rels/presentation.xml.rels').async('string');
 const types = await out.file('[Content_Types].xml').async('string');
 const ids = [...pres.matchAll(/<p:sldId id="\d+" r:id="(rId\d+)"\/>/g)].map(m => m[1]);
 const targets = ids.map(rid => rels.match(new RegExp(`Id="${rid}"[^>]*Target="([^"]+)"`))?.[1]);
-check('deck: cover, one overview, one next steps, five opps, closing', targets,
-  ['slides/slide1.xml', 'slides/slide4.xml', 'slides/slide5.xml', 'slides/slide6.xml', 'slides/slide7.xml', 'slides/slide8.xml', 'slides/slide9.xml', 'slides/slide10.xml', 'slides/slide3.xml']);
+check('deck: cover, one next steps, five opps, closing', targets,
+  ['slides/slide1.xml', 'slides/slide4.xml', 'slides/slide5.xml', 'slides/slide6.xml', 'slides/slide7.xml', 'slides/slide8.xml', 'slides/slide9.xml', 'slides/slide3.xml']);
 check('deck: prototype slide removed', [!!out.file('ppt/slides/slide2.xml'), rels.includes('slide2.xml'), types.includes('slide2.xml')], [false, false, false]);
 check('deck: every slide has a content type', targets.every(t => types.includes(`/ppt/${t}"`)), true);
 const cover = await out.file('ppt/slides/slide1.xml').async('string');
@@ -111,69 +111,49 @@ for (const t of targets) {
   if (/\{\{|<!--/.test(xml)) leftovers += 1;
 }
 check('deck: no tokens left behind', leftovers, 0);
-const overview = await out.file(`ppt/${targets[1]}`).async('string');
-check('deck: overview table is Account, Stage, Scope only',
-  [overview.includes('>Account<'), overview.includes('>Stage<'), overview.includes('>Scope<'), overview.includes('>Opportunity<'), overview.includes('>Deal size<')],
-  [true, true, true, false, false]);
-
-check('overview: scope written out per bucket, not cut to one line',
-  [overview.includes('Energy Procurement'), overview.includes('Utility Bill Management'), overview.includes('...')], [true, true, false]);
-check('scope summary: a line per bucket, listed with "and"',
-  scopeSummary([{ bucket: 'Bill Pay', items: ['Bill payment', 'Invoice variance testing', 'Invoice recalculation'] }, { bucket: 'Reporting', items: ['CDP climate'] }]),
-  [{ label: 'Bill Pay', text: 'Bill payment, Invoice variance testing and Invoice recalculation' }, { label: 'Reporting', text: 'CDP climate' }]);
-check('scope summary: services no bucket claims read without a label',
-  scopeSummary([{ bucket: 'Other services', items: ['Strategic sourcing', 'Peak Alerts'] }]), [{ label: '', text: 'Strategic sourcing and Peak Alerts' }]);
 {
-  // Long scopes make tall rows, and the overview pages by height so none
+  // The scope table that used to open the deck is gone.
+  let any = false;
+  for (const t of targets) if ((await out.file(`ppt/${t}`).async('string')).includes('Open opportunities at a glance')) any = true;
+  check('deck: no "Open opportunities at a glance" slide', any, false);
+}
+{
+  // Long next steps make tall rows, and the table pages by height so none
   // runs off the slide.
-  const many = Array.from({ length: 12 }, (_, i) => ({ _id: 100 + i, Account: `Holding ${i}`, Stage: 'Lead', Scope: Array.from({ length: 14 }, (_, k) => `Service number ${k}`).join(', ') }));
+  const many = Array.from({ length: 12 }, (_, i) => ({ _id: 100 + i, Account: `Holding ${i}`, Stage: 'Lead', 'Next Steps': Array.from({ length: 6 }, (_, k) => `step words number ${k}`).join(' and ') }));
   const deck = await buildOppDeck({ JSZip, template, company: 'Big Fund', entries: selectDeckOpps(many, { company: 'Big Fund', owned: many.map(r => ({ name: r.Account })) }) });
   const z = await JSZip.loadAsync(deck);
-  const glance = [];
+  const pages = [];
   for (const f of Object.keys(z.files).filter(f => /^ppt\/slides\/slide\d+\.xml$/.test(f))) {
     const xml = await z.file(f).async('string');
-    if (xml.includes('Opportunities table')) glance.push(xml);
+    if (xml.includes('Next steps table')) pages.push(xml);
   }
-  const heights = glance.map(xml => Number(xml.match(/name="Opportunities table"[\s\S]*?<a:ext cx="\d+" cy="(\d+)"/)[1]) / 914400);
-  check('overview: long scopes page onto another slide', glance.length >= 2, true);
-  check('overview: every page fits above the footer', heights.every(h => h <= 3.95 + 1e-6), true);
-  check('overview: every opp appears once', glance.reduce((n, xml) => n + (xml.match(/>Holding \d+</g) || []).length, 0), 12);
+  const heights = pages.map(xml => Number(xml.match(/name="Next steps table"[\s\S]*?<a:ext cx="\d+" cy="(\d+)"/)[1]) / 914400);
+  check('next steps: a long list pages onto another slide', pages.length >= 2, true);
+  check('next steps: every page fits above the footer', heights.every(h => h <= 3.95 + 1e-6), true);
+  check('next steps: every opp appears once', pages.reduce((n, xml) => n + (xml.match(/>Holding \d+</g) || []).length, 0), 12);
 }
 
 check('service names: the pull through label is dropped',
   ['EAC procurement - pull through', 'EAC procurement (pull through)', 'EAC procurement pull-through'].map(deckServiceName), ['EAC procurement', 'EAC procurement', 'EAC procurement']);
 {
-  // The overview reads Claude's plain-English summary where there is one,
-  // and lists by bucket where there isn't.
+  // No slide says "pull through".
   const two = [
     { _id: 201, Account: 'One Co', Stage: 'Lead', Scope: 'EAC procurement - pull through, Bill payment' },
     { _id: 202, Account: 'Two Co', Stage: 'Lead', Scope: 'Strategic sourcing, Peak Alerts' },
   ];
-  const entries = selectDeckOpps(two, { company: 'One Co', owned: [{ name: 'Two Co' }] });
-  const texts = deckScopeTexts(entries);
-  check('deck scope texts: one per distinct scope, pull through gone', texts, ['EAC procurement, Bill payment', 'Strategic sourcing, Peak Alerts']);
-  check('deck scope texts: none for a one-opp deck (no overview)', deckScopeTexts(entries.slice(0, 1)), []);
-  const deck = await buildOppDeck({ JSZip, template, company: 'One Co', entries,
-    scopeSummaries: { 'EAC procurement, Bill payment': 'Buy energy attribute certificates and pay utility bills on time.' } });
+  const deck = await buildOppDeck({ JSZip, template, company: 'One Co', entries: selectDeckOpps(two, { company: 'One Co', owned: [{ name: 'Two Co' }] }) });
   const z = await JSZip.loadAsync(deck);
-  let glance = '';
   let all = '';
-  for (const f of Object.keys(z.files).filter(f => /^ppt\/slides\/slide\d+\.xml$/.test(f))) {
-    const xml = await z.file(f).async('string');
-    all += xml;
-    if (xml.includes('Opportunities table')) glance = xml;
-  }
-  check('overview: the summary stands in for the list',
-    [glance.includes('Buy energy attribute certificates and pay utility bills on time.'), glance.includes('>EAC procurement')], [true, false]);
-  check('overview: a scope with no summary is still listed', glance.includes('Strategic sourcing and Peak Alerts'), true);
+  for (const f of Object.keys(z.files).filter(f => /^ppt\/slides\/slide\d+\.xml$/.test(f))) all += await z.file(f).async('string');
   check('deck: pull through appears on no slide', /pull[\s-]*through/i.test(all), false);
 }
 
 {
   // The next-steps slide: each opp's first step that isn't on hold, and
   // who it is waiting on; no Due column and no tally line.
-  const next = await out.file(`ppt/${targets[2]}`).async('string');
-  check('next steps: its own slide, after the overview', [next.includes('Next steps table'), next.includes('Next steps across the portfolio')], [true, true]);
+  const next = await out.file(`ppt/${targets[1]}`).async('string');
+  check('next steps: its own slide, right after the cover', [next.includes('Next steps table'), next.includes('Next steps across the portfolio')], [true, true]);
   check('next steps: Account, Stage, Next step, Waiting on only',
     ['>Account<', '>Stage<', '>Next step<', '>Waiting on<', '>Due<'].map(h => next.includes(h)), [true, true, true, true, false]);
   check('next steps: the step and who it waits on', [next.includes('Follow up on proposal'), next.includes('>Sam<')], [true, true]);
