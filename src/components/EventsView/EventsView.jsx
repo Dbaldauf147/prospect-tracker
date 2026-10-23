@@ -1505,6 +1505,8 @@ export function EventsView({
     competitors: rows.filter(r => isCompetitorCompany(companyOf(r))),
   });
   const [showCompetitors, setShowCompetitors] = useState(false);
+  // Lookup rows marked Ignore are hidden unless this is on.
+  const [showIgnored, setShowIgnored] = useState(false);
   // The row that hides or shows them, spanning the table.
   const competitorToggleRow = (count, colSpan, [one, many]) => (
     <tr key="__competitors" className={styles.competitorToggleRow}>
@@ -2431,6 +2433,13 @@ export function EventsView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [lookups, attendeeCompanies, attendeeNames, attendeeTitleKeys],
   );
+  // Done rows are already counted as "added (hidden)", so they aren't
+  // counted again here.
+  const lookupIgnoredCount = useMemo(
+    () => lookups.reduce((n, l) => n + (l.ignored && !isLookupDone(l) ? 1 : 0), 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lookups, attendeeCompanies, attendeeNames, attendeeTitleKeys],
+  );
   const lookupMatchCount = useMemo(
     () => lookups.reduce((n, l) => n + (matchProspect(l.company) ? 1 : 0), 0),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2750,6 +2759,19 @@ export function EventsView({
         onAdd={att => addAttendeeFromLookup(att, i)}
         onRemove={removeAttendeeObj}
       />
+    ) },
+    // Ignore keeps the row on the list (so re-uploading the same CSV won't
+    // bring it back) but hides it, unlike Remove which drops it.
+    { key: 'ignore', label: 'Ignore', width: 90, render: (l, { i }) => (
+      l.ignored ? (
+        <button type="button" className={styles.suggestSearchBtn} onClick={() => updateLookup(i, { ignored: false })} title="Show this row again">
+          Unignore
+        </button>
+      ) : (
+        <button type="button" className={styles.dmIgnore} onClick={() => updateLookup(i, { ignored: true })} title="Hide this row (Show ignored brings it back)">
+          Ignore
+        </button>
+      )
     ) },
   ];
   const LOOKUP_ACTIONS = { key: 'actions', label: 'Actions', width: 200 };
@@ -3083,6 +3105,19 @@ export function EventsView({
                 {' · '}
                 <span style={{ color: '#B45309', fontWeight: 600 }}>{lookups.length - lookupMatchCount} new</span>
                 {lookupDoneCount > 0 && <>{' · '}<span style={{ color: '#64748B', fontWeight: 600 }}>{lookupDoneCount} added (hidden)</span></>}
+                {lookupIgnoredCount > 0 && (
+                  <>
+                    {' · '}
+                    <button
+                      type="button"
+                      onClick={() => setShowIgnored(v => !v)}
+                      style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 600, color: '#64748B', textDecoration: 'underline', cursor: 'pointer' }}
+                      title={showIgnored ? 'Hide the ignored rows again' : 'Show the ignored rows, greyed out'}
+                    >
+                      {lookupIgnoredCount} ignored ({showIgnored ? 'hide' : 'show'})
+                    </button>
+                  </>
+                )}
               </span>
             )}
           </div>
@@ -3140,6 +3175,7 @@ export function EventsView({
                       // attendee list, or whose name is already an attendee -
                       // they're done. Reappears if removed (see isLookupDone).
                       if (isLookupDone(l)) return;
+                      if (l.ignored && !showIgnored) return;
                       // Apply the CDM filter (kept on original index i so
                       // edit / remove still target the right row).
                       if (cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter) return;
@@ -3230,7 +3266,7 @@ export function EventsView({
                             return (
                               <tr
                                 key={`${l.title}-${l.company}-${i}`}
-                                className={`${groupClass} ${ri === 0 ? styles.lookupGroupStart : ''}`}
+                                className={`${groupClass} ${ri === 0 ? styles.lookupGroupStart : ''} ${l.ignored ? styles.ignoredRow : ''}`}
                               >
                                 {lookupCols.visible.map(c => (
                                   <td key={c.key} style={c.key === 'suggested' ? { verticalAlign: 'top' } : undefined}>
