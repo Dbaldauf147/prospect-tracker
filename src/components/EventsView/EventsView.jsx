@@ -2933,7 +2933,7 @@ export function EventsView({
               No attendees saved yet. Use the search box above to add contacts.
             </div>
           ) : (
-            <div className={styles.tableScroll}>
+            <div className={`${styles.tableScroll} ${styles.tableScrollTall}`}>
               <table
                 className={`${styles.attendeeTable} ${styles.resizable}`}
                 style={{ width: attendeeTableWidth, minWidth: attendeeTableWidth }}
@@ -3100,7 +3100,7 @@ export function EventsView({
           </div>
 
           {lookups.length > 0 && (
-            <div className={styles.tableScroll}>
+            <div className={`${styles.tableScroll} ${styles.tableScrollTall}`}>
               <table
                 className={`${styles.attendeeTable} ${styles.resizable}`}
                 style={{ width: lookupTableWidth, minWidth: lookupTableWidth }}
