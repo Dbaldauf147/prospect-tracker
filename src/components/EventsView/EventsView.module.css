@@ -161,6 +161,31 @@
   margin-bottom: 1rem;
 }
 
+/* Share of this event's attendees who work at a competitor, next to
+   Delete event in the header. */
+.competitorStat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  align-self: center;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.76rem;
+  color: var(--color-text-muted);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.competitorStat strong {
+  font-size: 0.9rem;
+  color: var(--color-text);
+}
+
+.competitorStatSub {
+  font-size: 0.68rem;
+}
+
 .deleteBtn {
   padding: 0.35rem 0.7rem;
   font-size: 0.74rem;

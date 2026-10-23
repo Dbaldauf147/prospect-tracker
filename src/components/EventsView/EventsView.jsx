@@ -2068,6 +2068,35 @@ export function EventsView({
     setTimeout(() => setHubspotAddStatus(''), 5000);
   }
 
+  // Table View prospect for an attendee's Company cell. Tries, in order:
+  // the attendee's own company, the company of the lookup row they were
+  // added from (saved as lookupCompany, or found by the name written onto
+  // the row for attendees added before that was saved), then the fuzzy
+  // match the lookup table's Suggested column uses, flagged so the cell
+  // can say it's a guess.
+  const lookupCompanyByName = useMemo(() => {
+    const m = new Map();
+    for (const r of (selected?.lookups || [])) {
+      const name = String(r?.name || '').trim().toLowerCase();
+      if (name && r.company && !m.has(name)) m.set(name, r.company);
+    }
+    return m;
+  }, [selected]);
+  const attendeeProspect = (a) => {
+    const rowCompany = a.lookupCompany || lookupCompanyByName.get(String(a.name || '').trim().toLowerCase()) || '';
+    const exact = matchProspect(a.company) || (rowCompany ? matchProspect(rowCompany) : null);
+    if (exact) return { prospect: exact, fuzzy: false };
+    const guess = suggestProspect(a.company) || (rowCompany ? suggestProspect(rowCompany) : null);
+    return { prospect: guess, fuzzy: !!guess };
+  };
+  // Competitor attendees, by the same exact match (own company or the
+  // lookup row's), never the fuzzy guess: a wrong guess would hide a real
+  // prospect's contact behind the competitor toggle.
+  const isCompetitorAttendee = (a) => {
+    const { prospect, fuzzy } = attendeeProspect(a);
+    return !fuzzy && /competitor/i.test(String(prospect?.type || ''));
+  };
+
   // Attendees that pass the active per-column filters, paired with their
   // original index so Remove / checkboxes still target the right row.
   const attendeeSplit = useMemo(() => {
@@ -2078,9 +2107,10 @@ export function EventsView({
       const val = key === 'tags' ? tagsOf(a) : (a[key] || '');
       return String(val).toLowerCase().includes(q);
     });
-    return splitCompetitors(attendees.map((a, i) => ({ a, i })).filter(({ a }) => matches(a)), ({ a }) => a.company);
+    const rows = attendees.map((a, i) => ({ a, i })).filter(({ a }) => matches(a));
+    return { others: rows.filter(({ a }) => !isCompetitorAttendee(a)), competitors: rows.filter(({ a }) => isCompetitorAttendee(a)) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attendees, attFilters, contactsById, prospectByCompanyKey]);
+  }, [attendees, attFilters, contactsById, prospectByCompanyKey, lookupCompanyByName]);
   // What the table shows: everyone else, then the competitors only when
   // asked for. Select-all works off this, so a hidden competitor is never
   // tagged by accident.
@@ -2255,28 +2285,6 @@ export function EventsView({
   // state), and a render function for the body cell. The leading
   // select-all checkbox and trailing "Actions" columns are always shown,
   // so they live outside this set.
-  // Table View prospect for an attendee's Company cell. Tries, in order:
-  // the attendee's own company, the company of the lookup row they were
-  // added from (saved as lookupCompany, or found by the name written onto
-  // the row for attendees added before that was saved), then the fuzzy
-  // match the lookup table's Suggested column uses, flagged so the cell
-  // can say it's a guess.
-  const lookupCompanyByName = useMemo(() => {
-    const m = new Map();
-    for (const r of (selected?.lookups || [])) {
-      const name = String(r?.name || '').trim().toLowerCase();
-      if (name && r.company && !m.has(name)) m.set(name, r.company);
-    }
-    return m;
-  }, [selected]);
-  const attendeeProspect = (a) => {
-    const rowCompany = a.lookupCompany || lookupCompanyByName.get(String(a.name || '').trim().toLowerCase()) || '';
-    const exact = matchProspect(a.company) || (rowCompany ? matchProspect(rowCompany) : null);
-    if (exact) return { prospect: exact, fuzzy: false };
-    const guess = suggestProspect(a.company) || (rowCompany ? suggestProspect(rowCompany) : null);
-    return { prospect: guess, fuzzy: !!guess };
-  };
-
   const attendeeColumns = [
     { key: 'name', label: 'Name', width: 180, filterable: true, render: (a) => (
       <>
@@ -2505,6 +2513,19 @@ export function EventsView({
               placeholder="Event name"
               onChange={e => updateEvent(selected.id, { name: e.target.value })}
             />
+            {attendees.length > 0 && (() => {
+              const n = attendees.filter(isCompetitorAttendee).length;
+              const pct = Math.round((n / attendees.length) * 100);
+              return (
+                <span
+                  className={styles.competitorStat}
+                  title={`${n} of ${attendees.length} attendees work at a company whose Table View Type is a competitor`}
+                >
+                  Competitors <strong>{pct}%</strong>
+                  <span className={styles.competitorStatSub}>{n} of {attendees.length}</span>
+                </span>
+              );
+            })()}
             <button type="button" className={styles.deleteBtn} onClick={() => deleteEvent(selected.id)}>
               Delete event
             </button>
