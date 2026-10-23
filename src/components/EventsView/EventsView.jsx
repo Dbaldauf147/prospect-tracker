@@ -105,6 +105,81 @@ function LookupNameCell({ value, onCommit, suggestion, onAccept, onReject }) {
   );
 }
 
+// "Who is it?" cell: asks /api/find-person (Claude with web search) who
+// holds this row's title at its company. The answer is saved on the row
+// (`found`) so it survives a reload and isn't paid for twice; Use puts the
+// name in the row's Name box. Only suggests - nothing is added until then.
+function FindPersonCell({ row, onFound, onUse }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const found = row.found && typeof row.found === 'object' ? row.found : null;
+  const canSearch = String(row.title || '').trim() && String(row.company || '').trim();
+
+  async function search() {
+    setBusy(true);
+    setError('');
+    try {
+      const res = await apiFetch('/api/find-person', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: row.title, company: row.company }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Search failed (${res.status})`);
+      onFound({ ...data, searchedAt: new Date().toISOString() });
+    } catch (err) {
+      setError(err.message || 'Search failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (busy) return <span className={styles.tvMuted}>Searching…</span>;
+  const searchBtn = (label, title) => (
+    <button type="button" className={styles.suggestSearchBtn} onClick={search} disabled={!canSearch} title={title}>
+      {label}
+    </button>
+  );
+  if (found && found.name) {
+    const details = [
+      found.title && `Title: ${found.title}`,
+      `Confidence: ${found.confidence || 'low'}`,
+      found.reason,
+      ...(found.sources || []).map(src => `Source: ${src.url}`),
+    ].filter(Boolean).join('\n');
+    const nameUsed = String(row.name || '').trim().toLowerCase() === found.name.toLowerCase();
+    return (
+      <div title={details}>
+        {found.linkedinUrl ? (
+          <a href={found.linkedinUrl} target="_blank" rel="noopener noreferrer" className={styles.suggestName}>{found.name}</a>
+        ) : (
+          <span className={styles.suggestName}>{found.name}</span>
+        )}
+        {found.confidence && found.confidence !== 'high' && (
+          <span className={styles.tvMuted} style={{ fontSize: '0.68rem', marginLeft: 4 }}>({found.confidence})</span>
+        )}
+        <div className={styles.suggestBtns}>
+          {!nameUsed && (
+            <button type="button" className={styles.suggestUse} onClick={() => onUse(found.name)} title="Put this name in the row's Name box">
+              ✓ Use
+            </button>
+          )}
+          {searchBtn('↻', 'Search again')}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div>
+      {found && <div className={styles.tvMuted} style={{ fontSize: '0.72rem' }} title={found.reason || ''}>No match found</div>}
+      {error && <div style={{ color: '#B91C1C', fontSize: '0.7rem' }}>{error}</div>}
+      {searchBtn(found || error ? '↻ Retry' : '🔎 Find', canSearch
+        ? `Search the web for who is "${row.title}" at ${row.company}`
+        : 'Needs a title and a company to search')}
+    </div>
+  );
+}
+
 // Suggested-company cell for an unmatched lookup row. Surfaces the fuzzy
 // match (if any, and not rejected) with actions to Use it (rewrite the
 // row's company to the canonical Table View name), Reject it, or open a
@@ -2159,6 +2234,9 @@ export function EventsView({
     ) },
     { key: 'title', label: 'Title', width: 150, filterable: true, render: (l) => l.title || '-' },
     { key: 'company', label: 'Company', width: 160, filterable: true, render: (l) => l.company || '-' },
+    { key: 'findPerson', label: 'Who is it?', width: 170, render: (l, { i }) => (
+      <FindPersonCell row={l} onFound={found => updateLookup(i, { found })} onUse={name => updateLookup(i, { name })} />
+    ) },
     { key: 'emailDomain', label: 'Email Domain', width: 150, render: (l) => renderDomainCell(l.company) },
     { key: 'tableView', label: 'Table View', width: 160, filterable: true, render: (l, { prospect, adding }) => (
       prospect ? (
