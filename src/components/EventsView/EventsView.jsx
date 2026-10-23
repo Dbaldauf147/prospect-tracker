@@ -2135,6 +2135,17 @@ export function EventsView({
         <span className={styles.hsNo} title="Not found in the synced HubSpot contacts">Not added</span>
       )
     ) },
+    // Read off the live HubSpot record's Dan's Tags, same as the Tags
+    // column. A manual or not-synced attendee has no tags to read.
+    { key: 'decisionMaker', label: 'Decision Maker', width: 120, render: (a, { taggable, tags }) => (
+      !taggable ? (
+        <span className={styles.tvMuted} title="Not linked to a synced HubSpot contact, so there are no tags to check">-</span>
+      ) : tags.some(t => t.toLowerCase() === 'decision maker') ? (
+        <span className={styles.hsYes} title="Tagged Decision Maker in HubSpot (Dan's Tags)">Yes</span>
+      ) : (
+        <span className={styles.tvMuted} title="No Decision Maker tag on this HubSpot contact">No</span>
+      )
+    ) },
     { key: 'tags', label: 'Tags', width: 180, filterable: true, render: (a, { tags }) => (
       tags.length ? (
         <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
