@@ -68,9 +68,27 @@ function CdmCell({ prospect, onCommit }) {
 // Inline-editable Name cell for a lookup row. The name isn't usually in
 // the pasted title/company data, so this lets the user record the person
 // they find on LinkedIn. Commits on blur / Enter back onto the row.
-function LookupNameCell({ value, onCommit }) {
+function LookupNameCell({ value, onCommit, suggestion, onAccept, onReject }) {
   const [val, setVal] = useState(value || '');
   useEffect(() => { setVal(value || ''); }, [value]);
+  if (!String(value || '').trim() && suggestion) {
+    const c = suggestion;
+    const details = [
+      `Suggested: ${contactDisplayName(c)}`,
+      c.jobtitle && `Title: ${cleanText(c.jobtitle)}`,
+      `HubSpot company: ${cleanText(c.company) || 'none'}`,
+      c.email && `Email: ${c.email}`,
+    ].filter(Boolean).join('\n') + '\n\nClick ✓ to add them as an attendee on this row, or ✕ to dismiss.';
+    return (
+      <span className={styles.nameSuggest} title={details}>
+        <span className={styles.nameSuggestName}>{contactDisplayName(c)}</span>
+        <span className={styles.nameSuggestBtns}>
+          <button type="button" className={styles.dmAdd} onClick={onAccept} aria-label={`Add ${contactDisplayName(c)}`}>✓</button>
+          <button type="button" className={styles.dmIgnore} onClick={onReject} aria-label="Dismiss suggestion">✕</button>
+        </span>
+      </span>
+    );
+  }
   const commit = () => {
     const next = val.trim();
     if (next !== String(value || '').trim()) onCommit(next);
@@ -215,6 +233,37 @@ function emailDomain(email) {
   const m = /@([^@\s]+)$/.exec(String(email || '').trim().toLowerCase());
   return m ? m[1] : '';
 }
+// Title matching for the Name column's suggested person: two titles
+// "near match" when, after lower-casing, expanding the usual
+// abbreviations and dropping filler words, their word sets are the same
+// or overlap by at least 80% (Dice). "Director of Sustainability" and
+// "Director, Sustainability" match; "Director" and "Director of Impact"
+// don't.
+const TITLE_ABBR = {
+  vp: ['vice', 'president'], svp: ['senior', 'vice', 'president'], evp: ['executive', 'vice', 'president'],
+  avp: ['assistant', 'vice', 'president'], sr: ['senior'], jr: ['junior'], dir: ['director'],
+  mgr: ['manager'], mgmt: ['management'], assoc: ['associate'], md: ['managing', 'director'],
+  asst: ['assistant'], exec: ['executive'], sustainable: ['sustainability'],
+};
+const TITLE_FILLER = new Set(['of', 'the', 'and', 'for', 'a', 'an', 'in', 'at', 'to']);
+function titleTokens(title) {
+  const words = String(title || '').toLowerCase().replace(/&/g, ' and ').split(/[^a-z0-9]+/).filter(Boolean);
+  const out = new Set();
+  for (const w of words) {
+    for (const t of (TITLE_ABBR[w] || [w])) if (!TITLE_FILLER.has(t)) out.add(t);
+  }
+  return out;
+}
+function titleMatchScore(a, b) {
+  const ta = titleTokens(a);
+  const tb = titleTokens(b);
+  if (!ta.size || !tb.size) return 0;
+  let shared = 0;
+  for (const t of ta) if (tb.has(t)) shared += 1;
+  return (2 * shared) / (ta.size + tb.size);
+}
+const TITLE_MATCH_MIN = 0.8;
+
 const cleanNamePart = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z]/g, '');
 
 // Infer the dominant local-part pattern (e.g. first.last) from sample
@@ -1505,6 +1554,17 @@ export function EventsView({
     updateLookup(lookupIndex, { ignoredContactIds: [...cur, contactId] });
   }
 
+  // "Not this person" on a row's suggested name: only stops suggesting
+  // them for that row's Name; they stay in the company's chip list.
+  function rejectNameSuggestion(lookupIndex, contactId) {
+    const list = Array.isArray(selected?.lookups) ? selected.lookups : [];
+    const row = list[lookupIndex];
+    if (!row || !contactId) return;
+    const cur = Array.isArray(row.rejectedNameIds) ? row.rejectedNameIds : [];
+    if (cur.includes(contactId)) return;
+    updateLookup(lookupIndex, { rejectedNameIds: [...cur, contactId] });
+  }
+
   const existingIds = useMemo(() => {
     const set = new Set();
     for (const a of (selected?.attendees || [])) if (a.contactId) set.add(a.contactId);
@@ -2088,8 +2148,14 @@ export function EventsView({
   const ATTENDEE_ACTIONS = { key: 'actions', label: 'Actions', width: 200 };
 
   const lookupColumns = [
-    { key: 'name', label: 'Name', width: 150, filterable: true, render: (l, { i }) => (
-      <LookupNameCell value={l.name} onCommit={v => updateLookup(i, { name: v })} />
+    { key: 'name', label: 'Name', width: 150, filterable: true, render: (l, { i, nameSuggestion }) => (
+      <LookupNameCell
+        value={l.name}
+        onCommit={v => updateLookup(i, { name: v })}
+        suggestion={nameSuggestion}
+        onAccept={() => addDecisionMaker(nameSuggestion, { l, i })}
+        onReject={() => rejectNameSuggestion(i, String(nameSuggestion.id || nameSuggestion.vid || ''))}
+      />
     ) },
     { key: 'title', label: 'Title', width: 150, filterable: true, render: (l) => l.title || '-' },
     { key: 'company', label: 'Company', width: 160, filterable: true, render: (l) => l.company || '-' },
@@ -2547,19 +2613,43 @@ export function EventsView({
                       const ignoredIds = new Set(g.rows.flatMap(r => (
                         Array.isArray(r.l.ignoredContactIds) ? r.l.ignoredContactIds : []
                       )));
-                      const dmSuggestions = decisionMakersForCompany(first.l.company).filter(c => {
+                      const dmCandidates = decisionMakersForCompany(first.l.company).filter(c => {
                         const id = String(c.id || c.vid || '');
                         if (!id) return false;
                         if (attendees.some(a => a.contactId && String(a.contactId) === id)) return false;
                         return !ignoredIds.has(id);
                       });
+                      // A candidate whose title is an exact or near match
+                      // for an unnamed row is suggested in that row's Name
+                      // cell instead of the chip list. Best pairs first, so
+                      // each person and each row is used at most once.
+                      const nameSuggestionByRow = new Map();
+                      const pairs = [];
+                      for (const r of g.rows) {
+                        if (String(r.l.name || '').trim()) continue;
+                        const rejected = new Set(Array.isArray(r.l.rejectedNameIds) ? r.l.rejectedNameIds : []);
+                        for (const c of dmCandidates) {
+                          const id = String(c.id || c.vid || '');
+                          if (rejected.has(id)) continue;
+                          const score = titleMatchScore(r.l.title, c.jobtitle);
+                          if (score >= TITLE_MATCH_MIN) pairs.push({ r, c, id, score });
+                        }
+                      }
+                      pairs.sort((a, b) => b.score - a.score);
+                      const suggestedIds = new Set();
+                      for (const { r, c, id } of pairs) {
+                        if (nameSuggestionByRow.has(r.i) || suggestedIds.has(id)) continue;
+                        nameSuggestionByRow.set(r.i, c);
+                        suggestedIds.add(id);
+                      }
+                      const dmSuggestions = dmCandidates.filter(c => !suggestedIds.has(String(c.id || c.vid || '')));
                       const groupClass = `${styles.lookupGroupRow} ${gi % 2 ? styles.lookupGroupAlt : ''} ${g.competitor ? styles.competitorRow : ''}`;
                       return (
                         <Fragment key={g.key}>
                           {g.rows.map(({ l, i, prospect }, ri) => {
                             const suggestion = prospect ? null : suggestProspect(l.company);
                             const adding = addingCompanies.has(String(l.company || '').trim());
-                            const ctx = { i, prospect, suggestion, adding };
+                            const ctx = { i, prospect, suggestion, adding, nameSuggestion: nameSuggestionByRow.get(i) || null };
                             return (
                               <tr
                                 key={`${l.title}-${l.company}-${i}`}
