@@ -1087,6 +1087,43 @@ function useTableColumns(tableKey, columns) {
   });
   useEffect(() => { colsLsSet(`${tableKey}-widths`, JSON.stringify(widths)); }, [tableKey, widths]);
 
+  // Column order, saved per table. Stale keys are dropped and a column
+  // added in a later version slots in right after the column it follows
+  // by default, so a saved order never hides or misplaces it.
+  const [savedOrder, setOrder] = useState(() => {
+    try {
+      const saved = JSON.parse(colsLsGet(`${tableKey}-order`));
+      return Array.isArray(saved) ? saved : null;
+    } catch { return null; }
+  });
+  const order = useMemo(() => {
+    if (!savedOrder) return defaultVisible;
+    const out = savedOrder.filter(k => defaultVisible.includes(k));
+    defaultVisible.forEach((k, idx) => {
+      if (out.includes(k)) return;
+      const prev = defaultVisible.slice(0, idx).reverse().find(p => out.includes(p));
+      out.splice(prev ? out.indexOf(prev) + 1 : 0, 0, k);
+    });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedOrder, knownKeysStr]);
+  useEffect(() => {
+    if (savedOrder) colsLsSet(`${tableKey}-order`, JSON.stringify(savedOrder));
+    else colsLsSet(`${tableKey}-order`, '');
+  }, [tableKey, savedOrder]);
+
+  // Move column `fromKey` into `toKey`'s slot: dragging right lands it
+  // after `toKey`, dragging left lands it before.
+  function move(fromKey, toKey) {
+    if (!fromKey || !toKey || fromKey === toKey) return;
+    const next = order.filter(k => k !== fromKey);
+    const from = order.indexOf(fromKey);
+    const to = order.indexOf(toKey);
+    if (from === -1 || to === -1) return;
+    next.splice(next.indexOf(toKey) + (from < to ? 1 : 0), 0, fromKey);
+    setOrder(next);
+  }
+
   // Toggle a column on/off, but never let the user hide the last one.
   function toggle(key) {
     setVisibleKeys(prev => {
@@ -1094,7 +1131,7 @@ function useTableColumns(tableKey, columns) {
       return [...prev, key];
     });
   }
-  function reset() { setVisibleKeys(defaultVisible); setWidths(defaultWidths); }
+  function reset() { setVisibleKeys(defaultVisible); setWidths(defaultWidths); setOrder(null); }
 
   // Drag-to-resize a column. Start metrics are captured in local scope
   // so a stray mousemove after mouseup can't throw on a null ref.
@@ -1119,22 +1156,29 @@ function useTableColumns(tableKey, columns) {
     window.addEventListener('mouseup', onUp);
   }
 
-  const visible = columns.filter(c => visibleKeys.includes(c.key));
-  return { visible, visibleKeys, widths, toggle, reset, startResize };
+  const byKey = new Map(columns.map(c => [c.key, c]));
+  const ordered = order.map(k => byKey.get(k)).filter(Boolean);
+  const visible = ordered.filter(c => visibleKeys.includes(c.key));
+  return { ordered, visible, visibleKeys, widths, toggle, reset, startResize, move };
 }
 
-// "Columns ▾" dropdown: checkboxes to show/hide each column plus a reset.
-function ColumnsMenu({ columns, visibleKeys, onToggle, onReset }) {
+// "Columns ▾" dropdown: checkboxes to show/hide each column, drag the
+// rows to reorder them, plus a reset.
+function ColumnsMenu({ columns, visibleKeys, onToggle, onReset, onMove }) {
   const [open, setOpen] = useState(false);
+  const [dragKey, setDragKey] = useState(null);
+  const [overKey, setOverKey] = useState(null);
+  const keys = columns.map(c => c.key);
   const ref = useRef(null);
   useEffect(() => {
     if (!open) return;
     function onDown(e) { if (!ref.current?.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
   return (
     <div ref={ref} className={styles.colsMenuWrap}>
-      <button type="button" className={styles.colsBtn} onClick={() => setOpen(o => !o)} title="Show or hide columns">
+      <button type="button" className={styles.colsBtn} onClick={() => setOpen(o => !o)} title="Show, hide, or reorder columns">
         Columns ▾
       </button>
       {open && (
@@ -1142,7 +1186,19 @@ function ColumnsMenu({ columns, visibleKeys, onToggle, onReset }) {
           {columns.map(c => {
             const checked = visibleKeys.includes(c.key);
             return (
-              <label key={c.key} className={styles.colsMenuItem}>
+              <label
+                key={c.key}
+                className={`${styles.colsMenuItem} ${overKey === c.key && dragKey && dragKey !== c.key
+                  ? (keys.indexOf(dragKey) < keys.indexOf(c.key) ? styles.colsMenuItemAfter : styles.colsMenuItemBefore)
+                  : ''}`}
+                draggable={!!onMove}
+                onDragStart={e => { setDragKey(c.key); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', c.key); }}
+                onDragOver={e => { if (!dragKey) return; e.preventDefault(); setOverKey(c.key); }}
+                onDrop={e => { e.preventDefault(); onMove?.(dragKey, c.key); setDragKey(null); setOverKey(null); }}
+                onDragEnd={() => { setDragKey(null); setOverKey(null); }}
+                title="Drag to reorder"
+              >
+                {onMove && <span className={styles.colsGrip} aria-hidden="true">⋮⋮</span>}
                 <input
                   type="checkbox"
                   checked={checked}
@@ -1153,6 +1209,7 @@ function ColumnsMenu({ columns, visibleKeys, onToggle, onReset }) {
               </label>
             );
           })}
+          {onMove && <div className={styles.colsMenuHint}>Drag a row (or a column header) to reorder.</div>}
           <button type="button" className={styles.colsMenuReset} onClick={onReset}>Reset to default</button>
         </div>
       )}
@@ -1165,7 +1222,10 @@ function ColumnsMenu({ columns, visibleKeys, onToggle, onReset }) {
 // table is filterable a second row of always-visible type-to-filter
 // inputs sits directly beneath the headers. `leading` / `trailing` are
 // optional always-on columns (e.g. a select-all checkbox or row actions).
-function ResizableHead({ columns, widths, startResize, filters, onFilterChange, leading, trailing }) {
+function ResizableHead({ columns, widths, startResize, filters, onFilterChange, leading, trailing, onMove }) {
+  const [dragKey, setDragKey] = useState(null);
+  const [overKey, setOverKey] = useState(null);
+  const keys = columns.map(c => c.key);
   const showFilterRow = !!onFilterChange && columns.some(c => c.filterable);
   return (
     <>
@@ -1178,7 +1238,18 @@ function ResizableHead({ columns, widths, startResize, filters, onFilterChange, 
         <tr>
           {leading && <th style={{ textAlign: 'center' }}>{leading.content}</th>}
           {columns.map(c => (
-            <th key={c.key} title={c.label}>
+            <th
+              key={c.key}
+              title={onMove ? `${c.label} (drag to reorder)` : c.label}
+              className={overKey === c.key && dragKey && dragKey !== c.key
+                ? (keys.indexOf(dragKey) < keys.indexOf(c.key) ? styles.thDropAfter : styles.thDropBefore)
+                : undefined}
+              draggable={!!onMove}
+              onDragStart={e => { setDragKey(c.key); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', c.key); }}
+              onDragOver={e => { if (!dragKey) return; e.preventDefault(); setOverKey(c.key); }}
+              onDrop={e => { e.preventDefault(); onMove?.(dragKey, c.key); setDragKey(null); setOverKey(null); }}
+              onDragEnd={() => { setDragKey(null); setOverKey(null); }}
+            >
               <span className={styles.thLabel}>{c.label}</span>
               <span
                 className={styles.resizeHandle}
@@ -2558,8 +2629,9 @@ export function EventsView({
             )}
             {attendees.length > 0 && (
               <ColumnsMenu
-                columns={attendeeColumns}
+                columns={attendeeCols.ordered}
                 visibleKeys={attendeeCols.visibleKeys}
+                onMove={attendeeCols.move}
                 onToggle={attendeeCols.toggle}
                 onReset={attendeeCols.reset}
               />
@@ -2615,6 +2687,7 @@ export function EventsView({
                   columns={attendeeCols.visible}
                   widths={attendeeCols.widths}
                   startResize={attendeeCols.startResize}
+                  onMove={attendeeCols.move}
                   filters={attFilters}
                   onFilterChange={setAttFilter}
                   leading={{
@@ -2727,8 +2800,9 @@ export function EventsView({
             )}
             {lookups.length > 0 && (
               <ColumnsMenu
-                columns={lookupColumns}
+                columns={lookupCols.ordered}
                 visibleKeys={lookupCols.visibleKeys}
+                onMove={lookupCols.move}
                 onToggle={lookupCols.toggle}
                 onReset={lookupCols.reset}
               />
@@ -2780,6 +2854,7 @@ export function EventsView({
                   columns={lookupCols.visible}
                   widths={lookupCols.widths}
                   startResize={lookupCols.startResize}
+                  onMove={lookupCols.move}
                   filters={lookupFilters}
                   onFilterChange={setLookupFilter}
                   trailing={LOOKUP_ACTIONS}

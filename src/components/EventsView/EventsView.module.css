@@ -1231,3 +1231,38 @@
   background: #DCFCE7;
   border: 1px solid #86EFAC;
 }
+
+/* Column reordering: drag rows in the Columns menu or the headers. */
+.colsGrip {
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  letter-spacing: -0.15em;
+  cursor: grab;
+  user-select: none;
+}
+
+.colsMenuItemBefore {
+  box-shadow: inset 0 2px 0 var(--color-accent);
+}
+
+.colsMenuItemAfter {
+  box-shadow: inset 0 -2px 0 var(--color-accent);
+}
+
+.colsMenuHint {
+  padding: 0.3rem 0.45rem 0;
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+}
+
+.resizable th[draggable="true"] {
+  cursor: grab;
+}
+
+.resizable th.thDropBefore {
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+
+.resizable th.thDropAfter {
+  box-shadow: inset -2px 0 0 var(--color-accent);
+}
