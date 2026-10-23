@@ -1709,7 +1709,10 @@ export function EventsView({
   function addDecisionMaker(contact, target) {
     if (!selected || !target) return;
 
-    const attendee = { ...contactToAttendee(contact), originalTitle: target.l.title || '' };
+    // HubSpot often spells the company differently from the row ("Mapletree"
+    // vs "Mapletree Investments"), so keep the row's company too: it's the
+    // one that matched the Table View.
+    const attendee = { ...contactToAttendee(contact), originalTitle: target.l.title || '', lookupCompany: target.l.company || '' };
     const list = Array.isArray(selected.attendees) ? selected.attendees : [];
     const nextAttendees = attendeeExists(list, attendee) ? list : [...list, attendee];
     const lookups = Array.isArray(selected.lookups) ? selected.lookups : [];
@@ -2252,6 +2255,28 @@ export function EventsView({
   // state), and a render function for the body cell. The leading
   // select-all checkbox and trailing "Actions" columns are always shown,
   // so they live outside this set.
+  // Table View prospect for an attendee's Company cell. Tries, in order:
+  // the attendee's own company, the company of the lookup row they were
+  // added from (saved as lookupCompany, or found by the name written onto
+  // the row for attendees added before that was saved), then the fuzzy
+  // match the lookup table's Suggested column uses, flagged so the cell
+  // can say it's a guess.
+  const lookupCompanyByName = useMemo(() => {
+    const m = new Map();
+    for (const r of (selected?.lookups || [])) {
+      const name = String(r?.name || '').trim().toLowerCase();
+      if (name && r.company && !m.has(name)) m.set(name, r.company);
+    }
+    return m;
+  }, [selected]);
+  const attendeeProspect = (a) => {
+    const rowCompany = a.lookupCompany || lookupCompanyByName.get(String(a.name || '').trim().toLowerCase()) || '';
+    const exact = matchProspect(a.company) || (rowCompany ? matchProspect(rowCompany) : null);
+    if (exact) return { prospect: exact, fuzzy: false };
+    const guess = suggestProspect(a.company) || (rowCompany ? suggestProspect(rowCompany) : null);
+    return { prospect: guess, fuzzy: !!guess };
+  };
+
   const attendeeColumns = [
     { key: 'name', label: 'Name', width: 180, filterable: true, render: (a) => (
       <>
@@ -2273,16 +2298,18 @@ export function EventsView({
     { key: 'originalTitle', label: 'Original Title', width: 150, filterable: true, render: (a) => a.originalTitle || '-' },
     { key: 'title', label: 'Contact Title', width: 150, filterable: true, render: (a) => a.title || '-' },
     { key: 'company', label: 'Company', width: 160, filterable: true, render: (a) => {
-      const prospect = matchProspect(a.company);
+      const { prospect, fuzzy } = attendeeProspect(a);
       if (prospect) {
         return (
           <button
             type="button"
             className={styles.tvLink}
-            title={`Open "${prospect.company}" in the Table View`}
+            title={fuzzy
+              ? `Closest Table View match: "${prospect.company}" (names differ, check it's the right company). Click to open.`
+              : `Open "${prospect.company}" in the Table View`}
             onClick={() => onSelectProspect(prospect)}
           >
-            {a.company}
+            {fuzzy && '≈ '}{a.company || prospect.company}
           </button>
         );
       }
