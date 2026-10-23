@@ -322,6 +322,7 @@ export function ContactsView({
             onAddProspect={onAddProspect}
             onUpdateProspect={onUpdateProspect}
             cdmName={cdmName}
+            targetAccountsData={targetAccountsData}
           />
         )}
         {subtab === 'zoominfo' && (
