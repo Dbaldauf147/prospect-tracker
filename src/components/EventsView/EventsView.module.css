@@ -1147,3 +1147,37 @@
   border: 1px solid #CBD5E1;
   color: #64748B;
 }
+
+/* Competitor companies: held back behind one row at the bottom of each
+   table, and greyed out when shown, since the page is for mapping
+   everyone else. */
+.attendeeTable tr.competitorToggleRow td {
+  padding: 0.45rem 0.6rem;
+  background: #F8FAFC;
+  border-top: 1px dashed #CBD5E1;
+}
+.competitorToggle {
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: #B91C1C;
+  background: #FEF2F2;
+  border: 1px solid #FECACA;
+  border-radius: 999px;
+  padding: 0.15rem 0.65rem;
+  cursor: pointer;
+}
+.competitorToggle:hover { background: #FEE2E2; }
+.competitorToggleNote {
+  margin-left: 0.5rem;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+}
+.attendeeTable tr.competitorRow td {
+  background: #F1F5F9;
+  color: #94A3B8;
+  font-style: italic;
+}
+.attendeeTable tr.competitorRow td:first-child {
+  box-shadow: inset 3px 0 0 #FCA5A5;
+}

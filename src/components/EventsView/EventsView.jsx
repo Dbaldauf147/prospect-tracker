@@ -1051,14 +1051,29 @@ export function EventsView({
     const key = companyDedupeKey(company);
     return key ? (prospectByCompanyKey.get(key) || null) : null;
   };
-  // Competitors aren't who an event is for, so both tables on this page list
-  // a company whose Table View Type is a competitor after everyone else,
-  // each group keeping its own order.
+  // Competitors aren't who an event is for: the job on this page is mapping
+  // everyone else. So both tables hold a company whose Table View Type is a
+  // competitor out of the list by default, behind one "Show competitors"
+  // row at the bottom, and show them muted when asked for.
   const isCompetitorCompany = (company) => /competitor/i.test(String(matchProspect(company)?.type || ''));
-  const competitorsLast = (rows, companyOf) => [
-    ...rows.filter(r => !isCompetitorCompany(companyOf(r))),
-    ...rows.filter(r => isCompetitorCompany(companyOf(r))),
-  ];
+  const splitCompetitors = (rows, companyOf) => ({
+    others: rows.filter(r => !isCompetitorCompany(companyOf(r))),
+    competitors: rows.filter(r => isCompetitorCompany(companyOf(r))),
+  });
+  const [showCompetitors, setShowCompetitors] = useState(false);
+  // The row that hides or shows them, spanning the table.
+  const competitorToggleRow = (count, colSpan, [one, many]) => (
+    <tr key="__competitors" className={styles.competitorToggleRow}>
+      <td colSpan={colSpan}>
+        <button type="button" className={styles.competitorToggle} onClick={() => setShowCompetitors(v => !v)}>
+          {`${showCompetitors ? 'Hide' : 'Show'} ${count} competitor ${count === 1 ? one : many}`}
+        </button>
+        <span className={styles.competitorToggleNote}>
+          {showCompetitors ? 'Shown below, greyed out.' : 'Hidden so the list is only the people to map.'}
+        </span>
+      </td>
+    </tr>
+  );
 
   // Pre-normalized prospect names for the fuzzy "Suggested" column —
   // built once per prospects change. Each entry keeps a normalized
@@ -1792,7 +1807,7 @@ export function EventsView({
 
   // Attendees that pass the active per-column filters, paired with their
   // original index so Remove / checkboxes still target the right row.
-  const visibleAttendees = useMemo(() => {
+  const attendeeSplit = useMemo(() => {
     const tagsOf = a => (a.contactId ? contactTags(contactsById.get(String(a.contactId))).join(' ') : '');
     const matches = a => ATT_FILTER_KEYS.every(key => {
       const q = String(attFilters[key] || '').trim().toLowerCase();
@@ -1800,9 +1815,19 @@ export function EventsView({
       const val = key === 'tags' ? tagsOf(a) : (a[key] || '');
       return String(val).toLowerCase().includes(q);
     });
-    return competitorsLast(attendees.map((a, i) => ({ a, i })).filter(({ a }) => matches(a)), ({ a }) => a.company);
+    return splitCompetitors(attendees.map((a, i) => ({ a, i })).filter(({ a }) => matches(a)), ({ a }) => a.company);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attendees, attFilters, contactsById, prospectByCompanyKey]);
+  // What the table shows: everyone else, then the competitors only when
+  // asked for. Select-all works off this, so a hidden competitor is never
+  // tagged by accident.
+  const visibleAttendees = useMemo(
+    () => [
+      ...attendeeSplit.others,
+      ...(showCompetitors ? attendeeSplit.competitors.map(r => ({ ...r, competitor: true })) : []),
+    ],
+    [attendeeSplit, showCompetitors],
+  );
   // Taggable subset of the currently-visible rows, so select-all and the
   // header checkbox operate on what the user can actually see.
   const visibleTaggable = visibleAttendees.filter(
@@ -2266,19 +2291,24 @@ export function EventsView({
                   trailing={ATTENDEE_ACTIONS}
                 />
                 <tbody>
-                  {visibleAttendees.length === 0 ? (
+                  {visibleAttendees.length === 0 && attendeeSplit.competitors.length === 0 ? (
                     <tr>
                       <td colSpan={attendeeColSpan} className={styles.tvMuted} style={{ padding: '0.6rem', textAlign: 'center' }}>
                         No attendees match the current filters.
                       </td>
                     </tr>
-                  ) : visibleAttendees.map(({ a, i }) => {
+                  ) : visibleAttendees.flatMap(({ a, i, competitor }, vi) => {
                     const cid = a.contactId ? String(a.contactId) : '';
                     const taggable = cid && contactsById.has(cid);
                     const tags = taggable ? contactTags(contactsById.get(cid)) : [];
                     const ctx = { i, cid, taggable, tags };
-                    return (
-                      <tr key={`${a.contactId || 'manual'}-${i}`}>
+                    // The show / hide row sits between everyone else and the
+                    // competitors (at the very end while they're hidden).
+                    const toggle = vi === attendeeSplit.others.length && attendeeSplit.competitors.length
+                      ? [competitorToggleRow(attendeeSplit.competitors.length, attendeeColSpan, ['contact', 'contacts'])]
+                      : [];
+                    return [...toggle, (
+                      <tr key={`${a.contactId || 'manual'}-${i}`} className={competitor ? styles.competitorRow : undefined}>
                         <td style={{ textAlign: 'center' }}>
                           {taggable && (
                             <input
@@ -2310,8 +2340,10 @@ export function EventsView({
                           </button>
                         </td>
                       </tr>
-                    );
+                    )];
                   })}
+                  {visibleAttendees.length === attendeeSplit.others.length && attendeeSplit.competitors.length > 0
+                    && competitorToggleRow(attendeeSplit.competitors.length, attendeeColSpan, ['contact', 'contacts'])}
                 </tbody>
               </table>
             </div>
@@ -2449,8 +2481,17 @@ export function EventsView({
                       }
                       g.rows.push({ l, i, prospect });
                     });
-                    // Competitor companies go after everyone else.
-                    return competitorsLast(groups, g => g.rows[0].l.company).map((g, gi) => {
+                    // Competitor companies are held back behind one row at
+                    // the bottom, and shown greyed out when asked for.
+                    const split = splitCompetitors(groups, g => g.rows[0].l.company);
+                    const shown = [
+                      ...split.others,
+                      ...(showCompetitors ? split.competitors.map(g => ({ ...g, competitor: true })) : []),
+                    ];
+                    const toggleRow = split.competitors.length
+                      ? competitorToggleRow(split.competitors.length, lookupColSpan, ['company', 'companies'])
+                      : null;
+                    const rendered = shown.map((g, gi) => {
                       const first = g.rows[0];
                       // Decision maker(s) on file for this company that
                       // haven't already been added as attendees or ignored
@@ -2464,7 +2505,7 @@ export function EventsView({
                         if (attendees.some(a => a.contactId && String(a.contactId) === id)) return false;
                         return !ignoredIds.has(id);
                       });
-                      const groupClass = `${styles.lookupGroupRow} ${gi % 2 ? styles.lookupGroupAlt : ''}`;
+                      const groupClass = `${styles.lookupGroupRow} ${gi % 2 ? styles.lookupGroupAlt : ''} ${g.competitor ? styles.competitorRow : ''}`;
                       return (
                         <Fragment key={g.key}>
                           {g.rows.map(({ l, i, prospect }, ri) => {
@@ -2539,6 +2580,8 @@ export function EventsView({
                         </Fragment>
                       );
                     });
+                    if (toggleRow) rendered.splice(split.others.length, 0, toggleRow);
+                    return rendered;
                   })()}
                 </tbody>
               </table>
