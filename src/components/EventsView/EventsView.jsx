@@ -2818,16 +2818,28 @@ export function EventsView({
               placeholder="Event name"
               onChange={e => updateEvent(selected.id, { name: e.target.value })}
             />
-            {attendees.length > 0 && (() => {
-              const n = attendees.filter(isCompetitorAttendee).length;
-              const pct = Math.round((n / attendees.length) * 100);
+            {(() => {
+              // Everyone at the event: the attendees, plus the lookup rows
+              // not yet mapped to one (a done row is already counted as its
+              // attendee). Competitor rows hidden behind the toggles count.
+              const openRows = lookups.filter(l => !isLookupDone(l));
+              const total = attendees.length + openRows.length;
+              if (!total) return null;
+              const attComp = attendees.filter(isCompetitorAttendee).length;
+              const rowComp = openRows.filter(l => isCompetitorCompany(l.company)).length;
+              const n = attComp + rowComp;
+              const pct = Math.round((n / total) * 100);
               return (
                 <span
                   className={styles.competitorStat}
-                  title={`${n} of ${attendees.length} attendees work at a company whose Table View Type is a competitor`}
+                  title={[
+                    `${n} of ${total} contacts at this event work at a company whose Table View Type is a competitor.`,
+                    `Attendees: ${attComp} of ${attendees.length}`,
+                    `Find people on LinkedIn (not yet added): ${rowComp} of ${openRows.length}`,
+                  ].join('\n')}
                 >
                   Competitors <strong>{pct}%</strong>
-                  <span className={styles.competitorStatSub}>{n} of {attendees.length}</span>
+                  <span className={styles.competitorStatSub}>{n} of {total}</span>
                 </span>
               );
             })()}
