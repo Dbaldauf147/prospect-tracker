@@ -1277,6 +1277,12 @@
   box-shadow: inset 3px 0 0 #FCA5A5;
 }
 
+/* Lookup rows marked Ignore, shown only while "N ignored (show)" is on. */
+.attendeeTable tr.ignoredRow td {
+  background: #F8FAFC;
+  color: #94A3B8;
+}
+
 /* Lookup-row Name picker: the company's contacts, portalled to the body
    so the lookup table's scroll container can't clip it. */
 .namePicker {
