@@ -81,7 +81,7 @@ function CdmCell({ prospect, onCommit }) {
 //
 // A title-matched decision maker (suggestion) shows in place of the
 // box until it is accepted or dismissed.
-function LookupNameCell({ value, company, contacts = [], onCommit, onPick, onAddManual, suggestion, onAccept, onReject }) {
+function LookupNameCell({ value, company, title, contacts = [], onCommit, onPick, onAddManual, onSaveTitle, suggestion, onAccept, onReject }) {
   const [val, setVal] = useState(value || '');
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState(null);
@@ -148,13 +148,16 @@ function LookupNameCell({ value, company, contacts = [], onCommit, onPick, onAdd
     const next = val.trim();
     if (next !== String(value || '').trim()) onCommit(next);
   };
-  const pick = (c) => { setOpen(false); setVal(contactDisplayName(c)); onPick(c); };
+  // A title-only contact leaves the Name box empty (it has no name).
+  const pick = (c) => { setOpen(false); setVal(c._titleOnly ? '' : contactDisplayName(c)); onPick(c); };
   const addManual = () => {
     const name = val.trim();
     if (!name) { inputRef.current?.focus(); return; }
     setOpen(false);
     onAddManual(name);
   };
+  const saveTitle = () => { setOpen(false); onSaveTitle(); };
+  const rowTitle = String(title || '').trim();
 
   return (
     <>
@@ -201,6 +204,16 @@ function LookupNameCell({ value, company, contacts = [], onCommit, onPick, onAdd
           >
             {val.trim() ? `+ Add "${val.trim()}" as a new contact` : '+ Add new contact (type a name above)'}
           </button>
+          {rowTitle && onSaveTitle && (
+            <button
+              type="button"
+              className={`${styles.option} ${styles.addManual}`}
+              onClick={saveTitle}
+              title="Saves a contact with no name on this site only (nothing goes to HubSpot), marked as the decision maker"
+            >
+              {`+ Save "${rowTitle}" as the decision maker (title only)`}
+            </button>
+          )}
         </div>,
         document.body,
       )}
@@ -409,7 +422,20 @@ function contactTags(contact) {
 // A contact is a "decision maker" when its Dan's Tags include that tag —
 // the same convention the Prospect modal / Progress / PE views use.
 function isDecisionMaker(contact) {
+  if (contact?._manual) return !!contact._dm;
   return contactTags(contact).some(t => t.toLowerCase() === 'decision maker');
+}
+
+// Title-only attendees are site-side contacts saved with no name: just a
+// title at a company, usually marked as the decision maker. Two of them
+// are the same contact when title and company agree.
+function titleOnlyKey(title, company) {
+  return `${String(title || '').trim().toLowerCase()}|${normalizeCompany(company)}`;
+}
+// What to call an attendee in the UI: the name, or the title when the
+// contact was saved as a title only.
+function attendeeLabel(a) {
+  return a?.titleOnly ? (a.title || 'Title only') : (a?.name || '');
 }
 
 // ---- Email domain detection & guessing ---------------------------
@@ -514,6 +540,9 @@ function buildGuessedEmail(first, last, domain, pattern) {
 // attendees (no contactId) so they de-dupe by name against the original
 // rather than minting a parallel id-bearing copy.
 function contactToAttendee(c) {
+  if (c && c._titleOnly) {
+    return { contactId: '', name: '', titleOnly: true, decisionMaker: !!c._dm, email: '', company: c.company || '', title: c.jobtitle || '' };
+  }
   if (c && c._manual) {
     return { contactId: '', name: contactDisplayName(c), email: c.email || '', company: c.company || '', title: c.jobtitle || '' };
   }
@@ -863,7 +892,7 @@ function AttendeeContactModal({ attendee, contact, onClose }) {
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const name = contact ? contactDisplayName(contact) : (attendee.name || 'Contact');
+  const name = contact ? contactDisplayName(contact) : (attendeeLabel(attendee) || 'Contact');
   const contactTitle = contact?.jobtitle || attendee.title || '';
   const company = contact?.company || attendee.company || '';
   const email = contact?.email || attendee.email || '';
@@ -1649,9 +1678,13 @@ export function EventsView({
   }
 
   function attendeeExists(list, attendee) {
+    if (attendee.titleOnly) {
+      const key = titleOnlyKey(attendee.title, attendee.company);
+      return list.some(a => a.titleOnly && titleOnlyKey(a.title, a.company) === key);
+    }
     return attendee.contactId
       ? list.some(a => a.contactId && a.contactId === attendee.contactId)
-      : list.some(a => !a.contactId && a.name.toLowerCase() === attendee.name.toLowerCase());
+      : list.some(a => !a.contactId && !a.titleOnly && String(a.name || '').toLowerCase() === String(attendee.name || '').toLowerCase());
   }
 
   function addAttendee(attendee) {
@@ -1687,7 +1720,7 @@ export function EventsView({
     const list = Array.isArray(selected.attendees) ? selected.attendees : [];
     const next = list.filter(a => att.contactId
       ? String(a.contactId) !== String(att.contactId)
-      : !(!a.contactId && a.name === att.name && (a.company || '') === (att.company || '')));
+      : !(!a.contactId && a.name === att.name && (a.company || '') === (att.company || '') && (!att.titleOnly || a.title === att.title)));
     updateEvent(selected.id, { attendees: next });
   }
 
@@ -1906,7 +1939,12 @@ export function EventsView({
     const list = Array.isArray(selected.attendees) ? selected.attendees : [];
     const nextAttendees = attendeeExists(list, attendee) ? list : [...list, attendee];
     const lookups = Array.isArray(selected.lookups) ? selected.lookups : [];
-    const nextLookups = lookups.map((r, i) => (i === target.i ? { ...r, name: contactDisplayName(contact) } : r));
+    // A title-only contact has no name to put in the box, so the row
+    // remembers which one it was tagged to instead (see isLookupDone).
+    const patch = attendee.titleOnly
+      ? { titleContact: titleOnlyKey(attendee.title, attendee.company) }
+      : { name: contactDisplayName(contact) };
+    const nextLookups = lookups.map((r, i) => (i === target.i ? { ...r, ...patch } : r));
     updateEvent(selected.id, { attendees: nextAttendees, lookups: nextLookups });
   }
   // Name-cell "+ Add new contact": save the typed name as a manual
@@ -1920,6 +1958,16 @@ export function EventsView({
     const lookups = Array.isArray(selected.lookups) ? selected.lookups : [];
     const nextLookups = lookups.map((r, i) => (i === target.i ? { ...r, name } : r));
     updateEvent(selected.id, { attendees: nextAttendees, lookups: nextLookups });
+  }
+  // Name-cell "Save title as the decision maker": when nobody knows who
+  // holds the row's title, keep the title itself as a site-only contact
+  // (no name, never sent to HubSpot) marked as the company's decision
+  // maker. It shows up as a decision maker for the company on every event.
+  function saveTitleOnlyForLookup(target) {
+    if (!selected || !target || !String(target.l.title || '').trim()) return;
+    const title = String(target.l.title).trim();
+    const attendee = { contactId: '', name: '', titleOnly: true, decisionMaker: true, email: '', company: target.l.company || '', title, originalTitle: title, lookupCompany: target.l.company || '' };
+    addAttendee(attendee);
   }
   // Hide a suggested decision maker for one lookup row without adding
   // them. The ignore list is stored on the row so it persists.
@@ -1958,11 +2006,20 @@ export function EventsView({
     for (const ev of events) {
       for (const a of (ev.attendees || [])) {
         if (a.contactId) continue;
+        if (a.titleOnly) {
+          const title = String(a.title || '').trim();
+          if (!title) continue;
+          const key = `title:${titleOnlyKey(title, a.company)}`;
+          if (byKey.has(key)) continue;
+          // firstname carries the title so the pickers have something to show.
+          byKey.set(key, { id: key, firstname: title, lastname: '', email: '', company: a.company || '', jobtitle: title, _manual: true, _titleOnly: true, _dm: !!a.decisionMaker });
+          continue;
+        }
         const name = String(a.name || '').trim();
         if (!name) continue;
         const key = `manual:${name.toLowerCase()}|${String(a.company || '').toLowerCase()}`;
         if (byKey.has(key)) continue;
-        byKey.set(key, { id: key, firstname: name, lastname: '', email: a.email || '', company: a.company || '', jobtitle: a.title || '', _manual: true });
+        byKey.set(key, { id: key, firstname: name, lastname: '', email: a.email || '', company: a.company || '', jobtitle: a.title || '', _manual: true, _dm: !!a.decisionMaker });
       }
     }
     return [...byKey.values()];
@@ -1972,8 +2029,8 @@ export function EventsView({
   // HubSpot contacts tagged "Decision Maker" - used to surface the
   // decision maker(s) for each lookup company right under its row.
   const decisionMakerContacts = useMemo(
-    () => (contacts || []).filter(isDecisionMaker),
-    [contacts],
+    () => [...manualContacts, ...(contacts || [])].filter(isDecisionMaker),
+    [manualContacts, contacts],
   );
   // Decision-maker contacts whose company matches `company`, using the
   // same fuzzy company match the roster popup uses.
@@ -2139,7 +2196,7 @@ export function EventsView({
   // we can resolve an email for it - a typed one, or a guess from the
   // company's email domain.
   const canAddToHubSpot = (a) => {
-    if (attendeeInHubspot(a)) return false;
+    if (a.titleOnly || attendeeInHubspot(a)) return false;
     return !!effectiveAttendeeEmail(a).email;
   };
 
@@ -2335,6 +2392,8 @@ export function EventsView({
     }
     const set = new Set();
     for (const a of attendees) {
+      // A title-only contact accounts for its own title's row, not the company's.
+      if (a.titleOnly) continue;
       if (rowNames.has(String(a.name || '').trim().toLowerCase())) continue;
       const n = normalizeCompany(a.company);
       if (n) set.add(n);
@@ -2351,6 +2410,12 @@ export function EventsView({
     }
     return set;
   }, [attendees]);
+  // Title + company of every title-only contact on the list, so the
+  // lookup row it was saved from drops out as done.
+  const attendeeTitleKeys = useMemo(
+    () => new Set(attendees.filter(a => a.titleOnly).map(a => titleOnlyKey(a.title, a.company))),
+    [attendees],
+  );
   // A row is hidden as done when it's been mapped: its name is on the
   // attendee list (already shown above, no need to repeat it here), or it
   // has no name and its company already has an attendee. A name typed in
@@ -2358,12 +2423,13 @@ export function EventsView({
   const isLookupDone = (l) => {
     const name = String(l.name || '').trim().toLowerCase();
     if (name) return attendeeNames.has(name);
+    if (attendeeTitleKeys.has(l.titleContact || titleOnlyKey(l.title, l.company))) return true;
     return attendeeCompanies.has(normalizeCompany(l.company));
   };
   const lookupDoneCount = useMemo(
     () => lookups.reduce((n, l) => n + (isLookupDone(l) ? 1 : 0), 0),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [lookups, attendeeCompanies, attendeeNames],
+    [lookups, attendeeCompanies, attendeeNames, attendeeTitleKeys],
   );
   const lookupMatchCount = useMemo(
     () => lookups.reduce((n, l) => n + (matchProspect(l.company) ? 1 : 0), 0),
@@ -2484,9 +2550,16 @@ export function EventsView({
           onClick={() => openAttendeeContact(a)}
           title="View contact details"
         >
-          {a.name}
+          {attendeeLabel(a)}
         </button>
-        {!a.contactId && (
+        {a.titleOnly ? (
+          <span
+            style={{ marginLeft: 6, fontSize: '0.64rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}
+            title="Saved on this site as a title with no name. Not in HubSpot."
+          >
+            (title only)
+          </span>
+        ) : !a.contactId && (
           <span style={{ marginLeft: 6, fontSize: '0.64rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
             (manual)
           </span>
@@ -2539,7 +2612,9 @@ export function EventsView({
     } },
     { key: 'emailDomain', label: 'Email Domain', width: 150, render: (a) => renderDomainCell(a.company) },
     { key: 'inHubspot', label: 'In HubSpot', width: 110, render: (a) => (
-      attendeeInHubspot(a) ? (
+      a.titleOnly ? (
+        <span className={styles.hsNo} title="A title with no name, kept on this site only">Site only</span>
+      ) : attendeeInHubspot(a) ? (
         <span className={styles.hsYes} title="This contact exists in the synced HubSpot contacts">In HubSpot</span>
       ) : (
         <span className={styles.hsNo} title="Not found in the synced HubSpot contacts">Not added</span>
@@ -2558,8 +2633,22 @@ export function EventsView({
     } },
     // Read off the live HubSpot record's Dan's Tags, same as the Tags
     // column. A manual or not-synced attendee has no tags to read.
-    { key: 'decisionMaker', label: 'Decision Maker', width: 120, render: (a, { taggable, tags }) => (
-      !taggable ? (
+    { key: 'decisionMaker', label: 'Decision Maker', width: 120, render: (a, { i, taggable, tags }) => (
+      !a.contactId ? (
+        // Site-only contacts (manual or title only) keep the flag on the
+        // attendee itself, so it can be set here without HubSpot.
+        <button
+          type="button"
+          className={a.decisionMaker ? styles.hsYes : styles.hsNo}
+          style={{ cursor: 'pointer' }}
+          onClick={() => updateAttendeeAt(i, { decisionMaker: !a.decisionMaker })}
+          title={a.decisionMaker
+            ? 'Marked as the decision maker on this site. Click to unmark.'
+            : 'Click to mark as the decision maker (saved on this site, not HubSpot)'}
+        >
+          {a.decisionMaker ? 'Yes' : 'No'}
+        </button>
+      ) : !taggable ? (
         <span className={styles.tvMuted} title="Not linked to a synced HubSpot contact, so there are no tags to check">-</span>
       ) : tags.some(t => t.toLowerCase() === 'decision maker') ? (
         <span className={styles.hsYes} title="Tagged Decision Maker in HubSpot (Dan's Tags)">Yes</span>
@@ -2588,6 +2677,8 @@ export function EventsView({
         onCommit={v => updateLookup(i, { name: v })}
         onPick={c => addDecisionMaker(c, { l, i })}
         onAddManual={name => addManualForLookup(name, { l, i })}
+        title={l.title}
+        onSaveTitle={() => saveTitleOnlyForLookup({ l, i })}
         suggestion={nameSuggestion}
         onAccept={() => addDecisionMaker(nameSuggestion, { l, i })}
         onReject={() => rejectNameSuggestion(i, String(nameSuggestion.id || nameSuggestion.vid || ''))}
@@ -3088,6 +3179,9 @@ export function EventsView({
                         const id = String(c.id || c.vid || '');
                         if (!id) return false;
                         if (attendees.some(a => a.contactId && String(a.contactId) === id)) return false;
+                        // Site-only decision makers have no HubSpot id; skip
+                        // the ones already on this event.
+                        if (c._manual && attendeeExists(attendees, contactToAttendee(c))) return false;
                         return !ignoredIds.has(id);
                       });
                       // A candidate whose title is an exact or near match
