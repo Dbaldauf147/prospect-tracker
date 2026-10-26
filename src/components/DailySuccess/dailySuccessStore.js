@@ -13,9 +13,65 @@
 //                              // until this time
 //   }
 
-import { dbGet, dbGetAll, dbPut, dbDelete } from '../../utils/db';
+import { dbGet, dbGetAllEntries, dbPut } from '../../utils/db';
+import { registerMirroredDbKey, mirrorDbPut } from '../../utils/localMirrorSync';
 
 const STORE = 'daily-success-log';
+
+// The whole log is kept as ONE record, { [date]: entry }, under ALL_KEY, so
+// the single-record mirror (utils/localMirrorSync) can give it a copy in
+// the account, like the goals beside it. It used to be one record per day,
+// which no mirror carried: clearing site data or moving machines lost every
+// day of it. Those per-day records are folded in once (LEGACY_MERGED_KEY
+// marks it done) and then left where they are, untouched.
+const ALL_KEY = 'all';
+const LEGACY_MERGED_KEY = 'legacy-merged';
+export const DAILY_LOG_EVENT = 'daily-success-log-changed';
+
+const isMap = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+const entryStamp = (e) => Math.max(0, Number(e?.updatedAt) || 0, Number(e?.morningCreatedAt) || 0);
+
+// Every day either side has; where both have one, the later-edited entry
+// wins (the account's on a tie). Used when a browser that already has a log
+// first meets the account's copy, so neither side's days are dropped.
+export function mergeDailyLogs(local, remote) {
+  if (!isMap(remote)) return isMap(local) ? local : remote;
+  if (!isMap(local)) return remote;
+  const out = { ...remote };
+  for (const [date, entry] of Object.entries(local)) {
+    if (!(date in out) || entryStamp(entry) > entryStamp(out[date])) out[date] = entry;
+  }
+  return out;
+}
+
+registerMirroredDbKey(STORE, ALL_KEY, DAILY_LOG_EVENT, { merge: mergeDailyLogs });
+
+async function loadLog() {
+  const stored = await dbGet(STORE, ALL_KEY);
+  let log = isMap(stored) ? stored : {};
+  if (await dbGet(STORE, LEGACY_MERGED_KEY)) return log;
+  const legacy = {};
+  for (const { key, value } of await dbGetAllEntries(STORE)) {
+    if (key === ALL_KEY || key === LEGACY_MERGED_KEY) continue;
+    if (isMap(value) && typeof value.date === 'string') legacy[value.date] = value;
+  }
+  if (Object.keys(legacy).length) {
+    log = mergeDailyLogs(legacy, log);
+    await mirrorDbPut(STORE, ALL_KEY, log);
+  }
+  await dbPut(STORE, true, LEGACY_MERGED_KEY);
+  return log;
+}
+
+// Writes are read-modify-write of the one record, so they queue: two
+// check-ins landing together would otherwise each save a log without the
+// other's change.
+let writeChain = Promise.resolve();
+function serialWrite(fn) {
+  const run = writeChain.then(fn);
+  writeChain = run.catch(() => {});
+  return run;
+}
 
 export function todayKey(d = new Date()) {
   const yyyy = d.getFullYear();
@@ -30,24 +86,31 @@ export function isWeekday(d = new Date()) {
 }
 
 export async function getEntry(date) {
-  const e = await dbGet(STORE, date);
-  return e || null;
+  const log = await loadLog();
+  return log[date] || null;
 }
 
 export async function getAllEntries() {
-  const all = await dbGetAll(STORE);
-  return [...(all || [])].sort((a, b) => (a.date < b.date ? 1 : -1));
+  const log = await loadLog();
+  return Object.values(log).sort((a, b) => (a.date < b.date ? 1 : -1));
 }
 
-export async function upsertEntry(date, patch) {
-  const existing = (await dbGet(STORE, date)) || { date, bullets: [], shownMid: false, shownEnd: false };
-  const next = { ...existing, ...patch, date };
-  await dbPut(STORE, next, date);
-  return next;
+export function upsertEntry(date, patch) {
+  return serialWrite(async () => {
+    const log = await loadLog();
+    const existing = log[date] || { date, bullets: [], shownMid: false, shownEnd: false };
+    // updatedAt is what mergeDailyLogs compares when two copies meet.
+    const next = { ...existing, ...patch, date, updatedAt: Date.now() };
+    await mirrorDbPut(STORE, ALL_KEY, { ...log, [date]: next });
+    return next;
+  });
 }
 
-export async function deleteEntry(date) {
-  await dbDelete(STORE, date);
+export function deleteEntry(date) {
+  return serialWrite(async () => {
+    const { [date]: _gone, ...rest } = await loadLog();
+    await mirrorDbPut(STORE, ALL_KEY, rest);
+  });
 }
 
 export function newBullet(text = '') {

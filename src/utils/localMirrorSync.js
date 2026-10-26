@@ -699,6 +699,7 @@ async function loadMirroredStores() {
     import('./weeklyActivityLog.js'),
     import('./mirroredWorkKeys.js'),
     import('../components/DailySuccess/goalsStore.js'),
+    import('../components/DailySuccess/dailySuccessStore.js'),
   ]).catch(err => console.warn('localMirror: store registration import failed', err));
 }
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import styles from './DailySuccess.module.css';
-import { getAllEntries, upsertEntry, deleteEntry, completionStats, newBullet } from './dailySuccessStore';
+import { getAllEntries, upsertEntry, deleteEntry, completionStats, newBullet, DAILY_LOG_EVENT } from './dailySuccessStore';
 import { GoalsPanel } from './GoalsPanel';
 
 export function DailySuccessLogModal({ open, onClose, user }) {
@@ -11,10 +11,14 @@ export function DailySuccessLogModal({ open, onClose, user }) {
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    getAllEntries().then(list => {
+    const load = () => getAllEntries().then(list => {
       if (!cancelled) setEntries(list);
     });
-    return () => { cancelled = true; };
+    load();
+    // The account's copy landing (sign-in on a fresh browser, or a newer
+    // one from another machine) refreshes an open log.
+    window.addEventListener(DAILY_LOG_EVENT, load);
+    return () => { cancelled = true; window.removeEventListener(DAILY_LOG_EVENT, load); };
   }, [open]);
 
   if (!open) return null;

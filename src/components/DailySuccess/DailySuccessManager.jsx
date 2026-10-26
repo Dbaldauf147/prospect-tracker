@@ -10,6 +10,7 @@ import {
   newBullet,
   pickPhase,
   completionStats,
+  DAILY_LOG_EVENT,
 } from './dailySuccessStore';
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
@@ -365,6 +366,28 @@ export function DailySuccessManager({ user }) {
     };
     window.addEventListener('daily-success:open-morning', handler);
     return () => window.removeEventListener('daily-success:open-morning', handler);
+  }, [enabled]);
+
+  // The account's copy of the log landing after the check above ran: on a
+  // freshly cleared browser that check saw no entry for today and may have
+  // opened the morning prompt for a day already planned elsewhere. Re-read
+  // today and move to whatever phase it's really at. Left alone when the
+  // phase is unchanged, so a prompt being typed into isn't reset.
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const handler = async () => {
+      if (!isWeekday()) return;
+      const dk = todayKey();
+      const e = await getEntry(dk);
+      const p = pickPhase(e);
+      if (p === phaseRef.current) return;
+      if (p) setEntry(e || { date: dk, bullets: [], shownMid: false, shownEnd: false });
+      setPhase(p);
+    };
+    window.addEventListener(DAILY_LOG_EVENT, handler);
+    return () => window.removeEventListener(DAILY_LOG_EVENT, handler);
   }, [enabled]);
 
   if (!enabled || !phase) return null;

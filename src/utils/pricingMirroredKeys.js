@@ -14,7 +14,9 @@
 // shared marks, the Linked To defaults (and their unit, start month and
 // pass-through columns), the fee defaults, the Linked To dropdown's own
 // vocabulary, the S2C tags, the saved fee structures, the services marked
-// completed and the Fee Builder's saved deal scenarios. The workbook itself,
+// completed, the Fee Builder's saved deal scenarios, and the price check's
+// picks (which cost lines are left out of a service's check, and the fee
+// component each line is checked at). The workbook itself,
 // column widths and other view state are not.
 import { registerMirroredDbKey, mergeMirroredMaps, queueMirrorPush, dbMirrorId } from './localMirrorSync.js';
 
@@ -36,6 +38,8 @@ export const PRICING_MIRRORED_KEYS = [
   'serviceFeeStructures',
   'servicesCompleted',
   'feeBuilderSaved',
+  'priceCheckExcluded',
+  'priceCheckComponentPicks',
 ];
 
 const MIRRORED = new Set(PRICING_MIRRORED_KEYS);

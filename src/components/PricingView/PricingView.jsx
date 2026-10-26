@@ -2819,6 +2819,8 @@ export function PricingView({ settings } = {}) {
       serviceFeeStructures: setServiceFeeStructures,
       servicesCompleted: setServicesCompleted,
       feeBuilderSaved: (v) => { feeBuilderSavedRef.current = v; setFeeBuilderSaved(v); },
+      priceCheckExcluded: setPriceCheckExcluded,
+      priceCheckComponentPicks: setPriceCheckComponentPicks,
     };
     const reload = async () => {
       for (const key of PRICING_MIRRORED_KEYS) {
@@ -3008,12 +3010,12 @@ export function PricingView({ settings } = {}) {
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, priceCheckExcluded, PRICE_CHECK_EXCLUDED_KEY).catch(err => console.warn('Failed to save price check picks:', err));
+    saveMirrored(PRICE_CHECK_EXCLUDED_KEY, priceCheckExcluded, 'price check picks');
   }, [priceCheckExcluded]);
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, priceCheckComponentPicks, PRICE_CHECK_COMPONENTS_KEY).catch(err => console.warn('Failed to save fee component picks:', err));
+    saveMirrored(PRICE_CHECK_COMPONENTS_KEY, priceCheckComponentPicks, 'fee component picks');
   }, [priceCheckComponentPicks]);
 
   // Derive a per-Pricing-Option services bundle by walking each option's

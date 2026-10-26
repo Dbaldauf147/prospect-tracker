@@ -5,6 +5,7 @@ import { useAuth } from './contexts/AuthContext';
 import { useProspects } from './hooks/useProspects';
 import { userLsGet, userLsSet } from './utils/userLs';
 import { runProspectBackfill, formatBackfillReport, BACKFILL_PASSES } from './utils/peOwnerBackfill';
+import { planBackfillPasses } from './utils/backfillPassRecord';
 import { migrateIdKeyedSettings } from './utils/dedupeSettingsMigration';
 import { SERVICE_MERGES, planServiceMerge, SERVICE_RENAME_LOG_KEY, serviceRenameFlag } from './utils/serviceNameMerges';
 import { renameServiceShared, renameServiceLocal } from './utils/serviceRenameRunner';
@@ -346,11 +347,16 @@ function App() {
 
   // One-time prospect backfills (see utils/peOwnerBackfill.js): each
   // pass stamps fixed field values onto a list of Table View companies
-  // the first time prospects load for this user/browser, then reports
-  // the result — including any names that matched no record.
+  // the first time prospects load for this user, then reports the result —
+  // including any names that matched no record. "Has run" is recorded in
+  // the account (utils/backfillPassRecord), not just this browser, so
+  // clearing site data can't run a pass again over values changed since.
+  // Gated on settings having loaded: before then `settings` is {} and every
+  // pass would read as never run.
   useEffect(() => {
-    if (!user || dataLoading || prospects.length === 0) return;
-    const pending = BACKFILL_PASSES.filter(pass => !userLsGet(pass.flag));
+    if (!user || !settingsLoaded || dataLoading || prospects.length === 0) return;
+    const { pending, record } = planBackfillPasses(BACKFILL_PASSES, settingsRef.current, userLsGet);
+    if (Object.keys(record).length) updateSettingsPath(record);
     if (pending.length === 0) return;
     for (const pass of pending) userLsSet(pass.flag, new Date().toISOString());
     (async () => {
@@ -363,7 +369,7 @@ function App() {
         }
       }
     })();
-  }, [user, dataLoading, prospects, updateProspect]);
+  }, [user, settingsLoaded, dataLoading, prospects, updateProspect, updateSettingsPath]);
 
   // One-time settings work for the Google Sheets sync: lift the
   // configuration out of this browser's localStorage onto the settings

@@ -63,6 +63,8 @@ eq(mergeFeeBuilderSaved(
   'company:gamma': { key: 'company:gamma', savedAt: 7 },
 }, 'saved scenarios from both machines survive, the later save of a shared one wins');
 eq(PRICING_MIRRORED_KEYS.includes('feeBuilderSaved'), true, 'Fee Builder saved scenarios are synced');
+eq(PRICING_MIRRORED_KEYS.includes('priceCheckExcluded'), true, 'the price check left-out lines are synced');
+eq(PRICING_MIRRORED_KEYS.includes('priceCheckComponentPicks'), true, 'and the fee component each line is checked at');
 
 // Hydration at signin only reaches stores it has loaded, so the Pricing keys
 // module has to be on its list.
