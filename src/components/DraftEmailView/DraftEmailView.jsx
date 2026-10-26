@@ -15,7 +15,8 @@ import { useDraftCampaignQueue, clearQueuedContacts, setQueuedContactIds } from 
 import { useDraftLeadsQueue, clearQueuedLeads, removeQueuedLead, leadQueueKey } from '../../utils/draftLeadsQueue';
 import { useDraftRecipientsQueue, clearQueuedRecipients, removeQueuedRecipient, recipientQueueKey } from '../../utils/draftRecipientsQueue';
 import { workingLeadContacts } from '../../utils/workingLeads';
-import { userLsGet, userLsSet } from '../../utils/userLs';
+import { userLsGet } from '../../utils/userLs';
+import { writeWorkKey, DRAFT_AUTOSAVE_EVENT } from '../../utils/mirroredWorkKeys';
 import {
   normalizeBanners, findBanner, bannerHtml, bannerPlainText, bannerTextColor,
   bannerIdFor, normalizeBannerColor, bannerAccentColor, brandedBanners, needsBrandColors,
@@ -1340,15 +1341,29 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   const bodyRef = useRef(null);
 
   // Auto-save compose state so it's never lost. Inline images make the body
-  // big enough to hit the localStorage quota, and userLsSet rethrows when it
-  // does — so the failure is caught and said out loud. Silently losing the
-  // autosave is the one outcome worth avoiding here: the user carries on
+  // big enough to hit the localStorage quota, and writeWorkKey rethrows when
+  // it does — so the failure is caught and said out loud. Silently losing
+  // the autosave is the one outcome worth avoiding here: the user carries on
   // typing believing the draft is safe.
+  //
+  // The autosave also has a copy in the account (mirroredWorkKeys), so a
+  // half-written email survives clearing site data or moving machines. It's
+  // written only when the draft actually differs from what's stored, never
+  // just because the page opened: a browser that hasn't synced yet would
+  // otherwise offer its empty compose box as the latest draft.
   const [autosaveFailed, setAutosaveFailed] = useState(false);
+  const autosavedRef = useRef(null);
+  if (autosavedRef.current === null) autosavedRef.current = userLsGet(AUTOSAVE_KEY) ?? '';
   useEffect(() => {
     const timer = setTimeout(() => {
+      const json = JSON.stringify({ subject, body, contacts: selectedContacts, cc: draftCc, bannerId });
+      if (json === autosavedRef.current) return;
+      // Nothing saved and nothing typed: there's no draft to keep.
+      const blank = !subject && !body && !selectedContacts.length && !draftCc.length && !bannerId;
+      if (!autosavedRef.current && blank) return;
       try {
-        userLsSet(AUTOSAVE_KEY, JSON.stringify({ subject, body, contacts: selectedContacts, cc: draftCc, bannerId }));
+        writeWorkKey(AUTOSAVE_KEY, json);
+        autosavedRef.current = json;
         setAutosaveFailed(false);
       } catch (err) {
         console.warn('Draft autosave failed (likely storage quota):', err?.message || err);
@@ -1357,6 +1372,24 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
     }, 500);
     return () => clearTimeout(timer);
   }, [subject, body, selectedContacts, draftCc, bannerId]);
+  // The account's copy landing (sign-in on a fresh browser, or a newer one
+  // from another machine) puts that draft in the compose box.
+  useEffect(() => {
+    const reload = () => {
+      let saved = null;
+      const raw = userLsGet(AUTOSAVE_KEY) ?? '';
+      try { saved = JSON.parse(raw); } catch { /* unreadable: leave the box alone */ }
+      if (!saved || typeof saved !== 'object') return;
+      autosavedRef.current = raw;
+      setSubject(saved.subject || '');
+      setBody(saved.body || '');
+      setSelectedContacts(Array.isArray(saved.contacts) ? saved.contacts : []);
+      setDraftCc(Array.isArray(saved.cc) ? saved.cc : []);
+      setBannerId(saved.bannerId || '');
+    };
+    window.addEventListener(DRAFT_AUTOSAVE_EVENT, reload);
+    return () => window.removeEventListener(DRAFT_AUTOSAVE_EVENT, reload);
+  }, []);
 
   // Shrink oversized pasted images. Quill hands a pasted screenshot straight
   // into the body at its full capture size; redrawing it at email width keeps

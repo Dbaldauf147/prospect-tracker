@@ -68,6 +68,11 @@ for (const [key, area] of [
   ['bulk-contacts-company-rules', 'the bulk-add company rules'],
   ['clients-view:contract-services', 'the contract-services analysis'],
   ['zoom-search-log', 'the Zoom search log'],
+  ['prospect-draft-autosave', 'the email being drafted'],
+  ['bulk-contacts-cache', 'the Bulk Add Contacts rows not yet added'],
+  ['opp-detail-hidden-fields', 'the opp popup hidden fields'],
+  ['opp-detail-field-placement', 'the opp popup field filing'],
+  ['outlook-webhook-token', 'the Outlook calendar feed token'],
 ]) {
   ok(isMirroredWorkKey(key), `${area} follow the user`, key);
 }
@@ -112,6 +117,11 @@ const KEY_CONSTANTS = {
   'bulk-contacts-company-rules': ['COMPANY_RULES_KEY'],
   'clients-view:contract-services': ['STORAGE_KEY'],
   'zoom-search-log': ['ZOOM_SEARCH_LOG_KEY'],
+  'prospect-draft-autosave': ['AUTOSAVE_KEY'],
+  'bulk-contacts-cache': ['STORAGE_KEY'],
+  'opp-detail-hidden-fields': ['OPP_DETAIL_HIDDEN_FIELDS_KEY'],
+  'opp-detail-field-placement': ['OPP_DETAIL_FIELD_PLACEMENT_KEY'],
+  'outlook-webhook-token': ['webhookStorageKey'],
 };
 
 const unmirroredWrites = [];
