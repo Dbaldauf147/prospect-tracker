@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useSyncedTablePref, SET_PREF } from '../../hooks/useSyncedTablePref';
-import { userLsGet, userLsSet } from '../../utils/userLs';
+import { userLsGet, userLsSet, userLsHas } from '../../utils/userLs';
 import { companyDedupeKey } from '../../utils/firestoreSync';
 import { STATUSES, TIER_OPTIONS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS } from '../../data/enums';
 import { buildTypeOptions, buildCdmOptions, buildAssetTypeOptions, buildStrategyOptions } from '../../utils/prospectOptions';
@@ -217,11 +217,13 @@ export function BulkAddModal({ existingProspects = [], onAdd, onClose, settings,
     tableId: PREFS_TABLE_ID, field: 'widths', settings, updateSettings,
     readLocal: () => readJsonLs(WIDTHS_LS_KEY, {}),
     writeLocal: (w) => userLsSet(WIDTHS_LS_KEY, JSON.stringify(w)),
+    hasLocal: () => userLsHas(WIDTHS_LS_KEY),
   });
   const [starredCols, setStarredCols] = useSyncedTablePref({
     tableId: PREFS_TABLE_ID, field: 'starred', settings, updateSettings,
     readLocal: () => new Set(readJsonLs(STARRED_LS_KEY, [])),
     writeLocal: (set) => userLsSet(STARRED_LS_KEY, JSON.stringify([...set])),
+    hasLocal: () => userLsHas(STARRED_LS_KEY),
     ...SET_PREF,
   });
   const resizeRef = useRef(null);

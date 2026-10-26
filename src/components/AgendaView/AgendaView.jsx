@@ -1,5 +1,6 @@
 import { useMemo, useState, useCallback, useRef, useEffect, Fragment, lazy, Suspense } from 'react';
 import { useSyncedTablePref, SET_PREF } from '../../hooks/useSyncedTablePref';
+import { lsHas } from '../../utils/tablePrefsSync';
 import { writeWorkKey } from '../../utils/mirroredWorkKeys';
 import { apiFetch } from '../../utils/apiFetch';
 import { logAction } from '../../utils/auditLog';
@@ -746,6 +747,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     tableId: BULK_PREFS_TABLE_ID, field: 'widths', settings, updateSettings,
     readLocal: loadBulkColWidths,
     writeLocal: persistBulkColWidths,
+    hasLocal: () => lsHas(BULK_COL_WIDTHS_KEY),
   });
   const [bulkColTextFilters, setBulkColTextFilters] = useState({});
   const [bulkMassMode, setBulkMassMode] = useState(false);
@@ -812,6 +814,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     tableId: BULK_PREFS_TABLE_ID, field: 'visible', settings, updateSettings,
     readLocal: () => bulkVisibleFromSaved(loadBulkColVisible()),
     writeLocal: persistBulkColVisible,
+    hasLocal: () => lsHas(BULK_COL_VISIBLE_KEY),
     toRemote: SET_PREF.toRemote,
     fromRemote: (a) => bulkVisibleFromSaved(SET_PREF.fromRemote(a)),
   });
@@ -822,6 +825,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     tableId: BULK_PREFS_TABLE_ID, field: 'starred', settings, updateSettings,
     readLocal: () => loadBulkKeySet(BULK_COL_STARRED_KEY),
     writeLocal: (set) => persistBulkKeySet(BULK_COL_STARRED_KEY, set),
+    hasLocal: () => lsHas(BULK_COL_STARRED_KEY),
     toRemote: SET_PREF.toRemote,
     fromRemote: SET_PREF.fromRemote,
   });
@@ -829,6 +833,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     tableId: BULK_PREFS_TABLE_ID, field: 'removed', settings, updateSettings,
     readLocal: () => loadBulkKeySet(BULK_COL_REMOVED_KEY),
     writeLocal: (set) => persistBulkKeySet(BULK_COL_REMOVED_KEY, set),
+    hasLocal: () => lsHas(BULK_COL_REMOVED_KEY),
     toRemote: SET_PREF.toRemote,
     fromRemote: SET_PREF.fromRemote,
   });
@@ -837,6 +842,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     tableId: BULK_PREFS_TABLE_ID, field: 'order', settings, updateSettings,
     readLocal: loadBulkColOrder,
     writeLocal: persistBulkColOrder,
+    hasLocal: () => lsHas(BULK_COL_ORDER_KEY),
     fromRemote: (a) => (Array.isArray(a) ? a : []),
   });
   const orderedBulkCols = useMemo(() => orderBulkCols(bulkColOrder), [bulkColOrder]);
@@ -4497,6 +4503,8 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
         <BulkCompaniesModal
           companies={batchCompanies}
           rowCount={rows.length}
+          settings={settings}
+          updateSettings={updateSettings}
           onClose={() => setCompaniesOpen(false)}
           onOpenCompany={onSelectProspect ? (p) => { setCompaniesOpen(false); onSelectProspect(p); } : null}
           onRemoveContacts={removeRows}

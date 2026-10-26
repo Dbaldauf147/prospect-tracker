@@ -272,6 +272,106 @@ if (typeof window !== 'undefined') {
   });
 }
 
+// ── Uploading layouts that only this browser has ─────────────────────────
+//
+// A layout saved before its table synced, or simply not touched since,
+// exists in localStorage and nowhere else: each table only writes the
+// remote copy when it changes. Clearing site data would lose it. This sweep
+// runs once per sign-in and uploads every such layout the account doesn't
+// already hold, for every table using the standard key names (the shared
+// DataTable, useTableColumnPrefs, and the main Table view's own unsuffixed
+// names), whether or not that table is opened this session.
+//
+// Only what was actually saved goes up. A kind the account already has is
+// left alone: the account is the copy that knows what the other machine did.
+
+/** Does this browser hold a saved value under `key`? For `hasLocal`. */
+export function lsHas(key) {
+  try { return localStorage.getItem(key) !== null; } catch { return false; }
+}
+
+const SWEEP_KINDS = ['widths', 'names', 'order', 'removed', 'hidden', 'starred', 'visible'];
+const MAP_KINDS = new Set(['widths', 'names']);
+const STANDARD_KEY = /^prospect-col-(widths|names|order|removed|hidden|starred|visible)-(.+)$/;
+
+// The main Table view predates the per-table names (see TableView's
+// COL_PREF_KEYS); its layout is 'table-view' in settings.tablePrefs.
+const UNSUFFIXED_TABLE_ID = 'table-view';
+const UNSUFFIXED_KEY = /^prospect-col-(widths|names|order|removed|hidden|starred|visible)$/;
+
+function sweepValue(kind, raw) {
+  let v;
+  try { v = JSON.parse(raw); } catch { return undefined; }
+  if (MAP_KINDS.has(kind)) {
+    return (v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length) ? v : undefined;
+  }
+  if (!Array.isArray(v)) return undefined;
+  // An empty visible list reads as "no preference" everywhere (see
+  // loadColVisibleRaw), so it isn't one worth uploading. An empty hidden
+  // list IS one: it says the user has chosen to show everything.
+  if (kind === 'visible' && v.length === 0) return undefined;
+  if (kind !== 'hidden' && v.length === 0) return undefined;
+  return v;
+}
+
+/**
+ * Every standard-named layout in `storage` that settings.tablePrefs lacks,
+ * as { [tableId]: patch } ready for persistTablePrefs.
+ *
+ * Skipped: the legacy per-column-lineup ids (`<table>:<col>|<col>|…`),
+ * which DataTable adopts from locally on its own and which would otherwise
+ * fill the settings document with dead entries; and `visible` wherever the
+ * table has a hidden list on either side, since hidden supersedes it.
+ */
+export function localOnlyTablePrefs(settings, storage = globalThis.localStorage) {
+  const out = {};
+  if (!storage) return out;
+  const remoteAll = settings?.tablePrefs || {};
+  let count = 0;
+  try { count = storage.length; } catch { return out; }
+  const found = {};
+  for (let i = 0; i < count; i++) {
+    let key;
+    try { key = storage.key(i); } catch { continue; }
+    if (!key) continue;
+    let kind;
+    let tableId;
+    const m = STANDARD_KEY.exec(key);
+    if (m) { [, kind, tableId] = m; } else {
+      const u = UNSUFFIXED_KEY.exec(key);
+      if (!u) continue;
+      [, kind] = u;
+      tableId = UNSUFFIXED_TABLE_ID;
+    }
+    if (tableId.includes('|')) continue;
+    let raw;
+    try { raw = storage.getItem(key); } catch { continue; }
+    const value = sweepValue(kind, raw);
+    if (value === undefined) continue;
+    (found[tableId] ||= {})[kind] = value;
+  }
+  for (const [tableId, local] of Object.entries(found)) {
+    const remote = remoteAll[tableId] || {};
+    const patch = {};
+    for (const kind of SWEEP_KINDS) {
+      if (local[kind] === undefined || remote[kind] !== undefined) continue;
+      if (kind === 'visible' && (local.hidden !== undefined || remote.hidden !== undefined)) continue;
+      patch[kind] = local[kind];
+    }
+    if (Object.keys(patch).length) out[tableId] = patch;
+  }
+  return out;
+}
+
+/** Upload every local-only layout (see above). Returns how many tables. */
+export function seedTablePrefsFromLocal(settings, updateSettings) {
+  if (!settings || !updateSettings) return 0;
+  const byTable = localOnlyTablePrefs(settings);
+  const ids = Object.keys(byTable);
+  for (const tableId of ids) persistTablePrefs(null, tableId, settings, updateSettings, byTable[tableId]);
+  return ids.length;
+}
+
 /**
  * Is what's stored remotely the same as what this table is showing?
  *

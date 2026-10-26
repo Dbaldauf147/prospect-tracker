@@ -22,7 +22,7 @@ const {
   tablePrefsKeys, persistTablePrefs, flushTablePrefs, readRemoteTablePrefs, settingsHaveLoaded,
   sameStoredValue, SET_PREF,
   loadColWidths, loadColHidden, loadColStarred, loadColOrder, loadColRemoved, loadColVisibleRaw,
-  encodeRemoteMap, decodeRemoteMap,
+  encodeRemoteMap, decodeRemoteMap, localOnlyTablePrefs, seedTablePrefsFromLocal, lsHas,
 } = await import('../src/utils/tablePrefsSync.js');
 
 let passed = 0, failed = 0;
@@ -185,6 +185,77 @@ persistTablePrefs(null, 'pe-portfolio', s7.settings, s7.updateSettings, { filter
 flushTablePrefs();
 eq(s7.calls[0].tablePrefs['pe-portfolio'].filters, {},
   'clearing every filter is written as an empty map, so the other machine clears too');
+
+// ── uploading layouts only this browser has ──────────────────────────────
+// A layout that predates its table syncing exists locally and nowhere else
+// until the user changes it, so clearing site data would lose it. The sweep
+// at sign-in sends it up, but only what was actually saved, and never over
+// what the account already holds.
+
+// A storage with the length/key() enumeration the sweep walks.
+function fakeStorage(entries) {
+  const m = new Map(Object.entries(entries));
+  return {
+    get length() { return m.size; },
+    key: (i) => [...m.keys()][i] ?? null,
+    getItem: (k) => (m.has(k) ? m.get(k) : null),
+  };
+}
+{
+  const storage = fakeStorage({
+    'prospect-col-widths-deals': JSON.stringify({ company: 200 }),
+    'prospect-col-hidden-deals': JSON.stringify(['notes']),
+    'prospect-col-visible-deals': JSON.stringify(['company']),     // superseded by hidden
+    'prospect-col-starred-sites': JSON.stringify(['name']),
+    'prospect-col-widths-sites': JSON.stringify({ name: 120 }),    // account already has widths
+    'prospect-col-order-empty': JSON.stringify([]),                // nothing saved worth sending
+    'prospect-col-visible-blank': JSON.stringify([]),
+    'prospect-col-hidden-cleared': JSON.stringify([]),             // "show everything" is a choice
+    'prospect-col-widths': JSON.stringify({ company: 300 }),       // the main Table view's own names
+    'prospect-col-chosen-deals': JSON.stringify(['notes']),        // per-machine by design
+    'prospect-col-widths-deals:company|notes': JSON.stringify({ a: 1 }), // legacy lineup bucket
+    'prospect-col-names-broken': '{not json',
+    'unrelated-key': '1',
+  });
+  const settings = { _lastWriteAt: 1, tablePrefs: { sites: { widths: { name: 90 } } } };
+  const out = localOnlyTablePrefs(settings, storage);
+  eq(out.deals, { widths: { company: 200 }, hidden: ['notes'] },
+    'a local-only layout is found, and hidden wins over the old visible list');
+  eq(out.sites, { starred: ['name'] }, 'what the account already has is left alone');
+  eq(out['table-view'], { widths: { company: 300 } }, "the main Table view's unsuffixed keys count");
+  eq(out.cleared, { hidden: [] }, 'an empty hidden list is a choice, so it goes up');
+  ok(!out.empty && !out.blank, 'an empty order or visible list is no preference, so it stays');
+  ok(!Object.keys(out).some(k => k.includes('|')), 'legacy per-lineup buckets are not uploaded');
+  ok(!out.broken, 'an unreadable value is skipped rather than crashing the sweep');
+  ok(!JSON.stringify(out).includes('chosen'), 'the per-machine chosen flags stay local');
+
+  const remoteHidden = localOnlyTablePrefs(
+    { _lastWriteAt: 1, tablePrefs: { deals: { hidden: ['x'] } } },
+    fakeStorage({ 'prospect-col-visible-deals': JSON.stringify(['company']) }),
+  );
+  eq(remoteHidden, {}, 'nor is a visible list sent to a table the account has a hidden list for');
+}
+{
+  // The upload itself: one coalesced write carrying every table, layered
+  // onto what the account already had.
+  const realStorage = globalThis.localStorage;
+  globalThis.localStorage = fakeStorage({
+    'prospect-col-widths-deals': JSON.stringify({ company: 200 }),
+    'prospect-col-starred-sites': JSON.stringify(['name']),
+  });
+  const s8 = fakeSettings({ sites: { widths: { name: 90 } } });
+  eq(seedTablePrefsFromLocal(s8.settings, s8.updateSettings), 2, 'the sweep reports how many tables it sent');
+  flushTablePrefs();
+  eq(s8.calls.length, 1, 'as one settings write');
+  eq(s8.calls[0].tablePrefs.deals, { widths: { company: 200 } }, 'carrying the local-only table');
+  eq(s8.calls[0].tablePrefs.sites, { widths: { name: 90 }, starred: ['name'] },
+    'and merging into the entry the account already had');
+  const s9 = fakeSettings({ deals: { widths: { company: 1 } }, sites: { starred: [] } });
+  eq(seedTablePrefsFromLocal(s9.settings, s9.updateSettings), 0, 'nothing to send, nothing sent');
+  eq(seedTablePrefsFromLocal(null, s9.updateSettings), 0, 'and no settings, no sweep');
+  ok(lsHas('prospect-col-widths-deals') && !lsHas('nope'), 'lsHas tells a saved key from a missing one');
+  globalThis.localStorage = realStorage;
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

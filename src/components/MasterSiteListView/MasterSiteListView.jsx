@@ -7,7 +7,7 @@ import { lookupUtilityForZip } from '../../utils/utilityClassify';
 import { lookupIsoForZip, backfillIso } from '../../utils/isoLookup';
 import { buildCompanyIndex, hasMatchInIndex } from '../../utils/companyIndex';
 import { Badge } from '../common/Badge';
-import { userLsGet, userLsSet } from '../../utils/userLs';
+import { userLsGet, userLsSet, userLsHas } from '../../utils/userLs';
 import {
   MASTER_FIELDS,
   CANONICAL_HEADERS,
@@ -363,11 +363,13 @@ export function MasterSiteListView({ prospects = [], settings, updateSettings })
     tableId: PREFS_TABLE_ID, field: 'widths', settings, updateSettings,
     readLocal: () => readJsonLs(WIDTHS_LS_KEY, {}),
     writeLocal: (w) => userLsSet(WIDTHS_LS_KEY, JSON.stringify(w)),
+    hasLocal: () => userLsHas(WIDTHS_LS_KEY),
   });
   const [hiddenCols, setHiddenCols] = useSyncedTablePref({
     tableId: PREFS_TABLE_ID, field: 'hidden', settings, updateSettings,
     readLocal: () => new Set(readJsonLs(HIDDEN_LS_KEY, [])),
     writeLocal: (set) => userLsSet(HIDDEN_LS_KEY, JSON.stringify([...set])),
+    hasLocal: () => userLsHas(HIDDEN_LS_KEY),
     ...SET_PREF,
   });
   const [showColMenu, setShowColMenu] = useState(false);

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { sanitizeExcelWorkbook } from '../../utils/exportSanitize.js';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
+import { lsHas, readRemoteTablePrefs } from '../../utils/tablePrefsSync';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOpps2Cache, loadOpps2FromFirestore, setOppField } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
@@ -365,6 +366,24 @@ function asFilterMap(v) {
   return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
 }
 
+// What the PE Opps tab's column chooser is called in settings.tablePrefs.
+const PE_OPPS_PREFS_TABLE_ID = 'pe-opps';
+
+// A saved visible-column list, from either copy, made safe to draw. The
+// stars go in with it, which is what makes them durable: whatever the last
+// session hid, a starred column is on the table when it opens. And the four
+// one-per-stage tick columns (discovery / piloting / existingPartnership /
+// notSold) are now the single peStage column: anyone who had any of them
+// showing gets the combined one, and the retired keys are dropped so the
+// "n/m" count and the saved width map don't keep carrying them.
+const RETIRED_STAGE_COLS = ['discovery', 'piloting', 'existingPartnership', 'notSold'];
+function normalizePeVisible(saved, starred = []) {
+  const next = new Set([...saved, ...starred, 'company']);
+  if (RETIRED_STAGE_COLS.some(k => next.has(k))) next.add('peStage');
+  for (const k of RETIRED_STAGE_COLS) next.delete(k);
+  return next;
+}
+
 export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonMap = {}, onUpdateProspect, onAddProspect, settings, updateSettings, cdmName = '' }) {
   const { user } = useAuth();
   const [subtab, setSubtab] = useState('portfolio');
@@ -409,6 +428,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     },
     writeLocal: (f) => localStorage.setItem('pe-portfolio:col-filters', JSON.stringify(f)),
     fromRemote: asFilterMap,
+    hasLocal: () => lsHas('pe-portfolio:col-filters'),
   });
   const [hubspotCache, setHubspotCacheState] = useState(null);
   useEffect(() => {
@@ -425,11 +445,19 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
   // company is sticky and always shown — every other column is opt-in, and
   // a starred one is opt-in that stays in (see starredCols below).
   const ALL_COL_KEYS = ['company', 'cdm', 'status', 'peAum', 'geography', 'tier', 'frameworks', 'dm', 'met', 'mapping', 'pcDownload', 'ratio', 'topPc', 'topPcAnalysis', 'topPcStatus', 'clients', 'keyContacts', 'caseStudy', 'peStage', 'newsFeed'];
-  const [colWidths, setColWidths] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
-      return { ...DEFAULT_COL_WIDTHS, ...saved };
-    } catch { return DEFAULT_COL_WIDTHS; }
+  // Synced through settings.tablePrefs like the sort and filters, so a
+  // dragged width follows the user to their other machine.
+  const [colWidths, setColWidths] = useSyncedTablePref({
+    tableId: PE_PORTFOLIO_PREFS_TABLE_ID, field: 'widths', settings, updateSettings,
+    readLocal: () => {
+      try {
+        const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
+        return { ...DEFAULT_COL_WIDTHS, ...saved };
+      } catch { return DEFAULT_COL_WIDTHS; }
+    },
+    writeLocal: (w) => localStorage.setItem('pe-portfolio:col-widths', JSON.stringify(w)),
+    fromRemote: (w) => ({ ...DEFAULT_COL_WIDTHS, ...asFilterMap(w) }),
+    hasLocal: () => lsHas('pe-portfolio:col-widths'),
   });
   // Column and direction travel as one { dir, key } so a click that changes
   // both is one synced change, not two that can land out of step.
@@ -448,6 +476,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
       localStorage.setItem('pe-portfolio:sort-dir', v.dir);
     },
     fromRemote: asPeSort,
+    hasLocal: () => lsHas('pe-portfolio:sort-key'),
   });
   const sortKey = sort.key;
   const sortDir = sort.dir;
@@ -467,102 +496,117 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
   // something. `company` is the firm's name and is sticky whether or not
   // anybody stars it, so it is left out of this set entirely rather than
   // being a star the user can't remove.
-  const [starredCols, setStarredCols] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('pe-portfolio:starred-cols'));
-      return new Set(Array.isArray(saved) ? saved.filter(k => k !== 'company') : []);
-    } catch { return new Set(); }
-  });
-  const [visibleCols, setVisibleCols] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('pe-portfolio:visible-cols'));
-      // Read here rather than off the state above: both initialisers run on
-      // the same first render, and one piece of useState cannot see
-      // another's value.
-      let starred = [];
+  //
+  // Both sets sync through settings.tablePrefs, so the columns follow the
+  // user to their other machine; localStorage still draws the first paint.
+  const asStarred = (a) => new Set(Array.isArray(a) ? a.filter(k => k !== 'company') : []);
+  const [starredCols, setStarredCols] = useSyncedTablePref({
+    tableId: PE_PORTFOLIO_PREFS_TABLE_ID, field: 'starred', settings, updateSettings,
+    readLocal: () => {
       try {
-        const raw = JSON.parse(localStorage.getItem('pe-portfolio:starred-cols'));
-        if (Array.isArray(raw)) starred = raw;
-      } catch { /* no stars saved */ }
-      if (Array.isArray(saved)) {
-        // The stars go in with the saved set, which is what makes them
-        // durable: whatever the last session hid, a starred column is on
-        // the table when it opens.
-        const next = new Set([...saved, ...starred, 'company']);
-        // The four one-per-stage tick columns (discovery / piloting /
-        // existingPartnership / notSold) are now the single peStage
-        // column. Anyone who had any of them showing gets the combined
-        // one; the retired keys are dropped below so the "n/m" count and
-        // the saved width map don't keep carrying them.
-        const RETIRED_STAGE_COLS = ['discovery', 'piloting', 'existingPartnership', 'notSold'];
-        if (RETIRED_STAGE_COLS.some(k => next.has(k))) next.add('peStage');
-        for (const k of RETIRED_STAGE_COLS) next.delete(k);
-        // …and for a saved set old enough to predate the tick columns
-        // entirely, reveal the combined one once.
-        if (!localStorage.getItem('pe-portfolio:cols-pe-stage-combined')) {
-          next.add('peStage');
-          try { localStorage.setItem('pe-portfolio:cols-pe-stage-combined', '1'); } catch {}
+        return asStarred(JSON.parse(localStorage.getItem('pe-portfolio:starred-cols')));
+      } catch { return new Set(); }
+    },
+    writeLocal: (set) => localStorage.setItem('pe-portfolio:starred-cols', JSON.stringify([...set])),
+    toRemote: (set) => [...set],
+    fromRemote: asStarred,
+    hasLocal: () => lsHas('pe-portfolio:starred-cols'),
+  });
+  const [visibleCols, setVisibleCols] = useSyncedTablePref({
+    tableId: PE_PORTFOLIO_PREFS_TABLE_ID, field: 'visible', settings, updateSettings,
+    writeLocal: (set) => localStorage.setItem('pe-portfolio:visible-cols', JSON.stringify([...set])),
+    toRemote: (set) => [...set],
+    // The account's copy gets the same stars-in, stage-columns-merged
+    // treatment as the local one. The one-time reveals below don't apply:
+    // they ran on whichever machine saved this set, before it was saved.
+    fromRemote: (a) => (Array.isArray(a)
+      ? normalizePeVisible(a, [
+        ...(readRemoteTablePrefs(settings, PE_PORTFOLIO_PREFS_TABLE_ID)?.starred || []),
+        ...starredCols,
+      ])
+      : new Set(ALL_COL_KEYS)),
+    hasLocal: () => lsHas('pe-portfolio:visible-cols'),
+    readLocal: () => {
+      try {
+        const saved = JSON.parse(localStorage.getItem('pe-portfolio:visible-cols'));
+        // Read here rather than off the state above: both initialisers run on
+        // the same first render, and one piece of useState cannot see
+        // another's value.
+        let starred = [];
+        try {
+          const raw = JSON.parse(localStorage.getItem('pe-portfolio:starred-cols'));
+          if (Array.isArray(raw)) starred = raw;
+        } catch { /* no stars saved */ }
+        if (Array.isArray(saved)) {
+          // Stars in, retired stage columns merged (see normalizePeVisible).
+          const next = normalizePeVisible(saved, starred);
+          // …and for a saved set old enough to predate the tick columns
+          // entirely, reveal the combined one once.
+          if (!localStorage.getItem('pe-portfolio:cols-pe-stage-combined')) {
+            next.add('peStage');
+            try { localStorage.setItem('pe-portfolio:cols-pe-stage-combined', '1'); } catch {}
+          }
+          // One-time migration: reveal the PC Download column for users
+          // whose saved set predates it.
+          if (!localStorage.getItem('pe-portfolio:cols-pc-download')) {
+            next.add('pcDownload');
+            try { localStorage.setItem('pe-portfolio:cols-pc-download', '1'); } catch {}
+          }
+          // One-time migration: reveal the News Feed column for users whose
+          // saved set predates it.
+          if (!localStorage.getItem('pe-portfolio:cols-news-feed')) {
+            next.add('newsFeed');
+            try { localStorage.setItem('pe-portfolio:cols-news-feed', '1'); } catch {}
+          }
+          // One-time migration: reveal the Top PC column for users whose
+          // saved set predates it.
+          if (!localStorage.getItem('pe-portfolio:cols-top-pc')) {
+            next.add('topPc');
+            try { localStorage.setItem('pe-portfolio:cols-top-pc', '1'); } catch {}
+          }
+          // One-time migration: reveal the Top PC Status column for users
+          // whose saved set predates it.
+          if (!localStorage.getItem('pe-portfolio:cols-top-pc-status')) {
+            next.add('topPcStatus');
+            try { localStorage.setItem('pe-portfolio:cols-top-pc-status', '1'); } catch {}
+          }
+          // One-time migration: reveal the CDM column for users whose saved
+          // set predates it. A column somebody asked for that arrives hidden
+          // behind the Columns menu is a column they will report as missing.
+          if (!localStorage.getItem('pe-portfolio:cols-cdm')) {
+            next.add('cdm');
+            try { localStorage.setItem('pe-portfolio:cols-cdm', '1'); } catch {}
+          }
+          // One-time migration: reveal the Top PC Analysis column for users
+          // whose saved set predates it.
+          if (!localStorage.getItem('pe-portfolio:cols-top-pc-analysis')) {
+            next.add('topPcAnalysis');
+            try { localStorage.setItem('pe-portfolio:cols-top-pc-analysis', '1'); } catch {}
+          }
+          // One-time migration: reveal the Status column for users whose
+          // saved set predates it. The last of these - a column starred from
+          // now on comes back on its own.
+          if (!localStorage.getItem('pe-portfolio:cols-status')) {
+            next.add('status');
+            try { localStorage.setItem('pe-portfolio:cols-status', '1'); } catch { /* ignore */ }
+          }
+          // One-time migration: reveal the Tier column (asked for by name)
+          // for users whose saved set predates it.
+          if (!localStorage.getItem('pe-portfolio:cols-tier')) {
+            next.add('tier');
+            try { localStorage.setItem('pe-portfolio:cols-tier', '1'); } catch { /* ignore */ }
+          }
+          // One-time migration: reveal the Frameworks column (asked for by
+          // name) for users whose saved set predates it.
+          if (!localStorage.getItem('pe-portfolio:cols-frameworks')) {
+            next.add('frameworks');
+            try { localStorage.setItem('pe-portfolio:cols-frameworks', '1'); } catch { /* ignore */ }
+          }
+          return next;
         }
-        // One-time migration: reveal the PC Download column for users
-        // whose saved set predates it.
-        if (!localStorage.getItem('pe-portfolio:cols-pc-download')) {
-          next.add('pcDownload');
-          try { localStorage.setItem('pe-portfolio:cols-pc-download', '1'); } catch {}
-        }
-        // One-time migration: reveal the News Feed column for users whose
-        // saved set predates it.
-        if (!localStorage.getItem('pe-portfolio:cols-news-feed')) {
-          next.add('newsFeed');
-          try { localStorage.setItem('pe-portfolio:cols-news-feed', '1'); } catch {}
-        }
-        // One-time migration: reveal the Top PC column for users whose
-        // saved set predates it.
-        if (!localStorage.getItem('pe-portfolio:cols-top-pc')) {
-          next.add('topPc');
-          try { localStorage.setItem('pe-portfolio:cols-top-pc', '1'); } catch {}
-        }
-        // One-time migration: reveal the Top PC Status column for users
-        // whose saved set predates it.
-        if (!localStorage.getItem('pe-portfolio:cols-top-pc-status')) {
-          next.add('topPcStatus');
-          try { localStorage.setItem('pe-portfolio:cols-top-pc-status', '1'); } catch {}
-        }
-        // One-time migration: reveal the CDM column for users whose saved
-        // set predates it. A column somebody asked for that arrives hidden
-        // behind the Columns menu is a column they will report as missing.
-        if (!localStorage.getItem('pe-portfolio:cols-cdm')) {
-          next.add('cdm');
-          try { localStorage.setItem('pe-portfolio:cols-cdm', '1'); } catch {}
-        }
-        // One-time migration: reveal the Top PC Analysis column for users
-        // whose saved set predates it.
-        if (!localStorage.getItem('pe-portfolio:cols-top-pc-analysis')) {
-          next.add('topPcAnalysis');
-          try { localStorage.setItem('pe-portfolio:cols-top-pc-analysis', '1'); } catch {}
-        }
-        // One-time migration: reveal the Status column for users whose
-        // saved set predates it. The last of these - a column starred from
-        // now on comes back on its own.
-        if (!localStorage.getItem('pe-portfolio:cols-status')) {
-          next.add('status');
-          try { localStorage.setItem('pe-portfolio:cols-status', '1'); } catch { /* ignore */ }
-        }
-        // One-time migration: reveal the Tier column (asked for by name)
-        // for users whose saved set predates it.
-        if (!localStorage.getItem('pe-portfolio:cols-tier')) {
-          next.add('tier');
-          try { localStorage.setItem('pe-portfolio:cols-tier', '1'); } catch { /* ignore */ }
-        }
-        // One-time migration: reveal the Frameworks column (asked for by
-        // name) for users whose saved set predates it.
-        if (!localStorage.getItem('pe-portfolio:cols-frameworks')) {
-          next.add('frameworks');
-          try { localStorage.setItem('pe-portfolio:cols-frameworks', '1'); } catch { /* ignore */ }
-        }
-        return next;
-      }
-    } catch {}
-    return new Set(ALL_COL_KEYS);
+      } catch {}
+      return new Set(ALL_COL_KEYS);
+    },
   });
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const colMenuRef = useRef(null);
@@ -601,15 +645,6 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
   useEffect(() => {
     try { localStorage.setItem('pe-portfolio:pe-firm', peFirm); } catch {}
   }, [peFirm]);
-  useEffect(() => {
-    try { localStorage.setItem('pe-portfolio:col-widths', JSON.stringify(colWidths)); } catch {}
-  }, [colWidths]);
-  useEffect(() => {
-    try { localStorage.setItem('pe-portfolio:visible-cols', JSON.stringify([...visibleCols])); } catch {}
-  }, [visibleCols]);
-  useEffect(() => {
-    try { localStorage.setItem('pe-portfolio:starred-cols', JSON.stringify([...starredCols])); } catch { /* ignore */ }
-  }, [starredCols]);
   const resizingRef = useRef(null);
   function startResize(colKey, e) {
     e.preventDefault();
@@ -1691,6 +1726,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           onSelectProspect={onSelectProspect}
           onEditField={updateOppField}
           user={user}
+          settings={settings}
+          updateSettings={updateSettings}
         />
       ) : subtab === 'blackstoneOpps' ? (
         // Same PE Opps tab, hard-scoped to Blackstone. Omitting setFirm
@@ -1707,6 +1744,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           onSelectProspect={onSelectProspect}
           onEditField={updateOppField}
           user={user}
+          settings={settings}
+          updateSettings={updateSettings}
         />
       ) : subtab === 'stages' ? (
         <PEStagesTab
@@ -4713,7 +4752,7 @@ function EditableCell({ value, align, onCommit }) {
 // Opps 2 store — anything with Type = "Private Equity" or Source =
 // "PE partner". Rows link back to the matching prospect when one
 // exists so the user can jump into the company popup.
-function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmOptions = [], oppsMissing, prospects, onSelectProspect, onEditField, user }) {
+function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmOptions = [], oppsMissing, prospects, onSelectProspect, onEditField, user, settings, updateSettings }) {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const firmLabel = firm.trim();
   const ALL_COLUMNS = [
@@ -4738,16 +4777,22 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, firm = '', setFirm, firmO
   // Column chooser — drives both the on-screen table and the export.
   // Account always stays on (it's the row anchor). Persisted so the
   // chosen layout survives reloads.
-  const [visibleCols, setVisibleCols] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('pe-opps:visible-cols'));
-      if (Array.isArray(saved)) return new Set([...saved, 'Account']);
-    } catch { /* fall through to default */ }
-    return new Set(ALL_KEYS);
+  // Synced through settings.tablePrefs, so it follows the user to their
+  // other machine. The PE and Blackstone tabs share it, as they always have.
+  const [visibleCols, setVisibleCols] = useSyncedTablePref({
+    tableId: PE_OPPS_PREFS_TABLE_ID, field: 'visible', settings, updateSettings,
+    readLocal: () => {
+      try {
+        const saved = JSON.parse(localStorage.getItem('pe-opps:visible-cols'));
+        if (Array.isArray(saved)) return new Set([...saved, 'Account']);
+      } catch { /* fall through to default */ }
+      return new Set(ALL_KEYS);
+    },
+    writeLocal: (set) => localStorage.setItem('pe-opps:visible-cols', JSON.stringify([...set])),
+    toRemote: (set) => [...set],
+    fromRemote: (a) => (Array.isArray(a) ? new Set([...a, 'Account']) : new Set(ALL_KEYS)),
+    hasLocal: () => lsHas('pe-opps:visible-cols'),
   });
-  useEffect(() => {
-    try { localStorage.setItem('pe-opps:visible-cols', JSON.stringify([...visibleCols])); } catch { /* ignore */ }
-  }, [visibleCols]);
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const colMenuRef = useRef(null);
   useEffect(() => {

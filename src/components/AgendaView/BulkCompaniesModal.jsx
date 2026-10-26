@@ -8,6 +8,8 @@
 // next to the grid.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { STATUS_COLORS } from '../../data/enums';
+import { useSyncedTablePref, SET_PREF } from '../../hooks/useSyncedTablePref';
+import { lsHas } from '../../utils/tablePrefsSync';
 import { cellMatches, collectSuggestions, BLANKS_FILTER, NON_BLANKS_FILTER } from '../../utils/columnFilter';
 
 const COLS = [
@@ -19,6 +21,11 @@ const COLS = [
 ];
 const WIDTHS_KEY = 'bulk-companies-col-widths';
 const HIDDEN_KEY = 'bulk-companies-col-hidden';
+// What this table's layout is called in settings.tablePrefs, so the widths
+// and hidden columns follow the user to another machine. The local keys
+// above still draw the first paint.
+const PREFS_TABLE_ID = 'bulk-companies';
+const asWidthMap = (m) => (m && typeof m === 'object' && !Array.isArray(m) ? m : {});
 const SELECT_W = 36;
 
 function loadJson(key, fallback) {
@@ -194,9 +201,21 @@ function CompanyContactsModal({ company, statusOf, onClose, onRemove }) {
   );
 }
 
-export function BulkCompaniesModal({ companies, rowCount, onClose, onOpenCompany, onRemoveContacts, statusOf }) {
-  const [widths, setWidths] = useState(() => loadJson(WIDTHS_KEY, {}));
-  const [hidden, setHidden] = useState(() => new Set(loadJson(HIDDEN_KEY, [])));
+export function BulkCompaniesModal({ companies, rowCount, onClose, onOpenCompany, onRemoveContacts, statusOf, settings = null, updateSettings = null }) {
+  const [widths, setWidths] = useSyncedTablePref({
+    tableId: PREFS_TABLE_ID, field: 'widths', settings, updateSettings,
+    readLocal: () => asWidthMap(loadJson(WIDTHS_KEY, {})),
+    writeLocal: (w) => saveJson(WIDTHS_KEY, w),
+    hasLocal: () => lsHas(WIDTHS_KEY),
+    fromRemote: asWidthMap,
+  });
+  const [hidden, setHidden] = useSyncedTablePref({
+    tableId: PREFS_TABLE_ID, field: 'hidden', settings, updateSettings,
+    readLocal: () => { const v = loadJson(HIDDEN_KEY, []); return new Set(Array.isArray(v) ? v : []); },
+    writeLocal: (set) => saveJson(HIDDEN_KEY, [...set]),
+    hasLocal: () => lsHas(HIDDEN_KEY),
+    ...SET_PREF,
+  });
   const [filters, setFilters] = useState({});
   const [selected, setSelected] = useState(() => new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -205,9 +224,6 @@ export function BulkCompaniesModal({ companies, rowCount, onClose, onOpenCompany
   const [drillKey, setDrillKey] = useState(null);
   const drillCompany = drillKey ? companies.find(c => c.key === drillKey) : null;
   const pickerRef = useRef(null);
-
-  useEffect(() => { saveJson(WIDTHS_KEY, widths); }, [widths]);
-  useEffect(() => { saveJson(HIDDEN_KEY, [...hidden]); }, [hidden]);
 
   useEffect(() => {
     // With a company's contacts open on top, Escape steps back to the

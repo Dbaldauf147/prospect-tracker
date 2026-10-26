@@ -79,10 +79,6 @@ const LOCAL_BY_DESIGN = {
     + 'It is a pointer at a list that can be rebuilt in a click from the step that made it, '
     + 'and the audit itself reads from HubSpot rather than from anything kept here.',
 
-  // Per-browser view preferences. Cheap to redo, and arguably SHOULD differ
-  // between a laptop and an external monitor.
-  'stageTableColumns.js': 'per-browser column layout',
-
   // Not a store: helpers that write through to other stores' keys.
   'companyRenameCascade.js': 'rename helper - writes through the stores it cascades into',
   'fullBackup.js': 'IS the export/restore path - it reads and writes every other store by definition',

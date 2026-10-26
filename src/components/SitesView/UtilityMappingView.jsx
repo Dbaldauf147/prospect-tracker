@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
+import { lsHas } from '../../utils/tablePrefsSync';
 import * as XLSX from 'xlsx';
 import {
   saveList as saveListToIDB,
@@ -107,12 +108,14 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
     tableId: PREFS_TABLE_ID, field: 'widths', settings, updateSettings,
     readLocal: () => loadColPref(COL_WIDTHS_KEY, DEFAULT_COL_WIDTHS),
     writeLocal: (w) => { try { localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(w)); } catch { /* ignore */ } },
+    hasLocal: () => lsHas(COL_WIDTHS_KEY),
     fromRemote: (w) => ({ ...DEFAULT_COL_WIDTHS, ...(w || {}) }),
   });
   const [colVisible, setColVisible] = useSyncedTablePref({
     tableId: PREFS_TABLE_ID, field: 'visible', settings, updateSettings,
     readLocal: () => loadColPref(COL_VISIBLE_KEY, DEFAULT_COL_VISIBLE),
     writeLocal: (v) => { try { localStorage.setItem(COL_VISIBLE_KEY, JSON.stringify(v)); } catch { /* ignore */ } },
+    hasLocal: () => lsHas(COL_VISIBLE_KEY),
     fromRemote: (v) => ({ ...DEFAULT_COL_VISIBLE, ...(v || {}) }),
   });
   const [colSearch, setColSearch] = useState({}); // key -> query string

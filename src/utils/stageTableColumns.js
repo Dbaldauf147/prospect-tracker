@@ -12,14 +12,27 @@
 // you open the tab, and nobody wants a Firestore write per pixel of a drag.
 // So they live in user-scoped localStorage, keyed by format, with a change
 // event so every open timeline card re-reads at once.
+//
+// They also follow the user to their other machine, and survive a "clear
+// site data", through the Firestore mirror (utils/localMirrorSync): every
+// save queues a debounced push, so a drag is still one write rather than one
+// per pixel. They can't sit in settings.tablePrefs with the other tables'
+// layouts because nothing that saves them has the settings in scope. The
+// mirror's hydration at sign-in fires STAGE_TABLE_LAYOUT_EVENT, which is the
+// event the open cards already re-read on.
 
-import { userLsGet, userLsSet } from './userLs';
+// Extensions spelled out so this module loads under plain Node, where the
+// mirror force-imports it during hydration.
+import { userLsGet, userLsSet } from './userLs.js';
+import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 
 const STORAGE_KEY = 'timeline-stage-table-layout';
 // Fired in-tab whenever the layout changes, so other mounted stage tables
 // pick it up without a reload. Cross-tab updates ride the native `storage`
 // event, same as the other small stores.
 export const STAGE_TABLE_LAYOUT_EVENT = 'stage-table-layout-updated';
+
+registerMirroredKey(STORAGE_KEY, STAGE_TABLE_LAYOUT_EVENT);
 
 export const MIN_COLUMN_WIDTH = 44;
 export const MAX_COLUMN_WIDTH = 900;
@@ -165,6 +178,7 @@ export function saveStageTableLayout(format, { hidden, widths }) {
   };
   try {
     userLsSet(STORAGE_KEY, JSON.stringify(all));
+    queueMirrorPush(STORAGE_KEY);
   } catch (err) {
     console.warn('Saving stage table layout failed', err);
     return false;

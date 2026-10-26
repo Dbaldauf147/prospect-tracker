@@ -12,6 +12,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '../../utils/apiFetch';
+import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
 import { planTagEdit } from '../../utils/contactTagReview';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { attendeeFromContact, cleanText, contactDisplayName } from '../../utils/eventsStore';
@@ -1078,75 +1079,120 @@ function LookupMappingModal({ grid, onCancel, onConfirm }) {
 }
 
 // ---- Configurable / resizable table columns ----------------------
-// Column visibility + widths are personal display prefs, so they live in
-// localStorage (keyed per table) rather than the synced Firestore event
-// settings - same approach the Key Contacts table uses.
+// Column visibility, widths and order are personal display prefs. They are
+// kept in localStorage (keyed per table) for the first paint, and saved to
+// the account through settings.tablePrefs (`events-<table>`) so they follow
+// the user to another machine and survive clearing site data. They stay out
+// of the synced event settings themselves, which are shared data.
 const LS_PREFIX = 'events-view';
 function colsLsGet(key) { try { return localStorage.getItem(`${LS_PREFIX}:${key}`); } catch { return null; } }
 function colsLsSet(key, val) { try { localStorage.setItem(`${LS_PREFIX}:${key}`, val); } catch { /* ignore */ } }
+function colsLsJson(key) { try { return JSON.parse(colsLsGet(key)); } catch { return null; } }
+// A saved value worth uploading, as opposed to nothing or a reset order ('').
+function colsLsSaved(key) {
+  const v = colsLsJson(key);
+  return Array.isArray(v) ? v.length > 0 : !!(v && typeof v === 'object');
+}
 
 // Events list (left) width bounds, in px.
 const SIDEBAR_DEFAULT = 200;
 const SIDEBAR_MIN = 140;
 const SIDEBAR_MAX = 420;
 
+// A saved visible list, local or from the account, made safe to render:
+// keys we no longer know are dropped (falling back to the defaults if that
+// leaves nothing, so the table isn't empty), and columns this browser has
+// never offered (added in a later version) are surfaced instead of
+// silently hidden.
+//
+// The "-known" record is what makes the surfacing precise; before it
+// exists (first load after it shipped) every column reads as new, so a
+// one-time re-show of any hidden column is expected. From then on, columns
+// the user hides stay hidden. `offered` is the record as it stood when the
+// table mounted, since it's rewritten right after. (The account copy
+// doesn't go through this: it's stored as a hidden list, see below.)
+function normalizeVisibleKeys(saved, defaultVisible, offered) {
+  if (!Array.isArray(saved)) return defaultVisible;
+  const knownSet = new Set(defaultVisible);
+  const filtered = saved.filter(k => knownSet.has(k));
+  if (!filtered.length) return defaultVisible;
+  const offeredSet = new Set(Array.isArray(offered) ? offered : []);
+  const result = [...filtered];
+  for (const k of defaultVisible) {
+    if (!offeredSet.has(k) && !result.includes(k)) result.push(k);
+  }
+  return result;
+}
+
+// Only the widths the user dragged away from the default are stored, so a
+// default changed in code still reaches everyone who never touched it.
+function draggedWidths(widths, defaultWidths) {
+  const out = {};
+  for (const [k, w] of Object.entries(widths || {})) {
+    if (Number.isFinite(w) && w !== defaultWidths[k]) out[k] = w;
+  }
+  return out;
+}
+
 // Manage which columns are shown and how wide they are for one table.
 // `columns` is the full ordered definition ([{ key, label, width }…]);
 // the returned `visible` is the subset to render (in definition order).
-function useTableColumns(tableKey, columns) {
+function useTableColumns(tableKey, columns, settings, updateSettings) {
   const defaultVisible = columns.map(c => c.key);
   const defaultWidths = Object.fromEntries(columns.map(c => [c.key, c.width]));
+  const tableId = `events-${tableKey}`;
+  const [offeredAtMount] = useState(() => colsLsJson(`${tableKey}-known`));
 
-  const [visibleKeys, setVisibleKeys] = useState(() => {
-    try {
-      const saved = JSON.parse(colsLsGet(`${tableKey}-visible`));
-      if (Array.isArray(saved)) {
-        // Keep only keys we still know about; if everything saved is
-        // stale, fall back to the defaults so the table isn't empty.
-        const knownSet = new Set(defaultVisible);
-        const filtered = saved.filter(k => knownSet.has(k));
-        if (filtered.length) {
-          // Surface columns the user has never been offered before
-          // (added in a later version) instead of silently hiding them.
-          // The "-known" record is what makes this precise; before it
-          // exists (first load after this shipped) every column reads as
-          // new, so a one-time re-show of any hidden column is expected.
-          // From then on, columns the user hides stay hidden.
-          let offered = [];
-          try { offered = JSON.parse(colsLsGet(`${tableKey}-known`)) || []; } catch { /* ignore */ }
-          const offeredSet = new Set(offered);
-          const result = [...filtered];
-          for (const k of defaultVisible) {
-            if (!offeredSet.has(k) && !result.includes(k)) result.push(k);
-          }
-          return result;
-        }
-      }
-    } catch { /* ignore */ }
-    return defaultVisible;
+  // Locally this is the visible list it always was. The account stores the
+  // HIDDEN list instead, the model DataTable uses: a column added later
+  // isn't in anybody's hidden list, so it shows everywhere without needing
+  // the per-browser "-known" record, which a browser that has just had its
+  // site data cleared no longer has.
+  const [visibleKeys, setVisibleKeys] = useSyncedTablePref({
+    tableId, field: 'hidden', settings, updateSettings,
+    readLocal: () => normalizeVisibleKeys(colsLsJson(`${tableKey}-visible`), defaultVisible, offeredAtMount),
+    writeLocal: (v) => colsLsSet(`${tableKey}-visible`, JSON.stringify(v)),
+    hasLocal: () => colsLsSaved(`${tableKey}-visible`),
+    toRemote: (v) => defaultVisible.filter(k => !v.includes(k)),
+    fromRemote: (hidden) => {
+      const off = new Set(Array.isArray(hidden) ? hidden : []);
+      const shown = defaultVisible.filter(k => !off.has(k));
+      return shown.length ? shown : defaultVisible;
+    },
   });
-  useEffect(() => { colsLsSet(`${tableKey}-visible`, JSON.stringify(visibleKeys)); }, [tableKey, visibleKeys]);
   // Record the full set of columns we've now offered, so a column added
   // in a future version can be detected as new (and shown) on next load.
+  // Local only, on purpose: it's what THIS browser has shown, like
+  // DataTable's "chosen" record.
   const knownKeysStr = defaultVisible.join(',');
   useEffect(() => { colsLsSet(`${tableKey}-known`, JSON.stringify(knownKeysStr.split(','))); }, [tableKey, knownKeysStr]);
 
-  const [widths, setWidths] = useState(() => {
-    try {
-      const saved = JSON.parse(colsLsGet(`${tableKey}-widths`)) || {};
-      return { ...defaultWidths, ...saved };
-    } catch { return defaultWidths; }
+  const [widths, setWidths] = useSyncedTablePref({
+    tableId, field: 'widths', settings, updateSettings,
+    readLocal: () => {
+      const saved = colsLsJson(`${tableKey}-widths`);
+      return { ...defaultWidths, ...(saved && typeof saved === 'object' ? saved : {}) };
+    },
+    writeLocal: (w) => colsLsSet(`${tableKey}-widths`, JSON.stringify(w)),
+    hasLocal: () => colsLsSaved(`${tableKey}-widths`),
+    toRemote: (w) => draggedWidths(w, defaultWidths),
+    fromRemote: (w) => ({ ...defaultWidths, ...(w && typeof w === 'object' ? w : {}) }),
   });
-  useEffect(() => { colsLsSet(`${tableKey}-widths`, JSON.stringify(widths)); }, [tableKey, widths]);
 
   // Column order, saved per table. Stale keys are dropped and a column
   // added in a later version slots in right after the column it follows
-  // by default, so a saved order never hides or misplaces it.
-  const [savedOrder, setOrder] = useState(() => {
-    try {
-      const saved = JSON.parse(colsLsGet(`${tableKey}-order`));
+  // by default, so a saved order never hides or misplaces it. null is the
+  // default order; the account stores that as [].
+  const [savedOrder, setOrder] = useSyncedTablePref({
+    tableId, field: 'order', settings, updateSettings,
+    readLocal: () => {
+      const saved = colsLsJson(`${tableKey}-order`);
       return Array.isArray(saved) ? saved : null;
-    } catch { return null; }
+    },
+    writeLocal: (o) => colsLsSet(`${tableKey}-order`, o ? JSON.stringify(o) : ''),
+    hasLocal: () => colsLsSaved(`${tableKey}-order`),
+    toRemote: (o) => (Array.isArray(o) ? o : []),
+    fromRemote: (o) => (Array.isArray(o) && o.length ? o : null),
   });
   const order = useMemo(() => {
     if (!savedOrder) return defaultVisible;
@@ -1159,10 +1205,6 @@ function useTableColumns(tableKey, columns) {
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [savedOrder, knownKeysStr]);
-  useEffect(() => {
-    if (savedOrder) colsLsSet(`${tableKey}-order`, JSON.stringify(savedOrder));
-    else colsLsSet(`${tableKey}-order`, '');
-  }, [tableKey, savedOrder]);
 
   // Move column `fromKey` into `toKey`'s slot: dragging right lands it
   // after `toKey`, dragging left lands it before.
@@ -2776,8 +2818,8 @@ export function EventsView({
   ];
   const LOOKUP_ACTIONS = { key: 'actions', label: 'Actions', width: 200 };
 
-  const attendeeCols = useTableColumns('attendees', attendeeColumns);
-  const lookupCols = useTableColumns('lookups', lookupColumns);
+  const attendeeCols = useTableColumns('attendees', attendeeColumns, settings, updateSettings);
+  const lookupCols = useTableColumns('lookups', lookupColumns, settings, updateSettings);
   const ATTENDEE_SELECT = { width: 28 };
   const attendeeTableWidth = ATTENDEE_SELECT.width + attendeeCols.visible.reduce((s, c) => s + (attendeeCols.widths[c.key] || 0), 0) + ATTENDEE_ACTIONS.width;
   const lookupTableWidth = lookupCols.visible.reduce((s, c) => s + (lookupCols.widths[c.key] || 0), 0) + LOOKUP_ACTIONS.width;
