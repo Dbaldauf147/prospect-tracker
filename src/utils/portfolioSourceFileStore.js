@@ -8,6 +8,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db as firestore } from '../firebase';
 import { getDbUserId } from './db';
 import { deleteChunkedDoc, readChunkedDoc, writeChunkedDoc } from './chunkedDoc.js';
+import { clearLocalOnly, errorText, markLocalOnly } from './localOnlyFiles.js';
 
 const DB_NAME = 'prospect-tracker-files';
 const STORE = 'portfolio-source-files';
@@ -69,6 +70,15 @@ function backupMeta(rec) {
   return { name: rec.name, type: rec.type, size: rec.size, uploadedAt: rec.uploadedAt };
 }
 
+// The Issues tab's "File not backed up" entry for one company's workbook.
+const riskId = (companyName) => `portfolio:${legacySlugKey(companyName)}`;
+function markAtRisk(companyName, rec, err) {
+  markLocalOnly(riskId(companyName), {
+    kind: 'portfolio', reason: 'backup-failed', name: rec?.name, sizeBytes: rec?.size,
+    owner: companyName, error: errorText(err),
+  });
+}
+
 // Files found on this machine that have been checked against the backup
 // this session, so opening a company card twice doesn't read it twice.
 const verified = new Set();
@@ -88,13 +98,47 @@ async function ensureBackedUp(companyName, rec) {
     const ref = itemDoc(userId, legacyKey);
     const snap = await getDoc(ref);
     const meta = snap.exists() ? snap.data() : null;
-    if (meta && meta.uploadedAt === rec.uploadedAt && Number(meta.size) === Number(rec.size)) return;
-    await writeChunkedDoc(ref, rec, { meta: backupMeta(rec) });
+    if (!(meta && meta.uploadedAt === rec.uploadedAt && Number(meta.size) === Number(rec.size))) {
+      await writeChunkedDoc(ref, rec, { meta: backupMeta(rec) });
+    }
+    clearLocalOnly(riskId(companyName));
   } catch (err) {
     verified.delete(tag);
     console.warn('Portfolio source file backup check failed', companyName, err);
+    markAtRisk(companyName, rec, err);
   }
 }
+
+// Every workbook held on this machine, checked against the cloud and
+// uploaded where the cloud copy is missing or out of date. Run by the
+// daily repair pass (repairCloudBackups), so a workbook nobody opens is
+// still found. The company name comes back from the record's slug, which
+// is all the key needs.
+export async function backupAllSourceFiles() {
+  const uid = getDbUserId();
+  if (!uid) return { fixed: 0, failed: 0 };
+  const db = await openDB();
+  const rows = await new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const req = tx.objectStore(STORE).getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+  const prefix = `${uid}:portfolioUploadFile:`;
+  let failed = 0;
+  for (const rec of rows) {
+    if (typeof rec?.key !== 'string' || !rec.key.startsWith(prefix) || !rec.blob) continue;
+    // The slug is the company name lower-cased with punctuation as dashes,
+    // and slugging it again gives the same slug, so it stands in for the
+    // name. The Issues row shows the company from the record when it can.
+    const slugName = rec.key.slice(prefix.length);
+    verified.delete(`${uid}:portfolioUploadFile:${slugName}`);
+    await ensureBackedUp(slugName, rec);
+    if (!verified.has(`${uid}:portfolioUploadFile:${slugName}`)) failed++;
+  }
+  return { fixed: 0, failed };
+}
+
 
 function idbGet(db, key) {
   return new Promise((resolve, reject) => {
@@ -132,8 +176,10 @@ export async function saveSourceFile(companyName, file) {
   try {
     await writeChunkedDoc(itemDoc(userId, legacySlugKey(companyName)), rec, { meta: backupMeta(rec) });
     verified.add(`${userId}:${legacySlugKey(companyName)}`);
+    clearLocalOnly(riskId(companyName));
   } catch (err) {
     console.warn('Portfolio source file Firestore backup failed', companyName, err);
+    markAtRisk(companyName, rec, err);
   }
 }
 
@@ -257,8 +303,12 @@ export async function renameSourceFile(oldCompanyName, newCompanyName) {
       try {
         await writeChunkedDoc(itemDoc(userId, legacySlugKey(newCompanyName)), { ...rec, key: newKey }, { meta: backupMeta(rec) });
         await deleteChunkedDoc(itemDoc(userId, legacySlugKey(oldCompanyName)));
+        clearLocalOnly(riskId(oldCompanyName));
+        clearLocalOnly(riskId(newCompanyName));
       } catch (err) {
         console.warn('Portfolio source file Firestore rename failed', oldCompanyName, err);
+        clearLocalOnly(riskId(oldCompanyName));
+        markAtRisk(newCompanyName, rec, err);
       }
     }
     return true;
@@ -281,6 +331,7 @@ export async function clearSourceFile(companyName) {
   } catch { /* nothing stored, or the DB is closed */ }
   try { localStorage.removeItem(key); } catch { /* storage blocked */ }
   try { localStorage.removeItem(legacySlugKey(companyName)); } catch { /* storage blocked */ }
+  clearLocalOnly(riskId(companyName));
   const userId = getDbUserId();
   if (!userId) return;
   try { await deleteChunkedDoc(itemDoc(userId, legacySlugKey(companyName))); }

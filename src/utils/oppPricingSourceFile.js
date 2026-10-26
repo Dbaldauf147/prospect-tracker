@@ -14,6 +14,7 @@ import { collection, doc } from 'firebase/firestore';
 import { db as firestore } from '../firebase';
 import { dbGet, dbPut, dbDelete, getDbUserId } from './db';
 import { deleteChunkedDoc, readChunkedDoc, writeChunkedDoc } from './chunkedDoc.js';
+import { clearLocalOnly, errorText, markLocalOnly } from './localOnlyFiles.js';
 
 const STORE = 'pricing-source-files';
 
@@ -50,8 +51,11 @@ export async function saveOppSourceFile(oppId, bytes, fileName) {
 
   const userId = getDbUserId();
   if (!userId) return;
+  // What the Issues tab says about it if it stays on this device only.
+  const atRisk = { kind: 'sia', name: rec.fileName, sizeBytes: blob.size, oppId };
   if (blob.size > SOURCE_FILE_MAX_SYNC_BYTES) {
     console.warn(`Opp ${oppId} source file is ${blob.size} bytes - too big to back up to Firestore; it stays on this device.`);
+    markLocalOnly(`sia:${oppId}`, { ...atRisk, reason: 'too-big', limitBytes: SOURCE_FILE_MAX_SYNC_BYTES });
     return;
   }
   // Best-effort: a rules failure or an offline browser must not lose the
@@ -60,8 +64,10 @@ export async function saveOppSourceFile(oppId, bytes, fileName) {
     await writeChunkedDoc(itemDoc(userId, oppId), rec, {
       meta: { fileName: rec.fileName, sizeBytes: blob.size, savedAt: rec.savedAt },
     });
+    clearLocalOnly(`sia:${oppId}`);
   } catch (err) {
     console.warn('Opp source file Firestore backup failed', oppId, err);
+    markLocalOnly(`sia:${oppId}`, { ...atRisk, reason: 'backup-failed', error: errorText(err) });
   }
 }
 
@@ -92,6 +98,7 @@ export async function deleteOppSourceFile(oppId) {
   if (oppId == null) return;
   try { await dbDelete(STORE, String(oppId)); }
   catch { /* best-effort */ }
+  clearLocalOnly(`sia:${oppId}`);
   const userId = getDbUserId();
   if (!userId) return;
   try { await deleteChunkedDoc(itemDoc(userId, oppId)); }

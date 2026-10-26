@@ -20,6 +20,7 @@ import { collection, doc } from 'firebase/firestore';
 import { db as firestore } from '../firebase';
 import { dbGet, dbPut, getDbUserId } from './db';
 import { deleteChunkedDoc, readChunkedCollection, writeChunkedDoc } from './chunkedDoc.js';
+import { clearLocalOnly, errorText, markLocalOnly } from './localOnlyFiles.js';
 
 const STORE = 'market-updates';
 const KEY = 'entries';
@@ -95,20 +96,28 @@ export async function saveMarketUpdate(entry) {
 // Best-effort and deliberately not awaited by the save: the entry is
 // already in IndexedDB, and a slow upload of a 20 MB attachment must not
 // hold up the tab the user is still typing in.
-async function backUpEntry(entry) {
+// Exported for the daily repair pass, which re-runs it for entries the
+// cloud is missing.
+export async function backUpEntry(entry) {
   const userId = getDbUserId();
   if (!userId || !entry?.id) return;
   const bytes = entryBytes(entry);
+  // What the Issues tab says about it if it stays on this device only.
+  const riskId = `marketUpdate:${entry.id}`;
+  const atRisk = { kind: 'marketUpdate', name: String(entry.subject || '').slice(0, 120) || 'Untitled email', sizeBytes: bytes };
   if (bytes > MARKET_UPDATE_MAX_SYNC_BYTES) {
     console.warn(`Market update ${entry.id} is ${bytes} bytes - too big to back up to Firestore; it stays on this device.`);
+    markLocalOnly(riskId, { ...atRisk, reason: 'too-big', limitBytes: MARKET_UPDATE_MAX_SYNC_BYTES });
     return;
   }
   try {
     await writeChunkedDoc(entryDoc(userId, entry.id), entry, {
       meta: { savedAt: entry.savedAt || Date.now(), subject: String(entry.subject || '').slice(0, 200) },
     });
+    clearLocalOnly(riskId);
   } catch (err) {
     console.warn('Market update Firestore backup failed', entry.id, err);
+    markLocalOnly(riskId, { ...atRisk, reason: 'backup-failed', error: errorText(err) });
   }
 }
 
@@ -116,6 +125,7 @@ export async function deleteMarketUpdate(id) {
   const list = await loadMarketUpdates();
   const next = list.filter(e => e.id !== id);
   await writeAll(next);
+  clearLocalOnly(`marketUpdate:${id}`);
   const userId = getDbUserId();
   if (userId && id) {
     try { await deleteChunkedDoc(entryDoc(userId, id)); }

@@ -12,6 +12,7 @@ import { loadPipelineDashboard, coverageServicesOf, PIPELINE_DASHBOARD_EVENT } f
 // BFO Activity rows are pasted on the BFO Activity tab and persisted in that
 // store; the Opps cache backs the "not tagged to an opp" check.
 import { BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY, BFO_ACTIVITY_EVENT } from '../utils/bfoActivityStore';
+import { loadLocalOnlyFiles, LOCAL_ONLY_FILES_EVENT } from '../utils/localOnlyFiles';
 
 // The Pipeline dashboard is re-read on every window focus, and a fresh array
 // of the same services would re-run the whole issue computation each time —
@@ -53,6 +54,8 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   const [clientStatusMap, setClientStatusMap] = useState(() => loadClientStatusMap());
   const [snoozedMap, setSnoozedMap] = useState(() => loadIssueSnoozedMap());
   const [myAccountsFlags, setMyAccountsFlags] = useState(() => loadMyAccountsFlags());
+  // Files only this browser holds, for the "File not backed up" rows.
+  const [localOnlyFiles, setLocalOnlyFiles] = useState(() => loadLocalOnlyFiles());
   // BFO Activity rows + Opps cache (both IndexedDB) drive the "BFO
   // Opportunity Name not tagged to an opp" issue. Loaded async below.
   const [bfoActivity, setBfoActivityState] = useState(null);
@@ -123,6 +126,7 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
     setClientStatusMap(loadClientStatusMap());
     setSnoozedMap(loadIssueSnoozedMap());
     setMyAccountsFlags(loadMyAccountsFlags());
+    setLocalOnlyFiles(loadLocalOnlyFiles());
     dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY).then(d => setBfoActivity(d || null)).catch(() => {});
     loadPipelineDashboard().then(p => setCoverageServices(prev => keepIfSame(prev, coverageServicesOf(p)))).catch(() => {});
   }, [user?.uid, setBfoActivity]);
@@ -135,6 +139,8 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
       if (e.key === 'clients-status-map') setClientStatusMap(loadClientStatusMap());
       if (e.key === 'issues-snoozed-map') setSnoozedMap(loadIssueSnoozedMap());
       if (e.key === MY_ACCOUNTS_FLAGS_KEY) setMyAccountsFlags(loadMyAccountsFlags());
+      // Another tab's backup result (the key is user-prefixed by userLs).
+      if (String(e.key || '').endsWith(':local-only-files')) setLocalOnlyFiles(loadLocalOnlyFiles());
     }
     function onDealsList() { setDealsList(loadDealsList().data); }
     function onClientMap() { setClientMap(loadDealClientMap()); }
@@ -142,6 +148,7 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
     function onClientStatus() { setClientStatusMap(loadClientStatusMap()); }
     function onSnoozed() { setSnoozedMap(loadIssueSnoozedMap()); }
     function onMaFlags() { setMyAccountsFlags(loadMyAccountsFlags()); }
+    function onLocalOnly() { setLocalOnlyFiles(loadLocalOnlyFiles()); }
     // BFO Activity (IndexedDB): refresh on window focus (a fresh paste) and
     // on the BFO Activity store's own change event, mirroring how the BFO
     // Activity / Agents pages reload it. (The Opps cache comes off
@@ -176,6 +183,7 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
     window.addEventListener(CLIENT_STATUS_EVENT, onClientStatus);
     window.addEventListener(ISSUE_SNOOZED_EVENT, onSnoozed);
     window.addEventListener(MY_ACCOUNTS_FLAGS_EVENT, onMaFlags);
+    window.addEventListener(LOCAL_ONLY_FILES_EVENT, onLocalOnly);
     return () => {
       clearInterval(snoozeTimer);
       window.removeEventListener('focus', pruneSnoozes);
@@ -190,16 +198,17 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
       window.removeEventListener(CLIENT_STATUS_EVENT, onClientStatus);
       window.removeEventListener(ISSUE_SNOOZED_EVENT, onSnoozed);
       window.removeEventListener(MY_ACCOUNTS_FLAGS_EVENT, onMaFlags);
+      window.removeEventListener(LOCAL_ONLY_FILES_EVENT, onLocalOnly);
     };
   }, [setBfoActivity]);
 
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles });
     return rows.map((r) => {
       const { snoozed, until } = issueSnoozeState(snoozedMap, r.id);
       return { ...r, snoozed, snoozeUntil: until };
     });
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles]);
 
   // Services the client base hasn't explored yet. Not issues — outreach —
   // so they're returned alongside rather than mixed in, and the snooze map

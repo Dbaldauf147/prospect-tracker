@@ -10,6 +10,7 @@
 // auto-restoring it locally for fast subsequent reads.
 
 import { saveListBackup, loadListBackup, clearListBackup } from './listBackupSync';
+import { clearLocalOnly, errorText, markLocalOnly } from './localOnlyFiles.js';
 import { getDbUserId } from './db';
 
 const DB_NAME = 'prospect-tracker-files';
@@ -62,8 +63,12 @@ export async function saveList(key, data) {
   // of truth for this session.
   const uid = getDbUserId();
   if (uid) {
-    saveListBackup(uid, key, data).catch(err => {
+    saveListBackup(uid, key, data).then(() => clearLocalOnly(`list:${key}`)).catch(err => {
       console.warn('Firestore list backup failed', key, err);
+      markLocalOnly(`list:${key}`, {
+        kind: 'list', reason: 'backup-failed', name: `${key}, ${Array.isArray(data) ? data.length : 0} rows`,
+        error: errorText(err),
+      });
     });
   }
 }
@@ -116,6 +121,7 @@ export async function clearList(key) {
     });
   } catch {}
   try { localStorage.removeItem(key); } catch {}
+  clearLocalOnly(`list:${key}`);
   const uid = getDbUserId();
   if (uid) {
     clearListBackup(uid, key).catch(err => {
