@@ -24,6 +24,7 @@ import { db as firestore } from '../firebase';
 import { ADMIN_EMAIL } from '../config/accessControl';
 import { saveListBackup } from './listBackupSync';
 import { userLsGet, userLsSet } from './userLs';
+import { clearLocalOnly, errorText, loadLocalOnlyFiles, markLocalOnly } from './localOnlyFiles.js';
 
 // One pass a day per browser. The holes this fills do not appear on their
 // own — only an app version that could not write them creates one — so
@@ -41,7 +42,11 @@ import { userLsGet, userLsSet } from './userLs';
 // two intervals live in the same value. A leftover stamp from the old key
 // is simply ignored, which makes the first load after this change run a
 // pass — which is the point.
-const NEXT_RUN_KEY = 'cloud-backup-repair:next-at';
+//
+// v2: the pass now also walks the SIA, Market Update and portfolio files
+// and fills the Issues tab's "File not backed up" list, so a browser that
+// already ran today runs again rather than leaving that list empty a day.
+const NEXT_RUN_KEY = 'cloud-backup-repair:next-at:v2';
 const REPAIR_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const RETRY_INTERVAL_MS = 30 * 60 * 1000;
 
@@ -101,14 +106,15 @@ async function cloudCopyMissing(ref) {
 // admin may write it — everyone else would collect a permission error per
 // list for no benefit.
 async function repairUploadedLists(userId, email) {
-  if (email !== ADMIN_EMAIL) return { fixed: 0, failed: 0 };
+  if (email !== ADMIN_EMAIL) return { fixed: 0, failed: 0, seen: null };
   let db;
   // Not being able to open the local database is a hole left unchecked,
   // not a clean pass: another tab mid-upgrade blocks it, and that clears.
   try { db = await openExisting(FILES_DB); }
-  catch { return { fixed: 0, failed: 1 }; }
+  catch { return { fixed: 0, failed: 1, seen: null }; }
   let fixed = 0;
   let failed = 0;
+  const seen = new Set();
   try {
     const rows = await readAll(db, LISTS_STORE);
     for (const { key, value } of rows) {
@@ -116,37 +122,55 @@ async function repairUploadedLists(userId, email) {
       if (!storageKey || NOT_A_LIST.test(storageKey)) continue;
       const data = value?.data;
       if (!Array.isArray(data) || data.length === 0) continue;
+      const riskId = `list:${storageKey}`;
+      seen.add(riskId);
       try {
-        if (!(await cloudCopyMissing(doc(firestore, 'listBackups', storageKey)))) continue;
+        if (!(await cloudCopyMissing(doc(firestore, 'listBackups', storageKey)))) { clearLocalOnly(riskId); continue; }
         await saveListBackup(userId, storageKey, data);
+        clearLocalOnly(riskId);
         console.info(`Backed up "${storageKey}" (${data.length} rows) - it had no cloud copy.`);
         fixed++;
       } catch (err) {
         console.warn('List backup repair failed', storageKey, err);
+        markLocalOnly(riskId, { kind: 'list', reason: 'backup-failed', name: `${storageKey}, ${data.length} rows`, error: errorText(err) });
         failed++;
       }
     }
   } finally {
     try { db.close(); } catch { /* already closed */ }
   }
-  return { fixed, failed };
+  return { fixed, failed, seen };
 }
 
 // The RFP workbooks attached to opps. Per-user, so this runs for everyone.
 async function repairRfpTemplates(userId) {
-  const [{ dbGetAllEntries }, { saveOppRfpTemplate }] = await Promise.all([
+  const [{ dbGetAllEntries }, { saveOppRfpTemplate, RFP_MAX_SYNC_BYTES, STANDARD_RFP_KEY }] = await Promise.all([
     import('./db.js'),
     import('./oppRfpTemplate.js'),
   ]);
   let rows;
   try { rows = await dbGetAllEntries('rfp-templates'); }
-  catch { return { fixed: 0, failed: 1 }; }
+  catch { return { fixed: 0, failed: 1, seen: null }; }
   let fixed = 0;
   let failed = 0;
+  const seen = new Set();
   for (const { key, value } of rows) {
     if (!value?.blob || !key) continue;
+    const riskId = `rfp:${key}`;
+    seen.add(riskId);
+    const sizeBytes = Number(value.sizeBytes) || value.blob.size || 0;
+    // Over the ceiling it never had a cloud copy and won't get one: say
+    // so, without the read or a pointless re-save.
+    if (sizeBytes > RFP_MAX_SYNC_BYTES) {
+      markLocalOnly(riskId, {
+        kind: 'rfp', reason: 'too-big', name: value.fileName, sizeBytes, limitBytes: RFP_MAX_SYNC_BYTES,
+        ...(String(key) === STANDARD_RFP_KEY ? { owner: 'Standard RFP template' } : { oppId: key }),
+      });
+      continue;
+    }
     try {
-      if (!(await cloudCopyMissing(doc(firestore, 'oppRfpTemplates', String(userId), 'items', String(key))))) continue;
+      if (!(await cloudCopyMissing(doc(firestore, 'oppRfpTemplates', String(userId), 'items', String(key))))) { clearLocalOnly(riskId); continue; }
+      // Marks the file itself if the write fails.
       await saveOppRfpTemplate(key, value.blob, value.fileName);
       console.info(`Backed up the RFP workbook on opp ${key} - it had no cloud copy.`);
       fixed++;
@@ -155,7 +179,88 @@ async function repairRfpTemplates(userId) {
       failed++;
     }
   }
-  return { fixed, failed };
+  return { fixed, failed, seen };
+}
+
+// The SIA / pricing workbooks saved to opps from the Pricing tab.
+async function repairOppSourceFiles(userId) {
+  const [{ dbGetAllEntries }, { saveOppSourceFile, SOURCE_FILE_MAX_SYNC_BYTES }] = await Promise.all([
+    import('./db.js'),
+    import('./oppPricingSourceFile.js'),
+  ]);
+  let rows;
+  try { rows = await dbGetAllEntries('pricing-source-files'); }
+  catch { return { fixed: 0, failed: 1, seen: null }; }
+  let fixed = 0;
+  let failed = 0;
+  const seen = new Set();
+  for (const { key, value } of rows) {
+    if (!value?.blob || !key) continue;
+    const riskId = `sia:${key}`;
+    seen.add(riskId);
+    if (value.blob.size > SOURCE_FILE_MAX_SYNC_BYTES) {
+      markLocalOnly(riskId, {
+        kind: 'sia', reason: 'too-big', name: value.fileName, sizeBytes: value.blob.size,
+        limitBytes: SOURCE_FILE_MAX_SYNC_BYTES, oppId: key,
+      });
+      continue;
+    }
+    try {
+      if (!(await cloudCopyMissing(doc(firestore, 'oppSourceFiles', String(userId), 'items', String(key))))) { clearLocalOnly(riskId); continue; }
+      // Marks the file itself if the write fails.
+      await saveOppSourceFile(key, value.blob, value.fileName);
+      console.info(`Backed up the pricing workbook on opp ${key} - it had no cloud copy.`);
+      fixed++;
+    } catch (err) {
+      console.warn('Opp source file backup repair failed', key, err);
+      failed++;
+    }
+  }
+  return { fixed, failed, seen };
+}
+
+// The emails dropped onto Draft Emails > Market Updates.
+async function repairMarketUpdates(userId) {
+  const { loadMarketUpdates, backUpEntry } = await import('./marketUpdatesStore.js');
+  const entries = await loadMarketUpdates();
+  let fixed = 0;
+  let failed = 0;
+  const seen = new Set();
+  for (const entry of entries) {
+    if (!entry?.id) continue;
+    const riskId = `marketUpdate:${entry.id}`;
+    seen.add(riskId);
+    try {
+      if (!(await cloudCopyMissing(doc(firestore, 'marketUpdates', String(userId), 'entries', String(entry.id))))) { clearLocalOnly(riskId); continue; }
+      // Uploads it, or marks it too big / failed.
+      await backUpEntry(entry);
+      fixed++;
+    } catch (err) {
+      console.warn('Market update backup repair failed', entry.id, err);
+      failed++;
+    }
+  }
+  return { fixed, failed, seen };
+}
+
+// The PE portfolio workbooks on company cards. The store checks and uploads
+// each one itself, and marks any it could not back up.
+async function repairPortfolioFiles() {
+  const { backupAllSourceFiles } = await import('./portfolioSourceFileStore.js');
+  const { failed } = await backupAllSourceFiles();
+  // The store clears its own entries as it goes; nothing to prune here.
+  return { fixed: 0, failed, seen: null };
+}
+
+// Registry entries for files no longer held here (deleted from somewhere
+// that doesn't go through the store, or replaced) are dropped, so the
+// Issues tab only lists files that are really on this device. Only for the
+// kinds a pass actually walked.
+function pruneLocalOnly(seenByKind) {
+  for (const entry of loadLocalOnlyFiles()) {
+    const seen = seenByKind[entry.kind];
+    if (seen && !seen.has(entry.id)) clearLocalOnly(entry.id);
+  }
 }
 
 function scheduleNextRun(delayMs) {
@@ -176,21 +281,28 @@ export async function repairCloudBackups(userId, email) {
   // mid-pass costs half an hour rather than a day.
   scheduleNextRun(RETRY_INTERVAL_MS);
 
+  const kinds = ['list', 'rfp', 'sia', 'marketUpdate', 'portfolio'];
   const results = await Promise.allSettled([
     repairUploadedLists(userId, email),
     repairRfpTemplates(userId),
+    repairOppSourceFiles(userId),
+    repairMarketUpdates(userId),
+    repairPortfolioFiles(),
   ]);
   let fixed = 0;
   let failed = 0;
-  for (const r of results) {
+  const seenByKind = {};
+  results.forEach((r, i) => {
     if (r.status === 'fulfilled') {
       fixed += r.value?.fixed || 0;
       failed += r.value?.failed || 0;
+      if (r.value?.seen) seenByKind[kinds[i]] = r.value.seen;
     } else {
       console.warn('cloud backup repair failed', r.reason);
       failed++;
     }
-  }
+  });
+  pruneLocalOnly(seenByKind);
   if (failed === 0) scheduleNextRun(REPAIR_INTERVAL_MS);
   else console.warn(`${failed} backup(s) could not be repaired; retrying in ${RETRY_INTERVAL_MS / 60000} minutes.`);
   return fixed;

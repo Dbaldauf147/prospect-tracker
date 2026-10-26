@@ -6,6 +6,7 @@
 // and the Clients tab agree on what's expired — there's one definition
 // of soonest expiration, not two that can drift apart.
 import { RENEWAL_WARNING_DAYS } from './renewalWindow';
+import { localOnlyFileIssues } from './localOnlyFiles.js';
 import { asDate, fmtDate, isInactiveAgreement } from './dealsFormat';
 import { matchesCdm } from './cdmMatch';
 import { computeNewBfoOpps, computeNewBfoMissingData, normalizeBfoCompany } from './newBfoOpps';
@@ -871,7 +872,7 @@ export function computeExpiringClients({ prospects = [], cdmName, dealsList = []
 //
 // Service Exploration Coverage is deliberately not among them — see
 // computeServiceCoverageGaps above; it feeds the Prospecting ladder.
-export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, knownServices = null, ignoredScopeServices = null, coverageSettings = null }) {
+export function computeIssues({ prospects = [], cdmName, dealsList = [], clientMap = {}, untrackedMap = {}, clientStatusMap = {}, myAccountsFlags = [], marketingLeads = [], bfoActivity = null, oppsCache = null, serviceOverrides = {}, knownServices = null, ignoredScopeServices = null, coverageSettings = null, localOnlyFiles = [] }) {
   const dealsByClient = groupDealsByClient(dealsList, clientMap);
   // Opp `_id` → the visible "Opp #" the Opps tab shows. Built once here and
   // handed to the opp-derived detectors so every issue row names its opp by
@@ -895,5 +896,8 @@ export function computeIssues({ prospects = [], cdmName, dealsList = [], clientM
   issues.push(...detectAppDescriptionMissingContracting({ bfoActivity, oppsCache, prospects, oppNumbers }));
   issues.push(...detectPostSaleFollowUpOverdue({ dealsList, prospects, dealIndexOf }));
   issues.push(...detectIncompleteHandoff({ dealsList, prospects, dealIndexOf }));
+  // Files only this browser holds (utils/localOnlyFiles): what clearing
+  // browsing data would delete.
+  issues.push(...localOnlyFileIssues(localOnlyFiles, { oppsRecords: oppsCache?.records, oppNumbers, prospects }));
   return issues;
 }

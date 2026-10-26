@@ -65,6 +65,9 @@ const LOCAL_BY_DESIGN = {
 
   // Cannot meaningfully leave this browser.
   'localRecordings.js': 'holds a FileSystemDirectoryHandle - not serialisable, and machine-specific',
+  'localOnlyFiles.js':
+    "lists the files only THIS browser's IndexedDB holds. It describes this machine: cleared, it goes "
+    + 'with the files it names, and another machine has nothing at risk from them.',
   'nfatSchedules.js':
     'the schedules themselves live on userSettings (Firestore); the only key written here is '
     + "this browser's shadow copy of the newest config it has seen, which exists to REPAIR that "

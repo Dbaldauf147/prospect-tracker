@@ -27,6 +27,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { dbGet, dbPut, dbDelete, getDbUserId } from './db';
 import { deleteChunkedDoc, readChunkedDoc, writeChunkedDoc } from './chunkedDoc.js';
+import { clearLocalOnly, errorText, markLocalOnly } from './localOnlyFiles.js';
 
 const STORE = 'rfp-templates';
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -106,7 +107,15 @@ export async function saveOppRfpTemplate(oppId, blob, fileName) {
   await dbPut(STORE, rec, String(oppId));
 
   const userId = getDbUserId();
-  if (userId && rec.sizeBytes <= RFP_MAX_SYNC_BYTES) {
+  // What the Issues tab says about it if it stays on this device only.
+  const riskId = `rfp:${oppId}`;
+  const atRisk = {
+    kind: 'rfp', name: rec.fileName, sizeBytes: rec.sizeBytes,
+    ...(String(oppId) === STANDARD_RFP_KEY ? { owner: 'Standard RFP template' } : { oppId }),
+  };
+  if (userId && rec.sizeBytes > RFP_MAX_SYNC_BYTES) {
+    markLocalOnly(riskId, { ...atRisk, reason: 'too-big', limitBytes: RFP_MAX_SYNC_BYTES });
+  } else if (userId) {
     try {
       await writeChunkedDoc(itemDoc(userId, oppId), rec, {
         meta: {
@@ -116,8 +125,10 @@ export async function saveOppRfpTemplate(oppId, blob, fileName) {
           savedAt: rec.savedAt,
         },
       });
+      clearLocalOnly(riskId);
     } catch (err) {
       console.warn('RFP template Firestore backup failed', err);
+      markLocalOnly(riskId, { ...atRisk, reason: 'backup-failed', error: errorText(err) });
     }
   }
   return rec;
@@ -168,6 +179,7 @@ export async function loadOppRfpTemplate(oppId, expectedSavedAt) {
 export async function deleteOppRfpTemplate(oppId) {
   if (oppId == null) return;
   try { await dbDelete(STORE, String(oppId)); } catch { /* best-effort */ }
+  clearLocalOnly(`rfp:${oppId}`);
   const userId = getDbUserId();
   if (!userId) return;
   try { await deleteChunkedDoc(itemDoc(userId, oppId)); } catch { /* best-effort */ }
