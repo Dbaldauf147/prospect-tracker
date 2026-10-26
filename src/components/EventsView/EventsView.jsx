@@ -1311,6 +1311,74 @@ function ColumnsMenu({ columns, visibleKeys, onToggle, onReset, onMove }) {
   );
 }
 
+// Scroll box for the attendee and lookup tables, plus a copy of its
+// sideways scrollbar pinned to the bottom of the pane. The box is capped
+// to the window, but it usually starts well below the top of the pane, so
+// its own scrollbar can still sit under the fold. The pinned copy only
+// shows while that happens and stays in step with the box both ways.
+function TallTableScroll({ children }) {
+  const boxRef = useRef(null);
+  const barRef = useRef(null);
+  const [bar, setBar] = useState({ show: false, width: 0 });
+
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box) return undefined;
+    let pane = box.parentElement;
+    while (pane && !/(auto|scroll)/.test(getComputedStyle(pane).overflowY)) pane = pane.parentElement;
+    const measure = () => {
+      const overflows = box.scrollWidth > box.clientWidth + 1;
+      const r = box.getBoundingClientRect();
+      const visibleBottom = Math.min(window.innerHeight, pane ? pane.getBoundingClientRect().bottom : Infinity);
+      const show = overflows && r.bottom > visibleBottom + 1 && r.top < visibleBottom;
+      setBar(prev => (prev.show === show && prev.width === box.scrollWidth ? prev : { show, width: box.scrollWidth }));
+    };
+    measure();
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
+    if (ro) {
+      ro.observe(box);
+      if (box.firstElementChild) ro.observe(box.firstElementChild);
+    }
+    // Capture so a scroll of the pane (or anything above it) re-checks.
+    window.addEventListener('scroll', measure, true);
+    window.addEventListener('resize', measure);
+    return () => {
+      if (ro) ro.disconnect();
+      window.removeEventListener('scroll', measure, true);
+      window.removeEventListener('resize', measure);
+    };
+  }, []);
+
+  // When the pinned bar appears, start it where the box already is.
+  useEffect(() => {
+    if (bar.show && barRef.current && boxRef.current) barRef.current.scrollLeft = boxRef.current.scrollLeft;
+  }, [bar.show]);
+
+  // Each side only writes the other when they are out of step, so the
+  // pair can't loop.
+  function onBoxScroll(e) {
+    const b = barRef.current;
+    if (b && b.scrollLeft !== e.currentTarget.scrollLeft) b.scrollLeft = e.currentTarget.scrollLeft;
+  }
+  function onBarScroll(e) {
+    const box = boxRef.current;
+    if (box && box.scrollLeft !== e.currentTarget.scrollLeft) box.scrollLeft = e.currentTarget.scrollLeft;
+  }
+
+  return (
+    <>
+      <div ref={boxRef} className={`${styles.tableScroll} ${styles.tableScrollTall}`} onScroll={onBoxScroll}>
+        {children}
+      </div>
+      {bar.show && (
+        <div ref={barRef} className={styles.pinnedHScroll} onScroll={onBarScroll} aria-hidden="true">
+          <div style={{ width: bar.width, height: 1 }} />
+        </div>
+      )}
+    </>
+  );
+}
+
 // Header for a resizable table: a <colgroup> drives the fixed column
 // widths and each <th> carries its label and a drag handle. When the
 // table is filterable a second row of always-visible type-to-filter
@@ -3009,7 +3077,7 @@ export function EventsView({
               No attendees saved yet. Use the search box above to add contacts.
             </div>
           ) : (
-            <div className={`${styles.tableScroll} ${styles.tableScrollTall}`}>
+            <TallTableScroll>
               <table
                 className={`${styles.attendeeTable} ${styles.resizable}`}
                 style={{ width: attendeeTableWidth, minWidth: attendeeTableWidth }}
@@ -3093,7 +3161,7 @@ export function EventsView({
                     && competitorToggleRow(attendeeSplit.competitors.length, attendeeColSpan, ['contact', 'contacts'])}
                 </tbody>
               </table>
-            </div>
+            </TallTableScroll>
           )}
 
           <div className={styles.sectionTitle}>
@@ -3189,7 +3257,7 @@ export function EventsView({
           </div>
 
           {lookups.length > 0 && (
-            <div className={`${styles.tableScroll} ${styles.tableScrollTall}`}>
+            <TallTableScroll>
               <table
                 className={`${styles.attendeeTable} ${styles.resizable}`}
                 style={{ width: lookupTableWidth, minWidth: lookupTableWidth }}
@@ -3407,7 +3475,7 @@ export function EventsView({
                   })()}
                 </tbody>
               </table>
-            </div>
+            </TallTableScroll>
           )}
         </div>
       )}
