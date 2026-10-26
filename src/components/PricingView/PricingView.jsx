@@ -29,6 +29,7 @@ import { S2CTab } from './S2CTab';
 import { migrateS2cTags } from '../../utils/s2cTags';
 import { PRICING_MIRRORED_KEYS, PRICING_MIRROR_EVENT, queuePricingMirrorPush } from '../../utils/pricingMirroredKeys';
 import { CalculatorTab } from './CalculatorTab';
+import { EscAnalysisTab } from './EscAnalysisTab';
 import { ServicesTab } from './ServicesTab';
 import { SERVICE_RENAMED_EVENT } from '../../utils/serviceRenameRunner';
 import { renameLineItemServices, renameFeeStructures, renameWorkbookServices } from '../../utils/serviceRenamePlans';
@@ -2544,7 +2545,7 @@ export function PricingView({ settings } = {}) {
   useEffect(() => {
     try { localStorage.setItem('pricing-show-quick-conversions', showConversionsOnPricing ? '1' : '0'); } catch { /* noop */ }
   }, [showConversionsOnPricing]);
-  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'services' | 'feeBuilder' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c' | 'calculator' | 'history'
+  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'services' | 'feeBuilder' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c' | 'calculator' | 'escAnalysis' | 'history'
   const [optionsTabData, setOptionsTabData] = useState(null); // OptionsTab state: array of { name, years, escPct, rows: [...] }
   const [compareTabData, setCompareTabData] = useState(null); // CompareTab state: { currentLabel, nextLabel, current: [...], next: [...] }
   const [brokerFeesData, setBrokerFeesData] = useState(null); // BrokerFeesTab state: array of { company, loadEp, feeEp, rfps, loadNg, feeNg }
@@ -2759,7 +2760,7 @@ export function PricingView({ settings } = {}) {
         if (typeof saved.hideEmptyCtsRows === 'boolean') setHideEmptyCtsRows(saved.hideEmptyCtsRows);
         if (saved.summaryColWidths) setSummaryColWidths(saved.summaryColWidths);
         if (saved.summaryColVisibility) setSummaryColVisibility(saved.summaryColVisibility);
-        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'services' || saved.pageSubtab === 'feeBuilder' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options' || saved.pageSubtab === 'compare' || saved.pageSubtab === 'brokerFees' || saved.pageSubtab === 's2c' || saved.pageSubtab === 'calculator' || saved.pageSubtab === 'history') setPageSubtab(saved.pageSubtab);
+        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'services' || saved.pageSubtab === 'feeBuilder' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options' || saved.pageSubtab === 'compare' || saved.pageSubtab === 'brokerFees' || saved.pageSubtab === 's2c' || saved.pageSubtab === 'calculator' || saved.pageSubtab === 'escAnalysis' || saved.pageSubtab === 'history') setPageSubtab(saved.pageSubtab);
         if (Array.isArray(saved.s2cTabData)) setS2cTabData(saved.s2cTabData);
         if (Array.isArray(saved.optionsTabData)) setOptionsTabData(saved.optionsTabData);
         if (saved.compareTabData && typeof saved.compareTabData === 'object') setCompareTabData(saved.compareTabData);
@@ -6486,6 +6487,13 @@ export function PricingView({ settings } = {}) {
         </button>
         <button
           type="button"
+          className={pageSubtab === 'escAnalysis' ? styles.subtabActive : styles.subtab}
+          onClick={() => setPageSubtab('escAnalysis')}
+        >
+          Esc Analysis
+        </button>
+        <button
+          type="button"
           className={pageSubtab === 'history' ? styles.subtabActive : styles.subtab}
           onClick={() => setPageSubtab('history')}
         >
@@ -6651,6 +6659,8 @@ export function PricingView({ settings } = {}) {
           setSiaColWidths={setS2cSiaColWidths}
         />
       )}
+
+      {pageSubtab === 'escAnalysis' && <EscAnalysisTab />}
 
       {pageSubtab === 'calculator' && (
         <>
