@@ -25,7 +25,8 @@ import { buildCompanyIndex, findStrictMatchesInIndex } from '../../utils/company
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { normalizeTierText } from '../../utils/tierText';
 import { STATUSES, TIER_OPTIONS } from '../../data/enums';
-import { reportingStatus, SUBSTATUS_HOLD_STATUS } from '../../utils/reportingStatus';
+import { SUBSTATUS_HOLD_STATUS } from '../../utils/reportingStatus';
+import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import styles from './EventsView.module.css';
 
 // Inline Type dropdown for a matched Table View prospect — the same
@@ -403,7 +404,7 @@ function normalizeCompany(s) {
 // Filterable columns for the two Events tables (keys map to the value
 // pulled for each row in the filter predicates below).
 const ATT_FILTER_KEYS = ['name', 'originalTitle', 'title', 'company', 'email', 'tags'];
-const LOOKUP_FILTER_KEYS = ['name', 'title', 'company', 'tableView', 'type', 'status', 'tier', 'tierList', 'targetList', 'cdm'];
+const LOOKUP_FILTER_KEYS = ['name', 'title', 'company', 'tableView', 'type', 'status', 'substatus', 'tier', 'tierList', 'targetList', 'cdm'];
 
 // The values a column's checklist filter offers and matches on. A cell can
 // hold several (an attendee's tags); an empty cell counts as one blank.
@@ -1765,10 +1766,19 @@ export function EventsView({
   // everyone else. So both tables hold a company whose Table View Type is a
   // competitor out of the list by default, behind one "Show competitors"
   // row at the bottom, and show them muted when asked for. Hold Off
-  // accounts (read as reported, so a substatus counts) aren't being worked
-  // either, so they go behind the same row.
+  // accounts, and any with a substatus, aren't being worked either, so they
+  // go behind the same row. A substatus of "-" reads as blank here.
+  // Substatus choices come from Dropdowns > Substatus, as on the company card.
+  const substatusOptions = useMemo(
+    () => getEffectiveDropdownLists(settings).find(l => l.key === 'substatus')?.options || [],
+    [settings],
+  );
   const isCompetitorProspect = (p) => /competitor/i.test(String(p?.type || ''));
-  const isHoldOffProspect = (p) => !!p && reportingStatus(p) === SUBSTATUS_HOLD_STATUS;
+  const hasRealSubstatus = (p) => {
+    const v = String(p?.substatus ?? '').trim();
+    return !!v && v !== '-';
+  };
+  const isHoldOffProspect = (p) => !!p && (String(p.status || '').trim() === SUBSTATUS_HOLD_STATUS || hasRealSubstatus(p));
   const isParkedProspect = (p) => isCompetitorProspect(p) || isHoldOffProspect(p);
   const isCompetitorCompany = (company) => isCompetitorProspect(matchProspect(company));
   const isParkedCompany = (company) => isParkedProspect(matchProspect(company));
@@ -2765,6 +2775,7 @@ export function EventsView({
     tableView: prospect?.company || '',
     type: prospect?.type || '',
     status: prospect?.status || '',
+    substatus: prospect?.substatus || '',
     tier: prospect?.tier || '',
     tierList: prospect?.tierList || '',
     targetList: targetListText(l.company, prospect),
@@ -2991,6 +3002,11 @@ export function EventsView({
       const p = fuzzy ? null : prospect;
       return <TypeCell prospect={p} field="status" options={STATUSES} onCommit={v => onUpdateProspect(p.id, { status: v })} />;
     } },
+    { key: 'substatus', label: 'Substatus', width: 140, render: (a) => {
+      const { prospect, fuzzy } = attendeeProspect(a);
+      const p = fuzzy ? null : prospect;
+      return <TypeCell prospect={p} field="substatus" options={substatusOptions} onCommit={v => onUpdateProspect(p.id, { substatus: v })} />;
+    } },
     { key: 'targetList', label: 'Target List', width: 150, render: (a) => {
       const { prospect, fuzzy } = attendeeProspect(a);
       return renderTargetListCell(a.company || a.lookupCompany, fuzzy ? null : prospect);
@@ -3094,6 +3110,9 @@ export function EventsView({
     ) },
     { key: 'status', label: 'Status', width: 140, filterable: true, render: (l, { prospect }) => (
       <TypeCell prospect={prospect} field="status" options={STATUSES} onCommit={v => onUpdateProspect(prospect.id, { status: v })} />
+    ) },
+    { key: 'substatus', label: 'Substatus', width: 140, filterable: true, render: (l, { prospect }) => (
+      <TypeCell prospect={prospect} field="substatus" options={substatusOptions} onCommit={v => onUpdateProspect(prospect.id, { substatus: v })} />
     ) },
     { key: 'tier', label: 'Tier', width: 120, filterable: true, render: (l, { prospect }) => (
       <TypeCell prospect={prospect} field="tier" options={TIER_OPTIONS} onCommit={v => onUpdateProspect(prospect.id, { tier: v })} />
