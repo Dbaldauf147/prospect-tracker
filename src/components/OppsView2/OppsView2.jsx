@@ -137,7 +137,7 @@ import { FRAMEWORKS, SERVICE_STATUSES } from '../../data/enums';
 import { buildTypeOptions } from '../../utils/prospectOptions';
 import { NewOppsScheduleModal } from './NewOppsScheduleModal';
 import { STAGE_BANDS } from '../../utils/stageBands';
-import { writeWorkKey, clearWorkKey, restoreWorkKey, OPPS_TODO_EVENT } from '../../utils/mirroredWorkKeys';
+import { writeWorkKey, clearWorkKey, restoreWorkKey, OPPS_TODO_EVENT, OPP_DETAIL_FIELDS_EVENT } from '../../utils/mirroredWorkKeys';
 import { listMirrorVersions, readMirrorVersion } from '../../utils/localMirrorSync';
 import {
   TRACKED_STAGES,
@@ -241,8 +241,9 @@ const SHOW_IMPORT_BUTTONS = false;
 // (header fields) they don't care to see. The choice is a single global
 // preference applied to *every* opp's detail view (not per-opp) and is
 // persisted in user-scoped localStorage so it survives reloads and is
-// shared across the Opps 2 and Agents detail popups. Stored as a JSON
-// array of field names.
+// shared across the Opps 2 and Agents detail popups, with a copy in the
+// account (mirroredWorkKeys) so it follows the user to another machine.
+// Stored as a JSON array of field names.
 const OPP_DETAIL_HIDDEN_FIELDS_KEY = 'opp-detail-hidden-fields';
 
 // Where the user has chosen to file a detail field, overriding the
@@ -344,7 +345,7 @@ function saveDetailFieldPlacements(map) {
   try {
     const obj = {};
     for (const [field, v] of map) obj[field] = { tab: v.tab, step: v.step || null };
-    userLsSet(OPP_DETAIL_FIELD_PLACEMENT_KEY, JSON.stringify(obj));
+    writeWorkKey(OPP_DETAIL_FIELD_PLACEMENT_KEY, JSON.stringify(obj));
   } catch (err) { console.warn('opps2: save detail field placement failed', err); }
 }
 
@@ -358,7 +359,7 @@ function loadHiddenDetailFields() {
 }
 
 function saveHiddenDetailFields(set) {
-  try { userLsSet(OPP_DETAIL_HIDDEN_FIELDS_KEY, JSON.stringify([...set])); }
+  try { writeWorkKey(OPP_DETAIL_HIDDEN_FIELDS_KEY, JSON.stringify([...set])); }
   catch (err) { console.warn('opps2: save hidden detail fields failed', err); }
 }
 
@@ -10274,6 +10275,16 @@ export function OppInfoModal({
   // field that has just left the tab you're looking at says where it
   // went and offers the way back.
   const [fieldPlacements, setFieldPlacements] = useState(() => loadDetailFieldPlacements());
+  // Both are re-read when the account's copy lands, so a popup already open
+  // on a freshly signed-in browser picks up the arrangement.
+  useEffect(() => {
+    const reload = () => {
+      setHiddenFields(loadHiddenDetailFields());
+      setFieldPlacements(loadDetailFieldPlacements());
+    };
+    window.addEventListener(OPP_DETAIL_FIELDS_EVENT, reload);
+    return () => window.removeEventListener(OPP_DETAIL_FIELDS_EVENT, reload);
+  }, []);
   const [moveMenu, setMoveMenu] = useState(null);
   const [lastMove, setLastMove] = useState(null);
   const placeDetailField = useCallback((field, dest) => {

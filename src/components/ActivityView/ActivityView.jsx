@@ -7,7 +7,8 @@ import { DataTable } from '../common/DataTable';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
-import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
+import { userLsGet, userLsSet } from '../../utils/userLs';
+import { writeWorkKey, clearWorkKey, CALENDAR_WEBHOOK_EVENT } from '../../utils/mirroredWorkKeys';
 import { loadCallRecords, saveCallRecordResult } from '../../utils/callRecordingsStore';
 import {
   importGranolaMeetings, recordPatchFor, diagnoseEmptySync, DEFAULT_MEETING_WINDOW_DAYS,
@@ -913,6 +914,8 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   const [outlookError, setOutlookError] = useState(null);
   const [showWebhookSetup, setShowWebhookSetup] = useState(false);
 
+  // The token has a copy in the account (mirroredWorkKeys): the app made it
+  // up, so a browser without it would make a new one the flow doesn't know.
   const webhookStorageKey = 'outlook-webhook-token';
   const savedWebhookToken = (() => { try { return userLsGet(webhookStorageKey) || ''; } catch { return ''; } })();
   const hasWebhookToken = !!savedWebhookToken;
@@ -927,7 +930,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   function setupWebhook() {
     const token = savedWebhookToken || generateToken();
     if (!savedWebhookToken) {
-      try { userLsSet(webhookStorageKey, token); } catch {}
+      try { writeWorkKey(webhookStorageKey, token); } catch {}
       setWebhookToken(token);
     }
     setShowWebhookSetup(true);
@@ -935,11 +938,18 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
 
   function removeWebhook() {
     if (!window.confirm('Disconnect Outlook calendar? Your Power Automate flow will keep running but meetings will stop showing here.')) return;
-    try { userLsRemove(webhookStorageKey); } catch {}
+    try { clearWorkKey(webhookStorageKey); } catch {}
     setWebhookToken('');
     setOutlookEvents([]);
     setShowWebhookSetup(false);
   }
+
+  // The account's copy landing re-attaches the feed on a fresh browser.
+  useEffect(() => {
+    const reload = () => setWebhookToken(userLsGet(webhookStorageKey) || '');
+    window.addEventListener(CALENDAR_WEBHOOK_EVENT, reload);
+    return () => window.removeEventListener(CALENDAR_WEBHOOK_EVENT, reload);
+  }, []);
 
   // Subscribe to Firestore for real-time meeting updates from the webhook
   useEffect(() => {

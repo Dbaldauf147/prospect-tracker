@@ -27,6 +27,10 @@ export const BLOCKED_NAMES_EVENT = 'blocked-names-changed';
 export const BULK_CONTACT_RULES_EVENT = 'bulk-contact-rules-changed';
 export const CONTRACT_SERVICES_EVENT = 'contract-services-changed';
 export const ZOOM_SEARCH_LOG_EVENT = 'zoom-search-log-changed';
+export const DRAFT_AUTOSAVE_EVENT = 'draft-autosave-changed';
+export const BULK_CONTACTS_EVENT = 'bulk-contacts-changed';
+export const OPP_DETAIL_FIELDS_EVENT = 'opp-detail-fields-changed';
+export const CALENDAR_WEBHOOK_EVENT = 'calendar-webhook-token-changed';
 
 const GROUPS = [
   {
@@ -96,6 +100,22 @@ const GROUPS = [
   // Bulk Add > Zoom Search Log: which ZoomInfo pulls have been run, by
   // company and by tag. A record of work done, so it follows the user.
   { event: ZOOM_SEARCH_LOG_EVENT, keys: ['zoom-search-log'] },
+  // Draft Emails: the email being written (subject, body, recipients, cc,
+  // banner), autosaved as it's typed. Unsent writing is the work.
+  { event: DRAFT_AUTOSAVE_EVENT, keys: ['prospect-draft-autosave'] },
+  // Bulk Add Contacts: the uploaded rows still being cleaned up, with the
+  // edits, tags and notes typed into them, before they're added.
+  { event: BULK_CONTACTS_EVENT, keys: ['bulk-contacts-cache'] },
+  // The opp details popup: which fields are hidden and which tab each one
+  // has been filed under. Arranged by hand, like the chart dashboards.
+  {
+    event: OPP_DETAIL_FIELDS_EVENT,
+    keys: ['opp-detail-hidden-fields', 'opp-detail-field-placement'],
+  },
+  // Activity: the token the Power Automate flow posts meetings under. The
+  // app made it up, so a browser without it would make a new one the flow
+  // has never heard of, and the meetings would stop arriving.
+  { event: CALENDAR_WEBHOOK_EVENT, keys: ['outlook-webhook-token'] },
 ];
 
 const EVENT_FOR_KEY = new Map();

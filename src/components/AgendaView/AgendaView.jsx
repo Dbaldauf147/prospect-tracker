@@ -1,7 +1,7 @@
 import { useMemo, useState, useCallback, useRef, useEffect, Fragment, lazy, Suspense } from 'react';
 import { useSyncedTablePref, SET_PREF } from '../../hooks/useSyncedTablePref';
 import { lsHas } from '../../utils/tablePrefsSync';
-import { writeWorkKey } from '../../utils/mirroredWorkKeys';
+import { writeWorkKey, clearWorkKey, BULK_CONTACTS_EVENT } from '../../utils/mirroredWorkKeys';
 import { apiFetch } from '../../utils/apiFetch';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
@@ -10,7 +10,7 @@ import { BULK_ADD_LEAD_SOURCE, LEAD_SOURCE_OPTIONS, leadSourceFor } from '../../
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { cellMatches, BLANKS_FILTER, NON_BLANKS_FILTER } from '../../utils/columnFilter';
 import { getQueuedContactIds, setQueuedContactIds } from '../../utils/draftCampaignQueue';
-import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
+import { userLsGet } from '../../utils/userLs';
 import { buildEmailFromPattern, estimateEmailDomain, estimateEmailDomainCandidates } from '../../utils/emailDomainPattern';
 import { remapDomainWrites } from '../../utils/domainCompanyMapping';
 import { FREE_MAIL_DOMAINS } from '../../utils/companyGuess';
@@ -455,8 +455,11 @@ function persistCompanyRules(map) {
 function loadCache() {
   try { return JSON.parse(userLsGet(STORAGE_KEY)) || []; } catch { return []; }
 }
+// The rows being worked through also have a copy in the account
+// (mirroredWorkKeys), so a half-cleaned upload survives clearing site data
+// or moving machines. Written only from an edit, never on mount.
 function saveCache(rows) {
-  try { userLsSet(STORAGE_KEY, JSON.stringify(rows)); } catch { /* ignore */ }
+  try { writeWorkKey(STORAGE_KEY, JSON.stringify(rows)); } catch { /* ignore */ }
 }
 
 async function loadHubSpotByEmail() {
@@ -686,6 +689,13 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
   // row change.
   const rowsRef = useRef(rows);
   useEffect(() => { rowsRef.current = rows; }, [rows]);
+  // The account's copy landing (sign-in on a fresh browser, or a newer one
+  // from another machine) puts those rows in the table.
+  useEffect(() => {
+    const reload = () => setRows(loadCache());
+    window.addEventListener(BULK_CONTACTS_EVENT, reload);
+    return () => window.removeEventListener(BULK_CONTACTS_EVENT, reload);
+  }, []);
   const [dragActive, setDragActive] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null); // { done, total }
@@ -1885,7 +1895,8 @@ export function AgendaView({ prospects = [], onUpdateProspect, onSelectProspect,
     if (!confirm('Clear all rows?')) return;
     setRows([]);
     setResults({});
-    try { userLsRemove(STORAGE_KEY); } catch { /* ignore */ }
+    // Cleared in the account too, or the next sign-in would bring them back.
+    try { clearWorkKey(STORAGE_KEY); } catch { /* ignore */ }
   }
 
   // Snapshot every row in the grid into a Schneider-styled .xlsx
