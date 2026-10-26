@@ -243,7 +243,7 @@ export function getEffectiveServiceMetadata(name, overrides) {
       name, bfoTag: '', region: '', years: '',
       productLine: '', serviceType: '', localProjectName: '',
       timelineDriven: '', rolloutTime: '', dependsOn: '', autoAdd: '', autoNa: '',
-      sme: '', ktm: '', contactTags: '', notes: '',
+      sme: '', ktm: '', contactTags: '', notes: '', excludeFromBiggestDeal: false,
     };
   }
   const bfoTag = mergedBfoTag(seed, override);
@@ -287,6 +287,9 @@ export function getEffectiveServiceMetadata(name, overrides) {
     // Free-form notes about the service, typed in the Services popup. No
     // seed value; may run to several lines.
     notes:            override?.notes            ?? seed?.notes            ?? '',
+    // Switched on from the Services popup: the service is never named as a
+    // company's Biggest Deal. No seed; true only when the user said so.
+    excludeFromBiggestDeal: override?.excludeFromBiggestDeal === true,
     graveyard: seed?.graveyard || false,
   };
 }

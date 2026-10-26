@@ -38,6 +38,16 @@ const ctx = { serviceRows, pricing, bases: PRICING_BASES };
   eq(excludedServiceSet({ prospectingExcludedServices: 'oops' }).size, 0, 'a malformed setting excludes nothing');
 }
 
+// Excluded from Biggest Deal in the Services popup (excludeFromBiggestDeal on
+// its metadata): never named, the next one down is.
+{
+  const rows = [{ ...serviceRows[0], meta: { ...meta, excludeFromBiggestDeal: true } }, serviceRows[1]];
+  const record = { company: 'Big Co', numberOfSites: 200 };
+  eq(biggestDealFor(record, { ...ctx, serviceRows: rows })?.name, 'GHG reporting', 'a service excluded from Biggest Deal is skipped for the next one');
+  const all = rows.map(r => ({ ...r, meta: { ...meta, excludeFromBiggestDeal: true } }));
+  eq(biggestDealFor(record, { ...ctx, serviceRows: all }), null, 'every service excluded leaves no deal');
+}
+
 // A service the account's sales retire (Auto-N/A Services) shows as N/A on
 // the card, so it is never the biggest deal: the next one is.
 {
