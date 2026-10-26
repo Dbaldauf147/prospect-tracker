@@ -14,7 +14,8 @@ import {
 import {
   isColumnVisible, resetToStarred, applyStar, orderColumns, mergeColumnOrder,
 } from '../../utils/tableColumnPrefs';
-import { userLsGet, userLsSet } from '../../utils/userLs';
+import { userLsGet, userLsSet, userLsHas } from '../../utils/userLs';
+import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -159,6 +160,34 @@ function writeCols(key, value) {
   try { userLsSet(COLS_LS[key], JSON.stringify(value)); } catch { /* a full or blocked localStorage just means prefs don't persist */ }
 }
 
+// What the contact table's layout is called in settings.tablePrefs. The
+// local copy above still draws the first paint; the account copy is what
+// follows the user to another machine and survives clearing site data.
+const COLS_PREFS_TABLE_ID = 'email-campaign-contacts';
+const asKeyList = (a) => (Array.isArray(a) ? a.filter(k => typeof k === 'string') : []);
+const asWidthMap = (m) => (m && typeof m === 'object' && !Array.isArray(m) ? m : {});
+// One useSyncedTablePref per layout kind. Sets are stored as arrays, so they
+// cross the wire in the shape sameStoredValue compares.
+function colsPref(kind, settings, updateSettings) {
+  const isSet = kind === 'hidden' || kind === 'starred' || kind === 'removed';
+  const fallback = kind === 'widths' ? {} : [];
+  return {
+    tableId: COLS_PREFS_TABLE_ID, field: kind, settings, updateSettings,
+    readLocal: () => {
+      const v = readCols(kind, fallback);
+      if (kind === 'widths') return asWidthMap(v);
+      return isSet ? new Set(asKeyList(v)) : asKeyList(v);
+    },
+    writeLocal: (v) => writeCols(kind, isSet ? [...v] : v),
+    hasLocal: () => userLsHas(COLS_LS[kind]),
+    toRemote: (v) => (isSet ? [...v] : v),
+    fromRemote: (v) => {
+      if (kind === 'widths') return asWidthMap(v);
+      return isSet ? new Set(asKeyList(v)) : asKeyList(v);
+    },
+  };
+}
+
 // One row's note, edited in place.
 //
 // The text is held locally while it is being typed and only handed back on
@@ -297,11 +326,11 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   // Column layout: what's hidden, what's starred as the user's default view,
   // what's been deleted out of the table, the order, and the widths. Stored
   // as the user set it and reapplied on every visit.
-  const [colHidden, setColHidden] = useState(() => new Set(readCols('hidden', [])));
-  const [colStarred, setColStarred] = useState(() => new Set(readCols('starred', [])));
-  const [colRemoved, setColRemoved] = useState(() => new Set(readCols('removed', [])));
-  const [colOrder, setColOrder] = useState(() => readCols('order', []));
-  const [colWidths, setColWidths] = useState(() => readCols('widths', {}));
+  const [colHidden, setColHidden] = useSyncedTablePref(colsPref('hidden', settings, updateSettings));
+  const [colStarred, setColStarred] = useSyncedTablePref(colsPref('starred', settings, updateSettings));
+  const [colRemoved, setColRemoved] = useSyncedTablePref(colsPref('removed', settings, updateSettings));
+  const [colOrder, setColOrder] = useSyncedTablePref(colsPref('order', settings, updateSettings));
+  const [colWidths, setColWidths] = useSyncedTablePref(colsPref('widths', settings, updateSettings));
   // Collapses the summary cards (and the tracking nudge under them) so the
   // contact table starts higher up the page. The table, the box that adds to
   // it and its column controls are deliberately outside this — see the roster
@@ -312,11 +341,6 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   useEffect(() => {
     try { userLsSet(DETAILS_COLLAPSED_LS, detailsCollapsed ? '1' : '0'); } catch { /* a full or blocked localStorage just means the choice doesn't persist */ }
   }, [detailsCollapsed]);
-  useEffect(() => { writeCols('hidden', [...colHidden]); }, [colHidden]);
-  useEffect(() => { writeCols('starred', [...colStarred]); }, [colStarred]);
-  useEffect(() => { writeCols('removed', [...colRemoved]); }, [colRemoved]);
-  useEffect(() => { writeCols('order', colOrder); }, [colOrder]);
-  useEffect(() => { writeCols('widths', colWidths); }, [colWidths]);
   // Identifies the most recent "open a saved campaign" request so a slow
   // refresh for a campaign the user has since navigated away from can't stomp
   // the currently-shown one.

@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
+import { lsHas } from '../../utils/tablePrefsSync';
 import { DataTable } from '../common/DataTable';
 import { FollowUpOnSaleCell } from '../common/FollowUpOnSaleCell';
 import { matchesCdm } from '../../utils/cdmMatch';
@@ -435,6 +436,7 @@ function PostSaleFollowUpView({ deals, onUpdateFollowUp, settings, updateSetting
     tableId: POST_SALE_PREFS_TABLE_ID, field: 'widths', settings, updateSettings,
     readLocal: loadPostSaleWidths,
     writeLocal: savePostSaleWidths,
+    hasLocal: () => lsHas(POST_SALE_WIDTHS_KEY),
   });
 
   const getWidth = (col) => colWidths[col.key] || col.minWidth;

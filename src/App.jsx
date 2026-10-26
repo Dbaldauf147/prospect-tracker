@@ -41,6 +41,7 @@ import { DailySuccessLogModal } from './components/DailySuccess/DailySuccessLogM
 import { DailyWeatherPopup } from './components/DailyWeather/DailyWeatherPopup';
 import { WEATHER_SEEN_SETTINGS_KEY, localDateKey, shouldShowWeather } from './utils/dailyWeather';
 import { UTILITY_LOOKUP_HANDOFF_EVENT } from './utils/utilityLookupHandoff';
+import { seedTablePrefsFromLocal } from './utils/tablePrefsSync';
 import './App.css';
 
 // Route views load on first navigation rather than shipping in the entry
@@ -377,6 +378,17 @@ function App() {
     if (!patch) return;
     console.log('Updating the sheet sync configuration');
     updateSettings(patch);
+  }, [user, settingsLoaded, updateSettings]);
+
+  // Column layouts this browser has that the account doesn't, uploaded once
+  // per sign-in (see seedTablePrefsFromLocal), so clearing site data can't
+  // take a layout the user never happened to change after it started syncing.
+  const tablePrefsSeededFor = useRef(null);
+  useEffect(() => {
+    if (!user || !settingsLoaded || tablePrefsSeededFor.current === user.uid) return;
+    tablePrefsSeededFor.current = user.uid;
+    const n = seedTablePrefsFromLocal(settingsRef.current, updateSettings);
+    if (n) console.log(`Saving ${n} column layout${n === 1 ? '' : 's'} from this browser to the account`);
   }, [user, settingsLoaded, updateSettings]);
 
   // New boxes on the services board, carried onto a layout somebody has

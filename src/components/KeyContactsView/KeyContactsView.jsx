@@ -1,5 +1,6 @@
 import { Component, Fragment, useEffect, useMemo, useState, useRef, useCallback } from 'react';
-import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
+import { useSyncedTablePref, SET_PREF } from '../../hooks/useSyncedTablePref';
+import { lsHas } from '../../utils/tablePrefsSync';
 import { ColumnToggle } from '../common/ColumnToggle';
 import {
   resolveHiddenKeys, isColumnVisible, resetToStarred, applyStar,
@@ -2043,20 +2044,51 @@ function KeyContactsViewInner({
     try { localStorage.setItem(lsKey(suffix), JSON.stringify([...value])); } catch { /* private mode */ }
   };
 
-  const [hiddenPref, setHiddenPref] = useState(() => {
-    const stored = readStoredList('hidden-cols');
-    if (stored) return stored;
-    const columnKeys = buildContactColumns({ categorizeContact, showSuggestedCompany, showNewCompanyEmail, showReachedOut, showCompanyVertical, storagePrefix })
-      .filter(c => !c.alwaysOn).map(c => c.key);
-    const legacy = loadLegacyVisibleCols();
-    // No saved layout at all: hide the columns the page never showed by
-    // default (Suggested Company), so a first visit looks as it always has.
-    if (!legacy) return columnKeys.filter(k => !DEFAULT_VISIBLE_COLS.includes(k));
-    return [...resolveHiddenKeys({ legacyVisible: legacy, columnKeys })];
+  // Hidden, starred, deleted and order ride in settings.tablePrefs beside
+  // the widths below, under the same table id, so the whole layout follows
+  // the user to their other machine. The per-prefix localStorage lists stay
+  // the fast local copy, written by the synced setters.
+  const contactsPrefsTableId = `${storagePrefix}:contacts`;
+  const [hiddenPref, setHiddenPref] = useSyncedTablePref({
+    tableId: contactsPrefsTableId, field: 'hidden', settings, updateSettings,
+    readLocal: () => {
+      const stored = readStoredList('hidden-cols');
+      if (stored) return stored;
+      const columnKeys = buildContactColumns({ categorizeContact, showSuggestedCompany, showNewCompanyEmail, showReachedOut, showCompanyVertical, storagePrefix })
+        .filter(c => !c.alwaysOn).map(c => c.key);
+      const legacy = loadLegacyVisibleCols();
+      // No saved layout at all: hide the columns the page never showed by
+      // default (Suggested Company), so a first visit looks as it always has.
+      if (!legacy) return columnKeys.filter(k => !DEFAULT_VISIBLE_COLS.includes(k));
+      return [...resolveHiddenKeys({ legacyVisible: legacy, columnKeys })];
+    },
+    writeLocal: (v) => writeStoredList('hidden-cols', v),
+    // The pre-hidden-list visible set is a saved choice too: the hidden
+    // list derived from it is what goes up.
+    hasLocal: () => lsHas(lsKey('hidden-cols')) || lsHas(lsKey('visible-cols')),
+    fromRemote: (a) => (Array.isArray(a) ? a : []),
   });
-  const [starredCols, setStarredCols] = useState(() => new Set(readStoredList('starred-cols') || []));
-  const [removedCols, setRemovedCols] = useState(() => new Set(readStoredList('removed-cols') || []));
-  const [colOrder, setColOrder] = useState(() => readStoredList('col-order') || []);
+  const [starredCols, setStarredCols] = useSyncedTablePref({
+    tableId: contactsPrefsTableId, field: 'starred', settings, updateSettings,
+    readLocal: () => new Set(readStoredList('starred-cols') || []),
+    writeLocal: (v) => writeStoredList('starred-cols', v),
+    hasLocal: () => lsHas(lsKey('starred-cols')),
+    ...SET_PREF,
+  });
+  const [removedCols, setRemovedCols] = useSyncedTablePref({
+    tableId: contactsPrefsTableId, field: 'removed', settings, updateSettings,
+    readLocal: () => new Set(readStoredList('removed-cols') || []),
+    writeLocal: (v) => writeStoredList('removed-cols', v),
+    hasLocal: () => lsHas(lsKey('removed-cols')),
+    ...SET_PREF,
+  });
+  const [colOrder, setColOrder] = useSyncedTablePref({
+    tableId: contactsPrefsTableId, field: 'order', settings, updateSettings,
+    readLocal: () => readStoredList('col-order') || [],
+    writeLocal: (v) => writeStoredList('col-order', v),
+    hasLocal: () => lsHas(lsKey('col-order')),
+    fromRemote: (a) => (Array.isArray(a) ? a : []),
+  });
 
   // The columns still in the layout, in the user's order. Deleted columns
   // are dropped here so they don't render, don't export and don't appear in
@@ -2079,7 +2111,6 @@ function KeyContactsViewInner({
 
   function commitHidden(next) {
     setHiddenPref([...next]);
-    writeStoredList('hidden-cols', next);
   }
   function toggleVisibleCol(key) {
     if (alwaysVisibleCols.includes(key)) return;
@@ -2090,23 +2121,19 @@ function KeyContactsViewInner({
   function starVisibleCol(key) {
     const next = applyStar({ key, starred: starredCols, hidden: hiddenColsSet, removed: removedCols, star: !starredCols.has(key) });
     setStarredCols(next.starred);
-    writeStoredList('starred-cols', next.starred);
     commitHidden(next.hidden);
     setRemovedCols(next.removed);
-    writeStoredList('removed-cols', next.removed);
   }
   function removeVisibleCol(key) {
     if (alwaysVisibleCols.includes(key)) return;
     const next = new Set(removedCols);
     next.add(key);
     setRemovedCols(next);
-    writeStoredList('removed-cols', next);
   }
   function restoreVisibleCol(key) {
     const next = new Set(removedCols);
     next.delete(key);
     setRemovedCols(next);
-    writeStoredList('removed-cols', next);
   }
   function reorderVisibleCols(nextKeys) {
     // The picker lists only the columns still in the layout, so merge
@@ -2114,7 +2141,6 @@ function KeyContactsViewInner({
     // at the far right.
     const merged = mergeColumnOrder(colOrder, nextKeys);
     setColOrder(merged);
-    writeStoredList('col-order', merged);
   }
   // Reset: every deleted column back, the default order back, and
   // visibility set to the user's starred view - or to everything when
@@ -2127,9 +2153,7 @@ function KeyContactsViewInner({
     });
     commitHidden(hidden);
     setRemovedCols(removed);
-    writeStoredList('removed-cols', removed);
     setColOrder([]);
-    writeStoredList('col-order', []);
   }
 
   // Widths keep their existing per-prefix localStorage key as the fast local
@@ -2145,6 +2169,7 @@ function KeyContactsViewInner({
       } catch { return DEFAULT_CONTACT_COL_WIDTHS; }
     },
     writeLocal: (w) => { try { localStorage.setItem(lsKey('contact-col-widths'), JSON.stringify(w)); } catch { /* storage blocked */ } },
+    hasLocal: () => lsHas(lsKey('contact-col-widths')),
     fromRemote: (w) => ({ ...DEFAULT_CONTACT_COL_WIDTHS, ...(w || {}) }),
   });
   // Per-column value filters (Excel-style checklist). Each entry maps a
@@ -2632,6 +2657,7 @@ function KeyContactsViewInner({
       } catch { return DEFAULT_COL_WIDTHS; }
     },
     writeLocal: (w) => { try { localStorage.setItem(lsKey('col-widths'), JSON.stringify(w)); } catch { /* storage blocked */ } },
+    hasLocal: () => lsHas(lsKey('col-widths')),
     fromRemote: (w) => ({ ...DEFAULT_COL_WIDTHS, ...(w || {}) }),
   });
   // Which By Company columns show, and which are starred as the user's own
@@ -2643,12 +2669,14 @@ function KeyContactsViewInner({
     tableId: `${storagePrefix}:companies`, field: 'hidden', settings, updateSettings,
     readLocal: () => readStoredList('company-hidden-cols') || [],
     writeLocal: (v) => writeStoredList('company-hidden-cols', v || []),
+    hasLocal: () => lsHas(lsKey('company-hidden-cols')),
     fromRemote: (v) => (Array.isArray(v) ? v : []),
   });
   const [companyStarred, setCompanyStarred] = useSyncedTablePref({
     tableId: `${storagePrefix}:companies`, field: 'starred', settings, updateSettings,
     readLocal: () => readStoredList('company-starred-cols') || [],
     writeLocal: (v) => writeStoredList('company-starred-cols', v || []),
+    hasLocal: () => lsHas(lsKey('company-starred-cols')),
     fromRemote: (v) => (Array.isArray(v) ? v : []),
   });
   // Columns deleted out of the table (the picker's ×), back through its
@@ -2657,6 +2685,7 @@ function KeyContactsViewInner({
     tableId: `${storagePrefix}:companies`, field: 'removed', settings, updateSettings,
     readLocal: () => readStoredList('company-removed-cols') || [],
     writeLocal: (v) => writeStoredList('company-removed-cols', v || []),
+    hasLocal: () => lsHas(lsKey('company-removed-cols')),
     fromRemote: (v) => (Array.isArray(v) ? v : []),
   });
   const companyHiddenSet = useMemo(() => new Set(companyHidden || []), [companyHidden]);

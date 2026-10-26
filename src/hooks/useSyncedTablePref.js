@@ -26,6 +26,14 @@ export { SET_PREF } from '../utils/tablePrefsSync';
 // names, order, removed, visible, sort, filters — so a table's entry has the
 // same shape whichever component wrote it. Sets go through `toRemote` / `fromRemote`,
 // since what's stored has to be JSON.
+//
+// `hasLocal` says whether this browser holds a SAVED value, as opposed to
+// readLocal falling back to the table's default. When it does and the
+// account has nothing for this field yet, the local layout is uploaded
+// once, so a layout set up before the table synced (or never touched since)
+// reaches the account without the user having to change it first. Without
+// `hasLocal` nothing is seeded: pushing a default would pin it, and a
+// column the table later ships switched on would arrive switched off.
 export function useSyncedTablePref({
   tableId,
   field,
@@ -35,6 +43,7 @@ export function useSyncedTablePref({
   writeLocal,
   toRemote = (v) => v,
   fromRemote = (v) => v,
+  hasLocal = null,
 }) {
   const remoteRaw = readRemoteTablePrefs(settings, tableId)?.[field];
   const remoteJson = useMemo(() => (remoteRaw === undefined ? '' : JSON.stringify(remoteRaw)), [remoteRaw]);
@@ -49,7 +58,7 @@ export function useSyncedTablePref({
   // setter itself stable, so it can sit in a dependency array without
   // rebuilding every handler under it on each keystroke elsewhere on the page.
   const latest = useRef({});
-  latest.current = { settings, updateSettings, writeLocal, toRemote, fromRemote, value };
+  latest.current = { settings, updateSettings, writeLocal, toRemote, fromRemote, value, hasLocal };
 
   // The remote layout we last took, so an echo of our own write doesn't
   // re-enter as someone else's change.
@@ -65,6 +74,22 @@ export function useSyncedTablePref({
     // Keep the fast local copy in step, so the next first paint matches.
     try { latest.current.writeLocal(incoming); } catch { /* storage blocked */ }
   }, [loaded, remoteJson]);
+
+  // The one-time upload described above. Once per mount is enough: after
+  // it lands the account has an entry, and from then on every change goes
+  // up through the setter.
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (!loaded || remoteJson !== '' || seededRef.current) return;
+    seededRef.current = true;
+    const l = latest.current;
+    let saved = false;
+    try { saved = !!l.hasLocal?.(); } catch { /* storage blocked */ }
+    if (!saved) return;
+    const remoteValue = l.toRemote(l.value);
+    adoptedRef.current = JSON.stringify(remoteValue);
+    persistTablePrefs(null, tableId, l.settings, l.updateSettings, { [field]: remoteValue });
+  }, [loaded, remoteJson, tableId, field]);
 
   const set = useCallback((next) => {
     setValue((prev) => {

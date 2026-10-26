@@ -680,6 +680,7 @@ async function loadMirroredStores() {
     import('./yoyOverridesStore.js'),
     import('./raClientsStore.js'),
     import('./dealTimelineHiddenStore.js'),
+    import('./stageTableColumns.js'),
     import('./timelineTypeOptions.js'),
     import('./coaItemOptions.js'),
     import('./prospectingStatus.js'),

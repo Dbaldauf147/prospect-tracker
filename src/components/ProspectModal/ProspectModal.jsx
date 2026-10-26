@@ -1,4 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo, Suspense, Fragment, isValidElement, cloneElement } from 'react';
+import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
+import { lsHas } from '../../utils/tablePrefsSync';
 import { apiFetch } from '../../utils/apiFetch';
 import { hasMetInPersonTag, metInPersonState, normalizeMetState, metInPersonUpdate, MET_STATE_OPTIONS, MET_YES, MET_ASKED, MET_HOLD } from '../../utils/metInPerson';
 import { contactDisplayName } from '../../utils/contactRosters';
@@ -5263,6 +5265,10 @@ function DivisionsSection({ parentId, parentCompany, prospects, contacts, settin
 // Not a contact property: it writes dans_tags and the tag review records.
 const TAG_PRESET_FIELD = '_tagPreset';
 
+// What the company popup's Portfolio Companies table is called in
+// settings.tablePrefs.
+const PORTFOLIO_PREFS_TABLE_ID = 'prospect-modal-portfolio';
+
 const BULK_TAG_ANSWERS = [
   { mode: 'yes', label: 'Yes', tagModes: ['replace'], help: 'Also records Yes for each tag above on every selected contact.' },
   // No and Not sure take the tag off, so under Replace they act as a remove
@@ -6496,19 +6502,29 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     { key: 'salesRep',         label: 'Other CDM' },
     { key: 'listFlags',        label: 'External Reporting' },
   ], []);
-  const [portfolioColsVisible, setPortfolioColsVisible] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('portfolio-cols-visible'));
-      if (saved && typeof saved === 'object') return saved;
-    } catch { /* noop */ }
-    // Default visibility - every column on except HQ City, which the
-    // user keeps hidden by default and reveals via the Columns ▾ menu
-    // when they need it.
-    return Object.fromEntries(['rank','company','status','siteListSaved','analysisSaved','analysisSavings','analysisExposure','hqCity','hqCountry','energy','estElectricity','estNaturalGas','siteCount','sector','subsector','subsectorScore','strategy','acquisitionYear','pcDescription','notes','raClient','clientManager','targetAccount','tier','salesRep','listFlags'].map(k => [k, k !== 'hqCity']));
+  //
+  // Synced through settings.tablePrefs, so the layout follows the user to
+  // their other machine; localStorage still draws the first paint. The
+  // account holds it in the canonical shape, a list of the hidden keys,
+  // and a key it doesn't list is showing - which is how the local map
+  // already reads (see isPortfolioColShown).
+  const [portfolioColsVisible, setPortfolioColsVisible] = useSyncedTablePref({
+    tableId: PORTFOLIO_PREFS_TABLE_ID, field: 'hidden', settings, updateSettings,
+    readLocal: () => {
+      try {
+        const saved = JSON.parse(localStorage.getItem('portfolio-cols-visible'));
+        if (saved && typeof saved === 'object') return saved;
+      } catch { /* noop */ }
+      // Default visibility - every column on except HQ City, which the
+      // user keeps hidden by default and reveals via the Columns ▾ menu
+      // when they need it.
+      return Object.fromEntries(['rank','company','status','siteListSaved','analysisSaved','analysisSavings','analysisExposure','hqCity','hqCountry','energy','estElectricity','estNaturalGas','siteCount','sector','subsector','subsectorScore','strategy','acquisitionYear','pcDescription','notes','raClient','clientManager','targetAccount','tier','salesRep','listFlags'].map(k => [k, k !== 'hqCity']));
+    },
+    writeLocal: (v) => localStorage.setItem('portfolio-cols-visible', JSON.stringify(v)),
+    toRemote: (v) => Object.keys(v || {}).filter(k => v[k] === false),
+    fromRemote: (a) => Object.fromEntries((Array.isArray(a) ? a : []).map(k => [k, false])),
+    hasLocal: () => lsHas('portfolio-cols-visible'),
   });
-  useEffect(() => {
-    try { localStorage.setItem('portfolio-cols-visible', JSON.stringify(portfolioColsVisible)); } catch { /* noop */ }
-  }, [portfolioColsVisible]);
   const [portfolioColsMenuOpen, setPortfolioColsMenuOpen] = useState(false);
   useEffect(() => {
     if (!portfolioColsMenuOpen) return;
@@ -6521,9 +6537,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return () => document.removeEventListener('mousedown', h);
   }, [portfolioColsMenuOpen]);
   // The columns this user has starred: the standard set every company
-  // popup opens with. The checkboxes above live in this browser's
-  // localStorage, so they answer "what is showing here right now"; a star
-  // lives in the user's synced settings (settings.portfolioStarredCols, a
+  // popup opens with. The checkboxes above answer "what is showing right
+  // now" (synced too, through settings.tablePrefs); a star lives in its
+  // own synced setting (settings.portfolioStarredCols, a
   // { key: true } map so starring and unstarring are single-path writes
   // that can't be undone by a list-union merge from another laptop) and so
   // follows them to every company and every device. A starred column is
@@ -6541,7 +6557,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     // Unstarring leaves the column showing: losing the star shouldn't also
     // yank it off the table under the user's cursor.
     if (!starring) setPortfolioColsVisible(prev => ({ ...prev, [key]: true }));
-  }, [portfolioStarredCols, updateSettingsPath]);
+  }, [portfolioStarredCols, updateSettingsPath, setPortfolioColsVisible]);
   const isPortfolioColShown = (key) => key === 'company' || portfolioStarredCols.has(key) || portfolioColsVisible[key] !== false;
   const colVis = (key) => (isPortfolioColShown(key) ? 'visible' : 'collapse');
   // A hidden column also gives up its width: the table is 100% wide, and a
@@ -6549,21 +6565,28 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // on the right.
   const colWidth = (key) => (isPortfolioColShown(key) ? `${portfolioColWidths[key]}px` : '0px');
   // Column order for the Portfolio Companies table, set by dragging a
-  // header. Per browser, like the visibility toggles above; the Excel
+  // header. Synced, like the visibility toggles above; the Excel
   // export keeps its own fixed order. null means the default order.
-  const [portfolioColOrder, setPortfolioColOrder] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('portfolio-col-order'));
-      if (Array.isArray(saved)) return saved;
-    } catch { /* noop */ }
-    return null;
-  });
-  useEffect(() => {
-    try {
-      if (portfolioColOrder) localStorage.setItem('portfolio-col-order', JSON.stringify(portfolioColOrder));
+  // Synced like the visibility above. null (the default order) goes to the
+  // account as an empty list: a layout change can set a field but has no
+  // way to delete one.
+  const [portfolioColOrder, setPortfolioColOrder] = useSyncedTablePref({
+    tableId: PORTFOLIO_PREFS_TABLE_ID, field: 'order', settings, updateSettings,
+    readLocal: () => {
+      try {
+        const saved = JSON.parse(localStorage.getItem('portfolio-col-order'));
+        if (Array.isArray(saved)) return saved;
+      } catch { /* noop */ }
+      return null;
+    },
+    writeLocal: (order) => {
+      if (order) localStorage.setItem('portfolio-col-order', JSON.stringify(order));
       else localStorage.removeItem('portfolio-col-order');
-    } catch { /* noop */ }
-  }, [portfolioColOrder]);
+    },
+    toRemote: (order) => (Array.isArray(order) ? order : []),
+    fromRemote: (a) => (Array.isArray(a) && a.length ? a : null),
+    hasLocal: () => lsHas('portfolio-col-order'),
+  });
   const orderedPortfolioColKeys = useMemo(() => {
     const keys = PORTFOLIO_COL_DEFS.map(c => c.key);
     const out = (portfolioColOrder || []).filter((k, idx, arr) => keys.includes(k) && arr.indexOf(k) === idx);
@@ -6585,7 +6608,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     // Dragged rightward it lands after the target, leftward before it.
     next.splice(next.indexOf(toKey) + (fromIdx < toIdx ? 1 : 0), 0, fromKey);
     setPortfolioColOrder(next);
-  }, [orderedPortfolioColKeys]);
+  }, [orderedPortfolioColKeys, setPortfolioColOrder]);
   const [portfolioDragCol, setPortfolioDragCol] = useState(null);
   const [portfolioDragOverCol, setPortfolioDragOverCol] = useState(null);
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(true);

@@ -6,7 +6,8 @@ import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
 import { setOppField, setOppBfoLink, loadOpps2Cache, loadOpps2FromFirestore, mergeOpps2Datasets } from '../../utils/opps2Store';
 import { normalizeCompany as canonCompany } from '../../utils/companyNorm';
 import { dbGet } from '../../utils/db';
-import { userLsGet, userLsSet } from '../../utils/userLs';
+import { userLsGet, userLsSet, userLsHas } from '../../utils/userLs';
+import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
 import { writeWorkKey, AGENT_SETTINGS_EVENT } from '../../utils/mirroredWorkKeys';
 import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
@@ -765,6 +766,8 @@ const ACTIVITY_COLUMNS = [
 ];
 const ACTIVITY_COLUMN_KEYS = ACTIVITY_COLUMNS.map(c => c.key);
 const ACTIVITY_COLS_STORAGE_KEY = 'agents-activity-hidden-cols';
+// What the Activity table's hidden columns are called in settings.tablePrefs.
+const ACTIVITY_PREFS_TABLE_ID = 'agents-activity';
 
 // Read the set of hidden Activity-table column keys (persisted per user).
 function readHiddenActivityCols() {
@@ -778,6 +781,12 @@ function readHiddenActivityCols() {
 function writeHiddenActivityCols(set) {
   try { userLsSet(ACTIVITY_COLS_STORAGE_KEY, JSON.stringify([...set])); } catch {}
 }
+
+// The synced copy, read back as the same Set of known keys the local one is.
+const HIDDEN_ACTIVITY_COLS_PREF = {
+  toRemote: (s) => [...s],
+  fromRemote: (a) => new Set(Array.isArray(a) ? a.filter(k => ACTIVITY_COLUMN_KEYS.includes(k)) : []),
+};
 
 // Normalize a BFO Opportunity Name for matching the Opps tab's "BFO
 // Link" value against the BFO Activity tab's "Opportunity Name" column:
@@ -1753,7 +1762,14 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
   // is the same calendar day as the selected Activity date up top.
   const [hideActivityOnDate, setHideActivityOnDate] = useState(readHideActivityOnDate);
   // Which Activity-table columns are hidden, plus the column-menu open state.
-  const [hiddenActivityCols, setHiddenActivityCols] = useState(readHiddenActivityCols);
+  // Saved to the account as well, so they follow the user to another machine.
+  const [hiddenActivityCols, setHiddenActivityCols] = useSyncedTablePref({
+    tableId: ACTIVITY_PREFS_TABLE_ID, field: 'hidden', settings, updateSettings,
+    readLocal: readHiddenActivityCols,
+    writeLocal: writeHiddenActivityCols,
+    hasLocal: () => userLsHas(ACTIVITY_COLS_STORAGE_KEY),
+    ...HIDDEN_ACTIVITY_COLS_PREF,
+  });
   const [activityColsMenuOpen, setActivityColsMenuOpen] = useState(false);
   const activityColsMenuRef = useRef(null);
   const isActivityColVisible = (key) => !hiddenActivityCols.has(key);
@@ -1761,7 +1777,6 @@ export function AgentsView({ prospects = [], settings, updateProspect, updateSet
     setHiddenActivityCols(prev => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key); else next.add(key);
-      writeHiddenActivityCols(next);
       return next;
     });
   };
