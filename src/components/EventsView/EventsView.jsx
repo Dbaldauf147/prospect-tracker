@@ -22,6 +22,7 @@ import { buildCompanyIndex, findStrictMatchesInIndex } from '../../utils/company
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
 import { normalizeTierText } from '../../utils/tierText';
 import { STATUSES, TIER_OPTIONS } from '../../data/enums';
+import { reportingStatus, SUBSTATUS_HOLD_STATUS } from '../../utils/reportingStatus';
 import styles from './EventsView.module.css';
 
 // Inline Type dropdown for a matched Table View prospect — the same
@@ -1608,11 +1609,17 @@ export function EventsView({
   // Competitors aren't who an event is for: the job on this page is mapping
   // everyone else. So both tables hold a company whose Table View Type is a
   // competitor out of the list by default, behind one "Show competitors"
-  // row at the bottom, and show them muted when asked for.
-  const isCompetitorCompany = (company) => /competitor/i.test(String(matchProspect(company)?.type || ''));
+  // row at the bottom, and show them muted when asked for. Hold Off
+  // accounts (read as reported, so a substatus counts) aren't being worked
+  // either, so they go behind the same row.
+  const isCompetitorProspect = (p) => /competitor/i.test(String(p?.type || ''));
+  const isHoldOffProspect = (p) => !!p && reportingStatus(p) === SUBSTATUS_HOLD_STATUS;
+  const isParkedProspect = (p) => isCompetitorProspect(p) || isHoldOffProspect(p);
+  const isCompetitorCompany = (company) => isCompetitorProspect(matchProspect(company));
+  const isParkedCompany = (company) => isParkedProspect(matchProspect(company));
   const splitCompetitors = (rows, companyOf) => ({
-    others: rows.filter(r => !isCompetitorCompany(companyOf(r))),
-    competitors: rows.filter(r => isCompetitorCompany(companyOf(r))),
+    others: rows.filter(r => !isParkedCompany(companyOf(r))),
+    competitors: rows.filter(r => isParkedCompany(companyOf(r))),
   });
   const [showCompetitors, setShowCompetitors] = useState(false);
   // Lookup rows marked Ignore are hidden unless this is on.
@@ -1622,7 +1629,7 @@ export function EventsView({
     <tr key="__competitors" className={styles.competitorToggleRow}>
       <td colSpan={colSpan}>
         <button type="button" className={styles.competitorToggle} onClick={() => setShowCompetitors(v => !v)}>
-          {`${showCompetitors ? 'Hide' : 'Show'} ${count} competitor ${count === 1 ? one : many}`}
+          {`${showCompetitors ? 'Hide' : 'Show'} ${count} competitor / Hold Off ${count === 1 ? one : many}`}
         </button>
         <span className={styles.competitorToggleNote}>
           {showCompetitors ? 'Shown below, greyed out.' : 'Hidden so the list is only the people to map.'}
@@ -2453,7 +2460,12 @@ export function EventsView({
   // prospect's contact behind the competitor toggle.
   const isCompetitorAttendee = (a) => {
     const { prospect, fuzzy } = attendeeProspect(a);
-    return !fuzzy && /competitor/i.test(String(prospect?.type || ''));
+    return !fuzzy && isCompetitorProspect(prospect);
+  };
+  // Competitor or Hold Off, by the same exact match: these sit behind the toggle.
+  const isParkedAttendee = (a) => {
+    const { prospect, fuzzy } = attendeeProspect(a);
+    return !fuzzy && isParkedProspect(prospect);
   };
 
   // Attendees that pass the active per-column filters, paired with their
@@ -2467,7 +2479,7 @@ export function EventsView({
       return String(val).toLowerCase().includes(q);
     });
     const rows = attendees.map((a, i) => ({ a, i })).filter(({ a }) => matches(a));
-    return { others: rows.filter(({ a }) => !isCompetitorAttendee(a)), competitors: rows.filter(({ a }) => isCompetitorAttendee(a)) };
+    return { others: rows.filter(({ a }) => !isParkedAttendee(a)), competitors: rows.filter(({ a }) => isParkedAttendee(a)) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attendees, attFilters, contactsById, prospectByCompanyKey, lookupCompanyByName]);
   // What the table shows: everyone else, then the competitors only when
