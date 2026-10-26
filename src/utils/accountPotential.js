@@ -458,7 +458,11 @@ export function accountPotential({
   // ranked[0] on a book with no rates at all would name a service worth an
   // unknown amount as the biggest deal on the account, which is a claim
   // nothing supports.
-  const top = ranked.length && ranked[0].priced ? ranked[0] : null;
+  //
+  // A service switched off for it in the Services popup
+  // (excludeFromBiggestDeal) is skipped, and the next one down is named.
+  const noBiggestDeal = new Set(serviceRows.filter(r => r?.meta?.excludeFromBiggestDeal).map(r => r.name));
+  const top = ranked.find(l => l.priced && !noBiggestDeal.has(l.name)) || null;
 
   // The answered services, priced and put in size order of their own.
   //
