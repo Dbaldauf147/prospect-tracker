@@ -1763,11 +1763,11 @@ export function EventsView({
   };
 
   // Competitors aren't who an event is for: the job on this page is mapping
-  // everyone else. So both tables hold a company whose Table View Type is a
-  // competitor out of the list by default, behind one "Show competitors"
-  // row at the bottom, and show them muted when asked for. Hold Off
-  // accounts, and any with a substatus, aren't being worked either, so they
-  // go behind the same row. A substatus of "-" reads as blank here.
+  // everyone else. So both tables leave out a company whose Table View Type
+  // is a competitor, and list it on the Competitors / Hold Off subtab
+  // instead. Hold Off accounts, and any with a substatus, aren't being
+  // worked either, so they go there too. A substatus of "-" reads as blank
+  // here.
   // Substatus choices come from Dropdowns > Substatus, as on the company card.
   const substatusOptions = useMemo(
     () => getEffectiveDropdownLists(settings).find(l => l.key === 'substatus')?.options || [],
@@ -1786,22 +1786,14 @@ export function EventsView({
     others: rows.filter(r => !isParkedCompany(companyOf(r))),
     competitors: rows.filter(r => isParkedCompany(companyOf(r))),
   });
-  const [showCompetitors, setShowCompetitors] = useState(false);
+  // The event's three subtabs: the LinkedIn lookup list (where the mapping
+  // happens, so it opens first), the attendees, and the competitor / Hold
+  // Off companies, which are held out of the other two and listed here
+  // instead. Not remembered: every visit opens on the lookup list.
+  const [eventTab, setEventTab] = useState('lookup');
+  const parkedTab = eventTab === 'parked';
   // Lookup rows marked Ignore are hidden unless this is on.
   const [showIgnored, setShowIgnored] = useState(false);
-  // The row that hides or shows them, spanning the table.
-  const competitorToggleRow = (count, colSpan, [one, many]) => (
-    <tr key="__competitors" className={styles.competitorToggleRow}>
-      <td colSpan={colSpan}>
-        <button type="button" className={styles.competitorToggle} onClick={() => setShowCompetitors(v => !v)}>
-          {`${showCompetitors ? 'Hide' : 'Show'} ${count} competitor / Hold Off ${count === 1 ? one : many}`}
-        </button>
-        <span className={styles.competitorToggleNote}>
-          {showCompetitors ? 'Shown below, greyed out.' : 'Hidden so the list is only the people to map.'}
-        </span>
-      </td>
-    </tr>
-  );
 
   // Pre-normalized prospect names for the fuzzy "Suggested" column —
   // built once per prospects change. Each entry keeps a normalized
@@ -2697,15 +2689,12 @@ export function EventsView({
   }, [attendees, attFilters, attPicks, contactsById, prospectByCompanyKey, lookupCompanyByName]);
   const attendeeValueOptions = key =>
     columnValueOptions(attendees.map(attendeeFilterVals), ATT_FILTER_KEYS, attFilters, attPicks, key);
-  // What the table shows: everyone else, then the competitors only when
-  // asked for. Select-all works off this, so a hidden competitor is never
-  // tagged by accident.
+  // What the table shows: everyone else on the Attendees tab, only the
+  // competitor / Hold Off people on theirs. Select-all works off this, so a
+  // competitor is never tagged from the Attendees tab by accident.
   const visibleAttendees = useMemo(
-    () => [
-      ...attendeeSplit.others,
-      ...(showCompetitors ? attendeeSplit.competitors.map(r => ({ ...r, competitor: true })) : []),
-    ],
-    [attendeeSplit, showCompetitors],
+    () => (parkedTab ? attendeeSplit.competitors : attendeeSplit.others),
+    [attendeeSplit, parkedTab],
   );
   // Taggable subset of the currently-visible rows, so select-all and the
   // header checkbox operate on what the user can actually see.
@@ -2784,6 +2773,10 @@ export function EventsView({
   const lookupInTable = (l, prospect) => !isLookupDone(l)
     && !(l.ignored && !showIgnored)
     && !(cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter);
+  // Subtab counts, before the column filters: what each tab holds.
+  const parkedAttendeeCount = attendees.filter(isParkedAttendee).length;
+  const openLookups = lookups.filter(l => !isLookupDone(l) && !(l.ignored && !showIgnored));
+  const parkedLookupCount = openLookups.filter(l => isParkedCompany(l.company)).length;
   const lookupValueOptions = key => {
     const rowVals = [];
     for (const l of lookups) {
@@ -3217,7 +3210,7 @@ export function EventsView({
             {(() => {
               // Everyone at the event: the attendees, plus the lookup rows
               // not yet mapped to one (a done row is already counted as its
-              // attendee). Competitor rows hidden behind the toggles count.
+              // attendee). Competitor rows on their own subtab count.
               const openRows = lookups.filter(l => !isLookupDone(l));
               const total = attendees.length + openRows.length;
               if (!total) return null;
@@ -3265,15 +3258,39 @@ export function EventsView({
             </label>
           </div>
 
+          <div className={styles.eventTabs} role="tablist">
+            {[
+              { key: 'lookup', label: 'Find people on LinkedIn', count: openLookups.length - parkedLookupCount },
+              { key: 'attendees', label: 'Attendees', count: attendees.length - parkedAttendeeCount },
+              { key: 'parked', label: 'Competitors / Hold Off', count: parkedLookupCount + parkedAttendeeCount },
+            ].map(t => (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                aria-selected={eventTab === t.key}
+                className={`${styles.eventTab} ${eventTab === t.key ? styles.eventTabActive : ''}`}
+                onClick={() => setEventTab(t.key)}
+                title={t.key === 'parked'
+                  ? 'Companies whose Table View Type is a competitor, or that are Hold Off or have a substatus. They are kept out of the other two tabs.'
+                  : undefined}
+              >
+                {t.label}
+                <span className={styles.countPill}>{t.count}</span>
+              </button>
+            ))}
+          </div>
+
+          {eventTab !== 'lookup' && (<>
           <div className={styles.sectionTitle}>
             Attendees
-            <span className={styles.countPill}>{attendees.length}</span>
-            {attendees.length > 0 && (
+            <span className={styles.countPill}>{parkedTab ? parkedAttendeeCount : attendees.length - parkedAttendeeCount}</span>
+            {!parkedTab && attendees.length > 0 && (
               <button type="button" className={styles.exportBtn} onClick={exportAttendeesCsv}>
                 Export CSV
               </button>
             )}
-            {attendeesNeedingHubSpot.length > 0 && (
+            {!parkedTab && attendeesNeedingHubSpot.length > 0 && (
               <button
                 type="button"
                 className={styles.exportBtn}
@@ -3301,7 +3318,7 @@ export function EventsView({
             )}
           </div>
 
-          <AttendeePicker contacts={searchableContacts} existingIds={existingIds} onAdd={addAttendee} />
+          {!parkedTab && <AttendeePicker contacts={searchableContacts} existingIds={existingIds} onAdd={addAttendee} />}
 
           {taggableAttendees.length > 0 && (
             <div className={styles.bulkTagBar}>
@@ -3336,9 +3353,11 @@ export function EventsView({
             </div>
           )}
 
-          {attendees.length === 0 ? (
+          {(parkedTab ? parkedAttendeeCount === 0 : attendees.length === 0) ? (
             <div className={styles.emptyAttendees}>
-              No attendees saved yet. Use the search box above to add contacts.
+              {parkedTab
+                ? 'No attendees at a competitor or Hold Off company.'
+                : 'No attendees saved yet. Use the search box above to add contacts.'}
             </div>
           ) : (
             <TallTableScroll>
@@ -3373,24 +3392,19 @@ export function EventsView({
                   trailing={ATTENDEE_ACTIONS}
                 />
                 <tbody>
-                  {visibleAttendees.length === 0 && attendeeSplit.competitors.length === 0 ? (
+                  {visibleAttendees.length === 0 ? (
                     <tr>
                       <td colSpan={attendeeColSpan} className={styles.tvMuted} style={{ padding: '0.6rem', textAlign: 'center' }}>
                         No attendees match the current filters.
                       </td>
                     </tr>
-                  ) : visibleAttendees.flatMap(({ a, i, competitor }, vi) => {
+                  ) : visibleAttendees.map(({ a, i }) => {
                     const cid = a.contactId ? String(a.contactId) : '';
                     const taggable = cid && contactsById.has(cid);
                     const tags = taggable ? contactTags(contactsById.get(cid)) : [];
                     const ctx = { i, cid, taggable, tags };
-                    // The show / hide row sits between everyone else and the
-                    // competitors (at the very end while they're hidden).
-                    const toggle = vi === attendeeSplit.others.length && attendeeSplit.competitors.length
-                      ? [competitorToggleRow(attendeeSplit.competitors.length, attendeeColSpan, ['contact', 'contacts'])]
-                      : [];
-                    return [...toggle, (
-                      <tr key={`${a.contactId || 'manual'}-${i}`} className={competitor ? styles.competitorRow : undefined}>
+                    return (
+                      <tr key={`${a.contactId || 'manual'}-${i}`}>
                         <td style={{ textAlign: 'center' }}>
                           {taggable && (
                             <input
@@ -3422,18 +3436,18 @@ export function EventsView({
                           </button>
                         </td>
                       </tr>
-                    )];
+                    );
                   })}
-                  {visibleAttendees.length === attendeeSplit.others.length && attendeeSplit.competitors.length > 0
-                    && competitorToggleRow(attendeeSplit.competitors.length, attendeeColSpan, ['contact', 'contacts'])}
                 </tbody>
               </table>
             </TallTableScroll>
           )}
+          </>)}
 
+          {eventTab !== 'attendees' && (<>
           <div className={styles.sectionTitle}>
             Find people on LinkedIn
-            <span className={styles.countPill}>{lookups.length}</span>
+            <span className={styles.countPill}>{parkedTab ? parkedLookupCount : lookups.length}</span>
             {lookupCdms.length > 0 && (
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>
                 CDM
@@ -3447,7 +3461,7 @@ export function EventsView({
                 </select>
               </label>
             )}
-            {newLookupCount > 0 && (
+            {!parkedTab && newLookupCount > 0 && (
               <button
                 type="button"
                 className={styles.exportBtn}
@@ -3459,7 +3473,7 @@ export function EventsView({
                 {bulkAdding ? 'Adding…' : `+ Add all ${newLookupCount} new to Table View`}
               </button>
             )}
-            {lookups.length > 0 && (
+            {!parkedTab && lookups.length > 0 && (
               <button type="button" className={styles.exportBtn} style={{ background: '#FEF2F2', borderColor: '#FECACA', color: '#B91C1C', marginLeft: 0 }} onClick={clearLookups}>
                 Clear list
               </button>
@@ -3474,6 +3488,7 @@ export function EventsView({
               />
             )}
           </div>
+          {!parkedTab && (<>
           <div style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
             Paste, drop, or upload a list of <strong>titles and company names</strong> (CSV or tab-separated): a <strong>column-mapping</strong> popup lets you pick which column is which. Each row gets a LinkedIn people-search button, a <strong>Table View</strong> match (click to open, or <strong>+ Add</strong> a new prospect), and an editable <strong>CDM</strong>.
             {lookups.length > 0 && (
@@ -3523,7 +3538,11 @@ export function EventsView({
             </div>
           </div>
 
-          {lookups.length > 0 && (
+          </>)}
+
+          {parkedTab && parkedLookupCount === 0 ? (
+            <div className={styles.emptyAttendees}>No lookup rows at a competitor or Hold Off company.</div>
+          ) : lookups.length > 0 && (
             <TallTableScroll>
               <table
                 className={`${styles.attendeeTable} ${styles.resizable}`}
@@ -3570,17 +3589,11 @@ export function EventsView({
                       }
                       g.rows.push({ l, i, prospect });
                     });
-                    // Competitor companies are held back behind one row at
-                    // the bottom, and shown greyed out when asked for.
+                    // Competitor / Hold Off companies are listed on their
+                    // own subtab, everyone else on the lookup tab.
                     const split = splitCompetitors(groups, g => g.rows[0].l.company);
-                    const shown = [
-                      ...split.others,
-                      ...(showCompetitors ? split.competitors.map(g => ({ ...g, competitor: true })) : []),
-                    ];
-                    const toggleRow = split.competitors.length
-                      ? competitorToggleRow(split.competitors.length, lookupColSpan, ['company', 'companies'])
-                      : null;
-                    const rendered = shown.map((g, gi) => {
+                    const shown = parkedTab ? split.competitors : split.others;
+                    return shown.map((g, gi) => {
                       const first = g.rows[0];
                       // Decision maker(s) on file for this company that
                       // haven't already been added as attendees or ignored
@@ -3621,7 +3634,7 @@ export function EventsView({
                         suggestedIds.add(id);
                       }
                       const dmSuggestions = dmCandidates.filter(c => !suggestedIds.has(String(c.id || c.vid || '')));
-                      const groupClass = `${styles.lookupGroupRow} ${gi % 2 ? styles.lookupGroupAlt : ''} ${g.competitor ? styles.competitorRow : ''}`;
+                      const groupClass = `${styles.lookupGroupRow} ${gi % 2 ? styles.lookupGroupAlt : ''}`;
                       return (
                         <Fragment key={g.key}>
                           {g.rows.map(({ l, i, prospect }, ri) => {
@@ -3725,13 +3738,12 @@ export function EventsView({
                         </Fragment>
                       );
                     });
-                    if (toggleRow) rendered.splice(split.others.length, 0, toggleRow);
-                    return rendered;
                   })()}
                 </tbody>
               </table>
             </TallTableScroll>
           )}
+          </>)}
         </div>
       )}
       {contactPopup && (
