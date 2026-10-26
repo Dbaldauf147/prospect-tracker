@@ -94,7 +94,8 @@ export const PE_FIRM_COMPANIES = [
   'Whitebox Advisors',
 ];
 
-// Every pass runs at most once per user/browser; a new pass = a new
+// Every pass runs at most once per user (the record of it is in the
+// account, see utils/backfillPassRecord); a new pass = a new
 // entry with a fresh flag. `fields` are written verbatim onto each
 // matching prospect (only when at least one differs).
 export const BACKFILL_PASSES = [
