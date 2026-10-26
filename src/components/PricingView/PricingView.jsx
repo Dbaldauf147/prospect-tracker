@@ -27,7 +27,8 @@ import { CompareTab } from './CompareTab';
 import { BrokerFeesTab } from './BrokerFeesTab';
 import { S2CTab } from './S2CTab';
 import { migrateS2cTags } from '../../utils/s2cTags';
-import { PRICING_MIRRORED_KEYS, PRICING_MIRROR_EVENT, queuePricingMirrorPush } from '../../utils/pricingMirroredKeys';
+import { PRICING_MIRRORED_KEYS, PRICING_MIRROR_EVENT, PRICING_VERSION_CHOICES, queuePricingMirrorPush, restorePricingMirroredKey } from '../../utils/pricingMirroredKeys';
+import { MirrorVersionsModal } from '../common/MirrorVersionsModal';
 import { CalculatorTab } from './CalculatorTab';
 import { EscAnalysisTab } from './EscAnalysisTab';
 import { ServicesTab } from './ServicesTab';
@@ -2545,6 +2546,9 @@ export function PricingView({ settings } = {}) {
   useEffect(() => {
     try { localStorage.setItem('pricing-show-quick-conversions', showConversionsOnPricing ? '1' : '0'); } catch { /* noop */ }
   }, [showConversionsOnPricing]);
+  // Linked To > Earlier versions: the cloud's kept copies of the Pricing
+  // mappings, to put one back after it was lost or overwritten.
+  const [showMappingVersions, setShowMappingVersions] = useState(false);
   const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'services' | 'feeBuilder' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c' | 'calculator' | 'escAnalysis' | 'history'
   const [optionsTabData, setOptionsTabData] = useState(null); // OptionsTab state: array of { name, years, escPct, rows: [...] }
   const [compareTabData, setCompareTabData] = useState(null); // CompareTab state: { currentLabel, nextLabel, current: [...], next: [...] }
@@ -6585,6 +6589,46 @@ export function PricingView({ settings } = {}) {
               onUnlink: () => { if (linkedOppId) setOppOptionLink(linkedOppId, '').catch(() => {}); },
             };
           })()}
+        />
+      )}
+
+      {pageSubtab === 'linkedTo' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0.5rem 1.25rem 0' }}>
+          <button
+            type="button"
+            onClick={() => setShowMappingVersions(true)}
+            title="The copies of the Linked To and other Pricing mappings the cloud kept each time they were replaced. Restore one to put it back."
+            style={{ padding: '0.3rem 0.7rem', border: '1px solid #2563EB', background: '#EFF6FF', color: '#1D4ED8', borderRadius: 6, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+          >
+            Earlier versions
+          </button>
+          <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+            Lost or overwritten a mapping? Restore an earlier copy.
+          </span>
+        </div>
+      )}
+
+      {showMappingVersions && (
+        <MirrorVersionsModal
+          choices={PRICING_VERSION_CHOICES}
+          noun="mapping"
+          unit="entries"
+          defaultDatabase="pricing-recovery"
+          currentCount={(key) => {
+            const dbKey = PRICING_VERSION_CHOICES.find(c => c.key === key)?.dbKey;
+            const current = {
+              linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults,
+              linkedToOptionsList, feeDefaults, lineItemServices, lineItemIgnored, lineItemPriority, lineItemSharedOk,
+              s2cLineItemTags, serviceFeeStructures, servicesCompleted, feeBuilderSaved, priceCheckExcluded, priceCheckComponentPicks,
+            }[dbKey];
+            if (Array.isArray(current)) return current.length;
+            return current && typeof current === 'object' ? Object.keys(current).length : 0;
+          }}
+          onRestore={async (key, json) => {
+            const dbKey = PRICING_VERSION_CHOICES.find(c => c.key === key)?.dbKey;
+            await restorePricingMirroredKey(dbKey, JSON.parse(json));
+          }}
+          onClose={() => setShowMappingVersions(false)}
         />
       )}
 

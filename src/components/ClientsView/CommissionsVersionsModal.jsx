@@ -1,204 +1,25 @@
 // Commissions > Earlier versions: the copies of the roster the cloud kept
-// each time it was replaced (utils/localMirrorSync keeps the last 20), and
-// a Restore beside each. A restore saves like any edit and keeps the
-// roster it replaces as a version too, so it can itself be undone.
-import { useEffect, useState } from 'react';
-import { listMirrorVersions, readMirrorVersion } from '../../utils/localMirrorSync';
-import { apiFetch } from '../../utils/apiFetch';
+// each time it was replaced, and a Restore beside each. The popup itself is
+// common/MirrorVersionsModal; this names the roster and how to put it back.
+import { MirrorVersionsModal } from '../common/MirrorVersionsModal';
 import { COMMISSIONS_MIRROR_KEY, restoreCommissions } from '../../utils/commissionsStore';
 
-const REASONS = {
-  auto: 'Saved',
-  'before-delete': 'Before rows were removed or cleared',
-  'before-restore': 'Before a restore',
-  'not-saved': 'A change on a device whose copy was out of date (not saved)',
-  recovered: 'Recovered from the database history',
-  'restored-backup': 'Copied from a restored backup',
-};
-
-const fmtWhen = (ms) => (ms
-  ? new Date(ms).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-  : '-');
+const CHOICES = [{ key: COMMISSIONS_MIRROR_KEY, label: 'commissions roster' }];
 
 export function CommissionsVersionsModal({ currentRows = 0, onClose }) {
-  const [versions, setVersions] = useState(null);
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(null);
-
-  const [reloadTick, setReloadTick] = useState(0);
-  useEffect(() => {
-    let cancelled = false;
-    listMirrorVersions(COMMISSIONS_MIRROR_KEY)
-      .then(v => { if (!cancelled) setVersions(v); })
-      .catch(err => { if (!cancelled) { setError(String(err?.message || err)); setVersions([]); } });
-    return () => { cancelled = true; };
-  }, [reloadTick]);
-
-  // Firestore point-in-time recovery, when the database has it on, keeps 7
-  // days of every document's history. The server reads the roster back
-  // through it hour by hour and files each copy it finds as a version here
-  // (api/mirror-recover).
-  const [searching, setSearching] = useState(false);
-  const [searchNote, setSearchNote] = useState('');
-  // A Firestore scheduled backup restores into a NEW database (never over
-  // the live one); this copies just the roster out of it as a version here.
-  const [restoredDb, setRestoredDb] = useState('commissions-recovery');
-  const [copying, setCopying] = useState(false);
-  async function copyFromRestoredDatabase() {
-    setCopying(true);
-    setSearchNote('');
-    setError('');
-    try {
-      const resp = await apiFetch('/api/mirror-recover', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: COMMISSIONS_MIRROR_KEY, fromDatabase: restoredDb.trim() }),
-      });
-      const out = await resp.json().catch(() => ({}));
-      if (!resp.ok) throw new Error(out.error || `The copy failed (${resp.status}).`);
-      if (!out.found?.length) {
-        setSearchNote(`The database "${restoredDb.trim()}" has no commissions roster for your account.`);
-      } else {
-        const f = out.found[0];
-        setSearchNote(`Found the roster in "${restoredDb.trim()}" (${f.rows} rows, last saved ${fmtWhen(f.asOf)})${out.added ? ' and added it below' : ', already listed below'}. Click Restore beside it.`);
-        setReloadTick(t => t + 1);
-      }
-    } catch (err) {
-      setError(String(err?.message || err));
-    } finally {
-      setCopying(false);
-    }
-  }
-
-  async function lookForOlderCopies() {
-    setSearching(true);
-    setSearchNote('');
-    setError('');
-    try {
-      const resp = await apiFetch('/api/mirror-recover', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: COMMISSIONS_MIRROR_KEY }),
-      });
-      const out = await resp.json().catch(() => ({}));
-      if (!resp.ok) throw new Error(out.error || `The search failed (${resp.status}).`);
-      if (!out.pitr) {
-        setSearchNote('The database does not keep a history of past copies (point-in-time recovery is off), so there is nothing older to find. It can be turned on in Google Cloud, under Firestore > Disaster recovery.');
-      } else if (!out.found?.length) {
-        setSearchNote('No copies of the roster in the last 7 days of history.');
-      } else {
-        const biggest = Math.max(...out.found.map(f => f.rows || 0));
-        setSearchNote(`Found ${out.found.length} cop${out.found.length === 1 ? 'y' : 'ies'} in the last 7 days (largest ${biggest} rows)${out.added ? `; ${out.added} added below` : ', already listed below'}. Restore the one you want.`);
-        setReloadTick(t => t + 1);
-      }
-    } catch (err) {
-      setError(String(err?.message || err));
-    } finally {
-      setSearching(false);
-    }
-  }
-
-  async function restore(v) {
-    const n = v.rows ?? '?';
-    if (!window.confirm(`Replace the current roster (${currentRows} rows) with this version from ${fmtWhen(v.archivedAt)} (${n} rows)? The current roster is kept as an earlier version, so this can be undone.`)) return;
-    setBusy(v.slot);
-    try {
-      const json = await readMirrorVersion(COMMISSIONS_MIRROR_KEY, v.slot);
-      const rows = json ? JSON.parse(json) : null;
-      if (!Array.isArray(rows)) throw new Error('That version could not be read.');
-      restoreCommissions(rows);
-      onClose?.();
-    } catch (err) {
-      setError(String(err?.message || err));
-    } finally {
-      setBusy(null);
-    }
-  }
-
   return (
-    <div
-      onClick={onClose}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
-    >
-      <div
-        role="dialog"
-        aria-label="Earlier versions of the commissions roster"
-        onClick={e => e.stopPropagation()}
-        style={{ background: '#fff', borderRadius: 10, width: 'min(640px, 94vw)', maxHeight: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 12px 32px rgba(15, 23, 42, 0.25)' }}
-      >
-        <div style={{ padding: '0.9rem 1.1rem 0.5rem', borderBottom: '1px solid #E2E8F0' }}>
-          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>Earlier versions</div>
-          <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
-            The roster as it stood before each time it was replaced, newest first. Every save that removes rows keeps one; routine edits keep one at most every 10 minutes. The last 20 are kept.
-          </div>
-        </div>
-        <div style={{ overflow: 'auto', padding: '0.4rem 1.1rem 0.8rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.4rem 0', flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              onClick={lookForOlderCopies}
-              disabled={searching}
-              title="Search the database's own history (the last 7 days, if point-in-time recovery is on) for earlier copies of the roster"
-              style={{ padding: '0.3rem 0.7rem', border: '1px solid #16A34A', background: '#F0FDF4', color: '#166534', borderRadius: 6, fontSize: '0.75rem', fontWeight: 600, cursor: searching ? 'wait' : 'pointer', fontFamily: 'inherit' }}
-            >{searching ? 'Searching the last 7 days...' : 'Look for older copies'}</button>
-            <span style={{ fontSize: '0.7rem', color: '#64748B' }}>Searches the database&apos;s history for copies from before they were replaced. Can take a minute.</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.2rem 0 0.4rem', flexWrap: 'wrap' }}>
-            <input
-              value={restoredDb}
-              onChange={e => setRestoredDb(e.target.value)}
-              aria-label="Restored database ID"
-              placeholder="restored database ID"
-              style={{ padding: '0.28rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 6, fontSize: '0.75rem', fontFamily: 'inherit', width: 190 }}
-            />
-            <button
-              type="button"
-              onClick={copyFromRestoredDatabase}
-              disabled={copying || !restoredDb.trim()}
-              title="Copy the roster out of a database restored from a Firestore scheduled backup, as an earlier version here. Nothing else is read or changed."
-              style={{ padding: '0.3rem 0.7rem', border: '1px solid #2563EB', background: '#EFF6FF', color: '#1D4ED8', borderRadius: 6, fontSize: '0.75rem', fontWeight: 600, cursor: copying ? 'wait' : 'pointer', fontFamily: 'inherit' }}
-            >{copying ? 'Copying...' : 'Copy from restored database'}</button>
-            <span style={{ fontSize: '0.7rem', color: '#64748B' }}>For a Firestore backup restored into its own database.</span>
-          </div>
-          {searchNote && <div style={{ color: '#166534', fontSize: '0.75rem', padding: '0.2rem 0 0.4rem' }}>{searchNote}</div>}
-          {error && <div style={{ color: '#B91C1C', fontSize: '0.75rem', padding: '0.4rem 0' }}>{error}</div>}
-          {versions == null ? (
-            <div style={{ color: '#94A3B8', fontSize: '0.75rem', padding: '0.8rem 0' }}>Loading...</div>
-          ) : versions.length === 0 ? (
-            <div style={{ color: '#64748B', fontSize: '0.75rem', padding: '0.8rem 0' }}>
-              No earlier versions yet. They are kept from now on, each time the roster is replaced. To look further back, use Look for older copies above.
-            </div>
-          ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
-              <thead>
-                <tr style={{ textAlign: 'left', color: '#64748B' }}>
-                  {['Kept', 'Rows', 'Why', ''].map(h => <th key={h} style={{ padding: '6px 6px', borderBottom: '1px solid #E2E8F0', fontWeight: 700 }}>{h}</th>)}
-                </tr>
-              </thead>
-              <tbody>
-                {versions.map(v => (
-                  <tr key={`${v.slot}-${v.archivedAt}`} style={{ color: '#1E293B' }}>
-                    <td style={{ padding: '6px', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap' }}>{fmtWhen(v.archivedAt)}</td>
-                    <td style={{ padding: '6px', borderBottom: '1px solid #F1F5F9' }}>{v.rows ?? '-'}</td>
-                    <td style={{ padding: '6px', borderBottom: '1px solid #F1F5F9', color: v.reason === 'not-saved' ? '#B45309' : '#475569' }}>{REASONS[v.reason] || v.reason}</td>
-                    <td style={{ padding: '6px', borderBottom: '1px solid #F1F5F9', textAlign: 'right' }}>
-                      <button
-                        type="button"
-                        disabled={busy != null}
-                        onClick={() => restore(v)}
-                        style={{ padding: '0.25rem 0.6rem', border: '1px solid #2563EB', background: '#EFF6FF', color: '#1D4ED8', borderRadius: 6, fontSize: '0.72rem', fontWeight: 600, cursor: busy != null ? 'wait' : 'pointer', fontFamily: 'inherit' }}
-                      >{busy === v.slot ? 'Restoring...' : 'Restore'}</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-        <div style={{ padding: '0.6rem 1.1rem', borderTop: '1px solid #E2E8F0', textAlign: 'right' }}>
-          <button type="button" onClick={onClose} style={{ padding: '0.35rem 0.8rem', border: '1px solid #CBD5E1', background: '#fff', borderRadius: 6, fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}>Close</button>
-        </div>
-      </div>
-    </div>
+    <MirrorVersionsModal
+      choices={CHOICES}
+      noun="roster"
+      unit="rows"
+      defaultDatabase="commissions-recovery"
+      currentCount={() => currentRows}
+      onRestore={(_key, json) => {
+        const rows = JSON.parse(json);
+        if (!Array.isArray(rows)) throw new Error('That version could not be read.');
+        restoreCommissions(rows);
+      }}
+      onClose={onClose}
+    />
   );
 }
