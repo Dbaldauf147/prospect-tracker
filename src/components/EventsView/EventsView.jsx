@@ -17,6 +17,9 @@ import { planTagEdit } from '../../utils/contactTagReview';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { attendeeFromContact, cleanText, contactDisplayName } from '../../utils/eventsStore';
 import { companyDedupeKey } from '../../utils/firestoreSync';
+import { companyRosterContacts } from '../../utils/companyRoster';
+import { applyCompanyOverride } from '../../utils/contactRosters';
+import { contactIsHidden } from '../ProspectModal/contactTags';
 import { buildTypeOptions } from '../../utils/prospectOptions';
 import { buildCompanyIndex, findStrictMatchesInIndex } from '../../utils/companyIndex';
 import { resolveTargetAccountCdm } from '../../utils/cdmMatch';
@@ -75,7 +78,8 @@ function CdmCell({ prospect, onCommit }) {
 // they find on LinkedIn. Commits on blur / Enter back onto the row.
 //
 // Focusing it opens a picker of the contacts on file for the row's
-// company, decision makers first, filtered as you type. Picking one
+// company (`contacts`, already narrowed to it by rosterFor), decision
+// makers first, filtered as you type. Picking one
 // saves them as an attendee for this row (onPick); the "+ Add new
 // contact" button saves the typed name as a manual attendee instead
 // (onAddManual). The list is portalled with fixed positioning so the
@@ -90,19 +94,10 @@ function LookupNameCell({ value, company, title, contacts = [], onCommit, onPick
   const inputRef = useRef(null);
   useEffect(() => { setVal(value || ''); }, [value]);
 
-  const companyNorm = useMemo(() => normalizeCompany(company), [company]);
   // The company's roster, decision makers on top, then by name.
-  const roster = useMemo(() => {
-    if (!companyNorm) return [];
-    const out = [];
-    for (const c of contacts) {
-      const cn = normalizeCompany(c.company);
-      if (cn && (cn === companyNorm || cn.includes(companyNorm) || companyNorm.includes(cn))) out.push(c);
-    }
-    return out
-      .map(c => ({ c, dm: isDecisionMaker(c), name: contactDisplayName(c) }))
-      .sort((a, b) => (a.dm === b.dm ? a.name.localeCompare(b.name) : a.dm ? -1 : 1));
-  }, [contacts, companyNorm]);
+  const roster = useMemo(() => contacts
+    .map(c => ({ c, dm: isDecisionMaker(c), name: contactDisplayName(c) }))
+    .sort((a, b) => (a.dm === b.dm ? a.name.localeCompare(b.name) : a.dm ? -1 : 1)), [contacts]);
 
   const matches = useMemo(() => {
     const q = val.trim().toLowerCase();
@@ -741,7 +736,7 @@ function AttendeePicker({ contacts, existingIds, onAdd }) {
 
 // Modal roster picker for one company — the Opps 2 "+ Add from
 // <company>" flow as a popup: search the HubSpot contacts on file for
-// that company, toggle them on/off the attendee list, or add someone
+// that company (`contacts`, already narrowed to it by rosterFor), toggle them on/off the attendee list, or add someone
 // manually when nobody matches. Rendered in a portal so it isn't
 // clipped by the table's scroll container.
 function ContactPickerModal({ company, title, contacts, attendees, onAdd, onRemove, onClose }) {
@@ -753,17 +748,7 @@ function ContactPickerModal({ company, title, contacts, attendees, onAdd, onRemo
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const companyNorm = useMemo(() => normalizeCompany(company), [company]);
-  const roster = useMemo(() => {
-    if (!companyNorm) return [];
-    const out = [];
-    for (const c of contacts) {
-      const cn = normalizeCompany(c.company);
-      if (!cn) continue;
-      if (cn === companyNorm || cn.includes(companyNorm) || companyNorm.includes(cn)) out.push(c);
-    }
-    return out;
-  }, [contacts, companyNorm]);
+  const roster = contacts;
 
   const addedAtt = useMemo(() => {
     const byId = new Map();
@@ -2145,6 +2130,52 @@ export function EventsView({
   }, [events]);
   const searchableContacts = useMemo(() => [...manualContacts, ...contacts], [manualContacts, contacts]);
 
+  // The people on file for one lookup row's company, for its Name picker
+  // and Add Contact popup: everyone whose Company loosely matches the row's
+  // pasted company, plus everyone the company card's Contacts tab lists for
+  // the row's Table View company (the hand-corrected Company, the email
+  // domain match, the contacts linked by hand). Without the second half a
+  // person sitting on the card was missing from the picker whenever the
+  // two names were spelled differently. Matching reads the corrected
+  // Company; what is handed back (and saved) is the record itself.
+  const localFields = settings?.contactLocalFields;
+  const rosterLinks = settings?.companyContactLinks;
+  const rosterExclusions = settings?.companyContactExclusions;
+  const rosterFor = useMemo(() => {
+    const matchable = searchableContacts.map(c => applyCompanyOverride(c, localFields));
+    const rawOf = new Map(matchable.map((m, i) => [m, searchableContacts[i]]));
+    const cache = new Map();
+    return (company, prospect) => {
+      const norm = normalizeCompany(company);
+      // Keyed on the card fields the roster reads, so an Email Domain or
+      // website edit is picked up without rebuilding every row.
+      const key = prospect
+        ? [norm, prospect.id, prospect.company, prospect.emailDomain, prospect.website, prospect.exactContactMatch].join('|')
+        : norm;
+      if (cache.has(key)) return cache.get(key);
+      const out = [];
+      const seen = new Set();
+      const add = (m) => {
+        const raw = rawOf.get(m) || m;
+        const id = String(raw.id || raw.vid || '');
+        if (id && seen.has(id)) return;
+        if (id) seen.add(id);
+        out.push(raw);
+      };
+      if (norm) {
+        for (const m of matchable) {
+          const cn = normalizeCompany(m.company);
+          if (cn && (cn === norm || cn.includes(norm) || norm.includes(cn))) add(m);
+        }
+      }
+      if (prospect) {
+        for (const m of companyRosterContacts(matchable, prospect, { isHidden: contactIsHidden, links: rosterLinks, exclusions: rosterExclusions })) add(m);
+      }
+      cache.set(key, out);
+      return out;
+    };
+  }, [searchableContacts, localFields, rosterLinks, rosterExclusions]);
+
   // HubSpot contacts tagged "Decision Maker" - used to surface the
   // decision maker(s) for each lookup company right under its row.
   const decisionMakerContacts = useMemo(
@@ -2800,11 +2831,11 @@ export function EventsView({
   const ATTENDEE_ACTIONS = { key: 'actions', label: 'Actions', width: 200 };
 
   const lookupColumns = [
-    { key: 'name', label: 'Name', width: 150, filterable: true, render: (l, { i, nameSuggestion }) => (
+    { key: 'name', label: 'Name', width: 150, filterable: true, render: (l, { i, prospect, nameSuggestion }) => (
       <LookupNameCell
         value={l.name}
         company={l.company}
-        contacts={searchableContacts}
+        contacts={rosterFor(l.company, prospect)}
         onCommit={v => updateLookup(i, { name: v })}
         onPick={c => addDecisionMaker(c, { l, i })}
         onAddManual={name => addManualForLookup(name, { l, i })}
@@ -2872,11 +2903,11 @@ export function EventsView({
     { key: 'cdm', label: 'CDM', width: 140, filterable: true, render: (l, { prospect }) => (
       <CdmCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { cdm: v })} />
     ) },
-    { key: 'addContact', label: 'Add Contact', width: 190, render: (l, { i }) => (
+    { key: 'addContact', label: 'Add Contact', width: 190, render: (l, { i, prospect }) => (
       <RowContactAdder
         company={l.company}
         title={l.title}
-        contacts={searchableContacts}
+        contacts={rosterFor(l.company, prospect)}
         attendees={attendees}
         onAdd={att => addAttendeeFromLookup(att, i)}
         onRemove={removeAttendeeObj}
