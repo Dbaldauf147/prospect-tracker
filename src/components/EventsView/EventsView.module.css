@@ -335,6 +335,18 @@
   background: var(--color-bg);
 }
 
+/* Sideways scrollbar pinned to the bottom of the pane while the table's
+   own one is below the fold (see TallTableScroll). */
+.pinnedHScroll {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+}
+
 /* Resizable variant: fixed layout so the explicit column widths set via
    the <colgroup> are honored, with clipped headers and a drag handle. */
 .resizable {
