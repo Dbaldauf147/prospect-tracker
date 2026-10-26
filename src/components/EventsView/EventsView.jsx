@@ -405,6 +405,42 @@ function normalizeCompany(s) {
 const ATT_FILTER_KEYS = ['name', 'originalTitle', 'title', 'company', 'email', 'tags'];
 const LOOKUP_FILTER_KEYS = ['name', 'title', 'company', 'tableView', 'type', 'status', 'tier', 'tierList', 'targetList', 'cdm'];
 
+// The values a column's checklist filter offers and matches on. A cell can
+// hold several (an attendee's tags); an empty cell counts as one blank.
+function filterValuesOf(v) {
+  const list = (Array.isArray(v) ? v : [v]).map(x => String(x ?? '').trim()).filter(Boolean);
+  return list.length ? list : [''];
+}
+
+// Whether a row passes every column's type-to-filter text and checklist
+// picks. `picks[key]` is the list of values left ticked (undefined means
+// all of them). `exceptKey` skips one column, so that column's own
+// checklist lists everything the other filters leave.
+function passesColumnFilters(vals, keys, text, picks, exceptKey) {
+  return keys.every(key => {
+    if (key === exceptKey) return true;
+    const list = filterValuesOf(vals[key]);
+    const q = String(text?.[key] || '').trim().toLowerCase();
+    if (q && !list.join(' ').toLowerCase().includes(q)) return false;
+    const pick = picks?.[key];
+    return !pick || list.some(v => pick.includes(v));
+  });
+}
+
+// A column's checklist: each distinct value with how many rows carry it,
+// A to Z with the blank last.
+function columnValueOptions(rowVals, keys, text, picks, key) {
+  const counts = new Map();
+  for (const vals of rowVals) {
+    if (!passesColumnFilters(vals, keys, text, picks, key)) continue;
+    for (const v of new Set(filterValuesOf(vals[key]))) counts.set(v, (counts.get(v) || 0) + 1);
+  }
+  return [...counts]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => (a.value === '' ? 1 : b.value === '' ? -1
+      : a.value.localeCompare(b.value, undefined, { numeric: true, sensitivity: 'base' })));
+}
+
 // HubSpot stores Dan's Tags as a single semicolon-separated string.
 // Split it into a clean list of individual tags.
 function parseTags(str) {
@@ -1365,12 +1401,128 @@ function TallTableScroll({ children }) {
   );
 }
 
+// Where the checklist goes: just under its button, kept on screen.
+function placeUnder(r) {
+  return { top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 268)) };
+}
+
+// The ▾ in a column header: a checklist of the column's values, ticked
+// ones shown. `picked` is the ticked list (undefined means all ticked),
+// and every tick applies straight away. With the search box in use,
+// Select all and Clear only touch the values it shows.
+function ColumnPickFilter({ label, picked, options, onChange }) {
+  const btnRef = useRef(null);
+  const popRef = useRef(null);
+  const [pos, setPos] = useState(null);
+  const [q, setQ] = useState('');
+  const open = !!pos;
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const inside = t => popRef.current?.contains(t) || btnRef.current?.contains(t);
+    const onDown = e => { if (!inside(e.target)) setPos(null); };
+    const onKey = e => { if (e.key === 'Escape') setPos(null); };
+    // Follow the button when the table or pane scrolls, and close once it
+    // has scrolled out of sight.
+    const onScroll = e => {
+      if (popRef.current?.contains(e.target) || !btnRef.current) return;
+      const r = btnRef.current.getBoundingClientRect();
+      setPos(r.bottom < 0 || r.top > window.innerHeight ? null : placeUnder(r));
+    };
+    const onResize = () => setPos(null);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [open]);
+
+  const toggleOpen = () => {
+    if (open) { setPos(null); return; }
+    setQ('');
+    setPos(placeUnder(btnRef.current.getBoundingClientRect()));
+  };
+
+  const opts = open ? options() : [];
+  const all = opts.map(o => o.value);
+  const isOn = v => (picked ? picked.includes(v) : true);
+  const needle = q.trim().toLowerCase();
+  const shown = needle ? opts.filter(o => (o.value || '(blank)').toLowerCase().includes(needle)) : opts;
+  // Back to "no filter" whenever every value ends up ticked.
+  const commit = next => onChange(all.every(v => next.includes(v)) ? undefined : next);
+  const toggle = v => {
+    const cur = picked || all;
+    commit(cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v]);
+  };
+  const selectAll = () => {
+    if (!needle) { onChange(undefined); return; }
+    const cur = picked || all;
+    commit([...new Set([...cur, ...shown.map(o => o.value)])]);
+  };
+  const clear = () => {
+    if (!needle) { onChange([]); return; }
+    const hide = new Set(shown.map(o => o.value));
+    commit((picked || all).filter(v => !hide.has(v)));
+  };
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        draggable={false}
+        className={picked ? styles.pickBtnActive : styles.pickBtn}
+        title={picked ? `${label}: ${picked.length} value${picked.length === 1 ? '' : 's'} shown` : `Pick ${label} values to show`}
+        aria-label={`Pick ${label} values to show`}
+        aria-expanded={open}
+        onMouseDown={e => e.stopPropagation()}
+        onClick={toggleOpen}
+      >
+        ▾
+      </button>
+      {open && createPortal(
+        <div ref={popRef} className={styles.pickPop} style={{ top: pos.top, left: pos.left }} role="dialog" aria-label={`${label} values`}>
+          <input
+            className={styles.filterInput}
+            value={q}
+            placeholder={`Search ${label}…`}
+            aria-label={`Search ${label} values`}
+            autoFocus
+            onChange={e => setQ(e.target.value)}
+          />
+          <div className={styles.pickActions}>
+            <button type="button" onClick={selectAll}>Select all</button>
+            <button type="button" onClick={clear}>Clear</button>
+            <span>{picked ? `${picked.filter(v => all.includes(v)).length} of ${all.length}` : `All ${all.length}`}</span>
+          </div>
+          <div className={styles.pickList}>
+            {shown.length === 0 && <div className={styles.pickEmpty}>No matching values</div>}
+            {shown.map(o => (
+              <label key={o.value} className={styles.pickItem}>
+                <input type="checkbox" checked={isOn(o.value)} onChange={() => toggle(o.value)} />
+                <span className={o.value ? styles.pickValue : `${styles.pickValue} ${styles.pickBlank}`}>{o.value || '(Blank)'}</span>
+                <span className={styles.pickCount}>{o.count}</span>
+              </label>
+            ))}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 // Header for a resizable table: a <colgroup> drives the fixed column
 // widths and each <th> carries its label and a drag handle. When the
 // table is filterable a second row of always-visible type-to-filter
 // inputs sits directly beneath the headers. `leading` / `trailing` are
 // optional always-on columns (e.g. a select-all checkbox or row actions).
-function ResizableHead({ columns, widths, startResize, filters, onFilterChange, leading, trailing, onMove }) {
+function ResizableHead({ columns, widths, startResize, filters, onFilterChange, picks, onPick, pickOptions, leading, trailing, onMove }) {
   const [dragKey, setDragKey] = useState(null);
   const [overKey, setOverKey] = useState(null);
   const keys = columns.map(c => c.key);
@@ -1398,7 +1550,19 @@ function ResizableHead({ columns, widths, startResize, filters, onFilterChange, 
               onDrop={e => { e.preventDefault(); onMove?.(dragKey, c.key); setDragKey(null); setOverKey(null); }}
               onDragEnd={() => { setDragKey(null); setOverKey(null); }}
             >
-              <span className={styles.thLabel}>{c.label}</span>
+              {c.filterable && onPick ? (
+                <span className={styles.thLabelRow}>
+                  <span className={styles.thLabel}>{c.label}</span>
+                  <ColumnPickFilter
+                    label={c.label}
+                    picked={picks?.[c.key]}
+                    options={() => pickOptions(c.key)}
+                    onChange={v => onPick(c.key, v)}
+                  />
+                </span>
+              ) : (
+                <span className={styles.thLabel}>{c.label}</span>
+              )}
               <span
                 className={styles.resizeHandle}
                 onMouseDown={e => startResize(c.key, e)}
@@ -1507,6 +1671,12 @@ export function EventsView({
   const [lookupFilters, setLookupFilters] = useState({});
   const setAttFilter = (key, v) => setAttFilters(prev => ({ ...prev, [key]: v }));
   const setLookupFilter = (key, v) => setLookupFilters(prev => ({ ...prev, [key]: v }));
+  // Checklist picks from the header dropdowns, per column (see
+  // passesColumnFilters).
+  const [attPicks, setAttPicks] = useState({});
+  const [lookupPicks, setLookupPicks] = useState({});
+  const setAttPick = (key, v) => setAttPicks(prev => ({ ...prev, [key]: v }));
+  const setLookupPick = (key, v) => setLookupPicks(prev => ({ ...prev, [key]: v }));
 
   // Index every Table View prospect by the app's canonical company
   // dedupe key so each lookup row can find its matching prospect the
@@ -2501,18 +2671,22 @@ export function EventsView({
 
   // Attendees that pass the active per-column filters, paired with their
   // original index so Remove / checkboxes still target the right row.
+  const attendeeFilterVals = (a) => ({
+    name: a.name || '',
+    originalTitle: a.originalTitle || '',
+    title: a.title || '',
+    company: a.company || '',
+    email: a.email || '',
+    tags: a.contactId ? contactTags(contactsById.get(String(a.contactId))) : [],
+  });
   const attendeeSplit = useMemo(() => {
-    const tagsOf = a => (a.contactId ? contactTags(contactsById.get(String(a.contactId))).join(' ') : '');
-    const matches = a => ATT_FILTER_KEYS.every(key => {
-      const q = String(attFilters[key] || '').trim().toLowerCase();
-      if (!q) return true;
-      const val = key === 'tags' ? tagsOf(a) : (a[key] || '');
-      return String(val).toLowerCase().includes(q);
-    });
-    const rows = attendees.map((a, i) => ({ a, i })).filter(({ a }) => matches(a));
+    const rows = attendees.map((a, i) => ({ a, i }))
+      .filter(({ a }) => passesColumnFilters(attendeeFilterVals(a), ATT_FILTER_KEYS, attFilters, attPicks));
     return { others: rows.filter(({ a }) => !isParkedAttendee(a)), competitors: rows.filter(({ a }) => isParkedAttendee(a)) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attendees, attFilters, contactsById, prospectByCompanyKey, lookupCompanyByName]);
+  }, [attendees, attFilters, attPicks, contactsById, prospectByCompanyKey, lookupCompanyByName]);
+  const attendeeValueOptions = key =>
+    columnValueOptions(attendees.map(attendeeFilterVals), ATT_FILTER_KEYS, attFilters, attPicks, key);
   // What the table shows: everyone else, then the competitors only when
   // asked for. Select-all works off this, so a hidden competitor is never
   // tagged by accident.
@@ -2581,6 +2755,32 @@ export function EventsView({
     if (attendeeTitleKeys.has(l.titleContact || titleOnlyKey(l.title, l.company))) return true;
     return attendeeCompanies.has(normalizeCompany(l.company));
   };
+  // What each lookup column filters on, and whether a row is in the table
+  // at all before the column filters (not done, not a hidden ignore, and
+  // inside the CDM pick).
+  const lookupFilterVals = (l, prospect) => ({
+    name: l.name || '',
+    title: l.title || '',
+    company: l.company || '',
+    tableView: prospect?.company || '',
+    type: prospect?.type || '',
+    status: prospect?.status || '',
+    tier: prospect?.tier || '',
+    tierList: prospect?.tierList || '',
+    targetList: targetListText(l.company, prospect),
+    cdm: prospect?.cdm || '',
+  });
+  const lookupInTable = (l, prospect) => !isLookupDone(l)
+    && !(l.ignored && !showIgnored)
+    && !(cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter);
+  const lookupValueOptions = key => {
+    const rowVals = [];
+    for (const l of lookups) {
+      const prospect = matchProspect(l.company);
+      if (lookupInTable(l, prospect)) rowVals.push(lookupFilterVals(l, prospect));
+    }
+    return columnValueOptions(rowVals, LOOKUP_FILTER_KEYS, lookupFilters, lookupPicks, key);
+  };
   const lookupDoneCount = useMemo(
     () => lookups.reduce((n, l) => n + (isLookupDone(l) ? 1 : 0), 0),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2618,6 +2818,8 @@ export function EventsView({
     setTagStatus('');
     setAttFilters({});
     setLookupFilters({});
+    setAttPicks({});
+    setLookupPicks({});
     setLookupMapping(null);
   }, [selectedId]);
 
@@ -3132,6 +3334,9 @@ export function EventsView({
                   onMove={attendeeCols.move}
                   filters={attFilters}
                   onFilterChange={setAttFilter}
+                  picks={attPicks}
+                  onPick={setAttPick}
+                  pickOptions={attendeeValueOptions}
                   leading={{
                     width: ATTENDEE_SELECT.width,
                     content: (
@@ -3312,6 +3517,9 @@ export function EventsView({
                   onMove={lookupCols.move}
                   filters={lookupFilters}
                   onFilterChange={setLookupFilter}
+                  picks={lookupPicks}
+                  onPick={setLookupPick}
+                  pickOptions={lookupValueOptions}
                   trailing={LOOKUP_ACTIONS}
                 />
                 <tbody>
@@ -3327,28 +3535,13 @@ export function EventsView({
                       // Drop rows whose company already has a contact on the
                       // attendee list, or whose name is already an attendee -
                       // they're done. Reappears if removed (see isLookupDone).
-                      if (isLookupDone(l)) return;
-                      if (l.ignored && !showIgnored) return;
-                      // Apply the CDM filter (kept on original index i so
-                      // edit / remove still target the right row).
-                      if (cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter) return;
-                      // Apply the per-column type-to-filter drafts.
-                      const lookupVals = {
-                        name: l.name || '',
-                        title: l.title || '',
-                        company: l.company || '',
-                        tableView: prospect?.company || '',
-                        type: prospect?.type || '',
-                        status: prospect?.status || '',
-                        tier: prospect?.tier || '',
-                        tierList: prospect?.tierList || '',
-                        targetList: targetListText(l.company, prospect),
-                        cdm: prospect?.cdm || '',
-                      };
-                      if (!LOOKUP_FILTER_KEYS.every(key => {
-                        const q = String(lookupFilters[key] || '').trim().toLowerCase();
-                        return !q || String(lookupVals[key]).toLowerCase().includes(q);
-                      })) return;
+                      // Hidden ignores and the CDM pick go too (kept on
+                      // original index i so edit / remove still target the
+                      // right row).
+                      if (!lookupInTable(l, prospect)) return;
+                      // Apply the per-column type-to-filter drafts and
+                      // checklist picks.
+                      if (!passesColumnFilters(lookupFilterVals(l, prospect), LOOKUP_FILTER_KEYS, lookupFilters, lookupPicks)) return;
                       const key = normalizeCompany(l.company) || `__row${i}`;
                       let g = byCompany.get(key);
                       if (!g) {
