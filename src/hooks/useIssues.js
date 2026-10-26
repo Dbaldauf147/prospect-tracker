@@ -13,6 +13,7 @@ import { loadPipelineDashboard, coverageServicesOf, PIPELINE_DASHBOARD_EVENT } f
 // store; the Opps cache backs the "not tagged to an opp" check.
 import { BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY, BFO_ACTIVITY_EVENT } from '../utils/bfoActivityStore';
 import { loadLocalOnlyFiles, LOCAL_ONLY_FILES_EVENT } from '../utils/localOnlyFiles';
+import { oversizedSiteLists as findOversizedSiteLists } from '../utils/siteListSize';
 
 // The Pipeline dashboard is re-read on every window focus, and a fresh array
 // of the same services would re-run the whole issue computation each time —
@@ -115,6 +116,13 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   // computeIssues.
   const salesCoverage = settings?.salesCoverage;
   const coverageSettings = useMemo(() => ({ salesCoverage }), [salesCoverage]);
+  // Site lists near or over the size one can be saved at. Sizing walks
+  // every row, so it runs when the lists change, not on every settings
+  // edit, and only the few big ones go on to computeIssues (through a
+  // string key, so a re-sized list that stays the same size is no change).
+  const siteLists = settings?.companySiteLists;
+  const oversizedKey = useMemo(() => JSON.stringify(findOversizedSiteLists(siteLists)), [siteLists]);
+  const oversizedSiteLists = useMemo(() => JSON.parse(oversizedKey), [oversizedKey]);
 
   // Re-read once the per-user localStorage scope is established (and on any
   // later account switch), since the initial reads above may have run
@@ -203,12 +211,12 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   }, [setBfoActivity]);
 
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists });
     return rows.map((r) => {
       const { snoozed, until } = issueSnoozeState(snoozedMap, r.id);
       return { ...r, snoozed, snoozeUntil: until };
     });
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists]);
 
   // Services the client base hasn't explored yet. Not issues — outreach —
   // so they're returned alongside rather than mixed in, and the snooze map

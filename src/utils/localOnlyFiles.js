@@ -31,6 +31,10 @@ export const LOCAL_ONLY_KINDS = {
   rfp: { label: 'RFP workbook', where: 'Opps > the opp > Follow Up Notes > RFP' },
   marketUpdate: { label: 'Market Update email', where: 'Draft Emails > Market Updates' },
   list: { label: 'Uploaded list', where: 'Lists' },
+  // Not a file in IndexedDB: a site list whose save failed, so the change
+  // is held only by the open tab (see companySiteListsStore). Same list,
+  // different wording below.
+  siteList: { label: 'Site list', where: 'Company card > Site list' },
 };
 
 function read() {
@@ -118,12 +122,28 @@ export function localOnlyFileIssues(entries, { oppsRecords = null, oppNumbers = 
   return (entries || []).filter(e => e?.id && LOCAL_ONLY_KINDS[e.kind]).map((e) => {
     const kind = LOCAL_ONLY_KINDS[e.kind];
     const opp = e.oppId != null ? oppById.get(String(e.oppId)) : null;
-    const prospect = e.kind === 'portfolio' ? prospectBySlug.get(slug(e.owner)) : null;
+    const prospect = (e.kind === 'portfolio' || e.kind === 'siteList') ? prospectBySlug.get(slug(e.owner)) : null;
     const company = prospect?.company || e.owner || String(opp?.Account || '').trim();
     const size = e.sizeBytes ? ` (${fmtSize(e.sizeBytes)})` : '';
     const why = e.reason === 'too-big'
       ? `over the ${fmtSize(e.limitBytes)} backup limit`
       : `its cloud backup failed${e.error ? ` (${e.error})` : ''}`;
+    if (e.kind === 'siteList') {
+      return {
+        id: `local-only:${e.id}`,
+        source: 'Site lists',
+        type: 'Site list not saved',
+        company: company || '-',
+        oppNumber: null,
+        prospectId: prospect?.id || null,
+        daysUntil: null,
+        expirationDate: null,
+        detail: `The last save of ${e.name ? `the site list "${e.name}"` : 'this site list'}${size} failed: `
+          + `${e.reason === 'too-big' ? `it is over the ${fmtSize(e.limitBytes)} one site list can hold` : `the save was refused${e.error ? ` (${e.error})` : ''}`}. `
+          + 'The change was only in the tab you made it in, so a refresh loses it. '
+          + `${e.reason === 'too-big' ? 'Make the list smaller, then save it again' : 'Save it again'} from ${kind.where}.`,
+      };
+    }
     return {
       id: `local-only:${e.id}`,
       source: 'Backups',

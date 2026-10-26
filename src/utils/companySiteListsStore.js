@@ -18,6 +18,8 @@
 // `settings.companySiteLists`, and writes aimed at that key (or at a
 // `companySiteLists.<slug>` path) are routed here.
 
+import { clearLocalOnly, errorText, markLocalOnly } from './localOnlyFiles.js';
+import { siteListBytes, SITE_LIST_LIMIT_BYTES } from './siteListSize.js';
 import {
   collection, doc, deleteDoc, deleteField, getDoc, getDocs, runTransaction, setDoc, updateDoc,
 } from 'firebase/firestore';
@@ -129,23 +131,44 @@ export async function applySiteListOps(userId, ops) {
       continue;
     }
     if (op.paths) {
-      await viaSdkOrRest(
-        () => patchViaSdk(listDoc(userId, op.slug), op.paths),
-        // No not-found branch to mirror: a masked PATCH creates the
-        // document when it is absent, which is what the SDK needed two
-        // calls to do.
-        () => restUpdateFields(listDocPath(userId, op.slug), dottedFieldEntries(op.paths)),
-      );
+      try {
+        await viaSdkOrRest(
+          () => patchViaSdk(listDoc(userId, op.slug), op.paths),
+          // No not-found branch to mirror: a masked PATCH creates the
+          // document when it is absent, which is what the SDK needed two
+          // calls to do.
+          () => restUpdateFields(listDocPath(userId, op.slug), dottedFieldEntries(op.paths)),
+        );
+        clearLocalOnly(`siteList:${op.slug}`);
+      } catch (err) {
+        markLocalOnly(`siteList:${op.slug}`, { kind: 'siteList', reason: 'backup-failed', owner: op.slug, error: errorText(err) });
+        throw err;
+      }
     } else if (op.value == null) {
       await viaSdkOrRest(
         () => deleteDoc(listDoc(userId, op.slug)),
         () => restDeleteDoc(listDocPath(userId, op.slug)),
       );
+      clearLocalOnly(`siteList:${op.slug}`);
     } else {
-      await viaSdkOrRest(
-        () => setDoc(listDoc(userId, op.slug), op.value),
-        () => restSetDoc(listDocPath(userId, op.slug), op.value),
-      );
+      try {
+        await viaSdkOrRest(
+          () => setDoc(listDoc(userId, op.slug), op.value),
+          () => restSetDoc(listDocPath(userId, op.slug), op.value),
+        );
+        clearLocalOnly(`siteList:${op.slug}`);
+      } catch (err) {
+        // The save alerts; this keeps a row on the Issues tab after the
+        // alert is gone, since the list is now only in the open tab.
+        const bytes = siteListBytes(op.value);
+        markLocalOnly(`siteList:${op.slug}`, {
+          kind: 'siteList',
+          reason: bytes >= SITE_LIST_LIMIT_BYTES ? 'too-big' : 'backup-failed',
+          name: op.value?.fileName, sizeBytes: bytes, limitBytes: SITE_LIST_LIMIT_BYTES,
+          owner: op.value?.company || op.slug, error: errorText(err),
+        });
+        throw err;
+      }
     }
   }
 }
