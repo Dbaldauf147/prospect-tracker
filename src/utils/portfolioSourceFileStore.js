@@ -4,7 +4,7 @@
 // dataURL storage, adding ~33% overhead). IDB typically allows hundreds
 // of MB per origin without prompting the user.
 
-import { doc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { db as firestore } from '../firebase';
 import { getDbUserId } from './db';
 import { deleteChunkedDoc, readChunkedDoc, writeChunkedDoc } from './chunkedDoc.js';
@@ -59,9 +59,42 @@ function itemDoc(userId, legacyKey) {
   return doc(firestore, 'portfolioSourceFiles', String(userId), 'items', legacyKey);
 }
 
-// Past this the file stays local (and in the downloaded full backup)
-// rather than costing dozens of document writes on one upload.
-export const PORTFOLIO_FILE_MAX_SYNC_BYTES = 20 * 1024 * 1024;
+// Every file is backed up, whatever its size. There used to be a 20 MB
+// ceiling, to spare a big upload its dozens of document writes, and a file
+// past it lived in this browser and nowhere else: clearing site data lost
+// it. A portfolio workbook is worth more than the writes (chunkedDoc
+// splits it into as many documents and commits as it needs).
+
+function backupMeta(rec) {
+  return { name: rec.name, type: rec.type, size: rec.size, uploadedAt: rec.uploadedAt };
+}
+
+// Files found on this machine that have been checked against the backup
+// this session, so opening a company card twice doesn't read it twice.
+const verified = new Set();
+
+// Make sure the cloud holds this browser's copy. Files uploaded while the
+// ceiling stood, or while a backup write failed, are on this machine only;
+// the first time one is opened it is backed up. Best-effort and quiet: the
+// local copy is untouched either way.
+async function ensureBackedUp(companyName, rec) {
+  const userId = getDbUserId();
+  const legacyKey = legacySlugKey(companyName);
+  if (!userId || !legacyKey || !rec?.blob) return;
+  const tag = `${userId}:${legacyKey}`;
+  if (verified.has(tag)) return;
+  verified.add(tag);
+  try {
+    const ref = itemDoc(userId, legacyKey);
+    const snap = await getDoc(ref);
+    const meta = snap.exists() ? snap.data() : null;
+    if (meta && meta.uploadedAt === rec.uploadedAt && Number(meta.size) === Number(rec.size)) return;
+    await writeChunkedDoc(ref, rec, { meta: backupMeta(rec) });
+  } catch (err) {
+    verified.delete(tag);
+    console.warn('Portfolio source file backup check failed', companyName, err);
+  }
+}
 
 function idbGet(db, key) {
   return new Promise((resolve, reject) => {
@@ -93,15 +126,12 @@ export async function saveSourceFile(companyName, file) {
 
   const userId = getDbUserId();
   if (!userId) return;
-  if (file.size > PORTFOLIO_FILE_MAX_SYNC_BYTES) {
-    console.warn(`Portfolio source file for ${companyName} is ${file.size} bytes - too big to back up to Firestore; it stays on this device.`);
-    return;
-  }
   // Best-effort: an offline browser must not lose the file just uploaded.
+  // A failed write is retried the next time the file is opened
+  // (ensureBackedUp).
   try {
-    await writeChunkedDoc(itemDoc(userId, legacySlugKey(companyName)), rec, {
-      meta: { name: rec.name, type: rec.type, size: rec.size, uploadedAt: rec.uploadedAt },
-    });
+    await writeChunkedDoc(itemDoc(userId, legacySlugKey(companyName)), rec, { meta: backupMeta(rec) });
+    verified.add(`${userId}:${legacySlugKey(companyName)}`);
   } catch (err) {
     console.warn('Portfolio source file Firestore backup failed', companyName, err);
   }
@@ -114,7 +144,7 @@ export async function loadSourceFile(companyName) {
   try {
     const db = await openDB();
     const rec = await idbGet(db, key);
-    if (rec) return rec;
+    if (rec) { ensureBackedUp(companyName, rec); return rec; }
     // Claim a legacy un-scoped IDB record for the current user (covers
     // the admin's files uploaded before per-user scoping). Skip when the
     // scoped key already equals the legacy key (pre-auth).
@@ -129,6 +159,7 @@ export async function loadSourceFile(companyName) {
           tx.oncomplete = resolve;
           tx.onerror = () => reject(tx.error);
         });
+        ensureBackedUp(companyName, claimed);
         return claimed;
       }
     }
@@ -155,6 +186,7 @@ export async function loadSourceFile(companyName) {
             tx.onerror = () => reject(tx.error);
           });
           try { localStorage.removeItem(legacyKey); } catch { /* storage blocked */ }
+          ensureBackedUp(companyName, migrated);
           return migrated;
         }
       }
@@ -169,6 +201,7 @@ export async function loadSourceFile(companyName) {
     const rec = remote?.value;
     if (!rec?.blob) return null;
     const restored = { ...rec, key };
+    verified.add(`${userId}:${legacyKey}`);
     try {
       const db = await openDB();
       await new Promise((resolve, reject) => {
@@ -222,9 +255,7 @@ export async function renameSourceFile(oldCompanyName, newCompanyName) {
     const userId = getDbUserId();
     if (userId) {
       try {
-        await writeChunkedDoc(itemDoc(userId, legacySlugKey(newCompanyName)), { ...rec, key: newKey }, {
-          meta: { name: rec.name, type: rec.type, size: rec.size, uploadedAt: rec.uploadedAt },
-        });
+        await writeChunkedDoc(itemDoc(userId, legacySlugKey(newCompanyName)), { ...rec, key: newKey }, { meta: backupMeta(rec) });
         await deleteChunkedDoc(itemDoc(userId, legacySlugKey(oldCompanyName)));
       } catch (err) {
         console.warn('Portfolio source file Firestore rename failed', oldCompanyName, err);
