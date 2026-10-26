@@ -89,7 +89,7 @@ export default async function handler(req, res) {
     subject,
     // Per commodity, so a run that fell through to the backstop for one of
     // them says which one.
-    commodities: sections.map(({ spec, stats }, i) => ({
+    commodities: sections.map(({ spec, stats, averages }, i) => ({
       key: spec.key,
       name: spec.name,
       unit: spec.unit,
@@ -97,6 +97,7 @@ export default async function handler(req, res) {
       attempts: series[i].attempts,
       days: stats.days,
       latest: { date: stats.latest.date, close: stats.latest.close },
+      averages: averages.map(a => ({ label: a.label, value: a.value, days: a.days })),
     })),
     // Present only when a commodity's sources all failed. The mail still
     // went, naming it, and this says why.

@@ -108,6 +108,15 @@ function fillUnderPolyline(canvas, pts, baselineY, color, alpha) {
   }
 }
 
+// A horizontal rule broken into dashes: `dash` px on, `gap` px off, both
+// in canvas pixels. A dash as short as the line is thick reads as dots.
+function dashedHLine(canvas, x0, x1, y, thickness, dash, gap, color) {
+  const top = Math.round(y - thickness / 2);
+  for (let x = x0; x < x1; x += dash + gap) {
+    fillRect(canvas, x, top, Math.min(dash, x1 - x), thickness, color);
+  }
+}
+
 // ---- PNG encoding -----------------------------------------------------
 
 const CRC_TABLE = (() => {
@@ -182,7 +191,13 @@ function hexToRgb(hex) {
  * point, and the caller's caption says the axis is scaled to the window.
  *
  *   { values, width, height, scale, line, fill, grid, axis, background,
- *     gridLines, padding }
+ *     gridLines, padding, refLines }
+ *
+ * `refLines` are horizontal reference levels, [{ value, color, style }]
+ * with style 'dotted' or 'dashed' - the historical averages the email
+ * sets the window against. The axis stretches to take them in, so a level
+ * outside the window's range still lands on the plot instead of being
+ * clipped off it; their labels are the caller's, in HTML, like the axis.
  *
  * Returns { buffer, width, height, min, max, axisMin, axisMax } —
  * width/height are the DISPLAY size to put on the <img>, not the pixel
@@ -204,6 +219,7 @@ export function renderLineChartPng({
   gridLines = 4,
   padding = { top: 10, right: 8, bottom: 8, left: 8 },
   lastPointDot = true,
+  refLines = [],
 } = {}) {
   const nums = (values || []).map(Number).filter(Number.isFinite);
   if (nums.length < 2) throw new Error('renderLineChartPng needs at least two values');
@@ -218,8 +234,10 @@ export function renderLineChartPng({
   };
   const canvas = createCanvas(W, H, hexToRgb(background));
 
-  const min = Math.min(...nums);
-  const max = Math.max(...nums);
+  const refs = (refLines || []).filter(r => Number.isFinite(Number(r?.value)));
+  const levels = [...nums, ...refs.map(r => Number(r.value))];
+  const min = Math.min(...levels);
+  const max = Math.max(...levels);
   // A flat series would divide by zero; give it a nominal band so the line
   // lands mid-plot instead of on an edge.
   const span = max - min || Math.abs(max) * 0.02 || 1;
@@ -247,6 +265,12 @@ export function renderLineChartPng({
   const pts = nums.map((v, i) => [xOf(i), yOf(v)]);
   fillUnderPolyline(canvas, pts, plotBottom, hexToRgb(fill), fillAlpha);
   fillRect(canvas, plotLeft, plotBottom, plotW, hairline, hexToRgb(axis));
+  // Under the price line, so where they cross the price stays readable.
+  for (const r of refs) {
+    const t = 1.5 * scale;
+    const [dash, gap] = r.style === 'dashed' ? [6 * scale, 4 * scale] : [t, 2.5 * scale];
+    dashedHLine(canvas, plotLeft, plotRight, yOf(Number(r.value)), t, dash, gap, hexToRgb(r.color || axis));
+  }
   strokePolyline(canvas, pts, 2 * scale, hexToRgb(line));
 
   // The latest close is the number the reader came for: a dot with a
