@@ -31,6 +31,21 @@ import { renderLineChartPng } from './pngChart.js';
 
 const WINDOW_DAYS = 90;
 
+// How far back the sources are asked for, so the chart can set the 90
+// days against longer averages. The window's own stats still come from
+// the window alone.
+const HISTORY_YEARS = 5;
+
+/**
+ * The longer averages drawn across each chart as reference lines. Two
+ * line styles, both recessive grey, so neither reads as a second price
+ * series in the commodity's colour.
+ */
+export const HISTORY_AVERAGES = [
+  { key: 'year1', years: 1, label: '1-year average', color: '#475569', style: 'dotted' },
+  { key: 'year5', years: 5, label: '5-year average', color: '#94A3B8', style: 'dashed' },
+];
+
 /**
  * What the email covers, and where each one comes from.
  *
@@ -171,7 +186,7 @@ async function fetchStooq(spec, sinceIso, opts) {
 // nulls on non-trading days.
 async function fetchYahoo(spec, opts) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(spec.yahoo.symbol)}`
-    + '?range=3mo&interval=1d';
+    + `?range=${HISTORY_YEARS}y&interval=1d`;
   const res = await fetchWithTimeout(url, { ...opts, headers: { 'User-Agent': 'prospect-tracker/1.0' } });
   if (!res.ok) throw new Error(`Yahoo responded ${res.status}`);
   const body = await res.json();
@@ -185,17 +200,28 @@ async function fetchYahoo(spec, opts) {
   return { points, source: spec.yahoo.source, label: spec.yahoo.label };
 }
 
+// The same calendar day `years` back. Leap days roll to Mar 1, which is
+// close enough for the start of an average.
+function yearsBefore(ms, years) {
+  const d = new Date(ms);
+  d.setUTCFullYear(d.getUTCFullYear() - years);
+  return d.getTime();
+}
+
 /**
  * The last WINDOW_DAYS of daily closes for one commodity, oldest first,
- * deduped by date.
+ * deduped by date, plus up to HISTORY_YEARS of them for the averages.
  *
- * Returns { spec, points, source, label, attempts } — `attempts` records
+ * Returns { spec, points, history, source, label, attempts } - `points` is
+ * the window, `history` everything the source gave back within
+ * HISTORY_YEARS. `attempts` records
  * what each source did, so a run that fell through to the backstop can
  * say why in its own logs rather than looking like a clean success.
  */
 export async function fetchCommoditySeries(spec, { now = Date.now(), fetchImpl } = {}) {
   const sinceMs = now - WINDOW_DAYS * 86400000;
-  const sinceIso = isoDay(sinceMs);
+  const historySinceMs = yearsBefore(now, HISTORY_YEARS);
+  const sinceIso = isoDay(historySinceMs);
   const opts = { now, ...(fetchImpl ? { fetchImpl } : {}) };
   const attempts = [];
   const sources = [
@@ -212,13 +238,14 @@ export async function fetchCommoditySeries(spec, { now = Date.now(), fetchImpl }
       // Every source is asked for roughly the window, but none of them is
       // asked precisely enough to trust: EIA pads, Yahoo has no start
       // param at all. Trim here so "90-day high" means 90 days.
-      const points = hit.points
-        .filter(p => Date.parse(`${p.date}T00:00:00Z`) >= sinceMs)
+      const history = hit.points
+        .filter(p => Date.parse(`${p.date}T00:00:00Z`) >= historySinceMs)
         .sort((a, b) => a.date.localeCompare(b.date))
         .filter((p, i, arr) => i === 0 || p.date !== arr[i - 1].date);
+      const points = history.filter(p => Date.parse(`${p.date}T00:00:00Z`) >= sinceMs);
       if (points.length < 2) throw new Error('fewer than two closes in the window');
-      attempts.push({ name, status: 'ok', points: points.length });
-      return { spec, ...hit, points, attempts, windowDays: WINDOW_DAYS };
+      attempts.push({ name, status: 'ok', points: points.length, history: history.length });
+      return { spec, ...hit, points, history, attempts, windowDays: WINDOW_DAYS };
     } catch (err) {
       attempts.push({ name, status: 'error', error: String(err?.message || err) });
     }
@@ -299,6 +326,30 @@ export function summarizeSeries(points, { now = Date.now() } = {}) {
   };
 }
 
+/**
+ * The HISTORY_AVERAGES that `history` can honestly support: the mean
+ * close over each span, ending at the latest close.
+ *
+ * A span the history doesn't reach back to the start of is left out
+ * rather than averaged over what there is - a "5-year average" built from
+ * three months is the 90-day average under a false name. Two weeks of
+ * slack at the start covers holidays and a source's first row landing a
+ * few days late.
+ */
+export function historicalAverages(history, { now = Date.now(), averages = HISTORY_AVERAGES } = {}) {
+  const list = Array.isArray(history) ? history : [];
+  if (list.length === 0) return [];
+  const earliest = list[0].date;
+  return averages.flatMap((a) => {
+    const startMs = yearsBefore(now, a.years);
+    if (earliest > isoDay(startMs + 14 * 86400000)) return [];
+    const startIso = isoDay(startMs);
+    const closes = list.filter(p => p.date >= startIso).map(p => p.close);
+    if (closes.length === 0) return [];
+    return [{ ...a, value: closes.reduce((t, c) => t + c, 0) / closes.length, days: closes.length }];
+  });
+}
+
 // ---- email ------------------------------------------------------------
 
 function esc(s) {
@@ -350,8 +401,21 @@ function changeCell(label, change) {
 // the plot so the scale survives a client that blocks pictures. `src` is
 // a cid: reference in a sent mail and a data: URI in the ?dry=1 preview,
 // which no mail client ever sees.
-function lineChartHtml({ chart, stats, src, windowDays, name, unit }) {
+// The key to the reference lines. The chart can't letter them, so each
+// gets a swatch drawn in the same style as its line, then its value.
+function averagesLegendHtml(averages, unit) {
+  if (!averages?.length) return '';
+  const items = averages.map(a => `<td style="padding:0 16px 0 0;font-size:11px;color:#475569;white-space:nowrap">
+      <span style="display:inline-block;width:22px;height:0;border-top:2px ${a.style === 'dashed' ? 'dashed' : 'dotted'} ${a.color};vertical-align:middle;margin:0 6px 0 0"></span>${esc(a.label)} <strong>${esc(perUnit(a.value, unit))}</strong>
+    </td>`).join('');
+  return `<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:6px 0 4px 52px">
+    <tr>${items}</tr>
+  </table>`;
+}
+
+function lineChartHtml({ chart, stats, src, windowDays, name, unit, averages = [] }) {
   if (!chart) return '';
+  const avgAlt = averages.map(a => `, ${a.label} ${perUnit(a.value, unit)}`).join('');
   return `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:0 0 4px">
     <tr>
       <td style="width:46px;padding:0 6px 0 0;vertical-align:top">
@@ -361,7 +425,7 @@ function lineChartHtml({ chart, stats, src, windowDays, name, unit }) {
       </td>
       <td style="padding:0">
         <img src="${esc(src)}" width="${chart.width}" height="${chart.height}"
-             alt="${esc(name)} daily closes over the last ${windowDays} days: ${esc(perUnit(stats.low.close, unit))} to ${esc(perUnit(stats.high.close, unit))}, latest ${esc(perUnit(stats.latest.close, unit))}"
+             alt="${esc(name)} daily closes over the last ${windowDays} days: ${esc(perUnit(stats.low.close, unit))} to ${esc(perUnit(stats.high.close, unit))}, latest ${esc(perUnit(stats.latest.close, unit))}${esc(avgAlt)}"
              style="display:block;width:${chart.width}px;height:${chart.height}px;border:0;outline:none;text-decoration:none">
       </td>
     </tr>
@@ -377,7 +441,8 @@ function lineChartHtml({ chart, stats, src, windowDays, name, unit }) {
       </td>
     </tr>
   </table>
-  <div style="font-size:11px;color:#94A3B8;margin:0">Daily closes, ${esc(stats.days)} trading days. The axis is scaled to the window, not to $0.</div>`;
+  ${averagesLegendHtml(averages, unit)}
+  <div style="font-size:11px;color:#94A3B8;margin:0">Daily closes, ${esc(stats.days)} trading days. The axis is scaled to the window${averages.length ? ' and the averages' : ''}, not to $0.</div>`;
 }
 
 /**
@@ -397,7 +462,7 @@ export function commodityEmailSubject(sections, { windowDays = WINDOW_DAYS } = {
 
 // One commodity's block: headline, the three changes, the window's
 // high/low/average, and the chart.
-export function commoditySectionHtml({ spec, stats, source, label, windowDays, chart, chartSrc }) {
+export function commoditySectionHtml({ spec, stats, source, label, windowDays, chart, chartSrc, averages = [] }) {
   const wk = stats.changeWeek;
   const headlineColor = !wk ? FLAT : wk.abs > 0 ? UP : wk.abs < 0 ? DOWN : FLAT;
   return `
@@ -423,7 +488,7 @@ export function commoditySectionHtml({ spec, stats, source, label, windowDays, c
       </tr>
     </table>
 
-    ${lineChartHtml({ chart, stats, src: chartSrc, windowDays, name: spec.name, unit: spec.unit })}
+    ${lineChartHtml({ chart, stats, src: chartSrc, windowDays, name: spec.name, unit: spec.unit, averages })}
 
     <p style="font-size:11px;color:#94A3B8;margin:10px 0 0">Source: ${esc(source)}. Prices in dollars per ${esc(spec.unit)}.</p>`;
 }
@@ -467,10 +532,16 @@ export function buildCommodityEmail(seriesList, { now = Date.now(), inlineImage 
   const sections = list.map((series) => {
     const spec = series.spec;
     const stats = summarizeSeries(series.points, { now });
+    const averages = historicalAverages(series.history, { now });
 
     let chart = null;
     try {
-      chart = renderLineChartPng({ values: series.points.map(p => p.close), line: spec.line, fill: spec.line });
+      chart = renderLineChartPng({
+        values: series.points.map(p => p.close),
+        line: spec.line,
+        fill: spec.line,
+        refLines: averages.map(a => ({ value: a.value, color: a.color, style: a.style })),
+      });
     } catch (err) {
       chartErrors.push(`${spec.name}: ${String(err?.message || err)}`);
     }
@@ -487,6 +558,7 @@ export function buildCommodityEmail(seriesList, { now = Date.now(), inlineImage 
     return {
       spec,
       stats,
+      averages,
       source: series.source,
       label: series.label,
       chart,

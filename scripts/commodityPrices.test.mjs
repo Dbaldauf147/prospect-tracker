@@ -16,7 +16,7 @@
 // are a barrel and a million BTU, not a collapse.
 import {
   COMMODITIES, commodityByKey, fetchCommoditySeries, fetchAllSeries,
-  summarizeSeries, buildCommodityEmail, commodityEmailSubject,
+  summarizeSeries, buildCommodityEmail, commodityEmailSubject, historicalAverages,
 } from '../api/_lib/commodityPrices.js';
 
 let failures = 0;
@@ -138,6 +138,68 @@ const gas = commodityByKey('henryHub');
   const s = await fetchCommoditySeries(wti, { now: NOW, fetchImpl });
   check('history older than the window is dropped',
     s.points.some(p => p.close === 999), false);
+}
+
+// The sources are asked for five years, so the chart has history to set
+// the window against; the window itself is still 90 days.
+{
+  const fetchImpl = fakeFetch([['stooq.com', () => ok(csv(closes(60, 0.05)))]]);
+  await fetchCommoditySeries(wti, { now: NOW, fetchImpl });
+  check('Stooq is asked for five years back', fetchImpl.calls[0].includes('d1=20210914'), true);
+
+  const old = [
+    { date: iso(NOW - 6 * 366 * DAY), close: 1 },   // older than five years
+    { date: iso(NOW - 3 * 365 * DAY), close: 90 },
+    ...closes(60, 0.05),
+  ];
+  const s = await fetchCommoditySeries(wti, { now: NOW, fetchImpl: fakeFetch([['stooq.com', () => ok(csv(old))]]) });
+  check('history keeps the older closes', s.history.some(p => p.close === 90), true);
+  check('but not past five years', s.history.some(p => p.close === 1), false);
+  check('and the window still excludes them', s.points.some(p => p.close === 90), false);
+}
+
+// ---- historical averages ------------------------------------------------
+{
+  const history = [
+    { date: '2021-09-20', close: 100 },  // inside 5y, outside 1y
+    { date: '2025-09-20', close: 60 },   // inside both
+    { date: '2026-09-11', close: 70 },
+  ];
+  const avgs = historicalAverages(history, { now: NOW });
+  check('both averages when the history reaches back', avgs.map(a => a.key).join(','), 'year1,year5');
+  check('the 1-year average only counts the last year', avgs[0].value, 65);
+  check('the 5-year average counts it all', +avgs[1].value.toFixed(2), 76.67);
+
+  // A source that only volunteered a few months must not label their mean
+  // a five-year average.
+  const short = historicalAverages(closes(60, 0.05), { now: NOW });
+  check('a short history yields no averages', short.length, 0);
+  const oneYear = historicalAverages(history.slice(1), { now: NOW });
+  check('a year of history yields the 1-year line only', oneYear.map(a => a.key).join(','), 'year1');
+  check('no history, no averages', historicalAverages(undefined, { now: NOW }).length, 0);
+}
+
+// The averages are drawn on the chart and keyed beneath it.
+{
+  const long = (base) => {
+    const out = [];
+    for (let t = NOW - 5 * 366 * DAY; t <= NOW; t += 3 * DAY) out.push({ date: iso(t), close: base });
+    return out;
+  };
+  const fetchImpl = fakeFetch([
+    ['s=cl.f', () => ok(csv([...long(80), ...closes(60, 0.05)].sort((a, b) => a.date.localeCompare(b.date))))],
+    ['s=ng.f', () => ok(csv(closes(3.1, 0.01)))],
+  ]);
+  const { series } = await fetchAllSeries({ now: NOW, fetchImpl });
+  const mail = buildCommodityEmail(series, { now: NOW });
+  const [crude, gasSection] = mail.sections;
+  check('crude gets both averages', crude.averages.length, 2);
+  check('gas, with three months of history, gets none', gasSection.averages.length, 0);
+  check('the chart axis stretches to take in the averages', crude.chart.axisMax > 80, true);
+  check('the legend names the averages', mail.html.includes('5-year average') && mail.html.includes('1-year average'), true);
+  check('in the line styles they are drawn in',
+    mail.html.includes('dotted') && mail.html.includes('dashed'), true);
+  check('no chart failed to draw', mail.chartError, null);
 }
 
 // ---- both commodities together ------------------------------------------
