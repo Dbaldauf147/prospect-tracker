@@ -18,7 +18,8 @@
 // picks (which cost lines are left out of a service's check, and the fee
 // component each line is checked at). The workbook itself,
 // column widths and other view state are not.
-import { registerMirroredDbKey, mergeMirroredMaps, queueMirrorPush, dbMirrorId } from './localMirrorSync.js';
+import { registerMirroredDbKey, mergeMirroredMaps, queueMirrorPush, dbMirrorId, pushMirrorNow } from './localMirrorSync.js';
+import { dbPut } from './db.js';
 
 export const PRICING_MIRROR_STORE = 'pricing-cache';
 export const PRICING_MIRROR_EVENT = 'pricing:mirroredKeysChanged';
@@ -108,4 +109,38 @@ export function isPricingMirroredKey(key) {
 // After a write to one of the keys, send it up (debounced).
 export function queuePricingMirrorPush(key) {
   if (MIRRORED.has(key)) queueMirrorPush(dbMirrorId(PRICING_MIRROR_STORE, key));
+}
+
+// What Pricing > Linked To > Earlier versions offers, in the order a person
+// looks for them: the Linked To mappings first.
+export const PRICING_VERSION_CHOICES = [
+  ['linkedToDefaults', 'Linked To mapping (Default Linked To)'],
+  ['linkedToUnitDefaults', 'Linked To: Default Unit'],
+  ['linkedToStartMonthDefaults', 'Linked To: Fee Start Month'],
+  ['linkedToPassThroughDefaults', 'Linked To: Pass-through'],
+  ['linkedToOptionsList', 'Linked To dropdown options'],
+  ['feeDefaults', 'Fee defaults'],
+  ['lineItemServices', 'Line Item to Services mapping'],
+  ['lineItemIgnored', 'Line items marked Ignore'],
+  ['lineItemPriority', 'Line items marked First in scope'],
+  ['lineItemSharedOk', 'Line items kept shared'],
+  ['s2cLineItemTags', 'S2C tags'],
+  ['serviceFeeStructures', 'Saved fee structures'],
+  ['servicesCompleted', 'Services marked completed'],
+  ['feeBuilderSaved', 'Fee Builder saved scenarios'],
+  ['priceCheckExcluded', 'Price check: lines left out'],
+  ['priceCheckComponentPicks', 'Price check: fee components'],
+].map(([dbKey, label]) => ({ key: dbMirrorId(PRICING_MIRROR_STORE, dbKey), dbKey, label }));
+
+/**
+ * Put an earlier version of one key back: into this browser, up to the
+ * cloud (forced, as a restore is a deliberate overwrite; what it replaces
+ * is kept as an earlier version, so the restore can be undone), and onto
+ * an open Pricing page through its usual reload.
+ */
+export async function restorePricingMirroredKey(dbKey, value) {
+  if (!MIRRORED.has(dbKey)) throw new Error(`Not a Pricing mapping: ${dbKey}`);
+  await dbPut(PRICING_MIRROR_STORE, value, dbKey);
+  await pushMirrorNow(dbMirrorId(PRICING_MIRROR_STORE, dbKey));
+  try { window.dispatchEvent(new Event(PRICING_MIRROR_EVENT)); } catch { /* no window */ }
 }
