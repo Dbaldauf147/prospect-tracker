@@ -1591,6 +1591,9 @@ export function ServiceDetailModal({
               {hidden && (
                 <span className={styles.detailBadgeMuted} title="Hidden from this list, the company card's services board, and the Opps Scope picker">Hidden</span>
               )}
+              {meta?.excludeFromBiggestDeal && (
+                <span className={styles.detailBadgeMuted} title="Never named as a company's Biggest Deal">Not in Biggest Deal</span>
+              )}
               {explored && !explored.counted && (
                 <span className={styles.detailBadgeMuted} title="Left out of every company's % of services explored, and of the Services Pricing tracked figure">Not in % explored</span>
               )}
@@ -1650,6 +1653,16 @@ export function ServiceDetailModal({
                   ? 'Leave it out of every company\'s % of services explored'
                   : 'Count it in every company\'s % of services explored, whatever its bucket says'}
             >{explored.counted ? 'Remove from % explored' : 'Include in % explored'}</button>
+          )}
+          {onSaveField && (
+            <button
+              type="button"
+              className={styles.detailFooterBtn}
+              onClick={() => onSaveField(name, 'excludeFromBiggestDeal', meta?.excludeFromBiggestDeal ? '' : true)}
+              title={meta?.excludeFromBiggestDeal
+                ? 'Let it be named as a company\'s Biggest Deal again'
+                : 'Never name it as a company\'s Biggest Deal. The next biggest open service is named instead.'}
+            >{meta?.excludeFromBiggestDeal ? 'Include in Biggest Deal' : 'Exclude from Biggest Deal'}</button>
           )}
           {onDelete && (
             <button
