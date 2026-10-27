@@ -6,6 +6,7 @@ import { useState, useMemo, useRef } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
 import { toCsv, downloadCsv } from '../../utils/csv';
 import { MOVE_BUCKETS, moveBucket, summarizeMoveRows, describeDiffs } from '../../utils/hubspotMoveSummary';
+import { HubSpotBackupSection } from './HubSpotBackupSection';
 import styles from './HubSpotMoveTab.module.css';
 
 const DEFAULT_OWNER = 'daniel.baldauf@se.com';
@@ -262,6 +263,8 @@ export function HubSpotMoveTab() {
         </button>
       </div>
       {error && <div className={styles.error}>{error}</div>}
+
+      <HubSpotBackupSection />
 
       {overview && (
         <>
