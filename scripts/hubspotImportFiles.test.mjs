@@ -12,7 +12,7 @@
 //     contact name is a contact there, to that contact's email,
 //   * only companies with a contact or an Opp go in unless all are asked for,
 //   * the fields file lists the tags and deal stages seen in the data.
-import { buildImportFiles, domainOf, amountOf, dateOf, CONTACT_HEADERS, DEAL_HEADERS, COMPANY_HEADERS } from '../src/utils/hubspotImportFiles.js';
+import { buildImportFiles, liveOpps, domainOf, amountOf, dateOf, CONTACT_HEADERS, DEAL_HEADERS, COMPANY_HEADERS } from '../src/utils/hubspotImportFiles.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -27,6 +27,13 @@ eq(domainOf('jane@acme.co.uk'), 'acme.co.uk', 'domainOf reads an email address')
 eq(domainOf('not a site'), '', 'domainOf rejects text that is not a domain');
 eq([amountOf('$120,000'), amountOf(''), amountOf('n/a')], ['120000', '', ''], 'amounts are digits only');
 eq([dateOf('2026-11-30T00:00:00Z'), dateOf('Nov 30, 2026'), dateOf('soon')], ['2026-11-30', '2026-11-30', ''], 'dates become YYYY-MM-DD');
+
+// liveOpps: _deletedIds is a map of id -> deletedAt in the real data (the
+// first build on the live site died on `.map` of it).
+eq(liveOpps({ records: [{ _id: 'a' }, { _id: 'b' }, { id: 'c' }], _deletedIds: { b: 1730000000000 } }).map(r => r._id ?? r.id), ['a', 'c'],
+  'deleted Opps (id -> deletedAt map) are dropped');
+eq(liveOpps({ records: [{ _id: 'a' }, { _id: 'b' }], _deletedIds: ['a'] }).map(r => r._id), ['b'], 'a plain list of deleted ids works too');
+eq([liveOpps(null), liveOpps({ records: [{ _id: 'a' }] }).length], [[], 1], 'no dataset or no deletions');
 
 const prospects = [
   { id: 'p1', company: 'Acme Corp', website: 'https://acme.com', vertical: 'Retail', tier: 'Tier 1', status: 'Active', type: 'Corporate' },

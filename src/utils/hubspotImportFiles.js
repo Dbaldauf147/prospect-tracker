@@ -83,6 +83,18 @@ export function dateOf(v) {
 }
 
 /**
+ * The Opps still in play from an Opps 2 dataset: its records minus any
+ * listed in `_deletedIds`. That is a map of id -> deletedAt
+ * (utils/opps2Store.js); a plain list of ids is read too.
+ */
+export function liveOpps(data) {
+  const del = data?._deletedIds;
+  const ids = Array.isArray(del) ? del : (del && typeof del === 'object' ? Object.keys(del) : []);
+  const deleted = new Set(ids.map(String));
+  return (Array.isArray(data?.records) ? data.records : []).filter(r => r && !deleted.has(String(r._id ?? r.id)));
+}
+
+/**
  * Build the four files.
  *   prospects   the site's companies
  *   contacts    the contact list (the HubSpot cache)
