@@ -67,6 +67,14 @@ flushTablePrefs();
 eq(s2.calls.length, 1, 'they become one');
 eq(s2.calls[0].tablePrefs['my-accounts'].widths, { company: 159 }, 'holding where the drag ended');
 
+// Saved column presets ride along in the same entry, untouched.
+const sp = fakeSettings({ 'my-accounts': { widths: { company: 200 } } });
+const presetList = [{ id: 'p1', name: 'Energy view', cols: ['company', 'energy'], order: ['energy', 'company'] }];
+persistTablePrefs(null, 'my-accounts', sp.settings, sp.updateSettings, { presets: presetList });
+flushTablePrefs();
+eq(sp.calls[0].tablePrefs['my-accounts'].presets, presetList, 'presets are stored with the layout');
+eq(sp.calls[0].tablePrefs['my-accounts'].widths, { company: 200 }, 'without disturbing the rest of it');
+
 // Changes of different kinds in one burst all survive the coalescing.
 const s3 = fakeSettings();
 persistTablePrefs(keys, 'my-accounts', s3.settings, s3.updateSettings, { widths: { a: 10 } });

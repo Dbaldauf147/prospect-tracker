@@ -12,8 +12,9 @@
 // utils/tableColumnPrefs so both callers apply them identically.
 import { useState, useRef, useEffect } from 'react';
 import styles from './DataTable.module.css';
+import { ColumnPresets } from './ColumnPresets';
 
-export function ColumnToggle({ columns, visibleCols, starredCols, removedColumns = [], onToggle, onStar, onRemove, onRestore, alwaysVisible, colNames, onRename, onReorder, removable, onResetColumns, align = 'left' }) {
+export function ColumnToggle({ columns, visibleCols, starredCols, removedColumns = [], onToggle, onStar, onRemove, onRestore, alwaysVisible, colNames, onRename, onReorder, removable, onResetColumns, presets, align = 'left' }) {
   const [open, setOpen] = useState(false);
   const [editingKey, setEditingKey] = useState(null);
   const [editName, setEditName] = useState('');
@@ -172,6 +173,21 @@ export function ColumnToggle({ columns, visibleCols, starredCols, removedColumns
               >{`Reset${removedColumns.length ? ` (${removedColumns.length} deleted)` : ''}`}</button>
             )}
           </div>
+
+          {/* Saved views: { list, onApply, onSave, onDelete } from the
+              table (see useColumnPresets). Optional, so a caller that
+              hasn't wired them gets the menu it always had. */}
+          {presets && (
+            <ColumnPresets
+              presets={presets.list}
+              visibleKeys={visibleCols}
+              columnKeys={columns.map(c => c.key)}
+              alwaysVisible={alwaysVisible}
+              onApply={presets.onApply}
+              onSave={presets.onSave}
+              onDelete={presets.onDelete}
+            />
+          )}
 
           {removable ? (
             <>

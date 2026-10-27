@@ -14,6 +14,37 @@
 Branches stay one-PR-per-change so each fix can be reviewed and merged independently — don't pile unrelated changes onto a previous branch.
 
 
+## "Dan's column formatting" (the default for every table)
+
+When Dan asks for **Dan's column formatting**, and for **any new table by
+default** whether or not he asks, the table's columns are:
+
+1. **Width editable** - drag a header's right edge; widths are saved.
+2. **Starrable** - a star marks a column as one of the user's default
+   columns; starring shows it, and Reset / "★ Defaults" brings back exactly
+   the starred set.
+3. **Toggleable** - each column can be switched on and off from the
+   Columns menu.
+4. **Orderable** - drag to reorder (header or the menu's ⠿ handle).
+5. **Presets** - "+ Save current" stores the columns showing now, in their
+   order, under a name; clicking that preset's chip shows exactly those
+   columns again.
+
+All five are saved per user and synced through `settings.tablePrefs[tableId]`
+so the layout follows Dan to his other machine.
+
+How to get it:
+
+- **Use the shared `DataTable`** (`src/components/common/DataTable.jsx`)
+  with a stable `tableId` and `settings`/`updateSettings` passed in. It has
+  all five built in (presets come through `ColumnToggle`).
+- **A table that draws its own markup** wires the same pieces: widths, order
+  and hidden through `useSyncedTablePref` (or `useTableColumnPrefs`),
+  presets through `useColumnPresets` + `<ColumnPresets>` with the rules in
+  `src/utils/columnPresets.js`. The company popup's Portfolio Companies
+  table (`ProspectModal.jsx`, `PORTFOLIO_PREFS_TABLE_ID`) is the reference
+  example.
+
 ## No em dashes on the site
 
 **Nothing the app shows may contain an em dash (`—`, U+2014).** Not in

@@ -228,6 +228,9 @@ function encodeEntry(current, patch) {
   // the same key encoding as widths.
   if (patch.sort !== undefined) next.sort = patch.sort;
   if (patch.filters !== undefined) next.filters = encodeRemoteMap(patch.filters);
+  // Saved column views (utils/columnPresets): a short list of small plain
+  // objects whose column keys sit in arrays, so nothing to encode.
+  if (patch.presets !== undefined) next.presets = patch.presets;
   return next;
 }
 
