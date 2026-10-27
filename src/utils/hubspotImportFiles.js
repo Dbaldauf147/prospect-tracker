@@ -141,6 +141,14 @@ export function liveOpps(data) {
  *   settings    for the per-contact company pins (contactLocalFields)
  *   ownerEmail  who owns every record in the new portal
  *   allCompanies  every prospect, rather than only those with a contact or opp
+ *   includeNoDomain  companies with no website too (left out by default:
+ *               HubSpot can only de-duplicate a company by its domain, so
+ *               these would duplicate a colleague's record of the same
+ *               name, and no contact can link to them anyway)
+ *   includeColleagues  contacts at the owner's own email domain too (left
+ *               out by default: in the company's own portal they are
+ *               colleagues, not contacts, and their history is internal
+ *               mail)
  *   activity    { [contactId]: [[whenMs, kind, subject], ...] } from the
  *               backup (api/_lib/activityDigest.js); none leaves the
  *               history fields blank
@@ -149,10 +157,11 @@ export function liveOpps(data) {
  */
 export function buildImportFiles({
   prospects = [], contacts = [], opps = [], settings = {}, ownerEmail = '', allCompanies = false, activity = null,
+  includeNoDomain = false, includeColleagues = false,
 } = {}) {
   const report = {
     contactsWithHistory: 0, contactsNoEmail: 0, contactsHidden: 0, contactsDuplicateEmail: 0, contactsNoCompany: 0,
-    companiesNoDomain: [],
+    contactsColleagues: 0, companiesNoDomain: [], companiesMerged: [],
   };
 
   // Prospects by every name they go by.
@@ -171,6 +180,9 @@ export function buildImportFiles({
   const findProspect = (name) => byName.get(normalizeCompany(name)) || null;
 
   const used = new Set(); // prospect ids with a contact or an opp
+  const contactCount = new Map(); // prospect id -> contacts linked to it
+  const ownDomain = domainOf(ownerEmail);
+  const isColleague = (d) => !!ownDomain && (d === ownDomain || d.endsWith(`.${ownDomain}`));
   const local = settings.contactLocalFields || {};
 
   // ── Contacts ──
@@ -192,6 +204,7 @@ export function buildImportFiles({
     if (!email) { report.contactsNoEmail += 1; continue; }
     if (seen.has(email)) { report.contactsDuplicateEmail += 1; continue; }
     seen.add(email);
+    if (!includeColleagues && isColleague(domainOf(email))) { report.contactsColleagues += 1; continue; }
 
     const companyName = clean(local[c.id]?._companyOverride || c.company || c.companyText);
     const mailDomain = domainOf(email);
@@ -200,9 +213,10 @@ export function buildImportFiles({
     const domain = prospect ? prospectDomain(prospect) : '';
     if (prospect) {
       used.add(prospect.id);
-    } else {
-      report.contactsNoCompany += 1;
+      contactCount.set(prospect.id, (contactCount.get(prospect.id) || 0) + 1);
     }
+    // The import links by domain, so a company with no website links nobody.
+    if (!domain) report.contactsNoCompany += 1;
 
     contactRows.push([
       email, clean(c.firstname), clean(c.lastname), clean(c.jobtitle), clean(c.phone), clean(c.mobilephone),
@@ -224,16 +238,46 @@ export function buildImportFiles({
   }
 
   // ── Companies ──
-  const companyRows = [];
+  // One row per domain: HubSpot keys a company by its domain, so two rows
+  // with the same one collide in the import (Brookfield's funds share
+  // brookfield.com). The one kept has the most contacts linked, then the
+  // most filled-in fields; the rest are reported.
+  const filled = (p) => ['website', 'vertical', 'subVertical', 'type', 'status', 'tier', 'hqRegion', 'cdm'].filter(k => clean(p[k])).length;
+  const byDomainRows = new Map();
   for (const p of prospects) {
     if (!allCompanies && !used.has(p.id)) continue;
     const domain = prospectDomain(p);
-    if (!domain) report.companiesNoDomain.push(clean(p.company));
+    if (!domain) {
+      report.companiesNoDomain.push(clean(p.company));
+      if (!includeNoDomain) continue;
+    }
+    const key = domain || `no-domain:${p.id}`;
+    const list = byDomainRows.get(key) || [];
+    list.push(p);
+    byDomainRows.set(key, list);
+  }
+  const companyRows = [];
+  const nameForDomain = new Map();
+  for (const [key, list] of byDomainRows) {
+    const ranked = [...list].sort((x, y) => (contactCount.get(y.id) || 0) - (contactCount.get(x.id) || 0)
+      || filled(y) - filled(x)
+      || clean(x.company).length - clean(y.company).length);
+    const p = ranked[0];
+    const domain = key.startsWith('no-domain:') ? '' : key;
+    if (ranked.length > 1) report.companiesMerged.push({ domain, kept: clean(p.company), merged: ranked.slice(1).map(x => clean(x.company)) });
+    if (domain) nameForDomain.set(domain, clean(p.company));
     companyRows.push([
       domain, clean(p.company), clean(p.website), ownerEmail,
       clean(p.vertical), clean(p.subVertical), clean(p.type), clean(p.status), clean(p.tier),
       clean(p.hqRegion), clean(p.cdm), clean(p.id),
     ]);
+  }
+  // A contact names the company row its domain landed on.
+  const nameCol = CONTACT_HEADERS.indexOf('Company Name');
+  const domainCol = CONTACT_HEADERS.indexOf('Company Domain Name');
+  for (const row of contactRows) {
+    const n = nameForDomain.get(row[domainCol]);
+    if (n) row[nameCol] = n;
   }
 
   // ── Fields to create ──
@@ -243,22 +287,32 @@ export function buildImportFiles({
     const all = distinct(rows, col(headers, label));
     return all.length > max ? `${all.slice(0, max).join('; ')} (+${all.length - max} more)` : all.join('; ');
   };
+  // Text rather than dropdowns for the company fields: their values are
+  // inconsistent ("Tier 3" and "Tier III", "NAM" and "North America"), and a
+  // dropdown refuses any value not set up exactly. Dan's Tags stays a
+  // checkbox list, its values are clean. A field with no value anywhere in
+  // the files isn't listed: there is nothing to import into it.
+  const textNote = 'Text, because the values vary in spelling; a dropdown would reject any value not set up exactly';
   const fieldRows = [
     ['Contact', "Dan's Tags", 'Multiple checkboxes', opts(contactRows, CONTACT_HEADERS, "Dan's Tags", 500), 'Your tags; several per contact, separated by ;'],
-    ['Contact', 'Decision Maker', 'Dropdown select', opts(contactRows, CONTACT_HEADERS, 'Decision Maker'), ''],
+    ['Contact', 'Decision Maker', 'Single-line text', '', ''],
     ['Contact', 'Role', 'Single-line text', '', ''],
     ['Contact', 'Activity History', 'Multi-line text', '', 'Emails, meetings, notes, calls and tasks from the old portal, one dated line each, newest first'],
     ['Contact', 'Last Activity Date', 'Date picker', '', 'Date of the newest line in Activity History'],
     ['Contact', 'Activity Count', 'Number', '', 'How many activities the history holds'],
-    ['Company', 'Vertical', 'Dropdown select', opts(companyRows, COMPANY_HEADERS, 'Vertical'), ''],
+    ['Company', 'Vertical', 'Single-line text', opts(companyRows, COMPANY_HEADERS, 'Vertical'), textNote],
     ['Company', 'Sub Vertical', 'Single-line text', '', ''],
-    ['Company', 'Account Type', 'Dropdown select', opts(companyRows, COMPANY_HEADERS, 'Account Type'), "The site's company Type"],
-    ['Company', 'Prospect Status', 'Dropdown select', opts(companyRows, COMPANY_HEADERS, 'Prospect Status'), ''],
-    ['Company', 'Tier', 'Dropdown select', opts(companyRows, COMPANY_HEADERS, 'Tier'), ''],
-    ['Company', 'HQ Region', 'Dropdown select', opts(companyRows, COMPANY_HEADERS, 'HQ Region'), ''],
+    ['Company', 'Account Type', 'Single-line text', opts(companyRows, COMPANY_HEADERS, 'Account Type'), `The site's company Type. ${textNote}`],
+    ['Company', 'Prospect Status', 'Single-line text', opts(companyRows, COMPANY_HEADERS, 'Prospect Status'), textNote],
+    ['Company', 'Tier', 'Single-line text', opts(companyRows, COMPANY_HEADERS, 'Tier'), textNote],
+    ['Company', 'HQ Region', 'Single-line text', opts(companyRows, COMPANY_HEADERS, 'HQ Region'), textNote],
     ['Company', 'CDM', 'Single-line text', '', ''],
     ['Company', 'Prospect Tracker ID', 'Single-line text', '', 'Lets a later import update instead of duplicate'],
-  ];
+  ].filter(([object, label]) => {
+    const [rows, headers] = object === 'Contact' ? [contactRows, CONTACT_HEADERS] : [companyRows, COMPANY_HEADERS];
+    const i = headers.indexOf(label);
+    return i < 0 || rows.some(r => clean(r[i]));
+  });
 
   return {
     companies: { headers: COMPANY_HEADERS, rows: companyRows },

@@ -10,7 +10,10 @@
 //   * a company pin from the site wins over the synced company text,
 //   * Opps are not exported as deals; they only mark a company as a live
 //     account,
-//   * only companies with a contact or an Opp go in unless all are asked for,
+//   * only companies with a contact or an Opp, and a website, go in unless
+//     asked; one row per domain, the one with the most contacts kept,
+//   * contacts at the owner's own domain (colleagues) are left out,
+//   * the fields file lists only fields with data, company ones as text,
 //   * the fields file lists the tags seen in the data, and no deal fields,
 //   * activity history is one dated line per activity, newest first,
 //     repeats counted once, trimmed oldest-first under HubSpot's cap, and
@@ -75,7 +78,7 @@ const out = buildImportFiles({ prospects, contacts, opps, settings, ownerEmail: 
   eq(cell(CONTACT_HEADERS, rows[1], 'Company Domain Name'), '', 'a free-mail contact at an unknown company is not linked');
   eq(cell(CONTACT_HEADERS, rows[2], 'Company Domain Name'), 'beta.io', 'no company text: linked by the email domain of an account');
   eq(cell(CONTACT_HEADERS, rows[3], 'Company Domain Name'), 'beta.io', 'the site company pin wins over the synced text (alias match)');
-  eq(out.report.contactsNoCompany, 1, 'one contact is included unlinked');
+  eq(out.report.contactsNoCompany, 2, 'unlinked: a free-mail contact, and one whose company has no website');
 }
 
 // Opps
@@ -90,11 +93,13 @@ const out = buildImportFiles({ prospects, contacts, opps, settings, ownerEmail: 
 
 // Companies
 {
-  eq(out.companies.rows.map(r => cell(COMPANY_HEADERS, r, 'Name')), ['Acme Corp', 'Beta Holdings', 'No Site Inc'],
-    'only companies with a contact or an Opp');
+  eq(out.companies.rows.map(r => cell(COMPANY_HEADERS, r, 'Name')), ['Acme Corp', 'Beta Holdings'],
+    'only companies with a contact or an Opp, and a website');
+  eq(buildImportFiles({ prospects, contacts, opps, settings, includeNoDomain: true }).companies.rows.map(r => r[1]), ['Acme Corp', 'Beta Holdings', 'No Site Inc'],
+    'a company with no website goes in only when asked');
   eq(out.report.companiesNoDomain, ['No Site Inc'], 'a company with no website is reported');
   const all = buildImportFiles({ prospects, contacts, opps, settings, allCompanies: true });
-  eq(all.companies.rows.length, 4, 'every company when asked');
+  eq(all.companies.rows.length, 3, 'every company with a website when asked');
   eq(cell(COMPANY_HEADERS, out.companies.rows[0], 'Tier'), 'Tier 1', 'company fields carry over');
 }
 
@@ -130,7 +135,44 @@ const out = buildImportFiles({ prospects, contacts, opps, settings, ownerEmail: 
     ['2026-10-21 Email sent: Hi\n2026-08-01 Meeting: Intro', '2026-10-21', '2'], 'history of contacts sharing an email lands on the one row');
   eq(withAct.report.contactsWithHistory, 1, 'contacts with history are counted');
   eq(cell(CONTACT_HEADERS, out.contacts.rows[0], 'Activity History'), '', 'no activity given: blank');
-  eq(out.fields.rows.filter(r => r[0] === 'Contact').map(r => r[1]).slice(-3), ['Activity History', 'Last Activity Date', 'Activity Count'], 'the history fields are in the fields file');
+  eq(withAct.fields.rows.filter(r => r[0] === 'Contact').map(r => r[1]).slice(-3), ['Activity History', 'Last Activity Date', 'Activity Count'], 'the history fields are in the fields file');
+  eq(out.fields.rows.some(r => r[1] === 'Activity History'), false, '...but not when no contact has history');
+}
+
+// Colleagues, shared domains, fields
+{
+  const colleague = buildImportFiles({
+    prospects, settings, ownerEmail: 'daniel.baldauf@se.com',
+    contacts: [{ id: '1', email: 'pat@se.com', firstname: 'Pat' }, { id: '2', email: 'kim@emea.se.com' }, { id: '3', email: 'jo@acme.com', company: 'Acme' }, { id: '4', email: 'x@notse.com' }],
+  });
+  eq(colleague.contacts.rows.map(r => r[0]), ['jo@acme.com', 'x@notse.com'], "contacts at the owner's own domain (and its subdomains) are left out");
+  eq(colleague.report.contactsColleagues, 2, '...and counted');
+  eq(buildImportFiles({ ownerEmail: 'daniel.baldauf@se.com', includeColleagues: true, contacts: [{ id: '1', email: 'pat@se.com' }] }).contacts.rows.length, 1,
+    'colleagues go in only when asked');
+
+  const shared = buildImportFiles({
+    ownerEmail: 'd@se.com',
+    prospects: [
+      { id: 'b1', company: 'Brookfield Infrastructure Fund IV', website: 'brookfield.com' },
+      { id: 'b2', company: 'Brookfield', website: 'https://www.brookfield.com', tier: 'Tier 1' },
+      { id: 'b3', company: 'Brookfield Renewable', website: 'brookfield.com', tier: 'Tier 2' },
+    ],
+    contacts: [
+      { id: '1', email: 'a@brookfield.com', company: 'Brookfield Renewable' },
+      { id: '2', email: 'b@brookfield.com', company: 'Brookfield Renewable' },
+      { id: '3', email: 'c@brookfield.com', company: 'Brookfield' },
+    ],
+  });
+  eq(shared.companies.rows.map(r => r[1]), ['Brookfield Renewable'], 'one row per domain: the one with the most contacts is kept');
+  eq(shared.report.companiesMerged, [{ domain: 'brookfield.com', kept: 'Brookfield Renewable', merged: ['Brookfield'] }],
+    'the merged ones are reported (a company with no contact or Opp was never in)');
+  eq(shared.contacts.rows.map(r => cell(CONTACT_HEADERS, r, 'Company Name')), ['Brookfield Renewable', 'Brookfield Renewable', 'Brookfield Renewable'],
+    "every contact names the row its domain landed on");
+
+  const f = out.fields.rows;
+  eq(f.some(r => r[1] === 'Decision Maker' || r[1] === 'Role'), false, 'a field with no value anywhere is not listed');
+  eq(f.find(r => r[1] === 'Tier')[2], 'Single-line text', 'company fields are suggested as text, not dropdowns');
+  eq(f.find(r => r[1] === "Dan's Tags")[2], 'Multiple checkboxes', "Dan's Tags stays a checkbox list");
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
