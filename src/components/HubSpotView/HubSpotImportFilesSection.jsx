@@ -8,7 +8,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { toCsv, downloadCsv } from '../../utils/csv';
-import { buildImportFiles } from '../../utils/hubspotImportFiles';
+import { buildImportFiles, liveOpps } from '../../utils/hubspotImportFiles';
 import styles from './HubSpotMoveTab.module.css';
 
 const FILES = [
@@ -33,10 +33,8 @@ export function HubSpotImportFilesSection({ prospects = [], settings = {} }) {
     setBusy(true); setError('');
     try {
       const [cache, opps] = await Promise.all([getHubspotCache(), loadOpps2Newest(user?.uid)]);
-      const deleted = new Set((opps?._deletedIds || []).map(String));
-      const records = (opps?.records || []).filter(r => !deleted.has(String(r._id ?? r.id)));
       setBuilt(buildImportFiles({
-        prospects, contacts: cache?.contacts || [], opps: records, settings,
+        prospects, contacts: Array.isArray(cache?.contacts) ? cache.contacts : [], opps: liveOpps(opps), settings,
         ownerEmail: ownerEmail.trim(), pipeline: pipeline.trim(), allCompanies,
       }));
     } catch (err) {
