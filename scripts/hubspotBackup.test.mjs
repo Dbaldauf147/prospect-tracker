@@ -8,7 +8,8 @@
 //   * a type is read page by page from its cursor, every property is asked
 //     for, and associations (including ones past the first answer's page)
 //     land on their records,
-//   * a chunk stops at its time budget and hands back the cursor,
+//   * a chunk stops at its time budget or its size cap and hands back the
+//     cursor,
 //   * the verdict flags unfinished types, missing part files and short
 //     counts, and accepts more records than HubSpot counted,
 //   * start -> chunk -> finish saves schema, part files and a manifest under
@@ -146,6 +147,15 @@ eq(partName(runPrefix('111', '2026-10-27T10-00-00Z'), 'contacts', 3), 'hubspot-b
   eq([first.records.length, first.next], [100, '100'], 'a chunk stops at its budget and hands back the cursor');
   const rest = await readChunk(c2, 'contacts', { after: first.next, budgetMs: 1e9 });
   eq([rest.records.length, rest.records[0].id], [150, '101'], 'continuing from the cursor picks up where it stopped');
+}
+
+{
+  // Big records (logged emails with their HTML bodies) stop at the size
+  // cap long before the time budget.
+  const hs = fakeHubspot();
+  const client = hubspotClient('t', { fetchImpl: hs.fetchImpl, sleep: noSleep });
+  const capped = await readChunk(client, 'contacts', { budgetMs: 1e9, maxBytes: 100 });
+  eq([capped.records.length, capped.next], [100, '100'], 'a chunk stops at its size cap after the page that crossed it');
 }
 
 // ── collectSchema ────────────────────────────────────────────────────────

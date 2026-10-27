@@ -93,9 +93,16 @@ function assocEntry(t) {
   };
 }
 
+// How much a chunk may hold before it stops, measured as saved JSON. Time
+// alone is the wrong limit for logged emails: each carries its whole HTML
+// body, and 40 seconds of them outgrew the function's memory (the first
+// real run died with a bare 500 at 0 of 9,479 emails). Contacts stay far
+// under this and are still cut by time.
+export const CHUNK_MAX_BYTES = 12 * 1024 * 1024;
+
 /**
- * Read records of one type from `after` until the time budget runs out or
- * the type is finished. Returns
+ * Read records of one type from `after` until the time budget or the size
+ * cap runs out, or the type is finished. Returns
  *   { records, next, associationErrors }
  * where `next` is the cursor to continue from ('' when done) and each
  * record is { id, createdAt, updatedAt, properties, associations }.
@@ -103,13 +110,14 @@ function assocEntry(t) {
  * Listing gives the ids; a batch read then fetches every property for them
  * (a list request naming hundreds of properties outgrows the URL).
  */
-export async function readChunk(client, type, { after = '', budgetMs = 40000, now = Date.now } = {}) {
+export async function readChunk(client, type, { after = '', budgetMs = 40000, maxBytes = CHUNK_MAX_BYTES, now = Date.now } = {}) {
   const started = now();
   const props = await propertyNames(client, type);
   const targets = associationTargets(type);
   const records = [];
   const associationErrors = {};
   let cursor = after;
+  let bytes = 0;
 
   do {
     const qs = new URLSearchParams({ limit: String(LIST_LIMIT), archived: 'false' });
@@ -143,7 +151,7 @@ export async function readChunk(client, type, { after = '', budgetMs = 40000, no
       for (const to of Object.keys(assoc)) {
         if (assoc[to][id]?.length) associations[to] = assoc[to][id];
       }
-      records.push({
+      const record = {
         id,
         createdAt: r?.createdAt || null,
         updatedAt: r?.updatedAt || null,
@@ -151,9 +159,11 @@ export async function readChunk(client, type, { after = '', budgetMs = 40000, no
         associations,
         // Listed but gone by the time of the batch read (deleted mid-backup).
         ...(r ? {} : { missingOnRead: true }),
-      });
+      };
+      bytes += JSON.stringify(record).length;
+      records.push(record);
     }
-  } while (cursor && now() - started < budgetMs);
+  } while (cursor && now() - started < budgetMs && bytes < maxBytes);
 
   return { records, next: cursor, associationErrors };
 }
