@@ -63,6 +63,8 @@ export function HubSpotImportFilesSection({ prospects = [], settings = {} }) {
   const [ownerEmail, setOwnerEmail] = useState('daniel.baldauf@se.com');
   const [allCompanies, setAllCompanies] = useState(false);
   const [withHistory, setWithHistory] = useState(true);
+  const [includeNoDomain, setIncludeNoDomain] = useState(false);
+  const [includeColleagues, setIncludeColleagues] = useState(false);
   const [step, setStep] = useState('');
   const [historyFrom, setHistoryFrom] = useState('');
   const [built, setBuilt] = useState(null);
@@ -82,7 +84,7 @@ export function HubSpotImportFilesSection({ prospects = [], settings = {} }) {
       }
       setBuilt(buildImportFiles({
         prospects, contacts: Array.isArray(cache?.contacts) ? cache.contacts : [], opps: liveOpps(opps), settings,
-        ownerEmail: ownerEmail.trim(), allCompanies, activity,
+        ownerEmail: ownerEmail.trim(), allCompanies, activity, includeNoDomain, includeColleagues,
       }));
     } catch (err) {
       setError(err.message || String(err));
@@ -118,6 +120,16 @@ export function HubSpotImportFilesSection({ prospects = [], settings = {} }) {
           <input type="checkbox" checked={withHistory} onChange={e => setWithHistory(e.target.checked)} />
           Include activity history
         </label>
+        <label style={{ flexDirection: 'row', alignItems: 'center', gap: '0.4rem' }}
+          title="HubSpot can only match a company by its domain, so one with no website could duplicate a colleague's record of the same name. No contact can link to it either.">
+          <input type="checkbox" checked={includeNoDomain} onChange={e => setIncludeNoDomain(e.target.checked)} />
+          Include companies with no website
+        </label>
+        <label style={{ flexDirection: 'row', alignItems: 'center', gap: '0.4rem' }}
+          title="Contacts at your own email domain are colleagues in the company's portal, and their history is internal mail.">
+          <input type="checkbox" checked={includeColleagues} onChange={e => setIncludeColleagues(e.target.checked)} />
+          Include colleagues ({ownerEmail.split('@')[1] || 'your domain'})
+        </label>
         <button className={styles.btn} onClick={build} disabled={busy}>{busy ? 'Building...' : built ? 'Rebuild files' : 'Build files'}</button>
       </div>
       {error && <div className={styles.error}>{error}</div>}
@@ -144,13 +156,19 @@ export function HubSpotImportFilesSection({ prospects = [], settings = {} }) {
               : <div>Activity history not included.</div>}
             <b>Left out or not linked</b>
             <ul>
+              {r.contactsColleagues > 0 && <li>{fmt(r.contactsColleagues)} colleagues at your own email domain</li>}
               <li>{fmt(r.contactsNoEmail)} contacts with no email (HubSpot matches contacts by email, so these would duplicate on every import)</li>
               <li>{fmt(r.contactsHidden)} contacts tagged hide</li>
               {r.contactsDuplicateEmail > 0 && <li>{fmt(r.contactsDuplicateEmail)} repeat contacts sharing an email with another one</li>}
-              <li>{fmt(r.contactsNoCompany)} contacts are included but not linked to a company (their company isn&apos;t one of your accounts)</li>
+              <li>{fmt(r.contactsNoCompany)} contacts are included but not linked to a company (their company isn&apos;t one of your accounts, or has no website)</li>
               {r.companiesNoDomain.length > 0 && (
                 <li title={r.companiesNoDomain.slice(0, 50).join(', ')}>
-                  {fmt(r.companiesNoDomain.length)} companies have no website, so HubSpot can&apos;t de-duplicate them or link contacts to them. Add a website on the site and rebuild.
+                  {fmt(r.companiesNoDomain.length)} companies have no website{includeNoDomain ? ' (included, but' : ' (left out:'} HubSpot can&apos;t de-duplicate them or link contacts to them). Add a website on the site and rebuild.
+                </li>
+              )}
+              {r.companiesMerged.length > 0 && (
+                <li title={r.companiesMerged.slice(0, 50).map(m => `${m.domain}: kept ${m.kept}, merged ${m.merged.join(', ')}`).join('\n')}>
+                  {fmt(r.companiesMerged.reduce((n, m) => n + m.merged.length, 0))} companies share a website with another one ({fmt(r.companiesMerged.length)} domains). HubSpot keeps one company per domain, so each domain is one row: the one with the most contacts. Hover for the list.
                 </li>
               )}
             </ul>
