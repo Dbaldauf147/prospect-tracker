@@ -3042,7 +3042,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
         )}
       </div>
 
-      {tab === 'move' && isAdmin && <HubSpotMoveTab />}
+      {tab === 'move' && isAdmin && <HubSpotMoveTab prospects={prospects} settings={settings} />}
 
       {loading && !data && <div className={styles.loading}>Loading from HubSpot...</div>}
 
