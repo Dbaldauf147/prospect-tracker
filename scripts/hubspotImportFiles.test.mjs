@@ -8,11 +8,11 @@
 //   * contacts with no email, hidden ones and repeats are left out and
 //     counted; free-mail addresses never link a company,
 //   * a company pin from the site wins over the synced company text,
-//   * an Opp becomes a deal linked to its company's domain and, when its
-//     contact name is a contact there, to that contact's email,
+//   * Opps are not exported as deals; they only mark a company as a live
+//     account,
 //   * only companies with a contact or an Opp go in unless all are asked for,
-//   * the fields file lists the tags and deal stages seen in the data.
-import { buildImportFiles, liveOpps, domainOf, amountOf, dateOf, CONTACT_HEADERS, DEAL_HEADERS, COMPANY_HEADERS } from '../src/utils/hubspotImportFiles.js';
+//   * the fields file lists the tags seen in the data, and no deal fields.
+import { buildImportFiles, liveOpps, domainOf, amountOf, dateOf, CONTACT_HEADERS, COMPANY_HEADERS } from '../src/utils/hubspotImportFiles.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -58,7 +58,7 @@ const opps = [
   { _id: 'o3', Account: 'No Site Inc', Scope: 'Audit', Stage: 'Lead' },
 ];
 
-const out = buildImportFiles({ prospects, contacts, opps, settings, ownerEmail: 'daniel.baldauf@se.com', pipeline: 'Sales Pipeline' });
+const out = buildImportFiles({ prospects, contacts, opps, settings, ownerEmail: 'daniel.baldauf@se.com' });
 
 // Contacts
 {
@@ -75,17 +75,14 @@ const out = buildImportFiles({ prospects, contacts, opps, settings, ownerEmail: 
   eq(out.report.contactsNoCompany, 1, 'one contact is included unlinked');
 }
 
-// Deals
+// Opps
 {
-  const [d1, d2, d3] = out.deals.rows;
-  eq([cell(DEAL_HEADERS, d1, 'Deal Name'), cell(DEAL_HEADERS, d1, 'Deal Stage'), cell(DEAL_HEADERS, d1, 'Amount'), cell(DEAL_HEADERS, d1, 'Close Date'), cell(DEAL_HEADERS, d1, 'Pipeline')],
-    ['Acme Corp - Utility Bill Pay', 'Quoting', '50000', '2026-12-15', 'Sales Pipeline'], 'an Opp becomes a deal');
-  eq([cell(DEAL_HEADERS, d1, 'Company Domain Name'), cell(DEAL_HEADERS, d1, 'Contact Email'), cell(DEAL_HEADERS, d1, 'Prospect Tracker ID')],
-    ['acme.com', 'jane@acme.com', 'o1'], 'the deal links to its company and to the named contact there');
-  eq([cell(DEAL_HEADERS, d2, 'Deal Stage'), cell(DEAL_HEADERS, d2, 'Company Domain Name')], ['Lead', ''], 'no stage reads as Lead; an unknown account is unlinked');
-  eq(out.report.dealsNoCompany, ['Unknown Co - ESG'], '...and reported');
-  eq(out.report.dealsNoDomain, ['No Site Inc - Audit'], 'a deal whose company has no website is reported');
-  eq(d3[0], 'No Site Inc - Audit', 'that deal is still included');
+  eq(out.deals, undefined, 'no deals file');
+  const oppOnly = buildImportFiles({
+    prospects: [{ id: 'q1', company: 'Opp Only Co', website: 'opponly.com' }, { id: 'q2', company: 'Idle Co', website: 'idle.com' }],
+    opps: [{ _id: 'x', Account: 'Opp Only Co' }],
+  });
+  eq(oppOnly.companies.rows.map(r => r[1]), ['Opp Only Co'], 'a company with an Opp but no contacts is still exported');
 }
 
 // Companies
@@ -102,8 +99,7 @@ const out = buildImportFiles({ prospects, contacts, opps, settings, ownerEmail: 
 {
   const tags = out.fields.rows.find(r => r[1] === "Dan's Tags");
   eq(tags[3], 'ESG; Key', 'the fields file lists the tags seen');
-  const stages = out.fields.rows.find(r => r[0] === 'Deal' && r[1] === 'Deal Stage');
-  eq(stages[3], 'Lead; Quoting', '...and the deal stages used');
+  eq(out.fields.rows.filter(r => r[0] === 'Deal').length, 0, 'no deal fields to create');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

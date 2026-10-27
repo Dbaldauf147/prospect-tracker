@@ -14,7 +14,6 @@ import styles from './HubSpotMoveTab.module.css';
 const FILES = [
   { key: 'companies', label: 'Companies', file: 'hubspot-import-1-companies.csv' },
   { key: 'contacts', label: 'Contacts', file: 'hubspot-import-2-contacts.csv' },
-  { key: 'deals', label: 'Deals (from Opps)', file: 'hubspot-import-3-deals.csv' },
   { key: 'fields', label: 'Fields to create first', file: 'hubspot-import-0-fields-to-create.csv' },
 ];
 
@@ -23,7 +22,6 @@ const fmt = (n) => Number(n || 0).toLocaleString();
 export function HubSpotImportFilesSection({ prospects = [], settings = {} }) {
   const { user } = useAuth();
   const [ownerEmail, setOwnerEmail] = useState('daniel.baldauf@se.com');
-  const [pipeline, setPipeline] = useState('Sales Pipeline');
   const [allCompanies, setAllCompanies] = useState(false);
   const [built, setBuilt] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -35,7 +33,7 @@ export function HubSpotImportFilesSection({ prospects = [], settings = {} }) {
       const [cache, opps] = await Promise.all([getHubspotCache(), loadOpps2Newest(user?.uid)]);
       setBuilt(buildImportFiles({
         prospects, contacts: Array.isArray(cache?.contacts) ? cache.contacts : [], opps: liveOpps(opps), settings,
-        ownerEmail: ownerEmail.trim(), pipeline: pipeline.trim(), allCompanies,
+        ownerEmail: ownerEmail.trim(), allCompanies,
       }));
     } catch (err) {
       setError(err.message || String(err));
@@ -53,16 +51,13 @@ export function HubSpotImportFilesSection({ prospects = [], settings = {} }) {
         <h3 className={styles.sectionTitle}>Files for a HubSpot import</h3>
       </div>
       <p className={styles.muted}>
-        For a portal the site can&apos;t connect to. Builds your companies, contacts and Opps as CSV files for
+        For a portal the site can&apos;t connect to. Builds your companies and contacts as CSV files for
         HubSpot&apos;s own Import screen (Data integration, Import a file). Nothing is sent anywhere: the files
         are built in this browser and downloaded.
       </p>
       <div className={styles.controls}>
         <label>Owner in the new portal
           <input className={styles.input} value={ownerEmail} onChange={e => setOwnerEmail(e.target.value)} />
-        </label>
-        <label>Deal pipeline name
-          <input className={styles.input} value={pipeline} onChange={e => setPipeline(e.target.value)} />
         </label>
         <label style={{ flexDirection: 'row', alignItems: 'center', gap: '0.4rem' }}>
           <input type="checkbox" checked={allCompanies} onChange={e => setAllCompanies(e.target.checked)} />
@@ -96,11 +91,8 @@ export function HubSpotImportFilesSection({ prospects = [], settings = {} }) {
               <li>{fmt(r.contactsNoCompany)} contacts are included but not linked to a company (their company isn&apos;t one of your accounts)</li>
               {r.companiesNoDomain.length > 0 && (
                 <li title={r.companiesNoDomain.slice(0, 50).join(', ')}>
-                  {fmt(r.companiesNoDomain.length)} companies have no website, so HubSpot can&apos;t de-duplicate them or link contacts and deals to them. Add a website on the site and rebuild.
+                  {fmt(r.companiesNoDomain.length)} companies have no website, so HubSpot can&apos;t de-duplicate them or link contacts to them. Add a website on the site and rebuild.
                 </li>
-              )}
-              {r.dealsNoCompany.length > 0 && (
-                <li title={r.dealsNoCompany.slice(0, 50).join(', ')}>{fmt(r.dealsNoCompany.length)} Opps whose Account isn&apos;t one of your companies (included, but not linked)</li>
               )}
             </ul>
           </div>
@@ -108,10 +100,10 @@ export function HubSpotImportFilesSection({ prospects = [], settings = {} }) {
           <div className={styles.muted}>
             <b>Importing, in this order</b>
             <ol>
-              <li>Send <span className={styles.mono}>fields-to-create</span> to whoever can create properties (or create them yourself during the import). Each deal stage listed there must exist in the pipeline.</li>
-              <li>Import <b>Companies</b>, then <b>Contacts</b>, then <b>Deals</b>: one file, one object each time.</li>
+              <li>Send <span className={styles.mono}>fields-to-create</span> to whoever can create properties (or create them yourself during the import).</li>
+              <li>Import <b>Companies</b> first, then <b>Contacts</b>: one file, one object each time.</li>
               <li>When HubSpot asks, choose <b>Create new records only</b>, so records a colleague already owns are left alone.</li>
-              <li>On the mapping screen, check that <b>Company Domain Name</b> and <b>Contact Email</b> are mapped as the links to companies and contacts.</li>
+              <li>On the mapping screen, check that <b>Company Domain Name</b> is mapped as the link to the company.</li>
             </ol>
           </div>
         </>
