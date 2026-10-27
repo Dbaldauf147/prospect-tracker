@@ -38,6 +38,21 @@ const fmtRun = (runId) => {
   return Number.isNaN(d.getTime()) ? runId : d.toLocaleString();
 };
 
+// The run in progress (or the last one that fell short), kept so a retry
+// can carry on from each unfinished type's cursor instead of starting over,
+// even after a reload. Per-browser convenience only: the files themselves
+// are in the bucket either way.
+const RUN_KEY = 'hubspotBackupRun';
+function loadSavedRun() {
+  try { return JSON.parse(localStorage.getItem(RUN_KEY) || 'null'); } catch { return null; }
+}
+function saveRun(run) {
+  try {
+    if (run) localStorage.setItem(RUN_KEY, JSON.stringify(run));
+    else localStorage.removeItem(RUN_KEY);
+  } catch { /* storage unavailable: retry just won't survive a reload */ }
+}
+
 export function HubSpotBackupSection() {
   const [runs, setRuns] = useState(null);
   const [runsError, setRunsError] = useState('');
@@ -45,6 +60,7 @@ export function HubSpotBackupSection() {
   const [progress, setProgress] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
+  const [pending, setPending] = useState(() => loadSavedRun());
   const abortRef = useRef(null);
 
   const loadRuns = async () => {
@@ -54,67 +70,98 @@ export function HubSpotBackupSection() {
   };
   useEffect(() => { loadRuns(); }, []);
 
-  const run = async () => {
+  // Back up every type in `run` that isn't done yet, from where it stopped,
+  // then check the whole run. `run` is mutated as chunks land and saved
+  // after each one.
+  const drive = async (run, ctrl) => {
+    const label2 = (t) => label(t).toLowerCase();
+    for (const type of run.objectTypes) {
+      const r = run.reported[type] || (run.reported[type] = { records: 0, parts: 0, done: false });
+      if (r.done) continue;
+      delete run.typeErrors[type];
+      const cur = run.cursors[type] || (run.cursors[type] = { after: '', part: 1 });
+      for (;;) {
+        setProgress({ step: `Saving ${label2(type)}...`, current: type, reported: { ...run.reported } });
+        let chunk = null;
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            chunk = await call('chunk', { portalId: run.portalId, runId: run.runId, type, after: cur.after, part: cur.part }, ctrl.signal);
+            break;
+          } catch (err) {
+            if (err?.name === 'AbortError') throw err;
+            // Out of retries: usually a type the token has no scope for.
+            // It is reported as failed (finish flags it as unfinished) and
+            // the backup carries on with the next type.
+            if (attempt >= CHUNK_RETRIES) { run.typeErrors[type] = err.message; break; }
+          }
+        }
+        if (!chunk) break;
+        r.records += chunk.records;
+        r.parts = cur.part;
+        for (const [to, msg] of Object.entries(chunk.associationErrors || {})) run.assocErrors[`${type} -> ${to}`] = msg;
+        if (!chunk.next) { r.done = true; }
+        else { cur.after = chunk.next; cur.part += 1; }
+        saveRun(run);
+        if (r.done) break;
+      }
+    }
+    setProgress({ step: 'Checking the saved files against HubSpot...', reported: { ...run.reported } });
+    const manifest = await call('finish', {
+      portalId: run.portalId, runId: run.runId, objectTypes: run.objectTypes, reported: run.reported, typeErrors: run.typeErrors,
+    }, ctrl.signal);
+    setProgress(null);
+    setResult({ ...manifest, schemaErrors: run.schemaErrors, assocErrors: run.assocErrors });
+    const next = manifest.complete ? null : run;
+    saveRun(next);
+    setPending(next);
+  };
+
+  const go = async (resume) => {
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     setRunning(true); setError(''); setResult(null);
-    const reported = {};
-    const typeErrors = {};
-    const assocErrors = {};
+    let run = resume ? pending : null;
     try {
-      setProgress({ step: 'Reading the portal set-up (properties, pipelines, owners, lists)...', reported });
-      const start = await call('start', {}, ctrl.signal);
-      const { portalId, runId, objectTypes } = start;
-
-      for (const type of objectTypes) {
-        reported[type] = { records: 0, parts: 0, done: false };
-        let after = '';
-        for (let part = 1; ; part += 1) {
-          setProgress({ step: `Saving ${label(type).toLowerCase()}...`, current: type, reported: { ...reported }, schemaErrors: start.schemaErrors });
-          let chunk = null;
-          for (let attempt = 0; ; attempt += 1) {
-            try {
-              chunk = await call('chunk', { portalId, runId, type, after, part }, ctrl.signal);
-              break;
-            } catch (err) {
-              if (err?.name === 'AbortError') throw err;
-              // Out of retries: usually a type the token has no scope for.
-              // It is reported as failed (finish flags it as unfinished) and
-              // the backup carries on with the next type.
-              if (attempt >= CHUNK_RETRIES) { typeErrors[type] = err.message; break; }
-            }
-          }
-          if (!chunk) break;
-          reported[type].records += chunk.records;
-          reported[type].parts = part;
-          for (const [to, msg] of Object.entries(chunk.associationErrors || {})) assocErrors[`${type} -> ${to}`] = msg;
-          if (!chunk.next) { reported[type].done = true; break; }
-          after = chunk.next;
-        }
+      if (!run) {
+        setProgress({ step: 'Reading the portal set-up (properties, pipelines, owners, lists)...', reported: {} });
+        const start = await call('start', {}, ctrl.signal);
+        run = {
+          portalId: start.portalId, runId: start.runId, objectTypes: start.objectTypes, schemaErrors: start.schemaErrors || {},
+          reported: {}, cursors: {}, typeErrors: {}, assocErrors: {},
+        };
+        saveRun(run);
+        setPending(run);
       }
-      setProgress({ step: 'Checking the saved files against HubSpot...', reported: { ...reported } });
-      setResult(await call('finish', { portalId, runId, objectTypes, reported, typeErrors }, ctrl.signal));
-      setProgress(null);
-      setResult(r => ({ ...r, schemaErrors: start.schemaErrors, assocErrors }));
+      await drive(run, ctrl);
     } catch (err) {
-      if (err?.name === 'AbortError') setError('Stopped. What was saved so far is kept, but this run is unfinished; start a new one for a full backup.');
-      else setError(`${err.message} This run is unfinished; start a new one for a full backup.`);
+      if (run) { saveRun(run); setPending({ ...run }); }
+      const tail = run ? 'What was saved is kept; Retry carries on from where it stopped.' : '';
+      setError(err?.name === 'AbortError' ? `Stopped. ${tail}` : `${err.message} ${tail}`);
     } finally {
       setRunning(false);
       loadRuns();
     }
   };
 
+  const unfinished = pending ? pending.objectTypes.filter(t => !pending.reported[t]?.done) : [];
   const shown = progress?.reported || null;
 
   return (
     <section className={styles.section}>
       <div className={styles.sectionHead}>
         <h3 className={styles.sectionTitle}>Back up the current portal</h3>
-        <button className={styles.btn} onClick={run} disabled={running}>
+        <button className={styles.btn} onClick={() => go(false)} disabled={running}>
           {running ? 'Backing up...' : 'Start full backup'}
         </button>
+        {!running && pending && (
+          <button className={styles.btnGhost} onClick={() => go(true)}
+            title="Carries on with the record types that did not finish, in the same backup, from where each one stopped.">
+            {unfinished.length
+              ? `Retry ${unfinished.map(t => label(t).toLowerCase()).join(', ')}`
+              : 'Re-check this backup'}
+          </button>
+        )}
         {running && <button className={styles.btnGhost} onClick={() => abortRef.current?.abort()}>Stop</button>}
       </div>
       <p className={styles.muted}>
