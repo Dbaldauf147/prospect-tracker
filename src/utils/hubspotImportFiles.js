@@ -5,15 +5,14 @@
 //
 // What goes in, and how the files find each other inside HubSpot:
 //
-//   companies  the prospects that matter (with a contact or an opp, unless
-//              asked for all), keyed by Company Domain Name, which is how a
-//              HubSpot import de-duplicates companies
+//   companies  the prospects that matter (with a contact or an Opp, unless
+//              asked for all; Opps only pick the companies, they are not
+//              exported as deals: Dan doesn't track Opps in HubSpot),
+//              keyed by Company Domain Name, which is how a HubSpot import
+//              de-duplicates companies
 //   contacts   the contact list (the app's copy of the current portal),
 //              keyed by Email, with Company Domain Name so the import links
 //              each contact to its company
-//   deals      the Opps, with Company Domain Name and the contact's email
-//              for the links, and the Opp's own id so a later round can be
-//              told apart from a duplicate
 //   fields     the custom properties the files use, with a suggested type
 //              and the dropdown options seen in the data, for whoever
 //              creates them in the portal before the first import
@@ -34,11 +33,6 @@ export const CONTACT_HEADERS = [
   'Email', 'First Name', 'Last Name', 'Job Title', 'Phone Number', 'Mobile Phone Number',
   'City', 'State/Region', 'Country/Region', 'LinkedIn URL', 'Contact owner',
   'Company Name', 'Company Domain Name', "Dan's Tags", 'Decision Maker', 'Role',
-];
-export const DEAL_HEADERS = [
-  'Deal Name', 'Pipeline', 'Deal Stage', 'Amount', 'Close Date', 'Deal owner',
-  'Company Domain Name', 'Contact Email', 'Scope', 'Opp Source', 'Estimated Fee',
-  'BFO Opportunity Name', 'Prospect Tracker ID',
 ];
 export const FIELD_HEADERS = ['Object', 'Property label', 'Suggested type', 'Options seen in the data', 'Why'];
 
@@ -95,23 +89,22 @@ export function liveOpps(data) {
 }
 
 /**
- * Build the four files.
+ * Build the files.
  *   prospects   the site's companies
  *   contacts    the contact list (the HubSpot cache)
  *   opps        Opps 2 records
  *   settings    for the per-contact company pins (contactLocalFields)
  *   ownerEmail  who owns every record in the new portal
- *   pipeline    the deal pipeline's label in the new portal
  *   allCompanies  every prospect, rather than only those with a contact or opp
- * Returns { companies, contacts, deals, fields } as { headers, rows } plus
+ * Returns { companies, contacts, fields } as { headers, rows } plus
  * `report`: counts and what was left out and why.
  */
 export function buildImportFiles({
-  prospects = [], contacts = [], opps = [], settings = {}, ownerEmail = '', pipeline = '', allCompanies = false,
+  prospects = [], contacts = [], opps = [], settings = {}, ownerEmail = '', allCompanies = false,
 } = {}) {
   const report = {
     contactsNoEmail: 0, contactsHidden: 0, contactsDuplicateEmail: 0, contactsNoCompany: 0,
-    companiesNoDomain: [], dealsNoCompany: [], dealsNoDomain: [],
+    companiesNoDomain: [],
   };
 
   // Prospects by every name they go by.
@@ -135,7 +128,6 @@ export function buildImportFiles({
   // ── Contacts ──
   const seen = new Set();
   const contactRows = [];
-  const contactsByCompany = new Map(); // prospect id -> [{ name, email }]
   for (const c of contacts) {
     if (isHidden(c)) { report.contactsHidden += 1; continue; }
     const email = clean(c.email).toLowerCase();
@@ -150,9 +142,6 @@ export function buildImportFiles({
     const domain = prospect ? prospectDomain(prospect) : '';
     if (prospect) {
       used.add(prospect.id);
-      const list = contactsByCompany.get(prospect.id) || [];
-      list.push({ name: normalizeCompany(`${c.firstname || ''} ${c.lastname || ''}`), email });
-      contactsByCompany.set(prospect.id, list);
     } else {
       report.contactsNoCompany += 1;
     }
@@ -165,31 +154,10 @@ export function buildImportFiles({
     ]);
   }
 
-  // ── Deals ──
-  const dealRows = [];
+  // ── Opps: only to say which companies are live accounts ──
   for (const o of opps) {
-    if (!o || o._deleted) continue;
-    const account = clean(o.Account);
-    const prospect = account ? findProspect(account) : null;
-    const scope = clean(o.Scope);
-    const name = [account || 'Unnamed account', scope].filter(Boolean).join(' - ');
-    if (!prospect) report.dealsNoCompany.push(name);
-    const domain = prospect ? prospectDomain(prospect) : '';
-    if (prospect) {
-      used.add(prospect.id);
-      if (!domain) report.dealsNoDomain.push(name);
-    }
-    // The Opp names its contact in free text; link it when that name is a
-    // contact at the same company.
-    const who = normalizeCompany(o.Contact);
-    const contactEmail = prospect && who
-      ? (contactsByCompany.get(prospect.id) || []).find(x => x.name === who)?.email || ''
-      : '';
-    dealRows.push([
-      name, pipeline, clean(o.Stage) || 'Lead', amountOf(o['Quoted Amount']) || amountOf(o['Estimated Fee']),
-      dateOf(o['Close Date']), ownerEmail, domain, contactEmail, scope, clean(o.Source || o['Lead Source']),
-      amountOf(o['Estimated Fee']), clean(o['BFO Link']), clean(o._id || o.id),
-    ]);
+    const prospect = o && clean(o.Account) ? findProspect(o.Account) : null;
+    if (prospect) used.add(prospect.id);
   }
 
   // ── Companies ──
@@ -224,18 +192,11 @@ export function buildImportFiles({
     ['Company', 'HQ Region', 'Dropdown select', opts(companyRows, COMPANY_HEADERS, 'HQ Region'), ''],
     ['Company', 'CDM', 'Single-line text', '', ''],
     ['Company', 'Prospect Tracker ID', 'Single-line text', '', 'Lets a later import update instead of duplicate'],
-    ['Deal', 'Deal Stage', '(pipeline stages)', opts(dealRows, DEAL_HEADERS, 'Deal Stage'), 'Each of these must be a stage in the pipeline, or be mapped to one during the import'],
-    ['Deal', 'Scope', 'Single-line text', '', ''],
-    ['Deal', 'Opp Source', 'Dropdown select', opts(dealRows, DEAL_HEADERS, 'Opp Source'), ''],
-    ['Deal', 'Estimated Fee', 'Number', '', ''],
-    ['Deal', 'BFO Opportunity Name', 'Single-line text', '', ''],
-    ['Deal', 'Prospect Tracker ID', 'Single-line text', '', 'Lets a later import update instead of duplicate'],
   ];
 
   return {
     companies: { headers: COMPANY_HEADERS, rows: companyRows },
     contacts: { headers: CONTACT_HEADERS, rows: contactRows },
-    deals: { headers: DEAL_HEADERS, rows: dealRows },
     fields: { headers: FIELD_HEADERS, rows: fieldRows },
     report,
   };
