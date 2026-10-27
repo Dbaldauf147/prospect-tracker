@@ -13,6 +13,10 @@
 //   contacts   the contact list (the app's copy of the current portal),
 //              keyed by Email, with Company Domain Name so the import links
 //              each contact to its company
+//              and, from the saved backup of the current portal, its
+//              activity history as three fields: HubSpot's import takes no
+//              emails, meetings or notes, so a dated line per activity is
+//              the history that can travel
 //   fields     the custom properties the files use, with a suggested type
 //              and the dropdown options seen in the data, for whoever
 //              creates them in the portal before the first import
@@ -33,6 +37,7 @@ export const CONTACT_HEADERS = [
   'Email', 'First Name', 'Last Name', 'Job Title', 'Phone Number', 'Mobile Phone Number',
   'City', 'State/Region', 'Country/Region', 'LinkedIn URL', 'Contact owner',
   'Company Name', 'Company Domain Name', "Dan's Tags", 'Decision Maker', 'Role',
+  'Activity History', 'Last Activity Date', 'Activity Count',
 ];
 export const FIELD_HEADERS = ['Object', 'Property label', 'Suggested type', 'Options seen in the data', 'Why'];
 
@@ -76,6 +81,46 @@ export function dateOf(v) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+// HubSpot's cap on a multi-line text value is 65,536 characters; staying
+// under it with room to spare, so a busy contact's history is trimmed here
+// (oldest first) rather than refused by the import.
+export const HISTORY_MAX_CHARS = 60000;
+
+const utcDay = (ms) => (ms ? new Date(ms).toISOString().slice(0, 10) : '');
+
+/**
+ * One contact's activity entries ([whenMs, kind, subject]) as the three
+ * history fields:
+ *   { history, lastDate, count }
+ * `history` is one line per activity, newest first, "YYYY-MM-DD Kind:
+ * subject"; repeats (the same email logged twice) count once. When the
+ * lines run past `maxChars`, the oldest are dropped and the last line says
+ * how many.
+ */
+export function formatActivityHistory(entries, maxChars = HISTORY_MAX_CHARS) {
+  const seen = new Set();
+  const list = [];
+  for (const [when, kind, subject] of entries || []) {
+    const key = `${when}|${kind}|${subject}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    list.push([Number(when) || 0, String(kind || ''), String(subject || '')]);
+  }
+  list.sort((a, b) => b[0] - a[0]);
+  if (!list.length) return { history: '', lastDate: '', count: 0 };
+  const lines = [];
+  let used = 0;
+  for (let i = 0; i < list.length; i += 1) {
+    const [when, kind, subject] = list[i];
+    const line = `${utcDay(when) || 'undated'} ${kind}: ${subject}`;
+    const note = `(+${list.length - i} older not shown)`;
+    if (used + line.length + 1 + note.length > maxChars) { lines.push(note); break; }
+    lines.push(line);
+    used += line.length + 1;
+  }
+  return { history: lines.join('\n'), lastDate: utcDay(list[0][0]), count: list.length };
+}
+
 /**
  * The Opps still in play from an Opps 2 dataset: its records minus any
  * listed in `_deletedIds`. That is a map of id -> deletedAt
@@ -96,14 +141,17 @@ export function liveOpps(data) {
  *   settings    for the per-contact company pins (contactLocalFields)
  *   ownerEmail  who owns every record in the new portal
  *   allCompanies  every prospect, rather than only those with a contact or opp
+ *   activity    { [contactId]: [[whenMs, kind, subject], ...] } from the
+ *               backup (api/_lib/activityDigest.js); none leaves the
+ *               history fields blank
  * Returns { companies, contacts, fields } as { headers, rows } plus
  * `report`: counts and what was left out and why.
  */
 export function buildImportFiles({
-  prospects = [], contacts = [], opps = [], settings = {}, ownerEmail = '', allCompanies = false,
+  prospects = [], contacts = [], opps = [], settings = {}, ownerEmail = '', allCompanies = false, activity = null,
 } = {}) {
   const report = {
-    contactsNoEmail: 0, contactsHidden: 0, contactsDuplicateEmail: 0, contactsNoCompany: 0,
+    contactsWithHistory: 0, contactsNoEmail: 0, contactsHidden: 0, contactsDuplicateEmail: 0, contactsNoCompany: 0,
     companiesNoDomain: [],
   };
 
@@ -126,6 +174,16 @@ export function buildImportFiles({
   const local = settings.contactLocalFields || {};
 
   // ── Contacts ──
+  // Activity by email: contacts sharing an address become one row, so the
+  // history of every one of them goes on it.
+  const activityByEmail = new Map();
+  if (activity) {
+    for (const c of contacts) {
+      const e = clean(c?.email).toLowerCase();
+      const a = activity[String(c?.id)];
+      if (e && a?.length) activityByEmail.set(e, [...(activityByEmail.get(e) || []), ...a]);
+    }
+  }
   const seen = new Set();
   const contactRows = [];
   for (const c of contacts) {
@@ -151,6 +209,11 @@ export function buildImportFiles({
       clean(c.city), clean(c.state), clean(c.country), clean(c.hs_linkedin_url || c.linkedin_url), ownerEmail,
       prospect ? clean(prospect.company) : companyName, domain,
       tagsOf(c).join(';'), clean(c.decision_maker), clean(c.role),
+      ...(() => {
+        const h = formatActivityHistory(activityByEmail.get(email));
+        if (h.count) report.contactsWithHistory += 1;
+        return [h.history, h.lastDate, h.count ? String(h.count) : ''];
+      })(),
     ]);
   }
 
@@ -184,6 +247,9 @@ export function buildImportFiles({
     ['Contact', "Dan's Tags", 'Multiple checkboxes', opts(contactRows, CONTACT_HEADERS, "Dan's Tags", 500), 'Your tags; several per contact, separated by ;'],
     ['Contact', 'Decision Maker', 'Dropdown select', opts(contactRows, CONTACT_HEADERS, 'Decision Maker'), ''],
     ['Contact', 'Role', 'Single-line text', '', ''],
+    ['Contact', 'Activity History', 'Multi-line text', '', 'Emails, meetings, notes, calls and tasks from the old portal, one dated line each, newest first'],
+    ['Contact', 'Last Activity Date', 'Date picker', '', 'Date of the newest line in Activity History'],
+    ['Contact', 'Activity Count', 'Number', '', 'How many activities the history holds'],
     ['Company', 'Vertical', 'Dropdown select', opts(companyRows, COMPANY_HEADERS, 'Vertical'), ''],
     ['Company', 'Sub Vertical', 'Single-line text', '', ''],
     ['Company', 'Account Type', 'Dropdown select', opts(companyRows, COMPANY_HEADERS, 'Account Type'), "The site's company Type"],

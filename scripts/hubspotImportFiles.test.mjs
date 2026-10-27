@@ -11,8 +11,11 @@
 //   * Opps are not exported as deals; they only mark a company as a live
 //     account,
 //   * only companies with a contact or an Opp go in unless all are asked for,
-//   * the fields file lists the tags seen in the data, and no deal fields.
-import { buildImportFiles, liveOpps, domainOf, amountOf, dateOf, CONTACT_HEADERS, COMPANY_HEADERS } from '../src/utils/hubspotImportFiles.js';
+//   * the fields file lists the tags seen in the data, and no deal fields,
+//   * activity history is one dated line per activity, newest first,
+//     repeats counted once, trimmed oldest-first under HubSpot's cap, and
+//     merged across contacts that share an email.
+import { buildImportFiles, liveOpps, formatActivityHistory, domainOf, amountOf, dateOf, CONTACT_HEADERS, COMPANY_HEADERS } from '../src/utils/hubspotImportFiles.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -100,6 +103,34 @@ const out = buildImportFiles({ prospects, contacts, opps, settings, ownerEmail: 
   const tags = out.fields.rows.find(r => r[1] === "Dan's Tags");
   eq(tags[3], 'ESG; Key', 'the fields file lists the tags seen');
   eq(out.fields.rows.filter(r => r[0] === 'Deal').length, 0, 'no deal fields to create');
+}
+
+// Activity history
+{
+  const d = (s) => Date.parse(`${s}T12:00:00Z`);
+  const h = formatActivityHistory([
+    [d('2026-09-01'), 'Meeting', 'Review'],
+    [d('2026-10-21'), 'Email sent', 'Pilot'],
+    [d('2026-10-21'), 'Email sent', 'Pilot'],
+  ]);
+  eq(h, { history: '2026-10-21 Email sent: Pilot\n2026-09-01 Meeting: Review', lastDate: '2026-10-21', count: 2 },
+    'newest first, one line each, repeats once');
+  eq(formatActivityHistory([]), { history: '', lastDate: '', count: 0 }, 'no activity: blank fields');
+  const many = Array.from({ length: 50 }, (_, i) => [d('2026-01-01') + i * 86400000, 'Email sent', `Message number ${i}`]);
+  const capped = formatActivityHistory(many, 200);
+  eq([capped.history.length <= 200, capped.count, /\(\+\d+ older not shown\)$/.test(capped.history), capped.history.startsWith('2026-02-19')],
+    [true, 50, true, true], 'trimmed oldest-first under the cap, saying how many were dropped');
+
+  const withAct = buildImportFiles({
+    prospects, contacts, settings,
+    activity: { 1: [[d('2026-10-21'), 'Email sent', 'Hi']], 2: [[d('2026-08-01'), 'Meeting', 'Intro']] },
+  });
+  const jane = withAct.contacts.rows[0];
+  eq([cell(CONTACT_HEADERS, jane, 'Activity History'), cell(CONTACT_HEADERS, jane, 'Last Activity Date'), cell(CONTACT_HEADERS, jane, 'Activity Count')],
+    ['2026-10-21 Email sent: Hi\n2026-08-01 Meeting: Intro', '2026-10-21', '2'], 'history of contacts sharing an email lands on the one row');
+  eq(withAct.report.contactsWithHistory, 1, 'contacts with history are counted');
+  eq(cell(CONTACT_HEADERS, out.contacts.rows[0], 'Activity History'), '', 'no activity given: blank');
+  eq(out.fields.rows.filter(r => r[0] === 'Contact').map(r => r[1]).slice(-3), ['Activity History', 'Last Activity Date', 'Activity Count'], 'the history fields are in the fields file');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

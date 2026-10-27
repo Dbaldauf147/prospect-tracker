@@ -11,6 +11,13 @@
 //                         check the part files and HubSpot's own counts,
 //                         save manifest.json, answer the verdict
 //   GET  ?action=runs     the backups in the bucket, newest first
+//   GET  ?action=activity-files
+//                         the newest complete backup's activity part files
+//                         (emails, meetings, notes...), for the history
+//                         that goes into the import files
+//   GET  ?action=activity-digest&name=<part file>
+//                         one of those files boiled down to
+//                         [contactId, when, kind, subject] lines
 //
 // The browser drives start -> chunk... -> finish one short request at a
 // time, the same way the move comparison pages, so a big portal never has
@@ -25,6 +32,35 @@ import {
   BACKUP_ROOT, collectSchema, readChunk, newRunId, runPrefix, partName, tallyParts, verifyRun,
 } from './_lib/hubspotBackup.js';
 import { uploadJsonToGcs, listBackupObjects, downloadGcsObject } from './_lib/gcs.js';
+import { ACTIVITY_TYPES, digestRecords } from './_lib/activityDigest.js';
+
+// The saved runs, newest first, each with its manifest when it has one.
+async function listRuns(gcs, bucket, limit = 20) {
+  const files = await gcs.listBackupObjects({ bucket, prefix: BACKUP_ROOT });
+  const runs = new Map();
+  for (const f of files) {
+    const m = f.name.slice(BACKUP_ROOT.length).match(/^([^/]+)\/([^/]+)\//);
+    if (!m) continue;
+    const key = `${m[1]}/${m[2]}`;
+    const run = runs.get(key) || { portalId: m[1], runId: m[2], files: 0, bytes: 0, manifest: null, hasManifest: false, names: [] };
+    run.files += 1;
+    run.bytes += Number(f.size) || 0;
+    run.names.push(f.name);
+    if (f.name.endsWith('/manifest.json')) run.hasManifest = true;
+    runs.set(key, run);
+  }
+  const list = [...runs.values()].sort((a, b) => b.runId.localeCompare(a.runId)).slice(0, limit);
+  for (const run of list) {
+    if (!run.hasManifest) continue;
+    try {
+      run.manifest = JSON.parse(await gcs.downloadGcsObject({ bucket, name: `${runPrefix(run.portalId, run.runId)}manifest.json` }));
+    } catch { /* listed without its verdict */ }
+  }
+  return list;
+}
+
+// A part file of an activity type, inside the backup folder.
+const ACTIVITY_PART = new RegExp(`^${BACKUP_ROOT}[A-Za-z0-9_-]+/[A-Za-z0-9_-]+/(${ACTIVITY_TYPES.join('|')})-\\d{4}\\.json$`);
 
 // Under the function's own limit with room to save the part file; the
 // browser just asks for the next chunk.
@@ -108,26 +144,24 @@ async function handler(req, res, auth, deps = {}) {
   }
 
   if (action === 'runs') {
-    const files = await gcs.listBackupObjects({ bucket, prefix: BACKUP_ROOT });
-    const runs = new Map();
-    for (const f of files) {
-      const m = f.name.slice(BACKUP_ROOT.length).match(/^([^/]+)\/([^/]+)\//);
-      if (!m) continue;
-      const key = `${m[1]}/${m[2]}`;
-      const run = runs.get(key) || { portalId: m[1], runId: m[2], files: 0, bytes: 0, manifest: null, hasManifest: false };
-      run.files += 1;
-      run.bytes += Number(f.size) || 0;
-      if (f.name.endsWith('/manifest.json')) run.hasManifest = true;
-      runs.set(key, run);
-    }
-    const list = [...runs.values()].sort((a, b) => b.runId.localeCompare(a.runId)).slice(0, 20);
-    for (const run of list) {
-      if (!run.hasManifest) continue;
-      try {
-        run.manifest = JSON.parse(await gcs.downloadGcsObject({ bucket, name: `${runPrefix(run.portalId, run.runId)}manifest.json` }));
-      } catch { /* listed without its verdict */ }
-    }
-    return res.json({ runs: list });
+    const list = await listRuns(gcs, bucket);
+    // The part file names are only for activity-files; the list stays small.
+    return res.json({ runs: list.map(r => { const run = { ...r }; delete run.names; return run; }) });
+  }
+
+  if (action === 'activity-files') {
+    const run = (await listRuns(gcs, bucket)).find(r => r.manifest?.complete);
+    if (!run) return res.status(404).json({ error: 'There is no complete HubSpot backup yet. Run Start full backup first.' });
+    const files = run.names.filter(n => ACTIVITY_PART.test(n)).sort();
+    return res.json({ portalId: run.portalId, runId: run.runId, files });
+  }
+
+  if (action === 'activity-digest') {
+    const name = String(req.query.name || '');
+    const m = name.match(ACTIVITY_PART);
+    if (!m) return res.status(400).json({ error: 'Not an activity file of a HubSpot backup.' });
+    const part = JSON.parse(await gcs.downloadGcsObject({ bucket, name }));
+    return res.json({ name, entries: digestRecords(m[1], part.records) });
   }
 
   return res.status(400).json({ error: 'Missing or invalid action parameter.' });
