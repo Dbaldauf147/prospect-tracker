@@ -66,12 +66,21 @@ export async function uploadJsonToGcs({ bucket, name, content }) {
 // List objects whose name starts with `prefix`, newest first.
 export async function listBackupObjects({ bucket, prefix }) {
   const token = await getStorageToken();
-  const url = `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o` +
-    `?prefix=${encodeURIComponent(prefix)}&fields=items(name,timeCreated,size)`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) throw new Error(`GCS list ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  const data = await res.json();
-  return (data.items || [])
+  // GCS answers at most 1000 objects per page; a HubSpot backup run alone
+  // can hold more part files than that, so every page is followed.
+  const items = [];
+  let pageToken = '';
+  do {
+    const url = `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o` +
+      `?prefix=${encodeURIComponent(prefix)}&fields=items(name,timeCreated,size),nextPageToken` +
+      (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`GCS list ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const data = await res.json();
+    items.push(...(data.items || []));
+    pageToken = data.nextPageToken || '';
+  } while (pageToken);
+  return items
     .map(o => ({ name: o.name, createdTime: o.timeCreated, size: o.size }))
     .sort((a, b) => new Date(b.createdTime) - new Date(a.createdTime));
 }
