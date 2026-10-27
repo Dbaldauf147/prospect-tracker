@@ -31,6 +31,8 @@ const loadColChosen = (tableId) => readColChosen(tablePrefsKeys(tableId));
 const saveColChosen = (tableId, chosen) => writeColChosen(tablePrefsKeys(tableId), chosen);
 import { resolveSortSignal } from '../../utils/tableSortSignal';
 import { tableRowKey } from '../../utils/tableRowKey';
+import { useColumnPresets } from '../../hooks/useColumnPresets';
+import { applyPreset } from '../../utils/columnPresets';
 
 // The saved key order applied (see utils/tableColumnPrefs), plus one rule
 // of this table's own: a selection checkbox column always belongs at the
@@ -645,6 +647,39 @@ export function DataTable({
     persistPrefs(tableId, settings, updateSettings, { hidden, removed, order: [] });
   }
 
+  // Saved column views. Applying one shows exactly its columns in its
+  // order; it doesn't touch stars, widths or anything deleted.
+  const columnPresets = useColumnPresets({ tableId, settings, updateSettings });
+  function applyColumnPreset(preset) {
+    const { hidden, order } = applyPreset(preset, {
+      columnKeys: orderedColumns.map(c => c.key),
+      alwaysVisible,
+    });
+    // A column the preset shows that the user hadn't decided about yet is
+    // now decided, or a defaultHidden one would stay switched off.
+    const shown = defaultHidden.filter(k => !hidden.includes(k) && !chosenCols.has(k));
+    if (shown.length) {
+      const chosen = new Set(chosenCols);
+      shown.forEach(k => chosen.add(k));
+      setChosenCols(chosen);
+      saveColChosen(tableId, chosen);
+    }
+    if (order) {
+      const merged = mergeColumnOrder(colOrder, order);
+      setColOrder(merged);
+      commitHidden(new Set(hidden), { order: merged });
+    } else {
+      commitHidden(new Set(hidden));
+    }
+  }
+  function saveColumnPreset(name) {
+    columnPresets.save({
+      name,
+      cols: orderedColumns.filter(c => visibleCols.has(c.key)).map(c => c.key),
+      order: orderedColumns.map(c => c.key),
+    });
+  }
+
   function renameCol(key, name) {
     setColNames(prev => {
       const next = { ...prev, [key]: name };
@@ -1171,6 +1206,12 @@ export function DataTable({
           onReorder={reorderCols}
           removable={removableColumns}
           onResetColumns={resetColumns}
+          presets={{
+            list: columnPresets.list,
+            onApply: applyColumnPreset,
+            onSave: saveColumnPreset,
+            onDelete: columnPresets.remove,
+          }}
         />
         <button className={styles.resetBtn} onClick={() => { setColWidths({}); persistPrefs(tableId, settings, updateSettings, { widths: {} }); }}>
           Reset widths

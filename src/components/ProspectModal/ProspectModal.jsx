@@ -1,6 +1,9 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo, Suspense, Fragment, isValidElement, cloneElement } from 'react';
 import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
-import { lsHas } from '../../utils/tablePrefsSync';
+import { lsHas, settingsHaveLoaded } from '../../utils/tablePrefsSync';
+import { useColumnPresets } from '../../hooks/useColumnPresets';
+import { applyPreset as applyColumnPreset } from '../../utils/columnPresets';
+import { ColumnPresets } from '../common/ColumnPresets';
 import { apiFetch } from '../../utils/apiFetch';
 import { hasMetInPersonTag, metInPersonState, normalizeMetState, metInPersonUpdate, MET_STATE_OPTIONS, MET_YES, MET_ASKED, MET_HOLD } from '../../utils/metInPerson';
 import { contactDisplayName } from '../../utils/contactRosters';
@@ -5201,6 +5204,11 @@ const TAG_PRESET_FIELD = '_tagPreset';
 // settings.tablePrefs.
 const PORTFOLIO_PREFS_TABLE_ID = 'prospect-modal-portfolio';
 
+// Each Portfolio Companies column's width until the user drags it.
+const PORTFOLIO_DEFAULT_COL_WIDTHS = {
+  num: 30, company: 180, status: 130, siteListSaved: 110, analysisSaved: 120, analysisSavings: 110, analysisExposure: 120, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, strategy: 140, hqCity: 130, hqCountry: 90, energy: 110, estElectricity: 120, estNaturalGas: 120, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160, listFlags: 200,
+};
+
 const BULK_TAG_ANSWERS = [
   { mode: 'yes', label: 'Yes', tagModes: ['replace'], help: 'Also records Yes for each tag above on every selected contact.' },
   // No and Not sure take the tag off, so under Replace they act as a remove
@@ -6319,9 +6327,29 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [sustainResearchSlug, updateSettingsPath]);
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
-  const [portfolioColWidths, setPortfolioColWidths] = useState({
-    num: 30, company: 180, status: 130, siteListSaved: 110, analysisSaved: 120, analysisSavings: 110, analysisExposure: 120, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, strategy: 140, hqCity: 130, hqCountry: 90, energy: 110, estElectricity: 120, estNaturalGas: 120, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160, listFlags: 200,
+  // Column widths, dragged on the header's right edge. Synced like the
+  // visibility and order below, laid over the defaults so a column added
+  // since the layout was saved still gets a sensible width.
+  const [portfolioColWidthPref, setPortfolioColWidths] = useSyncedTablePref({
+    tableId: PORTFOLIO_PREFS_TABLE_ID, field: 'widths', settings, updateSettings,
+    readLocal: () => {
+      try {
+        const saved = JSON.parse(localStorage.getItem('portfolio-col-widths'));
+        if (saved && typeof saved === 'object' && !Array.isArray(saved)) return saved;
+      } catch { /* noop */ }
+      return {};
+    },
+    writeLocal: (v) => localStorage.setItem('portfolio-col-widths', JSON.stringify(v)),
+    fromRemote: (m) => (m && typeof m === 'object' && !Array.isArray(m) ? m : {}),
+    hasLocal: () => lsHas('portfolio-col-widths'),
   });
+  const portfolioColWidths = useMemo(
+    () => ({ ...PORTFOLIO_DEFAULT_COL_WIDTHS, ...portfolioColWidthPref }),
+    [portfolioColWidthPref],
+  );
+  const portfolioColWidthsChanged = Object.keys(portfolioColWidthPref || {}).length > 0;
+  // Saved column views for this table (utils/columnPresets).
+  const portfolioPresets = useColumnPresets({ tableId: PORTFOLIO_PREFS_TABLE_ID, settings, updateSettings });
   // Per-column visibility for the Portfolio Companies table. Independent
   // from the export - the export header list is hard-coded so toggling
   // the on-screen view never drops columns from the downloaded sheet.
@@ -6387,16 +6415,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [portfolioColsMenuOpen]);
-  // The columns this user has starred: the standard set every company
-  // popup opens with. The checkboxes above answer "what is showing right
-  // now" (synced too, through settings.tablePrefs); a star lives in its
-  // own synced setting (settings.portfolioStarredCols, a
-  // { key: true } map so starring and unstarring are single-path writes
-  // that can't be undone by a list-union merge from another laptop) and so
-  // follows them to every company and every device. A starred column is
-  // always on, its checkbox is locked, and Hide all leaves it alone - the
-  // same contract as the stars on the PE Portfolio table. `company` is
-  // always on regardless, so it never takes a star.
+  // The columns this user has starred: their default view of the table.
+  // The checkboxes above answer "what is showing right now" (synced too,
+  // through settings.tablePrefs); a star lives in its own synced setting
+  // (settings.portfolioStarredCols, a { key: true } map so starring and
+  // unstarring are single-path writes that can't be undone by a list-union
+  // merge from another laptop) and so follows them to every company and
+  // every device. Starring a column shows it, "★ Defaults" in the Columns
+  // menu shows exactly the starred ones, and Hide all leaves them alone.
+  // A star used to lock its column on; it doesn't any more, so a preset
+  // can be a view without them. `company` is always on regardless, so it
+  // never takes a star.
   const portfolioStarredCols = useMemo(() => new Set(
     Object.entries(settings.portfolioStarredCols || {})
       .filter(([k, v]) => v && k !== 'company')
@@ -6405,11 +6434,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const togglePortfolioStar = useCallback((key) => {
     const starring = !portfolioStarredCols.has(key);
     updateSettingsPath({ [`portfolioStarredCols.${key}`]: starring ? true : null });
-    // Unstarring leaves the column showing: losing the star shouldn't also
-    // yank it off the table under the user's cursor.
-    if (!starring) setPortfolioColsVisible(prev => ({ ...prev, [key]: true }));
+    // Starring shows the column, since a default you can't see isn't one.
+    // Unstarring leaves it showing: losing the star shouldn't also yank it
+    // off the table under the user's cursor.
+    setPortfolioColsVisible(prev => ({ ...prev, [key]: true }));
   }, [portfolioStarredCols, updateSettingsPath, setPortfolioColsVisible]);
-  const isPortfolioColShown = (key) => key === 'company' || portfolioStarredCols.has(key) || portfolioColsVisible[key] !== false;
+  // While a star locked its column on, Hide all could store a starred
+  // column as hidden and it showed anyway. Now that a star doesn't lock,
+  // that stored "hidden" would take it off the table the first time this
+  // opens, so turn those back on once the account's layout has arrived.
+  const portfolioStarUnlockRef = useRef(false);
+  useEffect(() => {
+    if (portfolioStarUnlockRef.current || !settingsHaveLoaded(settings)) return;
+    portfolioStarUnlockRef.current = true;
+    if (settings.portfolioStarUnlocked) return;
+    updateSettingsPath({ portfolioStarUnlocked: true });
+    if (portfolioStarredCols.size === 0) return;
+    setPortfolioColsVisible(prev => ({ ...prev, ...Object.fromEntries([...portfolioStarredCols].map(k => [k, true])) }));
+  }, [settings, portfolioStarredCols, updateSettingsPath, setPortfolioColsVisible]);
+  const isPortfolioColShown = (key) => key === 'company' || portfolioColsVisible[key] !== false;
   const colVis = (key) => (isPortfolioColShown(key) ? 'visible' : 'collapse');
   // A hidden column also gives up its width: the table is 100% wide, and a
   // collapsed column still counted in the sum would leave that much blank
@@ -6460,6 +6503,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     next.splice(next.indexOf(toKey) + (fromIdx < toIdx ? 1 : 0), 0, fromKey);
     setPortfolioColOrder(next);
   }, [orderedPortfolioColKeys, setPortfolioColOrder]);
+  // A preset shows exactly its columns, in its order. Company always shows.
+  const applyPortfolioPreset = useCallback((preset) => {
+    const { hidden, order } = applyColumnPreset(preset, {
+      columnKeys: PORTFOLIO_COL_DEFS.map(c => c.key),
+      alwaysVisible: ['company'],
+    });
+    setPortfolioColsVisible(Object.fromEntries(PORTFOLIO_COL_DEFS.map(c => [c.key, !hidden.includes(c.key)])));
+    if (order) setPortfolioColOrder(order);
+  }, [PORTFOLIO_COL_DEFS, setPortfolioColsVisible, setPortfolioColOrder]);
   const [portfolioDragCol, setPortfolioDragCol] = useState(null);
   const [portfolioDragOverCol, setPortfolioDragOverCol] = useState(null);
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(true);
@@ -13553,16 +13605,24 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           Columns ▾
                         </button>
                         {portfolioColsMenuOpen && (
-                          <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 2, background: '#fff', border: '1px solid var(--color-border)', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.08)', padding: '0.35rem', maxHeight: 360, overflowY: 'auto', zIndex: 30, minWidth: 200 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, padding: '0 0.25rem 0.35rem', borderBottom: '1px solid var(--color-border-light)', marginBottom: '0.25rem' }}>
+                          <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 2, background: '#fff', border: '1px solid var(--color-border)', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.08)', padding: '0.35rem', maxHeight: 420, overflowY: 'auto', zIndex: 30, minWidth: 260, maxWidth: 300 }}>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 6, padding: '0 0.25rem 0.35rem', borderBottom: '1px solid var(--color-border-light)', marginBottom: '0.25rem' }}>
                               <button
                                 type="button"
                                 onClick={() => setPortfolioColsVisible(Object.fromEntries(PORTFOLIO_COL_DEFS.map(c => [c.key, true])))}
                                 style={{ background: 'none', border: 'none', color: 'var(--color-accent)', fontSize: '0.65rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}
                               >Show all</button>
+                              {portfolioStarredCols.size > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setPortfolioColsVisible(Object.fromEntries(PORTFOLIO_COL_DEFS.map(c => [c.key, c.key === 'company' || portfolioStarredCols.has(c.key)])))}
+                                  style={{ background: 'none', border: 'none', color: '#D97706', fontSize: '0.65rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}
+                                  title="Show your starred default columns and hide the rest"
+                                >★ Defaults</button>
+                              )}
                               <button
                                 type="button"
-                                onClick={() => setPortfolioColsVisible(prev => ({ ...prev, ...Object.fromEntries(PORTFOLIO_COL_DEFS.filter(c => c.key !== 'company').map(c => [c.key, false])) }))}
+                                onClick={() => setPortfolioColsVisible(prev => ({ ...prev, ...Object.fromEntries(PORTFOLIO_COL_DEFS.filter(c => c.key !== 'company' && !portfolioStarredCols.has(c.key)).map(c => [c.key, false])) }))}
                                 style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', fontSize: '0.65rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}
                                 title={portfolioStarredCols.size > 0 ? 'Hide every column except Company and the ones you starred' : 'Hide every column except Company'}
                               >Hide all</button>
@@ -13573,14 +13633,34 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                 style={{ background: 'none', border: 'none', color: portfolioColOrder ? 'var(--color-accent)' : '#CBD5E1', fontSize: '0.65rem', fontWeight: 600, cursor: portfolioColOrder ? 'pointer' : 'default', fontFamily: 'inherit', padding: 0 }}
                                 title="Put the columns back in their original order"
                               >Reset order</button>
+                              <button
+                                type="button"
+                                onClick={() => setPortfolioColWidths({})}
+                                disabled={!portfolioColWidthsChanged}
+                                style={{ background: 'none', border: 'none', color: portfolioColWidthsChanged ? 'var(--color-accent)' : '#CBD5E1', fontSize: '0.65rem', fontWeight: 600, cursor: portfolioColWidthsChanged ? 'pointer' : 'default', fontFamily: 'inherit', padding: 0 }}
+                                title="Put every column back to its original width"
+                              >Reset widths</button>
                             </div>
-                            <div style={{ padding: '0 0.25rem 0.3rem', fontSize: '0.62rem', color: 'var(--color-text-muted)', lineHeight: 1.35, whiteSpace: 'normal', maxWidth: 220 }}>
-                              Star a column to make it standard: starred columns show on every company popup, and Hide all leaves them alone. Drag a column header on the table to move it.
+                            <ColumnPresets
+                              presets={portfolioPresets.list}
+                              visibleKeys={PORTFOLIO_COL_DEFS.filter(c => isPortfolioColShown(c.key)).map(c => c.key)}
+                              columnKeys={PORTFOLIO_COL_DEFS.map(c => c.key)}
+                              alwaysVisible={['company']}
+                              onApply={applyPortfolioPreset}
+                              onSave={(name) => portfolioPresets.save({
+                                name,
+                                cols: orderedPortfolioColKeys.filter(isPortfolioColShown),
+                                order: orderedPortfolioColKeys,
+                              })}
+                              onDelete={portfolioPresets.remove}
+                            />
+                            <div style={{ padding: '0 0.25rem 0.3rem', fontSize: '0.62rem', color: 'var(--color-text-muted)', lineHeight: 1.35, whiteSpace: 'normal', maxWidth: 240 }}>
+                              Star a column to make it one of your defaults: ★ Defaults shows just those, and Hide all leaves them alone. Drag a column header to move it, or its right edge to resize it.
                             </div>
                             {PORTFOLIO_COL_DEFS.map(({ key, label }) => {
                               const starred = portfolioStarredCols.has(key);
                               const isCompany = key === 'company';
-                              const locked = isCompany || starred;
+                              const locked = isCompany;
                               return (
                                 <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 4px' }}>
                                   <button
@@ -13590,8 +13670,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     title={isCompany
                                       ? 'The Company column is always on the table'
                                       : starred
-                                        ? `Stop showing ${label} on every company popup. It stays showing here until you hide it.`
-                                        : `Show ${label} on every company popup`}
+                                        ? `${label} is one of your default columns. Click to unstar; it stays showing until you hide it.`
+                                        : `Make ${label} one of your default columns`}
                                     style={{ border: 'none', background: 'none', padding: 0, lineHeight: 1, fontSize: '0.85rem', fontFamily: 'inherit', cursor: isCompany ? 'default' : 'pointer', color: starred || isCompany ? '#D97706' : '#CBD5E1' }}
                                   >{starred || isCompany ? '★' : '☆'}</button>
                                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, fontSize: '0.7rem', color: isCompany ? 'var(--color-text-muted)' : 'var(--color-text)', cursor: locked ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
