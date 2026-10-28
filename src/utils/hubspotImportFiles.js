@@ -25,6 +25,12 @@
 // (scripts/hubspotImportFiles.test.mjs).
 
 import { normalizeCompany } from './companyNorm.js';
+import { companyMatcher, contactsByEmail, ownerIsMe } from './seHubspotExisting.js';
+
+// The legal basis every contact goes in with, unless the caller names
+// another: HubSpot's own option label for a prospect, the basis Schneider
+// uses for people Dan works with but who never signed up for anything.
+export const DEFAULT_LEGAL_BASIS = 'Legitimate interest \u2013 prospect/lead';
 
 // One header per HubSpot property label. HubSpot's import matches columns to
 // properties by label, so the standard ones use HubSpot's own wording.
@@ -39,7 +45,10 @@ export const COMPANY_HEADERS = [
 export const CONTACT_HEADERS = [
   'Email', 'First Name', 'Last Name', 'Job Title', 'Phone Number', 'Mobile Phone Number',
   'City', 'State/Region', 'Country/Region', 'LinkedIn URL', 'Contact owner',
-  'Company Name', 'Company Domain Name', "Dan's Tags", 'Decision Maker', 'Role',
+  "Legal basis for processing contact's data",
+  // Company Record ID links a contact to a company the portal already had
+  // (seHubspotExisting.js); Company Domain Name to one this import makes.
+  'Company Name', 'Company Domain Name', 'Company Record ID', "Dan's Tags", 'Decision Maker', 'Role',
   'Activity History', 'Last Activity Date', 'Activity Count',
 ];
 export const FIELD_HEADERS = ['Object', 'Property label', 'Suggested type', 'Options seen in the data', 'Why'];
@@ -124,22 +133,6 @@ export function formatActivityHistory(entries, maxChars = HISTORY_MAX_CHARS) {
   return { history: lines.join('\n'), lastDate: utcDay(list[0][0]), count: list.length };
 }
 
-// The weekly refresh for contacts already in the new portal: the email to
-// match on, and only the fields that are Dan's own. Imported with "Update
-// existing records only", so it never creates anyone, and with no owner,
-// title or phone in it, it never reassigns or overwrites what a colleague
-// keeps on a shared contact.
-export const UPDATE_HEADERS = ['Email', "Dan's Tags", 'Activity History', 'Last Activity Date', 'Activity Count'];
-
-/** The update file from a built contacts file: rows with something to say. */
-export function weeklyUpdateFile(contactsFile) {
-  const idx = UPDATE_HEADERS.map(h => contactsFile.headers.indexOf(h));
-  const rows = contactsFile.rows
-    .map(r => idx.map(i => (i < 0 ? '' : r[i])))
-    .filter(r => r.slice(1).some(v => String(v || '').trim()));
-  return { headers: UPDATE_HEADERS, rows };
-}
-
 /**
  * The Opps still in play from an Opps 2 dataset: its records minus any
  * listed in `_deletedIds`. That is a map of id -> deletedAt
@@ -168,6 +161,12 @@ export function liveOpps(data) {
  *               out by default: in the company's own portal they are
  *               colleagues, not contacts, and their history is internal
  *               mail)
+ *   existing    what the new portal already holds, from Dan's exports there:
+ *               { companies, contacts, overrides } (seHubspotExisting.js).
+ *               A company it has is linked to rather than created, and a
+ *               contact a colleague owns there is left out
+ *   ownerName   Dan's name as the new portal's exports show owners
+ *   legalBasis  the legal basis every contact goes in with
  *   activity    { [contactId]: [[whenMs, kind, subject], ...] } from the
  *               backup (api/_lib/activityDigest.js); none leaves the
  *               history fields blank
@@ -177,11 +176,26 @@ export function liveOpps(data) {
 export function buildImportFiles({
   prospects = [], contacts = [], opps = [], settings = {}, ownerEmail = '', allCompanies = false, activity = null,
   includeNoDomain = false, includeColleagues = false,
+  existing = null, ownerName = 'Dan Baldauf', legalBasis = DEFAULT_LEGAL_BASIS,
 } = {}) {
   const report = {
     contactsWithHistory: 0, contactsNoEmail: 0, contactsHidden: 0, contactsDuplicateEmail: 0, contactsNoCompany: 0,
     contactsColleagues: 0, companiesNoDomain: [], companiesMerged: [],
+    contactsColleagueOwned: [], contactsExistingMine: 0, contactsExistingUnowned: 0, companiesExisting: [],
   };
+
+  // What the new portal already has.
+  const me = [ownerEmail, ownerName];
+  const matcher = existing?.companies?.length
+    ? companyMatcher(existing.companies, { overrides: existing.overrides || {}, me })
+    : null;
+  const matched = new Map();
+  const matchFor = (p) => {
+    if (!p || !matcher) return null;
+    if (!matched.has(p.id)) matched.set(p.id, matcher(p).company);
+    return matched.get(p.id);
+  };
+  const existingContacts = contactsByEmail(existing?.contacts || []);
 
   // Prospects by every name they go by.
   const byName = new Map();
@@ -224,23 +238,38 @@ export function buildImportFiles({
     if (seen.has(email)) { report.contactsDuplicateEmail += 1; continue; }
     seen.add(email);
     if (!includeColleagues && isColleague(domainOf(email))) { report.contactsColleagues += 1; continue; }
+    // Already in the new portal: a colleague's is left alone (the import
+    // would make Dan its owner); his own, or nobody's, is updated.
+    const there = existingContacts.get(email);
+    if (there?.owner && !ownerIsMe(there.owner, me)) {
+      report.contactsColleagueOwned.push({ email, owner: there.owner });
+      continue;
+    }
+    if (there) {
+      if (there.owner) report.contactsExistingMine += 1;
+      else report.contactsExistingUnowned += 1;
+    }
 
     const companyName = clean(local[c.id]?._companyOverride || c.company || c.companyText);
     const mailDomain = domainOf(email);
     const prospect = (companyName && findProspect(companyName))
       || (!FREE_MAIL.has(mailDomain) && byDomain.get(mailDomain)) || null;
-    const domain = prospect ? prospectDomain(prospect) : '';
+    const linked = matchFor(prospect);
+    const domain = linked ? linked.domain || '' : prospect ? prospectDomain(prospect) : '';
+    const recordId = linked ? String(linked.id) : '';
     if (prospect) {
       used.add(prospect.id);
       contactCount.set(prospect.id, (contactCount.get(prospect.id) || 0) + 1);
     }
-    // The import links by domain, so a company with no website links nobody.
-    if (!domain) report.contactsNoCompany += 1;
+    // The import links by domain or record id, so a company with neither
+    // links nobody.
+    if (!domain && !recordId) report.contactsNoCompany += 1;
 
     contactRows.push([
       email, clean(c.firstname), clean(c.lastname), clean(c.jobtitle), clean(c.phone), clean(c.mobilephone),
       clean(c.city), clean(c.state), clean(c.country), clean(c.hs_linkedin_url || c.linkedin_url), ownerEmail,
-      prospect ? clean(prospect.company) : companyName, domain,
+      legalBasis,
+      linked ? clean(linked.name) : prospect ? clean(prospect.company) : companyName, domain, recordId,
       tagsOf(c).join(';'), clean(c.decision_maker), clean(c.role),
       ...(() => {
         const h = formatActivityHistory(activityByEmail.get(email));
@@ -265,6 +294,12 @@ export function buildImportFiles({
   const byDomainRows = new Map();
   for (const p of prospects) {
     if (!allCompanies && !used.has(p.id)) continue;
+    // The portal has it already: linked to, not created again.
+    const there = matchFor(p);
+    if (there) {
+      report.companiesExisting.push({ name: clean(p.company), existing: clean(there.name), id: String(there.id) });
+      continue;
+    }
     const domain = prospectDomain(p);
     if (!domain) {
       report.companiesNoDomain.push(clean(p.company));
@@ -294,8 +329,9 @@ export function buildImportFiles({
   // A contact names the company row its domain landed on.
   const nameCol = CONTACT_HEADERS.indexOf('Company Name');
   const domainCol = CONTACT_HEADERS.indexOf('Company Domain Name');
+  const recordCol = CONTACT_HEADERS.indexOf('Company Record ID');
   for (const row of contactRows) {
-    const n = nameForDomain.get(row[domainCol]);
+    const n = !row[recordCol] && nameForDomain.get(row[domainCol]);
     if (n) row[nameCol] = n;
   }
 

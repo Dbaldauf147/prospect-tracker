@@ -50,3 +50,4 @@
 .num { text-align: right !important; font-variant-numeric: tabular-nums; }
 .mono { font-family: ui-monospace, monospace; font-size: var(--font-size-xs); }
 .diffs { font-size: var(--font-size-xs); }
+.tableBox { height: 28rem; display: flex; flex-direction: column; min-height: 0; }

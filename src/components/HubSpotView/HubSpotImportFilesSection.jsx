@@ -12,6 +12,7 @@ import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { toCsv, downloadCsv } from '../../utils/csv';
 import { buildImportFiles, liveOpps } from '../../utils/hubspotImportFiles';
+import { loadSeHubspot } from '../../utils/seHubspotStore';
 import styles from './HubSpotMoveTab.module.css';
 
 const FILES = [
@@ -90,12 +91,12 @@ function WeeklyEmail() {
         <button className={styles.btnGhost} onClick={send} disabled={sending}>{sending ? 'Building and sending (a minute or two)...' : 'Send it now'}</button>
       </div>
       <p className={styles.muted}>
-        {status ? <>{status.schedule}, the three files are built from your current HubSpot account and emailed to <b>{status.to.join(', ')}</b>, owned by <b>{status.owner}</b>, with the import option for each.</> : 'Loading...'}
+        {status ? <>{status.schedule}, the two import files (companies, contacts) are built from your current HubSpot account and emailed to <b>{status.to.join(', ')}</b>, owned by <b>{status.owner}</b>, with the import option for each.</> : 'Loading...'}
       </p>
       {last && (
         <p className={last.ok ? styles.ok : styles.errText}>
           {last.ok
-            ? `Last sent ${new Date(last.finishedAt).toLocaleString()}: ${fmt(last.counts?.companies)} companies, ${fmt(last.counts?.contacts)} contacts, ${fmt(last.counts?.updates)} updates.`
+            ? `Last sent ${new Date(last.finishedAt).toLocaleString()}: ${fmt(last.counts?.companies)} companies, ${fmt(last.counts?.contacts)} contacts.`
             : `Last run ${new Date(last.finishedAt).toLocaleString()} failed: ${last.error}`}
         </p>
       )}
@@ -121,7 +122,11 @@ export function HubSpotImportFilesSection({ prospects = [], settings = {} }) {
     setBusy(true); setError(''); setBuilt(null); setHistoryFrom('');
     try {
       setStep('Reading contacts, companies and Opps...');
-      const [cache, opps] = await Promise.all([getHubspotCache(), loadOpps2Newest(user?.uid)]);
+      const [cache, opps, existing] = await Promise.all([
+        getHubspotCache(), loadOpps2Newest(user?.uid),
+        // What Schneider's HubSpot already holds, from the uploads above.
+        loadSeHubspot().catch(() => null),
+      ]);
       let activity = null;
       if (withHistory) {
         const got = await loadActivity(setStep);
@@ -130,7 +135,7 @@ export function HubSpotImportFilesSection({ prospects = [], settings = {} }) {
       }
       setBuilt(buildImportFiles({
         prospects, contacts: Array.isArray(cache?.contacts) ? cache.contacts : [], opps: liveOpps(opps), settings,
-        ownerEmail: ownerEmail.trim(), allCompanies, activity, includeNoDomain, includeColleagues,
+        ownerEmail: ownerEmail.trim(), allCompanies, activity, includeNoDomain, includeColleagues, existing,
       }));
     } catch (err) {
       setError(err.message || String(err));
@@ -204,6 +209,19 @@ export function HubSpotImportFilesSection({ prospects = [], settings = {} }) {
             <b>Left out or not linked</b>
             <ul>
               {r.contactsColleagues > 0 && <li>{fmt(r.contactsColleagues)} colleagues at your own email domain</li>}
+              {r.contactsColleagueOwned.length > 0 && (
+                <li title={r.contactsColleagueOwned.slice(0, 50).map(c => `${c.email}: ${c.owner}`).join('\n')}>
+                  {fmt(r.contactsColleagueOwned.length)} contacts a colleague already owns in Schneider&apos;s HubSpot (left alone; hover for who)
+                </li>
+              )}
+              {r.companiesExisting.length > 0 && (
+                <li title={r.companiesExisting.slice(0, 50).map(c => `${c.name} -> ${c.existing}`).join('\n')}>
+                  {fmt(r.companiesExisting.length)} companies already in Schneider&apos;s HubSpot: not created again, their contacts link to the existing record
+                </li>
+              )}
+              {(r.contactsExistingMine + r.contactsExistingUnowned) > 0 && (
+                <li>{fmt(r.contactsExistingMine + r.contactsExistingUnowned)} contacts already there and yours or unowned: included, so the import updates them</li>
+              )}
               <li>{fmt(r.contactsNoEmail)} contacts with no email (HubSpot matches contacts by email, so these would duplicate on every import)</li>
               <li>{fmt(r.contactsHidden)} contacts tagged hide</li>
               {r.contactsDuplicateEmail > 0 && <li>{fmt(r.contactsDuplicateEmail)} repeat contacts sharing an email with another one</li>}
@@ -225,9 +243,10 @@ export function HubSpotImportFilesSection({ prospects = [], settings = {} }) {
             <b>Importing, in this order</b>
             <ol>
               <li>Send <span className={styles.mono}>fields-to-create</span> to whoever can create properties (or create them yourself during the import).</li>
-              <li>Import <b>Companies</b> first, then <b>Contacts</b>: one file, one object each time.</li>
+              <li>Import <b>Companies</b> first (one object: Companies), then <b>Contacts</b> (one file, multiple objects: Contacts and Companies).</li>
               <li>When HubSpot asks, choose <b>Create new records only</b>, so records a colleague already owns are left alone.</li>
-              <li>On the mapping screen, check that <b>Company Domain Name</b> is mapped as the link to the company.</li>
+              <li>On the contacts mapping screen, map <b>Company Name</b> and <b>Company Domain Name</b> to Company properties, and <b>Company Record ID</b> to the Company&apos;s <b>Record ID</b>: that links contacts to companies already in Schneider&apos;s HubSpot.</li>
+              <li>Leave <b>Set contacts as marketing contacts</b> unticked. Every contact carries the legal basis &quot;Legitimate interest, prospect/lead&quot;.</li>
             </ol>
           </div>
         </>

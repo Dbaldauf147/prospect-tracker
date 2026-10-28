@@ -1,6 +1,7 @@
 // Weekly HubSpot import files, emailed (see api/_lib/hubspotWeekly.js).
 //
-//   Vercel Cron (vercel.json, Mondays)   build and email; Authorization:
+//   Vercel Cron (vercel.json, Mondays)   build and email the two import
+//                                        files; Authorization:
 //                                        Bearer <CRON_SECRET>
 //   POST ?action=send                    the same, now (admin only), for the
 //                                        "Send it now" button
@@ -21,7 +22,7 @@
 import { withAuth, isAdminEmail } from './_lib/http.js';
 import { adminDb, adminAuth } from './_lib/firebaseAdmin.js';
 import { hubspotScope } from './_lib/hubspotScope.js';
-import { loadOpps2 } from './_lib/firestoreChunks.js';
+import { loadOpps2, readChunkedValue } from './_lib/firestoreChunks.js';
 import { sendEmail } from './_lib/mailer.js';
 import { getAllContacts } from './hubspot.js';
 import { liveActivity, hubspotGetter, flatContact, buildWeeklyFiles, weeklyEmailHtml } from './_lib/hubspotWeekly.js';
@@ -44,10 +45,13 @@ function settingsFromEnv(env = process.env) {
 // their own.
 async function loadSources(db, token) {
   const uid = (await adminAuth().getUserByEmail(ADMIN_EMAIL)).uid;
-  const [settingsSnap, prospectsSnap, opps] = await Promise.all([
+  const [settingsSnap, prospectsSnap, opps, existing] = await Promise.all([
     db.collection('userSettings').doc(uid).get(),
     db.collection('prospects').get(),
     loadOpps2(db, uid),
+    // What the corporate portal already holds, as Dan last uploaded it on
+    // the Account move tab (src/utils/seHubspotStore.js).
+    readChunkedValue(db.collection('lookupTables').doc(uid).collection('items').doc('se-hubspot'), { field: 's' }),
   ]);
   const scope = await hubspotScope(token);
   const contacts = (await getAllContacts(token, scope)).map(flatContact);
@@ -59,6 +63,7 @@ async function loadSources(db, token) {
     contacts,
     activity,
     activityErrors: errors,
+    existing,
   };
 }
 
