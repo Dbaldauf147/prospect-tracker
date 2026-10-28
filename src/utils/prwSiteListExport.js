@@ -20,6 +20,7 @@ import { ESTIMATED_COLUMN } from './siteListMerge.js';
 import { pickSiteNameColumn, pickZipColumn } from './siteColumns.js';
 import { accountsForTenure } from './ownershipEstimates.js';
 import { stripDashes, sanitizeExcelWorkbook } from './exportSanitize.js';
+import { siteRegionOf, NORTH_AMERICA, EUROPE, REST_OF_WORLD } from './siteRegion.js';
 
 // The columns, in PRW's order. `kind` picks the number format.
 export const PRW_COLUMNS = [
@@ -190,6 +191,49 @@ export function prwEstimateTally(rows) {
   return { estimated: est, actual: act };
 }
 
+// The three columns of the PRW summary table, in its order.
+export const PRW_REGIONS = [
+  { key: NORTH_AMERICA, label: 'North America' },
+  { key: EUROPE, label: 'Europe' },
+  { key: REST_OF_WORLD, label: 'ROW' },
+];
+
+/**
+ * The PRW summary table, worked out from the site rows:
+ *
+ *   { facilities, power, gas: { [region]: n },
+ *     powerEstimated, gasEstimated: { [region]: bool },
+ *     unplaced }
+ *
+ * A site's region comes from its country, else its US state / Canadian
+ * province, through the same rules the Corporate Compliance page counts
+ * regions by. A site with neither can't be placed in a column, so it is
+ * counted in `unplaced` rather than guessed into one. A region's account
+ * total is estimated when any site in it contributed an estimate.
+ */
+export function prwRegionSummary(rows) {
+  const zero = () => Object.fromEntries(PRW_REGIONS.map(r => [r.key, 0]));
+  const no = () => Object.fromEntries(PRW_REGIONS.map(r => [r.key, false]));
+  const out = { facilities: zero(), power: zero(), gas: zero(), powerEstimated: no(), gasEstimated: no(), unplaced: 0 };
+  for (const r of rows) {
+    const { region } = siteRegionOf({ country: r.country.value || '', state: r.state.value || '' });
+    if (!(region in out.facilities)) { out.unplaced += 1; continue; }
+    out.facilities[region] += 1;
+    for (const [field, total, est] of [['electricAccounts', 'power', 'powerEstimated'], ['gasAccounts', 'gas', 'gasEstimated']]) {
+      const { value, estimated } = r[field];
+      if (value === null) continue;
+      out[total][region] += value;
+      if (estimated) out[est][region] = true;
+    }
+  }
+  // Accounts can be fractional per site (a "0 – 1" is 0.5); the totals are
+  // read as counts, so they are rounded once, here, rather than per site.
+  for (const k of ['power', 'gas']) {
+    for (const reg of PRW_REGIONS) out[k][reg.key] = Math.round(out[k][reg.key] * 10) / 10;
+  }
+  return out;
+}
+
 export function prwSiteListFilename(company, date = new Date()) {
   const safe = String(company || 'company')
     .replace(/[^a-z0-9]+/gi, '_')
@@ -205,6 +249,135 @@ export function prwSiteListFilename(company, date = new Date()) {
 const EST_FONT = 'FFB45309';
 const EST_FILL = 'FFFEF3C7';
 const GRID = 'FFD9D9D9';
+
+// The second tab: PRW's facilities / accounts-by-service table, filled in
+// from the site rows on the first. Laid out and coloured like the PRW
+// template - the spare service rows are kept blank for services this
+// list has no figures for, and Total adds up whatever is in them.
+const SUM_GREEN = 'FFD8E4BC';
+const SUM_BLUE = 'FFDAEEF3';
+const SUM_YELLOW = 'FFFFFFCC';
+const SUM_ORANGE = 'FFFCD5B4';
+const SUM_BORDER = 'FF808080';
+const SERVICE_ROWS = 8; // Power, Natural Gas, six spare
+
+function addPrwSummarySheet(wb, rows) {
+  const sum = prwRegionSummary(rows);
+  const ws = wb.addWorksheet('Facilities & Accounts');
+  ws.columns = [{ width: 8 }, { width: 14 }, ...PRW_REGIONS.map(() => ({ width: 16 }))];
+  const thin = { style: 'thin', color: { argb: SUM_BORDER } };
+  const box = { top: thin, bottom: thin, left: thin, right: thin };
+  const fill = (argb) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
+  const font = (extra = {}) => ({ name: 'Calibri', size: 11, ...extra });
+  const lastCol = 2 + PRW_REGIONS.length;
+  const firstService = 3;
+  const totalRow = firstService + SERVICE_ROWS;
+
+  // Row 1: Country/Region → | North America | Europe | ROW
+  ws.mergeCells(1, 1, 1, 2);
+  const corner = ws.getCell(1, 1);
+  corner.value = 'Country/Region →';
+  corner.font = font({ bold: true });
+  corner.fill = fill(SUM_GREEN);
+  corner.alignment = { horizontal: 'center', vertical: 'middle' };
+  PRW_REGIONS.forEach((reg, i) => {
+    const c = ws.getCell(1, 3 + i);
+    c.value = reg.label;
+    c.font = font({ bold: true });
+    c.fill = fill(SUM_BLUE);
+    c.alignment = { horizontal: 'center', vertical: 'middle' };
+  });
+  ws.getRow(1).height = 30;
+
+  // Row 2: # of Facilities →
+  ws.mergeCells(2, 1, 2, 2);
+  const facLabel = ws.getCell(2, 1);
+  facLabel.value = '# of Facilities →';
+  facLabel.font = font();
+  facLabel.fill = fill(SUM_YELLOW);
+  facLabel.alignment = { horizontal: 'center', vertical: 'middle' };
+  PRW_REGIONS.forEach((reg, i) => {
+    const c = ws.getCell(2, 3 + i);
+    c.value = sum.facilities[reg.key];
+    c.numFmt = '#,##0';
+    c.font = font();
+    c.fill = fill(SUM_YELLOW);
+    c.alignment = { horizontal: 'center' };
+  });
+
+  // Rows 3-10: # of Accounts by Service ↓, one service per row.
+  ws.mergeCells(firstService, 1, totalRow, 1);
+  const svcLabel = ws.getCell(firstService, 1);
+  // Rotated 90°, so the down arrow reads as the template's right arrow.
+  svcLabel.value = '# of Accounts by Service\n↓';
+  svcLabel.font = font();
+  svcLabel.fill = fill(SUM_ORANGE);
+  svcLabel.alignment = { horizontal: 'center', vertical: 'middle', textRotation: 90, wrapText: true };
+  const services = [
+    ['Power', 'power', 'powerEstimated'],
+    ['Natural Gas', 'gas', 'gasEstimated'],
+  ];
+  for (let i = 0; i < SERVICE_ROWS; i += 1) {
+    const r = firstService + i;
+    const [label, key, estKey] = services[i] || [];
+    const name = ws.getCell(r, 2);
+    name.value = label || null;
+    name.font = font();
+    name.fill = fill(SUM_ORANGE);
+    PRW_REGIONS.forEach((reg, j) => {
+      const c = ws.getCell(r, 3 + j);
+      c.fill = fill(SUM_ORANGE);
+      c.alignment = { horizontal: 'center' };
+      c.numFmt = '#,##0.#;-#,##0.#;0';
+      if (!key) { c.font = font(); return; }
+      c.value = sum[key][reg.key];
+      // Same marking as the first tab: italic amber when any site behind
+      // the figure was an estimate.
+      c.font = sum[estKey][reg.key] ? font({ italic: true, color: { argb: EST_FONT } }) : font();
+    });
+  }
+
+  // Total: a live SUM, so a figure typed into a spare service row counts.
+  const totalLabel = ws.getCell(totalRow, 2);
+  totalLabel.value = 'Total';
+  totalLabel.font = font();
+  totalLabel.fill = fill(SUM_ORANGE);
+  PRW_REGIONS.forEach((reg, j) => {
+    const col = 3 + j;
+    const letter = String.fromCharCode(64 + col);
+    const c = ws.getCell(totalRow, col);
+    c.value = {
+      formula: `SUM(${letter}${firstService}:${letter}${totalRow - 1})`,
+      result: Math.round((sum.power[reg.key] + sum.gas[reg.key]) * 10) / 10,
+    };
+    c.numFmt = '#,##0.#;-#,##0.#;0';
+    c.font = font();
+    c.fill = fill(SUM_ORANGE);
+    c.alignment = { horizontal: 'center' };
+  });
+
+  for (let r = 1; r <= totalRow; r += 1) {
+    for (let col = 1; col <= lastCol; col += 1) ws.getCell(r, col).border = box;
+  }
+
+  // Under the table: what it was built from, and anything left out of it.
+  const notes = [
+    `Built from the ${rows.length} site${rows.length === 1 ? '' : 's'} on the PRW Site List tab. Region comes from each site's country, else its US state or Canadian province. Mexico counts as North America.`,
+    'Italic amber account totals include estimated accounts (from property type); see the Legend tab.',
+  ];
+  if (sum.unplaced) {
+    notes.push(`${sum.unplaced} site${sum.unplaced === 1 ? ' has' : 's have'} no country or recognized state, so ${sum.unplaced === 1 ? 'it is' : 'they are'} not counted in any column.`);
+  }
+  notes.forEach((text, i) => {
+    const r = totalRow + 2 + i;
+    ws.mergeCells(r, 1, r, lastCol);
+    const c = ws.getCell(r, 1);
+    c.value = text;
+    c.font = font({ size: 9, italic: true, color: { argb: 'FF64748B' } });
+    c.alignment = { wrapText: true, vertical: 'top' };
+    ws.getRow(r).height = text.length > 90 ? 26 : 14;
+  });
+}
 
 /** Build the workbook (exceljs Workbook passed in, so this stays testable). */
 export function buildPrwSiteListWorkbook(Workbook, list, company) {
@@ -246,6 +419,8 @@ export function buildPrwSiteListWorkbook(Workbook, list, company) {
   if (rows.length) {
     ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1 + rows.length, column: PRW_COLUMNS.length } };
   }
+
+  addPrwSummarySheet(wb, rows);
 
   // The key lives on its own sheet so the PRW sheet stays exactly the
   // template's twelve columns and nothing else.

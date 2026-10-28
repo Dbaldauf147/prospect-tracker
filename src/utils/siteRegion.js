@@ -16,9 +16,9 @@
 // left over is reported as Unknown rather than guessed at, so a company's
 // region counts always add back up to its site count.
 
-import { countryRates, normalizeCountryRateName } from '../data/countryRates';
-import { normalizeState } from './utilityRates';
-import { normalizeProvince } from '../data/naMarkets';
+import { countryRates, normalizeCountryRateName } from '../data/countryRates.js';
+import { normalizeState } from './utilityRates.js';
+import { normalizeProvince } from '../data/naMarkets.js';
 
 export const NORTH_AMERICA = 'North America';
 export const EUROPE = 'Europe';
