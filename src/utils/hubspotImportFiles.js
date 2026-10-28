@@ -30,7 +30,10 @@ import { normalizeCompany } from './companyNorm.js';
 // properties by label, so the standard ones use HubSpot's own wording.
 export const COMPANY_HEADERS = [
   'Company Domain Name', 'Name', 'Website URL', 'Company owner',
-  'Vertical', 'Sub Vertical', 'Account Type', 'Prospect Status', 'Tier', 'HQ Region', 'CDM',
+  // "Prospect Tier", not "Tier": the corporate portal already has a Tier
+  // company property (a number), and the import matched the column to it
+  // and refused every value.
+  'Vertical', 'Sub Vertical', 'Account Type', 'Prospect Status', 'Prospect Tier', 'HQ Region', 'CDM',
   'Prospect Tracker ID',
 ];
 export const CONTACT_HEADERS = [
@@ -320,7 +323,7 @@ export function buildImportFiles({
     ['Company', 'Sub Vertical', 'Single-line text', '', ''],
     ['Company', 'Account Type', 'Single-line text', opts(companyRows, COMPANY_HEADERS, 'Account Type'), `The site's company Type. ${textNote}`],
     ['Company', 'Prospect Status', 'Single-line text', opts(companyRows, COMPANY_HEADERS, 'Prospect Status'), textNote],
-    ['Company', 'Tier', 'Single-line text', opts(companyRows, COMPANY_HEADERS, 'Tier'), textNote],
+    ['Company', 'Prospect Tier', 'Single-line text', opts(companyRows, COMPANY_HEADERS, 'Prospect Tier'), textNote],
     ['Company', 'HQ Region', 'Single-line text', opts(companyRows, COMPANY_HEADERS, 'HQ Region'), textNote],
     ['Company', 'CDM', 'Single-line text', '', ''],
     ['Company', 'Prospect Tracker ID', 'Single-line text', '', 'Lets a later import update instead of duplicate'],
