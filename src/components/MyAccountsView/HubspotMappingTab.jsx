@@ -7,7 +7,9 @@
 //
 // Matching runs over every account, whatever the inactive toggle says: an
 // inactive account that is in HubSpot is still a match, not an "Only in
-// HubSpot" row.
+// HubSpot" row. Those rows (Old Client, Hold Off, Lost - Not Sold, or a
+// substatus, which reads as Hold Off) sit on the Inactive chip of their own
+// and are left out of All and the other chips.
 
 import { useState, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
@@ -15,6 +17,7 @@ import { DataTable } from '../common/DataTable';
 import { domainKey } from '../../utils/seHubspotExisting';
 import { compactMappingCompanies, buildHubspotMapping, MAPPING_STATUS, SUGGEST_MIN_SCORE } from '../../utils/hubspotMapping';
 import { loadHubspotMapping, saveHubspotMapping, EMPTY_HUBSPOT_MAPPING } from '../../utils/hubspotMappingStore';
+import { reportingStatus } from '../../utils/reportingStatus';
 
 const fmt = (n) => Number(n || 0).toLocaleString();
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
@@ -42,6 +45,9 @@ async function readSheet(file) {
 const MISMATCH = 'Status mismatch';
 // Another: HubSpot-only rows whose company is on the Table tab after all.
 const ON_TABLE = 'On Table, not My Accounts';
+// And the accounts out of active rotation, as on the rest of My Accounts.
+const INACTIVE = 'Inactive';
+const INACTIVE_STATUSES = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold']);
 const HOW = { website: 'Website', name: 'Name', linked: 'Your link' };
 const accountSite = (r) => (r.account ? domainKey(r.account.website) || domainKey(r.account.emailDomain) : '');
 const hsField = (field) => (r) => r.hubspot.map(c => c[field]).filter(Boolean).join(', ');
@@ -94,6 +100,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   };
   const trackerOf = (r) => (r.tracker || []).map(p => p.company).filter(Boolean).join(', ');
   const substatusOf = (r) => (r.account ? String(r.account.substatus || byId.get(r.account.id)?.substatus || '').trim() : '');
+  const isInactiveRow = (r) => !!r.account && INACTIVE_STATUSES.has(reportingStatus({ ...r.account, substatus: substatusOf(r) }));
   const mapping = useMemo(() => {
     if (!data.companies.length) return [];
     const withNames = accounts.map(a => {
@@ -104,27 +111,31 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   }, [accounts, prospects, byId, data]);
 
   const counts = useMemo(() => {
-    const c = {};
+    const c = { '': 0 };
     for (const r of mapping) {
+      if (isInactiveRow(r)) { c[INACTIVE] = (c[INACTIVE] || 0) + 1; continue; }
+      c[''] += 1;
       c[r.status] = (c[r.status] || 0) + 1;
       if (r.statusFlag) c[MISMATCH] = (c[MISMATCH] || 0) + 1;
       if (r.tracker?.length) c[ON_TABLE] = (c[ON_TABLE] || 0) + 1;
     }
     return c;
-  }, [mapping]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapping, byId]);
 
   const rows = useMemo(() => {
-    let out = mapping;
+    let out = statusFilter === INACTIVE ? mapping.filter(isInactiveRow) : mapping.filter(r => !isInactiveRow(r));
     if (statusFilter === MISMATCH) out = out.filter(r => r.statusFlag);
     else if (statusFilter === ON_TABLE) out = out.filter(r => r.tracker?.length);
-    else if (statusFilter) out = out.filter(r => r.status === statusFilter);
+    else if (statusFilter && statusFilter !== INACTIVE) out = out.filter(r => r.status === statusFilter);
     const term = search.trim().toLowerCase();
     if (term) {
       out = out.filter(r => [r.account?.company, ...r.hubspot.map(c => c.name), ...r.suggestions.map(c => c.name), ...(r.tracker || []).map(p => p.company)]
         .filter(Boolean).join(' ').toLowerCase().includes(term));
     }
     return out.map(r => ({ ...r, id: r.key }));
-  }, [mapping, statusFilter, search]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapping, byId, statusFilter, search]);
 
   const columns = useMemo(() => [
     {
@@ -251,7 +262,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     return (
       <button key={label} type="button" onClick={() => setStatusFilter(value)}
         style={{ padding: '0.2rem 0.6rem', borderRadius: 999, border: `1px solid ${active ? '#1D4ED8' : '#E2E8F0'}`, background: active ? '#EFF6FF' : '#fff', color: active ? '#1D4ED8' : '#475569', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap' }}
-      >{label} ({fmt(value ? counts[value] : mapping.length)})</button>
+      >{label} ({fmt(counts[value])})</button>
     );
   };
 
@@ -286,6 +297,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
             {chip(MAPPING_STATUS.hubspotOnly, MAPPING_STATUS.hubspotOnly)}
             {chip(ON_TABLE, ON_TABLE)}
             {chip(MISMATCH, MISMATCH)}
+            {chip(INACTIVE, INACTIVE)}
           </>
         )}
       </div>
