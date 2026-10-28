@@ -38,6 +38,7 @@ import { DmTagHistoryView } from './DmTagHistoryView';
 import { isQualifyingCompany } from '../../utils/companyDataFields';
 import { CompanyDataTab } from './CompanyDataTab';
 import { DealSizeTab } from './DealSizeTab';
+import { HubspotMappingTab } from './HubspotMappingTab';
 import { MissingHistoryView } from './MissingHistoryView';
 import { missingStepsReading, recordMissingDay, dayKey } from '../../utils/missingHistory';
 import { companyClosedBuckets, serviceBucketContext } from '../../utils/bucketServices';
@@ -3877,6 +3878,33 @@ Fix that now?
                 {inactiveMode === 'only' ? 'Inactive only' : inactiveMode === 'show' ? 'Showing all' : 'Inactive hidden'}
               </button>
             </>
+          )}
+        />
+      </div>
+    );
+  }
+
+  // Hubspot Mapping subtab - every account (the inactive toggle aside, so an
+  // inactive account in HubSpot still counts as a match) against the HubSpot
+  // companies export dropped there. The search box narrows what's shown.
+  if (mode === 'hubspotMapping') {
+    return (
+      <div className={styles.wrapper}>
+        <HubspotMappingTab
+          accounts={allAccounts}
+          prospects={prospects}
+          search={search}
+          onSelect={onSelect}
+          settings={settings}
+          updateSettings={updateSettings}
+          filterBar={(
+            <input
+              className={styles.searchInput}
+              type="text"
+              placeholder="Search companies..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
           )}
         />
       </div>
