@@ -109,7 +109,9 @@ export function HubSpotImportFilesSection({ prospects = [], settings = {} }) {
   const { user } = useAuth();
   const [ownerEmail, setOwnerEmail] = useState('daniel.baldauf@se.com');
   const [allCompanies, setAllCompanies] = useState(false);
-  const [withHistory, setWithHistory] = useState(true);
+  // Off by default: Dan keeps only future activity in the new portal (the
+  // emails he BCCs there), not the old history.
+  const [withHistory, setWithHistory] = useState(false);
   const [includeNoDomain, setIncludeNoDomain] = useState(false);
   const [includeColleagues, setIncludeColleagues] = useState(false);
   const [step, setStep] = useState('');

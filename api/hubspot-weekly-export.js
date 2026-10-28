@@ -55,7 +55,13 @@ async function loadSources(db, token) {
   ]);
   const scope = await hubspotScope(token);
   const contacts = (await getAllContacts(token, scope)).map(flatContact);
-  const { activity, errors } = await liveActivity(hubspotGetter(token));
+  // Past activity only goes in when asked for (HUBSPOT_WEEKLY_HISTORY=1):
+  // Dan keeps future activity in the new portal through the emails he BCCs
+  // there, so the history columns are left blank and the job skips reading
+  // every email in the portal.
+  const { activity, errors } = process.env.HUBSPOT_WEEKLY_HISTORY === '1'
+    ? await liveActivity(hubspotGetter(token))
+    : { activity: null, errors: {} };
   return {
     settings: settingsSnap.exists ? settingsSnap.data() || {} : {},
     prospects: prospectsSnap.docs.map(d => ({ id: d.id, ...d.data() })),

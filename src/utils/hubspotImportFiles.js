@@ -48,7 +48,9 @@ export const CONTACT_HEADERS = [
   "Legal basis for processing contact's data",
   // Company Record ID links a contact to a company the portal already had
   // (seHubspotExisting.js); Company Domain Name to one this import makes.
-  'Company Name', 'Company Domain Name', 'Company Record ID', "Dan's Tags", 'Decision Maker', 'Role',
+  // No Dan's Tags, Decision Maker or Role: Dan doesn't keep tags up to date
+  // in the corporate portal, and the other two were empty on every contact.
+  'Company Name', 'Company Domain Name', 'Company Record ID',
   'Activity History', 'Last Activity Date', 'Activity Count',
 ];
 export const FIELD_HEADERS = ['Object', 'Property label', 'Suggested type', 'Options seen in the data', 'Why'];
@@ -270,7 +272,6 @@ export function buildImportFiles({
       clean(c.city), clean(c.state), clean(c.country), clean(c.hs_linkedin_url || c.linkedin_url), ownerEmail,
       legalBasis,
       linked ? clean(linked.name) : prospect ? clean(prospect.company) : companyName, domain, recordId,
-      tagsOf(c).join(';'), clean(c.decision_maker), clean(c.role),
       ...(() => {
         const h = formatActivityHistory(activityByEmail.get(email));
         if (h.count) report.contactsWithHistory += 1;
@@ -344,14 +345,10 @@ export function buildImportFiles({
   };
   // Text rather than dropdowns for the company fields: their values are
   // inconsistent ("Tier 3" and "Tier III", "NAM" and "North America"), and a
-  // dropdown refuses any value not set up exactly. Dan's Tags stays a
-  // checkbox list, its values are clean. A field with no value anywhere in
+  // dropdown refuses any value not set up exactly. A field with no value anywhere in
   // the files isn't listed: there is nothing to import into it.
   const textNote = 'Text, because the values vary in spelling; a dropdown would reject any value not set up exactly';
   const fieldRows = [
-    ['Contact', "Dan's Tags", 'Multiple checkboxes', opts(contactRows, CONTACT_HEADERS, "Dan's Tags", 500), 'Your tags; several per contact, separated by ;'],
-    ['Contact', 'Decision Maker', 'Single-line text', '', ''],
-    ['Contact', 'Role', 'Single-line text', '', ''],
     ['Contact', 'Activity History', 'Multi-line text', '', 'Emails, meetings, notes, calls and tasks from the old portal, one dated line each, newest first'],
     ['Contact', 'Last Activity Date', 'Date picker', '', 'Date of the newest line in Activity History'],
     ['Contact', 'Activity Count', 'Number', '', 'How many activities the history holds'],
