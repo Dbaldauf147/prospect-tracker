@@ -10378,8 +10378,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 }) : targetSuggestions.map(row => (
                   <div key={row.name} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.25rem 0.75rem', marginTop: 2 }}>
                     <strong>{row.name}</strong>
+                    {/* Whose account it is leads, and is always shown (as in
+                        the mapped box), so "no CDM on the list" reads as an
+                        answer rather than a missing field. */}
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ color: '#B91C1C' }}>CDM</span>
+                      <strong style={{ color: row.cdm ? '#991B1B' : '#94A3B8' }}>{row.cdm || 'none on the list'}</strong>
+                      {row.cdm && matchesCdm(fields.cdm || '', row.cdm) && (
+                        <span title="Matches the CDM on this card." style={{ color: '#16A34A', fontWeight: 700 }}>✓</span>
+                      )}
+                    </span>
                     <span style={{ color: '#B91C1C' }}>
-                      {[row.cdm && `CDM ${row.cdm}`, row.tier, row.vertical].filter(Boolean).join(' · ') || 'no details on the list'}
+                      {[row.tier, row.vertical].filter(Boolean).join(' · ') || 'no tier or vertical on the list'}
                     </span>
                     <button
                       type="button"
