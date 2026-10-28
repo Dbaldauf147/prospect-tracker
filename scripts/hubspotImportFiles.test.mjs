@@ -14,7 +14,7 @@
 //     asked; one row per domain, the one with the most contacts kept,
 //   * contacts at the owner's own domain (colleagues) are left out,
 //   * the fields file lists only fields with data, company ones as text,
-//   * the fields file lists the tags seen in the data, and no deal fields,
+//   * no tags, decision maker or role columns, and no deal fields,
 //   * activity history is one dated line per activity, newest first,
 //     repeats counted once, trimmed oldest-first under HubSpot's cap, and
 //     merged across contacts that share an email.
@@ -73,8 +73,8 @@ const out = buildImportFiles({ prospects, contacts, opps, settings, ownerEmail: 
     'contacts keyed by lower-cased email; no-email, hidden and repeats left out');
   eq([out.report.contactsNoEmail, out.report.contactsHidden, out.report.contactsDuplicateEmail], [1, 1, 1], '...and counted');
   const jane = rows[0];
-  eq([cell(CONTACT_HEADERS, jane, 'Company Domain Name'), cell(CONTACT_HEADERS, jane, 'Company Name'), cell(CONTACT_HEADERS, jane, "Dan's Tags"), cell(CONTACT_HEADERS, jane, 'Contact owner')],
-    ['acme.com', 'Acme Corp', 'ESG;Key', 'daniel.baldauf@se.com'], 'a contact links by domain, carries tags and owner');
+  eq([cell(CONTACT_HEADERS, jane, 'Company Domain Name'), cell(CONTACT_HEADERS, jane, 'Company Name'), CONTACT_HEADERS.includes("Dan's Tags"), cell(CONTACT_HEADERS, jane, 'Contact owner')],
+    ['acme.com', 'Acme Corp', false, 'daniel.baldauf@se.com'], 'a contact links by domain and carries the owner; no tags column');
   eq(cell(CONTACT_HEADERS, rows[1], 'Company Domain Name'), '', 'a free-mail contact at an unknown company is not linked');
   eq(cell(CONTACT_HEADERS, rows[2], 'Company Domain Name'), 'beta.io', 'no company text: linked by the email domain of an account');
   eq(cell(CONTACT_HEADERS, rows[3], 'Company Domain Name'), 'beta.io', 'the site company pin wins over the synced text (alias match)');
@@ -105,8 +105,7 @@ const out = buildImportFiles({ prospects, contacts, opps, settings, ownerEmail: 
 
 // Fields
 {
-  const tags = out.fields.rows.find(r => r[1] === "Dan's Tags");
-  eq(tags[3], 'ESG; Key', 'the fields file lists the tags seen');
+  eq(out.fields.rows.some(r => r[1] === "Dan's Tags"), false, 'no tags field to create');
   eq(out.fields.rows.filter(r => r[0] === 'Deal').length, 0, 'no deal fields to create');
 }
 
@@ -173,7 +172,7 @@ const out = buildImportFiles({ prospects, contacts, opps, settings, ownerEmail: 
   eq(f.some(r => r[1] === 'Decision Maker' || r[1] === 'Role'), false, 'a field with no value anywhere is not listed');
   eq(f.find(r => r[1] === 'Prospect Tier')[2], 'Single-line text', 'company fields are suggested as text, not dropdowns');
   eq(COMPANY_HEADERS.includes('Tier'), false, "no plain Tier column: it would match the portal's own numeric Tier");
-  eq(f.find(r => r[1] === "Dan's Tags")[2], 'Multiple checkboxes', "Dan's Tags stays a checkbox list");
+  eq(['Decision Maker', 'Role', "Dan's Tags"].some(h => CONTACT_HEADERS.includes(h)), false, 'no tags, decision maker or role columns');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
