@@ -1276,6 +1276,7 @@ function JurisdictionScreening({ answers, links, sharedLinks, onSetSharedLink, f
                         <tr key={rKey} style={ruledOut ? ruledOutRow : undefined} title={ruledOut ? caRuledOutWhy : undefined}>
                           <td style={{ ...td, paddingLeft: '1.4rem' }}>
                             <div style={{ fontWeight: 700, color: ruledOut ? '#991B1B' : undefined }}>{r.regulation}</div>
+                            {r.framework && <div style={{ color: 'var(--color-text-muted)', fontSize: '0.68rem', fontStyle: 'italic' }}>{r.framework}</div>}
                             <div style={{ color: 'var(--color-text-muted)', fontSize: '0.68rem' }}>{r.timeline}</div>
                           </td>
                           <td style={td} title={r.description}>
@@ -1392,6 +1393,7 @@ function RegulationReference() {
                       <span style={{ fontWeight: 700, color: 'var(--color-text)' }}>{r.regulation}</span>
                       <span style={{ color: 'var(--color-text-muted)' }}> · {r.timeline}</span>
                     </div>
+                    {r.framework && <div style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)', fontStyle: 'italic', marginTop: '0.1rem' }}>{r.framework}</div>}
                     <div style={{ fontSize: '0.65rem', color: 'var(--color-text)', marginTop: '0.1rem' }}>{r.description}</div>
                     {r.thresholds.length > 0 && (
                       <div style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)', marginTop: '0.1rem' }}>

@@ -58,6 +58,11 @@ const CA_SALES_THRESHOLD_LABEL = `$${CA_SALES_THRESHOLD_USD.toLocaleString('en-U
 // requirement/metric pairs from the source screening matrix (numbers left
 // as strings so ranges like ">0 <50,000" survive intact).
 //
+// `framework` is the mandate's formal name and the standard it adopts (TCFD,
+// IFRS S2, ESRS E1...), shown under the regulation. It is display text only:
+// `regulation` stays the short name because the per-company answers are
+// stored under a slug of it, so renaming one would orphan saved answers.
+//
 // `timeline` is the one-line "which year, filed when" summary this page and
 // the exports print. The dated version — exact submission deadlines, how firm
 // each one is, and a source per date — lives in
@@ -68,6 +73,7 @@ export const REGULATIONS_BY_JURISDICTION = {
   california: [
     {
       regulation: 'SB 253',
+      framework: 'California SB 253 (Climate Corporate Data Accountability Act): GHG emissions disclosure',
       // First cycle covers FY2025. CARB set scope 1 & 2 at 10 Aug 2026, then
       // moved it to 10 Nov 2026 on 24 Jun 2026; scope 3 joins from 2027.
       timeline: '2025 data (scope 1 & 2 due 10 Nov 2026; scope 3 from 2027)',
@@ -83,6 +89,7 @@ export const REGULATIONS_BY_JURISDICTION = {
     },
     {
       regulation: 'SB 261',
+      framework: 'California SB 261: state-level TCFD / IFRS S2 adoption',
       // Statutory first report was due 1 Jan 2026, biennially after that. The
       // Ninth Circuit enjoined enforcement on 18 Nov 2025 and CARB's 1 Dec
       // 2025 advisory says it will set a replacement date once the appeal is
@@ -99,6 +106,7 @@ export const REGULATIONS_BY_JURISDICTION = {
   eu: [
     {
       regulation: 'CSRD: Wave 1',
+      framework: 'EU CSRD (Corporate Sustainability Reporting Directive), ESRS (European Sustainability Reporting Standards) E1',
       timeline: '2024 data (reporting starts 2025)',
       description: 'Large entities with securities listed on an EU regulated market meeting the new thresholds: more than 1,000 employees and a net turnover of EUR 450 million or more.',
       thresholds: [
@@ -108,6 +116,7 @@ export const REGULATIONS_BY_JURISDICTION = {
     },
     {
       regulation: 'CSRD: Wave 2',
+      framework: 'EU CSRD (Corporate Sustainability Reporting Directive), ESRS (European Sustainability Reporting Standards) E1',
       timeline: '2027 data (reporting starts 2028)',
       description: 'Large entities present in the EU meeting both criteria: more than 1,000 employees and a net turnover of EUR 450 million or more.',
       thresholds: [
@@ -117,6 +126,7 @@ export const REGULATIONS_BY_JURISDICTION = {
     },
     {
       regulation: 'CSRD: Wave 3',
+      framework: 'EU CSRD (Corporate Sustainability Reporting Directive), ESRS (European Sustainability Reporting Standards) E1',
       timeline: '2028 data (reporting starts 2029)',
       description: 'Large non-EU entities: a net turnover of EUR 450 million or more in the EU and at least one EU subsidiary or branch with over EUR 200 million net turnover.',
       thresholds: [
@@ -132,6 +142,7 @@ export const REGULATIONS_BY_JURISDICTION = {
       // on this card can settle it, and its Applies? cell stays a judgement
       // rather than a derivation.
       regulation: 'CBAM',
+      framework: 'EU CBAM (Carbon Border Adjustment Mechanism)',
       timeline: '2026 imports (definitive regime from 1 Jan 2026; first declaration 30 Sep 2027)',
       description: 'Importers bringing covered carbon-intensive goods into the EU - cement, iron and steel, aluminium, fertilisers, hydrogen and electricity. From 1 Jan 2026 an importer must hold authorised CBAM declarant status and surrender certificates against the emissions embedded in what it imports. The Omnibus regulation exempts importers of 50 tonnes or less of covered goods a year outright, which drops most occasional importers while keeping the bulk of embedded emissions in scope; the threshold does not apply to hydrogen or electricity.',
       thresholds: [
@@ -142,12 +153,14 @@ export const REGULATIONS_BY_JURISDICTION = {
   uk: [
     {
       regulation: 'UK FCA',
+      framework: 'UK FCA (Financial Conduct Authority) TCFD: country-level TCFD adoption',
       timeline: 'Yearly, based on company reporting cycle',
       description: 'Listed on a UK regulated market.',
       thresholds: [],
     },
     {
       regulation: 'UK CFD / SRS',
+      framework: 'UK CFD (Climate-related Financial Disclosures), replaced by UK SRS (Sustainability Reporting Standards) S2 from Jan 1, 2027: country-level IFRS S2 adoption',
       timeline: 'CFD: yearly, based on company reporting cycle. SRS: phasing out CFD on Jan 1, 2027 (still based on company yearly reporting).',
       description: 'A Public Interest Entity (PIE); a UK company with more than 500 employees AND more than £500 million turnover; a large LLP meeting the same thresholds; an AIM-listed company with more than 500 employees; or listed on a UK regulated market.',
       thresholds: [
@@ -159,6 +172,7 @@ export const REGULATIONS_BY_JURISDICTION = {
   australia: [
     {
       regulation: 'Australia Group 1',
+      framework: 'Australia ASRS (Australian Sustainability Reporting Standard) AASB S2: country-level IFRS S2 adoption',
       timeline: '2025 data (reporting starts 2026)',
       description: 'Files a financial report with ASIC (Part 2M, Corporations Act 2001) AND meets two of three: consolidated revenue ≥ AUD 500M, gross assets ≥ AUD 1B, ≥ 500 employees: OR reports to NGER with ≥ 50,000 tonnes CO2e.',
       thresholds: [
@@ -170,6 +184,7 @@ export const REGULATIONS_BY_JURISDICTION = {
     },
     {
       regulation: 'Australia Group 2',
+      framework: 'Australia ASRS (Australian Sustainability Reporting Standard) AASB S2: country-level IFRS S2 adoption',
       timeline: '2026 data (reporting starts 2027)',
       description: 'Files a financial report with ASIC AND is a registered scheme, registrable superannuation entity, or retail CCIV AND meets two of three: consolidated revenue ≥ AUD 200M, gross assets ≥ AUD 500M, ≥ 250 employees (OR reports to NGER), OR is an asset owner with over AUD 5B in AUM.',
       thresholds: [
@@ -181,6 +196,7 @@ export const REGULATIONS_BY_JURISDICTION = {
     },
     {
       regulation: 'Australia Group 3',
+      framework: 'Australia ASRS (Australian Sustainability Reporting Standard) AASB S2: country-level IFRS S2 adoption',
       timeline: '2027 data (reporting starts 2028)',
       description: 'Files a financial report with ASIC AND is a registered scheme, registrable superannuation entity, or retail CCIV AND meets two of three: consolidated revenue ≥ AUD 50M, gross assets ≥ AUD 25M, ≥ 100 employees.',
       thresholds: [
@@ -193,19 +209,21 @@ export const REGULATIONS_BY_JURISDICTION = {
   mexico: [
     {
       regulation: 'Mexico: CNBV',
+      framework: 'Mexico CNBV (La Comisión Nacional Bancaria y de Valores) Resolution: country-level IFRS S2 adoption',
       timeline: '2025 data (reporting starts 2026)',
-      description: 'Security issuer.',
+      description: 'All securities issuers.',
       thresholds: [],
     },
   ],
   brazil: [
     {
       regulation: 'Brazil: CVM',
+      framework: 'Brazil CVM (Comissão de Valores Mobiliários) Resolutions 193/2023, 218/2024 and 227/2025: country-level IFRS S2 adoption',
       // CVM Resolution 244 (published 1 Jun 2026) withdrew the mandatory phase
       // that would have applied to years beginning on/after 1 Jan 2026;
       // comply-or-explain runs from 1 Jan 2027 instead.
       timeline: '2027 data (comply-or-explain from 1 Jan 2027; the mandatory 2026 phase was withdrawn)',
-      description: 'Publicly traded companies.',
+      description: 'All Brazil listed companies.',
       thresholds: [],
     },
   ],
