@@ -8,9 +8,11 @@
 // Domain), then by name: the account's name, its "goes by" and its aliases,
 // normalised the way companyNorm does it. Both kinds of hit are kept, so a
 // same-named duplicate with a different website still shows.
-// Where an account has no exact match, a HubSpot company whose name starts
-// with (or is the start of) the account's is offered as a possible match,
-// and Dan can link it; his links are kept with the export.
+// Where an account has no exact match, the HubSpot companies no account
+// claimed are scored against it by name (nameSimilarity, 0-100) and the
+// closest are offered as possible matches, with the %, for Dan to map; a
+// HubSpot company no account claimed is offered the closest unmatched
+// accounts the same way. His links are kept with the export.
 //
 // Pure: no browser APIs, so it runs under plain Node in the tests
 // (scripts/hubspotMapping.test.mjs).
@@ -56,9 +58,74 @@ const accountDomain = (a) => domainKey(a.website) || domainKey(a.emailDomain);
 const accountNames = (a) => [a.company, a.goesBy, ...(Array.isArray(a.aliases) ? a.aliases : [])]
   .map(normalizeCompany).filter(Boolean);
 
-// "acme" and "acme realty partners": one is the other's first words. Short
-// keys are left out, or "the" would match half the list.
-const startsWithWords = (a, b) => a.length >= 4 && (b === a || b.startsWith(a + ' '));
+// Words that say what kind of firm it is rather than which one, so two
+// names sharing only these ("ABC Capital", "XYZ Capital") don't look alike.
+const GENERIC = new Set(['the', 'and', 'of', 'capital', 'partners', 'partner', 'real', 'estate', 'realty', 'properties', 'property', 'management', 'investment', 'investments', 'investors', 'advisors', 'advisers', 'fund', 'funds', 'trust', 'reit', 'asset', 'assets', 'global', 'international', 'us', 'usa', 'america', 'american', 'national', 'financial', 'equity', 'ventures', 'development', 'services', 'company', 'enterprises']);
+
+// A name's letter pairs, counted, with their total kept alongside.
+const bigrams = (s) => {
+  const t = s.replace(/ /g, '');
+  const map = new Map();
+  for (let i = 0; i < t.length - 1; i++) { const g = t.slice(i, i + 2); map.set(g, (map.get(g) || 0) + 1); }
+  return { map, list: [...map], total: Math.max(0, t.length - 1) };
+};
+function dice(a, b) {
+  const total = a.total + b.total;
+  if (!total) return 0;
+  let shared = 0;
+  // Walk the shorter list; an array walks faster than a Map.
+  const [x, y] = a.list.length <= b.list.length ? [a, b] : [b, a];
+  for (let i = 0; i < x.list.length; i++) {
+    const m = y.map.get(x.list[i][0]);
+    if (m) shared += Math.min(x.list[i][1], m);
+  }
+  return (2 * shared) / total;
+}
+function prepName(n) {
+  const words = [...new Set(n.split(' ').filter(w => w && !GENERIC.has(w)))];
+  return { n, grams: bigrams(n), coreGrams: bigrams(words.join(' ') || n), words, wordSet: new Set(words) };
+}
+
+/**
+ * How alike two company names are, 0-100, after normalizeCompany. The
+ * better of two readings: the letters (bigram overlap, which forgives a
+ * typo or a missing "s", averaged over the whole name and its distinctive
+ * part, so "ABC Capital" and "XYZ Capital" stay apart) and the distinctive
+ * words (the share of the shorter name's non-generic words the other has,
+ * half-weighted with the letters, so "Blackstone" vs "Blackstone Real
+ * Estate" scores high but not 100).
+ */
+export function nameSimilarity(a, b) {
+  return scorePrepared(prepName(normalizeCompany(a)), prepName(normalizeCompany(b)));
+}
+function scorePrepared(a, b) {
+  if (!a.n || !b.n) return 0;
+  if (a.n === b.n) return 100;
+  const letters = (dice(a.grams, b.grams) + dice(a.coreGrams, b.coreGrams)) / 2;
+  let words = 0;
+  const [fewer, more] = a.words.length <= b.words.length ? [a, b] : [b, a];
+  if (fewer.words.length) {
+    let hit = 0;
+    for (const w of fewer.words) if (more.wordSet.has(w)) hit++;
+    words = hit / fewer.words.length;
+  }
+  return Math.round(100 * Math.max(letters, 0.5 * words + 0.5 * letters));
+}
+
+// A possible match has to be at least this alike, and a row shows the best few.
+export const SUGGEST_MIN_SCORE = 60;
+const SUGGEST_MAX = 3;
+function bestMatches(names, pool) {
+  const out = [];
+  for (const item of pool) {
+    let score = 0;
+    for (const n of names) for (const m of item.names) {
+      score = Math.max(score, scorePrepared(n, m));
+    }
+    if (score >= SUGGEST_MIN_SCORE) out.push({ ...item.ref, score });
+  }
+  return out.sort((x, y) => y.score - x.score).slice(0, SUGGEST_MAX);
+}
 
 // Whether an account's Status and its HubSpot Lifecycle Stage disagree, as
 // a sentence saying how, or '' when they don't. HubSpot only has one stage
@@ -91,6 +158,9 @@ export const MAPPING_STATUS = {
  * (same-named records together):
  *   { key, status, account, hubspot: [records], how, suggestions, statusFlag }
  * `statusFlag` is statusDiscrepancy's sentence for a matched account.
+ * `suggestions` is [{ hubspotId, accountId, name, score }], best first: on an
+ * unmatched account the HubSpot companies it may be, on a HubSpot-only row
+ * the unmatched accounts it may be.
  * `how` is 'website' | 'name' | 'linked' | ''. `links` is { [accountId]: hubspotId },
  * Dan's own choices, which win over the name match.
  */
@@ -123,16 +193,24 @@ export function buildHubspotMapping(accounts = [], companies = [], { links = {} 
     return { key: `a:${a.id || a.company}`, account: a, hubspot, how, suggestions: [] };
   });
 
-  // Possible matches for the accounts left over, among the HubSpot companies
-  // no account claimed.
+  // Possible matches between the accounts left over and the HubSpot
+  // companies no account claimed, both ways.
   const unclaimed = companies.filter(c => !claimed.has(String(c.id)));
   const unclaimedKeys = unclaimed.map(c => [normalizeCompany(c.name), c]);
+  // Same-named records are scored once, as the first of them.
+  const hubspotPool = [];
+  const pooled = new Set();
+  for (const [k, c] of unclaimedKeys) {
+    if (!k || pooled.has(k)) continue;
+    pooled.add(k);
+    hubspotPool.push({ names: [prepName(k)], ref: { hubspotId: String(c.id), name: c.name } });
+  }
+  const accountPool = [];
   for (const r of rows) {
     if (r.hubspot.length) continue;
-    const names = accountNames(r.account);
-    r.suggestions = unclaimedKeys
-      .filter(([k]) => k && names.some(n => startsWithWords(n, k) || startsWithWords(k, n)))
-      .map(([, c]) => c);
+    const names = accountNames(r.account).map(prepName);
+    r.suggestions = bestMatches(names, hubspotPool).map(m => ({ ...m, accountId: r.account.id }));
+    if (names.length && r.account.id) accountPool.push({ names, ref: { accountId: r.account.id, name: r.account.company } });
   }
 
   for (const r of rows) {
@@ -146,8 +224,9 @@ export function buildHubspotMapping(accounts = [], companies = [], { links = {} 
     const g = k || `id:${c.id}`;
     (groups.get(g) || groups.set(g, []).get(g)).push(c);
   }
-  for (const hubspot of groups.values()) {
-    rows.push({ key: `h:${hubspot[0].id}`, status: MAPPING_STATUS.hubspotOnly, account: null, hubspot, how: '', suggestions: [], statusFlag: '' });
+  for (const [k, hubspot] of groups) {
+    const suggestions = k.startsWith('id:') ? [] : bestMatches([prepName(k)], accountPool).map(m => ({ ...m, hubspotId: String(hubspot[0].id) }));
+    rows.push({ key: `h:${hubspot[0].id}`, status: MAPPING_STATUS.hubspotOnly, account: null, hubspot, how: '', suggestions, statusFlag: '' });
   }
   return rows;
 }

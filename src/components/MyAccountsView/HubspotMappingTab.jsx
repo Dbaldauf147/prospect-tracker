@@ -13,7 +13,7 @@ import { useState, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { domainKey } from '../../utils/seHubspotExisting';
-import { compactMappingCompanies, buildHubspotMapping, MAPPING_STATUS } from '../../utils/hubspotMapping';
+import { compactMappingCompanies, buildHubspotMapping, MAPPING_STATUS, SUGGEST_MIN_SCORE } from '../../utils/hubspotMapping';
 import { loadHubspotMapping, saveHubspotMapping, EMPTY_HUBSPOT_MAPPING } from '../../utils/hubspotMappingStore';
 
 const fmt = (n) => Number(n || 0).toLocaleString();
@@ -23,6 +23,10 @@ const STATUS_TINTS = {
   [MAPPING_STATUS.accountOnly]: { bg: '#FFFBEB', border: '#FDE68A', ink: '#B45309' },
   [MAPPING_STATUS.hubspotOnly]: { bg: '#EFF6FF', border: '#BFDBFE', ink: '#1D4ED8' },
 };
+// How sure a possible match looks: green from 85%, amber from 70%, grey below.
+const scoreTint = (score) => (score >= 85 ? { bg: '#F0FDF4', border: '#BBF7D0', ink: '#15803D' }
+  : score >= 70 ? { bg: '#FFFBEB', border: '#FDE68A', ink: '#B45309' }
+  : { bg: '#F8FAFC', border: '#E2E8F0', ink: '#475569' });
 const linkBtn = { background: 'none', border: '1px solid #CBD5E1', borderRadius: 4, padding: '0 6px', fontSize: '0.68rem', fontFamily: 'inherit', color: '#1D4ED8', cursor: 'pointer', whiteSpace: 'nowrap' };
 
 // A CSV is read as text, so its dates stay as HubSpot wrote them
@@ -175,16 +179,25 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
       },
     },
     {
-      key: 'suggestions', label: 'Possible Match', defaultWidth: 280,
-      headerTitle: 'For an account with no exact name match: HubSpot companies (not matched to another account) whose name starts the same way. Link one to map it.',
-      getFilterValue: r => r.suggestions.map(c => c.name).join(', '),
-      exportValue: r => r.suggestions.map(c => c.name).join(', '),
+      key: 'suggestions', label: 'Possible Match', defaultWidth: 360,
+      headerTitle: `For a row with no match: the closest names on the other side that aren't matched yet (an account's HubSpot companies, a HubSpot company's accounts), with how alike the names are. ${SUGGEST_MIN_SCORE}% and up are shown. Map links the two.`,
+      getSortValue: r => (r.suggestions[0] ? r.suggestions[0].score : null),
+      getFilterValue: r => r.suggestions.map(m => m.name).join(', '),
+      exportValue: r => r.suggestions.map(m => `${m.name} (${m.score}%)`).join(', '),
       render: r => (r.suggestions.length ? (
-        <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
-          {r.suggestions.slice(0, 3).map(c => (
-            <button key={c.id} type="button" style={linkBtn} onClick={() => link(r.account.id, c.id)} title={`Link ${r.account.company} to ${c.name} (${c.id})`}>Link {c.name}</button>
-          ))}
-          {r.suggestions.length > 3 && <span style={{ fontSize: '0.68rem', color: '#64748B' }}>+{r.suggestions.length - 3} more</span>}
+        <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 3, padding: '2px 0' }}>
+          {r.suggestions.map(m => {
+            const t = scoreTint(m.score);
+            return (
+              <span key={`${m.accountId}:${m.hubspotId}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: '0.66rem', fontWeight: 700, color: t.ink, background: t.bg, border: `1px solid ${t.border}`, padding: '0 6px', borderRadius: 999, fontVariantNumeric: 'tabular-nums', minWidth: 30, textAlign: 'center' }}>{m.score}%</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }} title={m.name}>{m.name}</span>
+                <button type="button" style={linkBtn} onClick={() => link(m.accountId, m.hubspotId)}
+                  title={r.account ? `Map ${r.account.company} to HubSpot's ${m.name} (${m.hubspotId})` : `Map the account ${m.name} to this HubSpot company`}
+                >Map</button>
+              </span>
+            );
+          })}
         </span>
       ) : blank),
     },
