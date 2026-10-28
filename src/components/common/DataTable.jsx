@@ -14,6 +14,9 @@ import {
   loadColVisibleRaw as readColVisibleRaw,
   loadColChosen as readColChosen, saveColChosen as writeColChosen,
 } from '../../utils/tablePrefsSync';
+import {
+  BLANKS_FILTER, suggestionMatches, readPickFilter, pickFilterIsActive, pickFilterMatches, pickListOptions,
+} from '../../utils/columnFilter';
 
 // The shared persistence (utils/tablePrefsSync) is keyed by explicit
 // localStorage names so a table with its own established names can adopt it
@@ -76,24 +79,6 @@ function legacyBucketsFor(tableId, remoteTablePrefs) {
   return entries;
 }
 
-// Combobox-style per-column filter. Holds an array of "picked" values that
-// the row's column value must match (substring). A text input drives both
-// free-text search and an autocomplete dropdown of unique column values
-// gathered from the visible row set; pressing Enter adds the typed value
-// as a free-text chip, clicking a suggestion adds it as a chip.
-// Parse a colFilters value into normalized {picks, draft}. Backwards
-// compatible with the older array-only and string forms.
-function readFilterValue(value) {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return {
-      picks: Array.isArray(value.picks) ? value.picks : [],
-      draft: typeof value.draft === 'string' ? value.draft : '',
-    };
-  }
-  if (Array.isArray(value)) return { picks: value, draft: '' };
-  if (typeof value === 'string' && value.trim()) return { picks: [value.trim()], draft: '' };
-  return { picks: [], draft: '' };
-}
 function writeFilterValue(picks, draft) {
   // Collapse to the simpler array form when there's no draft so the
   // shape stays clean for callers that haven't been updated.
@@ -101,20 +86,45 @@ function writeFilterValue(picks, draft) {
   return { picks, draft };
 }
 
+// Spreadsheet-style per-column filter, the one under every DataTable header.
+//
+// The box is a search: typing narrows the rows live (substring) and narrows
+// the list that drops down under it. The list is the column's values, each
+// with a checkbox and how many rows hold it, drawn from the rows the OTHER
+// columns' filters leave on screen, so it only offers what can actually be
+// picked. Ticking values filters the column to exactly those (several at
+// once, as an OR); once anything is ticked the search box only narrows the
+// list. "Select all" ticks everything the search is showing, so "type warb,
+// Enter" picks every Warburg spelling in one go. The matching rules are
+// utils/columnFilter.js's pick-list ones, shared with PE Portfolio.
+//
+// The value it hands back is a bare array of ticks, or { picks, draft }
+// while something is in the search box (readPickFilter reads both).
+
 // Hard cap on the dropdown list so a column with thousands of unique
-// values doesn't ship a 10k-button popover. Past this, the footer
+// values doesn't ship a 10k-row popover. Past this, the footer
 // nudges the user to type to narrow.
 const FILTER_DROPDOWN_CAP = 500;
 
-// Synthetic column-filter option (like Excel's) for matching a column's
-// empty cells. Picking it filters the column down to rows whose value is
-// blank. Compared case-insensitively; a cell counts as blank when it trims
-// to the empty string.
-const BLANKS_TOKEN = '(Blanks)';
+const BLANKS_TOKEN = BLANKS_FILTER;
 const isBlanksToken = (p) => String(p ?? '').trim().toLowerCase() === BLANKS_TOKEN.toLowerCase();
 
-export function ColumnFilterCell({ value, onChange, suggestions, hasBlanks = false }) {
-  const { picks, draft: incomingDraft } = readFilterValue(value);
+// Past this many ticks the box shows one "N selected" chip instead of a
+// chip per value, so a narrow column doesn't grow a wall of chips.
+const MAX_CHIPS = 2;
+
+const CHECK_ROW_STYLE = {
+  display: 'flex', alignItems: 'center', gap: 6, width: '100%', textAlign: 'left',
+  padding: '3px 8px', background: 'transparent', border: 'none', cursor: 'pointer',
+  fontFamily: 'inherit', fontSize: '0.72rem', color: 'var(--color-text)',
+};
+
+// `options`, when given, is called only while the list is open and returns
+// { suggestions, counts, blanks } (pickListOptions' shape) - DataTable uses
+// it so the per-column value lists are only worked out for the column being
+// filtered. Without it, `suggestions` / `hasBlanks` are used as they are.
+export function ColumnFilterCell({ value, onChange, suggestions = [], hasBlanks = false, options, label }) {
+  const { picks, draft: incomingDraft } = readPickFilter(value);
   // We mirror the parent-controlled draft so typing feels instant
   // even when the parent re-render is async (e.g. inside a useMemo
   // chain). Sync down whenever the parent changes the draft.
@@ -123,13 +133,15 @@ export function ColumnFilterCell({ value, onChange, suggestions, hasBlanks = fal
   const [open, setOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState(null);
   const wrapRef = useRef(null);
+  const inputRef = useRef(null);
   const dropdownRef = useRef(null);
+  const selectAllRef = useRef(null);
   useEffect(() => {
     if (!open) return undefined;
     function onDocMouseDown(e) {
       // Closes when the click lands outside both the filter cell and
       // the portal-rendered dropdown. Without checking the dropdown
-      // too, the mousedown on a value button would close the dropdown
+      // too, the mousedown on a value would close the dropdown
       // before the click reaches it.
       const inWrap = wrapRef.current && wrapRef.current.contains(e.target);
       const inDropdown = dropdownRef.current && dropdownRef.current.contains(e.target);
@@ -153,60 +165,91 @@ export function ColumnFilterCell({ value, onChange, suggestions, hasBlanks = fal
     setOpen(true);
   }
 
+  // The column's values, only worked out while the list is open.
+  const source = useMemo(() => {
+    if (!open) return null;
+    if (typeof options === 'function') {
+      const o = options() || {};
+      return { values: o.suggestions || [], counts: o.counts || null, blanks: o.blanks || 0 };
+    }
+    return { values: suggestions, counts: null, blanks: hasBlanks ? 1 : 0 };
+  }, [open, options, suggestions, hasBlanks]);
+
+  const pickedKeys = useMemo(() => new Set(picks.map(p => p.toLowerCase())), [picks]);
+
   const { matches, totalAvailable } = useMemo(() => {
+    if (!source) return { matches: [], totalAvailable: 0 };
     const q = draft.trim().toLowerCase();
-    const seen = new Set(picks.map(p => p.toLowerCase()));
-    const out = [];
-    let totalAvailable = 0;
-    // Offer the "(Blanks)" option first — only when the column actually has
-    // empty cells and it isn't already picked. It matches an empty query or
-    // anything the user types toward "(blanks)" / "blank".
-    if (hasBlanks && !seen.has(BLANKS_TOKEN.toLowerCase())
-        && (!q || BLANKS_TOKEN.toLowerCase().includes(q) || 'blanks'.includes(q))) {
-      out.push(BLANKS_TOKEN);
-      totalAvailable += 1;
+    const all = [];
+    // "(Blanks)" leads, only when the column has empty cells (or it is
+    // already ticked, so it can be unticked).
+    if (source.blanks > 0 || pickedKeys.has(BLANKS_TOKEN.toLowerCase())) all.push(BLANKS_TOKEN);
+    const listed = new Set();
+    for (const s of source.values) { all.push(s); listed.add(s.toLowerCase()); }
+    // A tick whose value the other filters have since taken off screen
+    // stays in the list so it can still be unticked.
+    for (const p of picks) {
+      if (!listed.has(p.toLowerCase()) && !isBlanksToken(p)) all.push(p);
     }
-    for (const s of suggestions) {
-      const sl = s.toLowerCase();
-      if (seen.has(sl)) continue;
-      if (q && !sl.includes(q)) continue;
-      totalAvailable += 1;
-      if (out.length < FILTER_DROPDOWN_CAP) out.push(s);
-    }
-    return { matches: out, totalAvailable };
-  }, [suggestions, draft, picks, hasBlanks]);
+    const hits = q
+      ? suggestionMatches(all.filter(s => !isBlanksToken(s)), q)
+        .concat(all.some(isBlanksToken) && 'blanks'.includes(q.replace(/[()]/g, '')) ? [BLANKS_TOKEN] : [])
+      : all;
+    return { matches: hits.slice(0, FILTER_DROPDOWN_CAP), totalAvailable: hits.length };
+  }, [source, draft, picks, pickedKeys]);
+
+  const countOf = (s) => {
+    if (!source?.counts) return null;
+    if (isBlanksToken(s)) return source.blanks;
+    return source.counts.get(s.toLowerCase()) || 0;
+  };
+
+  const matchedPicked = matches.filter(s => pickedKeys.has(s.toLowerCase())).length;
+  const allMatchesPicked = matches.length > 0 && matchedPicked === matches.length;
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = matchedPicked > 0 && !allMatchesPicked;
+  }, [matchedPicked, allMatchesPicked]);
 
   function pushDraft(next) {
     setDraft(next);
     onChange(writeFilterValue(picks, next));
   }
-  function addPick(s) {
-    const t = String(s || '').trim();
-    if (!t) return;
-    if (picks.some(p => p.toLowerCase() === t.toLowerCase())) {
-      setDraft('');
-      onChange(writeFilterValue(picks, ''));
-      return;
-    }
-    setDraft('');
-    onChange(writeFilterValue([...picks, t], ''));
+  function setPicks(next) {
+    onChange(writeFilterValue(next, draft));
   }
-  function removePick(s) {
-    onChange(writeFilterValue(picks.filter(p => p !== s), draft));
+  function togglePick(s) {
+    if (pickedKeys.has(s.toLowerCase())) setPicks(picks.filter(p => p.toLowerCase() !== s.toLowerCase()));
+    else setPicks([...picks, s]);
+  }
+  // Tick (or untick) everything the search is currently showing.
+  function toggleAllMatches() {
+    const shown = new Set(matches.map(s => s.toLowerCase()));
+    if (allMatchesPicked) setPicks(picks.filter(p => !shown.has(p.toLowerCase())));
+    else setPicks([...picks, ...matches.filter(s => !pickedKeys.has(s.toLowerCase()))]);
+  }
+  function clearAll() {
+    setDraft('');
+    onChange([]);
   }
   function onKeyDown(e) {
     if (e.key === 'Enter') {
       e.preventDefault();
-      // First match wins on Enter — picks the highlighted suggestion or
-      // commits the typed text when nothing matches.
-      if (matches.length > 0) addPick(matches[0]);
-      else if (draft.trim()) addPick(draft);
+      // Enter on a search ticks everything it matches and clears the box,
+      // ready for the next search.
+      if (draft.trim() && matches.length > 0) {
+        const add = matches.filter(s => !pickedKeys.has(s.toLowerCase()));
+        setDraft('');
+        onChange(writeFilterValue([...picks, ...add], ''));
+      } else {
+        setOpen(false);
+      }
     } else if (e.key === 'Backspace' && !draft && picks.length > 0) {
-      removePick(picks[picks.length - 1]);
+      setPicks(picks.slice(0, -1));
     } else if (e.key === 'Escape') {
       setOpen(false);
+      e.currentTarget.blur();
     } else if (e.key === 'ArrowDown') {
-      setOpen(true);
+      openDropdown();
     }
   }
 
@@ -216,8 +259,8 @@ export function ColumnFilterCell({ value, onChange, suggestions, hasBlanks = fal
   // viewport coordinates side-steps that and lets the list be wider
   // than the (often narrow) filter column.
   const dropdownStyle = anchorRect ? (() => {
-    const minWidth = Math.max(anchorRect.width, 220);
-    const left = Math.min(anchorRect.left, window.innerWidth - minWidth - 8);
+    const minWidth = Math.max(anchorRect.width, 240);
+    const left = Math.max(8, Math.min(anchorRect.left, window.innerWidth - minWidth - 8));
     const spaceBelow = window.innerHeight - anchorRect.bottom;
     const flipAbove = spaceBelow < 200 && anchorRect.top > spaceBelow;
     return {
@@ -227,50 +270,63 @@ export function ColumnFilterCell({ value, onChange, suggestions, hasBlanks = fal
       left,
       minWidth,
       maxWidth: Math.min(420, window.innerWidth - left - 8),
-      maxHeight: flipAbove ? Math.min(320, anchorRect.top - 8) : Math.min(320, spaceBelow - 8),
+      maxHeight: flipAbove ? Math.min(340, anchorRect.top - 8) : Math.min(340, spaceBelow - 8),
       zIndex: 10000,
       background: '#fff',
       border: '1px solid var(--color-border)',
       borderRadius: 4,
       overflowY: 'auto',
       boxShadow: '0 8px 24px rgba(15, 23, 42, 0.18)',
+      textAlign: 'left',
+      textTransform: 'none',
+      fontWeight: 400,
     };
   })() : null;
 
+  const chipStyle = { display: 'inline-flex', alignItems: 'center', gap: 2, background: '#DBEAFE', border: '1px solid #93C5FD', color: '#1E3A8A', borderRadius: 999, padding: '0 4px 0 6px', fontSize: '0.62rem', fontWeight: 600, lineHeight: 1.5, maxWidth: '100%' };
+  const chipX = { background: 'transparent', border: 'none', color: '#1E3A8A', cursor: 'pointer', padding: 0, lineHeight: 1, fontSize: '0.85rem' };
+  const what = label ? `the ${label} filter` : 'this filter';
+
   return (
-    <div ref={wrapRef} style={{ position: 'relative' }}>
+    <div ref={wrapRef} style={{ position: 'relative', textAlign: 'left', textTransform: 'none', fontWeight: 400 }}>
       <div
-        onClick={openDropdown}
+        onClick={() => { openDropdown(); inputRef.current?.focus(); }}
         style={{
           display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center',
           padding: '1px 3px',
-          border: '1px solid var(--color-border)', borderRadius: 4,
+          border: `1px solid ${picks.length || draft ? 'var(--color-accent)' : 'var(--color-border)'}`, borderRadius: 4,
           background: '#fff', minHeight: 22, cursor: 'text',
         }}
       >
-        {picks.map(p => (
-          <span
-            key={p}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 2, background: '#DBEAFE', border: '1px solid #93C5FD', color: '#1E3A8A', borderRadius: 999, padding: '0 4px 0 6px', fontSize: '0.62rem', fontWeight: 600, lineHeight: 1.5, maxWidth: '100%' }}
-            title={p}
-          >
+        {picks.length > MAX_CHIPS ? (
+          <span style={chipStyle} title={picks.join(', ')}>
+            <span style={{ whiteSpace: 'nowrap' }}>{picks.length} selected</span>
+            <button type="button" onClick={e => { e.stopPropagation(); setPicks([]); }} style={chipX} title={`Clear ${what}`} aria-label={`Clear ${what}`}>×</button>
+          </span>
+        ) : picks.map(p => (
+          <span key={p} style={chipStyle} title={p}>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>{p}</span>
             <button
               type="button"
-              onClick={e => { e.stopPropagation(); removePick(p); }}
-              style={{ background: 'transparent', border: 'none', color: '#1E3A8A', cursor: 'pointer', padding: 0, lineHeight: 1, fontSize: '0.85rem' }}
+              onClick={e => { e.stopPropagation(); togglePick(p); }}
+              style={chipX}
               title="Remove filter"
+              aria-label={`Remove ${p}`}
             >×</button>
           </span>
         ))}
         <input
+          ref={inputRef}
           type="text"
           value={draft}
           onChange={e => { pushDraft(e.target.value); openDropdown(); }}
           onFocus={openDropdown}
           onKeyDown={onKeyDown}
-          placeholder={picks.length === 0 ? 'Filter…' : ''}
-          style={{ border: 'none', outline: 'none', flex: '1 0 60px', minWidth: 40, fontSize: '0.68rem', fontFamily: 'inherit', padding: '1px 2px', background: 'transparent' }}
+          placeholder={picks.length === 0 ? 'Search…' : ''}
+          aria-label={label ? `Search or pick ${label} values` : 'Search or pick values'}
+          title="Type to search this column, or tick values in the list to filter by them"
+          autoComplete="off"
+          style={{ border: 'none', outline: 'none', flex: '1 0 50px', minWidth: 36, fontSize: '0.68rem', fontFamily: 'inherit', padding: '1px 2px', background: 'transparent' }}
         />
       </div>
       {open && dropdownStyle && createPortal(
@@ -278,24 +334,48 @@ export function ColumnFilterCell({ value, onChange, suggestions, hasBlanks = fal
           ref={dropdownRef}
           style={dropdownStyle}
           onMouseDown={e => e.preventDefault() /* keep input focused */}
+          role="listbox"
+          aria-multiselectable="true"
         >
           {matches.length === 0 ? (
             <div style={{ padding: '6px 10px', fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-              {suggestions.length === 0 ? 'No values to filter by.' : 'No match: keep typing to filter.'}
+              {draft.trim() ? 'No match: try another search.' : 'No values to filter by.'}
             </div>
           ) : (
             <>
-              {matches.map(s => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => addPick(s)}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '4px 8px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.72rem', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                  onMouseEnter={e => e.currentTarget.style.background = '#F1F5F9'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                  title={s}
-                >{s}</button>
-              ))}
+              <div style={{ position: 'sticky', top: 0, zIndex: 1, display: 'flex', alignItems: 'center', background: '#F8FAFC', borderBottom: '1px solid var(--color-border-light)' }}>
+                <label style={{ ...CHECK_ROW_STYLE, fontWeight: 600, flex: 1 }}>
+                  <input ref={selectAllRef} type="checkbox" checked={allMatchesPicked} onChange={toggleAllMatches} style={{ margin: 0 }} />
+                  {draft.trim() ? `Select all matching (${totalAvailable})` : `Select all (${totalAvailable})`}
+                </label>
+                {(picks.length > 0 || draft) && (
+                  <button
+                    type="button"
+                    onClick={clearAll}
+                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-accent)', fontSize: '0.68rem', fontFamily: 'inherit', padding: '3px 8px', whiteSpace: 'nowrap' }}
+                    title={`Clear ${what}`}
+                  >Clear</button>
+                )}
+              </div>
+              {matches.map(s => {
+                const on = pickedKeys.has(s.toLowerCase());
+                const n = countOf(s);
+                return (
+                  <label
+                    key={s}
+                    role="option"
+                    aria-selected={on}
+                    style={CHECK_ROW_STYLE}
+                    onMouseEnter={e => { e.currentTarget.style.background = '#F1F5F9'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                    title={s}
+                  >
+                    <input type="checkbox" checked={on} onChange={() => togglePick(s)} style={{ margin: 0, flex: '0 0 auto' }} />
+                    <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontStyle: isBlanksToken(s) ? 'italic' : undefined }}>{s}</span>
+                    {n != null && <span style={{ flex: '0 0 auto', color: 'var(--color-text-muted)', fontSize: '0.65rem' }}>{n}</span>}
+                  </label>
+                );
+              })}
               {totalAvailable > matches.length && (
                 <div style={{ position: 'sticky', bottom: 0, padding: '4px 8px', fontSize: '0.65rem', color: 'var(--color-text-muted)', background: '#F8FAFC', borderTop: '1px solid var(--color-border-light)' }}>
                   Showing {matches.length} of {totalAvailable}: type to narrow.
@@ -309,7 +389,6 @@ export function ColumnFilterCell({ value, onChange, suggestions, hasBlanks = fal
     </div>
   );
 }
-
 
 // Column layout persistence lives in utils/tablePrefsSync — local copy plus
 // the Firestore one at settings.tablePrefs[tableId], so a layout follows the
@@ -390,10 +469,11 @@ export function DataTable({
   // when the user has hidden them on screen. Included in their natural
   // column order; ignored when a custom onExport is supplied.
   exportExtraColumnKeys,
-  // When true, every visible column gets a compact text input under
-  // its header. Rows are filtered (substring, case-insensitive) by
-  // the raw cell value for each column that has a non-empty filter.
-  enableColumnFilters = false,
+  // Every visible column gets a filter under its header (part of Dan's
+  // column formatting, so on by default): type to search the column, or
+  // tick values in its list to filter to exactly those. Pass false for a
+  // table that shouldn't have the filter row.
+  enableColumnFilters = true,
   // When true, the columns are scaled to fill the table's width exactly:
   // stretched when there is room to spare, squeezed when there isn't, so
   // the table never scrolls sideways. Widths keep their proportions, and a
@@ -772,50 +852,32 @@ export function DataTable({
 
   // Sort rows internally if no external sort.
   // Apply per-column filters on top of the externally-filtered rows prop.
-  // Each colFilters[key] is either a string (legacy) or array of strings
-  // (chips from ColumnFilterCell). A row passes if, for each filtered
-  // column, the cell value (case-insensitive) contains at least one of
-  // the picked values. Columns that supply getFilterValue use that
-  // instead of row[key] so derived/custom-render columns can still
-  // filter on what the user actually sees.
+  // Each colFilters[key] is what ColumnFilterCell hands back (ticked
+  // values, plus whatever is in its search box), matched by the shared
+  // pick-list rules in utils/columnFilter. Columns that supply
+  // getFilterValue use that instead of row[key] so derived/custom-render
+  // columns can still filter on what the user actually sees.
   const colByKey = useMemo(() => {
     const m = new Map();
     for (const c of columns) m.set(c.key, c);
     return m;
   }, [columns]);
-  const filteredRows = useMemo(() => {
-    const active = [];
-    for (const [key, raw] of Object.entries(colFilters)) {
-      let picks = [];
-      let draft = '';
-      if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-        if (Array.isArray(raw.picks)) picks = raw.picks.map(s => String(s || '').trim()).filter(Boolean);
-        if (typeof raw.draft === 'string') draft = raw.draft.trim();
-      } else if (Array.isArray(raw)) {
-        picks = raw.map(s => String(s || '').trim()).filter(Boolean);
-      } else if (typeof raw === 'string' && raw.trim()) {
-        picks = [raw.trim()];
-      }
-      if (picks.length > 0 || draft.length > 0) active.push({ key, picks, draft });
-    }
+  const filterValueOf = useCallback((row, key) => {
+    const getter = colByKey.get(key)?.getFilterValue;
+    return getter ? getter(row) : row[key];
+  }, [colByKey]);
+  const activeColFilters = useMemo(
+    () => Object.entries(colFilters).filter(([, raw]) => pickFilterIsActive(raw)),
+    [colFilters],
+  );
+  // Rows passing every column filter except `skipKey`'s: what that
+  // column's pick list offers, so it only shows values that are on screen.
+  const rowsPassing = useCallback((skipKey) => {
+    const active = skipKey == null ? activeColFilters : activeColFilters.filter(([k]) => k !== skipKey);
     if (active.length === 0) return rows;
-    return rows.filter(row => {
-      for (const { key, picks, draft } of active) {
-        const col = colByKey.get(key);
-        const getter = col?.getFilterValue;
-        const raw = getter ? getter(row) : row[key];
-        const hay = String(raw ?? '').toLowerCase();
-        // Combine committed picks (OR) with the live-typed draft (also OR).
-        // The row passes the column's filter if any pick matches as a
-        // substring OR the draft matches as a substring. The "(Blanks)"
-        // token is special: it matches only rows whose value is empty.
-        const candidates = [...picks];
-        if (draft) candidates.push(draft);
-        if (!candidates.some(p => isBlanksToken(p) ? hay.trim() === '' : hay.includes(p.toLowerCase()))) return false;
-      }
-      return true;
-    });
-  }, [rows, colFilters, colByKey]);
+    return rows.filter(row => active.every(([key, raw]) => pickFilterMatches(filterValueOf(row, key), raw)));
+  }, [rows, activeColFilters, filterValueOf]);
+  const filteredRows = useMemo(() => rowsPassing(null), [rowsPassing]);
 
   // Notify the consumer whenever the filtered-row set changes so it can
   // sync its own "select all visible" state against what's actually on
@@ -824,50 +886,17 @@ export function DataTable({
     if (onFilteredRowsChange) onFilteredRowsChange(filteredRows);
   }, [filteredRows, onFilteredRowsChange]);
 
-  // Distinct values per column from the current row pool, used to feed
-  // the column-filter autocomplete suggestions. Computed lazily and
-  // cached so opening the dropdown is cheap on big lists.
-  const filterSuggestions = useMemo(() => {
+  // Each column's pick list: its values with counts, from the rows the
+  // other columns' filters leave. Worked out only when that column's list
+  // is opened (ColumnFilterCell calls it), and cached until rows or
+  // filters change.
+  const filterOptions = useMemo(() => {
     const cache = new Map();
     return (key) => {
-      if (cache.has(key)) return cache.get(key);
-      const col = colByKey.get(key);
-      const getter = col?.getFilterValue;
-      const seen = new Set();
-      const out = [];
-      for (const row of rows) {
-        const raw = getter ? getter(row) : row[key];
-        const v = String(raw ?? '').trim();
-        if (!v) continue;
-        const lower = v.toLowerCase();
-        if (seen.has(lower)) continue;
-        seen.add(lower);
-        out.push(v);
-      }
-      out.sort((a, b) => a.localeCompare(b));
-      cache.set(key, out);
-      return out;
+      if (!cache.has(key)) cache.set(key, pickListOptions(rowsPassing(key).map(row => filterValueOf(row, key))));
+      return cache.get(key);
     };
-  }, [rows, colByKey]);
-
-  // Whether a column has any blank cell in the current row pool — gates the
-  // "(Blanks)" filter option so it only shows on columns that actually have
-  // empties. Uses the same getFilterValue/row[key] source as the filter.
-  const columnHasBlanks = useMemo(() => {
-    const cache = new Map();
-    return (key) => {
-      if (cache.has(key)) return cache.get(key);
-      const col = colByKey.get(key);
-      const getter = col?.getFilterValue;
-      let has = false;
-      for (const row of rows) {
-        const raw = getter ? getter(row) : row[key];
-        if (String(raw ?? '').trim() === '') { has = true; break; }
-      }
-      cache.set(key, has);
-      return has;
-    };
-  }, [rows, colByKey]);
+  }, [rowsPassing, filterValueOf]);
 
   const baseSortedRows = useMemo(() => {
     if (externalSortConfig || !internalSort.key) return filteredRows;
@@ -1380,8 +1409,8 @@ export function DataTable({
                                 else out[col.key] = next;
                                 return out;
                               })}
-                              suggestions={filterSuggestions(col.key)}
-                              hasBlanks={columnHasBlanks(col.key)}
+                              options={() => filterOptions(col.key)}
+                              label={typeof col.label === 'string' ? col.label : undefined}
                             />
                           ) : null}
                         </th>

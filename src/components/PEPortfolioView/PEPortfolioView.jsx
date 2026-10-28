@@ -21,6 +21,7 @@ import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 import { CompanyNewsScheduleModal } from './CompanyNewsScheduleModal';
 import { PEServicesReportModal } from './PEServicesReportModal';
 import { DataTable, ColumnFilterCell } from '../common/DataTable';
+import { pickFilterMatches } from '../../utils/columnFilter';
 import { buildZoomCsv, downloadZoomCsv } from '../../utils/zoomCsv';
 import { buildZoomExcludedMatcher } from '../../utils/zoomExportExclude';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
@@ -1527,14 +1528,13 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     return out;
   }, [colFilters, visibleCols]);
 
-  // A picked value matches its cell exactly, so picking "Sold" doesn't also
-  // keep the "Not Sold" firms; what's still being typed narrows by substring.
-  const passesColFilter = useCallback((pe, { key, picks, draft }) => {
-    const v = String(filterValueOf(key, pe) ?? '').trim();
-    const lower = v.toLowerCase();
-    if (picks.some(p => (p.toLowerCase() === '(blanks)' ? v === '' : lower === p.toLowerCase()))) return true;
-    return !!draft && lower.includes(draft);
-  }, [filterValueOf]);
+  // The shared pick-list rule (utils/columnFilter): a picked value matches
+  // its cell exactly, so picking "Sold" doesn't also keep the "Not Sold"
+  // firms; with nothing picked, what's being typed narrows by substring.
+  const passesColFilter = useCallback(
+    (pe, { key, picks, draft }) => pickFilterMatches(filterValueOf(key, pe), { picks, draft }),
+    [filterValueOf],
+  );
 
   const q = query.trim().toLowerCase();
   const searchedFirms = q

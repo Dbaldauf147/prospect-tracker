@@ -133,3 +133,82 @@ export function filtersForColumns(filters, columnKeys = []) {
   for (const [k, v] of Object.entries(current)) if (keep.has(k)) next[k] = v;
   return next;
 }
+
+/**
+ * A pick-list filter's value, normalized to { picks, draft }.
+ *
+ * The header filter on the shared DataTable (and the PE Portfolio table that
+ * borrows its cell) holds two things: the values ticked in its list, and
+ * whatever is still in the search box. It hands back a bare array of picks
+ * when nothing is being typed and { picks, draft } when something is; an old
+ * single string is read as one pick. Blank picks are dropped.
+ */
+export function readPickFilter(raw) {
+  let picks = [];
+  let draft = '';
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    if (Array.isArray(raw.picks)) picks = raw.picks;
+    if (typeof raw.draft === 'string') draft = raw.draft;
+  } else if (Array.isArray(raw)) {
+    picks = raw;
+  } else if (typeof raw === 'string') {
+    picks = [raw];
+  }
+  return {
+    picks: picks.map(p => String(p ?? '').trim()).filter(Boolean),
+    draft: draft.trim(),
+  };
+}
+
+/** Is anything ticked or typed in a pick-list filter? */
+export function pickFilterIsActive(raw) {
+  const { picks, draft } = readPickFilter(raw);
+  return picks.length > 0 || draft !== '';
+}
+
+/**
+ * Does one cell pass a pick-list filter? An empty filter passes everything.
+ *
+ * Ticked values match their cell exactly (ignoring case), so ticking "Sold"
+ * doesn't also keep "Not Sold"; the bracketed words keep the blank or the
+ * non-blank cells, and a cell passes on any one tick. Once anything is
+ * ticked the ticks decide: the search box goes back to narrowing the list
+ * being ticked from, so searching "a" to find "Alpha" and ticking it shows
+ * the Alpha rows rather than every row with an "a" in it. With nothing
+ * ticked, what is typed narrows the rows by substring, live.
+ */
+export function pickFilterMatches(value, raw) {
+  const { picks, draft } = readPickFilter(raw);
+  const text = String(value ?? '').trim();
+  const lower = text.toLowerCase();
+  if (picks.length === 0) return !draft || lower.includes(draft.toLowerCase());
+  return picks.some((p) => {
+    const key = p.toLowerCase();
+    if (key === BLANKS_KEY) return text === '';
+    if (key === NON_BLANKS_KEY) return text !== '';
+    return lower === key;
+  });
+}
+
+/**
+ * What a column's pick list offers: each distinct value in `values` with how
+ * many rows hold it, in the order collectSuggestions sorts them, plus how
+ * many cells are blank.
+ *
+ * Feed it the rows that pass every OTHER column's filter and the list shows
+ * only what is actually on screen to pick from, the way a spreadsheet's
+ * filter does: after Region is set to "West", Owner only offers the people
+ * who own something in the West.
+ */
+export function pickListOptions(values = []) {
+  const counts = new Map();
+  let blanks = 0;
+  for (const v of values) {
+    const raw = String(v ?? '').trim();
+    if (!raw) { blanks += 1; continue; }
+    const key = raw.toLowerCase();
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const suggestions = collectSuggestions(values);
+  return { suggestions, counts, blanks };
+}

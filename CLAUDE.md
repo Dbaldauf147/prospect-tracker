@@ -29,21 +29,30 @@ default** whether or not he asks, the table's columns are:
 5. **Presets** - "+ Save current" stores the columns showing now, in their
    order, under a name; clicking that preset's chip shows exactly those
    columns again.
+6. **Searchable, pickable filter** - a box under each header searches the
+   column as you type; its drop-down lists the column's values (only those
+   the other columns' filters leave on screen, with row counts) as
+   checkboxes, so you can tick one or several to filter to exactly those.
+   "Select all" / Enter ticks everything the search matches. Filters are
+   per session, not saved.
 
-All five are saved per user and synced through `settings.tablePrefs[tableId]`
+Items 1-5 are saved per user and synced through `settings.tablePrefs[tableId]`
 so the layout follows Dan to his other machine.
 
 How to get it:
 
 - **Use the shared `DataTable`** (`src/components/common/DataTable.jsx`)
   with a stable `tableId` and `settings`/`updateSettings` passed in. It has
-  all five built in (presets come through `ColumnToggle`).
+  all six built in (presets come through `ColumnToggle`; the filter row is
+  on by default, `enableColumnFilters={false}` turns it off).
 - **A table that draws its own markup** wires the same pieces: widths, order
   and hidden through `useSyncedTablePref` (or `useTableColumnPrefs`),
   presets through `useColumnPresets` + `<ColumnPresets>` with the rules in
   `src/utils/columnPresets.js`. The company popup's Portfolio Companies
   table (`ProspectModal.jsx`, `PORTFOLIO_PREFS_TABLE_ID`) is the reference
-  example.
+  example. Its filter row is `ColumnFilterCell` from `DataTable.jsx`
+  with the pick-list rules in `src/utils/columnFilter.js`
+  (`pickFilterMatches`, `pickListOptions`); PE Portfolio is the example.
 
 ## No em dashes on the site
 
