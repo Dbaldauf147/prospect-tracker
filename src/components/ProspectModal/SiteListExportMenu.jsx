@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   siteListColumns, downloadSiteListExcel, downloadSiteListCsv,
 } from '../../utils/siteListExport.js';
+import { downloadPrwSiteList } from '../../utils/prwSiteListExport.js';
 
 // Export the company's saved Site List, by the columns you pick.
 //
@@ -79,11 +80,12 @@ export function SiteListExportMenu({ list, company }) {
   }
 
   async function run(kind) {
-    if (chosen.length === 0) return;
+    if (kind !== 'prw' && chosen.length === 0) return;
     setBusy(kind);
     setError('');
     try {
-      if (kind === 'xlsx') await downloadSiteListExcel(list, chosen, company);
+      if (kind === 'prw') await downloadPrwSiteList(list, company);
+      else if (kind === 'xlsx') await downloadSiteListExcel(list, chosen, company);
       else downloadSiteListCsv(list, chosen, company);
       setOpen(false);
     } catch (err) {
@@ -200,6 +202,26 @@ export function SiteListExportMenu({ list, company }) {
           <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.55rem' }}>
             {fileButton('Excel', 'xlsx', `Download ${chosen.length} column${chosen.length === 1 ? '' : 's'} as .xlsx`)}
             {fileButton('CSV', 'csv', `Download ${chosen.length} column${chosen.length === 1 ? '' : 's'} as .csv`)}
+          </div>
+          {/* PRW's own fixed layout, so the column ticks above don't
+              apply to it. Excel only: the estimated / actual formatting
+              is the point, and a CSV can't carry it. */}
+          <div style={{ borderTop: '1px solid var(--color-border-light)', marginTop: '0.6rem', paddingTop: '0.55rem' }}>
+            <button
+              type="button"
+              onClick={() => run('prw')}
+              disabled={!!busy}
+              title="Download in the PRW Site List layout: site, address, then electric and gas spend, usage and accounts. Estimated figures are italic amber; actual figures are plain."
+              style={{
+                width: '100%', padding: '0.32rem 0.6rem', borderRadius: 6,
+                border: '1px solid #005A9E', background: busy ? '#94A3B8' : '#005A9E',
+                color: '#fff', fontSize: '0.72rem', fontWeight: 600,
+                cursor: busy ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+              }}
+            >{busy === 'prw' ? 'Preparing…' : '↓ PRW Site List (Excel)'}</button>
+            <div style={{ fontSize: '0.66rem', color: 'var(--color-text-muted)', marginTop: '0.3rem', lineHeight: 1.35 }}>
+              Fixed PRW columns. Estimated values are <span style={{ fontStyle: 'italic', color: '#B45309', background: '#FEF3C7', padding: '0 0.2rem' }}>italic amber</span>, actual values plain.
+            </div>
           </div>
         </div>,
         document.body,
