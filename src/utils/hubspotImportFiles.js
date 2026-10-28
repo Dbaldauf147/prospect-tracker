@@ -275,7 +275,10 @@ export function buildImportFiles({
       email, clean(c.firstname), clean(c.lastname), clean(c.jobtitle), clean(c.phone), clean(c.mobilephone),
       clean(c.city), clean(c.state), clean(c.country), clean(c.hs_linkedin_url || c.linkedin_url), ownerEmail,
       legalBasis,
-      linked ? clean(linked.name) : prospect ? clean(prospect.company) : companyName, domain, recordId,
+      // No company name without a domain or record id to go with it: in a
+      // contacts-and-companies import a bare name makes a NEW company, and
+      // the first real round made one for every unlinked contact.
+      (domain || recordId) ? (linked ? clean(linked.name) : prospect ? clean(prospect.company) : companyName) : '', domain, recordId,
       ...(() => {
         const h = formatActivityHistory(activityByEmail.get(email));
         if (h.count) report.contactsWithHistory += 1;
