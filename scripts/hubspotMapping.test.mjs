@@ -7,12 +7,14 @@
 //   * an account matches by website (Company Domain Name / Website URL
 //     against its Website or Email Domain), then by name, goes-by or alias, and every same-named
 //     HubSpot record comes with it (duplicates show),
-//   * an account with no match gets HubSpot companies starting the same
-//     way as possible matches; a link picks one and claims it,
+//   * an account with no match gets the closest unclaimed HubSpot names as
+//     possible matches with a % (and a HubSpot-only company the closest
+//     unmatched accounts); generic words alone don't make names alike; a
+//     link picks one and claims it,
 //   * a Client that isn't a Customer in HubSpot is flagged, and so is a
 //     HubSpot Customer that isn't a Client or Old Client here,
 //   * HubSpot companies no account claims are listed on their own.
-import { compactMappingCompanies, buildHubspotMapping, statusDiscrepancy, MAPPING_STATUS } from '../src/utils/hubspotMapping.js';
+import { compactMappingCompanies, buildHubspotMapping, statusDiscrepancy, nameSimilarity, MAPPING_STATUS } from '../src/utils/hubspotMapping.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -44,7 +46,8 @@ const byKey = Object.fromEntries(rows.map(r => [r.key, r]));
 eq(byKey['a:a'].hubspot.map(c => c.id), ['1', '2'], 'every same-named HubSpot record comes with the account');
 eq(byKey['a:c'].status, MAPPING_STATUS.matched, 'an alias matches');
 eq(byKey['a:e'].hubspot.map(c => c.id), ['5'], 'corporate suffixes are ignored');
-eq([byKey['a:b'].status, byKey['a:b'].suggestions.map(c => c.id)], [MAPPING_STATUS.accountOnly, ['3']], 'a name starting the same way is a possible match');
+eq([byKey['a:b'].status, byKey['a:b'].suggestions.map(m => [m.hubspotId, m.accountId, m.score])], [MAPPING_STATUS.accountOnly, [['3', 'b', 83]]], 'a name starting the same way is a possible match, with its %');
+eq(rows.find(r => r.key === 'h:3').suggestions.map(m => [m.accountId, m.hubspotId, m.name]), [['b', '3', 'Acme']], 'a HubSpot-only company is offered the unmatched account it may be');
 eq(byKey['a:d'].suggestions, [], 'nothing alike, nothing suggested');
 eq(rows.filter(r => r.status === MAPPING_STATUS.hubspotOnly).map(r => r.hubspot[0].id), ['3'], 'an unclaimed HubSpot company is listed on its own');
 eq(buildHubspotMapping([], companies).filter(r => r.hubspot.length > 1).map(r => r.hubspot.map(c => c.id)), [['1', '2']], 'same-named unclaimed records share a row');
@@ -52,6 +55,15 @@ eq(buildHubspotMapping([], companies).filter(r => r.hubspot.length > 1).map(r =>
 rows = buildHubspotMapping(accounts, companies, { links: { b: '3' } });
 eq(rows.find(r => r.key === 'a:b').how, 'linked', 'a link maps the account');
 eq(rows.filter(r => r.status === MAPPING_STATUS.hubspotOnly).length, 0, 'a linked company is no longer HubSpot-only');
+
+// ── name similarity ──────────────────────────────────────────────────────
+eq(nameSimilarity('Hines', 'Hines Inc.'), 100, 'corporate suffixes are ignored');
+eq(nameSimilarity('Hines Interest', 'Hines Interests') >= 90, true, 'a missing "s" still scores high');
+eq(nameSimilarity('Blackstone', 'Blackstone Real Estate') >= 75, true, 'the distinctive word carries a longer name');
+eq(nameSimilarity('ABC Capital Partners', 'XYZ Capital Partners') < 60, true, 'sharing only generic words is not a match');
+eq(nameSimilarity('Brookfield', 'Nuveen') < 30, true, 'different names score low');
+const many = compactMappingCompanies(['Acme One', 'Acme Two', 'Acme Three', 'Acme Four'].map((n, i) => ({ 'Company name': n, 'Company ID': `m${i}` })));
+eq(buildHubspotMapping([{ id: 'z', company: 'Acme' }], many)[0].suggestions.length, 3, 'a row shows the best three');
 
 // ── matching by website ──────────────────────────────────────────────────
 const sites = compactMappingCompanies([
