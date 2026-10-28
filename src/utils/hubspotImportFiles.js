@@ -54,6 +54,10 @@ export const CONTACT_HEADERS = [
   'Activity History', 'Last Activity Date', 'Activity Count',
 ];
 export const FIELD_HEADERS = ['Object', 'Property label', 'Suggested type', 'Options seen in the data', 'Why'];
+// Companies the new portal already had, put in Dan's name: he owns every
+// company he works, whoever held it there before (his call). Imported with
+// "Update existing records only", matched on Record ID.
+export const OWNER_UPDATE_HEADERS = ['Record ID', 'Company name', 'Company owner'];
 
 /** 'https://www.Acme.com/about' -> 'acme.com'. '' when there is none. */
 export function domainOf(v) {
@@ -298,7 +302,7 @@ export function buildImportFiles({
     // The portal has it already: linked to, not created again.
     const there = matchFor(p);
     if (there) {
-      report.companiesExisting.push({ name: clean(p.company), existing: clean(there.name), id: String(there.id) });
+      report.companiesExisting.push({ name: clean(p.company), existing: clean(there.name), id: String(there.id), owner: clean(there.owner) });
       continue;
     }
     const domain = prospectDomain(p);
@@ -368,6 +372,14 @@ export function buildImportFiles({
 
   return {
     companies: { headers: COMPANY_HEADERS, rows: companyRows },
+    // One row per existing company not already Dan's (several of his
+    // companies can land on the same record).
+    ownerUpdates: {
+      headers: OWNER_UPDATE_HEADERS,
+      rows: [...new Map(report.companiesExisting
+        .filter(c => !ownerIsMe(c.owner, me))
+        .map(c => [c.id, [c.id, c.existing, ownerEmail]])).values()],
+    },
     contacts: { headers: CONTACT_HEADERS, rows: contactRows },
     fields: { headers: FIELD_HEADERS, rows: fieldRows },
     report,

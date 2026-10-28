@@ -13,7 +13,8 @@
 //     link to it by Record ID with its name,
 //   * a contact a colleague owns there is left out; Dan's own and unowned
 //     ones stay, and each is counted,
-//   * every contact carries the legal basis.
+//   * every contact carries the legal basis,
+//   * existing companies not already Dan's are put in his name by Record ID.
 import { compactCompanies, compactContacts, companyMatcher, ownerIsMe, domainKey } from '../src/utils/seHubspotExisting.js';
 import { buildImportFiles, CONTACT_HEADERS, DEFAULT_LEGAL_BASIS } from '../src/utils/hubspotImportFiles.js';
 
@@ -84,7 +85,10 @@ const portal = [
   };
   const out = buildImportFiles({ prospects, contacts, existing, ownerEmail: 'daniel.baldauf@se.com', ownerName: 'Dan Baldauf' });
   eq(out.companies.rows.map(r => r[1]), ['Newco'], 'a company the portal has is left out of the companies file');
-  eq(out.report.companiesExisting, [{ name: 'Rehlko', existing: 'Rehlko', id: '101' }], '...and listed');
+  eq(out.report.companiesExisting, [{ name: 'Rehlko', existing: 'Rehlko', id: '101', owner: 'Alexis Nickl' }], '...and listed');
+  eq(out.ownerUpdates.rows, [['101', 'Rehlko', 'daniel.baldauf@se.com']], "an existing company someone else owns is put in Dan's name, by Record ID");
+  const mine = buildImportFiles({ prospects: [{ id: 'p2', company: 'Brookfield Renewable', website: 'brookfield.com' }], contacts: [{ id: '7', email: 'a@brookfield.com', company: 'Brookfield Renewable' }], existing, ownerEmail: 'daniel.baldauf@se.com', ownerName: 'Dan Baldauf' });
+  eq(mine.ownerUpdates.rows, [], 'one Dan already owns needs no update');
   eq(out.contacts.rows.map(r => r[0]), ['francis@rehlko.com', 'mine@rehlko.com', 'ann@newco.com'], "a colleague's contact is left out");
   eq(out.report.contactsColleagueOwned, [{ email: 'kat-owned@rehlko.com', owner: 'Kat Gross' }], '...and listed with its owner');
   eq([out.report.contactsExistingMine, out.report.contactsExistingUnowned], [1, 1], "Dan's own and unowned ones are counted");
