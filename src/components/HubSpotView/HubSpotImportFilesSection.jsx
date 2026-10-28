@@ -5,7 +5,7 @@
 // time, from the newest complete HubSpot backup (api/hubspot-backup.js
 // activity-digest). Nothing is sent to HubSpot; the files are built in the
 // browser and downloaded.
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiFetch } from '../../utils/apiFetch';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
@@ -58,6 +58,52 @@ const fmtRun = (runId) => {
   return Number.isNaN(d.getTime()) ? runId : d.toLocaleString();
 };
 
+// The weekly email of the same files (api/hubspot-weekly-export.js): when
+// it goes, where, how the last one went, and a button to send it now.
+function WeeklyEmail() {
+  const [status, setStatus] = useState(null);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  const load = async () => {
+    try { setStatus(await getJson('/api/hubspot-weekly-export?action=status')); }
+    catch (err) { setError(err.message); }
+  };
+  useEffect(() => { load(); }, []);
+  const send = async () => {
+    setSending(true); setError('');
+    try {
+      const res = await apiFetch('/api/hubspot-weekly-export?action=send', { method: 'POST' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSending(false);
+      load();
+    }
+  };
+  const last = status?.last;
+  return (
+    <div className={styles.card}>
+      <div className={styles.sectionHead}>
+        <div className={styles.cardTitle}>Weekly email</div>
+        <button className={styles.btnGhost} onClick={send} disabled={sending}>{sending ? 'Building and sending (a minute or two)...' : 'Send it now'}</button>
+      </div>
+      <p className={styles.muted}>
+        {status ? <>{status.schedule}, the three files are built from your current HubSpot account and emailed to <b>{status.to.join(', ')}</b>, owned by <b>{status.owner}</b>, with the import option for each.</> : 'Loading...'}
+      </p>
+      {last && (
+        <p className={last.ok ? styles.ok : styles.errText}>
+          {last.ok
+            ? `Last sent ${new Date(last.finishedAt).toLocaleString()}: ${fmt(last.counts?.companies)} companies, ${fmt(last.counts?.contacts)} contacts, ${fmt(last.counts?.updates)} updates.`
+            : `Last run ${new Date(last.finishedAt).toLocaleString()} failed: ${last.error}`}
+        </p>
+      )}
+      {error && <div className={styles.error}>{error}</div>}
+    </div>
+  );
+}
+
 export function HubSpotImportFilesSection({ prospects = [], settings = {} }) {
   const { user } = useAuth();
   const [ownerEmail, setOwnerEmail] = useState('daniel.baldauf@se.com');
@@ -104,9 +150,10 @@ export function HubSpotImportFilesSection({ prospects = [], settings = {} }) {
       </div>
       <p className={styles.muted}>
         For a portal the site can&apos;t connect to. Builds your companies and contacts as CSV files for
-        HubSpot&apos;s own Import screen (Data integration, Import a file). Nothing is sent anywhere: the files
-        are built in this browser and downloaded.
+        HubSpot&apos;s own Import screen (Data integration, Import a file). Nothing is sent to that portal: the
+        weekly email brings you the files, and Build files makes them here to download.
       </p>
+      <WeeklyEmail />
       <div className={styles.controls}>
         <label>Owner in the new portal
           <input className={styles.input} value={ownerEmail} onChange={e => setOwnerEmail(e.target.value)} />

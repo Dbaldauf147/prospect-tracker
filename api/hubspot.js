@@ -1514,4 +1514,4 @@ export default withAuth(handler);
 // scripts/contactTagsRead.test.mjs. Vercel only routes the default export, so
 // the extra names don't change the endpoint. `handler` is the unwrapped
 // version — the tests supply their own request rather than an auth session.
-export { isDansTagsOptionError, normalizeDansTagsForHubSpot, reconcileDansTags, handler as handlerForTests };
+export { isDansTagsOptionError, normalizeDansTagsForHubSpot, reconcileDansTags, getAllContacts, handler as handlerForTests };

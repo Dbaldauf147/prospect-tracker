@@ -121,6 +121,22 @@ export function formatActivityHistory(entries, maxChars = HISTORY_MAX_CHARS) {
   return { history: lines.join('\n'), lastDate: utcDay(list[0][0]), count: list.length };
 }
 
+// The weekly refresh for contacts already in the new portal: the email to
+// match on, and only the fields that are Dan's own. Imported with "Update
+// existing records only", so it never creates anyone, and with no owner,
+// title or phone in it, it never reassigns or overwrites what a colleague
+// keeps on a shared contact.
+export const UPDATE_HEADERS = ['Email', "Dan's Tags", 'Activity History', 'Last Activity Date', 'Activity Count'];
+
+/** The update file from a built contacts file: rows with something to say. */
+export function weeklyUpdateFile(contactsFile) {
+  const idx = UPDATE_HEADERS.map(h => contactsFile.headers.indexOf(h));
+  const rows = contactsFile.rows
+    .map(r => idx.map(i => (i < 0 ? '' : r[i])))
+    .filter(r => r.slice(1).some(v => String(v || '').trim()));
+  return { headers: UPDATE_HEADERS, rows };
+}
+
 /**
  * The Opps still in play from an Opps 2 dataset: its records minus any
  * listed in `_deletedIds`. That is a map of id -> deletedAt
