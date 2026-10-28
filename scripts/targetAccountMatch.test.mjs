@@ -25,6 +25,19 @@ const rows = targetAccountRows(data, {});
 check('one row per account, first wins', rows.map(r => r.name), ['Vibrantz Technologies', 'Vibrant Energy', 'Acme Corp']);
 check('a row carries CDM, Tier and Vertical', rows[0], { name: 'Vibrantz Technologies', cdm: 'Sam Ouimet', tier: 'Tier 2', vertical: 'chemicals & plastics', sheet: 'S' });
 check('an untiered row is still a row', rows[2].tier, '');
+{
+  // Silver Lake: tiered on the PE sheet with no owner, owned on another.
+  const two = { sheetNames: ['Owners', 'PE'], sheets: {
+    Owners: { records: [{ 'Account Name': 'Silver Lake', CDM: 'Dan Baldauf', Tier: '' }] },
+    PE: { records: [{ 'Account Name': 'Silver Lake', CDM: '', Tier: '3', Industry: 'Private Equity' }] },
+  } };
+  const [r] = targetAccountRows(two, {});
+  check('the tiered row keeps the CDM another row has', [r.tier, r.cdm, r.vertical, r.sheet], ['Tier 3', 'Dan Baldauf', 'Private Equity', 'PE']);
+  const flipped = { sheetNames: ['PE', 'Owners'], sheets: two.sheets };
+  const [f2] = targetAccountRows(flipped, {});
+  check('and a later untiered row fills it in too', [f2.tier, f2.cdm], ['Tier 3', 'Dan Baldauf']);
+  check('the first row with a CDM still wins it', rows[0].cdm, 'Sam Ouimet');
+}
 
 // suggestions
 check('Technology vs Technologies is a match', nameSimilarity('Vibrantz Technology', 'Vibrantz Technologies'), 1);

@@ -18,7 +18,8 @@ import { renameTargetVertical, resolveTargetAccountVertical, tierMismatch, targe
  * rows, since the point is to see whose account it is.
  *
  * An account on more than one row (two sheets, or listed twice on one)
- * shows its first TIERED row, else its first row. It used to be the first
+ * shows its first TIERED row, else its first row, filling in a CDM or
+ * vertical that row is missing from the account's other rows. It used to be the first
  * row outright, so an untiered duplicate ahead of the Tier 3 row made the
  * box read "none" and ask to move the card to Not on tier list, while the
  * Targets page row said Tier 3.
@@ -35,7 +36,6 @@ export function targetAccountRows(targetAccountsData, settings) {
       if (!name) continue;
       const k = name.toLowerCase();
       const tier = rowTier(r, tierCols);
-      if (at.has(k) && (out[at.get(k)].tier || !tier)) continue;
       const row = {
         name,
         cdm: resolveTargetAccountCdm(r, settings?.targetCdmColumn),
@@ -43,10 +43,14 @@ export function targetAccountRows(targetAccountsData, settings) {
         vertical: renameTargetVertical(resolveTargetAccountVertical(r, settings?.targetVerticalColumn), settings),
         sheet: sheetName,
       };
-      if (at.has(k)) {
-        // The tiered row wins, but keeps a vertical only the earlier row had.
-        out[at.get(k)] = { ...row, vertical: row.vertical || out[at.get(k)].vertical };
-      } else { at.set(k, out.length); out.push(row); }
+      if (!at.has(k)) { at.set(k, out.length); out.push(row); continue; }
+      // The tiered row wins, but whichever row it is keeps a CDM or vertical
+      // only the other row had: an account tiered on one sheet and owned on
+      // another read "CDM none" in the popup while the list named its CDM.
+      const kept = out[at.get(k)];
+      const win = !kept.tier && tier ? row : kept;
+      const lose = win === row ? kept : row;
+      out[at.get(k)] = { ...win, cdm: win.cdm || lose.cdm, vertical: win.vertical || lose.vertical };
     }
   }
   return out;
