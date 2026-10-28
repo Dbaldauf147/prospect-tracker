@@ -10,7 +10,7 @@
 import ExcelJS from 'exceljs';
 import {
   PRW_COLUMNS, prwSourceColumns, prwSiteListRows, prwEstimateTally,
-  prwSiteListFilename, buildPrwSiteListWorkbook, toNumber,
+  prwSiteListFilename, buildPrwSiteListWorkbook, toNumber, prwRegionSummary,
 } from '../src/utils/prwSiteListExport.js';
 
 let passed = 0, failed = 0;
@@ -115,6 +115,35 @@ check('estimated cell italic', ws.getCell('K2').font.italic, true);
 check('actual cell upright', !!ws.getCell('H2').font.italic, false);
 check('number stays a number', ws.getCell('G2').value, 98000);
 check('legend sheet present', !!wb.getWorksheet('Legend'), true);
+
+// --- Facilities & Accounts tab ------------------------------------------
+const regionRows = prwSiteListRows({
+  headers: ['Site', 'Country', 'State', 'Electric Accounts', 'Gas Accounts', 'Property Type'],
+  rows: [
+    { Site: 'Boston', Country: 'United States', 'Electric Accounts': 2, 'Gas Accounts': 1 },
+    { Site: 'Austin', Country: '', State: 'TX', 'Electric Accounts': 1, 'Gas Accounts': '', 'Property Type': 'Office' },
+    { Site: 'Toronto', Country: 'Canada', 'Electric Accounts': 1, 'Gas Accounts': 1 },
+    { Site: 'Lyon', Country: 'France', 'Electric Accounts': 3, 'Gas Accounts': 2 },
+    { Site: 'Shanghai', Country: 'China', 'Electric Accounts': 1, 'Gas Accounts': 0 },
+    { Site: 'Somewhere', Country: '', State: '', 'Electric Accounts': 5 },
+  ],
+});
+const sum = prwRegionSummary(regionRows);
+check('facilities by region', sum.facilities, { 'North America': 3, Europe: 1, 'Rest of World': 1 });
+check('power accounts by region', sum.power, { 'North America': 4, Europe: 3, 'Rest of World': 1 });
+check('a state with no country counts as North America', sum.facilities['North America'], 3);
+check('a site with no country or state is left out, and counted', sum.unplaced, 1);
+check('NA gas includes an estimated account', sum.gasEstimated['North America'], true);
+check('Europe gas is all actual', sum.gasEstimated.Europe, false);
+
+const sumWs = wb.getWorksheet('Facilities & Accounts');
+check('summary tab exists, second', wb.worksheets.map(w => w.name), ['PRW Site List', 'Facilities & Accounts', 'Legend']);
+check('summary header', [sumWs.getCell('A1').value, sumWs.getCell('C1').value, sumWs.getCell('D1').value, sumWs.getCell('E1').value],
+  ['Country/Region →', 'North America', 'Europe', 'ROW']);
+check('summary service labels', [sumWs.getCell('B3').value, sumWs.getCell('B4').value, sumWs.getCell('B11').value],
+  ['Power', 'Natural Gas', 'Total']);
+check('facilities filled from the site rows', sumWs.getCell('C2').value, 2);
+check('total is a live SUM', sumWs.getCell('C11').value.formula, 'SUM(C3:C10)');
 
 console.log(`${failed ? 'FAIL' : 'PASS'} prwSiteListExport: ${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
