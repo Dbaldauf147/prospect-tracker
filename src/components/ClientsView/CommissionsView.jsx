@@ -15,6 +15,8 @@ import {
 import { loadOppsFromCache, findOppByBfoLink } from '../../utils/oppsCache';
 import { buildOppIndex, suggestOpps, fieldsFromOpp, commissionProjectName } from '../../utils/commissionOppMatch';
 import { CommissionOppPicker } from './CommissionOppPicker';
+import { CommissionsMonthlyView } from './CommissionsMonthlyView';
+import { readCommissionsFile, isCommissionsFileName } from '../../utils/commissionsMonthFile';
 
 // Lookup columns the user adds at the front of the table. Account Name
 // is an autocomplete against the Table View prospect roster; BFO Name is
@@ -1014,8 +1016,14 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   const [{ data, source }, setStore] = useState(() => loadCommissions());
   const [search, setSearch] = useState('');
   // Which subtab is active: 'all' shows the full roster; 'activelyPaid'
-  // narrows to deals that had commission or revenue paid in the last 3 months.
+  // narrows to deals that had commission or revenue paid in the last 3 months;
+  // 'monthly' swaps the table for the month cards that Excel files drop onto.
   const [subtab, setSubtab] = useState('all');
+  // An Excel file dropped on a Monthly card, read into a grid and waiting in
+  // the mapping popup: { headers, rows, monthIdx, fileName }.
+  const [fileImport, setFileImport] = useState(null);
+  const [fileBusyMonth, setFileBusyMonth] = useState(null);
+  const [fileError, setFileError] = useState('');
   // When on, the table narrows to just the rows the warning banner is
   // flagging (missing Account Name, not ignored) so the user can fix
   // them in one pass.
@@ -1497,6 +1505,31 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     setPasteNote(describeCommissionsPaste(summary));
     setShowPaste(false);
     setInitialPaste('');
+    setFileImport(null);
+  }
+
+  // A file dropped on (or browsed from) a month card on the Monthly subtab.
+  // Read it, then hand it to the same mapping popup a paste opens, so the
+  // merge rules and the preview are the paste's.
+  async function handleMonthFile(files, monthIdx) {
+    setFileError('');
+    const file = files.find(f => isCommissionsFileName(f.name));
+    if (!file) {
+      setFileError(`${files[0]?.name || 'That file'} isn't an Excel file. Drop an .xlsx, .xls, .xlsm or .csv file.`);
+      return;
+    }
+    setFileBusyMonth(monthIdx);
+    try {
+      const grid = await readCommissionsFile(file, monthIdx);
+      setFileImport({ ...grid, monthIdx, fileName: file.name });
+      setInitialPaste('');
+      setShowPaste(true);
+      if (files.length > 1) setFileError(`Only ${file.name} was read. Drop the other files one at a time.`);
+    } catch (err) {
+      setFileError(err?.message || `Couldn't read ${file.name}.`);
+    } finally {
+      setFileBusyMonth(null);
+    }
   }
 
   function handleClear() {
@@ -1653,6 +1686,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           {[
             { key: 'all', label: 'All', count: rows.length },
             { key: 'activelyPaid', label: 'Actively Paid', count: activeCount },
+            { key: 'monthly', label: 'Monthly', count: null },
           ].map(t => {
             const isActive = subtab === t.key;
             return (
@@ -1662,7 +1696,9 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
                 onClick={() => setSubtab(t.key)}
                 title={t.key === 'activelyPaid'
                   ? 'Commissions still paying out (Payment Status: Active): the same set as the green Active only button'
-                  : 'Every commission row on file'}
+                  : t.key === 'monthly'
+                    ? 'Commission and revenue totals by month. Drop a commissions Excel file on a month to add it.'
+                    : 'Every commission row on file'}
                 style={{
                   background: 'none',
                   border: 'none',
@@ -1679,20 +1715,31 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
                 }}
               >
                 {t.label}
-                <span style={{
+                {t.count != null && <span style={{
                   fontSize: '0.65rem',
                   fontWeight: 700,
                   padding: '1px 6px',
                   borderRadius: 999,
                   background: isActive ? 'var(--color-accent)' : '#E2E8F0',
                   color: isActive ? '#fff' : '#475569',
-                }}>{t.count}</span>
+                }}>{t.count}</span>}
               </button>
             );
           })}
         </div>
       </div>
 
+      {subtab === 'monthly' ? (
+        <CommissionsMonthlyView
+          data={data}
+          onFile={handleMonthFile}
+          busyMonth={fileBusyMonth}
+          fileError={fileError}
+          onDismissError={() => setFileError('')}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      ) : (<>
       <div style={{ padding: '0 1.25rem 0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexShrink: 0 }}>
         <input
           type="text"
@@ -1852,12 +1899,18 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           />
         )}
       </div>
+      </>)}
 
       {showPaste && (
         <CommissionsPasteImportModal
-          onClose={() => { setShowPaste(false); setInitialPaste(''); }}
+          // A new file remounts the popup so it seeds from that file.
+          key={fileImport ? `file:${fileImport.fileName}:${fileImport.monthIdx}` : 'paste'}
+          onClose={() => { setShowPaste(false); setInitialPaste(''); setFileImport(null); }}
           onImport={(records, opts) => { handleImport(records, opts); setInitialPaste(''); }}
           initialPaste={initialPaste}
+          initialGrid={fileImport}
+          targetMonth={fileImport ? fileImport.monthIdx : null}
+          sourceLabel={fileImport ? fileImport.fileName : ''}
           existingRows={data}
         />
       )}
