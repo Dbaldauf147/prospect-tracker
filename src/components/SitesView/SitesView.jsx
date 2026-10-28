@@ -37,7 +37,8 @@ import {
   siteCellEditors, describeSiteCellEdit, SITE_EDIT_FIELDS,
 } from '../../utils/siteMassEdit';
 import { SummaryFieldEditModal } from './SummaryFieldEditModal.jsx';
-import { mergeIntoSiteList } from '../../utils/siteListMerge';
+import { mergeIntoSiteList, ESTIMATED_COLUMN } from '../../utils/siteListMerge';
+import { downloadPrwSiteList } from '../../utils/prwSiteListExport';
 import { UTILITY_LOOKUP_HANDOFF_EVENT, hasPendingHandoff, takePendingHandoff } from '../../utils/utilityLookupHandoff';
 import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripState, isIndicativeSavingsExport, readSheetNames } from '../../utils/xlsxParse';
 import { salvageWorkbook, looksLikeZipDamage, describeLostEntries } from '../../utils/salvageWorkbook';
@@ -6252,23 +6253,11 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     return { ok: true, shared: false, error: result.error };
   }, [personalOrdinanceOverrides, updateSettingsPath]);
 
-  // Mirror the currently-loaded sites into settings.companySiteLists under
-  // the company's slug, matching the shape the company popup writes
-  // ({ company, fileName, headers, rows, uploadedAt }) so the Company Look
-  // Up status and the Site List Overview both read it. Returns the note
-  // to append to the save status, how many sites the company's list holds
-  // afterwards, and the utility accounts behind them (both 0 when it
-  // couldn't be written).
-  // `timeoutMs` is the caller's, because the caller may already know
-  // something this function doesn't: when the analysis had to go around the
-  // SDK to get saved, the SDK is mute, and this write — which goes through
-  // it — is not going to land either. Waiting the full minute to find that
-  // out again would put a minute of spinner after a save that had already
-  // succeeded.
-  async function saveSitesAsCompanySiteList(company, { timeoutMs = SITE_LIST_WRITE_TIMEOUT_MS } = {}) {
-    const slug = companySlug(company);
-    if (!slug || !updateSettingsPath) return { note: ' Site list not updated: no company to file it under.', total: 0, accounts: 0, equipment: 0 };
-    if (!sitesData.length || !siteHeaders.length) return { note: ' Site list not updated: no sites are loaded.', total: 0, accounts: 0, equipment: 0 };
+  // The loaded sites as a saved-list table: the upload's own columns, then
+  // the analysis columns, plus per row the analysis columns that were
+  // modeled rather than measured. What Save to Company merges into the
+  // company's list, and what the PRW Site List download reads.
+  function buildLoadedSiteList() {
     // Firestore rejects Dates / nested objects in these row maps, and the
     // popup's own upload path normalizes the same way.
     const safeCell = (v) => {
@@ -6316,6 +6305,43 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       return o;
     });
     const loadedHeaders = [...siteHeaders, ...analysisCols.map(c => c.name)];
+    return { loadedHeaders, loadedRows, loadedSoft };
+  }
+
+  // The page's sites in the PRW Site List layout, estimates marked the same
+  // way the company popup's copy of the list marks them.
+  async function downloadPrwFromPage() {
+    const { loadedHeaders, loadedRows, loadedSoft } = buildLoadedSiteList();
+    const list = {
+      headers: [...loadedHeaders, ESTIMATED_COLUMN],
+      rows: loadedRows.map((r, i) => ({ ...r, [ESTIMATED_COLUMN]: loadedSoft[i].join(', ') })),
+    };
+    try {
+      await downloadPrwSiteList(list, portfolioCompanyName || 'Sites');
+    } catch (err) {
+      console.warn('PRW Site List export failed:', err);
+      alert(`PRW Site List export failed: ${err?.message || err}`);
+    }
+  }
+
+  // Mirror the currently-loaded sites into settings.companySiteLists under
+  // the company's slug, matching the shape the company popup writes
+  // ({ company, fileName, headers, rows, uploadedAt }) so the Company Look
+  // Up status and the Site List Overview both read it. Returns the note
+  // to append to the save status, how many sites the company's list holds
+  // afterwards, and the utility accounts behind them (both 0 when it
+  // couldn't be written).
+  // `timeoutMs` is the caller's, because the caller may already know
+  // something this function doesn't: when the analysis had to go around the
+  // SDK to get saved, the SDK is mute, and this write — which goes through
+  // it — is not going to land either. Waiting the full minute to find that
+  // out again would put a minute of spinner after a save that had already
+  // succeeded.
+  async function saveSitesAsCompanySiteList(company, { timeoutMs = SITE_LIST_WRITE_TIMEOUT_MS } = {}) {
+    const slug = companySlug(company);
+    if (!slug || !updateSettingsPath) return { note: ' Site list not updated: no company to file it under.', total: 0, accounts: 0, equipment: 0 };
+    if (!sitesData.length || !siteHeaders.length) return { note: ' Site list not updated: no sites are loaded.', total: 0, accounts: 0, equipment: 0 };
+    const { loadedHeaders, loadedRows, loadedSoft } = buildLoadedSiteList();
 
     // What the company already has. The page rarely holds a company's
     // whole portfolio at once — a file gets uploaded per region, per
@@ -16920,6 +16946,16 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
               style={{ padding: '0.4rem 0.8rem', border: '1px solid #005A9E', background: '#005A9E', color: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
             >
               ⬇ Master Analysis
+            </button>
+          )}
+          {sitesData.length > 0 && (
+            <button
+              type="button"
+              onClick={downloadPrwFromPage}
+              title="Download these sites in the PRW Site List layout: site, address, then electric and gas spend, usage and accounts. Estimated figures are italic amber on an amber fill; actual figures are plain."
+              style={{ padding: '0.4rem 0.8rem', border: '1px solid #005A9E', background: '#fff', color: '#005A9E', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+            >
+              ⬇ PRW Site List
             </button>
           )}
           {sitesData.length > 0 && (

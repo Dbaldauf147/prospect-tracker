@@ -59,6 +59,11 @@ check('city: upload first, analysis second', src.city, ['City', 'City (analysis)
 check('state: upload first, then ST / Prov', src.state, ['State', 'ST / Prov']);
 check('electric usage skips the rate column', src.electricUsage, ['Annual Electric (kWh)']);
 check('gas usage skips the rate column', src.gasUsage, ['Annual Gas (Dth)']);
+check('analysis zip beats the upload zip',
+  prwSourceColumns(['Site', 'Zip', 'Zip (analysis)']).zip, ['Zip (analysis)', 'Zip']);
+check('a leading zero survives through the analysis zip',
+  prwSiteListRows({ headers: ['Site', 'Zip', 'Zip (analysis)'], rows: [{ Site: 'A', Zip: 2458, 'Zip (analysis)': '02458' }] })[0].zip.value,
+  '02458');
 check('electric spend', src.electricSpend, ['Total Electric Cost']);
 check('gas spend', src.gasSpend, ['Total Natural Gas Cost']);
 check('Estimated Values is never a source',

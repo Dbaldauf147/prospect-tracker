@@ -84,7 +84,9 @@ export function prwSourceColumns(headers) {
     state: candidates(hs, [
       /^state$/i, /^province$/i, /^state\s*\/\s*prov/i, analysisName('ST / Prov'), /\bstate\b/i, /\bprovince\b/i,
     ]),
-    zip: [pickZipColumn(hs)].filter(Boolean),
+    // The analysis's zip first: it is the normalized one, where the upload's
+    // own column may have been read as a number and lost its leading zero.
+    zip: [...new Set([...candidates(hs, [/^zip \(analysis( \d+)?\)$/i, /^zip$/i]), pickZipColumn(hs)].filter(Boolean))],
     country: candidates(hs, [/^country$/i, analysisName('Country'), /\bcountry\b/i]),
     electricSpend: candidates(hs, [
       analysisName('Total Electric Cost'), /electric.*(cost|spend)/i, /(cost|spend).*electric/i,
