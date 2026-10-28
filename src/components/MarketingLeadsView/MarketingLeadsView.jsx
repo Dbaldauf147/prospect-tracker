@@ -22,6 +22,7 @@ import {
   autoDetectLeadMapping as autoDetectMapping,
   makeLeadId as makeId,
   makeLeadRow,
+  leadAddedAt,
   normalizeLeadName,
   leadEmailKey as emailKey,
   planLeadImport,
@@ -41,6 +42,9 @@ import { LEAD_MAPPING_LEDGER_KEY } from '../../utils/leadMappings';
 // persist via settings.marketingLeadsColumnWidths.
 const COLUMNS = [
   { key: 'name',                label: 'Name',                       defaultWidth: 170 },
+  // When the lead landed in this table, read off its id (see leadAddedAt).
+  // Read-only, but sortable: it is the table's default sort.
+  { key: 'dateAdded',           label: 'Date Added',                 defaultWidth: 110, readonly: true, sortable: true },
   { key: 'sfUrl',               label: 'Salesforce Link',            defaultWidth: 120 },
   { key: 'linkedin',            label: 'LinkedIn',                   defaultWidth: 120 },
   { key: 'email',               label: 'Email',                      defaultWidth: 220 },
@@ -61,6 +65,8 @@ const COLUMNS = [
 ];
 
 const MIN_COLUMN_WIDTH = 60;
+const DEFAULT_SORT_KEY = 'dateAdded';
+const DEFAULT_SORT_DIR = 'desc';
 const MIN_VISIBLE_ROWS = 25;
 
 // Columns present in the original Marketing Leads view. Used only to
@@ -470,8 +476,10 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
   const [search, setSearch] = useState('');
   // Click-to-sort state (display-only; not persisted). sortDir cycles
   // asc → desc → none as the user re-clicks a header.
-  const [sortKey, setSortKey] = useState('');
-  const [sortDir, setSortDir] = useState('asc'); // 'asc' | 'desc'
+  // Newest leads first by default, so a fresh paste from Salesforce lands
+  // at the top rather than under everything already worked.
+  const [sortKey, setSortKey] = useState(DEFAULT_SORT_KEY);
+  const [sortDir, setSortDir] = useState(DEFAULT_SORT_DIR); // 'asc' | 'desc'
   // Per-column contains-filters, keyed by column key. Shown in a filter
   // row under the header when the "Filters" toggle is on.
   const [columnFilters, setColumnFilters] = useState({});
@@ -479,10 +487,12 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
 
   function cycleSort(key) {
     if (sortKey !== key) { setSortKey(key); setSortDir('asc'); return; }
+    // The default column has no "off": it flips between its two directions.
+    if (key === DEFAULT_SORT_KEY) { setSortDir(sortDir === 'asc' ? 'desc' : 'asc'); return; }
     if (sortDir === 'asc') { setSortDir('desc'); return; }
-    // Was descending → clear the sort back to natural (paste) order.
-    setSortKey('');
-    setSortDir('asc');
+    // Was descending → back to the default sort (newest added first).
+    setSortKey(DEFAULT_SORT_KEY);
+    setSortDir(DEFAULT_SORT_DIR);
   }
   function setColumnFilter(key, value) {
     setColumnFilters(prev => {
@@ -544,7 +554,15 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
       const c = byKey.get(k);
       if (c && !seen.has(k)) { out.push(c); seen.add(k); }
     }
-    for (const c of COLUMNS) if (!seen.has(c.key)) out.push(c);
+    // A column the saved order has never seen goes in after the column it
+    // follows in COLUMNS, so it shows up where it was designed to sit
+    // rather than off the right-hand edge.
+    COLUMNS.forEach((c, i) => {
+      if (seen.has(c.key)) return;
+      const prev = i > 0 ? out.findIndex(o => o.key === COLUMNS[i - 1].key) : -1;
+      out.splice(prev + 1, 0, c);
+      seen.add(c.key);
+    });
     return out;
   }, [settings]);
 
@@ -1176,12 +1194,21 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
   );
   const isFiltering = !!search.trim() || activeColumnFilters.length > 0;
   const isSorting = !!sortKey;
+  const isDefaultSort = sortKey === DEFAULT_SORT_KEY && sortDir === DEFAULT_SORT_DIR;
 
   // Compare two rows for the active sort column. Created Date sorts
   // chronologically when both values parse as dates; everything else
   // falls back to a case-insensitive locale string compare. Blank cells
   // always sink to the bottom regardless of direction.
   function sortCompare(a, b) {
+    if (sortKey === 'dateAdded') {
+      const at = leadAddedAt(a);
+      const bt = leadAddedAt(b);
+      if (at == null && bt == null) return 0;
+      if (at == null) return 1;
+      if (bt == null) return -1;
+      return sortDir === 'desc' ? bt - at : at - bt;
+    }
     const av = String(a[sortKey] ?? '').trim();
     const bv = String(b[sortKey] ?? '').trim();
     if (!av && !bv) return 0;
@@ -1239,13 +1266,15 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
     const recycled = [];
     for (const r of rows) (isClosedRecycle(r) ? recycled : active).push(r);
     rows = [...active, ...recycled];
-    if (!showHidden && !isFiltering && !isSorting) {
+    // The default sort still gets them: it is the table's normal view, and
+    // the blank rows are where a lead gets typed in by hand.
+    if (!showHidden && !isFiltering && (!isSorting || isDefaultSort)) {
       const padding = Math.max(0, MIN_VISIBLE_ROWS - rows.length);
       const padRows = Array.from({ length: padding }, (_, i) => ({ ...emptyRow(), id: `__pad_${i}` }));
       rows = [...rows, ...padRows];
     }
     return rows;
-  }, [persistedRows, hiddenLeadIds, showHidden, search, activeColumnFilters, isFiltering, isSorting, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [persistedRows, hiddenLeadIds, showHidden, search, activeColumnFilters, isFiltering, isSorting, isDefaultSort, sortKey, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close-rate summary over the currently shown leads (padding rows are
   // synthetic scratch rows, so drop them). When a search / column filter
@@ -1957,10 +1986,10 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
             color: filtersOpen || activeColumnFilters.length ? '#166534' : 'var(--color-text-secondary)',
           })}
         >Filters{activeColumnFilters.length ? ` (${activeColumnFilters.length})` : ''}</button>
-        {(activeColumnFilters.length > 0 || search.trim() || sortKey) && (
+        {(activeColumnFilters.length > 0 || search.trim() || !isDefaultSort) && (
           <button
             type="button"
-            onClick={() => { clearAllFilters(); setSortKey(''); }}
+            onClick={() => { clearAllFilters(); setSortKey(DEFAULT_SORT_KEY); setSortDir(DEFAULT_SORT_DIR); }}
             title="Clear the search, every column filter, and the active sort."
             style={btn({ border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)' })}
           >Reset view</button>
@@ -2178,9 +2207,9 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
                     draggable
                     onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', c.key); } catch { /* noop */ } setDragColKey(c.key); }}
                     onDragEnd={() => { setDragColKey(''); setDragOverKey(''); }}
-                    onClick={c.readonly ? undefined : () => cycleSort(c.key)}
-                    title={c.readonly ? `Drag to reorder ${c.label}` : `Sort by ${c.label} · drag to reorder`}
-                    style={{ position: 'relative', display: 'block', paddingRight: 12, cursor: dragColKey ? 'grabbing' : (c.readonly ? 'grab' : 'pointer'), userSelect: 'none' }}
+                    onClick={c.readonly && !c.sortable ? undefined : () => cycleSort(c.key)}
+                    title={c.readonly && !c.sortable ? `Drag to reorder ${c.label}` : `Sort by ${c.label} · drag to reorder`}
+                    style={{ position: 'relative', display: 'block', paddingRight: 12, cursor: dragColKey ? 'grabbing' : (c.readonly && !c.sortable ? 'grab' : 'pointer'), userSelect: 'none' }}
                   >
                     {c.label}
                     {sortKey === c.key && (
@@ -2390,6 +2419,15 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
                           return (
                             <div title={cdm ? `CDM for "${info.name}"${info.owned ? '' : ' (Target Accounts)'}` : undefined} style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem', fontSize: '0.78rem', color: info?.owned ? '#334155' : '#7C3AED', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {cdm || <span style={{ color: '#CBD5E1', fontStyle: 'italic' }}>-</span>}
+                            </div>
+                          );
+                        })()
+                      ) : c.key === 'dateAdded' ? (
+                        (() => {
+                          const ms = isPad ? null : leadAddedAt(r);
+                          return (
+                            <div title={ms ? `Added ${new Date(ms).toLocaleString()}` : undefined} style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem', fontSize: '0.78rem', color: '#334155', whiteSpace: 'nowrap' }}>
+                              {ms ? new Date(ms).toLocaleDateString() : <span style={{ color: '#CBD5E1', fontStyle: 'italic' }}>-</span>}
                             </div>
                           );
                         })()

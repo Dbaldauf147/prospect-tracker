@@ -57,6 +57,22 @@ export function makeLeadId() {
   return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// When a lead was added to the Marketing Leads table, as epoch ms, or null.
+//
+// Nothing ever stored this, but every lead's id has always started with
+// Date.now() in base 36 (makeLeadId), so the moment a row was created is
+// already on every row, old ones included. A prefix that doesn't decode to
+// a plausible date (an id from somewhere else) reads as unknown rather than
+// as some date in 1970.
+const EARLIEST_LEAD_MS = Date.UTC(2020, 0, 1);
+export function leadAddedAt(row) {
+  const prefix = String(row?.id || '').split('_')[0];
+  if (!/^[0-9a-z]{6,10}$/.test(prefix)) return null;
+  const ms = parseInt(prefix, 36);
+  if (!Number.isFinite(ms) || ms < EARLIEST_LEAD_MS || ms > Date.now() + 86_400_000) return null;
+  return ms;
+}
+
 // A blank lead row with every stored field present, so a freshly pasted
 // lead has the same shape as one that's been edited on the page.
 export function makeLeadRow(fields = {}) {
