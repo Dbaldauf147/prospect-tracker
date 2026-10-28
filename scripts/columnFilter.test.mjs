@@ -10,6 +10,7 @@
 import {
   suggestionMatches, cellMatches, collectSuggestions, rowMatchesFilters,
   activeFilterCount, clearFilter, filtersForColumns, BLANKS_FILTER, NON_BLANKS_FILTER,
+  readPickFilter, pickFilterIsActive, pickFilterMatches, pickListOptions,
 } from '../src/utils/columnFilter.js';
 
 let passed = 0, failed = 0;
@@ -89,6 +90,34 @@ check('every column still shown', filtersForColumns({ status: 'no' }, ['email', 
 check('no columns at all', filtersForColumns({ status: 'no' }, []), {});
 check('nothing to drop returns the same object',
   (() => { const f = { status: 'no' }; return filtersForColumns(f, ['status']) === f; })(), true);
+
+// --- the header pick list (DataTable) -------------------------------------
+check('a bare array is the picks', readPickFilter(['Sold', ' ']), { picks: ['Sold'], draft: '' });
+check('picks plus a draft', readPickFilter({ picks: ['A'], draft: ' we ' }), { picks: ['A'], draft: 'we' });
+check('an old single string is one pick', readPickFilter('Sold'), { picks: ['Sold'], draft: '' });
+check('nothing is nothing', readPickFilter(undefined), { picks: [], draft: '' });
+check('empty is inactive', pickFilterIsActive([]), false);
+check('a draft alone is active', pickFilterIsActive({ picks: [], draft: 'x' }), true);
+check('empty filter passes', pickFilterMatches('anything', []), true);
+// The reason ticks are exact: "Sold" must not keep "Not Sold".
+check('a tick is exact', pickFilterMatches('Not Sold', ['Sold']), false);
+check('a tick ignores case', pickFilterMatches('sold', ['Sold']), true);
+check('any tick passes', pickFilterMatches('Lost', ['Sold', 'Lost']), true);
+check('the search box is a substring', pickFilterMatches('Warburg Pincus', { picks: [], draft: 'pinc' }), true);
+// Searching "a" to find Alpha and ticking it must show Alpha, not every "a".
+check('a tick overrides the search', pickFilterMatches('Banana', { picks: ['Alpha'], draft: 'a' }), false);
+check('the ticked row still passes mid-search', pickFilterMatches('Alpha', { picks: ['Alpha'], draft: 'zzz' }), true);
+check('a search that matches nothing', pickFilterMatches('KKR', { picks: [], draft: 'warb' }), false);
+check('(Blanks) ticked keeps blanks', pickFilterMatches('  ', [BLANKS_FILTER]), true);
+check('(Blanks) ticked drops values', pickFilterMatches('x', [BLANKS_FILTER]), false);
+check('(Non-blanks) ticked keeps values', pickFilterMatches('x', [NON_BLANKS_FILTER]), true);
+check('(Blanks) alongside a value', pickFilterMatches('', ['Sold', BLANKS_FILTER]), true);
+{
+  const o = pickListOptions(['West', 'east', '', 'West', null, 'East']);
+  check('options dedupe and sort', o.suggestions, ['east', 'West']);
+  check('options count each value', [o.counts.get('west'), o.counts.get('east')], [2, 2]);
+  check('options count the blanks', o.blanks, 2);
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
