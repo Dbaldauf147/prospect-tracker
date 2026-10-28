@@ -8,6 +8,7 @@ import { toCsv, downloadCsv } from '../../utils/csv';
 import { MOVE_BUCKETS, moveBucket, summarizeMoveRows, describeDiffs } from '../../utils/hubspotMoveSummary';
 import { HubSpotBackupSection } from './HubSpotBackupSection';
 import { HubSpotImportFilesSection } from './HubSpotImportFilesSection';
+import { HubSpotExistingSection } from './HubSpotExistingSection';
 import styles from './HubSpotMoveTab.module.css';
 
 const DEFAULT_OWNER = 'daniel.baldauf@se.com';
@@ -222,7 +223,7 @@ function CompareSection({ kind, ownerEmail, recentDays }) {
   );
 }
 
-export function HubSpotMoveTab({ prospects, settings }) {
+export function HubSpotMoveTab({ prospects, settings, updateSettings }) {
   const [ownerEmail, setOwnerEmail] = useState(DEFAULT_OWNER);
   const [recentDays, setRecentDays] = useState(5);
   const [overview, setOverview] = useState(null);
@@ -264,6 +265,8 @@ export function HubSpotMoveTab({ prospects, settings }) {
         </button>
       </div>
       {error && <div className={styles.error}>{error}</div>}
+
+      <HubSpotExistingSection prospects={prospects} settings={settings} updateSettings={updateSettings} />
 
       <HubSpotImportFilesSection prospects={prospects} settings={settings} />
 

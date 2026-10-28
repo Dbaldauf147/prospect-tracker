@@ -6,15 +6,15 @@
 //   * activity is read page by page from the current portal with only the
 //     properties a history line needs, and lands on every linked contact;
 //     a type the token can't read is reported, not fatal; nothing but GETs,
-//   * the update file is the email plus Dan's own fields only (no owner,
-//     no title), and only rows with something to update,
-//   * the three attachments carry a BOM, no em dash, and the email names
-//     each file's import option,
+//   * two attachments (companies, contacts) with a BOM and no em dash, and
+//     the email names each file's import option,
+//   * with the Schneider exports, a company already there isn't in the
+//     companies file and a colleague's contact isn't in the contacts file;
+//     without them, the email says not to import the contacts file yet,
 //   * a run sends one email to the configured address and logs it; a
 //     failure is logged with its error and sends nothing.
 import { liveActivity, buildWeeklyFiles, weeklyEmailHtml, flatContact } from '../api/_lib/hubspotWeekly.js';
 import { runWeekly } from '../api/hubspot-weekly-export.js';
-import { weeklyUpdateFile, UPDATE_HEADERS } from '../src/utils/hubspotImportFiles.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -58,19 +58,26 @@ const contacts = [
 ];
 const activity = { 11: [[T, 'Email sent', 'Pilot']], 13: [[T, 'Email sent', 'Internal']] };
 {
-  const up = weeklyUpdateFile({ headers: ['Email', 'Job Title', "Dan's Tags", 'Contact owner'], rows: [['a@x.com', 'CFO', 'ESG', 'o@se.com'], ['b@x.com', 'VP', '', 'o@se.com']] });
-  eq([up.headers, up.rows], [UPDATE_HEADERS, [['a@x.com', 'ESG', '', '', '']]], 'the update file: email and own fields only, rows with something to update');
-
   const { attachments, counts } = buildWeeklyFiles({ prospects, contacts, opps: { records: [] }, settings: {}, activity, ownerEmail: 'daniel.baldauf@se.com', date: '2026-11-02' });
-  eq(attachments.map(a => a.filename), ['hubspot-2026-11-02-1-companies.csv', 'hubspot-2026-11-02-2-new-contacts.csv', 'hubspot-2026-11-02-3-contact-updates.csv'], 'three attachments, dated and numbered');
-  eq(attachments.every(a => a.content.startsWith('﻿') && !a.content.includes('—')), true, 'each has a BOM and no em dash');
-  eq([counts.companies, counts.contacts, counts.updates, counts.withHistory, counts.colleaguesLeftOut], [1, 2, 1, 1, 1], 'counts: colleague left out, one contact to update');
-  const updates = attachments[2].content;
-  eq([updates.includes('jane@acme.com'), updates.includes('bo@acme.com'), updates.includes('Contact owner'), updates.includes('CFO')], [true, false, false, false],
-    'updates carry no owner and no title');
+  eq(attachments.map(a => a.filename), ['hubspot-2026-11-02-1-companies.csv', 'hubspot-2026-11-02-2-contacts.csv'], 'two attachments, dated and numbered');
+  eq(attachments.every(a => a.content.startsWith('\uFEFF') && !a.content.includes('\u2014')), true, 'each has a BOM and no em dash');
+  eq([counts.companies, counts.contacts, counts.withHistory, counts.colleaguesLeftOut, counts.hasContactsExport], [1, 2, 1, 1, false], 'counts: colleague left out');
   const html = weeklyEmailHtml({ counts, attachments, activityErrors: { tasks: 'missing scope' } });
-  eq([html.includes('Create new records only'), html.includes('Update existing records only'), html.includes('tasks: missing scope'), html.includes('—')], [true, true, true, false],
+  eq([html.includes('Create new records only'), html.includes('Create and update'), html.includes('tasks: missing scope'), html.includes('\u2014')], [true, true, true, false],
     'the email names each import option and any unread activity, with no em dash');
+  eq(html.includes("Don't import the contacts file yet"), true, 'no Schneider exports: the email says not to import contacts yet');
+
+  const existing = {
+    companies: [{ id: '501', name: 'Acme Corp', domain: '', owner: 'Kat Gross' }],
+    contacts: [{ id: '9', email: 'bo@acme.com', owner: 'Kat Gross' }],
+    meta: { contactsAt: '2026-11-01T10:00:00Z' },
+  };
+  const withExports = buildWeeklyFiles({ prospects, contacts, opps: { records: [] }, settings: {}, activity, ownerEmail: 'daniel.baldauf@se.com', date: '2026-11-02', existing });
+  eq([withExports.counts.companies, withExports.counts.companiesExisting, withExports.counts.contacts, withExports.counts.colleagueOwned],
+    [0, 1, 1, 1], "with the exports: the existing company isn't created, the colleague's contact is left out");
+  eq(withExports.attachments[1].content.includes('501'), true, 'the contact links to the existing company by Record ID');
+  const html2 = weeklyEmailHtml({ counts: withExports.counts, attachments: withExports.attachments });
+  eq([html2.includes("Don't import the contacts file yet"), html2.includes('2026-11-01')], [false, true], 'with the exports: no warning, and the export date shown');
 }
 
 // ── runWeekly ────────────────────────────────────────────────────────────
@@ -82,7 +89,7 @@ const activity = { 11: [[T, 'Email sent', 'Pilot']], 13: [[T, 'Email sent', 'Int
   const load = async () => ({ prospects, contacts, opps: { records: [] }, settings: {}, activity, activityErrors: {} });
   const now = () => new Date('2026-11-02T12:35:00Z');
   const ok = await runWeekly({ db, token: 't', env: {}, load, send, now });
-  eq([ok.ok, sent.length, sent[0].to, sent[0].attachments.length, logs[0].ok], [true, 1, ['daniel.baldauf@se.com'], 3, true], 'a run sends one email to the owner by default and logs it');
+  eq([ok.ok, sent.length, sent[0].to, sent[0].attachments.length, logs[0].ok], [true, 1, ['daniel.baldauf@se.com'], 2, true], 'a run sends one email to the owner by default and logs it');
   eq(sent[0].subject, 'HubSpot import files for the week of 2026-11-02', 'subject names the week');
   await runWeekly({ db, token: 't', env: { HUBSPOT_WEEKLY_TO: 'a@se.com; b@se.com' }, load, send, now });
   eq(sent[1].to, ['a@se.com', 'b@se.com'], 'HUBSPOT_WEEKLY_TO overrides the recipient');

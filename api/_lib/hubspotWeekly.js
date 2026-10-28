@@ -11,14 +11,18 @@
 // only the few properties a history line needs, not from a full backup, so
 // the whole job fits in one function call.
 //
-// Three attachments, each with its own import mode:
-//   1 companies          Create new records only
-//   2 new contacts       Create new records only (the full list each week:
-//                        anyone already in the portal is skipped)
-//   3 contact updates    Update existing records only (email + Dan's own
-//                        fields, so nothing a colleague keeps is touched)
+// Two attachments, each with its own import mode:
+//   1 companies   Create new records only, and only the ones the portal
+//                 doesn't already have (from the exports Dan uploads on the
+//                 Account move tab, src/utils/seHubspotExisting.js)
+//   2 contacts    Contacts and Companies together, create and update: a
+//                 contact a colleague owns there is already left out of the
+//                 file, so what it updates is Dan's own or nobody's, and its
+//                 company links to the existing record by Record ID
+// Without a contacts export there is nothing to tell a colleague's contact
+// from Dan's, and the email says so at the top.
 
-import { buildImportFiles, liveOpps, weeklyUpdateFile } from '../../src/utils/hubspotImportFiles.js';
+import { buildImportFiles, liveOpps } from '../../src/utils/hubspotImportFiles.js';
 import { toCsv } from '../../src/utils/csv.js';
 import { stripDashes } from '../../src/utils/exportSanitize.js';
 import { digestRecords } from './activityDigest.js';
@@ -87,25 +91,27 @@ export function hubspotGetter(token, { fetchImpl = fetch, sleep = (ms) => new Pr
 export const flatContact = (c) => ({ id: String(c.id), ...(c.properties || {}) });
 
 /**
- * Build the three attachments and the email's summary from loaded data.
+ * Build the two attachments and the email's summary from loaded data.
  * Pure.
  */
-export function buildWeeklyFiles({ prospects, contacts, opps, settings, activity, ownerEmail, date }) {
-  const built = buildImportFiles({ prospects, contacts, opps: liveOpps(opps), settings, ownerEmail, activity });
-  const updates = weeklyUpdateFile(built.contacts);
+export function buildWeeklyFiles({ prospects, contacts, opps, settings, activity, ownerEmail, date, existing = null }) {
+  const built = buildImportFiles({ prospects, contacts, opps: liveOpps(opps), settings, ownerEmail, activity, existing });
   const csv = (f) => `\uFEFF${stripDashes(toCsv(f.headers, f.rows))}`;
   const attachments = [
     { filename: `hubspot-${date}-1-companies.csv`, content: csv(built.companies), contentType: 'text/csv; charset=utf-8' },
-    { filename: `hubspot-${date}-2-new-contacts.csv`, content: csv(built.contacts), contentType: 'text/csv; charset=utf-8' },
-    { filename: `hubspot-${date}-3-contact-updates.csv`, content: csv(updates), contentType: 'text/csv; charset=utf-8' },
+    { filename: `hubspot-${date}-2-contacts.csv`, content: csv(built.contacts), contentType: 'text/csv; charset=utf-8' },
   ];
   const counts = {
     companies: built.companies.rows.length,
     contacts: built.contacts.rows.length,
-    updates: updates.rows.length,
     withHistory: built.report.contactsWithHistory,
     colleaguesLeftOut: built.report.contactsColleagues,
     companiesNoWebsite: built.report.companiesNoDomain.length,
+    companiesExisting: built.report.companiesExisting.length,
+    colleagueOwned: built.report.contactsColleagueOwned.length,
+    hasContactsExport: !!existing?.contacts?.length,
+    hasCompaniesExport: !!existing?.companies?.length,
+    exportsAt: existing?.meta?.contactsAt || existing?.meta?.companiesAt || null,
   };
   return { attachments, counts, report: built.report };
 }
@@ -124,7 +130,10 @@ export function weeklyEmailHtml({ counts, attachments, activityErrors = {} }) {
   return `
     <div style="font-family:Arial,sans-serif;max-width:680px;margin:0 auto;color:#334155;font-size:13px">
       <h2 style="color:#009530;margin:0 0 8px">Your weekly HubSpot import files</h2>
-      <p style="margin:0 0 12px">Import these three files into the Schneider HubSpot account, in this order
+      ${!counts.hasContactsExport || !counts.hasCompaniesExport ? `<div style="background:#fdecea;border:1px solid #f5c2c0;color:#8a1c12;border-radius:6px;padding:10px 12px;margin:0 0 12px">
+        <b>Don't import the contacts file yet.</b> No ${!counts.hasContactsExport ? 'contacts' : 'companies'} export from the Schneider account has been uploaded,
+        so the files can't tell a colleague's contact or an existing company from yours. Upload the exports on the Account move tab, then click Send it now.</div>` : ''}
+      <p style="margin:0 0 12px">Import these two files into the Schneider HubSpot account, in this order
         (Data integration, Import a file, File from computer, One file, One object).</p>
       <table style="border-collapse:collapse;margin:0 0 14px">
         <thead><tr>
@@ -134,13 +143,15 @@ export function weeklyEmailHtml({ counts, attachments, activityErrors = {} }) {
         </tr></thead>
         <tbody>
           ${step(1, attachments[0].filename, `${n(counts.companies)} companies. Object: Companies.`, 'Create new records only')}
-          ${step(2, attachments[1].filename, `${n(counts.contacts)} contacts, all of them: anyone already in HubSpot is skipped. Object: Contacts.`, 'Create new records only')}
-          ${step(3, attachments[2].filename, `${n(counts.updates)} contacts: your tags and activity history only. Object: Contacts.`, 'Update existing records only')}
+          ${step(2, attachments[1].filename, `${n(counts.contacts)} contacts. Multiple objects: Contacts and Companies. Map Company Record ID to the Company's Record ID. Leave "marketing contacts" unticked.`, 'Create and update')}
         </tbody>
       </table>
       <p style="margin:0 0 6px">${n(counts.withHistory)} contacts carry activity history.
-        Left out: ${n(counts.colleaguesLeftOut)} colleagues at your own domain, ${n(counts.companiesNoWebsite)} companies with no website.</p>
+        Left out: ${n(counts.colleaguesLeftOut)} colleagues at your own domain, ${n(counts.colleagueOwned || 0)} contacts a colleague owns in the Schneider account,
+        ${n(counts.companiesNoWebsite)} companies with no website. ${n(counts.companiesExisting || 0)} companies already there are linked to, not created again
+        (from the exports you last uploaded on the Account move tab).</p>
       ${errs.length ? `<p style="color:#b45309">Activity that could not be read this week (the history is missing these): ${errs.map(([t, e]) => `${esc(t)}: ${esc(e)}`).join('; ')}</p>` : ''}
+      ${counts.exportsAt ? `<p style="color:#64748b;font-size:12px">Matched against the Schneider exports uploaded ${esc(new Date(counts.exportsAt).toISOString().slice(0, 10))}. Re-upload them now and then, so contacts a colleague added since are recognised.</p>` : ''}
       <p style="color:#8896A6;font-size:11px;margin-top:18px">Sent every Monday by Prospect Tracker. On the files' mapping screens, Company Domain Name links contacts to their company. Built from your current HubSpot account and the site; nothing was sent to the Schneider account.</p>
     </div>`;
 }
