@@ -91,5 +91,11 @@ eq(statusDiscrepancy('Client', []), '', 'no lifecycle stage in the export, nothi
 const flagRows = buildHubspotMapping([{ id: 'x', company: '3650 REIT', status: 'Client' }], companies);
 eq(flagRows[0].statusFlag, 'Client here, Lead in HubSpot', 'a matched row carries the flag');
 
+// ── on the Table tab, not My Accounts ─────────────────────────────────────
+const apollo = compactMappingCompanies([{ 'Company name': 'Apollo Global Management', 'Company ID': '20' }]);
+const tableRows = buildHubspotMapping([], apollo, { tracker: [{ id: 't', company: 'Apollo Global Management, Inc.', cdm: 'Jane Doe' }, { id: 'u', company: 'Other' }] });
+eq([tableRows[0].status, tableRows[0].tracker.map(p => p.id)], [MAPPING_STATUS.hubspotOnly, ['t']], 'a HubSpot-only company on the tracker names the tracker record');
+eq(buildHubspotMapping([], apollo)[0].tracker, [], 'no tracker given, no tracker records');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

@@ -40,6 +40,8 @@ async function readSheet(file) {
 // A filter chip of its own: matched accounts whose Status and HubSpot
 // Lifecycle Stage disagree (statusDiscrepancy).
 const MISMATCH = 'Status mismatch';
+// Another: HubSpot-only rows whose company is on the Table tab after all.
+const ON_TABLE = 'On Table, not My Accounts';
 const HOW = { website: 'Website', name: 'Name', linked: 'Your link' };
 const accountSite = (r) => (r.account ? domainKey(r.account.website) || domainKey(r.account.emailDomain) : '');
 const hsField = (field) => (r) => r.hubspot.map(c => c[field]).filter(Boolean).join(', ');
@@ -84,6 +86,13 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
 
   // Aliases and "goes by" live on the tracker record, not the account row.
   const byId = useMemo(() => new Map((prospects || []).map(p => [p.id, p])), [prospects]);
+  // A matched account's CDM is its tracker record's; a HubSpot-only row's is
+  // that of the Table tab records with its name or website, if any.
+  const cdmOf = (r) => {
+    const recs = r.account ? [byId.get(r.account.id) || r.account] : r.tracker || [];
+    return [...new Set(recs.map(p => String(p.cdm || '').trim()).filter(Boolean))].join(', ');
+  };
+  const trackerOf = (r) => (r.tracker || []).map(p => p.company).filter(Boolean).join(', ');
   const substatusOf = (r) => (r.account ? String(r.account.substatus || byId.get(r.account.id)?.substatus || '').trim() : '');
   const mapping = useMemo(() => {
     if (!data.companies.length) return [];
@@ -91,14 +100,15 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
       const p = byId.get(a.id);
       return p ? { ...a, goesBy: a.goesBy || p.goesBy, aliases: a.aliases || p.aliases, website: a.website || p.website, emailDomain: a.emailDomain || p.emailDomain } : a;
     });
-    return buildHubspotMapping(withNames, data.companies, { links: data.links });
-  }, [accounts, byId, data]);
+    return buildHubspotMapping(withNames, data.companies, { links: data.links, tracker: prospects || [] });
+  }, [accounts, prospects, byId, data]);
 
   const counts = useMemo(() => {
     const c = {};
     for (const r of mapping) {
       c[r.status] = (c[r.status] || 0) + 1;
       if (r.statusFlag) c[MISMATCH] = (c[MISMATCH] || 0) + 1;
+      if (r.tracker?.length) c[ON_TABLE] = (c[ON_TABLE] || 0) + 1;
     }
     return c;
   }, [mapping]);
@@ -106,10 +116,11 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   const rows = useMemo(() => {
     let out = mapping;
     if (statusFilter === MISMATCH) out = out.filter(r => r.statusFlag);
+    else if (statusFilter === ON_TABLE) out = out.filter(r => r.tracker?.length);
     else if (statusFilter) out = out.filter(r => r.status === statusFilter);
     const term = search.trim().toLowerCase();
     if (term) {
-      out = out.filter(r => [r.account?.company, ...r.hubspot.map(c => c.name), ...r.suggestions.map(c => c.name)]
+      out = out.filter(r => [r.account?.company, ...r.hubspot.map(c => c.name), ...r.suggestions.map(c => c.name), ...(r.tracker || []).map(p => p.company)]
         .filter(Boolean).join(' ').toLowerCase().includes(term));
     }
     return out.map(r => ({ ...r, id: r.key }));
@@ -156,6 +167,25 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
       key: 'substatus', label: 'Substatus', defaultWidth: 140,
       getFilterValue: r => substatusOf(r), exportValue: r => substatusOf(r),
       render: r => substatusOf(r) || blank,
+    },
+    { key: 'cdm', label: 'CDM', defaultWidth: 140, getFilterValue: r => cdmOf(r), exportValue: r => cdmOf(r), render: r => cdmOf(r) || blank },
+    {
+      key: 'onTable', label: 'On Table Tab', defaultWidth: 220,
+      headerTitle: 'For a HubSpot company no account matched: the companies on the Table tab with its name or website. They are on the tracker but not on My Accounts (for example another CDM\'s account, or one with no tier and no opps), which is why it shows as Only in HubSpot.',
+      getSortValue: r => trackerOf(r).toLowerCase() || null,
+      getFilterValue: r => trackerOf(r), exportValue: r => trackerOf(r),
+      render: r => {
+        if (!r.tracker?.length) return blank;
+        return (
+          <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 6 }}>
+            {r.tracker.map(p => (onSelect ? (
+              <button key={p.id || p.company} type="button" onClick={() => onSelect(p)} title="Open the company"
+                style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: '#1D4ED8', cursor: 'pointer', textAlign: 'left' }}
+              >{p.company}</button>
+            ) : <span key={p.id || p.company}>{p.company}</span>))}
+          </span>
+        );
+      },
     },
     {
       key: 'hubspot', label: 'HubSpot Company', defaultWidth: 260,
@@ -254,6 +284,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
             {chip(MAPPING_STATUS.matched, MAPPING_STATUS.matched)}
             {chip(MAPPING_STATUS.accountOnly, MAPPING_STATUS.accountOnly)}
             {chip(MAPPING_STATUS.hubspotOnly, MAPPING_STATUS.hubspotOnly)}
+            {chip(ON_TABLE, ON_TABLE)}
             {chip(MISMATCH, MISMATCH)}
           </>
         )}

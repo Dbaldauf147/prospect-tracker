@@ -163,8 +163,12 @@ export const MAPPING_STATUS = {
  * the unmatched accounts it may be.
  * `how` is 'website' | 'name' | 'linked' | ''. `links` is { [accountId]: hubspotId },
  * Dan's own choices, which win over the name match.
+ * `tracker` is every company on the tracker (the Table tab), not just My
+ * Accounts. A HubSpot-only row gets `tracker`: the records there with its
+ * website or name, so a company that is on the Table tab but not on My
+ * Accounts (another CDM's, say) says so instead of looking missing.
  */
-export function buildHubspotMapping(accounts = [], companies = [], { links = {} } = {}) {
+export function buildHubspotMapping(accounts = [], companies = [], { links = {}, tracker = [] } = {}) {
   const byName = new Map();
   const byDomain = new Map();
   const byId = new Map();
@@ -190,7 +194,7 @@ export function buildHubspotMapping(accounts = [], companies = [], { links = {} 
       if (hubspot.length) how = viaDomain.length ? 'website' : 'name';
     }
     for (const c of hubspot) claimed.add(String(c.id));
-    return { key: `a:${a.id || a.company}`, account: a, hubspot, how, suggestions: [] };
+    return { key: `a:${a.id || a.company}`, account: a, hubspot, how, suggestions: [], tracker: [] };
   });
 
   // Possible matches between the accounts left over and the HubSpot
@@ -217,6 +221,21 @@ export function buildHubspotMapping(accounts = [], companies = [], { links = {} 
     r.status = r.hubspot.length ? MAPPING_STATUS.matched : MAPPING_STATUS.accountOnly;
     r.statusFlag = r.hubspot.length ? statusDiscrepancy(r.account.status, r.hubspot.map(c => c.lifecycle)) : '';
   }
+  const trackerByName = new Map();
+  const trackerByDomain = new Map();
+  for (const p of tracker) {
+    const d = accountDomain(p);
+    if (d) (trackerByDomain.get(d) || trackerByDomain.set(d, []).get(d)).push(p);
+    for (const n of new Set(accountNames(p))) (trackerByName.get(n) || trackerByName.set(n, []).get(n)).push(p);
+  }
+  const onTracker = (hubspot) => {
+    const seen = new Set();
+    return hubspot.flatMap(c => [
+      ...(c.domain ? trackerByDomain.get(c.domain) || [] : []),
+      ...(trackerByName.get(normalizeCompany(c.name)) || []),
+    ]).filter(p => !seen.has(p) && seen.add(p));
+  };
+
   // Same-named HubSpot records share a row, so duplicates show as one
   // company with "N records", as they do on a matched account.
   const groups = new Map();
@@ -226,7 +245,7 @@ export function buildHubspotMapping(accounts = [], companies = [], { links = {} 
   }
   for (const [k, hubspot] of groups) {
     const suggestions = k.startsWith('id:') ? [] : bestMatches([prepName(k)], accountPool).map(m => ({ ...m, hubspotId: String(hubspot[0].id) }));
-    rows.push({ key: `h:${hubspot[0].id}`, status: MAPPING_STATUS.hubspotOnly, account: null, hubspot, how: '', suggestions, statusFlag: '' });
+    rows.push({ key: `h:${hubspot[0].id}`, status: MAPPING_STATUS.hubspotOnly, account: null, hubspot, how: '', suggestions, statusFlag: '', tracker: onTracker(hubspot) });
   }
   return rows;
 }
