@@ -80,6 +80,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
 
   // Aliases and "goes by" live on the tracker record, not the account row.
   const byId = useMemo(() => new Map((prospects || []).map(p => [p.id, p])), [prospects]);
+  const substatusOf = (r) => (r.account ? String(r.account.substatus || byId.get(r.account.id)?.substatus || '').trim() : '');
   const mapping = useMemo(() => {
     if (!data.companies.length) return [];
     const withNames = accounts.map(a => {
@@ -146,6 +147,12 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     },
     { key: 'tier', label: 'Tier', defaultWidth: 90, getFilterValue: r => r.account?.myTier || '', exportValue: r => r.account?.myTier || '', render: r => r.account?.myTier || blank },
     { key: 'accountStatus', label: 'Account Status', defaultWidth: 130, getFilterValue: r => r.account?.status || '', exportValue: r => r.account?.status || '', render: r => r.account?.status || blank },
+    {
+      // Read off the tracker record: the account row doesn't carry it.
+      key: 'substatus', label: 'Substatus', defaultWidth: 140,
+      getFilterValue: r => substatusOf(r), exportValue: r => substatusOf(r),
+      render: r => substatusOf(r) || blank,
+    },
     {
       key: 'hubspot', label: 'HubSpot Company', defaultWidth: 260,
       getSortValue: r => (r.hubspot[0]?.name || '').toLowerCase() || null,
