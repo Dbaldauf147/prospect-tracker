@@ -3,8 +3,11 @@
 // with My Accounts, so he can see which accounts are in HubSpot, which
 // aren't yet, and which HubSpot companies aren't on My Accounts.
 //
-// The export carries no domain, so a match is by name: the account's name,
-// its "goes by" and its aliases, normalised the way companyNorm does it.
+// A match is by website first, when the export carries one (Company Domain
+// Name or Website URL) and the account has one (Website, else Email
+// Domain), then by name: the account's name, its "goes by" and its aliases,
+// normalised the way companyNorm does it. Both kinds of hit are kept, so a
+// same-named duplicate with a different website still shows.
 // Where an account has no exact match, a HubSpot company whose name starts
 // with (or is the start of) the account's is offered as a possible match,
 // and Dan can link it; his links are kept with the export.
@@ -13,6 +16,7 @@
 // (scripts/hubspotMapping.test.mjs).
 
 import { normalizeCompany } from './companyNorm.js';
+import { domainKey } from './seHubspotExisting.js';
 
 const clean = (v) => {
   const s = String(v ?? '').replace(/\s+/g, ' ').trim();
@@ -36,6 +40,7 @@ export function compactMappingCompanies(rows) {
   return (rows || []).map((r, i) => ({
     id: pick(r, 'Company ID', 'Record ID', 'Record ID - Company') || `row-${i + 1}`,
     name: pick(r, 'Company name', 'Name'),
+    domain: domainKey(pick(r, 'Company Domain Name', 'Domain')) || domainKey(pick(r, 'Website URL', 'Website')),
     owner: pick(r, 'Company owner', 'Owner'),
     targetAccount: pick(r, 'Target Account'),
     lifecycle: pick(r, 'Lifecycle Stage'),
@@ -45,6 +50,8 @@ export function compactMappingCompanies(rows) {
     created: pick(r, 'Create Date'),
   })).filter(c => c.name);
 }
+
+const accountDomain = (a) => domainKey(a.website) || domainKey(a.emailDomain);
 
 const accountNames = (a) => [a.company, a.goesBy, ...(Array.isArray(a.aliases) ? a.aliases : [])]
   .map(normalizeCompany).filter(Boolean);
@@ -63,14 +70,16 @@ export const MAPPING_STATUS = {
  * One row per account and one per HubSpot company no account claims
  * (same-named records together):
  *   { key, status, account, hubspot: [records], how, suggestions }
- * `how` is 'name' | 'linked' | ''. `links` is { [accountId]: hubspotId },
+ * `how` is 'website' | 'name' | 'linked' | ''. `links` is { [accountId]: hubspotId },
  * Dan's own choices, which win over the name match.
  */
 export function buildHubspotMapping(accounts = [], companies = [], { links = {} } = {}) {
   const byName = new Map();
+  const byDomain = new Map();
   const byId = new Map();
   for (const c of companies) {
     byId.set(String(c.id), c);
+    if (c.domain) (byDomain.get(c.domain) || byDomain.set(c.domain, []).get(c.domain)).push(c);
     const n = normalizeCompany(c.name);
     if (n) (byName.get(n) || byName.set(n, []).get(n)).push(c);
   }
@@ -83,8 +92,11 @@ export function buildHubspotMapping(accounts = [], companies = [], { links = {} 
     if (linked) { hubspot = [linked]; how = 'linked'; }
     else {
       const seen = new Set();
-      hubspot = accountNames(a).flatMap(n => byName.get(n) || []).filter(c => !seen.has(c.id) && seen.add(c.id));
-      if (hubspot.length) how = 'name';
+      const domain = accountDomain(a);
+      const viaDomain = domain ? byDomain.get(domain) || [] : [];
+      const viaName = accountNames(a).flatMap(n => byName.get(n) || []);
+      hubspot = [...viaDomain, ...viaName].filter(c => !seen.has(c.id) && seen.add(c.id));
+      if (hubspot.length) how = viaDomain.length ? 'website' : 'name';
     }
     for (const c of hubspot) claimed.add(String(c.id));
     return { key: `a:${a.id || a.company}`, account: a, hubspot, how, suggestions: [] };
