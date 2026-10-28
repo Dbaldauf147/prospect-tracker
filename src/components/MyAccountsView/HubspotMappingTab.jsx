@@ -12,6 +12,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
+import { domainKey } from '../../utils/seHubspotExisting';
 import { compactMappingCompanies, buildHubspotMapping, MAPPING_STATUS } from '../../utils/hubspotMapping';
 import { loadHubspotMapping, saveHubspotMapping, EMPTY_HUBSPOT_MAPPING } from '../../utils/hubspotMappingStore';
 
@@ -32,6 +33,8 @@ async function readSheet(file) {
   return XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
 }
 
+const HOW = { website: 'Website', name: 'Name', linked: 'Your link' };
+const accountSite = (r) => (r.account ? domainKey(r.account.website) || domainKey(r.account.emailDomain) : '');
 const hsField = (field) => (r) => r.hubspot.map(c => c[field]).filter(Boolean).join(', ');
 
 export function HubspotMappingTab({ accounts = [], prospects = [], search = '', onSelect, settings, updateSettings, filterBar }) {
@@ -78,7 +81,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     if (!data.companies.length) return [];
     const withNames = accounts.map(a => {
       const p = byId.get(a.id);
-      return p ? { ...a, goesBy: a.goesBy || p.goesBy, aliases: a.aliases || p.aliases } : a;
+      return p ? { ...a, goesBy: a.goesBy || p.goesBy, aliases: a.aliases || p.aliases, website: a.website || p.website, emailDomain: a.emailDomain || p.emailDomain } : a;
     });
     return buildHubspotMapping(withNames, data.companies, { links: data.links });
   }, [accounts, byId, data]);
@@ -161,6 +164,9 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
         </span>
       ) : blank),
     },
+    { key: 'accountWebsite', label: 'My Website', defaultWidth: 160, getFilterValue: r => accountSite(r), exportValue: r => accountSite(r), render: r => accountSite(r) || blank },
+    { key: 'website', label: 'HubSpot Website', defaultWidth: 160, getFilterValue: hsField('domain'), exportValue: hsField('domain'), render: r => hsField('domain')(r) || blank },
+    { key: 'how', label: 'Matched By', defaultWidth: 100, getFilterValue: r => HOW[r.how] || '', exportValue: r => HOW[r.how] || '', render: r => HOW[r.how] || blank },
     { key: 'hubspotId', label: 'HubSpot Company ID', defaultWidth: 150, getFilterValue: hsField('id'), exportValue: hsField('id'), render: r => hsField('id')(r) || blank },
     { key: 'owner', label: 'HubSpot Owner', defaultWidth: 130, getFilterValue: hsField('owner'), exportValue: hsField('owner'), render: r => hsField('owner')(r) || blank },
     { key: 'lifecycle', label: 'Lifecycle Stage', defaultWidth: 120, getFilterValue: hsField('lifecycle'), exportValue: hsField('lifecycle'), render: r => hsField('lifecycle')(r) || blank },
@@ -194,7 +200,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
         <input type="file" accept=".csv,.xlsx,.xls" disabled={busy} style={{ display: 'none' }}
           onChange={e => { upload(e.target.files?.[0]); e.target.value = ''; }} />
         <strong style={{ color: '#0F172A' }}>Drop your HubSpot companies export here</strong>, or click to choose it (CSV or Excel).
-        {' '}It needs Company name; Company ID, Company owner, Lifecycle Stage, Target Account and the activity dates come along when they&apos;re there.
+        {' '}It needs Company name. Add Company Domain Name (or Website URL) to the export and accounts match by website first, then by name; Company ID, Company owner, Lifecycle Stage, Target Account and the activity dates come along when they&apos;re there.
         <div style={{ marginTop: 4, color: '#64748B' }}>
           {busy ? 'Reading the file...'
             : !loaded ? 'Loading...'
