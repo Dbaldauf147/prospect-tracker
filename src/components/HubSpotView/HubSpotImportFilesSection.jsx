@@ -18,6 +18,7 @@ import styles from './HubSpotMoveTab.module.css';
 const FILES = [
   { key: 'companies', label: 'Companies', file: 'hubspot-import-1-companies.csv' },
   { key: 'contacts', label: 'Contacts', file: 'hubspot-import-2-contacts.csv' },
+  { key: 'ownerUpdates', label: 'Companies already there: put in your name (Update existing records only)', file: 'hubspot-import-3-company-owner.csv' },
   { key: 'fields', label: 'Fields to create first', file: 'hubspot-import-0-fields-to-create.csv' },
 ];
 
