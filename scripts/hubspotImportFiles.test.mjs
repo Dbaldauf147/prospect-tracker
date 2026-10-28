@@ -100,7 +100,7 @@ const out = buildImportFiles({ prospects, contacts, opps, settings, ownerEmail: 
   eq(out.report.companiesNoDomain, ['No Site Inc'], 'a company with no website is reported');
   const all = buildImportFiles({ prospects, contacts, opps, settings, allCompanies: true });
   eq(all.companies.rows.length, 3, 'every company with a website when asked');
-  eq(cell(COMPANY_HEADERS, out.companies.rows[0], 'Tier'), 'Tier 1', 'company fields carry over');
+  eq(cell(COMPANY_HEADERS, out.companies.rows[0], 'Prospect Tier'), 'Tier 1', 'company fields carry over');
 }
 
 // Fields
@@ -171,7 +171,8 @@ const out = buildImportFiles({ prospects, contacts, opps, settings, ownerEmail: 
 
   const f = out.fields.rows;
   eq(f.some(r => r[1] === 'Decision Maker' || r[1] === 'Role'), false, 'a field with no value anywhere is not listed');
-  eq(f.find(r => r[1] === 'Tier')[2], 'Single-line text', 'company fields are suggested as text, not dropdowns');
+  eq(f.find(r => r[1] === 'Prospect Tier')[2], 'Single-line text', 'company fields are suggested as text, not dropdowns');
+  eq(COMPANY_HEADERS.includes('Tier'), false, "no plain Tier column: it would match the portal's own numeric Tier");
   eq(f.find(r => r[1] === "Dan's Tags")[2], 'Multiple checkboxes', "Dan's Tags stays a checkbox list");
 }
 
