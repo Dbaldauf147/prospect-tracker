@@ -79,6 +79,8 @@ const out = buildImportFiles({ prospects, contacts, opps, settings, ownerEmail: 
   eq(cell(CONTACT_HEADERS, rows[2], 'Company Domain Name'), 'beta.io', 'no company text: linked by the email domain of an account');
   eq(cell(CONTACT_HEADERS, rows[3], 'Company Domain Name'), 'beta.io', 'the site company pin wins over the synced text (alias match)');
   eq(out.report.contactsNoCompany, 2, 'unlinked: a free-mail contact, and one whose company has no website');
+  eq(out.contacts.rows.filter(r => !cell(CONTACT_HEADERS, r, 'Company Domain Name') && !cell(CONTACT_HEADERS, r, 'Company Record ID')).map(r => cell(CONTACT_HEADERS, r, 'Company Name')), ['', ''],
+    'an unlinked contact has no company name either: a bare name would make a new company in the import');
 }
 
 // Opps
