@@ -9,8 +9,10 @@
 //     HubSpot record comes with it (duplicates show),
 //   * an account with no match gets HubSpot companies starting the same
 //     way as possible matches; a link picks one and claims it,
+//   * a Client that isn't a Customer in HubSpot is flagged, and so is a
+//     HubSpot Customer that isn't a Client or Old Client here,
 //   * HubSpot companies no account claims are listed on their own.
-import { compactMappingCompanies, buildHubspotMapping, MAPPING_STATUS } from '../src/utils/hubspotMapping.js';
+import { compactMappingCompanies, buildHubspotMapping, statusDiscrepancy, MAPPING_STATUS } from '../src/utils/hubspotMapping.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -65,6 +67,17 @@ const siteRows = buildHubspotMapping([
 ], sites);
 eq([siteRows[0].how, siteRows[0].hubspot.map(c => c.id)], ['website', ['10', '11', '12']], 'website hits first, same-named records still come along');
 eq([siteRows[1].status, siteRows[1].how, siteRows[1].hubspot.map(c => c.id)], [MAPPING_STATUS.matched, 'website', ['13']], 'an email domain matches when the names differ');
+
+// ── status discrepancy ───────────────────────────────────────────────────
+eq(statusDiscrepancy('Client', ['Lead']), 'Client here, Lead in HubSpot', 'a Client that is a Lead in HubSpot is flagged');
+eq(statusDiscrepancy('Client', ['Lead', 'Customer']), '', 'a Client with a Customer record among duplicates is fine');
+eq(statusDiscrepancy('Qualifying', ['Customer']), 'Qualifying here, Customer in HubSpot', 'a HubSpot Customer that is a prospect here is flagged');
+eq(statusDiscrepancy('', ['Evangelist']), 'No status here, Evangelist in HubSpot', 'no status here and a customer there is flagged');
+eq(statusDiscrepancy('Old Client', ['Customer']), '', 'an Old Client that is a Customer is fine');
+eq(statusDiscrepancy('Qualifying', ['Lead']), '', 'a prospect that is a Lead is fine');
+eq(statusDiscrepancy('Client', []), '', 'no lifecycle stage in the export, nothing to compare');
+const flagRows = buildHubspotMapping([{ id: 'x', company: '3650 REIT', status: 'Client' }], companies);
+eq(flagRows[0].statusFlag, 'Client here, Lead in HubSpot', 'a matched row carries the flag');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

@@ -33,6 +33,9 @@ async function readSheet(file) {
   return XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
 }
 
+// A filter chip of its own: matched accounts whose Status and HubSpot
+// Lifecycle Stage disagree (statusDiscrepancy).
+const MISMATCH = 'Status mismatch';
 const HOW = { website: 'Website', name: 'Name', linked: 'Your link' };
 const accountSite = (r) => (r.account ? domainKey(r.account.website) || domainKey(r.account.emailDomain) : '');
 const hsField = (field) => (r) => r.hubspot.map(c => c[field]).filter(Boolean).join(', ');
@@ -88,13 +91,17 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
 
   const counts = useMemo(() => {
     const c = {};
-    for (const r of mapping) c[r.status] = (c[r.status] || 0) + 1;
+    for (const r of mapping) {
+      c[r.status] = (c[r.status] || 0) + 1;
+      if (r.statusFlag) c[MISMATCH] = (c[MISMATCH] || 0) + 1;
+    }
     return c;
   }, [mapping]);
 
   const rows = useMemo(() => {
     let out = mapping;
-    if (statusFilter) out = out.filter(r => r.status === statusFilter);
+    if (statusFilter === MISMATCH) out = out.filter(r => r.statusFlag);
+    else if (statusFilter) out = out.filter(r => r.status === statusFilter);
     const term = search.trim().toLowerCase();
     if (term) {
       out = out.filter(r => [r.account?.company, ...r.hubspot.map(c => c.name), ...r.suggestions.map(c => c.name)]
@@ -126,6 +133,16 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
           >{r.account.company}</button>
         ) : <span style={{ fontWeight: 600 }}>{r.account.company}</span>;
       },
+    },
+    {
+      key: 'statusFlag', label: 'Status Check', defaultWidth: 280,
+      headerTitle: 'Flags a matched account whose Status disagrees with its HubSpot Lifecycle Stage: a Client that is not a Customer in HubSpot, or a Customer in HubSpot that is not a Client or Old Client here.',
+      getSortValue: r => r.statusFlag || null,
+      getFilterValue: r => (r.statusFlag ? MISMATCH : ''),
+      exportValue: r => r.statusFlag,
+      render: r => (r.statusFlag ? (
+        <span title={r.statusFlag} style={{ fontSize: '0.68rem', fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA', padding: '0 7px', borderRadius: 999, whiteSpace: 'nowrap' }}>{'\u26A0'} {r.statusFlag}</span>
+      ) : blank),
     },
     { key: 'tier', label: 'Tier', defaultWidth: 90, getFilterValue: r => r.account?.myTier || '', exportValue: r => r.account?.myTier || '', render: r => r.account?.myTier || blank },
     { key: 'accountStatus', label: 'Account Status', defaultWidth: 130, getFilterValue: r => r.account?.status || '', exportValue: r => r.account?.status || '', render: r => r.account?.status || blank },
@@ -217,6 +234,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
             {chip(MAPPING_STATUS.matched, MAPPING_STATUS.matched)}
             {chip(MAPPING_STATUS.accountOnly, MAPPING_STATUS.accountOnly)}
             {chip(MAPPING_STATUS.hubspotOnly, MAPPING_STATUS.hubspotOnly)}
+            {chip(MISMATCH, MISMATCH)}
           </>
         )}
       </div>

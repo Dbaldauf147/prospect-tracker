@@ -60,6 +60,26 @@ const accountNames = (a) => [a.company, a.goesBy, ...(Array.isArray(a.aliases) ?
 // keys are left out, or "the" would match half the list.
 const startsWithWords = (a, b) => a.length >= 4 && (b === a || b.startsWith(a + ' '));
 
+// Whether an account's Status and its HubSpot Lifecycle Stage disagree, as
+// a sentence saying how, or '' when they don't. HubSpot only has one stage
+// that means a customer (Evangelist comes after it), so the check is that
+// one line: a Client should be a Customer there, and a Customer there
+// should be a Client (or an Old Client, which HubSpot has no stage for).
+// Anything short of Customer is fine for a prospect, whichever it is.
+const CUSTOMER_STAGES = new Set(['customer', 'evangelist']);
+const CLIENT_STATUSES = new Set(['client', 'old client']);
+export function statusDiscrepancy(accountStatus, lifecycles = []) {
+  const stages = lifecycles.map(l => clean(l)).filter(Boolean);
+  if (!stages.length) return '';
+  const status = clean(accountStatus);
+  const isClient = status.toLowerCase() === 'client';
+  const customer = stages.filter(l => CUSTOMER_STAGES.has(l.toLowerCase()));
+  const shown = [...new Set(stages)].join(', ');
+  if (isClient && !customer.length) return `Client here, ${shown} in HubSpot`;
+  if (customer.length && !CLIENT_STATUSES.has(status.toLowerCase())) return `${status || 'No status'} here, ${[...new Set(customer)].join(', ')} in HubSpot`;
+  return '';
+}
+
 export const MAPPING_STATUS = {
   matched: 'In both',
   accountOnly: 'Only in My Accounts',
@@ -69,7 +89,8 @@ export const MAPPING_STATUS = {
 /**
  * One row per account and one per HubSpot company no account claims
  * (same-named records together):
- *   { key, status, account, hubspot: [records], how, suggestions }
+ *   { key, status, account, hubspot: [records], how, suggestions, statusFlag }
+ * `statusFlag` is statusDiscrepancy's sentence for a matched account.
  * `how` is 'website' | 'name' | 'linked' | ''. `links` is { [accountId]: hubspotId },
  * Dan's own choices, which win over the name match.
  */
@@ -114,7 +135,10 @@ export function buildHubspotMapping(accounts = [], companies = [], { links = {} 
       .map(([, c]) => c);
   }
 
-  for (const r of rows) r.status = r.hubspot.length ? MAPPING_STATUS.matched : MAPPING_STATUS.accountOnly;
+  for (const r of rows) {
+    r.status = r.hubspot.length ? MAPPING_STATUS.matched : MAPPING_STATUS.accountOnly;
+    r.statusFlag = r.hubspot.length ? statusDiscrepancy(r.account.status, r.hubspot.map(c => c.lifecycle)) : '';
+  }
   // Same-named HubSpot records share a row, so duplicates show as one
   // company with "N records", as they do on a matched account.
   const groups = new Map();
@@ -123,7 +147,7 @@ export function buildHubspotMapping(accounts = [], companies = [], { links = {} 
     (groups.get(g) || groups.set(g, []).get(g)).push(c);
   }
   for (const hubspot of groups.values()) {
-    rows.push({ key: `h:${hubspot[0].id}`, status: MAPPING_STATUS.hubspotOnly, account: null, hubspot, how: '', suggestions: [] });
+    rows.push({ key: `h:${hubspot[0].id}`, status: MAPPING_STATUS.hubspotOnly, account: null, hubspot, how: '', suggestions: [], statusFlag: '' });
   }
   return rows;
 }
