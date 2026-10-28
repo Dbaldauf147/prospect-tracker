@@ -14,7 +14,7 @@
 //   * a Client that isn't a Customer in HubSpot is flagged, and so is a
 //     HubSpot Customer that isn't a Client or Old Client here,
 //   * HubSpot companies no account claims are listed on their own.
-import { compactMappingCompanies, buildHubspotMapping, statusDiscrepancy, nameSimilarity, MAPPING_STATUS } from '../src/utils/hubspotMapping.js';
+import { compactMappingCompanies, buildHubspotMapping, statusDiscrepancy, nameSimilarity, likelyDuplicateName, MAPPING_STATUS } from '../src/utils/hubspotMapping.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -96,6 +96,29 @@ const apollo = compactMappingCompanies([{ 'Company name': 'Apollo Global Managem
 const tableRows = buildHubspotMapping([], apollo, { tracker: [{ id: 't', company: 'Apollo Global Management, Inc.', cdm: 'Jane Doe' }, { id: 'u', company: 'Other' }] });
 eq([tableRows[0].status, tableRows[0].tracker.map(p => p.id)], [MAPPING_STATUS.hubspotOnly, ['t']], 'a HubSpot-only company on the tracker names the tracker record');
 eq(buildHubspotMapping([], apollo)[0].tracker, [], 'no tracker given, no tracker records');
+
+// ── likely duplicates of a matched account ────────────────────────────────
+eq(likelyDuplicateName('Silver Lake', 'Silver Lake Partners'), true, 'a dropped "Partners" is the same firm');
+eq(likelyDuplicateName('WSP', 'WSP Global'), true, 'a dropped "Global" is the same firm');
+eq(likelyDuplicateName('DivcoWest', 'Divco West Properties'), true, 'spacing aside, the same firm');
+eq(likelyDuplicateName('Jones Lang LaSalle (JLL)', 'Jones Lang LaSalle'), true, 'the name without its bracketed acronym');
+eq(likelyDuplicateName('Teachers Insurance and Annuity Association of America (TIAA)', 'TIAA'), true, 'the acronym on its own, in capitals');
+eq(likelyDuplicateName('Alberta Investment Management Corporation (AIMCo)', 'Aimco'), false, 'a different firm spelled like the acronym is not');
+eq(likelyDuplicateName('Westinghouse', 'Westinghouse (a Brookfield Co.)'), true, 'an "a ... Co." clause is the same firm');
+eq(likelyDuplicateName('Blackstone', 'A&E Real Estate Holdings (a Blackstone Co.)'), false, 'a portfolio company is not');
+eq(likelyDuplicateName('Brookfield Asset Management', 'Brookfield (Selenta)'), false, 'a sister company is not');
+eq(likelyDuplicateName('Berkeley Partners', 'Berkeley Capital Group'), false, 'more of a different name is not');
+eq(likelyDuplicateName('CommonWealth Partners', 'Equity Commonwealth'), false, 'sharing one word is not');
+const dupCos = compactMappingCompanies([
+  { 'Company name': 'Silver Lake', 'Company ID': '30' },
+  { 'Company name': 'Silver Lake Partners', 'Company ID': '31' },
+  { 'Company name': 'Silver Lake Partners', 'Company ID': '32' },
+  { 'Company name': 'Silverlake Dental', 'Company ID': '33' },
+]);
+const dupRows = buildHubspotMapping([{ id: 's', company: 'Silver Lake' }], dupCos);
+eq(dupRows[0].duplicates.map(c => c.id), ['31', '32'], 'duplicates go on the matched account row');
+eq(dupRows.filter(r => r.status === MAPPING_STATUS.hubspotOnly).map(r => r.hubspot[0].id), ['33'], 'and no longer get an Only in HubSpot row');
+eq(buildHubspotMapping([{ id: 'n', company: 'Nobody' }], dupCos).every(r => !r.duplicates.length), true, 'no matched account, no duplicates');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

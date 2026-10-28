@@ -52,6 +52,8 @@ const INACTIVE_STATUSES = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold'])
 const HOW = { website: 'Website', name: 'Name', linked: 'Your link' };
 const accountSite = (r) => (r.account ? domainKey(r.account.website) || domainKey(r.account.emailDomain) : '');
 const hsField = (field) => (r) => r.hubspot.map(c => c[field]).filter(Boolean).join(', ');
+// Same-named duplicate records read once.
+const dupNames = (r) => [...new Set((r.duplicates || []).map(c => c.name))].join(', ');
 
 export function HubspotMappingTab({ accounts = [], prospects = [], search = '', onSelect, settings, updateSettings, filterBar, cdmName = '' }) {
   const [data, setData] = useState(EMPTY_HUBSPOT_MAPPING);
@@ -147,7 +149,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     else if (statusFilter && statusFilter !== INACTIVE) out = out.filter(r => r.status === statusFilter);
     const term = search.trim().toLowerCase();
     if (term) {
-      out = out.filter(r => [r.account?.company, ...r.hubspot.map(c => c.name), ...r.suggestions.map(c => c.name), ...(r.tracker || []).map(p => p.company)]
+      out = out.filter(r => [r.account?.company, ...r.hubspot.map(c => c.name), ...(r.duplicates || []).map(c => c.name), ...r.suggestions.map(c => c.name), ...(r.tracker || []).map(p => p.company)]
         .filter(Boolean).join(' ').toLowerCase().includes(term));
     }
     return out.map(r => ({ ...r, id: r.key }));
@@ -247,6 +249,24 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
             )}
             {r.how === 'linked' && (
               <button type="button" style={linkBtn} onClick={() => link(r.account.id, null)} title="Linked by you. Unlink to go back to the name match.">Unlink</button>
+            )}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'duplicates', label: 'Hubspot Duplicates', defaultWidth: 260,
+      headerTitle: 'Other HubSpot companies that are most likely this account entered again under a slightly different name (for example Silver Lake Partners next to Silver Lake). They show here instead of as Only in HubSpot rows. Merge them in HubSpot when you are ready.',
+      getSortValue: r => (r.duplicates[0]?.name || '').toLowerCase() || null,
+      getFilterValue: dupNames, exportValue: r => r.duplicates.map(c => `${c.name} (${c.id})`).join(', '),
+      render: r => {
+        if (!r.duplicates.length) return blank;
+        return (
+          <span title={r.duplicates.map(c => `${c.name} (${c.id})`).join('\n')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span>{dupNames(r)}</span>
+            {r.duplicates.length > 1 && (
+              <span style={{ fontSize: '0.62rem', fontWeight: 700, color: '#B45309', background: '#FFFBEB', border: '1px solid #FDE68A', padding: '0 5px', borderRadius: 999, whiteSpace: 'nowrap' }}
+              >{r.duplicates.length} records</span>
             )}
           </span>
         );
