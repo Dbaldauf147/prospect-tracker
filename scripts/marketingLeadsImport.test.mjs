@@ -10,6 +10,7 @@
 import {
   autoDetectLeadMapping, leadRowsFromTable, planLeadImport,
   normalizeLeadName, leadNameKey, summariseLeadNames,
+  makeLeadId, leadAddedAt,
 } from '../src/utils/marketingLeadsImport.js';
 
 let passed = 0, failed = 0;
@@ -191,6 +192,20 @@ eq(summariseLeadNames([{ name: 'A' }, { name: 'B' }]), 'A, B', 'a short list nam
 eq(summariseLeadNames([{ name: 'A' }, { name: 'B' }, { name: 'C' }], 2), 'A, B and 1 more',
   'a long list is capped');
 eq(summariseLeadNames([]), '', 'an empty list reports nothing');
+
+// ---- date added (decoded from the id) --------------------------------
+
+{
+  const before = Date.now();
+  const at = leadAddedAt({ id: makeLeadId() });
+  eq(at >= before && at <= Date.now(), true, 'a fresh lead id decodes to now');
+}
+const sep2026 = Date.UTC(2026, 8, 15, 12);
+eq(leadAddedAt({ id: `${sep2026.toString(36)}_abc123` }), sep2026, 'an older id decodes to its own moment');
+eq(leadAddedAt({ id: 's_jane' }), null, 'an id that is not a timestamp reads as unknown');
+eq(leadAddedAt({ id: '__pad_3' }), null, 'a padding row has no date');
+eq(leadAddedAt({ id: '1_abc' }), null, 'a prefix decoding to 1970 reads as unknown');
+eq(leadAddedAt({}), null, 'no id, no date');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
