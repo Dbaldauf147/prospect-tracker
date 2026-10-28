@@ -3892,6 +3892,7 @@ Fix that now?
       <div className={styles.wrapper}>
         <HubspotMappingTab
           accounts={allAccounts}
+          cdmName={cdmName}
           prospects={prospects}
           search={search}
           onSelect={onSelect}

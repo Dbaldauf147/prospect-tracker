@@ -18,6 +18,7 @@ import { domainKey } from '../../utils/seHubspotExisting';
 import { compactMappingCompanies, buildHubspotMapping, MAPPING_STATUS, SUGGEST_MIN_SCORE } from '../../utils/hubspotMapping';
 import { loadHubspotMapping, saveHubspotMapping, EMPTY_HUBSPOT_MAPPING } from '../../utils/hubspotMappingStore';
 import { reportingStatus } from '../../utils/reportingStatus';
+import { matchesCdm } from '../../utils/cdmMatch';
 
 const fmt = (n) => Number(n || 0).toLocaleString();
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
@@ -52,7 +53,7 @@ const HOW = { website: 'Website', name: 'Name', linked: 'Your link' };
 const accountSite = (r) => (r.account ? domainKey(r.account.website) || domainKey(r.account.emailDomain) : '');
 const hsField = (field) => (r) => r.hubspot.map(c => c[field]).filter(Boolean).join(', ');
 
-export function HubspotMappingTab({ accounts = [], prospects = [], search = '', onSelect, settings, updateSettings, filterBar }) {
+export function HubspotMappingTab({ accounts = [], prospects = [], search = '', onSelect, settings, updateSettings, filterBar, cdmName = '' }) {
   const [data, setData] = useState(EMPTY_HUBSPOT_MAPPING);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -97,6 +98,22 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   const cdmOf = (r) => {
     const recs = r.account ? [byId.get(r.account.id) || r.account] : r.tracker || [];
     return [...new Set(recs.map(p => String(p.cdm || '').trim()).filter(Boolean))].join(', ');
+  };
+  // A Tier 1 or Tier 2 company whose CDM isn't Dan and whose popup doesn't
+  // have "aligned w/other CDM" ticked: he should align with that CDM first.
+  // A matched account's tier is its My Accounts tier; a Table tab record's
+  // is the tier on the record.
+  const firstName = String(cdmName || '').trim().split(/\s+/)[0] || 'Dan';
+  const cdmWarning = (r) => {
+    if (!cdmName) return '';
+    const recs = r.account
+      ? [{ ...(byId.get(r.account.id) || r.account), tier: r.account.myTier }]
+      : r.tracker || [];
+    const flagged = recs.filter(p => (p.tier === 'Tier 1' || p.tier === 'Tier 2')
+      && !matchesCdm(p.cdm, cdmName) && p.cdmAligned !== true);
+    if (!flagged.length) return '';
+    const p = flagged[0];
+    return `${p.tier} with ${String(p.cdm || '').trim() || 'no CDM'} as CDM, and ${firstName}'s aligned w/other CDM isn't ticked`;
   };
   const trackerOf = (r) => (r.tracker || []).map(p => p.company).filter(Boolean).join(', ');
   const substatusOf = (r) => (r.account ? String(r.account.substatus || byId.get(r.account.id)?.substatus || '').trim() : '');
@@ -179,7 +196,23 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
       getFilterValue: r => substatusOf(r), exportValue: r => substatusOf(r),
       render: r => substatusOf(r) || blank,
     },
-    { key: 'cdm', label: 'CDM', defaultWidth: 140, getFilterValue: r => cdmOf(r), exportValue: r => cdmOf(r), render: r => cdmOf(r) || blank },
+    {
+      key: 'cdm', label: 'CDM', defaultWidth: 210,
+      headerTitle: `\u26A0 marks a Tier 1 or Tier 2 company whose CDM isn't ${cdmName || 'you'} and whose "${firstName}'s aligned w/other CDM" box (company popup) isn't ticked.`,
+      getFilterValue: r => cdmOf(r) + (cdmWarning(r) ? ' \u26A0' : ''),
+      exportValue: r => [cdmOf(r), cdmWarning(r)].filter(Boolean).join(' - '),
+      render: r => {
+        const cdm = cdmOf(r);
+        const warn = cdmWarning(r);
+        if (!warn) return cdm || blank;
+        return (
+          <span title={warn} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA', padding: '0 6px', borderRadius: 999, whiteSpace: 'nowrap' }}>{'\u26A0'} Not aligned</span>
+            <span>{cdm || blank}</span>
+          </span>
+        );
+      },
+    },
     {
       key: 'onTable', label: 'On Table Tab', defaultWidth: 220,
       headerTitle: 'For a HubSpot company no account matched: the companies on the Table tab with its name or website. They are on the tracker but not on My Accounts (for example another CDM\'s account, or one with no tier and no opps), which is why it shows as Only in HubSpot.',
@@ -255,7 +288,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     { key: 'created', label: 'HubSpot Created', defaultWidth: 130, getFilterValue: hsField('created'), exportValue: hsField('created'), render: r => hsField('created')(r) || blank },
   // link closes over data; the table re-renders with it.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [data, byId, onSelect]);
+  ], [data, byId, onSelect, cdmName]);
 
   const chip = (label, value) => {
     const active = statusFilter === value;
