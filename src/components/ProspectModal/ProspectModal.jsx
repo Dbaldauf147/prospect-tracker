@@ -117,7 +117,7 @@ import {
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { buildStrategyOptions, persistCustomStrategy, buildAssetTypeOptions, buildCdmOptions, buildTypeOptions } from '../../utils/prospectOptions';
 import { resolveTargetAccountCdm, matchesCdm } from '../../utils/cdmMatch';
-import { coverageFromSettings, salespeopleForVertical } from '../../utils/salesCoverage';
+import { coverageFromSettings, salespeopleForVertical, isCoverageVertical } from '../../utils/salesCoverage';
 import { buildTargetTierResolver, tierMismatch, targetVerticalFor } from '../../utils/targetTier';
 import { normalizeTierText } from '../../utils/tierText';
 import { targetAccountRows, suggestTargetMatches, mappedTargetNames, targetRowFlags } from '../../utils/targetAccountMatch';
@@ -5592,10 +5592,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // doesn't include you (cdmName). Shown as a second warning on the CDM
   // field beside the Target Accounts one: the vertical is someone else's
   // coverage, so the account likely isn't yours to work.
+  //
+  // A Vertical that is not on the Coverage tab at all ("Retail Team" where
+  // the list has Big Box / Small Box Retail) can't be checked, so it gets
+  // its own warning rather than none.
   const verticalCoverageConflict = useMemo(() => {
     const vertical = String(fields.vertical || '').trim();
-    if (!vertical || !cdmName) return null;
-    const people = salespeopleForVertical(coverageFromSettings(settings), vertical);
+    if (!vertical) return null;
+    const coverage = coverageFromSettings(settings);
+    if (coverage.length && !isCoverageVertical(coverage, vertical)) return { vertical, offList: true, names: [], teams: [] };
+    if (!cdmName) return null;
+    const people = salespeopleForVertical(coverage, vertical);
     if (people.length === 0) return null;
     if (people.some(p => matchesCdm(p.name, cdmName))) return null;
     const teams = [...new Set(people.flatMap(p => p.teams || []))];
@@ -10789,7 +10796,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   })()}
                   {verticalCoverageConflict && (
                     <span
-                      title={`Opps > Coverage lists ${verticalCoverageConflict.names.join(', ')}${verticalCoverageConflict.teams.length ? ` (${verticalCoverageConflict.teams.join(', ')} team${verticalCoverageConflict.teams.length === 1 ? '' : 's'})` : ''} for the ${verticalCoverageConflict.vertical} vertical, not ${cdmName}.`}
+                      title={verticalCoverageConflict.offList
+                        ? `${verticalCoverageConflict.vertical} is not a vertical on Opps > Coverage, so who covers this account can't be checked. Pick a Vertical from the Coverage list, or add this one there.`
+                        : `Opps > Coverage lists ${verticalCoverageConflict.names.join(', ')}${verticalCoverageConflict.teams.length ? ` (${verticalCoverageConflict.teams.join(', ')} team${verticalCoverageConflict.teams.length === 1 ? '' : 's'})` : ''} for the ${verticalCoverageConflict.vertical} vertical, not ${cdmName}.`}
                       style={{
                         display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
                         flexShrink: 0, maxWidth: '100%', padding: '0.15rem 0.35rem', borderRadius: 4,
@@ -10799,7 +10808,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     >
                       <span aria-hidden="true">⚠</span>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {`${verticalCoverageConflict.vertical}: ${verticalCoverageConflict.names.join(', ')}${verticalCoverageConflict.teams.length ? ` (${verticalCoverageConflict.teams.join(', ')})` : ''}`}
+                        {verticalCoverageConflict.offList
+                          ? `${verticalCoverageConflict.vertical}: not a vertical on Opps > Coverage`
+                          : `${verticalCoverageConflict.vertical}: ${verticalCoverageConflict.names.join(', ')}${verticalCoverageConflict.teams.length ? ` (${verticalCoverageConflict.teams.join(', ')})` : ''}`}
                       </span>
                     </span>
                   )}

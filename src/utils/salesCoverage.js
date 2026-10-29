@@ -60,6 +60,17 @@ export function salespeopleForVertical(coverage, vertical) {
   return [...byName.values()];
 }
 
+// Is this vertical on the Coverage tab at all, under any team? Matched the
+// same way as salespeopleForVertical. A card whose Vertical is not on the
+// list (a team name like "Retail Team", a typo) can't be checked against
+// anybody's coverage, so the card says so rather than staying quiet.
+export function isCoverageVertical(coverage, vertical) {
+  const key = (s) => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  const want = key(vertical);
+  if (!want) return false;
+  return (coverage || []).some(g => (g?.rows || []).some(r => key(r?.vertical) === want));
+}
+
 // One inline edit on the Coverage table, applied to the list as shown and
 // tidied the way a full Edit-mode save is. `gi` / `ri` index the unfiltered
 // list; `field` is 'team' (ri ignored), 'vertical' or 'salespeople' (typed
