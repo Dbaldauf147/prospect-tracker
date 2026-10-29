@@ -178,6 +178,7 @@ import styles from './ProspectModal.module.css';
 import { PeOwnerField } from './PeOwnerField';
 import { recipientMapSaver } from '../../utils/recipientMaps';
 import { selectDeckOpps } from '../../utils/oppDeck';
+import { holdOffMissingSubstatus } from '../../utils/reportingStatus';
 import oppDeckTemplateUrl from '../../assets/se-opps-template.pptx?url';
 
 // The notes editor is fetched the first time an opportunity's notes open,
@@ -10643,6 +10644,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div>
               <label className={styles.label}>Substatus</label>
+              {/* The dropdown and its warning share the value column, as Tier does. */}
+              <div style={{ minWidth: 0 }}>
               <select
                 className={styles.select}
                 value={fields.substatus || ''}
@@ -10654,6 +10657,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 <option value="">{substatusOptions.length ? '-' : '- (add options on Dropdowns)'}</option>
                 {substatusOptions.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
+              {holdOffMissingSubstatus(fields) && (
+                <div style={{ marginTop: 4, fontSize: '0.7rem', fontWeight: 600, color: '#B91C1C' }}>
+                  {'\u26A0'} Hold Off needs a substatus. Pick one to say why it is on hold.
+                </div>
+              )}
+              </div>
             </div>
 
             <div>

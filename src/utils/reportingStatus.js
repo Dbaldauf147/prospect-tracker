@@ -19,6 +19,14 @@ export function hasSubstatus(account) {
   return !!String(account?.substatus ?? '').trim();
 }
 
+/**
+ * Whether the account's own Status is Hold Off with no substatus saying
+ * why: the company popup and My Accounts warn about it.
+ */
+export function holdOffMissingSubstatus(account) {
+  return String(account?.status ?? '').trim() === SUBSTATUS_HOLD_STATUS && !hasSubstatus(account);
+}
+
 /** 'Hold Off' when the account has a substatus, else its saved Status. */
 export function reportingStatus(account) {
   if (hasSubstatus(account)) return SUBSTATUS_HOLD_STATUS;
