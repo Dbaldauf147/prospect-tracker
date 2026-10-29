@@ -8,7 +8,7 @@ globalThis.localStorage = {
   removeItem: (k) => { store.delete(k); },
 };
 const { setUserLsUserId } = await import('../src/utils/userLs.js');
-const { markLocalOnly, clearLocalOnly, loadLocalOnlyFiles, localOnlyFileIssues } = await import('../src/utils/localOnlyFiles.js');
+const { markLocalOnly, clearLocalOnly, loadLocalOnlyFiles, localOnlyFileIssues, failedOnCrashedClient, hasCrashedClientFailures } = await import('../src/utils/localOnlyFiles.js');
 setUserLsUserId('u1');
 
 let passed = 0, failed = 0;
@@ -46,6 +46,16 @@ eq(rows.map(r => [r.id, r.source, r.type, r.company, r.oppNumber, r.prospectId])
   ['local-only:portfolio:portfolioUploadFile:blackstone', 'Backups', 'File not backed up', 'Blackstone', null, 'p9'],
 ], 'rows name the opp and its company, and the portfolio company card');
 eq(rows[0].detail, 'SIA / pricing workbook "Big SIA.xlsx" (30.0 MB) is only in this browser: over the 20.0 MB backup limit. Clearing browsing data would delete it. Find it under Opps > the opp > Pricing.', 'too-big detail');
+{
+  const sdk = 'FIRESTORE (12.18.0) INTERNAL ASSERTION FAILED: Unexpected state (ID: b815) CONTEXT: {"el":"Error"}';
+  eq(hasCrashedClientFailures(), false, 'a permission error is not a crashed client');
+  markLocalOnly('list:sites-list-override', { kind: 'list', reason: 'backup-failed', name: 'sites-list-override, 238 rows', error: sdk });
+  eq(hasCrashedClientFailures(), true, 'an SDK assertion is a crashed client, worth retrying now');
+  eq(failedOnCrashedClient({ reason: 'too-big', error: sdk }), false, 'too big is never a crash');
+  const row = localOnlyFileIssues(loadLocalOnlyFiles()).find(r => r.id === 'local-only:list:sites-list-override');
+  eq(row.detail, 'Uploaded list "sites-list-override, 238 rows" is only in this browser: its cloud backup failed because the database connection in that tab had crashed (a Firebase bug, not your data). Reload the page and it backs itself up within a minute; this row clears when it has. Until then, don\'t clear browsing data.', 'a crashed-client failure says to reload, not the assertion');
+  clearLocalOnly('list:sites-list-override');
+}
 eq(rows[1].detail, 'PE portfolio workbook "bx.xlsx" (2 KB) is only in this browser: its cloud backup failed (permission-denied). Clearing browsing data would delete it. Find it under Company card > Portfolio.', 'failed-backup detail');
 eq(localOnlyFileIssues([{ id: 'x', kind: 'nope' }]), [], 'an unknown kind makes no row');
 eq(rows.every(r => !/—/.test(r.detail)), true, 'no em dashes in the copy');
