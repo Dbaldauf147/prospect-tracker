@@ -225,6 +225,16 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
       setAccepting(false);
     }
   }
+  // Ignore hides this suggestion for this company, in the same per-company
+  // list the card's Targets list box ignores into; the next closest Targets
+  // list account, if any, takes its place.
+  const ignoreTarget = (accountId, name) => {
+    if (accountId == null || !name || !updateSettings) return;
+    updateSettings(prev => {
+      const all = prev?.ignoredTargetSuggestions || {};
+      return { ignoredTargetSuggestions: { ...all, [accountId]: { ...(all[accountId] || {}), [name.toLowerCase()]: true } } };
+    });
+  };
   const withSuggestion = (list) => list.filter(r => r.account && targetSuggestions.has(r.account.id));
   const shownSuggested = withSuggestion(shownRows);
   const shownUnmappedSuggested = withSuggestion(shownUnmappedRows);
@@ -275,7 +285,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     },
     {
       key: 'targetSuggest', label: 'Suggested Target', defaultWidth: 380,
-      headerTitle: 'For a company not mapped to the Targets list: the closest Targets list account nobody else is mapped to, with how alike the names are and its CDM, Tier and Vertical. Accept maps it and sets the company to that CDM, Tier and Vertical.',
+      headerTitle: 'For a company not mapped to the Targets list: the closest Targets list account nobody else is mapped to, with how alike the names are and its CDM, Tier and Vertical. Accept maps it and sets the company to that CDM, Tier and Vertical. Ignore stops suggesting it for that company.',
       getSortValue: r => (r.account && targetSuggestions.get(r.account.id)?.score) || null,
       getFilterValue: r => (r.account && targetSuggestions.get(r.account.id)?.name) || '',
       exportValue: r => {
@@ -297,6 +307,10 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
               onClick={() => acceptTargets([r], { ask: false })}
               title={`Map ${r.account.company} to ${t.name} on the Targets list. ${plan ? describePatch(plan) : ''}.`}
             >Accept</button>
+            <button type="button" style={{ ...linkBtn, color: '#64748B' }} disabled={accepting}
+              onClick={() => ignoreTarget(r.account.id, t.name)}
+              title={`Not ${t.name}: stop suggesting it for ${r.account.company}. The next closest Targets list account shows instead, if there is one.`}
+            >Ignore</button>
           </span>
         );
       },
@@ -418,7 +432,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     { key: 'created', label: 'HubSpot Created', defaultWidth: 130, getFilterValue: hsField('created'), exportValue: hsField('created'), render: r => hsField('created')(r) || blank },
   // link closes over data; the table re-renders with it.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [data, byId, onSelect, cdmName, targetSuggestions, cdmOptions, verticalOptions, accepting, settings?.targetMap]);
+  ], [data, byId, onSelect, cdmName, targetSuggestions, cdmOptions, verticalOptions, accepting, settings?.targetMap, updateSettings]);
 
   const chip = (label, value) => {
     const active = statusFilter === value;
