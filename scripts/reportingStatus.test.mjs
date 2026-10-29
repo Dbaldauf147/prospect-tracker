@@ -2,7 +2,7 @@
 // Status, and only a substatus puts it in the left-out map.
 //
 // Run: node scripts/reportingStatus.test.mjs
-import { reportingStatus, hasSubstatus, substatusNameMap, withSubstatusLeftOut, withCoverageLeftOut, SUBSTATUS_HOLD_STATUS } from '../src/utils/reportingStatus.js';
+import { reportingStatus, hasSubstatus, substatusNameMap, withSubstatusLeftOut, withCoverageLeftOut, holdOffMissingSubstatus, SUBSTATUS_HOLD_STATUS } from '../src/utils/reportingStatus.js';
 import { excludeUntrackedFromWeek } from '../src/utils/progressUntracked.js';
 
 let passed = 0, failed = 0;
@@ -46,6 +46,12 @@ const week = {
 };
 const adjusted = excludeUntrackedFromWeek(week, new Set(Object.keys(coverageMap)));
 eq([adjusted.t1Total, adjusted.t1WithContacts, adjusted.t1ContactPct], [2, 2, 100], 'a saved week re-answered without them');
+
+eq(holdOffMissingSubstatus({ status: 'Hold Off' }), true, 'Hold Off with no substatus is warned about');
+eq(holdOffMissingSubstatus({ status: 'Hold Off', substatus: '  ' }), true, 'a blank substatus counts as none');
+eq(holdOffMissingSubstatus({ status: 'Hold Off', substatus: 'Budget freeze' }), false, 'Hold Off with a substatus is fine');
+eq(holdOffMissingSubstatus({ status: 'Client' }), false, 'other statuses are not warned about');
+eq(holdOffMissingSubstatus({ status: 'Client', substatus: 'Budget freeze' }), false, 'nor is a Client parked by a substatus');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

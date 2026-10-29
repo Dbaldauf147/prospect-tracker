@@ -7,7 +7,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { Badge } from '../common/Badge';
 import { DataTable } from '../common/DataTable';
 import { statusColor, formatAum } from '../../utils/formatters';
-import { reportingStatus, hasSubstatus, SUBSTATUS_HOLD_STATUS } from '../../utils/reportingStatus';
+import { reportingStatus, hasSubstatus, holdOffMissingSubstatus, SUBSTATUS_HOLD_STATUS } from '../../utils/reportingStatus';
 import { STATUSES, TYPES, TIER_OPTIONS, NOT_ON_TIER_LIST, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
 import { buildTypeOptions } from '../../utils/prospectOptions';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
@@ -3556,6 +3556,12 @@ Fix that now?
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <InlineCell row={row} field="status" value={row.status} onUpdate={onUpdate} options={STATUSES} />
             {row.statusMismatch && <StatusMismatchWarning row={row} onUpdate={onUpdate} />}
+            {holdOffMissingSubstatus(row) && (
+              <span
+                title="Hold Off with no substatus. Set one on the company popup, beside Status, to say why it is on hold."
+                style={{ color: '#B91C1C', fontWeight: 700, cursor: 'help' }}
+              >{'\u26A0'}</span>
+            )}
           </span>
         ))};
       }
