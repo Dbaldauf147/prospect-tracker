@@ -28,8 +28,9 @@ import { buildZoomExcludedMatcher, zoomExcludedLabel } from '../../utils/zoomExp
 import { ZoomExcludedCell } from './ZoomExcludedCell';
 import { ZOOM_SEARCH_LOG_KEY, readLog as readZoomSearchLog, buildTitleSearchedMatcher } from '../../utils/zoomSearchLog';
 import { readWorkKey, ZOOM_SEARCH_LOG_EVENT } from '../../utils/mirroredWorkKeys';
+import { OWN_TARGET_TIER_LABEL } from '../../utils/tierSource';
 
-const TIER_INK = { 'Tier 1': '#DC2626', 'Tier 2': '#3B82F6', 'Tier 3': '#F59E0B' };
+const TIER_INK = { 'Tier 1': '#DC2626', 'Tier 2': '#3B82F6', [OWN_TARGET_TIER_LABEL]: '#7C3AED', 'Tier 3': '#F59E0B' };
 
 // Tier 1 first, then 2, 3, then anything else that was typed (Not on tier
 // list); no tier at all sorts last. A number, because DataTable compares
@@ -159,9 +160,15 @@ export function DecisionMakerTagsTable({ accounts, contacts, prospects, settings
       ),
     },
     {
-      key: 'myTier', label: 'Tier', defaultWidth: 80,
-      getSortValue: r => tierRank(r.myTier),
-      render: r => <span style={{ fontWeight: 600, color: TIER_INK[r.myTier] || '#64748B' }}>{r.myTier || '-'}</span>,
+      // Shows tierLabel (Strategic Target for a "Not on tier list, but Dan
+      // target" company), which sorts between Tier 2 and Tier 3.
+      key: 'myTier', label: 'Tier', defaultWidth: 110,
+      getSortValue: r => (r.tierLabel === OWN_TARGET_TIER_LABEL ? 2.5 : tierRank(r.myTier)),
+      getFilterValue: r => r.tierLabel || r.myTier || '',
+      render: r => {
+        const label = r.tierLabel || r.myTier;
+        return <span style={{ fontWeight: 600, color: TIER_INK[label] || '#64748B', whiteSpace: 'nowrap' }}>{label || '-'}</span>;
+      },
     },
     {
       key: 'status', label: 'Status', defaultWidth: 130,
