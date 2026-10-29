@@ -188,7 +188,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
         <span title={r.statusFlag} style={{ fontSize: '0.68rem', fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA', padding: '0 7px', borderRadius: 999, whiteSpace: 'nowrap' }}>{'\u26A0'} {r.statusFlag}</span>
       ) : blank),
     },
-    { key: 'tier', label: 'Tier', defaultWidth: 90, getFilterValue: r => r.account?.myTier || '', exportValue: r => r.account?.myTier || '', render: r => r.account?.myTier || blank },
+    { key: 'tier', label: 'Tier', defaultWidth: 90, getFilterValue: r => r.account?.tierLabel || r.account?.myTier || '', exportValue: r => r.account?.tierLabel || r.account?.myTier || '', render: r => r.account?.tierLabel || r.account?.myTier || blank },
     { key: 'accountStatus', label: 'Account Status', defaultWidth: 130, getFilterValue: r => r.account?.status || '', exportValue: r => r.account?.status || '', render: r => r.account?.status || blank },
     {
       // Read off the tracker record: the account row doesn't carry it.

@@ -57,6 +57,16 @@ export function clearImportedTierOnEdit(patch) {
 export const OWN_TARGET_REPORTING_TIER = 'Tier 3';
 const REAL_TIERS = ['Tier 1', 'Tier 2', 'Tier 3'];
 
+// How My Accounts and its subtabs show an own target's tier: Strategic
+// Target, unless the card has a Tier 1 or Tier 2. It still counts as Tier 3
+// (reportingTier) everywhere tiers are counted.
+export const OWN_TARGET_TIER_LABEL = 'Strategic Target';
+
+export function ownTargetTierLabel(record, tier) {
+  if (isOwnTarget(record) && tier !== 'Tier 1' && tier !== 'Tier 2') return OWN_TARGET_TIER_LABEL;
+  return tier;
+}
+
 export function isOwnTarget(record) {
   return record?.tierOwnTarget === true;
 }

@@ -33,7 +33,7 @@ export function DealSizeTab({ accounts, prospects, settings, updateSettings, onS
   const rows = useMemo(() => accounts.map(a => ({
     id: a.id || a.company,
     company: a.company || '',
-    tier: a.myTier || '',
+    tier: a.tierLabel || a.myTier || '',
     prospect: byId.get(a.id) || null,
     deal: deals.get(a.id) || null,
   })), [accounts, byId, deals]);

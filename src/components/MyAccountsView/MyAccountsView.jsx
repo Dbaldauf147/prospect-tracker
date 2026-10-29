@@ -20,7 +20,7 @@ import { userLsGet, userLsSet } from '../../utils/userLs';
 import { saveMyAccountsFlags } from '../../utils/myAccountsFlagsStore';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadList } from '../../utils/uploadedListStore';
-import { tierPreferringTargetsList, isOwnTarget, reportingTier } from '../../utils/tierSource';
+import { tierPreferringTargetsList, isOwnTarget, reportingTier, ownTargetTierLabel } from '../../utils/tierSource';
 import { companyDedupeKey } from '../../utils/companyKey';
 import { MASTER_FIELDS, CANONICAL_HEADERS } from '../MasterSiteListView/masterSiteFields';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
@@ -227,7 +227,10 @@ function warningHeaderTitle(description, companies) {
 // What the filters, search and option lists read for a column. Status is
 // read as reported (reportingStatus): a company with a substatus filters
 // as Hold Off, the way its cell reads.
+// Tier filters on what the cell shows, so an own target filters as
+// Strategic Target.
 function filterValueOf(account, key) {
+  if (key === 'myTier') return account?.tierLabel || account?.myTier;
   return key === 'status' ? reportingStatus(account) : account?.[key];
 }
 
@@ -2648,7 +2651,10 @@ Fix that now?
       // company and any division names, matched on the normalized name.
       let mslSiteCount = 0;
       for (const name of allCompanyNames) mslSiteCount += mslCountByCompany.get(String(name).trim()) || 0;
-      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, feedingOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, mslSiteCount, _contactDebug, suggestedStatus, statusMismatch, suggestedType, typeMismatch };
+      // tierLabel is what the Tier cells show: Strategic Target for a "Not on
+      // tier list, but Dan target" company without a Tier 1 or 2. myTier
+      // stays the tier it counts under (Tier 3 for those).
+      const entry = { ...p, myTier: tier, tierLabel: ownTargetTierLabel(p, tier), activityCount, oppsCount, totalOpps, feedingOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, mslSiteCount, _contactDebug, suggestedStatus, statusMismatch, suggestedType, typeMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
       // Counted as reported: a Client with a substatus is Hold Off here.
@@ -3149,7 +3155,7 @@ Fix that now?
     if (search.trim()) {
       const term = search.toLowerCase();
       rows = rows.filter(a =>
-        [a.company, a.type, a.status, a.myTier].filter(Boolean).join(' ').toLowerCase().includes(term)
+        [a.company, a.type, a.status, a.myTier, a.tierLabel].filter(Boolean).join(' ').toLowerCase().includes(term)
       );
     }
     const byType = new Map();
@@ -3245,7 +3251,7 @@ Fix that now?
     if (search.trim()) {
       const term = search.toLowerCase();
       rows = rows.filter(a =>
-        [a.company, a.type, a.status, a.myTier].filter(Boolean).join(' ').toLowerCase().includes(term)
+        [a.company, a.type, a.status, a.myTier, a.tierLabel].filter(Boolean).join(' ').toLowerCase().includes(term)
       );
     }
     return rows;
@@ -3464,14 +3470,15 @@ Fix that now?
       }
       if (col.key === 'myTier') {
         return { ...col, render: (row) => {
-          const stripped = (row.myTier || '').replace(/^\s*tier\s*/i, '').trim();
+          const label = row.tierLabel || row.myTier || '';
+          const stripped = label.replace(/^\s*tier\s*/i, '').trim();
           return (
             <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
               <InlineCell
                 row={row}
                 field="tier"
                 value={row.myTier}
-                displayValue={stripped || row.myTier}
+                displayValue={stripped || label}
                 onUpdate={onUpdate}
                 options={TIER_OPTIONS}
               />
@@ -3849,7 +3856,7 @@ Fix that now?
     else if (inactiveMode === 'only') rows = rows.filter(a => isInactive(a));
     if (search.trim()) {
       const term = search.toLowerCase();
-      rows = rows.filter(a => [a.company, a.type, a.status, a.myTier].filter(Boolean).join(' ').toLowerCase().includes(term));
+      rows = rows.filter(a => [a.company, a.type, a.status, a.myTier, a.tierLabel].filter(Boolean).join(' ').toLowerCase().includes(term));
     }
     return (
       <div className={styles.wrapper}>
@@ -3920,7 +3927,7 @@ Fix that now?
     else if (inactiveMode === 'only') rows = rows.filter(a => isInactive(a));
     if (search.trim()) {
       const term = search.toLowerCase();
-      rows = rows.filter(a => [a.company, a.type, a.status, a.myTier].filter(Boolean).join(' ').toLowerCase().includes(term));
+      rows = rows.filter(a => [a.company, a.type, a.status, a.myTier, a.tierLabel].filter(Boolean).join(' ').toLowerCase().includes(term));
     }
     return (
       <div className={styles.wrapper}>
