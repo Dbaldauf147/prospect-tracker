@@ -87,12 +87,13 @@ function editDistance(a, b, cap) {
 }
 
 // Two words are the same word when equal, or one typo apart: a slip
-// ("Techonology", "Virbantz") shouldn't hide the row it was meant to be. Short words
-// must match exactly, or "Acme" would find "Acne".
+// ("Techonology", "Virbantz") shouldn't hide the row it was meant to be. Words
+// under 7 letters must match exactly, or "Acme" would find "Acne" and "AECOM"
+// "ALCOM": one letter is a lot of a short name.
 export function sameWord(a, b) {
   if (a === b) return true;
   const len = Math.min(a.length, b.length);
-  const cap = len >= 9 ? 2 : len >= 5 ? 1 : 0;
+  const cap = len >= 9 ? 2 : len >= 7 ? 1 : 0;
   return cap > 0 && editDistance(a, b, cap) <= cap;
 }
 

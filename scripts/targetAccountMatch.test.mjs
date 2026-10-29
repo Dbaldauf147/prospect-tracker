@@ -49,6 +49,9 @@ check('short words must match exactly (Acme is not Acne)', nameSimilarity('Acme 
 check('Vibrantz is not Vibrant (one letter, but a different company)', suggestTargetMatches('Vibrantz Technology', rows).some(r => r.name === 'Vibrant Energy'), false);
 check('swapped letters in the first word still match (Virbantz)', nameSimilarity('Virbantz Technology', 'Vibrantz Technologies'), 1);
 check('and the swapped-letter case is suggested', suggestTargetMatches('Virbantz Technology', rows).map(r => r.name), ['Vibrantz Technologies']);
+check('a 5-letter name a letter off is no match (AECOM is not ALCOM)', nameSimilarity('AECOM', 'ALCOM'), 0);
+check('nor a 6-letter one', sameWord('anchor', 'anchar'), false);
+check('a 7-letter word still forgives one typo', sameWord('pacific', 'pacifik'), true);
 check('a swap counts as one edit, so a short word still needs an exact match', sameWord('acme', 'amce'), false);
 check('a swap plus another slip in an 8-letter word is too far', sameWord('virbantx', 'vibrantz'), false);
 check('a different first word is no match', nameSimilarity('Acme Technology', 'Vibrantz Technologies'), 0);
