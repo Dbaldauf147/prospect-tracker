@@ -11,12 +11,12 @@
 // substatus, which reads as Hold Off) sit on the Inactive chip of their own
 // and are left out of All and the other chips.
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { domainKey } from '../../utils/seHubspotExisting';
-import { compactMappingCompanies, buildHubspotMapping, hubspotOnlyOwnedRows, MAPPING_STATUS, SUGGEST_MIN_SCORE } from '../../utils/hubspotMapping';
+import { compactMappingCompanies, buildHubspotMapping, hubspotOnlyOwnedRows, MAPPING_STATUS, SUGGEST_MIN_SCORE, otherOwners, ownedByOthersRows } from '../../utils/hubspotMapping';
 import { loadHubspotMapping, saveHubspotMapping, EMPTY_HUBSPOT_MAPPING } from '../../utils/hubspotMappingStore';
 import { reportingStatus } from '../../utils/reportingStatus';
 import { matchesCdm } from '../../utils/cdmMatch';
@@ -60,6 +60,32 @@ const hsField = (field) => (r) => r.hubspot.map(c => c[field]).filter(Boolean).j
 // Same-named duplicate records read once.
 const dupNames = (r) => [...new Set((r.duplicates || []).map(c => c.name))].join(', ');
 
+// The frame the subtab's report popups share: a title, a line saying what
+// is listed, any buttons, and the table. Esc, x or a click outside closes it.
+function ReportPopup({ title, blurb, actions, onClose, children }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return createPortal(
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 10, width: 1100, maxWidth: '100%', height: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 10px 40px rgba(0,0,0,0.25)' }}>
+        <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem' }}>
+          <div>
+            <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>{title}</div>
+            <div style={{ fontSize: '0.72rem', color: '#64748B', lineHeight: 1.45 }}>{blurb}</div>
+          </div>
+          {actions}
+          <button type="button" onClick={onClose} title="Close" style={{ border: 'none', background: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer' }}>×</button>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>{children}</div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export function HubspotMappingTab({ accounts = [], prospects = [], search = '', onSelect, onUpdate, settings, updateSettings, filterBar, cdmName = '', targetAccountsData = null }) {
   const [data, setData] = useState(EMPTY_HUBSPOT_MAPPING);
   const [loaded, setLoaded] = useState(false);
@@ -68,6 +94,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   const [dragOver, setDragOver] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
   const [showUnmapped, setShowUnmapped] = useState(false);
+  const [showOthers, setShowOthers] = useState(false);
   // The rows each table has on screen after its column filters, for the
   // bulk Accept, which takes only the suggestions you can see.
   const [shownRows, setShownRows] = useState([]);
@@ -409,6 +436,16 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     { key: 'website', label: 'HubSpot Website', defaultWidth: 160, getFilterValue: hsField('domain'), exportValue: hsField('domain'), render: r => hsField('domain')(r) || blank },
     { key: 'how', label: 'Matched By', defaultWidth: 100, getFilterValue: r => HOW[r.how] || '', exportValue: r => HOW[r.how] || '', render: r => HOW[r.how] || blank },
     { key: 'hubspotId', label: 'HubSpot Company ID', defaultWidth: 150, getFilterValue: hsField('id'), exportValue: hsField('id'), render: r => hsField('id')(r) || blank },
+    {
+      key: 'otherOwner', label: 'Owner (Not You)', defaultWidth: 140,
+      headerTitle: 'The HubSpot Company owner on this row when it is someone other than you, from the export.',
+      getFilterValue: r => otherOwners(r, cdmName).join(', '),
+      exportValue: r => otherOwners(r, cdmName).join(', '),
+      render: r => {
+        const o = otherOwners(r, cdmName);
+        return o.length ? <span style={{ fontWeight: 600, color: '#B45309' }}>{o.join(', ')}</span> : blank;
+      },
+    },
     { key: 'owner', label: 'HubSpot Owner', defaultWidth: 130, getFilterValue: hsField('owner'), exportValue: hsField('owner'), render: r => hsField('owner')(r) || blank },
     { key: 'lifecycle', label: 'Lifecycle Stage', defaultWidth: 120, getFilterValue: hsField('lifecycle'), exportValue: hsField('lifecycle'), render: r => hsField('lifecycle')(r) || blank },
     { key: 'targetAccount', label: 'Target Account', defaultWidth: 110, getFilterValue: hsField('targetAccount'), exportValue: hsField('targetAccount'), render: r => hsField('targetAccount')(r) || blank },
@@ -451,12 +488,15 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     XLSX.writeFile(wb, `Only in HubSpot - ${firstName}'s companies - ${new Date().toISOString().slice(0, 10)}.csv`, { bookType: 'csv' });
   };
 
-  useEffect(() => {
-    if (!showUnmapped) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') setShowUnmapped(false); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [showUnmapped]);
+  // The "Owned by others" report: matched, active accounts whose HubSpot
+  // company has a Company owner who isn't you.
+  const othersRows = useMemo(
+    () => ownedByOthersRows(mapping, cdmName).filter(r => !isInactiveRow(r)).map(r => ({ ...r, id: r.key })),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mapping, cdmName, byId],
+  );
+  const closeUnmapped = useCallback(() => setShowUnmapped(false), []);
+  const closeOthers = useCallback(() => setShowOthers(false), []);
 
   const m = data.meta || {};
   return (
@@ -477,49 +517,61 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
           </span>
         </button>
       )}
-      {showUnmapped && createPortal(
-        <div onClick={() => setShowUnmapped(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 10, width: 1100, maxWidth: '100%', height: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 10px 40px rgba(0,0,0,0.25)' }}>
-            <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem' }}>
-              <div>
-                <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>
-                  My Accounts companies not mapped to HubSpot ({fmt(unmappedRows.length)})
-                </div>
-                <div style={{ fontSize: '0.72rem', color: '#64748B', lineHeight: 1.45 }}>
-                  Active accounts with no HubSpot company matched by website, name or your link. Map links a possible match, and the company drops off this list.
-                </div>
-              </div>
-              {shownUnmappedSuggested.length > 0 && (
-                <button type="button" disabled={accepting}
-                  onClick={() => acceptTargets(shownUnmappedSuggested)}
-                  title="Map every company in this list that has a Suggested Target to it, and set its CDM, Tier and Vertical to the Targets list's."
-                  style={{ ...bulkBtn, marginLeft: 'auto' }}
-                >{bulkLabel(shownUnmappedSuggested.length)}</button>
-              )}
-              <button type="button" onClick={() => setShowUnmapped(false)} title="Close" style={{ border: 'none', background: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer' }}>×</button>
-            </div>
-            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              {unmappedRows.length ? (
-                <DataTable
-                  tableId="my-accounts-hubspot-unmapped"
-                  exportFileName="My Accounts Not Mapped to HubSpot"
-                  columns={columns}
-                  rows={unmappedRows}
-                  defaultSort={{ key: 'account', direction: 'asc' }}
-                  alwaysVisible={['account']}
-                  defaultHidden={['status', 'statusFlag', 'onTable', 'hubspot', 'duplicates', 'website', 'how', 'hubspotId', 'owner', 'lifecycle', 'targetAccount', 'lastActivity', 'lastContacted', 'nextActivity', 'created']}
-                  emptyMessage="Nothing matches"
-                  settings={settings}
-                  updateSettings={updateSettings}
-                  onFilteredRowsChange={setShownUnmappedRows}
-                />
-              ) : (
-                <div style={{ padding: '2rem', textAlign: 'center', color: '#64748B', fontSize: '0.85rem' }}>Every active My Accounts company is mapped to a HubSpot company.</div>
-              )}
-            </div>
-          </div>
-        </div>,
-        document.body,
+      {showUnmapped && (
+        <ReportPopup
+          onClose={closeUnmapped}
+          title={`My Accounts companies not mapped to HubSpot (${fmt(unmappedRows.length)})`}
+          blurb="Active accounts with no HubSpot company matched by website, name or your link. Map links a possible match, and the company drops off this list."
+          actions={shownUnmappedSuggested.length > 0 && (
+            <button type="button" disabled={accepting}
+              onClick={() => acceptTargets(shownUnmappedSuggested)}
+              title="Map every company in this list that has a Suggested Target to it, and set its CDM, Tier and Vertical to the Targets list's."
+              style={{ ...bulkBtn, marginLeft: 'auto' }}
+            >{bulkLabel(shownUnmappedSuggested.length)}</button>
+          )}
+        >
+          {unmappedRows.length ? (
+            <DataTable
+              tableId="my-accounts-hubspot-unmapped"
+              exportFileName="My Accounts Not Mapped to HubSpot"
+              columns={columns}
+              rows={unmappedRows}
+              defaultSort={{ key: 'account', direction: 'asc' }}
+              alwaysVisible={['account']}
+              defaultHidden={['status', 'statusFlag', 'onTable', 'hubspot', 'duplicates', 'website', 'how', 'hubspotId', 'owner', 'otherOwner', 'lifecycle', 'targetAccount', 'lastActivity', 'lastContacted', 'nextActivity', 'created']}
+              emptyMessage="Nothing matches"
+              settings={settings}
+              updateSettings={updateSettings}
+              onFilteredRowsChange={setShownUnmappedRows}
+            />
+          ) : (
+            <div style={{ padding: '2rem', textAlign: 'center', color: '#64748B', fontSize: '0.85rem' }}>Every active My Accounts company is mapped to a HubSpot company.</div>
+          )}
+        </ReportPopup>
+      )}
+      {showOthers && (
+        <ReportPopup
+          onClose={closeOthers}
+          title={`My Accounts companies owned by someone else in HubSpot (${fmt(othersRows.length)})`}
+          blurb={`Active My Accounts companies whose HubSpot company has a Company owner other than ${firstName}, with the activity dates from the export. The export doesn't say who logged each activity, only the company's owner. Drop a newer export to refresh it.`}
+        >
+          {othersRows.length ? (
+            <DataTable
+              tableId="my-accounts-hubspot-owned-by-others"
+              exportFileName="My Accounts Owned by Others in HubSpot"
+              columns={columns}
+              rows={othersRows}
+              defaultSort={{ key: 'otherOwner', direction: 'asc' }}
+              alwaysVisible={['account', 'otherOwner']}
+              defaultHidden={['status', 'statusFlag', 'onTable', 'duplicates', 'suggestions', 'accountWebsite', 'website', 'how', 'hubspotId', 'owner', 'targetName', 'targetSuggest', 'substatus', 'created']}
+              emptyMessage="Nothing matches"
+              settings={settings}
+              updateSettings={updateSettings}
+            />
+          ) : (
+            <div style={{ padding: '2rem', textAlign: 'center', color: '#64748B', fontSize: '0.85rem' }}>Every mapped My Accounts company is owned by {firstName} in HubSpot, or has no owner.</div>
+          )}
+        </ReportPopup>
       )}
       <label
         onDragOver={e => { e.preventDefault(); setDragOver(true); }}
@@ -556,6 +608,12 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
                 style={{ padding: '0.2rem 0.6rem', borderRadius: 6, border: '1px solid #1D4ED8', background: '#fff', color: '#1D4ED8', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap', marginLeft: 'auto' }}
               >{'\u21E9'} Export Only in HubSpot owned by {firstName} ({fmt(ownedHubspotOnly.length)})</button>
             )}
+            {othersRows.length > 0 && cdmName && (
+              <button type="button" onClick={() => setShowOthers(true)}
+                title={`Open a report of the active My Accounts companies whose HubSpot company is owned by someone other than ${firstName}, with their activity dates.`}
+                style={{ padding: '0.2rem 0.6rem', borderRadius: 6, border: '1px solid #B45309', background: '#FFFBEB', color: '#B45309', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap' }}
+              >Owned by others in HubSpot ({fmt(othersRows.length)})</button>
+            )}
             {targetSuggestions.size > 0 && (
               <button type="button" disabled={accepting || !shownSuggested.length}
                 onClick={() => acceptTargets(shownSuggested)}
@@ -575,7 +633,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
             rows={rows}
             defaultSort={{ key: 'account', direction: 'asc' }}
             alwaysVisible={['status', 'account', 'hubspot']}
-            defaultHidden={['lastContacted', 'nextActivity', 'created']}
+            defaultHidden={['otherOwner', 'lastContacted', 'nextActivity', 'created']}
             emptyMessage="Nothing matches"
             settings={settings}
             updateSettings={updateSettings}

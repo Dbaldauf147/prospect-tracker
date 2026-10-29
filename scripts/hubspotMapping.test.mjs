@@ -14,7 +14,7 @@
 //   * a Client that isn't a Customer in HubSpot is flagged, and so is a
 //     HubSpot Customer that isn't a Client or Old Client here,
 //   * HubSpot companies no account claims are listed on their own.
-import { compactMappingCompanies, buildHubspotMapping, statusDiscrepancy, nameSimilarity, likelyDuplicateName, MAPPING_STATUS, hubspotOnlyOwnedRows } from '../src/utils/hubspotMapping.js';
+import { compactMappingCompanies, buildHubspotMapping, statusDiscrepancy, nameSimilarity, likelyDuplicateName, MAPPING_STATUS, hubspotOnlyOwnedRows, otherOwners, ownedByOthersRows } from '../src/utils/hubspotMapping.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -131,6 +131,22 @@ const ownRows = hubspotOnlyOwnedRows(buildHubspotMapping([{ id: 'm', company: 'M
 eq(ownRows.map(r => r['Record ID']), ['41', '42', '44'], 'Only in HubSpot records owned by Dan (or no owner), each same-named record, matched and other owners left out');
 eq(ownRows[0], { 'Record ID': '41', 'Company name': 'Lonely Co', 'Company Domain Name': 'lonely.com', 'Company owner': 'Dan Baldauf' }, 'rows carry the HubSpot import columns');
 eq(hubspotOnlyOwnedRows(buildHubspotMapping([], compactMappingCompanies([{ 'Company name': 'No Id Co' }])), 'Dan Baldauf')[0]['Record ID'], '', 'no Company ID column, blank Record ID');
+
+// "Owned by others" report
+{
+  const accts = [{ id: 'm', company: 'Mine Co' }, { id: 'o', company: 'Other Co' }, { id: 'n', company: 'Nobody Co' }];
+  const cos = compactMappingCompanies([
+    { 'Company name': 'Mine Co', 'Company owner': 'Dan Baldauf' },
+    { 'Company name': 'Other Co', 'Company owner': 'Sam Ouimet' },
+    { 'Company name': 'Nobody Co', 'Company owner': '' },
+    { 'Company name': 'Loose Co', 'Company owner': 'Sam Ouimet' },
+  ]);
+  const mp = buildHubspotMapping(accts, cos);
+  eq(ownedByOthersRows(mp, 'Dan Baldauf').map(r => r.account.company), ['Other Co'], 'only matched accounts owned by someone else');
+  eq(otherOwners(mp.find(r => r.account?.id === 'o'), 'Dan Baldauf'), ['Sam Ouimet'], 'the other owner is named');
+  eq(otherOwners(mp.find(r => r.account?.id === 'm'), 'Dan'), [], 'a first name alone still reads as you');
+  eq(ownedByOthersRows(mp, ''), [], 'no CDM name, no report');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
