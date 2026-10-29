@@ -145,5 +145,22 @@ check('summary service labels', [sumWs.getCell('B3').value, sumWs.getCell('B4').
 check('facilities filled from the site rows', sumWs.getCell('C2').value, 2);
 check('total is a live SUM', sumWs.getCell('C11').value.formula, 'SUM(C3:C10)');
 
+// A Canadian / UK list whose export halved the postal code across City and
+// Zip and left city and province in the address: put back together, and
+// placed, rather than counted as unplaced.
+const split = prwSiteListRows({
+  headers: ['Site Name', 'Address', 'City', 'State', 'Zip Code'],
+  rows: [
+    { 'Site Name': 'Mount Pearl', Address: '96 Glencoe Drive, , Mount Pearl, , NL', City: 'A1N', State: '', 'Zip Code': '4S9' },
+    { 'Site Name': 'Bristol', Address: 'Garanor Way, , Portbury', City: 'BS20', State: '', 'Zip Code': '7XT' },
+  ],
+});
+check('split postal rejoined (CA)', ['address', 'city', 'state', 'zip', 'country'].map(k => split[0][k].value),
+  ['96 Glencoe Drive', 'Mount Pearl', 'NL', 'A1N 4S9', 'Canada']);
+check('split postal rejoined (UK)', ['address', 'city', 'state', 'zip', 'country'].map(k => split[1][k].value),
+  ['Garanor Way', 'Portbury', null, 'BS20 7XT', 'United Kingdom']);
+const splitSum = prwRegionSummary(split);
+check('repaired sites are placed', [splitSum.facilities['North America'], splitSum.facilities.Europe, splitSum.unplaced], [1, 1, 0]);
+
 console.log(`${failed ? 'FAIL' : 'PASS'} prwSiteListExport: ${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

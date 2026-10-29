@@ -21,6 +21,7 @@ import { pickSiteNameColumn, pickZipColumn } from './siteColumns.js';
 import { accountsForTenure } from './ownershipEstimates.js';
 import { stripDashes, sanitizeExcelWorkbook } from './exportSanitize.js';
 import { siteRegionOf, NORTH_AMERICA, EUROPE, REST_OF_WORLD } from './siteRegion.js';
+import { repairSiteLocation } from './siteAddressRepair.js';
 
 // The columns, in PRW's order. `kind` picks the number format.
 export const PRW_COLUMNS = [
@@ -158,6 +159,14 @@ export function prwSiteListRows(list) {
       rec[col.key] = { value, estimated: !!hit && value !== null && est.has(hit.col) };
     }
     if (!rec.siteName.value) continue;
+    // A Canadian / UK postal code halved across City and Zip, with the
+    // real city and province left in the address, is put back together,
+    // so the site lands on the right country and in the summary's region.
+    const loc = repairSiteLocation({
+      address: rec.address.value, city: rec.city.value, state: rec.state.value,
+      zip: rec.zip.value, country: rec.country.value,
+    });
+    for (const key of loc.changed) rec[key] = { value: loc[key] || null, estimated: false };
     // Accounts the list doesn't carry come from the property type, under
     // the site's tenure (a leased office's gas is often the landlord's).
     const needAccounts = rec.electricAccounts.value === null || rec.gasAccounts.value === null;

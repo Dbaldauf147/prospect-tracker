@@ -186,6 +186,7 @@ import styles from './SitesView.module.css';
 import { mergeSavedSitesMapping } from './sitesMapping.js';
 import { MasterAnalysisTabPicker } from './MasterAnalysisTabPicker.jsx';
 import { pruneMasterAnalysisTabs } from '../../utils/masterAnalysisTabs.js';
+import { repairSiteLocation } from '../../utils/siteAddressRepair.js';
 
 const SITES_STORAGE_KEY = 'sites-list-override';
 // The column mapping the site list was imported (or last re-mapped) with,
@@ -2784,8 +2785,18 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
   // removing the site.
   const allRows = useMemo(() => {
     return cleanSitesData.map((r, i) => {
-      const cityColInput = String(r[cityColumn] || '').trim();
-      const stateColInput = stateColumnOverride ? String(r[stateColumnOverride] || '').trim() : '';
+      // A Canadian / UK postal code the upload halved across City and Zip,
+      // with the real city and province left in the address, is put back
+      // together before anything reads the location (see siteAddressRepair).
+      const loc = repairSiteLocation({
+        address: addressOverride ? r[addressOverride] : '',
+        city: r[cityColumn],
+        state: stateColumnOverride ? r[stateColumnOverride] : '',
+        zip: zipColumn ? r[zipColumn] : '',
+        country: countryOverride ? r[countryOverride] : '',
+      });
+      const cityColInput = loc.city;
+      const stateColInput = loc.state;
       const uploadedZip = zipColumn ? normalizeZip(r[zipColumn]) : '';
       // When the row has no zip of its own, estimate one from its city +
       // state using zips already present in the utility lookup. The
@@ -2798,7 +2809,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
       const zip = uploadedZip || zipEstimate?.zip || '';
       const zipEstimated = !uploadedZip && !!zipEstimate;
       const match = utility?.zipMap && zip ? utility.zipMap[zip] : null;
-      const inputCountry = countryOverride ? String(r[countryOverride] || '').trim() : '';
+      const inputCountry = loc.country;
       // Whether a US / Canadian state code may be derived for this site
       // at all. Read from the uploaded Country alone — never from the zip
       // match's country, which on a foreign site is the collision this
@@ -3123,7 +3134,10 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         __electricUtilityTokens__: electricUtilityTokens,
         __gasUtilityTokens__: gasUtilityTokens,
         __water__: lookupAllowed ? match?.water : undefined,
-        __address__: addressOverride ? String(r[addressOverride] || '').trim() || null : null,
+        __address__: addressOverride ? loc.address || null : null,
+        // The whole repaired location, so the upload's own Address / State
+        // / Zip / Country columns can show what the analysis actually used.
+        __loc__: loc.changed.length ? loc : null,
         __city__: cityColInput || match?.city,
         // Where the city came from - the site list itself, or the utility
         // lookup's zip. The City column shows the difference.
@@ -3925,6 +3939,15 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
     const dateOverrideCols = new Set(
       [electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride].filter(Boolean)
     );
+    // The upload's location columns, by the repaired field each one holds.
+    const locationField = new Map(
+      [[addressOverride, 'address'], [stateColumnOverride, 'state'], [zipColumn, 'zip'], [countryOverride, 'country']]
+        .filter(([col]) => col),
+    );
+    const repairedValue = (row, k) => {
+      const field = locationField.get(k);
+      return field && row.__loc__?.changed.includes(field) ? row.__loc__[field] : undefined;
+    };
     const base = headers.map((k, i) => {
       const isDate = dateOverrideCols.has(k);
       return {
@@ -3934,6 +3957,14 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         ...(i === 0 ? { sticky: true } : {}),
         render: (row) => {
           const v = row[k];
+          const fixed = repairedValue(row, k);
+          if (fixed !== undefined) {
+            return (
+              <span title={`Uploaded as "${v ?? ''}". Rebuilt from the address and the postal code split across City and Zip.`}>
+                {fixed || <span style={{ color: 'var(--color-text-muted)' }}>-</span>}
+              </span>
+            );
+          }
           // Only the mapped zip column gets the zip treatment. Guarding on
           // zipColumn itself keeps an unmapped file (zipColumn === '') from
           // matching a blank header and turning that column into the zip.
@@ -3970,6 +4001,8 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         },
         exportValue: (row) => {
           if (zipColumn && k === zipColumn && row.__zipNorm__) return row.__zipNorm__;
+          const fixed = repairedValue(row, k);
+          if (fixed !== undefined) return fixed;
           const v = row[k];
           if (isDate) return fmtShortDate(v);
           return v ?? '';
@@ -4798,7 +4831,7 @@ export function SitesView({ settings, updateSettings, updateSettingsPath, prospe
         ];
       })(),
     ];
-  }, [sitesData, zipColumn, utility, supplierOverrides, editingSupplier, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, siteStatusOptions, siteStatusColumn, cityColumn]);
+  }, [sitesData, zipColumn, utility, supplierOverrides, editingSupplier, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, siteStatusOptions, siteStatusColumn, cityColumn, addressOverride, stateColumnOverride, countryOverride]);
 
   // The same columns, with the editable ones openable for typing.
   //
