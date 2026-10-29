@@ -20,7 +20,7 @@ import { userLsGet, userLsSet } from '../../utils/userLs';
 import { saveMyAccountsFlags } from '../../utils/myAccountsFlagsStore';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadList } from '../../utils/uploadedListStore';
-import { tierPreferringTargetsList, isOwnTarget, reportingTier, ownTargetTierLabel } from '../../utils/tierSource';
+import { tierPreferringTargetsList, isOwnTarget, reportingTier, ownTargetTierLabel, OWN_TARGET_TIER_LABEL } from '../../utils/tierSource';
 import { companyDedupeKey } from '../../utils/companyKey';
 import { MASTER_FIELDS, CANONICAL_HEADERS } from '../MasterSiteListView/masterSiteFields';
 import { matchesCdm, resolveTargetAccountCdm } from '../../utils/cdmMatch';
@@ -2812,7 +2812,12 @@ Fix that now?
   }, [prospects, targetMap, targetAccounts, targetAccountTiers, targetAccountTiersAllReps, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain, linkableContactById, settings?.companyContactLinks, divisionsMap, pePartnerAccountSet, mslCountByCompany]);
 
   const clientCount = statusCounts['Client'] || 0;
-  const tier3Count = allAccounts.filter(a => a.myTier === 'Tier 3').length;
+  // The Strategic Target card lists the "Not on tier list, but Dan target"
+  // companies whose Tier cell reads Strategic Target, so the Tier 3 card
+  // leaves them out and each company sits under one card.
+  const isStrategicTarget = (a) => a.tierLabel === OWN_TARGET_TIER_LABEL;
+  const strategicTargetCount = allAccounts.filter(isStrategicTarget).length;
+  const tier3Count = allAccounts.filter(a => a.myTier === 'Tier 3' && !isStrategicTarget(a)).length;
 
   // Targets-list accounts, per tier, that still have no row on My Accounts.
   // Feeds the "N not in list" line under each tier card and the expandable
@@ -3109,7 +3114,8 @@ Fix that now?
     if (bucketFilter === 'tier1') result = result.filter(a => a.myTier === 'Tier 1');
     else if (bucketFilter === 'tier2') result = result.filter(a => a.myTier === 'Tier 2');
     else if (bucketFilter === 'client') result = result.filter(a => reportingStatus(a) === 'Client');
-    else if (bucketFilter === 'pipeline') result = result.filter(a => a.myTier === 'Tier 3');
+    else if (bucketFilter === 'pipeline') result = result.filter(a => a.myTier === 'Tier 3' && a.tierLabel !== OWN_TARGET_TIER_LABEL);
+    else if (bucketFilter === 'strategicTarget') result = result.filter(a => a.tierLabel === OWN_TARGET_TIER_LABEL);
     else if (bucketFilter === 'noTarget') result = result.filter(a => !a.targetNames || a.targetNames.length === 0);
     for (const [key, values] of Object.entries(filters)) {
       if (values.length > 0) {
@@ -4265,7 +4271,7 @@ Fix that now?
             </div>
           );
         })()}
-        {bucketFilter && <span style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', borderRadius: '999px', background: '#EBF2FC', color: '#3B7DDD', fontWeight: 600 }}>Showing: {bucketFilter === 'tier1' ? 'Tier 1' : bucketFilter === 'tier2' ? 'Tier 2' : bucketFilter === 'client' ? 'Clients' : bucketFilter === 'noTarget' ? 'No Target Mapped' : 'Tier 3'}</span>}
+        {bucketFilter && <span style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', borderRadius: '999px', background: '#EBF2FC', color: '#3B7DDD', fontWeight: 600 }}>Showing: {bucketFilter === 'tier1' ? 'Tier 1' : bucketFilter === 'tier2' ? 'Tier 2' : bucketFilter === 'client' ? 'Clients' : bucketFilter === 'noTarget' ? 'No Target Mapped' : bucketFilter === 'strategicTarget' ? OWN_TARGET_TIER_LABEL : 'Tier 3'}</span>}
         {flagFilter && (
           <button
             type="button"
@@ -4447,6 +4453,10 @@ Fix that now?
           <div className={styles.summaryLabel}>Tier 3</div>
           <div className={styles.summaryValue}>{tier3Count}</div>
           {targetsMissingByTier['Tier 3'].length > 0 && <div className={styles.summaryBreakdown} style={{ color: '#B45309' }}>{targetsMissingByTier['Tier 3'].length} not in list</div>}
+        </button>
+        <button className={`${styles.summaryCard} ${bucketFilter === 'strategicTarget' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#7C3AED', cursor: 'pointer' }} onClick={() => setBucketFilter(bucketFilter === 'strategicTarget' ? null : 'strategicTarget')} title="Companies ticked Not on tier list, but Dan target. Click to show only them.">
+          <div className={styles.summaryLabel}>{OWN_TARGET_TIER_LABEL}</div>
+          <div className={styles.summaryValue}>{strategicTargetCount}</div>
         </button>
         <button className={`${styles.summaryCard} ${bucketFilter === 'noTarget' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#9CA3AF', cursor: 'pointer' }} onClick={() => setBucketFilter(bucketFilter === 'noTarget' ? null : 'noTarget')}>
           <div className={styles.summaryLabel}>No Target Mapped</div>
