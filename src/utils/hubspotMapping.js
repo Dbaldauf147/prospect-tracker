@@ -127,6 +127,44 @@ function bestMatches(names, pool) {
   return out.sort((x, y) => y.score - x.score).slice(0, SUGGEST_MAX);
 }
 
+// Words a firm's name can carry or drop and still be the same firm in
+// HubSpot ("Silver Lake" / "Silver Lake Partners", "WSP" / "WSP Global").
+// normalizeCompany has already taken off Inc, Co, Group and the like.
+const DUP_SUFFIX = new Set(['the', 'and', 'partners', 'partner', 'global', 'properties']);
+const dupWords = (s) => normalizeCompany(s).split(' ').filter(w => w && !DUP_SUFFIX.has(w));
+const dupParen = (s) => dupWords((String(s || '').match(/\(([^)]+)\)/) || [])[1] || '').join(' ');
+function prepDup(name) {
+  const words = dupWords(name);
+  // Written in capitals, the way an acronym is ("TIAA", not "Aimco").
+  return { words, joined: words.join(''), spaced: words.join(' '), paren: dupParen(name), caps: !/[a-z]/.test(String(name)) };
+}
+function dupPrepared(a, b) {
+  if (!a.words.length || !b.words.length) return false;
+  // Same words, spaces aside ("DivcoWest" / "Divco West Properties").
+  if (a.joined === b.joined) return true;
+  // One is the other's acronym in brackets ("TIAA" / "... (TIAA)"), in
+  // capitals: "Aimco" the REIT is not "AIMCo" the pension manager.
+  if ((a.paren && b.caps && a.paren === b.spaced) || (b.paren && a.caps && b.paren === a.spaced)) return true;
+  // One starts with the other, and what's left over is the longer name's
+  // bracketed acronym ("Jones Lang LaSalle (JLL)") or an "a ... Co." clause
+  // ("Westinghouse (a Brookfield Co.)"), not more of a different name
+  // ("Berkeley Capital Group" is not "Berkeley Partners").
+  const [short, long] = a.words.length <= b.words.length ? [a, b] : [b, a];
+  if (!short.words.every((w, i) => long.words[i] === w)) return false;
+  const rest = long.words.slice(short.words.length);
+  return rest[0] === 'a' || rest[0] === 'an' || (!!long.paren && rest.join(' ') === long.paren);
+}
+
+/**
+ * Whether two HubSpot company names are most likely the same firm entered
+ * twice, by the narrow rules in dupPrepared. Looser than an exact match,
+ * far stricter than nameSimilarity: a sister company or a portfolio company
+ * ("Brookfield (Selenta)", "Duke Realty, a Prologis Co.") is not a duplicate.
+ */
+export function likelyDuplicateName(a, b) {
+  return dupPrepared(prepDup(a), prepDup(b));
+}
+
 // Whether an account's Status and its HubSpot Lifecycle Stage disagree, as
 // a sentence saying how, or '' when they don't. HubSpot only has one stage
 // that means a customer (Evangelist comes after it), so the check is that
@@ -156,7 +194,10 @@ export const MAPPING_STATUS = {
 /**
  * One row per account and one per HubSpot company no account claims
  * (same-named records together):
- *   { key, status, account, hubspot: [records], how, suggestions, statusFlag }
+ *   { key, status, account, hubspot: [records], how, suggestions, statusFlag, duplicates }
+ * `duplicates` is, on a matched account, the HubSpot records no account
+ * claimed whose names are likely the same firm (likelyDuplicateName):
+ * "Silver Lake Partners" on Silver Lake's row rather than a row of its own.
  * `statusFlag` is statusDiscrepancy's sentence for a matched account.
  * `suggestions` is [{ hubspotId, accountId, name, score }], best first: on an
  * unmatched account the HubSpot companies it may be, on a HubSpot-only row
@@ -194,8 +235,27 @@ export function buildHubspotMapping(accounts = [], companies = [], { links = {},
       if (hubspot.length) how = viaDomain.length ? 'website' : 'name';
     }
     for (const c of hubspot) claimed.add(String(c.id));
-    return { key: `a:${a.id || a.company}`, account: a, hubspot, how, suggestions: [], tracker: [] };
+    return { key: `a:${a.id || a.company}`, account: a, hubspot, how, suggestions: [], tracker: [], duplicates: [] };
   });
+
+  // A HubSpot company no account claimed whose name is a likely duplicate
+  // of a matched account's (likelyDuplicateName) goes on that account's row
+  // as `duplicates` instead of a row of its own.
+  const hosts = rows.filter(r => r.hubspot.length).map(r => ({
+    row: r,
+    names: [r.account.company, r.account.goesBy, ...(Array.isArray(r.account.aliases) ? r.account.aliases : []), ...r.hubspot.map(c => c.name)]
+      .filter(Boolean).map(prepDup),
+  }));
+  const dupNames = new Map();
+  for (const c of companies) {
+    if (claimed.has(String(c.id))) continue;
+    if (!dupNames.has(c.name)) {
+      const p = prepDup(c.name);
+      dupNames.set(c.name, hosts.find(h => h.names.some(n => dupPrepared(n, p)))?.row || null);
+    }
+    const host = dupNames.get(c.name);
+    if (host) { host.duplicates.push(c); claimed.add(String(c.id)); }
+  }
 
   // Possible matches between the accounts left over and the HubSpot
   // companies no account claimed, both ways.
@@ -245,7 +305,7 @@ export function buildHubspotMapping(accounts = [], companies = [], { links = {},
   }
   for (const [k, hubspot] of groups) {
     const suggestions = k.startsWith('id:') ? [] : bestMatches([prepName(k)], accountPool).map(m => ({ ...m, hubspotId: String(hubspot[0].id) }));
-    rows.push({ key: `h:${hubspot[0].id}`, status: MAPPING_STATUS.hubspotOnly, account: null, hubspot, how: '', suggestions, statusFlag: '', tracker: onTracker(hubspot) });
+    rows.push({ key: `h:${hubspot[0].id}`, status: MAPPING_STATUS.hubspotOnly, account: null, hubspot, how: '', suggestions, statusFlag: '', tracker: onTracker(hubspot), duplicates: [] });
   }
   return rows;
 }
