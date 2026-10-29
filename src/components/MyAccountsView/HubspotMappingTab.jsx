@@ -12,6 +12,7 @@
 // and are left out of All and the other chips.
 
 import { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { domainKey } from '../../utils/seHubspotExisting';
@@ -62,6 +63,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   const [error, setError] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
+  const [showUnmapped, setShowUnmapped] = useState(false);
 
   useEffect(() => {
     loadHubspotMapping().then(setData).catch(err => setError(err.message)).finally(() => setLoaded(true));
@@ -174,7 +176,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
         if (!r.account) return blank;
         const p = byId.get(r.account.id);
         return p && onSelect ? (
-          <button type="button" onClick={() => onSelect(p)} title="Open the company"
+          <button type="button" onClick={() => { setShowUnmapped(false); onSelect(p); }} title="Open the company"
             style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 600, color: '#1D4ED8', cursor: 'pointer', textAlign: 'left' }}
           >{r.account.company}</button>
         ) : <span style={{ fontWeight: 600 }}>{r.account.company}</span>;
@@ -325,20 +327,74 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   const mappedCount = counts[MAPPING_STATUS.matched] || 0;
   const accountTotal = mappedCount + (counts[MAPPING_STATUS.accountOnly] || 0);
   const mappedPct = accountTotal ? Math.round((mappedCount / accountTotal) * 100) : null;
+  // The rest of those accounts, the ones the click on the banner lists.
+  const unmappedRows = useMemo(
+    () => mapping.filter(r => r.status === MAPPING_STATUS.accountOnly && !isInactiveRow(r)).map(r => ({ ...r, id: r.key })),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mapping, byId],
+  );
+
+  useEffect(() => {
+    if (!showUnmapped) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setShowUnmapped(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showUnmapped]);
 
   const m = data.meta || {};
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
       {mapping.length > 0 && mappedPct != null && (
-        <div
-          title="My Accounts companies (inactive ones left out) that are mapped to a HubSpot company, by website, name or your link."
-          style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', padding: '0.5rem 0.9rem', border: '1px solid #E2E8F0', borderRadius: 8, background: '#fff' }}
+        <button
+          type="button"
+          onClick={() => setShowUnmapped(true)}
+          title="My Accounts companies (inactive ones left out) that are mapped to a HubSpot company, by website, name or your link. Click to see the ones that aren't."
+          style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', padding: '0.5rem 0.9rem', border: '1px solid #E2E8F0', borderRadius: 8, background: '#fff', font: 'inherit', textAlign: 'left', cursor: 'pointer' }}
         >
           <span style={{ fontSize: '1.5rem', fontWeight: 700, color: mappedPct >= 90 ? '#15803D' : mappedPct >= 70 ? '#B45309' : '#B91C1C', fontVariantNumeric: 'tabular-nums' }}>{mappedPct}%</span>
           <span style={{ fontSize: '0.8rem', color: '#475569' }}>
             of My Accounts companies mapped to a HubSpot company ({fmt(mappedCount)} of {fmt(accountTotal)})
           </span>
-        </div>
+          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#1D4ED8', marginLeft: 'auto' }}>
+            {unmappedRows.length ? `See the ${fmt(unmappedRows.length)} not mapped` : 'All mapped'}
+          </span>
+        </button>
+      )}
+      {showUnmapped && createPortal(
+        <div onClick={() => setShowUnmapped(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 10, width: 1100, maxWidth: '100%', height: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 10px 40px rgba(0,0,0,0.25)' }}>
+            <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem' }}>
+              <div>
+                <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>
+                  My Accounts companies not mapped to HubSpot ({fmt(unmappedRows.length)})
+                </div>
+                <div style={{ fontSize: '0.72rem', color: '#64748B', lineHeight: 1.45 }}>
+                  Active accounts with no HubSpot company matched by website, name or your link. Map links a possible match, and the company drops off this list.
+                </div>
+              </div>
+              <button type="button" onClick={() => setShowUnmapped(false)} title="Close" style={{ border: 'none', background: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer' }}>×</button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+              {unmappedRows.length ? (
+                <DataTable
+                  tableId="my-accounts-hubspot-unmapped"
+                  exportFileName="My Accounts Not Mapped to HubSpot"
+                  columns={columns}
+                  rows={unmappedRows}
+                  defaultSort={{ key: 'account', direction: 'asc' }}
+                  alwaysVisible={['account']}
+                  defaultHidden={['status', 'statusFlag', 'onTable', 'hubspot', 'duplicates', 'website', 'how', 'hubspotId', 'owner', 'lifecycle', 'targetAccount', 'lastActivity', 'lastContacted', 'nextActivity', 'created']}
+                  emptyMessage="Nothing matches"
+                  settings={settings}
+                  updateSettings={updateSettings}
+                />
+              ) : (
+                <div style={{ padding: '2rem', textAlign: 'center', color: '#64748B', fontSize: '0.85rem' }}>Every active My Accounts company is mapped to a HubSpot company.</div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
       <label
         onDragOver={e => { e.preventDefault(); setDragOver(true); }}
