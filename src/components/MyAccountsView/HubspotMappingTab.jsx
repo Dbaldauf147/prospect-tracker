@@ -24,6 +24,12 @@ import { targetAccountRows, targetSuggestionsForAccounts, targetAcceptPatch } fr
 import { buildCdmOptions } from '../../utils/prospectOptions';
 import { canonicalCdmOption } from '../../utils/targetAccountCdm';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
+import { readHubspotAgents, activityAgentRows, ownerAgentRows, AGENT_DATA, HUBSPOT_AGENTS_SETTINGS_KEY } from '../../utils/hubspotAgents';
+import { HubspotAgents } from './HubspotAgents';
+
+// Which subtab of the page is open (Mapping or Agents), per viewer.
+const SUBTAB_KEY = 'hubspot-mapping-subtab';
+const readSubtab = () => { try { return localStorage.getItem(SUBTAB_KEY) === 'agents' ? 'agents' : 'mapping'; } catch { return 'mapping'; } };
 
 const fmt = (n) => Number(n || 0).toLocaleString();
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
@@ -95,6 +101,8 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   const [statusFilter, setStatusFilter] = useState('');
   const [showUnmapped, setShowUnmapped] = useState(false);
   const [showOthers, setShowOthers] = useState(false);
+  const [subtab, setSubtabState] = useState(readSubtab);
+  const setSubtab = (t) => { setSubtabState(t); try { localStorage.setItem(SUBTAB_KEY, t); } catch { /* per-viewer convenience only */ } };
   // The rows each table has on screen after its column filters, for the
   // bulk Accept, which takes only the suggestions you can see.
   const [shownRows, setShownRows] = useState([]);
@@ -509,12 +517,49 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   // eslint-disable-next-line react-hooks/exhaustive-deps
     [mapping, cdmName, byId],
   );
+  // The Agents subtab's prompts and the rows each one copies.
+  const agents = useMemo(() => readHubspotAgents(settings), [settings]);
+  const agentRows = useMemo(() => ({
+    [AGENT_DATA.activity]: activityAgentRows(mapping, isInactiveRow),
+    [AGENT_DATA.owners]: ownerAgentRows(mapping, cdmName, isInactiveRow),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [mapping, cdmName, byId]);
+  const agentBlurbs = {
+    [AGENT_DATA.activity]: 'Every HubSpot company your active My Accounts companies are mapped to, so the agent can tie their contacts\' emails, calls and meetings to the company.',
+    [AGENT_DATA.owners]: `Your active My Accounts companies whose HubSpot Company owner isn't ${firstName} (or is blank) go to ${firstName}. HubSpot companies owned by ${firstName} that aren't on My Accounts come off ${firstName} (No owner). Inactive accounts are left alone.`,
+  };
+  const subtabBar = (
+    <div style={{ display: 'flex', gap: '0.25rem', borderBottom: '1px solid #E2E8F0' }}>
+      {[['mapping', 'Mapping'], ['agents', 'Agents']].map(([key, label]) => (
+        <button key={key} type="button" onClick={() => setSubtab(key)}
+          style={{ padding: '0.35rem 0.9rem', border: 'none', borderBottom: `2px solid ${subtab === key ? '#1D4ED8' : 'transparent'}`, background: 'none', color: subtab === key ? '#1D4ED8' : '#475569', fontSize: '0.8rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', marginBottom: -1 }}
+        >{label}</button>
+      ))}
+    </div>
+  );
   const closeUnmapped = useCallback(() => setShowUnmapped(false), []);
   const closeOthers = useCallback(() => setShowOthers(false), []);
 
   const m = data.meta || {};
+  if (subtab === 'agents') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
+        {subtabBar}
+        <HubspotAgents
+          agents={agents}
+          onChange={(next) => updateSettings({ [HUBSPOT_AGENTS_SETTINGS_KEY]: next })}
+          rowsByData={agentRows}
+          blurbs={agentBlurbs}
+          hasExport={data.companies.length > 0}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      </div>
+    );
+  }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
+      {subtabBar}
       {mapping.length > 0 && mappedPct != null && (
         <button
           type="button"
