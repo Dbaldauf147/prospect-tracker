@@ -336,3 +336,26 @@ export function hubspotOnlyOwnedRows(mapping = [], ownerName = '') {
   }
   return out;
 }
+
+/**
+ * The HubSpot company owners on a row who aren't `ownerName` (matchesCdm),
+ * once each. A record with no owner is nobody's, so it isn't listed.
+ */
+export function otherOwners(row, ownerName = '') {
+  if (!ownerName) return [];
+  const out = [];
+  for (const c of row?.hubspot || []) {
+    const o = String(c?.owner || '').trim();
+    if (o && !matchesCdm(o, ownerName) && !out.includes(o)) out.push(o);
+  }
+  return out;
+}
+
+/**
+ * The Hubspot Mapping subtab's "Owned by others" report: the matched
+ * accounts (In both) where a HubSpot company they map to has a Company
+ * owner who isn't `ownerName`.
+ */
+export function ownedByOthersRows(mapping = [], ownerName = '') {
+  return (mapping || []).filter(r => r.status === MAPPING_STATUS.matched && r.account && otherOwners(r, ownerName).length > 0);
+}
