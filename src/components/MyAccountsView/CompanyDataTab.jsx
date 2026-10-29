@@ -111,7 +111,7 @@ export function CompanyDataTab({ accounts = [], prospects = [], contacts = null,
       const p = prospectById.get(a.id);
       if (!p) { missing += 1; continue; }
       if (isQualifyingCompany(p)) { qualifyingCount += 1; continue; }
-      const row = { id: p.id, company: p.company || a.company || '', tier: a.myTier || a.tier || '', status: p.status || '', cdm: p.cdm || '' };
+      const row = { id: p.id, company: p.company || a.company || '', tier: a.tierLabel || a.myTier || a.tier || '', status: p.status || '', cdm: p.cdm || '' };
       for (const f of COMPANY_DATA_FIELDS) row[f.key] = fieldValue(f, p[f.key]);
       row.zoomExcluded = isZoomExcluded({ id: p.id, company: p.company || a.company, zoomId: p.zoomCompanyId });
       const steps = dmLookup ? allMissingStepsFor({

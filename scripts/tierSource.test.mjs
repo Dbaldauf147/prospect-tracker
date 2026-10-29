@@ -12,6 +12,7 @@
 // ever tiered by hand.
 import {
   IMPORTED_TIER, markImportedTier, tierPreferringTargetsList, clearImportedTierOnEdit,
+  ownTargetTierLabel, reportingTier,
 } from '../src/utils/tierSource.js';
 
 let passed = 0, failed = 0;
@@ -76,6 +77,18 @@ function eq(actual, expected, name) {
   const edited = { ...imported, ...clearImportedTierOnEdit({ tier: 'Tier 1' }) };
   eq(tierPreferringTargetsList({ tier: edited.tier, targetTier: 'Tier 3', tierSource: edited.tierSource }), 'Tier 1',
     'after the user sets it: their choice wins, and the mismatch warning does the telling');
+}
+
+// A "Not on tier list, but Dan target" company shows as Strategic Target
+// on My Accounts and its subtabs unless it has a Tier 1 or 2, and still
+// counts as Tier 3.
+{
+  const own = { tier: 'Not on tier list', tierOwnTarget: true };
+  eq(ownTargetTierLabel(own, reportingTier(own)), 'Strategic Target', 'own target, not on tier list: Strategic Target');
+  eq(reportingTier(own), 'Tier 3', 'own target still counts as Tier 3');
+  eq(ownTargetTierLabel({ tier: 'Tier 3', tierOwnTarget: true }, 'Tier 3'), 'Strategic Target', 'own target at Tier 3: Strategic Target');
+  eq(ownTargetTierLabel({ tier: 'Tier 2', tierOwnTarget: true }, 'Tier 2'), 'Tier 2', 'own target at Tier 2 keeps Tier 2');
+  eq(ownTargetTierLabel({ tier: 'Tier 3' }, 'Tier 3'), 'Tier 3', 'not an own target: its tier');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
