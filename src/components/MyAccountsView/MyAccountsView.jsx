@@ -3915,6 +3915,8 @@ Fix that now?
           prospects={prospects}
           search={search}
           onSelect={onSelect}
+          onUpdate={onUpdate}
+          targetAccountsData={targetAccountsData}
           settings={settings}
           updateSettings={updateSettings}
           filterBar={(

@@ -160,3 +160,73 @@ export function targetRowFlags(row, card, verticalOptions = []) {
     : null;
   return { cdm, tier, vertical };
 }
+
+/**
+ * The Hubspot Mapping subtab's Targets list helper: for every account that
+ * isn't mapped to a Targets list row, the best-looking row (suggestTargetMatches'
+ * rules) that no other account is mapped to. Returns Map(accountId -> row
+ * with score).
+ *
+ * Left out: an account with a mapping, set or cleared on purpose
+ * (settings.targetMap has its id, even as []), or one the name match already
+ * ties to a row (`targetNames` on the My Accounts row); a suggestion the card's
+ * Ignore hid (settings.ignoredTargetSuggestions); and rows without a record
+ * behind them (the Opps-only ones). Two accounts after the same row: the
+ * closer name keeps it and the other gets nothing.
+ */
+export function targetSuggestionsForAccounts(accounts, rows, settings, { min = 0.5 } = {}) {
+  const out = new Map();
+  if (!rows?.length) return out;
+  const targetMap = settings?.targetMap || {};
+  const ignored = settings?.ignoredTargetSuggestions || {};
+  const taken = new Set();
+  for (const names of Object.values(targetMap)) {
+    for (const n of (Array.isArray(names) ? names : [names])) if (n) taken.add(String(n).trim().toLowerCase());
+  }
+  for (const a of accounts || []) for (const n of a?.targetNames || []) if (n) taken.add(String(n).trim().toLowerCase());
+  const pool = rows
+    .filter(r => r?.name && !taken.has(r.name.toLowerCase()))
+    .map(r => ({ row: r, tokens: similarityTokens(r.name) }));
+  const best = [];
+  for (const a of accounts || []) {
+    const id = a?.id;
+    if (id == null || String(id).startsWith('opps-only:')) continue;
+    if (Object.prototype.hasOwnProperty.call(targetMap, id)) continue;
+    if ((a.targetNames || []).length) continue;
+    const mine = similarityTokens(a.company);
+    if (!mine.length) continue;
+    const skip = ignored[id] || {};
+    let hit = null;
+    for (const p of pool) {
+      const score = tokenSimilarity(mine, p.tokens);
+      if (score < min || skip[p.row.name.toLowerCase()]) continue;
+      if (!hit || score > hit.score || (score === hit.score && p.row.name.localeCompare(hit.row.name) < 0)) hit = { row: p.row, score };
+    }
+    if (hit) best.push({ id, ...hit });
+  }
+  best.sort((x, y) => y.score - x.score);
+  const claimed = new Set();
+  for (const b of best) {
+    const k = b.row.name.toLowerCase();
+    if (claimed.has(k)) continue;
+    claimed.add(k);
+    out.set(b.id, { ...b.row, score: b.score });
+  }
+  return out;
+}
+
+/**
+ * What accepting a Targets list row writes on the company: the row's CDM,
+ * Tier and Vertical wherever the card disagrees (targetRowFlags, the same
+ * fixes the card's Targets list box offers). A row with no tier or no
+ * vertical leaves that field alone rather than blanking it. The CDM is
+ * spelled the way the CDM dropdown spells that person (canonicalCdm).
+ */
+export function targetAcceptPatch(row, card, { verticalOptions = [], canonicalCdm = (n) => n } = {}) {
+  const flags = targetRowFlags(row, card, verticalOptions);
+  const patch = {};
+  if (flags.cdm) patch.cdm = canonicalCdm(flags.cdm.apply) || flags.cdm.apply;
+  if (flags.tier && row?.tier) patch.tier = flags.tier.apply;
+  if (flags.vertical) patch.vertical = flags.vertical.apply;
+  return patch;
+}
