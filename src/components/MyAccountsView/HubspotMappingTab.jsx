@@ -20,6 +20,10 @@ import { compactMappingCompanies, buildHubspotMapping, hubspotOnlyOwnedRows, MAP
 import { loadHubspotMapping, saveHubspotMapping, EMPTY_HUBSPOT_MAPPING } from '../../utils/hubspotMappingStore';
 import { reportingStatus } from '../../utils/reportingStatus';
 import { matchesCdm } from '../../utils/cdmMatch';
+import { targetAccountRows, targetSuggestionsForAccounts, targetAcceptPatch } from '../../utils/targetAccountMatch';
+import { buildCdmOptions } from '../../utils/prospectOptions';
+import { canonicalCdmOption } from '../../utils/targetAccountCdm';
+import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 
 const fmt = (n) => Number(n || 0).toLocaleString();
 const blank = <span style={{ color: '#CBD5E1' }}>-</span>;
@@ -56,7 +60,7 @@ const hsField = (field) => (r) => r.hubspot.map(c => c[field]).filter(Boolean).j
 // Same-named duplicate records read once.
 const dupNames = (r) => [...new Set((r.duplicates || []).map(c => c.name))].join(', ');
 
-export function HubspotMappingTab({ accounts = [], prospects = [], search = '', onSelect, settings, updateSettings, filterBar, cdmName = '' }) {
+export function HubspotMappingTab({ accounts = [], prospects = [], search = '', onSelect, onUpdate, settings, updateSettings, filterBar, cdmName = '', targetAccountsData = null }) {
   const [data, setData] = useState(EMPTY_HUBSPOT_MAPPING);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -64,6 +68,11 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   const [dragOver, setDragOver] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
   const [showUnmapped, setShowUnmapped] = useState(false);
+  // The rows each table has on screen after its column filters, for the
+  // bulk Accept, which takes only the suggestions you can see.
+  const [shownRows, setShownRows] = useState([]);
+  const [shownUnmappedRows, setShownUnmappedRows] = useState([]);
+  const [accepting, setAccepting] = useState(false);
 
   useEffect(() => {
     loadHubspotMapping().then(setData).catch(err => setError(err.message)).finally(() => setLoaded(true));
@@ -158,6 +167,70 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapping, byId, statusFilter, search]);
 
+  // The Targets list helper: for an account no Targets list row is mapped
+  // to, the closest row nobody else has (targetSuggestionsForAccounts).
+  // Accept maps it (settings.targetMap, the mapping My Accounts and the
+  // company card use) and sets the card's CDM, Tier and Vertical to the
+  // row's, the same fixes the card's Targets list box offers.
+  const targetRows = useMemo(
+    () => (targetAccountsData ? targetAccountRows(targetAccountsData, {
+      targetCdmColumn: settings?.targetCdmColumn,
+      targetVerticalColumn: settings?.targetVerticalColumn,
+      targetVerticalNames: settings?.targetVerticalNames,
+    }) : []),
+    [targetAccountsData, settings?.targetCdmColumn, settings?.targetVerticalColumn, settings?.targetVerticalNames],
+  );
+  const targetSuggestions = useMemo(
+    () => targetSuggestionsForAccounts(accounts, targetRows, {
+      targetMap: settings?.targetMap, ignoredTargetSuggestions: settings?.ignoredTargetSuggestions,
+    }),
+    [accounts, targetRows, settings?.targetMap, settings?.ignoredTargetSuggestions],
+  );
+  const cdmOptions = useMemo(() => buildCdmOptions(prospects, settings), [prospects, settings]);
+  const verticalOptions = useMemo(
+    () => getEffectiveDropdownLists(settings).find(l => l.key === 'vertical')?.options || [],
+    [settings],
+  );
+  const acceptPlan = (r) => {
+    const row = r.account ? targetSuggestions.get(r.account.id) : null;
+    if (!row) return null;
+    const card = byId.get(r.account.id) || r.account;
+    const patch = targetAcceptPatch(row, card, { verticalOptions, canonicalCdm: n => canonicalCdmOption(n, cdmOptions) });
+    return { id: r.account.id, company: r.account.company, row, card, patch };
+  };
+  const describePatch = (plan) => {
+    const parts = Object.entries(plan.patch).map(([k, v]) => `${k === 'cdm' ? 'CDM' : k === 'tier' ? 'Tier' : 'Vertical'} ${String(plan.card?.[k] || '').trim() || 'blank'} → ${v}`);
+    return parts.length ? parts.join(', ') : 'CDM, Tier and Vertical already match';
+  };
+  async function acceptTargets(list, { ask = true } = {}) {
+    const plans = list.map(acceptPlan).filter(Boolean);
+    if (!plans.length || accepting) return;
+    if (ask) {
+      const sample = plans.slice(0, 12).map(pl => `• ${pl.company} → ${pl.row.name} (${describePatch(pl)})`).join('\n');
+      const more = plans.length > 12 ? `\n...and ${plans.length - 12} more` : '';
+      if (!window.confirm(`Map ${plans.length} compan${plans.length === 1 ? 'y' : 'ies'} to the Targets list and take its CDM, Tier and Vertical:\n\n${sample}${more}`)) return;
+    }
+    setAccepting(true);
+    try {
+      const nextMap = { ...(settings?.targetMap || {}) };
+      for (const pl of plans) nextMap[pl.id] = [pl.row.name];
+      updateSettings({ targetMap: nextMap });
+      const failed = [];
+      for (const pl of plans) {
+        if (!Object.keys(pl.patch).length || !onUpdate) continue;
+        try { await onUpdate(pl.id, pl.patch); } catch (err) { failed.push(`${pl.company}: ${err?.message || err}`); }
+      }
+      if (failed.length) setError(`Mapped, but couldn't update ${failed.length}: ${failed.slice(0, 3).join('; ')}`);
+    } finally {
+      setAccepting(false);
+    }
+  }
+  const withSuggestion = (list) => list.filter(r => r.account && targetSuggestions.has(r.account.id));
+  const shownSuggested = withSuggestion(shownRows);
+  const shownUnmappedSuggested = withSuggestion(shownUnmappedRows);
+  const bulkBtn = { padding: '0.2rem 0.7rem', borderRadius: 6, border: '1px solid #1D4ED8', background: '#1D4ED8', color: '#fff', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: accepting ? 'wait' : 'pointer', whiteSpace: 'nowrap' };
+  const bulkLabel = (n) => (accepting ? 'Accepting...' : `Accept ${fmt(n)} Targets suggestion${n === 1 ? '' : 's'}`);
+
   const columns = useMemo(() => [
     {
       key: 'status', label: 'Status', defaultWidth: 150,
@@ -193,6 +266,41 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
       ) : blank),
     },
     { key: 'tier', label: 'Tier', defaultWidth: 90, getFilterValue: r => r.account?.tierLabel || r.account?.myTier || '', exportValue: r => r.account?.tierLabel || r.account?.myTier || '', render: r => r.account?.tierLabel || r.account?.myTier || blank },
+    {
+      key: 'targetName', label: 'Targets List', defaultWidth: 180,
+      headerTitle: 'The Targets list account this company is mapped to, as on My Accounts.',
+      getFilterValue: r => (r.account?.targetNames || []).join(', '),
+      exportValue: r => (r.account?.targetNames || []).join(', '),
+      render: r => ((r.account?.targetNames || []).length ? r.account.targetNames.join(', ') : blank),
+    },
+    {
+      key: 'targetSuggest', label: 'Suggested Target', defaultWidth: 380,
+      headerTitle: 'For a company not mapped to the Targets list: the closest Targets list account nobody else is mapped to, with how alike the names are and its CDM, Tier and Vertical. Accept maps it and sets the company to that CDM, Tier and Vertical.',
+      getSortValue: r => (r.account && targetSuggestions.get(r.account.id)?.score) || null,
+      getFilterValue: r => (r.account && targetSuggestions.get(r.account.id)?.name) || '',
+      exportValue: r => {
+        const t = r.account && targetSuggestions.get(r.account.id);
+        return t ? `${t.name} (${Math.round(t.score * 100)}%)` : '';
+      },
+      render: r => {
+        const t = r.account && targetSuggestions.get(r.account.id);
+        if (!t) return blank;
+        const pct = Math.round(t.score * 100);
+        const tint = scoreTint(pct);
+        const plan = acceptPlan(r);
+        return (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }} title={`${t.name}: CDM ${t.cdm || 'none'}, ${t.tier || 'no tier'}, Vertical ${t.vertical || 'none'}`}>
+            <span style={{ fontSize: '0.66rem', fontWeight: 700, color: tint.ink, background: tint.bg, border: `1px solid ${tint.border}`, padding: '0 6px', borderRadius: 999, fontVariantNumeric: 'tabular-nums', minWidth: 30, textAlign: 'center' }}>{pct}%</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 170, fontWeight: 600 }}>{t.name}</span>
+            <span style={{ color: '#64748B', fontSize: '0.68rem', whiteSpace: 'nowrap' }}>{[t.cdm, t.tier, t.vertical].filter(Boolean).join(' · ')}</span>
+            <button type="button" style={linkBtn} disabled={accepting}
+              onClick={() => acceptTargets([r], { ask: false })}
+              title={`Map ${r.account.company} to ${t.name} on the Targets list. ${plan ? describePatch(plan) : ''}.`}
+            >Accept</button>
+          </span>
+        );
+      },
+    },
     { key: 'accountStatus', label: 'Account Status', defaultWidth: 130, getFilterValue: r => r.account?.status || '', exportValue: r => r.account?.status || '', render: r => r.account?.status || blank },
     {
       // Read off the tracker record: the account row doesn't carry it.
@@ -310,7 +418,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     { key: 'created', label: 'HubSpot Created', defaultWidth: 130, getFilterValue: hsField('created'), exportValue: hsField('created'), render: r => hsField('created')(r) || blank },
   // link closes over data; the table re-renders with it.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [data, byId, onSelect, cdmName]);
+  ], [data, byId, onSelect, cdmName, targetSuggestions, cdmOptions, verticalOptions, accepting, settings?.targetMap]);
 
   const chip = (label, value) => {
     const active = statusFilter === value;
@@ -381,6 +489,13 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
                   Active accounts with no HubSpot company matched by website, name or your link. Map links a possible match, and the company drops off this list.
                 </div>
               </div>
+              {shownUnmappedSuggested.length > 0 && (
+                <button type="button" disabled={accepting}
+                  onClick={() => acceptTargets(shownUnmappedSuggested)}
+                  title="Map every company in this list that has a Suggested Target to it, and set its CDM, Tier and Vertical to the Targets list's."
+                  style={{ ...bulkBtn, marginLeft: 'auto' }}
+                >{bulkLabel(shownUnmappedSuggested.length)}</button>
+              )}
               <button type="button" onClick={() => setShowUnmapped(false)} title="Close" style={{ border: 'none', background: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer' }}>×</button>
             </div>
             <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
@@ -396,6 +511,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
                   emptyMessage="Nothing matches"
                   settings={settings}
                   updateSettings={updateSettings}
+                  onFilteredRowsChange={setShownUnmappedRows}
                 />
               ) : (
                 <div style={{ padding: '2rem', textAlign: 'center', color: '#64748B', fontSize: '0.85rem' }}>Every active My Accounts company is mapped to a HubSpot company.</div>
@@ -440,6 +556,13 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
                 style={{ padding: '0.2rem 0.6rem', borderRadius: 6, border: '1px solid #1D4ED8', background: '#fff', color: '#1D4ED8', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap', marginLeft: 'auto' }}
               >{'\u21E9'} Export Only in HubSpot owned by {firstName} ({fmt(ownedHubspotOnly.length)})</button>
             )}
+            {targetSuggestions.size > 0 && (
+              <button type="button" disabled={accepting || !shownSuggested.length}
+                onClick={() => acceptTargets(shownSuggested)}
+                title="Map every company on screen that has a Suggested Target to it, and set its CDM, Tier and Vertical to the Targets list's. Filter the table first to accept only some."
+                style={{ ...bulkBtn, opacity: shownSuggested.length ? 1 : 0.5 }}
+              >{bulkLabel(shownSuggested.length)}</button>
+            )}
           </>
         )}
       </div>
@@ -456,6 +579,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
             emptyMessage="Nothing matches"
             settings={settings}
             updateSettings={updateSettings}
+            onFilteredRowsChange={setShownRows}
           />
         </div>
       )}

@@ -3,6 +3,7 @@
 //   node scripts/targetAccountMatch.test.mjs
 import {
   targetAccountRows, nameSimilarity, suggestTargetMatches, mappedTargetNames, targetRowFlags, sameWord,
+  targetSuggestionsForAccounts, targetAcceptPatch,
 } from '../src/utils/targetAccountMatch.js';
 
 let passed = 0, failed = 0;
@@ -72,6 +73,43 @@ const ok = targetRowFlags(rows[0], { cdm: 'Sam Ouimet', tier: 'Tier 2', vertical
 check('all agree: no flags', ok, { cdm: null, tier: null, vertical: null });
 check('a row with no CDM or vertical flags neither', targetRowFlags({ name: 'Bare', cdm: '', tier: '', vertical: '' }, { cdm: 'X', tier: '', vertical: 'Y' }, opts), { cdm: null, tier: null, vertical: null });
 check('no row, no flags', targetRowFlags(null, {}), { cdm: null, tier: null, vertical: null });
+
+// Hubspot Mapping's Targets list helper
+{
+  const list = [
+    { name: 'Vibrantz Technologies', cdm: 'Sam Ouimet', tier: 'Tier 2', vertical: 'Chemicals' },
+    { name: 'Acme Corp', cdm: 'Dan Baldauf', tier: '', vertical: '' },
+    { name: 'Taken Co', cdm: '', tier: 'Tier 1', vertical: '' },
+  ];
+  const accts = [
+    { id: 'a', company: 'Vibrantz Technology' },
+    { id: 'b', company: 'Vibrantz' },
+    { id: 'c', company: 'Acme, Inc.' },
+    { id: 'd', company: 'Taken Company' },
+    { id: 'e', company: 'Acme Corp', targetNames: ['Acme Corp'] },
+    { id: 'f', company: 'Acme Corp' },
+    { id: 'opps-only:acme corp', company: 'Acme Corp' },
+    { id: 'g', company: 'Zebra Labs' },
+  ];
+  const got = targetSuggestionsForAccounts(accts, list, { targetMap: { x: ['Taken Co'], f: [] } });
+  check('the closer name keeps a row two accounts want', got.get('a')?.name, 'Vibrantz Technologies');
+  check('the other account gets nothing', got.has('b'), false);
+  check('a row another account is mapped to is not suggested', got.has('c') || got.has('d'), false);
+  check('an account already matched by name is left out', got.has('e'), false);
+  check('an account cleared on purpose is left out', got.has('f'), false);
+  check('an Opps-only row is left out', got.has('opps-only:acme corp'), false);
+  check('nothing alike, nothing suggested', got.has('g'), false);
+  const ign = targetSuggestionsForAccounts([{ id: 'a', company: 'Vibrantz Technology' }], list, { ignoredTargetSuggestions: { a: { 'vibrantz technologies': true } } });
+  check('an ignored suggestion is not offered', ign.has('a'), false);
+
+  check('accepting writes the CDM, tier and vertical that differ',
+    targetAcceptPatch(list[0], { cdm: 'Dan Baldauf', tier: 'Tier 3', vertical: '' }, { verticalOptions: ['Chemicals'] }),
+    { cdm: 'Sam Ouimet', tier: 'Tier 2', vertical: 'Chemicals' });
+  check('a row with no tier or vertical leaves those alone',
+    targetAcceptPatch(list[1], { cdm: 'Dan Baldauf', tier: 'Tier 1', vertical: 'Office' }), {});
+  check('the CDM is spelled as the dropdown spells it',
+    targetAcceptPatch(list[0], { cdm: '', tier: 'Tier 2', vertical: 'Chemicals' }, { canonicalCdm: () => 'Samuel Ouimet' }), { cdm: 'Samuel Ouimet' });
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
