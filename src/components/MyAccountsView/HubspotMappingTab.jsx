@@ -319,9 +319,27 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     );
   };
 
+  // The share of My Accounts companies (inactive ones aside, as in the
+  // chips) that are mapped to a HubSpot company: In both over In both plus
+  // Only in My Accounts.
+  const mappedCount = counts[MAPPING_STATUS.matched] || 0;
+  const accountTotal = mappedCount + (counts[MAPPING_STATUS.accountOnly] || 0);
+  const mappedPct = accountTotal ? Math.round((mappedCount / accountTotal) * 100) : null;
+
   const m = data.meta || {};
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, gap: '0.5rem' }}>
+      {mapping.length > 0 && mappedPct != null && (
+        <div
+          title="My Accounts companies (inactive ones left out) that are mapped to a HubSpot company, by website, name or your link."
+          style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', padding: '0.5rem 0.9rem', border: '1px solid #E2E8F0', borderRadius: 8, background: '#fff' }}
+        >
+          <span style={{ fontSize: '1.5rem', fontWeight: 700, color: mappedPct >= 90 ? '#15803D' : mappedPct >= 70 ? '#B45309' : '#B91C1C', fontVariantNumeric: 'tabular-nums' }}>{mappedPct}%</span>
+          <span style={{ fontSize: '0.8rem', color: '#475569' }}>
+            of My Accounts companies mapped to a HubSpot company ({fmt(mappedCount)} of {fmt(accountTotal)})
+          </span>
+        </div>
+      )}
       <label
         onDragOver={e => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
