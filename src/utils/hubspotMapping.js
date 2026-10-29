@@ -19,6 +19,7 @@
 
 import { normalizeCompany } from './companyNorm.js';
 import { domainKey } from './seHubspotExisting.js';
+import { matchesCdm } from './cdmMatch.js';
 
 const clean = (v) => {
   const s = String(v ?? '').replace(/\s+/g, ' ').trim();
@@ -308,4 +309,30 @@ export function buildHubspotMapping(accounts = [], companies = [], { links = {},
     rows.push({ key: `h:${hubspot[0].id}`, status: MAPPING_STATUS.hubspotOnly, account: null, hubspot, how: '', suggestions, statusFlag: '', tracker: onTracker(hubspot), duplicates: [] });
   }
   return rows;
+}
+
+/**
+ * The Only in HubSpot companies owned by `ownerName`, as rows for a HubSpot
+ * import (Record ID, Company name, Company Domain Name, Company owner): Dan
+ * takes them off his name in HubSpot from this list. One row per HubSpot
+ * record, so same-named records each come along. A record with no owner in
+ * the export counts as his (the export is of his companies); one owned by
+ * someone else is left out. Record ID is blank when the export had no
+ * Company ID column, since the row numbers stood in for it.
+ */
+export function hubspotOnlyOwnedRows(mapping = [], ownerName = '') {
+  const out = [];
+  for (const r of mapping) {
+    if (r.status !== MAPPING_STATUS.hubspotOnly) continue;
+    for (const c of r.hubspot || []) {
+      if (c.owner && ownerName && !matchesCdm(c.owner, ownerName)) continue;
+      out.push({
+        'Record ID': /^row-\d+$/.test(String(c.id)) ? '' : String(c.id),
+        'Company name': c.name || '',
+        'Company Domain Name': c.domain || '',
+        'Company owner': c.owner || '',
+      });
+    }
+  }
+  return out;
 }

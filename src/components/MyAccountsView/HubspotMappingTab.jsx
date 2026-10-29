@@ -16,7 +16,7 @@ import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { domainKey } from '../../utils/seHubspotExisting';
-import { compactMappingCompanies, buildHubspotMapping, MAPPING_STATUS, SUGGEST_MIN_SCORE } from '../../utils/hubspotMapping';
+import { compactMappingCompanies, buildHubspotMapping, hubspotOnlyOwnedRows, MAPPING_STATUS, SUGGEST_MIN_SCORE } from '../../utils/hubspotMapping';
 import { loadHubspotMapping, saveHubspotMapping, EMPTY_HUBSPOT_MAPPING } from '../../utils/hubspotMappingStore';
 import { reportingStatus } from '../../utils/reportingStatus';
 import { matchesCdm } from '../../utils/cdmMatch';
@@ -334,6 +334,15 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     [mapping, byId],
   );
 
+  // The Only in HubSpot companies still on Dan's name in HubSpot, as a CSV
+  // HubSpot imports: he takes them off his name there from it.
+  const ownedHubspotOnly = useMemo(() => hubspotOnlyOwnedRows(mapping, cdmName), [mapping, cdmName]);
+  const exportOwnedHubspotOnly = () => {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ownedHubspotOnly, { header: ['Record ID', 'Company name', 'Company Domain Name', 'Company owner'] }), 'Only in HubSpot');
+    XLSX.writeFile(wb, `Only in HubSpot - ${firstName}'s companies - ${new Date().toISOString().slice(0, 10)}.csv`, { bookType: 'csv' });
+  };
+
   useEffect(() => {
     if (!showUnmapped) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') setShowUnmapped(false); };
@@ -425,6 +434,12 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
             {chip(ON_TABLE, ON_TABLE)}
             {chip(MISMATCH, MISMATCH)}
             {chip(INACTIVE, INACTIVE)}
+            {ownedHubspotOnly.length > 0 && (
+              <button type="button" onClick={exportOwnedHubspotOnly}
+                title={`Download the Only in HubSpot companies with ${cdmName || 'you'} as Company owner (Record ID, Company name, Company Domain Name, Company owner) as a CSV. Import it into HubSpot as a static list, then bulk-edit Company owner on that list to take them off your name.`}
+                style={{ padding: '0.2rem 0.6rem', borderRadius: 6, border: '1px solid #1D4ED8', background: '#fff', color: '#1D4ED8', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap', marginLeft: 'auto' }}
+              >{'\u21E9'} Export Only in HubSpot owned by {firstName} ({fmt(ownedHubspotOnly.length)})</button>
+            )}
           </>
         )}
       </div>

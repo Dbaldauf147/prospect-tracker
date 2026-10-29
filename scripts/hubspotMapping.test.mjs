@@ -14,7 +14,7 @@
 //   * a Client that isn't a Customer in HubSpot is flagged, and so is a
 //     HubSpot Customer that isn't a Client or Old Client here,
 //   * HubSpot companies no account claims are listed on their own.
-import { compactMappingCompanies, buildHubspotMapping, statusDiscrepancy, nameSimilarity, likelyDuplicateName, MAPPING_STATUS } from '../src/utils/hubspotMapping.js';
+import { compactMappingCompanies, buildHubspotMapping, statusDiscrepancy, nameSimilarity, likelyDuplicateName, MAPPING_STATUS, hubspotOnlyOwnedRows } from '../src/utils/hubspotMapping.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -119,6 +119,18 @@ const dupRows = buildHubspotMapping([{ id: 's', company: 'Silver Lake' }], dupCo
 eq(dupRows[0].duplicates.map(c => c.id), ['31', '32'], 'duplicates go on the matched account row');
 eq(dupRows.filter(r => r.status === MAPPING_STATUS.hubspotOnly).map(r => r.hubspot[0].id), ['33'], 'and no longer get an Only in HubSpot row');
 eq(buildHubspotMapping([{ id: 'n', company: 'Nobody' }], dupCos).every(r => !r.duplicates.length), true, 'no matched account, no duplicates');
+
+const ownCos = compactMappingCompanies([
+  { 'Company name': 'Matched Co', 'Company ID': '40', 'Company owner': 'Dan Baldauf' },
+  { 'Company name': 'Lonely Co', 'Company ID': '41', 'Company owner': 'Dan Baldauf', 'Company Domain Name': 'lonely.com' },
+  { 'Company name': 'Lonely Co', 'Company ID': '42', 'Company owner': 'Dan Baldauf' },
+  { 'Company name': 'Other Owner Co', 'Company ID': '43', 'Company owner': 'Pat Smith' },
+  { 'Company name': 'No Owner Co', 'Company ID': '44' },
+]);
+const ownRows = hubspotOnlyOwnedRows(buildHubspotMapping([{ id: 'm', company: 'Matched Co' }], ownCos), 'Dan Baldauf');
+eq(ownRows.map(r => r['Record ID']), ['41', '42', '44'], 'Only in HubSpot records owned by Dan (or no owner), each same-named record, matched and other owners left out');
+eq(ownRows[0], { 'Record ID': '41', 'Company name': 'Lonely Co', 'Company Domain Name': 'lonely.com', 'Company owner': 'Dan Baldauf' }, 'rows carry the HubSpot import columns');
+eq(hubspotOnlyOwnedRows(buildHubspotMapping([], compactMappingCompanies([{ 'Company name': 'No Id Co' }])), 'Dan Baldauf')[0]['Record ID'], '', 'no Company ID column, blank Record ID');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
