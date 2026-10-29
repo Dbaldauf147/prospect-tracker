@@ -20,7 +20,7 @@ import { compactMappingCompanies, buildHubspotMapping, hubspotOnlyOwnedRows, MAP
 import { loadHubspotMapping, saveHubspotMapping, EMPTY_HUBSPOT_MAPPING } from '../../utils/hubspotMappingStore';
 import { reportingStatus } from '../../utils/reportingStatus';
 import { matchesCdm } from '../../utils/cdmMatch';
-import { targetAccountRows, targetSuggestionsForAccounts, targetAcceptPatch } from '../../utils/targetAccountMatch';
+import { targetAccountRows, targetSuggestionsForAccounts, targetAcceptPatch, mappedTargetNames } from '../../utils/targetAccountMatch';
 import { buildCdmOptions } from '../../utils/prospectOptions';
 import { canonicalCdmOption } from '../../utils/targetAccountCdm';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
@@ -202,8 +202,16 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapping, byId, statusFilter, search]);
 
-  // The Targets list helper: for an account no Targets list row is mapped
-  // to, the closest row nobody else has (targetSuggestionsForAccounts).
+  // The company a row's Targets list mapping belongs to: the account, or for
+  // a HubSpot-only row the Table tab record behind it (the company popup
+  // that row opens), if there is one.
+  const subjectOf = (r) => r.account || r.tracker?.[0] || null;
+  const targetNamesOf = (r) => (r.account ? r.account.targetNames || [] : mappedTargetNames(settings, subjectOf(r)?.id));
+  const suggestionOf = (r) => { const s = subjectOf(r); return s ? targetSuggestions.get(s.id) : undefined; };
+
+  // The Targets list helper: for an account (or a HubSpot-only row's Table
+  // tab record) no Targets list row is mapped to, the closest row nobody
+  // else has (targetSuggestionsForAccounts).
   // Accept maps it (settings.targetMap, the mapping My Accounts and the
   // company card use) and sets the card's CDM, Tier and Vertical to the
   // row's, the same fixes the card's Targets list box offers.
@@ -216,10 +224,13 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     [targetAccountsData, settings?.targetCdmColumn, settings?.targetVerticalColumn, settings?.targetVerticalNames],
   );
   const targetSuggestions = useMemo(
-    () => targetSuggestionsForAccounts(accounts, targetRows, {
+    () => targetSuggestionsForAccounts([
+      ...accounts,
+      ...mapping.filter(r => !r.account && r.tracker?.length).map(r => r.tracker[0]),
+    ], targetRows, {
       targetMap: settings?.targetMap, ignoredTargetSuggestions: settings?.ignoredTargetSuggestions,
     }),
-    [accounts, targetRows, settings?.targetMap, settings?.ignoredTargetSuggestions],
+    [accounts, mapping, targetRows, settings?.targetMap, settings?.ignoredTargetSuggestions],
   );
   const cdmOptions = useMemo(() => buildCdmOptions(prospects, settings), [prospects, settings]);
   const verticalOptions = useMemo(
@@ -227,11 +238,12 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     [settings],
   );
   const acceptPlan = (r) => {
-    const row = r.account ? targetSuggestions.get(r.account.id) : null;
+    const subject = subjectOf(r);
+    const row = suggestionOf(r);
     if (!row) return null;
-    const card = byId.get(r.account.id) || r.account;
+    const card = byId.get(subject.id) || subject;
     const patch = targetAcceptPatch(row, card, { verticalOptions, canonicalCdm: n => canonicalCdmOption(n, cdmOptions) });
-    return { id: r.account.id, company: r.account.company, row, card, patch };
+    return { id: subject.id, company: subject.company, row, card, patch };
   };
   const describePatch = (plan) => {
     const parts = Object.entries(plan.patch).map(([k, v]) => `${k === 'cdm' ? 'CDM' : k === 'tier' ? 'Tier' : 'Vertical'} ${String(plan.card?.[k] || '').trim() || 'blank'} → ${v}`);
@@ -270,7 +282,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
       return { ignoredTargetSuggestions: { ...all, [accountId]: { ...(all[accountId] || {}), [name.toLowerCase()]: true } } };
     });
   };
-  const withSuggestion = (list) => list.filter(r => r.account && targetSuggestions.has(r.account.id));
+  const withSuggestion = (list) => list.filter(r => suggestionOf(r));
   const shownSuggested = withSuggestion(shownRows);
   const shownUnmappedSuggested = withSuggestion(shownUnmappedRows);
   const bulkBtn = { padding: '0.2rem 0.7rem', borderRadius: 6, border: '1px solid #1D4ED8', background: '#1D4ED8', color: '#fff', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: accepting ? 'wait' : 'pointer', whiteSpace: 'nowrap' };
@@ -314,21 +326,21 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     {
       key: 'targetName', label: 'Targets List', defaultWidth: 180,
       headerTitle: 'The Targets list account this company is mapped to, as on My Accounts.',
-      getFilterValue: r => (r.account?.targetNames || []).join(', '),
-      exportValue: r => (r.account?.targetNames || []).join(', '),
-      render: r => ((r.account?.targetNames || []).length ? r.account.targetNames.join(', ') : blank),
+      getFilterValue: r => targetNamesOf(r).join(', '),
+      exportValue: r => targetNamesOf(r).join(', '),
+      render: r => (targetNamesOf(r).length ? targetNamesOf(r).join(', ') : blank),
     },
     {
       key: 'targetSuggest', label: 'Suggested Target', defaultWidth: 380,
-      headerTitle: 'For a company not mapped to the Targets list: the closest Targets list account nobody else is mapped to, with how alike the names are and its CDM, Tier and Vertical. Accept maps it and sets the company to that CDM, Tier and Vertical. Ignore stops suggesting it for that company.',
-      getSortValue: r => (r.account && targetSuggestions.get(r.account.id)?.score) || null,
-      getFilterValue: r => (r.account && targetSuggestions.get(r.account.id)?.name) || '',
+      headerTitle: 'For a company not mapped to the Targets list (an Only in HubSpot row: its Table tab record, if it has one): the closest Targets list account nobody else is mapped to, with how alike the names are and its CDM, Tier and Vertical. Accept maps it and sets the company to that CDM, Tier and Vertical. Ignore stops suggesting it for that company.',
+      getSortValue: r => (suggestionOf(r)?.score) || null,
+      getFilterValue: r => (suggestionOf(r)?.name) || '',
       exportValue: r => {
-        const t = r.account && targetSuggestions.get(r.account.id);
+        const t = suggestionOf(r);
         return t ? `${t.name} (${Math.round(t.score * 100)}%)` : '';
       },
       render: r => {
-        const t = r.account && targetSuggestions.get(r.account.id);
+        const t = suggestionOf(r);
         if (!t) return blank;
         const pct = Math.round(t.score * 100);
         const tint = scoreTint(pct);
@@ -340,11 +352,11 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
             <span style={{ color: '#64748B', fontSize: '0.68rem', whiteSpace: 'nowrap' }}>{[t.cdm, t.tier, t.vertical].filter(Boolean).join(' · ')}</span>
             <button type="button" style={linkBtn} disabled={accepting}
               onClick={() => acceptTargets([r], { ask: false })}
-              title={`Map ${r.account.company} to ${t.name} on the Targets list. ${plan ? describePatch(plan) : ''}.`}
+              title={`Map ${subjectOf(r).company} to ${t.name} on the Targets list. ${plan ? describePatch(plan) : ''}.`}
             >Accept</button>
             <button type="button" style={{ ...linkBtn, color: '#64748B' }} disabled={accepting}
-              onClick={() => ignoreTarget(r.account.id, t.name)}
-              title={`Not ${t.name}: stop suggesting it for ${r.account.company}. The next closest Targets list account shows instead, if there is one.`}
+              onClick={() => ignoreTarget(subjectOf(r).id, t.name)}
+              title={`Not ${t.name}: stop suggesting it for ${subjectOf(r).company}. The next closest Targets list account shows instead, if there is one.`}
             >Ignore</button>
           </span>
         );
