@@ -24,7 +24,8 @@ import { db as firestore } from '../firebase';
 import { ADMIN_EMAIL } from '../config/accessControl';
 import { saveListBackup } from './listBackupSync';
 import { userLsGet, userLsSet } from './userLs';
-import { clearLocalOnly, errorText, loadLocalOnlyFiles, markLocalOnly } from './localOnlyFiles.js';
+import { clearLocalOnly, errorText, hasCrashedClientFailures, loadLocalOnlyFiles, markLocalOnly } from './localOnlyFiles.js';
+import { isClientWedged } from './firestoreClientHealth';
 
 // One pass a day per browser. The holes this fills do not appear on their
 // own — only an app version that could not write them creates one — so
@@ -274,8 +275,16 @@ function scheduleNextRun(delayMs) {
  */
 export async function repairCloudBackups(userId, email) {
   if (!userId) return 0;
+  // A tab whose Firestore client has crashed fails every write, so a pass
+  // from it would only record each file as failed (with the assertion as
+  // the reason) and put the next try off half an hour. Leave it to a tab
+  // that can write.
+  if (isClientWedged()) return 0;
+  // Backups that failed only because an earlier tab's client crashed are
+  // retried on the next load, whatever the stamp says: this page has a new
+  // client, and the file has been on one device only since.
   const nextAt = Number(userLsGet(NEXT_RUN_KEY)) || 0;
-  if (nextAt && Date.now() < nextAt) return 0;
+  if (nextAt && Date.now() < nextAt && !hasCrashedClientFailures()) return 0;
   // Claim the slot before any work, so two tabs opening together don't both
   // run the pass. Claiming it for the SHORT interval means a tab closed
   // mid-pass costs half an hour rather than a day.

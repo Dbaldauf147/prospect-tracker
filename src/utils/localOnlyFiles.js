@@ -19,6 +19,7 @@
 // from them.
 
 import { userLsGet, userLsSet } from './userLs.js';
+import { isClientWedgedError } from './firestoreClientHealth.js';
 
 const KEY = 'local-only-files';
 export const LOCAL_ONLY_FILES_EVENT = 'local-only-files-changed';
@@ -91,6 +92,24 @@ export function loadLocalOnlyFiles() {
   return Object.entries(read()).map(([id, entry]) => ({ id, ...entry }));
 }
 
+/**
+ * Did this backup fail only because the tab's Firestore client had crashed?
+ *
+ * That is the SDK's INTERNAL ASSERTION FAILED (b815 / ca9) family, see
+ * firestoreClientHealth: once it trips, every write from that tab fails,
+ * the database is fine, and a reload builds a working client. So the file
+ * isn't stuck, it just needs a pass from a tab that can still write, and
+ * the repair pass runs one on the next load (repairCloudBackups).
+ */
+export function failedOnCrashedClient(entry) {
+  return entry?.reason === 'backup-failed' && isClientWedgedError(entry?.error);
+}
+
+/** Any file whose backup failed on a crashed client, so worth retrying now. */
+export function hasCrashedClientFailures() {
+  return loadLocalOnlyFiles().some(failedOnCrashedClient);
+}
+
 /** A failed write's message, short enough for a tooltip. */
 export function errorText(err) {
   return String(err?.code || err?.message || err || '').slice(0, 300);
@@ -125,9 +144,14 @@ export function localOnlyFileIssues(entries, { oppsRecords = null, oppNumbers = 
     const prospect = (e.kind === 'portfolio' || e.kind === 'siteList') ? prospectBySlug.get(slug(e.owner)) : null;
     const company = prospect?.company || e.owner || String(opp?.Account || '').trim();
     const size = e.sizeBytes ? ` (${fmtSize(e.sizeBytes)})` : '';
+    const crashed = failedOnCrashedClient(e);
+    // The raw assertion is a wall of minified JSON that says nothing to the
+    // person reading it; what they need is that a reload fixes it.
     const why = e.reason === 'too-big'
       ? `over the ${fmtSize(e.limitBytes)} backup limit`
-      : `its cloud backup failed${e.error ? ` (${e.error})` : ''}`;
+      : crashed
+        ? 'its cloud backup failed because the database connection in that tab had crashed (a Firebase bug, not your data)'
+        : `its cloud backup failed${e.error ? ` (${e.error})` : ''}`;
     if (e.kind === 'siteList') {
       return {
         id: `local-only:${e.id}`,
@@ -154,7 +178,9 @@ export function localOnlyFileIssues(entries, { oppsRecords = null, oppNumbers = 
       daysUntil: null,
       expirationDate: null,
       detail: `${kind.label} "${e.name || 'unnamed'}"${size} is only in this browser: ${why}. `
-        + `Clearing browsing data would delete it. Find it under ${kind.where}.`,
+        + (crashed
+          ? 'Reload the page and it backs itself up within a minute; this row clears when it has. Until then, don\'t clear browsing data.'
+          : `Clearing browsing data would delete it. Find it under ${kind.where}.`),
     };
   });
 }
