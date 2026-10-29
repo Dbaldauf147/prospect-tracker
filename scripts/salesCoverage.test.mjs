@@ -3,7 +3,7 @@
 // Plain Node - no test framework (the project has none). Run:
 //   node scripts/salesCoverage.test.mjs
 import { SALES_COVERAGE } from '../src/data/salesCoverage.js';
-import { cleanCoverage, coverageFromSettings, splitSalespeople, salespeopleForVertical, withCoverageEdit } from '../src/utils/salesCoverage.js';
+import { cleanCoverage, coverageFromSettings, splitSalespeople, salespeopleForVertical, withCoverageEdit, isCoverageVertical } from '../src/utils/salesCoverage.js';
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -69,6 +69,13 @@ eq(cleanCoverage(SALES_COVERAGE), SALES_COVERAGE, 'the default list survives a s
     { vertical: '', salespeople: ['Doug'] }, 'clearing the vertical keeps a row that still has a salesperson');
   eq(list[0].rows[0].vertical, 'Hotels', 'the list passed in is not changed');
 }
+
+// Whether a card's Vertical is on the Coverage tab at all.
+eq(isCoverageVertical(SALES_COVERAGE, 'Big Box Retail'), true, 'a listed vertical is on Coverage');
+eq(isCoverageVertical(SALES_COVERAGE, '  big box  retail '), true, 'matched ignoring case and spacing');
+eq(isCoverageVertical(SALES_COVERAGE, 'Retail Team'), false, 'a team-style name is not a Coverage vertical');
+eq(isCoverageVertical(SALES_COVERAGE, ''), false, 'a blank vertical is not on Coverage');
+eq(isCoverageVertical([], 'Hotels'), false, 'nothing is on an empty list');
 
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
