@@ -43,6 +43,8 @@ import { loadYoyOverrides } from '../../utils/yoyOverridesStore';
 import { loadList as loadUploadedList } from '../../utils/uploadedListStore';
 import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
 import { userLsGet } from '../../utils/userLs';
+import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
+import { TRIED_BUCKETS, newTriedItem, sanitizeTriedItems, triedOutcomeNotes } from '../../utils/triedOutcomes';
 
 // Uploaded Strategic Accounts list — same storageKey the Lists tab uses.
 const STRATEGIC_STORAGE_KEY = 'strategic-accounts-override';
@@ -221,6 +223,11 @@ const DEFAULT_STATE = {
  - Leverage fee floating tools
  - SCLP partnership where possible on company/prospect research
  - Afternoons for calls/mornings for focused work and outreach`,
+  // What I Tried, and the two buckets each tried item can be tagged into
+  // (utils/triedOutcomes.js). Start empty: these are the user's own log.
+  triedItems: [],
+  wentWellNotes: '',
+  notWellNotes: '',
 };
 
 // Per-stage numeric fields. Anything not in this list is left to the
@@ -303,6 +310,9 @@ function fromRecord(saved) {
     coverageServices: Array.isArray(saved.coverageServices)
       ? saved.coverageServices.filter(s => typeof s === 'string' && s)
       : [],
+    triedItems: sanitizeTriedItems(saved.triedItems),
+    wentWellNotes: typeof saved.wentWellNotes === 'string' ? saved.wentWellNotes : '',
+    notWellNotes: typeof saved.notWellNotes === 'string' ? saved.notWellNotes : '',
   };
 }
 
@@ -1623,6 +1633,12 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         { title: lbl('notes-distractions-title', 'Eliminating Distractions'), text: state.notesDistractions },
         { title: lbl('notes-prospecting-title', 'Prospecting Approach'), text: [state.notesProspectingLeft, state.notesProspectingRight].filter(Boolean).join('\n') },
         { title: lbl('notes-efficient-title', 'Efficient Time Utilization'), text: state.notesEfficientTime },
+        // What I Tried and the two buckets it's tagged into, as bullets.
+        ...triedOutcomeNotes(state, {
+          tried: lbl('tried-title', 'What I Tried'),
+          well: lbl('tried-well-title', 'What Went Well'),
+          notWell: lbl('tried-notwell-title', "What Didn't Go Well"),
+        }),
       ],
     };
   }
@@ -2561,6 +2577,15 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
             <NotesBox value={state.notesEfficientTime} onCommit={(v) => setField('notesEfficientTime', v)} minRows={6} />
           </div>
         </div>
+
+        {/* What I Tried on the left; on the right, the two buckets each
+            tried item can be tagged into. All three go in both exports. */}
+        <TriedOutcomes
+          items={state.triedItems}
+          setItems={(fn) => setState(s => ({ ...s, triedItems: fn(s.triedItems || []) }))}
+          notes={state}
+          onNotes={setField}
+        />
       </div>
     </LiveValueProvider>
     </LabelCtx.Provider>
@@ -2591,6 +2616,176 @@ function NotesBox({ value, onCommit, minRows = 5 }) {
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => { if (draft !== value) onCommit(draft); }}
       spellCheck={false}
+    />
+  );
+}
+
+// What I Tried (left) and What Went Well / What Didn't Go Well (right).
+// Every tried item is its own bullet: Enter opens the next one, Backspace
+// in an empty one removes it, and pasting several lines makes one bullet
+// per line. The Went well / Didn't go well chips on a bullet tag it into
+// that bucket, and a bucket's "+ Link" picker does the same from the right.
+function TriedOutcomes({ items = [], setItems, notes, onNotes }) {
+  const focusRef = useRef(null); // { id, atEnd } to focus after the next render
+  const inputs = useRef(new Map());
+  useEffect(() => {
+    const f = focusRef.current;
+    if (!f) return;
+    focusRef.current = null;
+    const el = inputs.current.get(f.id);
+    if (el) { el.focus(); const n = f.atEnd ? el.value.length : 0; el.setSelectionRange(n, n); }
+  });
+
+  const patch = (id, p) => setItems(list => list.map(it => (it.id === id ? { ...it, ...p } : it)));
+  const insertAfter = (id, texts = [''], atEnd = true) => {
+    const made = texts.map(t => newTriedItem(t));
+    focusRef.current = { id: made[made.length - 1].id, atEnd };
+    setItems((list) => {
+      const i = list.findIndex(it => it.id === id);
+      const at = i === -1 ? list.length : i + 1;
+      return [...list.slice(0, at), ...made, ...list.slice(at)];
+    });
+  };
+  const remove = (id) => {
+    const i = items.findIndex(it => it.id === id);
+    const prev = items[i - 1];
+    if (prev) focusRef.current = { id: prev.id, atEnd: true };
+    setItems(list => list.filter(it => it.id !== id));
+  };
+
+  const filled = items.filter(it => it.text.trim());
+  return (
+    <div className={styles.triedGrid}>
+      <div className={styles.section}>
+        <div className={styles.sectionTitle}><EL id="tried-title">What I Tried</EL></div>
+        <div className={styles.notesBody}>
+          {items.length === 0 ? (
+            <button type="button" className={styles.triedEmpty} onClick={() => insertAfter(null)}>
+              • Click to add the first thing you tried
+            </button>
+          ) : (
+            <ul className={styles.triedList}>
+              {items.map(it => (
+                <li key={it.id} className={styles.triedItem}>
+                  <span className={styles.triedBullet}>•</span>
+                  <TriedText
+                    item={it}
+                    inputRef={(el) => { if (el) inputs.current.set(it.id, el); else inputs.current.delete(it.id); }}
+                    onCommit={(text) => patch(it.id, { text })}
+                    onEnter={(text, rest) => { patch(it.id, { text }); insertAfter(it.id, [rest], false); }}
+                    onPasteLines={(text, lines) => { patch(it.id, { text }); insertAfter(it.id, lines); }}
+                    onRemove={() => remove(it.id)}
+                  />
+                  {TRIED_BUCKETS.map(b => (
+                    <button
+                      key={b.key}
+                      type="button"
+                      className={`${styles.triedTag} ${it[b.key] ? styles[b.key === 'well' ? 'triedTagWell' : 'triedTagNotWell'] : ''}`}
+                      onClick={() => patch(it.id, { [b.key]: !it[b.key] })}
+                      title={it[b.key] ? `Remove from ${b.title}` : `Tag into ${b.title}`}
+                    >
+                      {b.key === 'well' ? '✓' : '✗'} {b.tag}
+                    </button>
+                  ))}
+                  <button type="button" className={styles.delBtn} onClick={() => remove(it.id)} title="Remove">×</button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {items.length > 0 && (
+            <button type="button" className={styles.actionBtn} style={{ marginTop: '0.4rem' }} onClick={() => insertAfter(items[items.length - 1].id)}>+ Add</button>
+          )}
+        </div>
+      </div>
+
+      <div className={styles.triedBuckets}>
+        {TRIED_BUCKETS.map(b => {
+          const linked = items.filter(it => it[b.key]);
+          const unlinked = filled.filter(it => !it[b.key]);
+          return (
+            <div key={b.key} className={`${styles.section} ${b.key === 'well' ? styles.bucketWell : styles.bucketNotWell}`}>
+              <div className={styles.sectionTitle}><EL id={b.key === 'well' ? 'tried-well-title' : 'tried-notwell-title'}>{b.title}</EL></div>
+              <div className={styles.notesBody}>
+                {linked.length > 0 && (
+                  <div className={styles.triedLinked}>
+                    {linked.map(it => (
+                      <span key={it.id} className={styles.triedChip} title="From What I Tried">
+                        {it.text.trim() || '(empty)'}
+                        <button type="button" onClick={() => patch(it.id, { [b.key]: false })} title={`Unlink from ${b.title}`}>×</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {unlinked.length > 0 && (
+                  <select
+                    className={styles.triedLink}
+                    value=""
+                    onChange={(e) => { if (e.target.value) patch(e.target.value, { [b.key]: true }); }}
+                  >
+                    <option value="">+ Link something I tried...</option>
+                    {unlinked.map(it => <option key={it.id} value={it.id}>{it.text.trim()}</option>)}
+                  </select>
+                )}
+                <CommitOnBlurInput
+                  multiline
+                  autoGrow
+                  bulletList
+                  className={styles.notesArea}
+                  rows={3}
+                  value={notes[b.notesKey] || ''}
+                  onCommit={(v) => onNotes(b.notesKey, v)}
+                  placeholder="• Notes"
+                  spellCheck={false}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// One tried bullet's text. Keeps a draft while typing and commits on blur,
+// Enter (splitting at the caret) or a multi-line paste.
+function TriedText({ item, inputRef, onCommit, onEnter, onPasteLines, onRemove }) {
+  const [draft, setDraft] = useState(item.text);
+  // Reflect external changes (hydration / restore) into the draft.
+  const [seen, setSeen] = useState(item.text);
+  if (seen !== item.text) { setSeen(item.text); setDraft(item.text); }
+  return (
+    <input
+      ref={inputRef}
+      className={styles.triedInput}
+      value={draft}
+      placeholder="What did you try?"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => { if (draft !== item.text) onCommit(draft); }}
+      onKeyDown={(e) => {
+        const el = e.currentTarget;
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const at = el.selectionStart ?? draft.length;
+          const head = draft.slice(0, at);
+          setDraft(head);
+          onEnter(head, draft.slice(el.selectionEnd ?? at));
+        } else if (e.key === 'Backspace' && draft === '') {
+          e.preventDefault();
+          onRemove();
+        }
+      }}
+      onPaste={(e) => {
+        const text = e.clipboardData.getData('text');
+        if (!text.includes('\n')) return;
+        e.preventDefault();
+        const el = e.currentTarget;
+        const lines = text.split(/\r?\n/).map(l => l.replace(/^\s*(?:[•*-]|\d+[.)])\s*/, '').trim()).filter(Boolean);
+        if (!lines.length) return;
+        const head = draft.slice(0, el.selectionStart) + lines[0] + draft.slice(el.selectionEnd);
+        setDraft(head);
+        if (lines.length > 1) onPasteLines(head, lines.slice(1));
+        else onCommit(head);
+      }}
     />
   );
 }
