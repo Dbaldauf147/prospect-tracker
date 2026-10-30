@@ -13,6 +13,7 @@ import styles from './TargetAccountsView.module.css';
 import { writeWorkKey } from '../../utils/mirroredWorkKeys';
 import { readChunkedDoc, writeChunkedDoc } from '../../utils/chunkedDoc';
 import { normalizeTierText } from '../../utils/tierText';
+import { tableViewCompaniesByTarget, tableViewMappingCoverage } from '../../utils/targetTableViewMap';
 
 const STORE_NAME = 'target-accounts';
 
@@ -176,7 +177,7 @@ function InlineEditCell({ value, rowIndex, colKey, onSave }) {
   return <span style={{ cursor: 'default', padding: '1px 3px', borderRadius: '4px' }} onDoubleClick={startEdit}>{value || '-'}</span>;
 }
 
-export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdmName, onListUploaded }) {
+export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdmName, onListUploaded, prospects = [], onSelectProspect }) {
   const { user } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -233,18 +234,21 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
     return () => { cancelled = true; };
   }, [user]);
 
-  // One-time migration so the new "Active Opps" column surfaces for users
-  // who've customized this table's visible columns (DataTable otherwise
-  // keeps any column added later hidden). Adds it to their saved set —
-  // both the localStorage copy and the Firestore-synced tablePrefs. Sticky
-  // flag; only ADDs.
+  // One-time migrations so columns added later ("Active Opps", then
+  // "Table View") surface for users who've customized this table's visible
+  // columns (DataTable otherwise keeps any column added later hidden).
+  // Adds each to their saved set — both the localStorage copy and the
+  // Firestore-synced tablePrefs. Sticky flag per column; only ADDs.
   useEffect(() => {
     if (!settings) return;
     const tid = 'target-accounts';
-    const flag = `${tid}:mig-active-opps-col`;
-    let alreadyDone = true;
-    try { alreadyDone = !!localStorage.getItem(flag); } catch { /* storage blocked */ }
-    if (alreadyDone) return;
+    const pending = [['__activeOpps__', 'mig-active-opps-col'], ['__tableView__', 'mig-table-view-col']]
+      .filter(([, f]) => {
+        let done = true;
+        try { done = !!localStorage.getItem(`${tid}:${f}`); } catch { /* storage blocked */ }
+        return !done;
+      });
+    if (pending.length === 0) return;
     const remote = settings.tablePrefs?.[tid]?.visible;
     let lsSaved = null;
     try {
@@ -254,14 +258,17 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
     const saved = Array.isArray(remote) && remote.length > 0
       ? remote
       : (Array.isArray(lsSaved) && lsSaved.length > 0 ? lsSaved : null);
-    try { localStorage.setItem(flag, '1'); } catch { /* storage blocked */ }
-    if (!saved || saved.includes('__activeOpps__')) return;
-    // Slot it just after the account-name column (the first non-control
+    for (const [, f] of pending) {
+      try { localStorage.setItem(`${tid}:${f}`, '1'); } catch { /* storage blocked */ }
+    }
+    const toAdd = pending.map(([k]) => k).filter(k => saved && !saved.includes(k));
+    if (toAdd.length === 0) return;
+    // Slot them just after the account-name column (the first non-control
     // key) when we can find one, else append.
     const next = [...saved];
     const firstDataIdx = next.findIndex(k => !String(k).startsWith('__'));
-    if (firstDataIdx >= 0) next.splice(firstDataIdx + 1, 0, '__activeOpps__');
-    else next.push('__activeOpps__');
+    if (firstDataIdx >= 0) next.splice(firstDataIdx + 1, 0, ...toAdd);
+    else next.push(...toAdd);
     try { localStorage.setItem(`prospect-col-visible-${tid}`, JSON.stringify(next)); } catch { /* storage blocked */ }
     if (updateSettings) {
       const curEntry = settings.tablePrefs?.[tid] || {};
@@ -431,6 +438,30 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
   // "Blocked" column toggles per-row; blocked accounts are suppressed
   // from fuzzy-match suggestions across the app.
   const nameKey = headers[0];
+
+  // Table View companies mapped to each row of the whole list (every
+  // sheet), by the same saved mapping / name match My Accounts uses.
+  const allTargetNames = useMemo(() => {
+    const out = [];
+    for (const n of data?.sheetNames || []) {
+      const sh = data?.sheets?.[n];
+      const k = sh?.headers?.[0];
+      if (!k) continue;
+      for (const r of sh.records || []) out.push(r[k]);
+    }
+    return out;
+  }, [data]);
+  const tableViewByTarget = useMemo(
+    () => tableViewCompaniesByTarget(prospects, allTargetNames, settings?.targetMap),
+    [prospects, allTargetNames, settings?.targetMap]
+  );
+  const mappedFor = (row) => tableViewByTarget.get(String((nameKey ? row[nameKey] : '') || '').toLowerCase().trim()) || [];
+  // Coverage of the sheet on screen, so it sits beside that sheet's tier counts.
+  const mappingCoverage = useMemo(
+    () => tableViewMappingCoverage(nameKey ? records.map(r => r[nameKey]) : [], tableViewByTarget),
+    [records, nameKey, tableViewByTarget]
+  );
+
   const columns = useMemo(() => {
     const seen = new Set();
     const dataCols = headers
@@ -522,8 +553,46 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
         );
       },
     };
-    return [blockCol, deleteCol, ...(dataCols.length > 0 ? [dataCols[0], oppsCol, ...dataCols.slice(1)] : [oppsCol])];
-  }, [headers, blockedAccountNames, nameKey, oppsIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Table View companies mapped to this row: a saved mapping (My Accounts
+    // or the company popup) in full colour, a name match in italics.
+    // Clicking one opens its popup.
+    const tableViewCol = {
+      key: '__tableView__',
+      label: 'Table View',
+      defaultWidth: 200,
+      getSortValue: (row) => mappedFor(row).length,
+      getFilterValue: (row) => {
+        const list = mappedFor(row);
+        return list.length === 0 ? 'Not mapped' : list.map(x => x.company).join(', ');
+      },
+      render: (row) => {
+        const list = mappedFor(row);
+        if (list.length === 0) return <span style={{ color: '#CBD5E1' }}>-</span>;
+        return (
+          <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: '2px 8px' }}>
+            {list.map(x => (
+              <button
+                key={x.id}
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onSelectProspect?.(prospects.find(p => p.id === x.id)); }}
+                disabled={!onSelectProspect}
+                title={x.auto
+                  ? `"${x.company}" matches this row by name. Map it on My Accounts to make it stick.`
+                  : `"${x.company}" is mapped to this row. Click to open it.`}
+                style={{
+                  border: 'none', background: 'transparent', padding: 0, fontFamily: 'inherit',
+                  fontSize: 'inherit', cursor: onSelectProspect ? 'pointer' : 'default', textAlign: 'left',
+                  color: x.auto ? 'var(--color-text-secondary)' : 'var(--color-accent)',
+                  fontStyle: x.auto ? 'italic' : 'normal', fontWeight: x.auto ? 400 : 600,
+                }}
+              >{x.company}</button>
+            ))}
+          </span>
+        );
+      },
+    };
+    return [blockCol, deleteCol, ...(dataCols.length > 0 ? [dataCols[0], tableViewCol, oppsCol, ...dataCols.slice(1)] : [tableViewCol, oppsCol])];
+  }, [headers, blockedAccountNames, nameKey, oppsIndex, tableViewByTarget, prospects, onSelectProspect]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Union of column headers across every sheet — feeds the "Salesperson /
   // CDM column" picker so the mapping works no matter which sheet is
@@ -617,6 +686,15 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
                 <div className={`${styles.tierRow} ${styles.tierTotal}`}>
                   <span><strong>Total companies</strong></span>
                   <span className={styles.tierCount}>{tierCounts.total.toLocaleString()}</span>
+                </div>
+              )}
+              {data && (
+                <div
+                  className={styles.tierRow}
+                  title={`${mappingCoverage.mapped.toLocaleString()} of ${mappingCoverage.total.toLocaleString()} companies on this sheet have a Table View company: ${mappingCoverage.manual.toLocaleString()} mapped by hand, ${(mappingCoverage.mapped - mappingCoverage.manual).toLocaleString()} matched by name.`}
+                >
+                  <span><strong>Mapped to Table View</strong> ({mappingCoverage.mapped.toLocaleString()} of {mappingCoverage.total.toLocaleString()})</span>
+                  <span className={styles.tierCount}>{mappingCoverage.pct}%</span>
                 </div>
               )}
             </div>
