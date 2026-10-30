@@ -250,7 +250,19 @@ function TagContactList({ cell, bucket, onNavigate, onClose, onOpenContact, onAu
               <span style={{
                 color: '#64748B', flex: 1, minWidth: 0,
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              }}>{person.company || person.email}</span>
+              }}>
+                {person.company || person.email}
+                {/* The Table View company that made this contact a Key
+                    Prospect, when it isn't the contact's own company: a
+                    loose name match shows up here instead of hiding. */}
+                {(cell.key === 'keyProspect' || cell.key === 'all') && person.keyProspectVia
+                  && person.keyProspectVia.toLowerCase() !== person.company.toLowerCase() && (
+                  <span
+                    title={`On the Key Prospect roster through the Table View company "${person.keyProspectVia}", which this contact's company "${person.company}" matched by name`}
+                    style={{ marginLeft: 6, color: '#6D28D9', fontStyle: 'italic' }}
+                  >via {person.keyProspectVia}</span>
+                )}
+              </span>
               {/* What this contact contributes to the percentage above. */}
               <span
                 title={`${person.answered} of ${person.total} tag questions answered`}

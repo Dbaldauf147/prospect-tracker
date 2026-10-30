@@ -98,7 +98,7 @@ const strippedNames = new Map();
 function strippedName(lower) {
   let v = strippedNames.get(lower);
   if (v === undefined) {
-    v = lower.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
+    v = lower.replace(/\b(incorporated|inc|llc|limited|ltd|corporation|corp|company|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
     if (strippedNames.size >= STRIPPED_MAX) strippedNames.clear();
     strippedNames.set(lower, v);
   }
@@ -126,10 +126,17 @@ export function rosterKeysMatch(ka, kb) {
   const longer = na.length >= nb.length ? na : nb;
   const shorter = na.length >= nb.length ? nb : na;
   if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
+  // Suffixes and punctuation stripped, the same rule again: equal, or one
+  // inside the other only when the shorter is 4+ characters and most of the
+  // longer. Without that guard a short name matched any longer one holding
+  // it, so a "KKR" contact counted as a Key Prospect at "Accel-KKR".
   const sa = ka.s;
   const sb = kb.s;
-  if (sa && sb && (sa === sb || sa.includes(sb) || sb.includes(sa))) return true;
-  return false;
+  if (!sa || !sb) return false;
+  if (sa === sb) return true;
+  const sLonger = sa.length >= sb.length ? sa : sb;
+  const sShorter = sa.length >= sb.length ? sb : sa;
+  return sShorter.length >= 4 && sShorter.length >= sLonger.length * 0.6 && sLonger.includes(sShorter);
 }
 
 // Every email domain an account record claims — its Email Domain field
@@ -459,35 +466,40 @@ export function makeRosterGates({
         if (rosterKeysMatch(pk, acct)) { hasOpp = true; break; }
       }
     }
-    tierAccountStatus.set(lc, { tier: reportingTier(p), hasOpp });
+    tierAccountStatus.set(lc, { tier: reportingTier(p), hasOpp, company: String(p.company || '').trim() });
   }
-  // Also a function of the company name alone; remembered per set of gates
-  // for the same reason as hasActiveOppByName above.
-  const untouchedByName = new Map();
-  const isAtUntouchedTierAccount = (c) => {
-    const company = String(c.company || '').trim();
-    if (!company) return false;
+  // The Tier 1/2/3 account a contact's company resolves to, as
+  // { account, untouched } (account: that Table View company's name), or
+  // null for none. Also a function of the company name alone; remembered
+  // per set of gates for the same reason as hasActiveOppByName above.
+  const tierAccountByName = new Map();
+  const tierAccountOf = (c) => {
+    const company = String(c?.company || '').trim();
+    if (!company) return null;
     const direct = tierAccountStatus.get(company.toLowerCase());
-    if (direct) return !direct.hasOpp;
-    const known = untouchedByName.get(company);
+    if (direct) return { account: direct.company, untouched: !direct.hasOpp };
+    const known = tierAccountByName.get(company);
     if (known !== undefined) return known;
-    let result = false;
+    let result = null;
     const ck = rosterMatchKey(company);
     for (let i = 0; i < myTierAccounts.length; i++) {
       const p = myTierAccounts[i];
       if (rosterKeysMatch(myTierAccountKeys[i], ck)) {
         const status = tierAccountStatus.get(String(p.company || '').toLowerCase().trim());
-        if (status) { result = !status.hasOpp; break; }
+        if (status) { result = { account: status.company, untouched: !status.hasOpp }; break; }
       }
     }
-    untouchedByName.set(company, result);
+    tierAccountByName.set(company, result);
     return result;
   };
   const isKeyProspect = (c) => {
     if (!passesBaseGate(c)) return false;
     if (!tagsOf(c).includes('decision maker')) return false;
-    return isAtUntouchedTierAccount(c);
+    return !!tierAccountOf(c)?.untouched;
   };
+  // Which Table View company put a Key Prospect on the roster, so a list
+  // can say "via Accel-KKR" when that isn't the contact's own company.
+  const keyProspectAccountOf = (c) => (isKeyProspect(c) ? tierAccountOf(c).account : '');
 
   // Roster gate — a contact passes when it would land on at least one of
   // the dedicated rosters and isn't at an account the Clients tab flags as
@@ -502,7 +514,7 @@ export function makeRosterGates({
     .map(({ label }) => label);
 
   return {
-    isKey, isActive, isClient, isKeyProspect,
+    isKey, isActive, isClient, isKeyProspect, keyProspectAccountOf,
     clientExclusionOf, rosterSelector, categorize, gateFor,
   };
 }
@@ -575,6 +587,9 @@ export function rosterTagCoverage({ contacts = [], gates, tagReviewMap = {}, loc
       answered: score.answered,
       total: score.total,
       done: score.done,
+      // The Table View company that made them a Key Prospect, '' when they
+      // aren't one (or the gates predate it).
+      keyProspectVia: hits.some(h => h.key === 'keyProspect') && gates.keyProspectAccountOf ? gates.keyProspectAccountOf(c) : '',
       // The record itself, so a list built from this coverage can open the
       // contact popup on a name rather than send the user to another tab to
       // find the same person again. A reference, not a copy: these contacts
