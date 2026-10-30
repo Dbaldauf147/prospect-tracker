@@ -771,6 +771,38 @@ function AttendeePicker({ contacts, existingIds, onAdd }) {
   );
 }
 
+// "Name unknown?" under the attendee search: someone who was at the event
+// but whose name nobody caught. Saved as a title-only attendee (no name, no
+// email, kept on this site only), so the event still logs them as attending.
+function UnknownNameAdder({ onAdd }) {
+  const [title, setTitle] = useState('');
+  const [company, setCompany] = useState('');
+  const t = title.trim();
+  function add() {
+    if (!t) return;
+    const c = company.trim();
+    onAdd({ contactId: '', name: '', titleOnly: true, decisionMaker: false, email: '', company: c, title: t, originalTitle: t, lookupCompany: c });
+    setTitle('');
+    setCompany('');
+  }
+  const onKeyDown = (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
+  return (
+    <div className={styles.unknownName} style={{ padding: '0.4rem 0 0', borderTop: 'none', maxWidth: 680 }}>
+      <span className={styles.unknownNameLabel}>Name unknown?</span>
+      <input className={styles.input} style={{ flex: 1, minWidth: 0 }} value={title} placeholder="Their title" onChange={e => setTitle(e.target.value)} onKeyDown={onKeyDown} />
+      <input className={styles.input} style={{ flex: 1, minWidth: 0 }} value={company} placeholder="Company" onChange={e => setCompany(e.target.value)} onKeyDown={onKeyDown} />
+      <button
+        type="button"
+        className={styles.modalManualBtn}
+        style={{ marginTop: 0, whiteSpace: 'nowrap' }}
+        disabled={!t}
+        onClick={add}
+        title="Add them to this event as an attendee with this title and no name or email. Kept on this site only, not sent to HubSpot."
+      >+ Add with title only</button>
+    </div>
+  );
+}
+
 // Modal roster picker for one company — the Opps 2 "+ Add from
 // <company>" flow as a popup: search the HubSpot contacts on file for
 // that company (`contacts`, already narrowed to it by rosterFor), toggle them on/off the attendee list, or add someone
@@ -778,6 +810,8 @@ function AttendeePicker({ contacts, existingIds, onAdd }) {
 // clipped by the table's scroll container.
 function ContactPickerModal({ company, title, contacts, attendees, onAdd, onRemove, onClose }) {
   const [query, setQuery] = useState('');
+  // "Name unknown?": the title to save the attendee under, the row's to start.
+  const [unknownTitle, setUnknownTitle] = useState(title || '');
 
   useEffect(() => {
     function onKey(e) { if (e.key === 'Escape') onClose(); }
@@ -817,6 +851,18 @@ function ContactPickerModal({ company, title, contacts, attendees, onAdd, onRemo
     if (!name) return;
     onAdd({ contactId: '', name, email: '', company: company || '', title: title || '', originalTitle: title || '' });
     setQuery('');
+  }
+
+  // Someone who was there but whose name nobody caught: saved as a
+  // title-only attendee (no name, no email, never sent to HubSpot), so the
+  // event still logs them as attending. Not marked as the decision maker;
+  // the Name cell's "Save title as the decision maker" does that.
+  const unknownTitleClean = unknownTitle.trim();
+  const unknownAdded = !!unknownTitleClean && (attendees || []).some(a => a.titleOnly
+    && titleOnlyKey(a.title, a.company) === titleOnlyKey(unknownTitleClean, company));
+  function addUnknownName() {
+    if (!unknownTitleClean || unknownAdded) return;
+    onAdd({ contactId: '', name: '', titleOnly: true, decisionMaker: false, email: '', company: company || '', title: unknownTitleClean, originalTitle: title || unknownTitleClean, lookupCompany: company || '' });
   }
 
   return createPortal(
@@ -872,6 +918,25 @@ function ContactPickerModal({ company, title, contacts, attendees, onAdd, onRemo
             + Add "{query.trim()}" as a manual contact
           </button>
         )}
+        <div className={styles.unknownName}>
+          <span className={styles.unknownNameLabel}>Name unknown?</span>
+          <input
+            className={styles.input}
+            style={{ flex: 1, minWidth: 0 }}
+            value={unknownTitle}
+            placeholder="Their title"
+            onChange={e => setUnknownTitle(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addUnknownName(); } }}
+          />
+          <button
+            type="button"
+            className={styles.modalManualBtn}
+            style={{ marginTop: 0 }}
+            disabled={!unknownTitleClean || unknownAdded}
+            onClick={addUnknownName}
+            title="Add them to this event as an attendee with this title and no name or email. Kept on this site only, not sent to HubSpot."
+          >{unknownAdded ? '\u2713 Added' : '+ Add with title only'}</button>
+        </div>
       </div>
     </div>,
     document.body,
@@ -3319,6 +3384,7 @@ export function EventsView({
           </div>
 
           {!parkedTab && <AttendeePicker contacts={searchableContacts} existingIds={existingIds} onAdd={addAttendee} />}
+          {!parkedTab && <UnknownNameAdder onAdd={addAttendee} />}
 
           {taggableAttendees.length > 0 && (
             <div className={styles.bulkTagBar}>
