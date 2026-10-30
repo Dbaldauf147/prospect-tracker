@@ -97,6 +97,29 @@ check('plan from today', f.plan.map(w => [w.from, w.to]), [
 ]);
 check('plan drops windows already past', buildQ4Focus({ ...base, today: '2026-12-01' }).plan.map(w => w.from), ['2026-12-01', '2026-12-13']);
 
+// Workdays: Fri Oct 30, 21 Nov weekdays less Thanksgiving, 23 Dec
+// weekdays less Christmas.
+check('workdays left', f.workdaysLeft, 1 + 20 + 22);
+check('workdays on the last day', buildQ4Focus({ ...base, today: '2026-12-31' }).workdaysLeft, 1);
+check('scope from the Opps record', buildQ4Focus({ ...base, oppsRecords: [...opps, { Account: 'Scoped', Scope: 'Strategic sourcing', Stage: 'Agreement Sent', 'Close Date': '2026-12-01', 'Quoted Amount': '1' }] })
+  .projectionDeals.find(d => d.account === 'Scoped').scope, 'Strategic sourcing');
+
+// Largest Stage 5 deals, marked when the account is already a client.
+const big = buildQ4Focus({
+  ...base,
+  clientCompanies: ['Park Hotels & Resorts', 'Hilton'],
+  largeDeals: { minAmount: 100000, rows: [
+    { account: 'Pursuit Aerospace', stage: 'Stage 5', amount: 175000 },
+    { account: 'Park Hotels & Resorts - Headquarters', stage: 'Stage 5', amount: 337107 },
+    { account: 'Hilton - Headquarters', stage: 'Stage 5', amount: 150000 },
+    { account: 'Six Co', stage: 'Stage 6', amount: 900000 },
+  ] },
+});
+check('large stage 5 only, biggest first, client marked', big.largeStage5.map(d => [d.account, d.existingClient]), [
+  ['Park Hotels & Resorts - Headquarters', true], ['Pursuit Aerospace', false], ['Hilton - Headquarters', true],
+]);
+check('no large deals', f.largeStage5, []);
+
 check('no em dash', JSON.stringify(f).includes('—'), false);
 
 console.log(`${failed ? 'FAIL' : 'PASS'} q4Focus: ${passed} passed, ${failed} failed`);

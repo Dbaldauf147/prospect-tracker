@@ -1666,6 +1666,8 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           // The YOY chart's pins, so the projected total is the number the
           // Annual Sales chart shows.
           yoyOverrides: loadYoyOverrides(),
+          // Companies set to Client, for the Existing Client? column.
+          clientCompanies: prospects.filter(pp => String(pp?.status || '').trim().toLowerCase() === 'client').map(pp => pp.company),
         });
       }
       await downloadPipelineWorkbook({ ...payload, layout });
