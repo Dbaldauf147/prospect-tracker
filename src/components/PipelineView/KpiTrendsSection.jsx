@@ -69,7 +69,7 @@ function Sparkline({ kpi, months, target }) {
   if (!last) return <span className={crt.sparkEmpty} title={`${kpi.short}: nothing to measure in these months.`}>-</span>;
 
   return (
-    <svg className={crt.spark} viewBox={`0 0 ${PLOT_W} ${PLOT_H}`} width={PLOT_W} height={PLOT_H} role="img"
+    <svg className={crt.spark} viewBox={`0 0 ${PLOT_W} ${PLOT_H}`} width={PLOT_W} height={PLOT_H} role="img" data-kpi-spark={kpi.key}
       aria-label={`${kpi.short}: ${points.filter(Boolean).map(p => p.label).join(', ')}${t != null ? `. Target ${formatKpi(t, kpi.format)}` : ''}`}>
       <line x1={0} y1={PLOT_H - PAD} x2={PLOT_W} y2={PLOT_H - PAD} stroke="#e2e8f0" strokeWidth="1" />
       {t != null && (

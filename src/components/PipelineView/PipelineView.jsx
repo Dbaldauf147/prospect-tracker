@@ -45,7 +45,9 @@ import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
 import { userLsGet } from '../../utils/userLs';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { TRIED_BUCKETS, newTriedItem, sanitizeTriedItems, triedOutcomeNotes } from '../../utils/triedOutcomes';
-import { quotedStageDays, sanitizeKpiTargets } from '../../utils/kpiTrends';
+import { computeKpiTrends, quotedStageDays, sanitizeKpiTargets } from '../../utils/kpiTrends';
+import { kpiTrendsForExport } from '../../utils/kpiTrendsExport';
+import { svgToPngDataUrl } from '../../utils/svgToPng';
 import { KpiTrendsSection } from './KpiTrendsSection';
 
 // Uploaded Strategic Accounts list — same storageKey the Lists tab uses.
@@ -878,6 +880,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
   const [clientStores, setClientStores] = useState(readClientStores);
   const [hubspotContacts, setHubspotContacts] = useState([]);
   const [exporting, setExporting] = useState(''); // '' | 'multi' | 'single' — which Excel export is building
+  const funnelRef = useRef(null);
   const [strategicRows, setStrategicRows] = useState([]);
 
   useEffect(() => {
@@ -1648,11 +1651,32 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     };
   }
 
+  // The funnel and the KPI Trends sparklines go into the export as
+  // pictures, rasterised off the charts on screen so they match them.
+  // A chart that can't be captured is just left out.
+  async function exportImages() {
+    const big = { widths: [1600, 1200], maxBytes: Infinity };
+    const funnelSvg = funnelRef.current?.querySelector('svg');
+    const funnelImage = funnelSvg ? await svgToPngDataUrl(funnelSvg, big) : null;
+    const fetched = opps && opps.fetchedAt ? Date.parse(opps.fetchedAt) : NaN;
+    const trends = kpiTrendsForExport(
+      computeKpiTrends(oppsRecords, Number.isFinite(fetched) ? { ageRef: fetched } : {}),
+      state.kpiTargets || {},
+    );
+    if (trends) {
+      for (const row of trends.rows) {
+        const svg = document.querySelector(`svg[data-kpi-spark="${row.key}"]`);
+        row.spark = svg ? await svgToPngDataUrl(svg, { widths: [264], maxBytes: Infinity }) : null;
+      }
+    }
+    return { funnelImage, kpiTrends: trends };
+  }
+
   async function handleExportExcel(layout = 'multi') {
     if (exporting) return;
     setExporting(layout);
     try {
-      const payload = buildExportPayload();
+      const payload = { ...buildExportPayload(), ...(await exportImages()) };
       // The one-page export carries a second tab proposing what to work on
       // to close the year out: the Annual Sales projected total and the
       // deals behind it, plus the same figures as this report and the Opps
@@ -1769,7 +1793,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         {/* Pipeline funnel — the stage volumes from the metrics table drawn
             as a horizontal funnel, with a red dotted goal line (and shaded
             shortfall) on every stage that's running under its goal. */}
-        <div className={styles.section}>
+        <div className={styles.section} ref={funnelRef}>
           <div className={styles.sectionTitle}><EL id="t-pipeline-funnel">PIPELINE FUNNEL</EL></div>
           <PipelineFunnel
             stages={funnelStages}

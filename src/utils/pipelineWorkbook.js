@@ -116,6 +116,78 @@ function blockWriter(ws) {
 }
 const HEAD = { bold: true, fg: 'FFFFFFFF', fill: SE_GREEN_DARK, align: 'center', wrap: true };
 
+// Excel row heights are in points; images are placed in pixels.
+const PX_PER_PT = 4 / 3;
+
+// Drop a PNG ({ src, width, height } from utils/svgToPng) onto the sheet
+// with its top-left at (row, col), 1-based, `widthPx` wide. Returns the
+// image's height in pixels.
+function placeImage(wb, ws, img, row, col, widthPx) {
+  const heightPx = Math.round(widthPx * (img.height / img.width));
+  const id = wb.addImage({ base64: img.src, extension: 'png' });
+  ws.addImage(id, { tl: { col: col - 1, row: row - 1 }, ext: { width: widthPx, height: heightPx }, editAs: 'oneCell' });
+  return heightPx;
+}
+
+// The Pipeline Funnel picture across `cols` columns starting at `r`.
+// Reserves enough 20pt rows to hold it and returns the row after it.
+function writeFunnelImage(wb, ws, r, img, widthPx) {
+  const heightPx = placeImage(wb, ws, img, r, 1, widthPx);
+  const rows = Math.ceil(heightPx / (20 * PX_PER_PT)) + 1;
+  for (let i = 0; i < rows; i++) ws.getRow(r + i).height = 20;
+  return r + rows;
+}
+
+// The Pipeline page's KPI Trends table (utils/kpiTrendsExport.js): two
+// rows per KPI, the figure over what it rests on, the sparkline picture in
+// the Trend block, the 6 mo / 12 mo figures green with a ▲ when they meet
+// the target and red with a ▼ when they miss. `cols` maps each part onto
+// the sheet's grid: { kpi, months: [...], trend, totals: [...], target }.
+function writeKpiTrends(wb, ws, put, r, kt, cols) {
+  const head = (c, text, align = 'center') => put(r, c[0], r, c[1], text, { ...HEAD, wrap: false, align });
+  head(cols.kpi, 'KPI', 'left');
+  kt.months.forEach((m, i) => head(cols.months[i], m));
+  head(cols.trend, 'Trend');
+  kt.windows.forEach((w, i) => head(cols.totals[i], w));
+  head(cols.target, 'Target');
+  ws.getRow(r).height = 18;
+  r++;
+  const trendPx = cols.trendPx || 110;
+  kt.rows.forEach((k, idx) => {
+    const zebra = idx % 2 === 1 ? { zebra: true } : {};
+    const top = r, bottom = r + 1;
+    // Two rows tall, so a long name takes its second line.
+    put(top, cols.kpi[0], bottom, cols.kpi[1], k.label, { bold: true, wrap: true, ...zebra });
+    const figure = (c, cell, tint) => {
+      put(top, c[0], top, c[1], cell.text, { align: 'right', bold: true, ...(tint || zebra) });
+      put(bottom, c[0], bottom, c[1], cell.sub || null, { align: 'right', size: 8, fg: tint ? tint.fg : SE_MUTED, ...(tint ? { fill: tint.fill } : zebra) });
+    };
+    k.cells.forEach((cell, i) => figure(cols.months[i], cell));
+    put(top, cols.trend[0], bottom, cols.trend[1], null, zebra);
+    k.totals.forEach((cell, i) => {
+      const tint = cell.status === 'met' ? { fill: OK_FILL, fg: OK_FG } : cell.status === 'missed' ? { fill: BAD_FILL, fg: BAD_FG } : null;
+      const arrow = cell.status === 'met' ? '▲ ' : cell.status === 'missed' ? '▼ ' : '';
+      figure(cols.totals[i], { ...cell, text: `${arrow}${cell.text}` }, tint);
+    });
+    put(top, cols.target[0], bottom, cols.target[1], k.target || null, { align: 'right', ...zebra });
+    // Tall enough for the sparkline, which sits centred across both rows.
+    const TOP_PT = 22, BOTTOM_PT = 14;
+    ws.getRow(top).height = TOP_PT; ws.getRow(bottom).height = BOTTOM_PT;
+    if (k.spark) {
+      const sparkH = Math.min(Math.round(trendPx * (k.spark.height / k.spark.width)), Math.floor((TOP_PT + BOTTOM_PT) * PX_PER_PT) - 2);
+      const offsetPx = ((TOP_PT + BOTTOM_PT) * PX_PER_PT - sparkH) / 2;
+      const id = wb.addImage({ base64: k.spark.src, extension: 'png' });
+      ws.addImage(id, {
+        tl: { col: cols.trend[0] - 1 + 0.08, row: top - 1 + offsetPx / (TOP_PT * PX_PER_PT) },
+        ext: { width: trendPx, height: sparkH },
+        editAs: 'oneCell',
+      });
+    }
+    r += 2;
+  });
+  return r;
+}
+
 // ── Single-tab layout ───────────────────────────────────────────────────
 // Everything on one polished worksheet: a brand band, a KPI card strip, the
 // per-stage metrics table (grouped two-row header), Current-Client-vs-
@@ -157,6 +229,13 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
   });
   ws.getRow(r).height = 15; ws.getRow(r + 1).height = 26;
   r += 2;
+
+  // ── Pipeline Funnel (the chart on the page, as a picture) ──
+  if (p.funnelImage) {
+    gap();
+    title(lbl('t-pipeline-funnel', 'Pipeline Funnel'));
+    r = writeFunnelImage(wb, ws, r, p.funnelImage, 1100);
+  }
 
   // ── Pipeline Metrics (grouped two-row header) ──
   gap();
@@ -239,6 +318,20 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     styleBody(cell, { align, numFmt, bold: true, ...(tint || {}) });
   });
   ws.getRow(r).height = 18; r++;
+
+  // ── KPI Trends ──
+  if (p.kpiTrends) {
+    gap();
+    title('KPI Trends');
+    r = writeKpiTrends(wb, ws, put, r, p.kpiTrends, {
+      kpi: [1, 2],
+      months: [[3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8]],
+      trend: [9, 10],
+      totals: [[11, 11], [12, 12]],
+      target: [13, 13],
+      trendPx: 120,
+    });
+  }
 
   // ── Current Client vs Greenfield ──
   gap();
@@ -676,6 +769,31 @@ export async function downloadPipelineWorkbook(p) {
 
     ws.autoFilter = { from: { row: hdrRow, column: 1 }, to: { row: hdrRow, column: headers.length } };
     widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+  }
+
+  // ── Pipeline Funnel and KPI Trends (the charts on the page) ───────────
+  if (p.funnelImage) {
+    const ws = wb.addWorksheet('Pipeline Funnel', { properties: { tabColor: { argb: SE_GREEN } } });
+    ws.columns = Array.from({ length: 10 }, () => ({ width: 16 }));
+    const r = brandBand(ws, 10, sub);
+    writeFunnelImage(wb, ws, r + 1, p.funnelImage, 1100);
+  }
+  if (p.kpiTrends) {
+    const n = p.kpiTrends.months.length;
+    const ws = wb.addWorksheet('KPI Trends', {
+      properties: { tabColor: { argb: SE_GREEN } },
+      views: [{ state: 'frozen', ySplit: 3, xSplit: 1 }],
+    });
+    ws.columns = [{ width: 38 }, ...Array.from({ length: n }, () => ({ width: 12 })), { width: 20 }, { width: 14 }, { width: 14 }, { width: 13 }];
+    const r = brandBand(ws, n + 5, sub);
+    writeKpiTrends(wb, ws, blockWriter(ws), r, p.kpiTrends, {
+      kpi: [1, 1],
+      months: p.kpiTrends.months.map((_, i) => [i + 2, i + 2]),
+      trend: [n + 2, n + 2],
+      totals: [[n + 3, n + 3], [n + 4, n + 4]],
+      target: [n + 5, n + 5],
+      trendPx: 120,
+    });
   }
 
   // ── Sheet 3: New Opps by Month ────────────────────────────────────────
