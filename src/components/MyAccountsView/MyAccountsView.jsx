@@ -18,6 +18,7 @@ import { slimHubspotContact } from '../../utils/hubspotContactFields';
 import { dbGet } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { saveMyAccountsFlags } from '../../utils/myAccountsFlagsStore';
+import { MY_ACCOUNTS_SINCE_EVENT, loadMyAccountsSince, saveMyAccountsSince, withMyAccountsStamped, sinceFor, sinceDayKey, daysBetween } from '../../utils/myAccountsSince';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadList } from '../../utils/uploadedListStore';
 import { tierPreferringTargetsList, isOwnTarget, reportingTier, ownTargetTierLabel, OWN_TARGET_TIER_LABEL } from '../../utils/tierSource';
@@ -293,6 +294,7 @@ const ACCOUNT_COLUMNS = [
     return <span style={{ fontWeight: 700, color }}>{count}/5</span>;
   }},
   { key: 'activityCount', label: 'Activity (30d)', defaultWidth: 85, render: (row) => row.activityCount > 0 ? <span style={{ fontWeight: 700, color: 'var(--color-accent)' }}>{row.activityCount}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
+  { key: 'daysInMyAccounts', label: 'Days in My Accounts', defaultWidth: 110, render: null /* set in columns memo */ },
   { key: 'oppsCount', label: 'Opps', defaultWidth: 70, render: (row) => {
     const active = row.oppsCount || 0;
     const total = row.totalOpps || 0;
@@ -1137,6 +1139,13 @@ const BULK_FIELDS = [
   { key: 'zoomCompanyId', label: 'Zoom Company ID' },
   { key: 'zoomCompanyName', label: 'Zoom Company Name' },
 ];
+
+// 'YYYY-MM-DD' -> 'Oct 30, 2026' for the Days in My Accounts tooltip.
+function formatSinceDay(day) {
+  const [y, m, d] = String(day || '').split('-').map(Number);
+  if (!y || !m || !d) return day || '';
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
 
 // Opps-only rows are synthetic (no backing prospect doc), so they can't be
 // bulk-edited. Everything else keys off its real prospect id.
@@ -2939,6 +2948,24 @@ Fix that now?
     } catch {}
   }, [allAccounts]);
 
+  // Stamp the day each account first showed up here, for the Days in My
+  // Accounts column (utils/myAccountsSince). Re-read on the store's event so
+  // another tab's or machine's earlier dates come through.
+  const [myAccountsSince, setMyAccountsSince] = useState(() => loadMyAccountsSince());
+  const sinceToday = sinceDayKey(new Date());
+  useEffect(() => {
+    const reload = () => setMyAccountsSince(loadMyAccountsSince());
+    window.addEventListener(MY_ACCOUNTS_SINCE_EVENT, reload);
+    return () => window.removeEventListener(MY_ACCOUNTS_SINCE_EVENT, reload);
+  }, []);
+  useEffect(() => {
+    if (!allAccounts.length) return;
+    const current = loadMyAccountsSince();
+    const next = withMyAccountsStamped(current, allAccounts, sinceDayKey(new Date()));
+    if (next !== current) saveMyAccountsSince(next);
+    else setMyAccountsSince(current);
+  }, [allAccounts]);
+
   // Publish the tier / status / HQ-Region flags so the Issues tab can list
   // them. One record per (account, flag); synthetic opps-only rows are
   // skipped since they have no backing prospect to open or edit. The
@@ -3714,8 +3741,19 @@ Fix that now?
           );
         }};
       }
+      if (col.key === 'daysInMyAccounts') {
+        const days = (row) => daysBetween(sinceFor(myAccountsSince, row.company)?.since, sinceToday);
+        return { ...col, getSortValue: days, getFilterValue: (row) => { const n = days(row); return n == null ? '' : String(n); }, render: (row) => {
+          const rec = sinceFor(myAccountsSince, row.company);
+          const n = days(row);
+          if (n == null) return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
+          const tip = `On My Accounts since ${formatSinceDay(rec.since)}`
+            + (rec.est ? ' (estimated from when the company was added to the tracker, since this was first tracked)' : '');
+          return <span title={tip} style={rec.est ? { fontStyle: 'italic' } : undefined}>{n.toLocaleString()}</span>;
+        }};
+      }
       // Skip computed columns - they stay read-only
-      if (['myTier', 'verticalSuggestion', 'activityCount', 'oppsCount', 'contactCount', 'bucketCount', 'naRegion', 'type2', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', 'listFlags', '_hide'].includes(col.key)) {
+      if (['myTier', 'verticalSuggestion', 'daysInMyAccounts', 'activityCount', 'oppsCount', 'contactCount', 'bucketCount', 'naRegion', 'type2', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', 'listFlags', '_hide'].includes(col.key)) {
         return col;
       }
       // Make any remaining columns editable as text
@@ -3732,7 +3770,7 @@ Fix that now?
       render: (row) => <button className={styles.deleteBtn} onClick={(e) => { e.stopPropagation(); if (confirm(`Remove "${row.company}" from the database?`)) { dismissCompany(row.company); onDelete(row.id); } }} title="Remove">&#x2715;</button>,
     });
     return mapped;
-  }, [onSelect, onUpdate, verticalSuggestions, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany, similarNamesByAccount, matchingAccounts, flagTests, flagFilter, mslRowsByCompany, settings?.dropdownLists, settings?.dropdownListsHidden]);
+  }, [myAccountsSince, sinceToday, onSelect, onUpdate, verticalSuggestions, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany, similarNamesByAccount, matchingAccounts, flagTests, flagFilter, mslRowsByCompany, settings?.dropdownLists, settings?.dropdownListsHidden]);
 
   // Prepend a checkbox column for the mass-edit selection. Opps-only rows
   // render no checkbox since they have no backing prospect to update.
