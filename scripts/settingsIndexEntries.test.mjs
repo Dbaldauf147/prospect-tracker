@@ -20,12 +20,12 @@ check('an array costs itself plus each distinct element', valueIndexEntries(['a'
 check('a company-keyed map grows per company', valueIndexEntries({ p1: ['Acme'], p2: ['Beta'] }), 2 + 3 + 3);
 
 const settings = {
-  targetMap: Object.fromEntries(Array.from({ length: 15000 }, (_, i) => [`p${i}`, [`Co ${i}`]])),
+  bigMap: Object.fromEntries(Array.from({ length: 15000 }, (_, i) => [`p${i}`, [`Co ${i}`]])),
   small: { a: 1 },
   companySiteLists: { huge: 'stored elsewhere' },
 };
-const r = settingsIndexReport(settings, new Set(['targetMap']));
-check('the biggest key comes first and says it is exempt', [r.keys[0].key, r.keys[0].exempt], ['targetMap', true]);
+const r = settingsIndexReport(settings, new Set(['bigMap']));
+check('the biggest key comes first and says it is exempt', [r.keys[0].key, r.keys[0].exempt], ['bigMap', true]);
 check('exempted keys are left out of the total', r.total, 4);
 check('but counted in the total without exemptions', r.totalIfNoExemptions > FIRESTORE_INDEX_ENTRY_LIMIT, true);
 check('keys stored off the document are not counted', r.keys.some(k => k.key === 'companySiteLists'), false);
@@ -37,7 +37,10 @@ const live = indexLimitMessage(r);
 check('fits once exempt: the message says the exemptions are not live', /not live on Firestore yet/.test(live), true);
 const over = indexLimitMessage(settingsIndexReport(settings, new Set()));
 check('over even with exemptions: the message says a key needs adding', /needs adding/.test(over), true);
-check('the message names the key', /targetMap - about/.test(over), true);
+check('the message names the key', /bigMap - about/.test(over), true);
+const text = settingsIndexReport({ targetMap: settings.bigMap });
+check('a map stored as text costs two entries however big', [text.keys[0].entries, text.keys[0].asText], [2, true]);
+check('and the message says so', /targetMap - about 2 \(stored as text\)/.test(indexLimitMessage(text)), true);
 check('the message has no em dash', /—/.test(live + over), false);
 
 // The client reads the same exemption list the build releases.

@@ -371,7 +371,9 @@ export function useUserSettings(user) {
     let viaRest = false;
 
     try {
-      const result = await savePathUpdates(userIdRef.current, pathUpdates, { expectedAt });
+      // The big maps are stored whole (utils/settingsCodec), so a path into
+      // one is written as the map's whole new value, read off `optimistic`.
+      const result = await savePathUpdates(userIdRef.current, pathUpdates, { expectedAt, wholeValues: optimistic });
       if (result.stale) {
         // Silent auto-merge for path-based saves. Path writes target
         // specific dotted keys (e.g. "companyOpportunities.acme-inc"),
@@ -401,16 +403,18 @@ export function useUserSettings(user) {
             ? value
             : autoMergeValue(value, cur, parts[parts.length - 1]);
         }
-        const forced = await savePathUpdates(userIdRef.current, mergedPathUpdates, { force: true });
-        written = mergedPathUpdates;
-        writtenAt = forced.writtenAt;
-        viaRest = !!forced.viaRest;
         // Rebuild local state: take the freshest remote, then apply
-        // our merged path writes on top.
+        // our merged path writes on top. It is also where a big map's
+        // whole value is read from, so the other device's entries in it
+        // are kept.
         const rebuilt = structuredClone(remote);
         for (const [path, value] of Object.entries(mergedPathUpdates)) {
           setDottedPath(rebuilt, path, value);
         }
+        const forced = await savePathUpdates(userIdRef.current, mergedPathUpdates, { force: true, wholeValues: rebuilt });
+        written = mergedPathUpdates;
+        writtenAt = forced.writtenAt;
+        viaRest = !!forced.viaRest;
         const next = foldWriteResult(rebuilt, optimistic, settingsRef.current);
         next._lastWriteAt = forced.writtenAt;
         settingsRef.current = next;

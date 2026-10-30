@@ -19,6 +19,7 @@ register('./stubs/loader.mjs', import.meta.url);
 
 const fs = await import('./stubs/firestore.mjs');
 const { saveUserSettings } = await import('../src/utils/userSettingsSync.js');
+const { decodeSettingsDoc } = await import('../src/utils/settingsCodec.js');
 
 let passed = 0, failed = 0;
 function ok(cond, name) {
@@ -27,7 +28,10 @@ function ok(cond, name) {
 }
 
 const DOC = 'userSettings/u1';
-const read = () => fs.store.get(DOC);
+// The document the way the app reads it: the big maps (ccMap among them)
+// are stored as one JSON string each (utils/settingsCodec).
+const raw = () => fs.store.get(DOC);
+const read = () => decodeSettingsDoc(raw());
 
 function seed(data) {
   fs.reset();
@@ -49,6 +53,7 @@ function seed(data) {
   ok(Array.isArray(doc.ccMap['caitlin@berkshirepartners.com']), 'the address that stayed is still there');
   ok(doc.contactNotes[101] === 'spoke at the conference', 'a key the write never named is untouched');
   ok(doc._lastWriteAt > 100, 'and the write stamp other devices watch has moved');
+  ok(typeof raw().ccMap_json === 'string' && !('ccMap' in raw()), 'ccMap is stored as text, and its old map field is gone');
 }
 
 // ── Clearing the last entry ────────────────────────────────────────────

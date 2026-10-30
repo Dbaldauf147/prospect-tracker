@@ -26,6 +26,7 @@ import { loadOpps2, readChunkedValue } from './_lib/firestoreChunks.js';
 import { sendEmail } from './_lib/mailer.js';
 import { getAllContacts } from './hubspot.js';
 import { liveActivity, hubspotGetter, flatContact, buildWeeklyFiles, weeklyEmailHtml } from './_lib/hubspotWeekly.js';
+import { decodeSettingsDoc } from '../src/utils/settingsCodec.js';
 
 // The account whose companies, settings and Opps the files are built from.
 // Its prospects live in the shared top-level collection (see dataBackup.js).
@@ -63,7 +64,7 @@ async function loadSources(db, token) {
     ? await liveActivity(hubspotGetter(token))
     : { activity: null, errors: {} };
   return {
-    settings: settingsSnap.exists ? settingsSnap.data() || {} : {},
+    settings: settingsSnap.exists ? decodeSettingsDoc(settingsSnap.data()) || {} : {},
     prospects: prospectsSnap.docs.map(d => ({ id: d.id, ...d.data() })),
     opps,
     contacts,

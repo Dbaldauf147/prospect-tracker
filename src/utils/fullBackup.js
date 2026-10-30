@@ -408,7 +408,10 @@ async function collectFirestore(uid, ctx, onProgress) {
   out.userSettings = await step('userSettings', async () => {
     const [{ db }, { doc, getDoc }] = await Promise.all([import('../firebase.js'), import('firebase/firestore')]);
     const snap = await getDoc(doc(db, 'userSettings', uid));
-    return snap.exists() ? snap.data() : null;
+    if (!snap.exists()) return null;
+    // The big maps as objects, the way the app holds them (utils/settingsCodec).
+    const { decodeSettingsDoc } = await import('./settingsCodec.js');
+    return decodeSettingsDoc(snap.data());
   });
 
   out.companySiteLists = await step('companySiteLists', async () => {
