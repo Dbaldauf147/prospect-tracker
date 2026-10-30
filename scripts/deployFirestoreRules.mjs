@@ -213,7 +213,9 @@ function signedAssertion(serviceAccount, nowSec) {
   return `${signingInput}.${base64url(signature)}`;
 }
 
-async function accessToken(serviceAccount) {
+// Exported for scripts/deployFirestoreIndexExemptions.mjs, which signs in
+// with the same credential.
+export async function accessToken(serviceAccount) {
   const body = new URLSearchParams({
     grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
     assertion: signedAssertion(serviceAccount, Math.floor(Date.now() / 1000)),
@@ -302,7 +304,7 @@ function readJson(path) {
 }
 
 /** Environment plus, on a manual run, whatever .env has to add. */
-function environment() {
+export function environment() {
   const envPath = resolve(ROOT, '.env');
   if (!existsSync(envPath)) return process.env;
   try {

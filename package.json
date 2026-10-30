@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "deploy:rules": "node scripts/deployFirestoreRules.mjs",
-    "prebuild": "node scripts/deployFirestoreRules.mjs --build",
+    "deploy:exemptions": "node scripts/deployFirestoreIndexExemptions.mjs",
+    "prebuild": "node scripts/deployFirestoreRules.mjs --build && node scripts/deployFirestoreIndexExemptions.mjs --build",
     "build": "vite build",
     "test": "node scripts/runTests.mjs",
     "lint": "eslint .",
