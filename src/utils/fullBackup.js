@@ -406,12 +406,10 @@ async function collectFirestore(uid, ctx, onProgress) {
   });
 
   out.userSettings = await step('userSettings', async () => {
-    const [{ db }, { doc, getDoc }] = await Promise.all([import('../firebase.js'), import('firebase/firestore')]);
-    const snap = await getDoc(doc(db, 'userSettings', uid));
-    if (!snap.exists()) return null;
-    // The big maps as objects, the way the app holds them (utils/settingsCodec).
-    const { decodeSettingsDoc } = await import('./settingsCodec.js');
-    return decodeSettingsDoc(snap.data());
+    // The settings as the app holds them, the big maps that live in their
+    // own documents included (utils/settingsCodec).
+    const { fetchUserSettings } = await import('./userSettingsSync.js');
+    return fetchUserSettings(uid);
   });
 
   out.companySiteLists = await step('companySiteLists', async () => {
@@ -568,13 +566,12 @@ async function restoreCloud(env, uid, say) {
   if (cloud.userSettings && typeof cloud.userSettings === 'object') {
     say('Restoring settings…');
     const { pushBackup } = await import('./settingsBackup.js');
-    const { saveUserSettings } = await import('./userSettingsSync.js');
-    const [{ db }, { doc, getDoc }] = await Promise.all([import('../firebase.js'), import('firebase/firestore')]);
+    const { saveUserSettings, fetchUserSettings } = await import('./userSettingsSync.js');
     // Snapshot what's there first, so a restore is itself reversible from
     // the Settings backups list right below this panel.
     try {
-      const snap = await getDoc(doc(db, 'userSettings', uid));
-      if (snap.exists()) await pushBackup(snap.data(), 'pre-full-restore', { force: true });
+      const current = await fetchUserSettings(uid);
+      if (current) await pushBackup(current, 'pre-full-restore', { force: true });
     } catch (err) { console.warn('fullBackup: pre-restore settings snapshot failed', err); }
     const { _lastWriteAt, ...rest } = cloud.userSettings;
     await saveUserSettings(uid, rest, { force: true });

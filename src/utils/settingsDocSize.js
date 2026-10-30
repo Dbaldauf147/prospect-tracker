@@ -15,7 +15,7 @@
 const DOC_OVERHEAD = 32;
 export const FIRESTORE_DOC_LIMIT = 1048576;
 
-import { isEncodedSettingsKey, encodedFieldName } from './settingsCodec.js';
+import { isEncodedSettingsKey } from './settingsCodec.js';
 
 // Stop a little short of the hard cap. The sizing below is faithful but
 // not byte-exact (it does not model timestamps, geo points or references,
@@ -73,20 +73,32 @@ export function settingsDocReport(settings) {
   const keys = [];
   let bytes = DOC_OVERHEAD;
   let offloadedBytes = 0;
+  // The big maps each live in a document of their own (utils/settingsCodec)
+  // as one JSON string, so each has its own budget rather than a share of
+  // this one: sized as that string, and listed so a save that would take
+  // one past it can be refused too.
+  const ownDocs = [];
   for (const [key, value] of Object.entries(settings || {})) {
     if (value === undefined) continue;
-    // The big maps are stored as one JSON string each (utils/settingsCodec),
-    // which is what the document actually holds for them.
-    const size = isEncodedSettingsKey(key)
-      ? utf8(encodedFieldName(key)) + 1 + valueBytes(JSON.stringify(value))
-      : utf8(key) + 1 + valueBytes(value);
+    if (isEncodedSettingsKey(key)) {
+      const own = DOC_OVERHEAD + utf8('json') + 1 + valueBytes(value == null ? '' : JSON.stringify(value)) + 16;
+      ownDocs.push({ key, bytes: own });
+      offloadedBytes += own;
+      continue;
+    }
+    const size = utf8(key) + 1 + valueBytes(value);
     if (OFFLOADED_KEYS.has(key)) { offloadedBytes += size; continue; }
     keys.push({ key, bytes: size });
     bytes += size;
   }
   keys.sort((a, b) => b.bytes - a.bytes);
-  return { bytes, keys, offloadedBytes, limit: FIRESTORE_DOC_LIMIT, budget: SETTINGS_SIZE_BUDGET };
+  ownDocs.sort((a, b) => b.bytes - a.bytes);
+  const overOwn = ownDocs.filter(d => d.bytes > SETTINGS_SIZE_BUDGET);
+  return { bytes, keys, offloadedBytes, ownDocs, overOwn, limit: FIRESTORE_DOC_LIMIT, budget: SETTINGS_SIZE_BUDGET };
 }
+
+/** Whether a save of these settings would not fit: the document, or one of the maps' own. */
+export const overSettingsBudget = (report) => report.bytes > report.budget || (report.overOwn || []).length > 0;
 
 const kb = (n) => `${Math.round(n / 1024).toLocaleString()} KB`;
 
@@ -96,6 +108,13 @@ const kb = (n) => `${Math.round(n / 1024).toLocaleString()} KB`;
  * part of this a person can act on.
  */
 export function overBudgetMessage(report) {
+  if (report.bytes <= report.budget && report.overOwn?.length) {
+    const k = report.overOwn[0];
+    return `This save can't be stored: ${k.key} would come to ${kb(k.bytes)}, `
+      + `over the ${kb(report.limit)} Firestore allows for the one document it is kept in.\n\n`
+      + `Nothing was changed on the server, and a local backup of your current settings was taken.\n\n`
+      + `Clearing entries you no longer need from ${k.key} will make room.`;
+  }
   const top = report.keys.slice(0, 5)
     .filter(k => k.bytes > 1024)
     .map(k => `  • ${k.key} - ${kb(k.bytes)}`)
@@ -158,12 +177,10 @@ export function settingsIndexReport(settings, exempt = new Set()) {
   let total = 0;
   let totalIfNoExemptions = 0;
   for (const [key, value] of Object.entries(settings || {})) {
-    if (value === undefined || OFFLOADED_KEYS.has(key)) continue;
-    // A map stored as a JSON string is one field: two entries, however big.
-    const asText = isEncodedSettingsKey(key);
-    const entries = asText ? 2 : valueIndexEntries(value);
+    if (value === undefined || OFFLOADED_KEYS.has(key) || isEncodedSettingsKey(key)) continue;
+    const entries = valueIndexEntries(value);
     const isExempt = exempt.has(key);
-    keys.push({ key, entries, exempt: isExempt, asText });
+    keys.push({ key, entries, exempt: isExempt });
     totalIfNoExemptions += entries;
     if (!isExempt) total += entries;
   }
@@ -179,7 +196,7 @@ export function isIndexEntryLimitError(err) {
 export function indexLimitMessage(report) {
   const n = (x) => Math.round(x).toLocaleString();
   const top = report.keys.slice(0, 6)
-    .map(k => `  • ${k.key} - about ${n(k.entries)}${k.asText ? ' (stored as text)' : k.exempt ? ' (on the exemption list)' : ' (NOT on the exemption list)'}`)
+    .map(k => `  • ${k.key} - about ${n(k.entries)}${k.exempt ? ' (on the exemption list)' : ' (NOT on the exemption list)'}`)
     .join('\n');
   const verdict = report.total > report.limit
     ? 'Even with the exemptions in place this is over the limit, so a key marked NOT on the list needs adding to firestore.field-exemptions.json.'

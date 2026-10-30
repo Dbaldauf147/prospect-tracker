@@ -65,7 +65,7 @@ import {
 import { loadOpps2, loadMirror, MIRROR } from './firestoreChunks.js';
 import { fetchActivityWindow } from './hubspotActivityWindow.js';
 import { zonedToUtc, localParts } from './weeklyReportSchedule.js';
-import { decodeSettingsDoc } from '../../src/utils/settingsCodec.js';
+import { readUserSettings } from './readUserSettings.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -162,8 +162,7 @@ export async function loadReportSources(db, uid, { token = '', start, end, histo
         return (weeks && typeof weeks === 'object') ? weeks : {};
       }, {}),
       settle('userSettings', async () => {
-        const snap = await db.collection('userSettings').doc(uid).get();
-        return snap.exists ? (decodeSettingsDoc(snap.data()) || {}) : {};
+        return (await readUserSettings(db, uid)) || {};
       }, {}),
       // The one live source. When it fails — no token, HubSpot down — the
       // build carries on and emailsSentFor falls back to the recorded

@@ -4,7 +4,7 @@ import { pushBackup } from '../utils/settingsBackup';
 import { autoMergeValue, mergeSettingsKey, foldWriteResult } from '../utils/settingsMerge';
 import { guardLeadLinks, recordLeadLinks, LEAD_LINK_LEDGER_KEY } from '../utils/leadLinks';
 import { guardLeadMappings, recordLeadMappings, LEAD_MAPPING_LEDGER_KEY } from '../utils/leadMappings';
-import { SETTINGS_SIZE_BUDGET, overBudgetMessage, settingsDocReport, settingsIndexReport, isIndexEntryLimitError, indexLimitMessage } from '../utils/settingsDocSize';
+import { overSettingsBudget, overBudgetMessage, settingsDocReport, settingsIndexReport, isIndexEntryLimitError, indexLimitMessage } from '../utils/settingsDocSize';
 import fieldExemptions from '../../firestore.field-exemptions.json';
 import {
   isClientWedged, isClientWedgedError, shouldAnnounceWedgedClient, wedgedClientMessage, watchForClientCrash, autoReloadWhenWedged,
@@ -61,7 +61,7 @@ const INDEX_EXEMPT_KEYS = new Set(
 
 function refuseIfOverBudget(next) {
   const report = settingsDocReport(next);
-  if (report.bytes <= SETTINGS_SIZE_BUDGET) return false;
+  if (!overSettingsBudget(report)) return false;
   console.error('userSettings would exceed the document size limit', report);
   alert(overBudgetMessage(report));
   return true;

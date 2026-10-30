@@ -38,9 +38,7 @@ check('fits once exempt: the message says the exemptions are not live', /not liv
 const over = indexLimitMessage(settingsIndexReport(settings, new Set()));
 check('over even with exemptions: the message says a key needs adding', /needs adding/.test(over), true);
 check('the message names the key', /bigMap - about/.test(over), true);
-const text = settingsIndexReport({ targetMap: settings.bigMap });
-check('a map stored as text costs two entries however big', [text.keys[0].entries, text.keys[0].asText], [2, true]);
-check('and the message says so', /targetMap - about 2 \(stored as text\)/.test(indexLimitMessage(text)), true);
+check('a map kept in its own document costs the settings document nothing', settingsIndexReport({ targetMap: settings.bigMap }).keys, []);
 check('the message has no em dash', /—/.test(live + over), false);
 
 // The client reads the same exemption list the build releases.
