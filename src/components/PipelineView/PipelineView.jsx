@@ -45,6 +45,8 @@ import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
 import { userLsGet } from '../../utils/userLs';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { TRIED_BUCKETS, newTriedItem, sanitizeTriedItems, triedOutcomeNotes } from '../../utils/triedOutcomes';
+import { quotedStageDays } from '../../utils/kpiTrends';
+import { KpiTrendsSection } from './KpiTrendsSection';
 
 // Uploaded Strategic Accounts list — same storageKey the Lists tab uses.
 const STRATEGIC_STORAGE_KEY = 'strategic-accounts-override';
@@ -86,22 +88,8 @@ function renderDaysToGoal(soldRaw) {
 // Stages that mean a deal was genuinely quoted. A closed deal that never
 // logged time in either of these counts as "not quoted" for the
 // "% of deals not Quoted" table.
-const QUOTE_STAGES = new Set(['Quoted', 'Agreement Sent']);
-
-// Total days a deal spent in the Quoted / Agreement Sent stages, read from
-// its `_stageHistory`. A closed deal (live Stage = Sold / Not Sold) carries
-// all of its Quoted / Agreement Sent time in history — the stage it left was
-// pushed there with the days it sat in it — so history alone is sufficient.
-// Returns 0 when the deal never logged any time in those stages.
-function quotedStageDays(r) {
-  let total = 0;
-  for (const h of (Array.isArray(r?._stageHistory) ? r._stageHistory : [])) {
-    if (!QUOTE_STAGES.has(String(h?.stage || '').trim())) continue;
-    const d = Number(h?.days);
-    if (Number.isFinite(d) && d > 0) total += d;
-  }
-  return total;
-}
+// Total days a deal spent in Quoted / Agreement Sent (quotedStageDays)
+// now lives in utils/kpiTrends, which KPI Trends shares. Imported above.
 
 // The windows the "% of deals not Quoted" table reports, shortest first.
 // Rolling rather than calendar: the table used to show the current
@@ -2095,6 +2083,10 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           </div>
           </MetricsTableBoundary>
         </div>
+
+        {/* KPI Trends: six KPIs over the trailing 6 and 12 months from the
+            Opps tab; every value downloads the opps behind it. */}
+        <KpiTrendsSection oppsRecords={oppsRecords} ageRef={opps && opps.fetchedAt && Number.isFinite(Date.parse(opps.fetchedAt)) ? Date.parse(opps.fetchedAt) : undefined} />
 
         {/* Mid row — Client/Greenfield + Coverage Ratio + % deals
             not Quoted. Widths are pinned to the metrics colgroup
