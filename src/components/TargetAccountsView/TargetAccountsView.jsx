@@ -16,7 +16,7 @@ import { normalizeTierText } from '../../utils/tierText';
 import { tableViewCompaniesByTarget, tableViewMappingCoverage, bestSuggestionScore, matchScoreBucket, planSuggestionAccepts } from '../../utils/targetTableViewMap';
 import { targetAccountRows } from '../../utils/targetAccountMatch';
 import { buildCdmOptions } from '../../utils/prospectOptions';
-import { canonicalCdmOption } from '../../utils/targetAccountCdm';
+import { canonicalCdmOption, rowsForCdm } from '../../utils/targetAccountCdm';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 
 const STORE_NAME = 'target-accounts';
@@ -525,6 +525,13 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
     () => tableViewMappingCoverage(nameKey ? records.map(r => r[nameKey]) : [], tableViewByTarget),
     [records, nameKey, tableViewByTarget]
   );
+  // The same, over just the signed-in CDM's rows on that sheet.
+  const cdmMappingCoverage = useMemo(
+    () => (cdmName && nameKey
+      ? tableViewMappingCoverage(rowsForCdm(records, cdmName, { cdmColumn: settings?.targetCdmColumn }).map(r => r[nameKey]), tableViewByTarget)
+      : null),
+    [records, nameKey, tableViewByTarget, cdmName, settings?.targetCdmColumn]
+  );
 
   const columns = useMemo(() => {
     const seen = new Set();
@@ -790,6 +797,15 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
                 >
                   <span><strong>Mapped to Table View</strong> ({mappingCoverage.mapped.toLocaleString()} of {mappingCoverage.total.toLocaleString()})</span>
                   <span className={styles.tierCount}>{mappingCoverage.pct}%</span>
+                </div>
+              )}
+              {data && cdmMappingCoverage && cdmMappingCoverage.total > 0 && (
+                <div
+                  className={styles.tierRow}
+                  title={`${cdmMappingCoverage.mapped.toLocaleString()} of the ${cdmMappingCoverage.total.toLocaleString()} companies on this sheet with ${cdmName} as CDM have a Table View company: ${cdmMappingCoverage.manual.toLocaleString()} mapped by hand, ${(cdmMappingCoverage.mapped - cdmMappingCoverage.manual).toLocaleString()} matched by name.`}
+                >
+                  <span><strong>{cdmName} - Mapped to Table View</strong> ({cdmMappingCoverage.mapped.toLocaleString()} of {cdmMappingCoverage.total.toLocaleString()})</span>
+                  <span className={styles.tierCount}>{cdmMappingCoverage.pct}%</span>
                 </div>
               )}
             </div>

@@ -58,6 +58,15 @@ export function rowTargetCdms(record, { cdmColumn = '', repColumn = '' } = {}) {
   return out;
 }
 
+// The rows of a sheet the CDM column (or, on a sheet without it, the
+// keyword scan rowTargetCdms falls back to) puts under `cdmName`, however
+// the name is spelled ("Baldauf, Dan"). The Targets List page's "Mapped to
+// Table View" line counts these for the signed-in CDM.
+export function rowsForCdm(records, cdmName, { cdmColumn = '' } = {}) {
+  if (!String(cdmName || '').trim()) return [];
+  return (records || []).filter(r => r && rowTargetCdms(r, { cdmColumn }).some(c => matchesCdm(c, cdmName)));
+}
+
 // Pull { company, cdms } out of a Target Accounts workbook, every rep's
 // rows included — the warning has to find the row whoever it belongs to.
 // Rows for the same account name across sheets are merged so an account

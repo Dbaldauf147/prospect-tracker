@@ -17,7 +17,7 @@
 import {
   parseTargetAccountCdms, rowTargetCdms, buildTargetCdmResolver,
   targetCdmConflictLabel, describeTargetCdmConflict,
-  canonicalCdmOption, targetCdmApplyHint,
+  canonicalCdmOption, targetCdmApplyHint, rowsForCdm,
 } from '../src/utils/targetAccountCdm.js';
 
 let failures = 0;
@@ -182,6 +182,16 @@ eq('several reps means a choice, not an apply',
   targetCdmApplyHint({ cdms: ['Kristi McNary', 'Ravi Patel'] }, 'Dan Baldauf'),
   ' Click to pick one of them for the CDM field.');
 eq('no conflict, no hint', targetCdmApplyHint(null, 'Dan Baldauf'), '');
+
+// rowsForCdm: the Targets List page's per-CDM "Mapped to Table View" line.
+const cdmSheet = [
+  { Account: 'A Co', 'Salesperson': 'Dan Baldauf' },
+  { Account: 'B Co', 'Salesperson': 'Baldauf, Dan' },
+  { Account: 'C Co', 'Salesperson': 'Sam Ouimet' },
+  { Account: 'D Co', 'Salesperson': '' },
+];
+eq('rowsForCdm: the CDM column, however the name is written', rowsForCdm(cdmSheet, 'Dan Baldauf', { cdmColumn: 'Salesperson' }).map(r => r.Account), ['A Co', 'B Co']);
+eq('rowsForCdm: no CDM name, no rows', rowsForCdm(cdmSheet, '', { cdmColumn: 'Salesperson' }), []);
 
 console.log(failures === 0 ? '\nAll target-account CDM warning tests passed.' : `\n${failures} test(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
