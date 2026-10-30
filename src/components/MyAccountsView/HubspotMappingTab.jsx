@@ -538,7 +538,7 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
   }), [mapping, cdmName, byId]);
   const agentBlurbs = {
     [AGENT_DATA.activity]: 'Every HubSpot company your active My Accounts companies are mapped to, so the agent can tie their contacts\' emails, calls and meetings to the company.',
-    [AGENT_DATA.owners]: `Your active My Accounts companies whose HubSpot Company owner isn't ${firstName} (or is blank) go to ${firstName}. HubSpot companies owned by ${firstName} that aren't on My Accounts come off ${firstName} (No owner). Inactive accounts are left alone.`,
+    [AGENT_DATA.owners]: `Your active My Accounts companies whose HubSpot Company owner isn't ${firstName} (or is blank) go to ${firstName}, and so do the ones that aren't in your HubSpot export at all (most likely owned by someone else or nobody; the agent finds those by domain or name). HubSpot companies owned by ${firstName} that aren't on My Accounts come off ${firstName} (No owner). Inactive accounts are left alone.`,
   };
   const subtabBar = (
     <div style={{ display: 'flex', gap: '0.25rem', borderBottom: '1px solid #E2E8F0' }}>

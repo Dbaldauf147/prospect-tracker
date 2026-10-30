@@ -23,8 +23,8 @@ const TABLE_COLUMNS = {
     col('domain', 'Domain', 160), col('owner', 'Company Owner', 140), col('lastActivity', 'Last Activity', 130),
   ],
   [AGENT_DATA.owners]: [
-    col('hubspotName', 'HubSpot Company', 240), col('recordId', 'Record ID', 120), col('domain', 'Domain', 160),
-    col('owner', 'Current Owner', 140), col('newOwner', 'New Owner', 140), col('why', 'Why', 170),
+    col('company', 'My Accounts Company', 220), col('hubspotName', 'HubSpot Company', 240), col('recordId', 'Record ID', 120), col('domain', 'Domain', 160),
+    col('owner', 'Current Owner', 140), col('newOwner', 'New Owner', 140), col('why', 'Why', 260),
   ],
 };
 
