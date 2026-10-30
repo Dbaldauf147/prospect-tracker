@@ -708,46 +708,73 @@
   background: #b91c1c;
 }
 
-.triedLinked {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
+.triedLinkedTable {
+  width: 100%;
+  border-collapse: collapse;
   margin-bottom: 0.45rem;
-}
-
-.triedChip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  font-size: 0.75rem;
-  padding: 0.15rem 0.2rem 0.15rem 0.5rem;
-  border-radius: 999px;
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  color: var(--color-text);
-}
-
-.bucketWell .triedChip {
-  background: #f0fdf4;
-  border-color: #86efac;
-}
-
-.bucketNotWell .triedChip {
-  background: #fef2f2;
-  border-color: #fca5a5;
-}
-
-.triedChip button {
-  border: none;
-  background: transparent;
-  color: #94a3b8;
-  cursor: pointer;
-  padding: 0 0.2rem;
   font-size: 0.8rem;
 }
 
-.triedChip button:hover {
-  color: #ef4444;
+.triedLinkedTable th {
+  text-align: left;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.15rem 0.35rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.triedLinkedTable th:first-child {
+  width: 40%;
+}
+
+.triedLinkedTable th:last-child {
+  width: 1.5rem;
+}
+
+.triedLinkedTable td {
+  padding: 0.25rem 0.35rem;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+
+.triedLinkedItem {
+  color: var(--color-text);
+  font-weight: 500;
+  padding-top: 0.45rem !important;
+}
+
+.bucketWell .triedLinkedItem {
+  border-left: 3px solid #16a34a;
+}
+
+.bucketNotWell .triedLinkedItem {
+  border-left: 3px solid #dc2626;
+}
+
+.triedNoteInput {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  padding: 0.2rem 0.35rem;
+}
+
+.triedNoteInput:hover {
+  border-color: var(--color-border);
+}
+
+.triedNoteInput:focus {
+  outline: none;
+  border-color: #2563eb;
+  background: var(--color-surface);
 }
 
 .triedLink {

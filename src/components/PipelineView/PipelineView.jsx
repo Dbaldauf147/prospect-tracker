@@ -2625,6 +2625,8 @@ function NotesBox({ value, onCommit, minRows = 5 }) {
 // in an empty one removes it, and pasting several lines makes one bullet
 // per line. The Went well / Didn't go well chips on a bullet tag it into
 // that bucket, and a bucket's "+ Link" picker does the same from the right.
+// Each tagged item gets its own Notes cell in the bucket; untagging keeps
+// the note, so tagging it back brings it with it.
 function TriedOutcomes({ items = [], setItems, notes, onNotes }) {
   const focusRef = useRef(null); // { id, atEnd } to focus after the next render
   const inputs = useRef(new Map());
@@ -2707,14 +2709,34 @@ function TriedOutcomes({ items = [], setItems, notes, onNotes }) {
               <div className={styles.sectionTitle}><EL id={b.key === 'well' ? 'tried-well-title' : 'tried-notwell-title'}>{b.title}</EL></div>
               <div className={styles.notesBody}>
                 {linked.length > 0 && (
-                  <div className={styles.triedLinked}>
-                    {linked.map(it => (
-                      <span key={it.id} className={styles.triedChip} title="From What I Tried">
-                        {it.text.trim() || '(empty)'}
-                        <button type="button" onClick={() => patch(it.id, { [b.key]: false })} title={`Unlink from ${b.title}`}>×</button>
-                      </span>
-                    ))}
-                  </div>
+                  <table className={styles.triedLinkedTable}>
+                    <thead>
+                      <tr><th>What I Tried</th><th>Notes</th><th /></tr>
+                    </thead>
+                    <tbody>
+                      {linked.map(it => (
+                        <tr key={it.id}>
+                          <td className={styles.triedLinkedItem}>{it.text.trim() || '(empty)'}</td>
+                          <td>
+                            <CommitOnBlurInput
+                              multiline
+                              autoGrow
+                              smartBullets
+                              rows={1}
+                              className={styles.triedNoteInput}
+                              value={it[b.noteKey] || ''}
+                              onCommit={(v) => patch(it.id, { [b.noteKey]: v })}
+                              placeholder="Notes"
+                              spellCheck={false}
+                            />
+                          </td>
+                          <td>
+                            <button type="button" className={styles.delBtn} onClick={() => patch(it.id, { [b.key]: false })} title={`Unlink from ${b.title}`}>×</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 )}
                 {unlinked.length > 0 && (
                   <select
@@ -2734,7 +2756,7 @@ function TriedOutcomes({ items = [], setItems, notes, onNotes }) {
                   rows={3}
                   value={notes[b.notesKey] || ''}
                   onCommit={(v) => onNotes(b.notesKey, v)}
-                  placeholder="• Notes"
+                  placeholder="• Other notes"
                   spellCheck={false}
                 />
               </div>
