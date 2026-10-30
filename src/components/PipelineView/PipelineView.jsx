@@ -45,7 +45,7 @@ import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
 import { userLsGet } from '../../utils/userLs';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { TRIED_BUCKETS, newTriedItem, sanitizeTriedItems, triedOutcomeNotes } from '../../utils/triedOutcomes';
-import { quotedStageDays } from '../../utils/kpiTrends';
+import { quotedStageDays, sanitizeKpiTargets } from '../../utils/kpiTrends';
 import { KpiTrendsSection } from './KpiTrendsSection';
 
 // Uploaded Strategic Accounts list — same storageKey the Lists tab uses.
@@ -216,6 +216,9 @@ const DEFAULT_STATE = {
   triedItems: [],
   wentWellNotes: '',
   notWellNotes: '',
+  // KPI Trends targets, { [kpiKey]: number } in the units the box is typed
+  // in (utils/kpiTrends.js). Start unset.
+  kpiTargets: {},
 };
 
 // Per-stage numeric fields. Anything not in this list is left to the
@@ -301,6 +304,7 @@ function fromRecord(saved) {
     triedItems: sanitizeTriedItems(saved.triedItems),
     wentWellNotes: typeof saved.wentWellNotes === 'string' ? saved.wentWellNotes : '',
     notWellNotes: typeof saved.notWellNotes === 'string' ? saved.notWellNotes : '',
+    kpiTargets: sanitizeKpiTargets(saved.kpiTargets),
   };
 }
 
@@ -2097,9 +2101,18 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           </MetricsTableBoundary>
         </div>
 
-        {/* KPI Trends: six KPIs over the trailing 6 and 12 months from the
-            Opps tab; every value downloads the opps behind it. */}
-        <KpiTrendsSection oppsRecords={oppsRecords} ageRef={opps && opps.fetchedAt && Number.isFinite(Date.parse(opps.fetchedAt)) ? Date.parse(opps.fetchedAt) : undefined} />
+        {/* KPI Trends: six KPIs month by month and over the trailing 6 and
+            12 months from the Opps tab, against the targets saved here. */}
+        <KpiTrendsSection
+          oppsRecords={oppsRecords}
+          ageRef={opps && opps.fetchedAt && Number.isFinite(Date.parse(opps.fetchedAt)) ? Date.parse(opps.fetchedAt) : undefined}
+          targets={state.kpiTargets || {}}
+          onTargetChange={(key, value) => setState(s => {
+            const next = { ...(s.kpiTargets || {}) };
+            if (value == null) delete next[key]; else next[key] = value;
+            return { ...s, kpiTargets: next };
+          })}
+        />
 
         {/* Mid row — Client/Greenfield + Coverage Ratio + % deals
             not Quoted. Widths are pinned to the metrics colgroup
