@@ -67,6 +67,23 @@ export function readHubspotAgents(settings) {
     }));
 }
 
+/**
+ * The agents with the one whose id is `id` moved to position `to` (counted
+ * in the list as it is now, clamped to its ends): the Agents subtab's drag
+ * and arrow buttons. Unknown id or no move gives the same list back.
+ */
+export function moveAgent(agents, id, to) {
+  const list = Array.isArray(agents) ? agents : [];
+  const from = list.findIndex(a => a?.id === id);
+  if (from < 0) return list;
+  const dest = Math.max(0, Math.min(list.length - 1, Number(to) || 0));
+  if (dest === from) return list;
+  const next = list.slice();
+  const [item] = next.splice(from, 1);
+  next.splice(dest, 0, item);
+  return next;
+}
+
 // A HubSpot record's id when the export had one; the row numbers that stand
 // in for a missing Company ID column are no use in HubSpot.
 const recordId = (c) => (/^row-\d+$/.test(String(c?.id || '')) ? '' : String(c?.id || ''));

@@ -3,7 +3,7 @@
 //   node scripts/hubspotAgents.test.mjs
 import {
   readHubspotAgents, DEFAULT_HUBSPOT_AGENTS, builtInAgent, activityAgentRows, ownerAgentRows,
-  agentDataBlock, fullAgentPrompt, AGENT_DATA, NO_OWNER,
+  agentDataBlock, fullAgentPrompt, AGENT_DATA, NO_OWNER, moveAgent,
 } from '../src/utils/hubspotAgents.js';
 import { buildHubspotMapping, compactMappingCompanies } from '../src/utils/hubspotMapping.js';
 
@@ -66,6 +66,13 @@ check('no rows, no block', agentDataBlock(AGENT_DATA.activity, []), '');
 check('prompt only copies the prompt', fullAgentPrompt(' Do it. ', ''), 'Do it.');
 check('a prompt with rows has them after a blank line', fullAgentPrompt('Do it.', 'A\tB'), 'Do it.\n\nA\tB');
 check('tabs and line breaks in a cell are flattened', agentDataBlock(AGENT_DATA.activity, [{ company: 'A\tB\nC' }]).split('\n')[1].split('\t')[0], 'A B C');
+
+const abc = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+check('moveAgent moves an agent down', moveAgent(abc, 'a', 2).map(x => x.id), ['b', 'c', 'a']);
+check('moveAgent moves an agent up', moveAgent(abc, 'c', 0).map(x => x.id), ['c', 'a', 'b']);
+check('moveAgent clamps past the ends', moveAgent(abc, 'b', 9).map(x => x.id), ['a', 'c', 'b']);
+check('moveAgent leaves the list alone for no move or an unknown id', [moveAgent(abc, 'b', 1), moveAgent(abc, 'z', 0)].every(l => l === abc), true);
+check('moveAgent keeps the agents intact', moveAgent(abc, 'a', 1).length, 3);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
