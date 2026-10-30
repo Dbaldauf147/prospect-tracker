@@ -466,30 +466,26 @@ function buildQ4Sheet(wb, q, { sub }) {
   const title = (text) => { sectionTitle(ws, r, COLS, text); r++; };
 
   // ── KPI strip ──
-  gap();
+  // The top of the tab is laid out like the one-page summary Dan sends:
+  // five cards, then the deals behind the projection. Nothing up here
+  // wraps; a long name is cut off at its cell's edge instead.
+  gap(17);
   const hasProj = q.projected != null;
   const kpis = [
-    { label: 'Target', value: num(q.target), fmt: MONEY },
-    { label: 'Sold YTD', value: num(q.soldYTD), fmt: MONEY },
-    { label: 'Projected Total', value: hasProj ? num(q.projected) : null, fmt: MONEY, tint: hasProj && q.target > 0 ? cmpTint(q.projected, q.target, 'higher') : null },
-    { label: 'Gap to Projected', value: hasProj ? num(q.toProjected) : null, fmt: MONEY },
-    { label: hasProj && q.projectedShort < 0 ? 'Projected Over Target' : 'Projected Short of Target', value: hasProj && q.target > 0 ? num(Math.abs(q.projectedShort)) : null, fmt: MONEY,
+    { label: 'Target', cols: [1, 2], value: num(q.target), fmt: MONEY },
+    { label: 'Sold YTD', cols: [3, 4], value: num(q.soldYTD), fmt: MONEY },
+    { label: 'Projected Total', cols: [5, 6], value: hasProj ? num(q.projected) : null, fmt: MONEY, tint: hasProj && q.target > 0 ? cmpTint(q.projected, q.target, 'higher') : null },
+    { label: hasProj && q.projectedShort < 0 ? 'Projected Over Target' : 'Projected Short of Target', cols: [7, 10], value: hasProj && q.target > 0 ? num(Math.abs(q.projectedShort)) : null, fmt: MONEY,
       tint: hasProj && q.target > 0 ? (q.projectedShort > 0 ? { fill: BAD_FILL, fg: BAD_FG } : { fill: OK_FILL, fg: OK_FG }) : null },
-    { label: 'Days Left', value: num(q.daysLeft), fmt: INT },
+    { label: 'Days Left', cols: [11, COLS], value: num(q.daysLeft), fmt: INT },
   ];
-  kpis.forEach((k, i) => {
-    const c0 = Math.floor((i * COLS) / kpis.length) + 1;
-    const c1 = Math.floor(((i + 1) * COLS) / kpis.length);
+  kpis.forEach((k) => {
+    const [c0, c1] = k.cols;
     put(r, c0, r, c1, k.label.toUpperCase(), { align: 'center', bold: true, size: 8, fg: SE_MUTED, fill: 'FFEFF7F0' });
     put(r + 1, c0, r + 1, c1, k.value, { align: 'center', bold: true, size: 15, numFmt: k.fmt, fill: k.tint ? k.tint.fill : 'FFFFFFFF', fg: k.tint ? k.tint.fg : SE_TEXT_DARK });
   });
   ws.getRow(r).height = 15; ws.getRow(r + 1).height = 26;
   r += 2;
-  put(r, 1, r, COLS, hasProj
-    ? `Projected Total is the Annual Sales chart's Projected bar: Sold YTD plus every open deal at Agreement Sent or Contracting${q.overridden ? ' (pinned by hand on the chart)' : ''}. Sold so far this quarter: $${Math.round(q.closedQ4).toLocaleString('en-US')}.`
-    : 'Load the Opps tab for the Annual Sales projection and the deals behind it.', { fg: SE_MUTED, size: 9, wrap: true });
-  ws.getRow(r).height = 16;
-  r++;
 
   // Deal tables share one column map: Account | Opportunity | Stage |
   // Close Date | Amount | Share of the gap | Flag | Risks. The Risks block
@@ -527,20 +523,39 @@ function buildQ4Sheet(wb, q, { sub }) {
         : '');
 
   // ── Projected total: the deals between Sold YTD and the projection ──
-  gap();
-  title(q.projected != null
-    ? `Projected Total: Deals Between $${Math.round(q.soldYTD).toLocaleString('en-US')} Sold and $${Math.round(q.projected).toLocaleString('en-US')} Projected`
-    : 'Projected Total: Deals Behind the Projection');
-  dealTable(q.projectionDeals || [], {
-    empty: q.projected != null ? 'No open deals at Agreement Sent or Contracting.' : 'Load the Opps tab to list the deals behind the projection.',
-    flagOf: d => dateFlag(d) || (d.stage === 'Agreement Sent' ? 'Chase the signature' : ''),
-    share: true,
+  // Account | Opportunity | Stage | Amount, then an Opportunity and a
+  // Risks block left empty to be typed into. One line per deal.
+  gap(17); gap(17);
+  title(hasProj ? `$${Math.round(q.projected).toLocaleString('en-US')} Projected` : 'Projected');
+  const pCols = [[1, 2], [3, 4], [5, 5], [6, 6], [7, 10], [11, COLS]];
+  ['Account', 'Opportunity', 'Stage', 'Amount', 'Opportunity', 'Risks'].forEach((h, i) => {
+    put(r, pCols[i][0], r, pCols[i][1], h, { ...HEAD, wrap: false, align: i === 3 ? 'center' : 'left' });
   });
-  if ((q.projectionDeals || []).length) {
-    put(r, 1, r, 6, `Sold YTD + these deals = $${Math.round(q.soldYTD + q.projectionDealsTotal).toLocaleString('en-US')}${q.overridden ? `  (chart pinned at $${Math.round(q.projected).toLocaleString('en-US')})` : ''}`, { bold: true });
-    put(r, 7, r, 7, num(q.projectionDealsTotal), { align: 'center', numFmt: MONEY, bold: true });
-    put(r, 8, r, 8, 1, { align: 'center', numFmt: PCT, bold: true });
-    put(r, 9, r, COLS, null, {});
+  ws.getRow(r).height = 17;
+  r++;
+  const projDeals = q.projectionDeals || [];
+  if (!projDeals.length) {
+    put(r, 1, r, COLS, hasProj ? 'No open deals at Agreement Sent or Contracting.' : 'Load the Opps tab to list the deals behind the projection.', { fg: SE_MUTED });
+    ws.getRow(r).height = 17;
+    r++;
+  }
+  projDeals.forEach((d, idx) => {
+    const zebra = idx % 2 === 1 ? { zebra: true } : {};
+    const at = (i, value, opts) => put(r, pCols[i][0], r, pCols[i][1], value, opts);
+    at(0, d.account, zebra);
+    at(1, d.opp, zebra);
+    at(2, d.stage, zebra);
+    at(3, num(d.amount), { align: 'center', numFmt: MONEY, bold: true, ...zebra });
+    at(4, null, { fill: 'FFFFFFFF' });
+    at(5, null, { fill: 'FFFFFFFF' });
+    ws.getRow(r).height = 17;
+    r++;
+  });
+  if (projDeals.length) {
+    put(r, 1, r, 5, `Sold YTD + these deals = $${Math.round(q.soldYTD + q.projectionDealsTotal).toLocaleString('en-US')}${q.overridden ? `  (chart pinned at $${Math.round(q.projected).toLocaleString('en-US')})` : ''}`, { bold: true });
+    put(r, 6, r, 6, num(q.projectionDealsTotal), { align: 'center', numFmt: MONEY, bold: true });
+    put(r, 7, r, COLS, null, {});
+    ws.getRow(r).height = 17;
     r++;
   }
 
