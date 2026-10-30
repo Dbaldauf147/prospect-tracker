@@ -238,7 +238,7 @@ check('a half-sent campaign', campaignSummaryRow({
   refreshedAt: daysAgo(1),
 }, NOW), [
   'September market update', 'Power prices, September', 33, 13, 39.4, 20,
-  4, 30.8, 'Active', '2026-08-29', '2026-09-07', '',
+  4, 30.8, 'Active', '2026-08-29', '2026-09-07', '', '',
 ]);
 
 // The event the campaign invites people to, as typed — the file carries the

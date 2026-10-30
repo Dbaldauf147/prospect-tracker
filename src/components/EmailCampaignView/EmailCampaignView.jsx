@@ -53,6 +53,8 @@ import { addTargetCompany, removeTargetCompany, targetCompanyStatus, campaignTar
 import { buildCampaignTierLookup, tierRank } from '../../utils/campaignTier';
 import { buildScheduledCampaign, cannotCreateReason } from '../../utils/campaignSchedules';
 import { CampaignSchedulesPanel } from './CampaignSchedulesPanel';
+import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
+import { campaignCategory, campaignCategoryOptions, normalizeCampaignCategory } from '../../utils/campaignCategory';
 
 // The contact table's columns, and how wide each one starts.
 //
@@ -1315,6 +1317,17 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     if (isCampaignPaused(c)) { resumeCampaign(index); return; }
     const next = !effectiveActive(c);
     saveCampaigns(savedCampaigns.map((x, i) => (i === index ? { ...x, manualActive: next } : x)));
+  }
+
+  // The Category column: free text, offered the categories already in use,
+  // and spelled like one of them when it matches but for case.
+  const categoryOptions = useMemo(() => campaignCategoryOptions(savedCampaigns), [savedCampaigns]);
+  function setCampaignCategory(index, typed) {
+    const c = savedCampaigns[index];
+    if (!c) return;
+    const next = normalizeCampaignCategory(typed, categoryOptions);
+    if (next === campaignCategory(c)) return;
+    saveCampaigns(savedCampaigns.map((x, i) => (i === index ? { ...x, category: next } : x)));
   }
 
   // Park a campaign for CAMPAIGN_PAUSE_DAYS days. Stored as the moment the
@@ -3205,7 +3218,7 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
             <div style={{ display: 'inline-flex', gap: '0.4rem' }}>
               <button
                 onClick={exportSummaryCsv}
-                title="Download every saved campaign as a CSV: contacts, sent, % sent, replies, response rate and status"
+                title="Download every saved campaign as a CSV: contacts, sent, % sent, replies, response rate, status and category"
                 style={{
                   padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
                   background: 'var(--color-surface)', color: 'var(--color-text-secondary)',
@@ -3231,11 +3244,15 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
               </button>
             </div>
           </div>
+          <datalist id="saved-campaign-categories">
+            {categoryOptions.map(o => <option key={o} value={o} />)}
+          </datalist>
           <div style={{ overflowX: 'auto', border: '1px solid var(--color-border)', borderRadius: '6px' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
               <thead>
                 <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)', fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700 }}>Campaign</th>
+                  <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, whiteSpace: 'nowrap' }} title="Type a category for the campaign, or pick one already in use.">Category</th>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap' }}>% Sent</th>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, textAlign: 'right', whiteSpace: 'nowrap' }}>Response Rate</th>
                   <th style={{ padding: '0.4rem 0.6rem', fontWeight: 700, textAlign: 'center', whiteSpace: 'nowrap' }}>Status</th>
@@ -3367,6 +3384,17 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                     Saved {fmtDate(c.savedAt)}: {c.uniqueRecipients} of {c.totalContacts ?? c.contacts?.length ?? c.uniqueRecipients} sent, {c.uniqueRepliers} replies
                     {c.refreshedAt && <span style={{ color: 'var(--color-text-muted)' }}> · updated {fmtDate(c.refreshedAt)}</span>}
                   </div>
+                </td>
+                {/* Its own click, so typing a category doesn't open the row. */}
+                <td style={{ padding: '0.4rem 0.6rem', verticalAlign: 'top', width: 170 }} onClick={e => e.stopPropagation()}>
+                  <CommitOnBlurInput
+                    value={campaignCategory(c)}
+                    onCommit={v => setCampaignCategory(i, v)}
+                    list="saved-campaign-categories"
+                    placeholder="Add category"
+                    aria-label={`Category for ${c.title || subs[0] || 'this campaign'}`}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '0.2rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.75rem', fontFamily: 'inherit', background: 'var(--color-surface)', color: 'var(--color-text)' }}
+                  />
                 </td>
                 {isEditing ? (
                   <td colSpan={3} />
