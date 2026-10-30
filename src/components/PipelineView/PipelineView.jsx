@@ -1044,6 +1044,19 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     return out;
   }, [strategicRows, settings.listMappings]);
 
+  // One row per account: every mapped owner on the Strategic Accounts list
+  // becomes a contact, written "Name (Type)".
+  const strategicAccountGroups = useMemo(() => {
+    const byAccount = new Map();
+    for (const s of strategicMyAccounts) {
+      const key = s.account.toLowerCase();
+      if (!byAccount.has(key)) byAccount.set(key, { account: s.account, contacts: [] });
+      const owner = s.owner && s.owner !== '-' ? s.owner : 'No owner listed';
+      byAccount.get(key).contacts.push(s.type ? `${owner} (${s.type})` : owner);
+    }
+    return [...byAccount.values()];
+  }, [strategicMyAccounts]);
+
   // Deep-link a Strategic Accounts row to its account modal by company name.
   function openStrategicAccount(company) {
     if (!onSelectProspect) return;
@@ -1626,8 +1639,8 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
       // (My Accounts mapped to the uploaded Strategic Accounts list), verbatim.
       strategicAccounts: {
         title: lbl('strat-title', 'Strategic Accounts: My Accounts'),
-        headers: [lbl('strat-account', 'Account'), lbl('strat-owner', 'Account Owner'), lbl('strat-type', 'Type')],
-        rows: strategicMyAccounts.map(s => ({ account: s.account, owner: s.owner, type: s.type })),
+        headers: [lbl('strat-account', 'Company Name'), lbl('strat-contact', 'Contact')],
+        rows: strategicAccountGroups.map(g => ({ account: g.account, contacts: g.contacts })),
       },
       notes: [
         { title: lbl('notes-distractions-title', 'Eliminating Distractions'), text: state.notesDistractions },
@@ -2527,27 +2540,27 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
         {/* My Accounts mapped to the uploaded Strategic Accounts list, with
             each mapped row's Account Owner + Type. Hidden when nothing is
             mapped so the section doesn't show an empty shell. */}
-        {strategicMyAccounts.length > 0 && (
+        {strategicAccountGroups.length > 0 && (
           <div className={styles.section}>
             <div className={styles.sectionTitle}><EL id="strat-title">Strategic Accounts: My Accounts</EL></div>
-            <table className={styles.tinyTable} title="Your accounts mapped to the uploaded Strategic Accounts list (from the Lists tab), with each mapped row's Account Owner and Type.">
+            <table className={styles.tinyTable} title="Your accounts mapped to the uploaded Strategic Accounts list (from the Lists tab), one row per account, with each Account Owner and their Type.">
               <thead>
                 <tr>
-                  <th><EL id="strat-account">Account</EL></th>
-                  <th><EL id="strat-owner">Account Owner</EL></th>
-                  <th><EL id="strat-type">Type</EL></th>
+                  <th><EL id="strat-account">Company Name</EL></th>
+                  <th><EL id="strat-contact">Contact</EL></th>
                 </tr>
               </thead>
               <tbody>
-                {strategicMyAccounts.map((s, i) => (
-                  <tr key={i}>
+                {strategicAccountGroups.map((g) => (
+                  <tr key={g.account}>
                     <td>
                       {onSelectProspect ? (
-                        <span className={styles.linkCell} onClick={() => openStrategicAccount(s.account)}>{s.account}</span>
-                      ) : s.account}
+                        <span className={styles.linkCell} onClick={() => openStrategicAccount(g.account)}>{g.account}</span>
+                      ) : g.account}
                     </td>
-                    <td>{s.owner || '-'}</td>
-                    <td>{s.type || '-'}</td>
+                    <td>
+                      {g.contacts.map((c, i) => <div key={i}>{c}</div>)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
