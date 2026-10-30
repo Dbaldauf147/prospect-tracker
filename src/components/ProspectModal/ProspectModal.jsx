@@ -108,7 +108,8 @@ import PortfolioTransactions from './PortfolioTransactions';
 import { PortfolioCompanyLinkPicker } from './PortfolioCompanyLinkPicker';
 import { siteListFacts as computeSiteListFacts, siteListScreeningRows, formatSqft } from '../../utils/siteListFacts';
 import { annualSavingsFromWorkbook } from '../../utils/analysisWorkbookFigures';
-import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
+import { isContactInEvent, toggleContactInEvents, titleOnlyAttendeesForCompany } from '../../utils/eventsStore';
+import { normalizeCompany as normalizeCompanyName } from '../../utils/companyNorm';
 // Aliased: `setClientManager` is also the name of this modal's own state
 // setter for the resolved value.
 import {
@@ -5391,6 +5392,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const localContactsRef = useRef(localContacts);
   localContactsRef.current = localContacts;
   const companyContacts = localContacts;
+  // People at this company added on the Events page with a title and no
+  // name or email. They aren't HubSpot contacts, so the roster above can't
+  // hold them; the Contacts tab lists them on their own, with the events
+  // they attended.
+  const titleOnlyAttendees = useMemo(() => {
+    const aliases = Array.isArray(fields.aliases) ? fields.aliases : String(fields.aliases || '').split(/[,;\n]/);
+    return titleOnlyAttendeesForCompany(settings.events, [fields.company, fields.goesBy, ...aliases], normalizeCompanyName);
+  }, [settings.events, fields.company, fields.goesBy, fields.aliases]);
 
   // What this company's own people say its address format is, for the
   // Email Domains field below. Read off the contacts already on the card
@@ -15033,6 +15042,36 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               the same question the roster above it answers - who is at this
               company, and where do they sit. Portfolio is what the company
               OWNS: its sites and its holdings. */}
+          {!isNew && activeTab === 'contacts' && titleOnlyAttendees.length > 0 && (
+            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
+              <label className={styles.label} style={{ margin: 0 }} title="Added on the Events page with a title and no name or email. Kept on this site only, not in HubSpot.">
+                Event attendees, name unknown ({titleOnlyAttendees.length})
+              </label>
+              <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '0.4rem', fontSize: '0.78rem' }}>
+                <thead>
+                  <tr style={{ textAlign: 'left', color: 'var(--color-text-muted)', fontSize: '0.66rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                    <th style={{ padding: '0.3rem 0.5rem', fontWeight: 600 }}>Title</th>
+                    <th style={{ padding: '0.3rem 0.5rem', fontWeight: 600 }}>Events attended</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {titleOnlyAttendees.map(a => (
+                    <tr key={a.key} style={{ borderTop: '1px solid var(--color-border-light)' }}>
+                      <td style={{ padding: '0.35rem 0.5rem', fontWeight: 600, color: 'var(--color-text)' }}>
+                        {a.title}
+                        {a.decisionMaker && (
+                          <span style={{ marginLeft: 6, fontSize: '0.62rem', fontWeight: 700, color: '#1D4ED8', background: '#EFF6FF', border: '1px solid #BFDBFE', padding: '0 6px', borderRadius: 999 }}>Decision maker</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '0.35rem 0.5rem', color: 'var(--color-text-secondary)' }}>
+                        {a.events.map(e => (/^\d{4}-\d{2}-\d{2}$/.test(e.date) ? `${e.name} (${new Date(`${e.date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })})` : e.name)).join(', ')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           {!isNew && activeTab === 'contacts' && prospect?.id && (
             <DivisionsSection
               parentId={prospect.id}
