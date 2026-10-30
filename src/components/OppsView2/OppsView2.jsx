@@ -7674,7 +7674,8 @@ function QualifyingUsdModal({ opp, columnLinks, listRegistry, onSave, onClose })
 
 // Prompt shown whenever an opp moves into the "Quoted" stage so the user
 // can enter / review the quote-tracking data points (Quoted On, Chance?,
-// Margin Email Date - Sales Leader Review Date). Pre-populated with the
+// Margin Email Date - Sales Leader Review Date, and optionally Margin
+// Approval Date when the approval is already back). Pre-populated with the
 // opp's current values (with fallbacks to alternate key names) so it
 // doubles as a review screen. Mirrors the NotSoldFollowUpModal pattern.
 function QuotedFollowUpModal({ opp, chanceOptions, columnLinks, listRegistry, onSave, onClose }) {
@@ -7707,6 +7708,7 @@ function QuotedFollowUpModal({ opp, chanceOptions, columnLinks, listRegistry, on
   const curChance = opp?.['Chance?'] ?? opp?.['Chance'] ?? '';
   const curMarginReview = opp?.['Margin Email Date - Sales Leader Review Date']
     ?? opp?.['Margin Email Date'] ?? opp?.['Sales Leader Review Date'] ?? '';
+  const curMarginApproval = opp?.['Margin Approval Date'] ?? '';
 
   // Default the Quoted On date to today when the opp doesn't already have
   // one — the opp just moved into the Quoted stage, so today is almost
@@ -7715,9 +7717,11 @@ function QuotedFollowUpModal({ opp, chanceOptions, columnLinks, listRegistry, on
   const [usd, setUsd] = useState(String(curUsd ?? ''));
   const [chance, setChance] = useState(String(curChance ?? ''));
   const [marginReviewDate, setMarginReviewDate] = useState(toISODate(curMarginReview) || '');
+  // Optional: left blank unless the margin approval has already come back.
+  const [marginApprovalDate, setMarginApprovalDate] = useState(toISODate(curMarginApproval) || '');
 
   function handleSave() {
-    onSave({ quotedOn, usd, chance, marginReviewDate });
+    onSave({ quotedOn, usd, chance, marginReviewDate, marginApprovalDate });
   }
 
   // Render the USD? field as a dropdown when it has resolvable options
@@ -7844,6 +7848,22 @@ function QuotedFollowUpModal({ opp, chanceOptions, columnLinks, listRegistry, on
               style={inputStyle}
             />
             {dateHint(curMarginReview)}
+          </div>
+          <div>
+            <label style={labelStyle}>
+              {headerLabel('Margin Approval Date')}
+              <span style={{ fontWeight: 400, color: 'var(--color-text-muted)' }}> (optional)</span>
+            </label>
+            <input
+              type="date"
+              value={marginApprovalDate}
+              onChange={(e) => setMarginApprovalDate(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
+              }}
+              style={inputStyle}
+            />
+            {dateHint(curMarginApproval)}
           </div>
         </div>
 
@@ -18468,7 +18488,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             chanceOptions={listRegistry.get('chance')?.options || []}
             columnLinks={columnLinks}
             listRegistry={listRegistry}
-            onSave={({ quotedOn, usd, chance, marginReviewDate }) => {
+            onSave={({ quotedOn, usd, chance, marginReviewDate, marginApprovalDate }) => {
               // Only push fields whose value actually changed so the
               // undo stack stays uncluttered with no-op snapshots.
               const curQuotedOn = toISODate(opp['Quoted On'] ?? opp['Quoted Date']) || '';
@@ -18487,6 +18507,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               ) || '';
               if (marginReviewDate !== curMarginReview) {
                 updateOppField(opp._id, 'Margin Email Date - Sales Leader Review Date', marginReviewDate);
+              }
+              if (marginApprovalDate !== (toISODate(opp['Margin Approval Date']) || '')) {
+                updateOppField(opp._id, 'Margin Approval Date', marginApprovalDate);
               }
               setQuotedPromptId(null);
             }}
