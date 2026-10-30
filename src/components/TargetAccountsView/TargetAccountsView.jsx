@@ -13,7 +13,11 @@ import styles from './TargetAccountsView.module.css';
 import { writeWorkKey } from '../../utils/mirroredWorkKeys';
 import { readChunkedDoc, writeChunkedDoc } from '../../utils/chunkedDoc';
 import { normalizeTierText } from '../../utils/tierText';
-import { tableViewCompaniesByTarget, tableViewMappingCoverage } from '../../utils/targetTableViewMap';
+import { tableViewCompaniesByTarget, tableViewMappingCoverage, bestSuggestionScore, matchScoreBucket, planSuggestionAccepts } from '../../utils/targetTableViewMap';
+import { targetAccountRows } from '../../utils/targetAccountMatch';
+import { buildCdmOptions } from '../../utils/prospectOptions';
+import { canonicalCdmOption } from '../../utils/targetAccountCdm';
+import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 
 const STORE_NAME = 'target-accounts';
 
@@ -177,7 +181,7 @@ function InlineEditCell({ value, rowIndex, colKey, onSave }) {
   return <span style={{ cursor: 'default', padding: '1px 3px', borderRadius: '4px' }} onDoubleClick={startEdit}>{value || '-'}</span>;
 }
 
-export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdmName, onListUploaded, prospects = [], onSelectProspect }) {
+export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdmName, onListUploaded, prospects = [], onSelectProspect, updateProspect }) {
   const { user } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -242,7 +246,7 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
   useEffect(() => {
     if (!settings) return;
     const tid = 'target-accounts';
-    const pending = [['__activeOpps__', 'mig-active-opps-col'], ['__tableView__', 'mig-table-view-col']]
+    const pending = [['__activeOpps__', 'mig-active-opps-col'], ['__tableView__', 'mig-table-view-col'], ['__matchPct__', 'mig-match-pct-col']]
       .filter(([, f]) => {
         let done = true;
         try { done = !!localStorage.getItem(`${tid}:${f}`); } catch { /* storage blocked */ }
@@ -456,6 +460,66 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
     [prospects, allTargetNames, settings?.targetMap]
   );
   const mappedFor = (row) => tableViewByTarget.get(String((nameKey ? row[nameKey] : '') || '').toLowerCase().trim()) || [];
+
+  // Accepting a suggestion: map the company to the row (settings.targetMap,
+  // the mapping My Accounts and the company popup read) and set its CDM,
+  // Tier and Vertical to the row's where they differ, the same fixes the
+  // Hubspot Mapping tab's Accept makes.
+  const [accepting, setAccepting] = useState(null);
+  const [acceptError, setAcceptError] = useState(null);
+  const [onScreen, setOnScreen] = useState([]);
+  const targetRowsByName = useMemo(() => {
+    const m = new Map();
+    for (const r of (data ? targetAccountRows(data, {
+      targetCdmColumn: settings?.targetCdmColumn,
+      targetVerticalColumn: settings?.targetVerticalColumn,
+      targetVerticalNames: settings?.targetVerticalNames,
+    }) : [])) m.set(r.name.toLowerCase(), r);
+    return m;
+  }, [data, settings?.targetCdmColumn, settings?.targetVerticalColumn, settings?.targetVerticalNames]);
+  const prospectsById = useMemo(() => new Map(prospects.map(p => [p.id, p])), [prospects]);
+  const cdmOptions = useMemo(() => buildCdmOptions(prospects, settings || {}), [prospects, settings]);
+  const verticalOptions = useMemo(
+    () => getEffectiveDropdownLists(settings || {}).find(l => l.key === 'vertical')?.options || [],
+    [settings],
+  );
+  const planFor = (rows, only) => planSuggestionAccepts(
+    rows.flatMap(r => mappedFor(r).filter(x => !only || x.id === only).map(entry => ({ target: nameKey ? r[nameKey] : '', entry }))),
+    { prospectsById, rowsByName: targetRowsByName, targetMap: settings?.targetMap, verticalOptions, canonicalCdm: n => canonicalCdmOption(n, cdmOptions) },
+  );
+  const describePatch = (pl) => {
+    const parts = Object.entries(pl.patch).map(([k, v]) => `${k === 'cdm' ? 'CDM' : k === 'tier' ? 'Tier' : 'Vertical'} ${String(prospectsById.get(pl.id)?.[k] || '').trim() || 'blank'} → ${v}`);
+    return parts.length ? parts.join(', ') : 'CDM, Tier and Vertical already match';
+  };
+  async function acceptSuggestions(plans) {
+    if (!plans.length || accepting || !updateSettings) return;
+    const sample = plans.slice(0, 12).map(pl => `• ${pl.company} → ${pl.target} (${pl.score}%): ${describePatch(pl)}`).join('\n');
+    const more = plans.length > 12 ? `\n...and ${plans.length - 12} more` : '';
+    if (!window.confirm(`Map ${plans.length} Table View compan${plans.length === 1 ? 'y' : 'ies'} to the Targets list and take each row's CDM, Tier and Vertical:\n\n${sample}${more}`)) return;
+    setAcceptError(null);
+    setAccepting({ done: 0, total: plans.length });
+    try {
+      const nextMap = { ...(settings?.targetMap || {}) };
+      for (const pl of plans) nextMap[pl.id] = [pl.target];
+      updateSettings({ targetMap: nextMap });
+      const failed = [];
+      let done = 0;
+      for (const pl of plans) {
+        if (Object.keys(pl.patch).length && updateProspect) {
+          try { await updateProspect(pl.id, pl.patch); } catch (err) { failed.push(`${pl.company}: ${err?.message || err}`); }
+        }
+        done += 1;
+        setAccepting({ done, total: plans.length });
+      }
+      if (failed.length) setAcceptError(`Mapped, but couldn't update ${failed.length}: ${failed.slice(0, 3).join('; ')}`);
+    } finally {
+      setAccepting(null);
+    }
+  }
+  const bulkPlans = useMemo(
+    () => planFor(onScreen),
+    [onScreen, tableViewByTarget, targetRowsByName, prospectsById, settings?.targetMap, verticalOptions, cdmOptions], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   // Coverage of the sheet on screen, so it sits beside that sheet's tier counts.
   const mappingCoverage = useMemo(
     () => tableViewMappingCoverage(nameKey ? records.map(r => r[nameKey]) : [], tableViewByTarget),
@@ -571,8 +635,8 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
         return (
           <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: '2px 8px' }}>
             {list.map(x => (
+              <span key={x.id} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 4 }}>
               <button
-                key={x.id}
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onSelectProspect?.(prospects.find(p => p.id === x.id)); }}
                 disabled={!onSelectProspect}
@@ -586,13 +650,44 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
                   fontStyle: x.auto ? 'italic' : 'normal', fontWeight: x.auto ? 400 : 600,
                 }}
               >{x.company}</button>
+              {x.auto && (
+                <span
+                  title={`How alike "${x.company}" and this row's name are`}
+                  style={{ fontSize: '0.66rem', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: x.score >= 90 ? '#166534' : x.score >= 75 ? '#92400E' : '#991B1B' }}
+                >{x.score}%</span>
+              )}
+              {x.auto && updateSettings && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); acceptSuggestions(planFor([row], x.id)); }}
+                  disabled={!!accepting}
+                  title={`Map "${x.company}" to this row and take its CDM, Tier and Vertical`}
+                  aria-label={`Map ${x.company} to this row`}
+                  style={{ border: '1px solid #BBF7D0', background: '#F0FDF4', color: '#166534', borderRadius: 4, padding: '0 4px', fontSize: '0.66rem', lineHeight: 1.4, cursor: accepting ? 'wait' : 'pointer', fontFamily: 'inherit' }}
+                >✓</button>
+              )}
+              </span>
             ))}
           </span>
         );
       },
     };
-    return [blockCol, deleteCol, ...(dataCols.length > 0 ? [dataCols[0], tableViewCol, oppsCol, ...dataCols.slice(1)] : [tableViewCol, oppsCol])];
-  }, [headers, blockedAccountNames, nameKey, oppsIndex, tableViewByTarget, prospects, onSelectProspect]); // eslint-disable-line react-hooks/exhaustive-deps
+    // The best suggested match's name similarity, to sort or filter the
+    // suggestions by before mapping them in bulk.
+    const matchCol = {
+      key: '__matchPct__',
+      label: 'Match %',
+      defaultWidth: 90,
+      getSortValue: (row) => bestSuggestionScore(mappedFor(row)) ?? -1,
+      getFilterValue: (row) => matchScoreBucket(bestSuggestionScore(mappedFor(row))),
+      render: (row) => {
+        const best = bestSuggestionScore(mappedFor(row));
+        if (best == null) return <span style={{ color: '#CBD5E1' }}>-</span>;
+        return <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: best >= 90 ? '#166534' : best >= 75 ? '#92400E' : '#991B1B' }}>{best}%</span>;
+      },
+    };
+    return [blockCol, deleteCol, ...(dataCols.length > 0 ? [dataCols[0], tableViewCol, matchCol, oppsCol, ...dataCols.slice(1)] : [tableViewCol, matchCol, oppsCol])];
+  }, [headers, blockedAccountNames, nameKey, oppsIndex, tableViewByTarget, prospects, onSelectProspect, accepting, targetRowsByName, settings?.targetMap, verticalOptions, cdmOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Union of column headers across every sheet — feeds the "Salesperson /
   // CDM column" picker so the mapping works no matter which sheet is
@@ -758,6 +853,11 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
           allHeaderOptions={allHeaderOptions}
           untiedOpps={untiedOpps}
           cdmName={cdmName}
+          onFilteredRowsChange={setOnScreen}
+          bulkPlans={bulkPlans}
+          onAcceptBulk={() => acceptSuggestions(bulkPlans)}
+          accepting={accepting}
+          acceptError={acceptError}
         />
       )}
     </div>
@@ -832,11 +932,12 @@ function ListSection({
   error, status, data, loading, dragOver, setDragOver, handleDrop, fileRef,
   activeSheet, setActiveSheet, search, setSearch, filtered, handleFileChange,
   columns, settings, updateSettings, cdmColumn, verticalColumn, allHeaderOptions,
-  untiedOpps, cdmName,
+  untiedOpps, cdmName, onFilteredRowsChange, bulkPlans, onAcceptBulk, accepting, acceptError,
 }) {
   return (
     <>
       {error && <div className={styles.error}>{error}</div>}
+      {acceptError && <div className={styles.error}>{acceptError}</div>}
       {status && <div className={styles.success}>{status}</div>}
       {data && <UntiedOppsWarning untiedOpps={untiedOpps} cdmName={cdmName} />}
 
@@ -935,6 +1036,15 @@ function ListSection({
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
+            <button
+              type="button"
+              onClick={onAcceptBulk}
+              disabled={!!accepting || !bulkPlans?.length}
+              title="Map every suggested Table View company in the rows on screen to its row, and set its CDM, Tier and Vertical to the row's. Filter Match % first to map only the close ones. A company suggested for two rows goes to the closer name."
+              style={{ padding: '0.3rem 0.7rem', borderRadius: 6, border: '1px solid #1D4ED8', background: bulkPlans?.length ? '#1D4ED8' : '#E2E8F0', color: bulkPlans?.length ? '#fff' : '#64748B', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: accepting ? 'wait' : bulkPlans?.length ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap' }}
+            >{accepting
+              ? `Mapping ${accepting.done} of ${accepting.total}...`
+              : `Map ${(bulkPlans?.length || 0).toLocaleString()} suggested match${bulkPlans?.length === 1 ? '' : 'es'}`}</button>
             <label
               title="Pick which column holds the salesperson / CDM who owns each account. My Accounts (and the prospect modal, Agenda, and other pages) use this column to decide whose account a row is, instead of guessing by header name: leave on Auto to keep the keyword guess."
               style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
@@ -976,6 +1086,7 @@ function ListSection({
             alwaysVisible={[]}
             enableColumnFilters
             emptyMessage="No records found"
+            onFilteredRowsChange={onFilteredRowsChange}
             settings={settings}
             updateSettings={updateSettings}
           />
