@@ -21,6 +21,7 @@ import { campaignSubjects } from './campaignSubjects.js';
 import { campaignEventUrl } from './campaignEventLink.js';
 import { followUpInfo, followUpLabel } from './campaignFollowUp.js';
 import { contactOutreach, contactOutreachLabel } from './campaignContactHold.js';
+import { campaignCategory } from './campaignCategory.js';
 
 // The CSV mechanics live in utils/csv.js now that the Site List export
 // needs the same quoting and the same download. Re-exported here so the
@@ -163,7 +164,7 @@ export const CAMPAIGN_SUMMARY_HEADERS = [
   'Replies', 'Response Rate %', 'Status', 'Saved', 'Last Refreshed',
   // Last, so every column that was here keeps its place — the tests and
   // anybody's saved spreadsheet formula both read these by position.
-  'Event Link',
+  'Event Link', 'Category',
 ];
 
 // One saved campaign's row: the Saved Campaigns table's own figures, read
@@ -185,6 +186,7 @@ export function campaignSummaryRow(c, nowMs = Date.now()) {
     // As typed, not as displayed: a spreadsheet wants the address it can
     // click, not the shortened label the screen shows.
     campaignEventUrl(c),
+    campaignCategory(c),
   ];
 }
 
