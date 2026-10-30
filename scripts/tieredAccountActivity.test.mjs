@@ -63,8 +63,8 @@ eq(m.get('a')?.contact, { id: '2', name: 'al@acme.com', email: 'al@acme.com', co
 eq(noIndex.get('a')?.contact?.source, 'HubSpot last contacted', 'contact from Last Contacted without the index');
 
 {
-  // A contact at the parent, tied by the loose name match, is flagged as
-  // reached through the owner.
+  // A contact at the parent, tied through the account's PE Owner, is
+  // flagged as reached through the owner.
   const storage = { id: 's', company: 'Brookfield (Self Storage)', cdm: 'Dan Baldauf', tier: 'Tier 3', peOwner: 'Brookfield' };
   const people = [
     { id: '20', company: 'Brookfield', firstname: 'Wendy', lastname: 'Lau', email: 'wendy@brookfield.com' },

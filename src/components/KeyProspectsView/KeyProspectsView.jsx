@@ -16,6 +16,7 @@ import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { reportingStatus } from '../../utils/reportingStatus';
 import { onMyBook, reportingTier } from '../../utils/tierSource';
 import { accountHasDecisionMaker, decisionMakerCompanies, makeAccountContactIndex } from '../../utils/decisionMakerCoverage';
+import { rosterCompaniesMatch } from '../../utils/contactRosters';
 
 const SCHNEIDER_COMPANY_RE = /\bschneider\s*electric\b/i;
 const SCHNEIDER_DOMAIN_RE = /(^|\.)(se\.com|schneider-electric\.com|schneider\.com)$/i;
@@ -30,23 +31,10 @@ function isSchneiderContact(c) {
   return false;
 }
 
-// Shared fuzzy company-name compare so a contact's HubSpot Company
-// text doesn't have to exactly match a prospect / opp Account string
-// (handles suffix / abbreviation drift).
-function companiesMatch(a, b) {
-  const na = String(a || '').toLowerCase().trim();
-  const nb = String(b || '').toLowerCase().trim();
-  if (!na || !nb) return false;
-  if (na === nb) return true;
-  const longer = na.length >= nb.length ? na : nb;
-  const shorter = na.length >= nb.length ? nb : na;
-  if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
-  const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
-  const sa = strip(na);
-  const sb = strip(nb);
-  if (sa && sb && (sa === sb || sa.includes(sb) || sb.includes(sa))) return true;
-  return false;
-}
+// Company names are compared with the roster gates' own rosterCompaniesMatch,
+// so this tab and the Prospecting ladder's Key Prospect roster can't put a
+// contact on one list and not the other.
+const companiesMatch = rosterCompaniesMatch;
 
 // Statuses the no-Decision-Maker warning leaves out: Ex Clients and Hold Off.
 const MISSING_DM_SKIP_STATUSES = new Set(['Old Client', 'Hold Off']);

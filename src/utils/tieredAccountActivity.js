@@ -129,8 +129,13 @@ export function lastActivityByAccount({
       if (id) seen.add(id);
       at.push(c);
     };
+    // A contact at one of the account's PE owners counts too (ownerVia then
+    // says it came through the owner), matched on the owner's own name
+    // rather than by the account's name happening to contain it.
+    const owners = splitPeOwners(p.peOwner);
     for (const g of groups) {
-      if (g.lc === lc || rosterCompaniesMatch(p.company, g.company)) g.contacts.forEach(add);
+      if (g.lc === lc || rosterCompaniesMatch(p.company, g.company)
+        || owners.some(o => rosterCompaniesMatch(o, g.company))) g.contacts.forEach(add);
     }
     for (const c of index.extraFor(p)) if (usable(c)) add(c);
 
