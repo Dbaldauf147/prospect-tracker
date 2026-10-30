@@ -26,6 +26,7 @@ import { canonicalCdmOption } from '../../utils/targetAccountCdm';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { readHubspotAgents, activityAgentRows, ownerAgentRows, AGENT_DATA, HUBSPOT_AGENTS_SETTINGS_KEY } from '../../utils/hubspotAgents';
 import { HubspotAgents } from './HubspotAgents';
+import { buildHubspotImportSheets, buildHubspotImportWorkbook, hubspotImportFileName } from '../../utils/hubspotImportFile';
 
 // Which subtab of the page is open (Mapping or Agents), per viewer.
 const SUBTAB_KEY = 'hubspot-mapping-subtab';
@@ -522,6 +523,32 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     XLSX.writeFile(wb, `Only in HubSpot - ${firstName}'s companies - ${new Date().toISOString().slice(0, 10)}.csv`, { bookType: 'csv' });
   };
 
+  // The HubSpot import file (utils/hubspotImportFile.js): every account on
+  // the tab, active and inactive, whatever is filtered on screen.
+  const [exportingImport, setExportingImport] = useState(false);
+  const exportHubspotImportFile = async () => {
+    if (exportingImport) return;
+    setExportingImport(true); setError('');
+    try {
+      const reference = columns.map(c => ({ label: c.label, value: c.exportValue || c.getFilterValue || (() => '') }));
+      const sheets = buildHubspotImportSheets(mapping, { reference });
+      const { Workbook } = await import('exceljs');
+      const buf = await buildHubspotImportWorkbook(Workbook, sheets).xlsx.writeBuffer();
+      const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = hubspotImportFileName();
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      setError(`Couldn't build the import file: ${err.message}`);
+    } finally {
+      setExportingImport(false);
+    }
+  };
+
   // The "Owned by others" report: matched, active accounts whose HubSpot
   // company has a Company owner who isn't you.
   const othersRows = useMemo(
@@ -692,6 +719,10 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
                 style={{ ...bulkBtn, opacity: shownSuggested.length ? 1 : 0.5 }}
               >{bulkLabel(shownSuggested.length)}</button>
             )}
+            <button type="button" onClick={exportHubspotImportFile} disabled={exportingImport}
+              title="Download an Excel file to import into HubSpot (Companies, Update existing companies only, Create a list from this import). Import: one row per HubSpot Company ID, or the domain when there is no ID. Review: accounts to check first, with why. Reference: every column, one row per account. Every account goes in, active and inactive, whatever is filtered on screen."
+              style={{ padding: '0.2rem 0.6rem', borderRadius: 6, border: '1px solid #1D4ED8', background: '#fff', color: '#1D4ED8', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: exportingImport ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}
+            >{'\u21E9'} {exportingImport ? 'Building...' : 'Export HubSpot Import File'}</button>
           </>
         )}
       </div>
