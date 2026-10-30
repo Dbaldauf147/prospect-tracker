@@ -1,0 +1,56 @@
+/* KPI Trends on the Pipeline page. The table itself is drawn with the
+   Close Rate Trend's stylesheet (WeeklyReportView/CloseRateTrend.module.css);
+   these are the pieces it doesn't have: the target column and the
+   short-of-target chip. */
+
+/* Sits inside a titled section rather than standing alone as the Weekly
+   Report's card does, so it drops that card's own border. */
+.wrap {
+  border: none;
+  border-radius: 0;
+}
+
+/* Short of target: the app's "bad" pair (#991b1b on #fee2e2), shipped with
+   a ▼ so the cue never rests on hue alone. */
+.missedChip {
+  display: inline-block;
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  background: #fee2e2;
+}
+
+.cellMissed :global(span) {
+  color: #991b1b;
+}
+
+.targetHead {
+  border-left: 1px solid var(--color-border, #e2e8f0);
+  padding-left: 0.6rem;
+}
+
+.targetCell {
+  border-left: 1px solid var(--color-border, #e2e8f0);
+  padding-left: 0.6rem;
+}
+
+.targetInput {
+  width: 6.5rem;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 0.76rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #0f172a);
+}
+
+.targetInput:focus {
+  outline: none;
+  border-color: #2a78d6;
+}
+
+.targetInput::placeholder {
+  color: var(--color-text-muted, #94a3b8);
+}
