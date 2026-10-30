@@ -39,6 +39,7 @@ import { mirrorDbPut } from '../../utils/localMirrorSync';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { downloadPipelineWorkbook } from '../../utils/pipelineWorkbook';
 import { buildQ4Focus } from '../../utils/q4Focus';
+import { loadYoyOverrides } from '../../utils/yoyOverridesStore';
 import { loadList as loadUploadedList } from '../../utils/uploadedListStore';
 import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
 import { userLsGet } from '../../utils/userLs';
@@ -1632,7 +1633,8 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     try {
       const payload = buildExportPayload();
       // The one-page export carries a second tab proposing what to work on
-      // to close the year out, built from the same figures plus the Opps
+      // to close the year out: the Annual Sales projected total and the
+      // deals behind it, plus the same figures as this report and the Opps
       // tab's close dates (utils/q4Focus.js).
       if (layout === 'single') {
         const now = payload.generatedAt;
@@ -1640,6 +1642,9 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           ...payload,
           today: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
           oppsRecords,
+          // The YOY chart's pins, so the projected total is the number the
+          // Annual Sales chart shows.
+          yoyOverrides: loadYoyOverrides(),
         });
       }
       await downloadPipelineWorkbook({ ...payload, layout });
