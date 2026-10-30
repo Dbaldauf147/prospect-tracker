@@ -2,21 +2,22 @@
 //
 // Each thing tried is its own bullet, with an id, so it can be tagged into
 // What Went Well, What Didn't Go Well, or both, and the tag survives the
-// bullet being reworded. Each bucket also keeps its own bulleted notes for
-// anything that isn't one of the tried items.
+// bullet being reworded. A tagged item carries its own note per bucket
+// (wellNote / notWellNote), and each bucket also keeps its own bulleted
+// notes for anything that isn't one of the tried items.
 //
 // Kept out of the component so the record cleanup and the export text can
 // be asserted under plain Node - see scripts/triedOutcomes.test.mjs.
 
 export const TRIED_BUCKETS = [
-  { key: 'well', title: 'What Went Well', notesKey: 'wentWellNotes', tag: 'Went well' },
-  { key: 'notWell', title: "What Didn't Go Well", notesKey: 'notWellNotes', tag: "Didn't go well" },
+  { key: 'well', title: 'What Went Well', notesKey: 'wentWellNotes', noteKey: 'wellNote', tag: 'Went well' },
+  { key: 'notWell', title: "What Didn't Go Well", notesKey: 'notWellNotes', noteKey: 'notWellNote', tag: "Didn't go well" },
 ];
 
 let seq = 0;
 export function newTriedItem(text = '') {
   seq += 1;
-  return { id: `t${Date.now().toString(36)}${seq.toString(36)}`, text, well: false, notWell: false };
+  return { id: `t${Date.now().toString(36)}${seq.toString(36)}`, text, well: false, notWell: false, wellNote: '', notWellNote: '' };
 }
 
 /** A stored triedItems value as something the page can render. */
@@ -32,6 +33,8 @@ export function sanitizeTriedItems(saved) {
       text: typeof it.text === 'string' ? it.text : '',
       well: it.well === true,
       notWell: it.notWell === true,
+      wellNote: typeof it.wellNote === 'string' ? it.wellNote : '',
+      notWellNote: typeof it.notWellNote === 'string' ? it.notWellNote : '',
     });
   }
   return out;
@@ -63,7 +66,11 @@ export function triedOutcomeNotes(state = {}, titles = {}) {
     ...TRIED_BUCKETS.map(b => ({
       title: titles[b.key] || b.title,
       text: [
-        ...items.filter(it => it[b.key]).map(it => bullet(`Tried: ${it.text.trim()}`)),
+        ...items.filter(it => it[b.key]).map((it) => {
+          // A multi-line note reads as one line beside its item.
+          const note = String(it[b.noteKey] || '').split('\n').map(l => l.replace(/^•\s*/, '').trim()).filter(Boolean).join('; ');
+          return bullet(`Tried: ${it.text.trim()}${note ? ` - ${note}` : ''}`);
+        }),
         ...notesLines(state[b.notesKey]),
       ].join('\n'),
     })),
