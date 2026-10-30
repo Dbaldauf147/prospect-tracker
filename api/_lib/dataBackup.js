@@ -1,4 +1,5 @@
 import { readChunkedJson } from './firestoreChunks.js';
+import { readUserSettings } from './readUserSettings.js';
 // Collects a full point-in-time snapshot of one user's Firestore data
 // for the daily backup job, plus a lightweight summary (counts only)
 // used for the notification email and day-over-day anomaly detection.
@@ -76,6 +77,10 @@ export async function collectUserBackup(db, uid, email) {
       if (col === 'targetAccounts' && data && Number(data.chunkCount) > 0) {
         data = { ...data, json: await readChunkedJson(ref, { field: 's' }), chunkCount: 0 };
       }
+      // The big settings maps moved to their own documents
+      // (src/utils/settingsCodec.js); fold them back in so the snapshot
+      // holds the settings as one object, the way it always did.
+      if (col === 'userSettings') data = await readUserSettings(db, uid);
       backup.collections[col] = data;
       if (s.exists) summary.captured.push(col);
       // The services board (which bucket each service is filed in) is a key

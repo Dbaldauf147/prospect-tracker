@@ -19,7 +19,7 @@ import { chunk, needsSummary, oppNotesText } from '../../src/utils/notesSummary.
 import { needsScopeSummary, oppScopeText } from '../../src/utils/scopeSummary.js';
 import { MAX_ITEMS, summarizeBatch } from './summarizeNotes.js';
 import { summarizeScopeBatch } from './summarizeScope.js';
-import { decodeSettingsDoc } from '../../src/utils/settingsCodec.js';
+import { readUserSettings } from './readUserSettings.js';
 
 // ---- Email column set (fixed) -------------------------------------------
 // The digest email always shows exactly these columns, in this order: the
@@ -52,8 +52,7 @@ export async function addVerticalCoverage(db, uid, email, records) {
   let prospects = [];
   let targetAccountsData = null;
   try {
-    const snap = await db.collection('userSettings').doc(uid).get();
-    settings = snap.exists ? (decodeSettingsDoc(snap.data()) || null) : null;
+    settings = await readUserSettings(db, uid);
   } catch { /* the shipped Coverage default still applies */ }
   try {
     const col = email === ADMIN_EMAIL

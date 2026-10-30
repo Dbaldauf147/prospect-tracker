@@ -131,6 +131,15 @@ service cloud.firestore {
       allow read, write: if owns(userId);
     }
 
+    // The biggest settings maps (targetMap, contactTagReview, listMappings,
+    // companyOpportunities and the rest in src/utils/settingsCodec.js), one
+    // document each, as a JSON string. Keyed by company or contact, they
+    // outgrew the settings document twice over: first its 40,000 index
+    // entries, then its 1 MB.
+    match /userSettings/{userId}/settingsKeys/{settingsKey} {
+      allow read, write: if owns(userId);
+    }
+
     // Firestore mirror of the localStorage-backed stores — the uploaded
     // deals roster, the deal→client mappings, and the typed Clients-tab
     // fields. These lived in one browser and nowhere else, so clearing site

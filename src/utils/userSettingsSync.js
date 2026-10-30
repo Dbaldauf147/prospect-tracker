@@ -3,7 +3,8 @@ import { onSnapshot } from './safeOnSnapshot';
 import { db } from '../firebase';
 import { restGetDoc, restUpdateFields, dottedFieldEntries, keyFieldEntries } from './firestoreRest.js';
 import { isClientWedgedError, isClientWedged, noteClientWedged } from './firestoreClientHealth.js';
-import { decodeSettingsDoc, encodeSettingsUpdates, encodePathUpdates, plainEncodedKeys } from './settingsCodec.js';
+import { composeSettings, legacyKeysIn, splitSettingsUpdates, splitPathUpdates, ENCODED_SETTINGS_KEYS } from './settingsCodec.js';
+import { subscribeToSettingsKeys, readSettingsKeys, writeSettingsKeys } from './settingsKeyStore.js';
 import {
   SITE_LISTS_KEY,
   applySiteListOps,
@@ -17,26 +18,30 @@ import {
 
 const COL = 'userSettings';
 
-// The settings document plus the per-company site lists that used to be a
-// key on it (see companySiteListsStore for why they moved), delivered as
-// the single object every caller already expects.
+// The settings document plus the per-company site lists and the big maps
+// that used to be keys on it (see companySiteListsStore and settingsCodec for
+// why they moved), delivered as the single object every caller expects.
 export function subscribeToUserSettings(userId, onChange) {
   const ref = doc(db, COL, userId);
-  let docData;   // undefined until the document's first snapshot
-  let lists;     // undefined until the subcollection's first snapshot
+  let rawDoc;    // undefined until the document's first snapshot
+  let pending = false; // whether that snapshot carries this tab's own unsent writes
+  let lists;     // undefined until the site lists' first snapshot
+  let keyValues; // undefined until the big maps' first snapshot
   let migrating = false;
-  let encoding = false;
+  let movingKeys = false;
+  // Set once a move has failed (rules not released yet, say): tried again on
+  // the next page load rather than on every snapshot.
+  let moveFailed = false;
 
   const emit = () => {
-    // Nothing goes out until BOTH sources have reported. A settings object
-    // whose companySiteLists is still empty is worse than a slightly later
-    // one: "Save to <company>" merges its rows against what it finds
-    // there, so an early emit would let a save write a company's existing
-    // sites away.
-    if (docData === undefined || lists === undefined) return;
-    if (docData === null && !Object.keys(lists).length) { onChange(null); return; }
+    // Nothing goes out until every source has reported. A settings object
+    // whose companySiteLists (or targetMap) is still empty is worse than a
+    // slightly later one: a save merges against what it finds there, so an
+    // early emit would let it write the stored entries away.
+    if (rawDoc === undefined || lists === undefined || keyValues === undefined) return;
+    if (rawDoc === null && !Object.keys(lists).length && !Object.keys(keyValues).length) { onChange(null); return; }
 
-    const merged = { ...(docData || {}) };
+    const merged = composeSettings(rawDoc || {}, keyValues);
     const legacy = merged[SITE_LISTS_KEY];
     // A migration that hasn't finished yet leaves a company in both
     // places; the subcollection holds the newer copy either way.
@@ -44,27 +49,28 @@ export function subscribeToUserSettings(userId, onChange) {
     if (Object.keys(all).length) merged[SITE_LISTS_KEY] = all;
     else delete merged[SITE_LISTS_KEY];
     onChange(merged);
+
+    // A big map the settings document still holds itself (saved before the
+    // maps moved out, or written since by a tab on the old code) is moved to
+    // its own document once, so the settings document shrinks now rather
+    // than whenever that key next happens to be saved. Guarded by the stale
+    // check: if another device wrote in between, it waits for the next
+    // snapshot.
+    const due = legacyKeysIn(rawDoc);
+    if (!movingKeys && !moveFailed && due.length && !pending) {
+      movingKeys = true;
+      const updates = Object.fromEntries(due.map(k => [k, merged[k] ?? null]));
+      saveUserSettings(userId, updates, { expectedAt: Number(rawDoc?._lastWriteAt || 0) })
+        .then((res) => { if (!res?.stale) console.log('Settings: moved to their own documents:', due); })
+        .catch((err) => { moveFailed = true; console.warn('Settings: could not move the big maps to their own documents yet', err); })
+        .finally(() => { movingKeys = false; });
+    }
   };
 
   const unsubDoc = onSnapshot(ref, (snap) => {
-    // The big maps come back as objects (utils/settingsCodec).
-    const raw = snap.exists() ? snap.data() : null;
-    docData = raw ? decodeSettingsDoc(raw) : null;
-    // A big map still stored the old way (a document saved before they
-    // moved to text, or a tab on the old code since) is rewritten as text
-    // once, so its index entries are freed now rather than whenever that
-    // key next happens to be saved. Guarded by the stale check: if another
-    // device wrote in between, it is left for the next snapshot.
-    const plain = plainEncodedKeys(raw);
-    if (!encoding && plain.length && !snap.metadata?.hasPendingWrites) {
-      encoding = true;
-      const updates = Object.fromEntries(plain.map(k => [k, docData[k]]));
-      saveUserSettings(userId, updates, { expectedAt: Number(raw._lastWriteAt || 0) })
-        .then((res) => { if (!res?.stale) console.log('Settings: stored as text:', plain); })
-        .catch(err => console.warn('Settings: could not store the big maps as text yet', err))
-        .finally(() => { encoding = false; });
-    }
-    const legacy = docData?.[SITE_LISTS_KEY];
+    rawDoc = snap.exists() ? snap.data() : null;
+    pending = !!snap.metadata?.hasPendingWrites;
+    const legacy = rawDoc?.[SITE_LISTS_KEY];
     if (!migrating && legacy && typeof legacy === 'object' && Object.keys(legacy).length) {
       migrating = true;
       migrateCompanySiteLists(userId, legacy)
@@ -86,7 +92,16 @@ export function subscribeToUserSettings(userId, onChange) {
     if (lists === undefined) { lists = {}; emit(); }
   });
 
-  return () => { unsubDoc(); unsubLists(); };
+  const unsubKeys = subscribeToSettingsKeys(userId, (map) => {
+    keyValues = map;
+    emit();
+  }, () => {
+    // Same as the site lists: carry on with what the settings document
+    // still holds for these keys.
+    if (keyValues === undefined) { keyValues = {}; emit(); }
+  });
+
+  return () => { unsubDoc(); unsubLists(); unsubKeys(); };
 }
 
 // ── When the SDK has crashed ───────────────────────────────────────────
@@ -111,8 +126,17 @@ const settingsPath = (userId) => `${COL}/${userId}`;
 
 // The settings document for the stale check, read over HTTPS once the SDK
 // can no longer answer. Returns the data, or null when there is no document.
-async function readSettingsDoc(userId, ref) {
-  return decodeSettingsDoc(await readRawSettingsDoc(userId, ref));
+//
+// `keys` names the big maps to read from their own documents too
+// (settingsCodec): the ones a stale save touches, so the merge sees the other
+// device's entries, or all of them for a full read. The rest come back as
+// whatever the settings document itself still holds for them.
+async function readSettingsDoc(userId, ref, keys = []) {
+  const [raw, keyValues] = await Promise.all([
+    readRawSettingsDoc(userId, ref),
+    keys.length ? readSettingsKeys(userId, keys) : {},
+  ]);
+  return raw || Object.keys(keyValues).length ? composeSettings(raw || {}, keyValues) : null;
 }
 
 async function readRawSettingsDoc(userId, ref) {
@@ -161,11 +185,14 @@ export async function saveUserSettings(userId, updates, opts = {}) {
   const { expectedAt, force } = opts;
   // companySiteLists lives in its own subcollection; everything else is a
   // field on the document.
-  const { ops, rest } = splitSiteListUpdates(updates);
+  const { ops, rest: fields } = splitSiteListUpdates(updates);
+  // So do the big maps (settingsCodec): `keys` goes to their documents.
+  const { keys, main: rest } = splitSettingsUpdates(fields);
+  const keyNames = Object.keys(keys);
 
   if (!force && expectedAt != null) {
     try {
-      const remote = await readSettingsDoc(userId, ref);
+      const remote = await readSettingsDoc(userId, ref, keyNames);
       if (remote) {
         const remoteAt = Number(remote._lastWriteAt || 0);
         if (remoteAt > Number(expectedAt)) {
@@ -184,8 +211,10 @@ export async function saveUserSettings(userId, updates, opts = {}) {
 
   const writtenAt = Date.now();
   if (ops.length) await applySiteListOps(userId, ops);
-  // The big maps go in as one string each (utils/settingsCodec).
-  const written = { ...encodeSettingsUpdates(rest), _lastWriteAt: writtenAt };
+  // The maps' documents first, so the settings document never drops its old
+  // copy of a map before the new home holds it.
+  if (keyNames.length) await writeSettingsKeys(userId, keys, writtenAt);
+  const written = { ...rest, _lastWriteAt: writtenAt };
   // Whole keys, not dotted paths: a settings key is free to contain a dot
   // (orgCharts entries are keyed by name), and splitting one would write to
   // a nested field nothing reads.
@@ -300,18 +329,19 @@ async function migrateFromLocalStorage(userId) {
 // and _lastWriteAt semantics as saveUserSettings.
 //
 // opts.wholeValues: the settings with these paths applied. A path into one
-// of the big maps stored as a string (utils/settingsCodec) can't be written
-// on its own, so the map's whole new value is read from here and written
-// instead. Required whenever such a path is in the update.
+// of the big maps kept in their own documents (utils/settingsCodec) is
+// written as the map's whole new value, read from here. Required whenever
+// such a path is in the update.
 export async function savePathUpdates(userId, pathUpdates, opts = {}) {
   const ref = doc(db, COL, userId);
   const { expectedAt, force, wholeValues } = opts;
   const { ops, rest: rawRest } = splitSiteListPaths(pathUpdates);
-  const rest = encodePathUpdates(rawRest, wholeValues);
+  const { keys, main: rest } = splitPathUpdates(rawRest, wholeValues);
+  const keyNames = Object.keys(keys);
 
   if (!force && expectedAt != null) {
     try {
-      const remote = await readSettingsDoc(userId, ref);
+      const remote = await readSettingsDoc(userId, ref, keyNames);
       if (remote) {
         const remoteAt = Number(remote._lastWriteAt || 0);
         if (remoteAt > Number(expectedAt)) {
@@ -328,6 +358,8 @@ export async function savePathUpdates(userId, pathUpdates, opts = {}) {
 
   const writtenAt = Date.now();
   if (ops.length) await applySiteListOps(userId, ops);
+  // The big maps' documents first, as in saveUserSettings.
+  if (keyNames.length) await writeSettingsKeys(userId, keys, writtenAt);
 
   // Still stamp _lastWriteAt even when every path went to the
   // subcollection: it is what other devices watch to know this one wrote.
@@ -390,5 +422,5 @@ export async function initUserSettings(userId) {
 // that has quietly stopped hearing it.
 export async function fetchUserSettings(userId) {
   if (!userId) return null;
-  return readSettingsDoc(userId, doc(db, COL, userId));
+  return readSettingsDoc(userId, doc(db, COL, userId), ENCODED_SETTINGS_KEYS);
 }

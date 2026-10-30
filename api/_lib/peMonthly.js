@@ -14,7 +14,7 @@
 import { loadOpps2Records, sendHtmlEmail } from './newOpps.js';
 import { loadTargetAccounts } from './firestoreChunks.js';
 import { buildPeMonthlyRows, buildPeMonthlyEmailHtml, PE_MONTHLY_DRAFT_DEFAULTS } from '../../src/utils/peMonthlyEmail.js';
-import { decodeSettingsDoc } from '../../src/utils/settingsCodec.js';
+import { readUserSettings } from './readUserSettings.js';
 
 const ADMIN_EMAIL = 'baldaufdan@gmail.com';
 
@@ -26,8 +26,7 @@ export async function loadPeMonthlyRows(db, uid, email) {
 
   let settings = null;
   try {
-    const snap = await db.collection('userSettings').doc(uid).get();
-    settings = snap.exists ? (decodeSettingsDoc(snap.data()) || null) : null;
+    settings = await readUserSettings(db, uid);
   } catch { /* shipped Coverage default, no Target Accounts mapping */ }
 
   let prospects = [];
