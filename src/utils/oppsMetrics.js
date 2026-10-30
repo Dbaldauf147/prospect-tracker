@@ -160,6 +160,39 @@ export function annualSalesProjection(records, { nowMs = Date.now(), dealFor = n
   };
 }
 
+// The YOY charts let the user pin a corrected value onto a data point, and
+// the Annual Sales "Projected" bar is one of them. Apply that pin here too,
+// so the Weekly Report's projection tile (and the Pipeline export's Q4
+// Focus tab) shows what the chart shows rather
+// than the computed number the user has already overruled.
+//
+// Precedence mirrors the chart's own recompute(): an overridden Total wins
+// outright; otherwise the total is the sum of the two client segments with
+// any of their overrides applied.
+export function applyProjectionOverride(projection, yoyOverrides) {
+  if (!projection) return null;
+  const patch = yoyOverrides?.annualSales?.Projected;
+  const ov = (key) => {
+    const v = patch?.[key];
+    return (v != null && Number.isFinite(Number(v))) ? Number(v) : null;
+  };
+  if (!patch) return { ...projection, overridden: false };
+  const total = ov('_total');
+  if (total !== null) return { ...projection, amount: Math.round(total), overridden: true };
+  const currentClient = ov('currentClient');
+  const newClient = ov('newClient');
+  if (currentClient === null && newClient === null) return { ...projection, overridden: false };
+  const nextCurrent = currentClient ?? projection.currentClient;
+  const nextNew = newClient ?? projection.newClient;
+  return {
+    ...projection,
+    currentClient: Math.round(nextCurrent),
+    newClient: Math.round(nextNew),
+    amount: Math.round(nextCurrent + nextNew),
+    overridden: true,
+  };
+}
+
 export function yoyReviewMetrics(records, { target = 0, nowMs = Date.now() } = {}) {
   const list = Array.isArray(records) ? records : [];
   const now = new Date(nowMs);

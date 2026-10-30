@@ -413,10 +413,12 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
 }
 
 // ── Q4 Focus tab (one-page layout only) ─────────────────────────────────
-// What to work on to close the year out: a KPI strip for the year-end
-// number, a ranked list of focus areas built from the report's own figures
-// (utils/q4Focus.js), the deals dated to close by Dec 31, the late-stage
-// deals a push could bring into Q4, and the weeks left as a game plan.
+// What to work on to close the year out: a KPI strip led by the Annual
+// Sales chart's projected total, the deals that make up the gap between
+// Sold YTD and that projection with a Risks column to fill in, a ranked
+// list of focus areas built from the report's own figures
+// (utils/q4Focus.js), the upside outside the projection, and the weeks
+// left as a game plan.
 // Same 13-column grid, brand band, section bands and cell styles as the
 // Pipeline Report tab beside it.
 const DATE_FMT = 'mmm d, yyyy';
@@ -448,7 +450,7 @@ function buildQ4Sheet(wb, q, { sub }) {
   const COLS = 13;
   // The Pipeline Report's grid, with the Close Date and Flag columns given
   // room for a full date and a flag's words.
-  const widths = [20, 11, 12, 11, 12, 12, 12, 10, 13, 13, 11, 11, 26];
+  const widths = [20, 11, 12, 11, 16, 13, 13, 10, 11, 13, 11, 11, 25];
   const ws = wb.addWorksheet(`Q4 ${q.year} Focus`, {
     properties: { tabColor: { argb: SE_GREEN_DARK } },
     views: [{ state: 'frozen', ySplit: 2 }],
@@ -463,13 +465,14 @@ function buildQ4Sheet(wb, q, { sub }) {
 
   // ── KPI strip ──
   gap();
-  const projTint = q.target > 0 ? cmpTint(q.projected, q.target, 'higher') : null;
+  const hasProj = q.projected != null;
   const kpis = [
     { label: 'Target', value: num(q.target), fmt: MONEY },
-    { label: 'Closed YTD', value: num(q.closedYTD), fmt: MONEY },
-    { label: 'Gap to Target', value: num(q.gap), fmt: MONEY, tint: q.target > 0 ? (q.gap > 0 ? { fill: BAD_FILL, fg: BAD_FG } : { fill: OK_FILL, fg: OK_FG }) : null },
-    { label: 'Weighted Q4 Pipeline', value: num(q.weightedQ4), fmt: MONEY },
-    { label: 'Projected Finish', value: num(q.projected), fmt: MONEY, tint: projTint },
+    { label: 'Sold YTD', value: num(q.soldYTD), fmt: MONEY },
+    { label: 'Projected Total', value: hasProj ? num(q.projected) : null, fmt: MONEY, tint: hasProj && q.target > 0 ? cmpTint(q.projected, q.target, 'higher') : null },
+    { label: 'Gap to Projected', value: hasProj ? num(q.toProjected) : null, fmt: MONEY },
+    { label: hasProj && q.projectedShort < 0 ? 'Projected Over Target' : 'Projected Short of Target', value: hasProj && q.target > 0 ? num(Math.abs(q.projectedShort)) : null, fmt: MONEY,
+      tint: hasProj && q.target > 0 ? (q.projectedShort > 0 ? { fill: BAD_FILL, fg: BAD_FG } : { fill: OK_FILL, fg: OK_FG }) : null },
     { label: 'Days Left', value: num(q.daysLeft), fmt: INT },
   ];
   kpis.forEach((k, i) => {
@@ -480,9 +483,64 @@ function buildQ4Sheet(wb, q, { sub }) {
   });
   ws.getRow(r).height = 15; ws.getRow(r + 1).height = 26;
   r += 2;
-  put(r, 1, r, COLS, `Projected Finish = Closed YTD + every open deal dated to close by Dec 31, weighted by its stage's close rate. Closed so far this quarter: $${Math.round(q.closedQ4).toLocaleString('en-US')}.`, { fg: SE_MUTED, size: 9, wrap: true });
+  put(r, 1, r, COLS, hasProj
+    ? `Projected Total is the Annual Sales chart's Projected bar: Sold YTD plus every open deal at Agreement Sent or Contracting${q.overridden ? ' (pinned by hand on the chart)' : ''}. Sold so far this quarter: $${Math.round(q.closedQ4).toLocaleString('en-US')}.`
+    : 'Load the Opps tab for the Annual Sales projection and the deals behind it.', { fg: SE_MUTED, size: 9, wrap: true });
   ws.getRow(r).height = 16;
   r++;
+
+  // Deal tables share one column map: Account | Opportunity | Stage |
+  // Close Date | Amount | Share of the gap | Flag | Risks. The Risks block
+  // is left empty and wide, to be typed into.
+  const dealTable = (rows, { empty, flagOf, share = false, lastHead = 'Risks' }) => {
+    const cols = share
+      ? [[1, 2], [3, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 10], [11, 13]]
+      : [[1, 2], [3, 4], [5, 5], [6, 6], [7, 7], null, [8, 10], [11, 13]];
+    const heads = ['Account', 'Opportunity', 'Stage', 'Close Date', 'Amount', '% of Gap', 'Flag', lastHead];
+    heads.forEach((h, i) => {
+      if (!cols[i]) return;
+      put(r, cols[i][0], r, cols[i][1], h, { ...HEAD, align: i >= 3 && i <= 5 ? 'center' : 'left' });
+    });
+    r++;
+    if (!rows.length) { put(r, 1, r, COLS, empty, { fg: SE_MUTED }); r++; return; }
+    rows.forEach((d, idx) => {
+      const zebra = idx % 2 === 1 ? { zebra: true } : {};
+      const flag = flagOf(d);
+      const at = (i, value, opts) => put(r, cols[i][0], r, cols[i][1], value, opts);
+      at(0, d.account, { wrap: true, vertical: 'top', ...zebra });
+      at(1, d.opp, { wrap: true, vertical: 'top', ...zebra });
+      at(2, d.stage, { vertical: 'top', ...zebra });
+      at(3, excelDay(d.closeDate), { align: 'center', vertical: 'top', numFmt: DATE_FMT, ...((d.pastDue || d.nextYear) ? { fill: BAD_FILL, fg: BAD_FG } : zebra) });
+      at(4, num(d.amount), { align: 'center', vertical: 'top', numFmt: MONEY, bold: true, ...zebra });
+      if (share) at(5, num(d.share), { align: 'center', vertical: 'top', numFmt: PCT, ...zebra });
+      at(6, flag, { wrap: true, vertical: 'top', ...(flag ? { fill: WARN_FILL, fg: WARN_FG } : zebra) });
+      at(7, null, { wrap: true, vertical: 'top', fill: 'FFFFFFFF' });
+      ws.getRow(r).height = Math.max(30, wrapHeight(d.account, span(...cols[0])), wrapHeight(d.opp, span(...cols[1])), wrapHeight(flag, span(...cols[6])));
+      r++;
+    });
+  };
+  const dateFlag = (d) => (!d.closeDate ? 'No close date'
+    : d.pastDue ? 'Close date has passed'
+      : d.nextYear ? `Dated ${q.year + 1}: needs a Dec 31 signature`
+        : '');
+
+  // ── Projected total: the deals between Sold YTD and the projection ──
+  gap();
+  title(q.projected != null
+    ? `Projected Total: Deals Between $${Math.round(q.soldYTD).toLocaleString('en-US')} Sold and $${Math.round(q.projected).toLocaleString('en-US')} Projected`
+    : 'Projected Total: Deals Behind the Projection');
+  dealTable(q.projectionDeals || [], {
+    empty: q.projected != null ? 'No open deals at Agreement Sent or Contracting.' : 'Load the Opps tab to list the deals behind the projection.',
+    flagOf: d => dateFlag(d) || (d.stage === 'Agreement Sent' ? 'Chase the signature' : ''),
+    share: true,
+  });
+  if ((q.projectionDeals || []).length) {
+    put(r, 1, r, 6, `Sold YTD + these deals = $${Math.round(q.soldYTD + q.projectionDealsTotal).toLocaleString('en-US')}${q.overridden ? `  (chart pinned at $${Math.round(q.projected).toLocaleString('en-US')})` : ''}`, { bold: true });
+    put(r, 7, r, 7, num(q.projectionDealsTotal), { align: 'center', numFmt: MONEY, bold: true });
+    put(r, 8, r, 8, 1, { align: 'center', numFmt: PCT, bold: true });
+    put(r, 9, r, COLS, null, {});
+    r++;
+  }
 
   // ── Where to focus ──
   gap();
@@ -507,50 +565,23 @@ function buildQ4Sheet(wb, q, { sub }) {
     r++;
   });
 
-  // Deal tables share one column map.
-  const dCols = [[1, 3], [4, 6], [7, 8], [9, 9], [10, 10], [11, 11], [12, 12], [13, 13]];
-  const dealHead = ['Account', 'Opportunity', 'Stage', 'Close Date', 'Amount', 'Close Rate', 'Weighted', 'Flag'];
-  const dealRows = (rows, empty, flagOf) => {
-    dealHead.forEach((h, i) => put(r, dCols[i][0], r, dCols[i][1], h, { ...HEAD, align: i >= 3 && i <= 6 ? 'center' : 'left' }));
-    r++;
-    if (!rows.length) { put(r, 1, r, COLS, empty, { fg: SE_MUTED }); r++; return; }
-    rows.forEach((d, idx) => {
-      const zebra = idx % 2 === 1 ? { zebra: true } : {};
-      const flag = flagOf(d);
-      put(r, 1, r, 3, d.account, { wrap: true, ...zebra });
-      put(r, 4, r, 6, d.opp, { wrap: true, ...zebra });
-      put(r, 7, r, 8, `${d.stageNumber}: ${d.stage}`, zebra);
-      put(r, 9, r, 9, excelDay(d.closeDate), { align: 'center', numFmt: DATE_FMT, ...(d.pastDue ? { fill: BAD_FILL, fg: BAD_FG } : zebra) });
-      put(r, 10, r, 10, num(d.amount), { align: 'center', numFmt: MONEY, ...zebra });
-      put(r, 11, r, 11, num(d.odds), { align: 'center', numFmt: PCT, ...zebra });
-      put(r, 12, r, 12, num(d.weighted), { align: 'center', numFmt: MONEY, bold: true, ...zebra });
-      put(r, 13, r, 13, flag, flag ? { fill: WARN_FILL, fg: WARN_FG } : zebra);
-      ws.getRow(r).height = Math.max(wrapHeight(d.account, span(1, 3)), wrapHeight(d.opp, span(4, 6)));
-      r++;
-    });
-  };
-
-  // ── Deals to close by Dec 31 ──
+  // ── Upside outside the projection ──
   gap();
-  title(`Deals to Close by Dec 31, ${q.year}: Biggest Weighted Value First`);
-  dealRows(
-    q.deals,
-    'No open deals on the Opps tab have a close date this year.',
-    d => (d.pastDue ? 'Past due: update the date' : (d.stageNumber === 6 ? 'Chase the signature' : '')),
-  );
-  if (q.deals.length) {
-    put(r, 1, r, 9, 'Total', { bold: true });
-    put(r, 10, r, 10, num(q.faceQ4), { align: 'center', numFmt: MONEY, bold: true });
-    put(r, 11, r, 11, null, {});
-    put(r, 12, r, 12, num(q.weightedQ4), { align: 'center', numFmt: MONEY, bold: true });
-    put(r, 13, r, 13, null, {});
-    r++;
-  }
+  title(`Upside: Other Open Deals Dated by Dec 31, ${q.year}`);
+  dealTable(q.upside || [], {
+    empty: 'No other open deals have a close date this year.',
+    flagOf: dateFlag,
+    lastHead: 'Next Step',
+  });
 
   // ── Pull-in candidates ──
   gap();
-  title(`Pull-In Candidates: Stage 5 & 6 Deals Dated Jan to Mar ${q.year + 1}`);
-  dealRows(q.pullIn, `No Stage 5 or 6 deals are dated for early ${q.year + 1}.`, () => 'Ask for a December close');
+  title(`Pull-In Candidates: Quoted Deals Dated Jan to Mar ${q.year + 1}`);
+  dealTable(q.pullIn || [], {
+    empty: `No quoted deals are dated for early ${q.year + 1}.`,
+    flagOf: () => 'Ask for a December close',
+    lastHead: 'Next Step',
+  });
 
   // ── Game plan ──
   gap();

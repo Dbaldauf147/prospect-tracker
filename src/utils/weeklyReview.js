@@ -13,7 +13,7 @@
 // tab first. Anything missing is reported as missing rather than guessed.
 
 import { bfoStageMetrics } from './bfoStageMetrics.js';
-import { yoyReviewMetrics } from './oppsMetrics.js';
+import { yoyReviewMetrics, applyProjectionOverride } from './oppsMetrics.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -208,38 +208,6 @@ function progressSection(progressWeeks, weekKey) {
 }
 
 // ---- Snapshot -----------------------------------------------------------
-
-// The YOY charts let the user pin a corrected value onto a data point, and
-// the Annual Sales "Projected" bar is one of them. Apply that pin here too,
-// so the Weekly Report's projection tile shows what the chart shows rather
-// than the computed number the user has already overruled.
-//
-// Precedence mirrors the chart's own recompute(): an overridden Total wins
-// outright; otherwise the total is the sum of the two client segments with
-// any of their overrides applied.
-function applyProjectionOverride(projection, yoyOverrides) {
-  if (!projection) return null;
-  const patch = yoyOverrides?.annualSales?.Projected;
-  const ov = (key) => {
-    const v = patch?.[key];
-    return (v != null && Number.isFinite(Number(v))) ? Number(v) : null;
-  };
-  if (!patch) return { ...projection, overridden: false };
-  const total = ov('_total');
-  if (total !== null) return { ...projection, amount: Math.round(total), overridden: true };
-  const currentClient = ov('currentClient');
-  const newClient = ov('newClient');
-  if (currentClient === null && newClient === null) return { ...projection, overridden: false };
-  const nextCurrent = currentClient ?? projection.currentClient;
-  const nextNew = newClient ?? projection.newClient;
-  return {
-    ...projection,
-    currentClient: Math.round(nextCurrent),
-    newClient: Math.round(nextNew),
-    amount: Math.round(nextCurrent + nextNew),
-    overridden: true,
-  };
-}
 
 // Build the full review input. `now` is injectable so a review can be
 // regenerated for a past week from the same code path.
