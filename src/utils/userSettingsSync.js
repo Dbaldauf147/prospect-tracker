@@ -3,6 +3,7 @@ import { onSnapshot } from './safeOnSnapshot';
 import { db } from '../firebase';
 import { restGetDoc, restUpdateFields, dottedFieldEntries, keyFieldEntries } from './firestoreRest.js';
 import { isClientWedgedError, isClientWedged, noteClientWedged } from './firestoreClientHealth.js';
+import { decodeSettingsDoc, encodeSettingsUpdates, encodePathUpdates, plainEncodedKeys } from './settingsCodec.js';
 import {
   SITE_LISTS_KEY,
   applySiteListOps,
@@ -24,6 +25,7 @@ export function subscribeToUserSettings(userId, onChange) {
   let docData;   // undefined until the document's first snapshot
   let lists;     // undefined until the subcollection's first snapshot
   let migrating = false;
+  let encoding = false;
 
   const emit = () => {
     // Nothing goes out until BOTH sources have reported. A settings object
@@ -45,7 +47,23 @@ export function subscribeToUserSettings(userId, onChange) {
   };
 
   const unsubDoc = onSnapshot(ref, (snap) => {
-    docData = snap.exists() ? snap.data() : null;
+    // The big maps come back as objects (utils/settingsCodec).
+    const raw = snap.exists() ? snap.data() : null;
+    docData = raw ? decodeSettingsDoc(raw) : null;
+    // A big map still stored the old way (a document saved before they
+    // moved to text, or a tab on the old code since) is rewritten as text
+    // once, so its index entries are freed now rather than whenever that
+    // key next happens to be saved. Guarded by the stale check: if another
+    // device wrote in between, it is left for the next snapshot.
+    const plain = plainEncodedKeys(raw);
+    if (!encoding && plain.length && !snap.metadata?.hasPendingWrites) {
+      encoding = true;
+      const updates = Object.fromEntries(plain.map(k => [k, docData[k]]));
+      saveUserSettings(userId, updates, { expectedAt: Number(raw._lastWriteAt || 0) })
+        .then((res) => { if (!res?.stale) console.log('Settings: stored as text:', plain); })
+        .catch(err => console.warn('Settings: could not store the big maps as text yet', err))
+        .finally(() => { encoding = false; });
+    }
     const legacy = docData?.[SITE_LISTS_KEY];
     if (!migrating && legacy && typeof legacy === 'object' && Object.keys(legacy).length) {
       migrating = true;
@@ -94,6 +112,10 @@ const settingsPath = (userId) => `${COL}/${userId}`;
 // The settings document for the stale check, read over HTTPS once the SDK
 // can no longer answer. Returns the data, or null when there is no document.
 async function readSettingsDoc(userId, ref) {
+  return decodeSettingsDoc(await readRawSettingsDoc(userId, ref));
+}
+
+async function readRawSettingsDoc(userId, ref) {
   if (isClientWedged()) return restGetDoc(settingsPath(userId));
   try {
     const snap = await getDoc(ref);
@@ -162,7 +184,8 @@ export async function saveUserSettings(userId, updates, opts = {}) {
 
   const writtenAt = Date.now();
   if (ops.length) await applySiteListOps(userId, ops);
-  const written = { ...rest, _lastWriteAt: writtenAt };
+  // The big maps go in as one string each (utils/settingsCodec).
+  const written = { ...encodeSettingsUpdates(rest), _lastWriteAt: writtenAt };
   // Whole keys, not dotted paths: a settings key is free to contain a dot
   // (orgCharts entries are keyed by name), and splitting one would write to
   // a nested field nothing reads.
@@ -275,10 +298,16 @@ async function migrateFromLocalStorage(userId) {
 // Path-based write. `pathUpdates` has keys like 'companyOpportunities.acme-inc'.
 // A value of `null` or `undefined` means "delete this path". Same staleness
 // and _lastWriteAt semantics as saveUserSettings.
+//
+// opts.wholeValues: the settings with these paths applied. A path into one
+// of the big maps stored as a string (utils/settingsCodec) can't be written
+// on its own, so the map's whole new value is read from here and written
+// instead. Required whenever such a path is in the update.
 export async function savePathUpdates(userId, pathUpdates, opts = {}) {
   const ref = doc(db, COL, userId);
-  const { expectedAt, force } = opts;
-  const { ops, rest } = splitSiteListPaths(pathUpdates);
+  const { expectedAt, force, wholeValues } = opts;
+  const { ops, rest: rawRest } = splitSiteListPaths(pathUpdates);
+  const rest = encodePathUpdates(rawRest, wholeValues);
 
   if (!force && expectedAt != null) {
     try {
