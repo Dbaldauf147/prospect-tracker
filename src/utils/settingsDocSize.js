@@ -113,7 +113,71 @@ if (typeof window !== 'undefined') {
     const report = settingsDocReport(data);
     console.log(`settings document: ${kb(report.bytes)} of ${kb(report.limit)}`
       + (report.offloadedBytes ? ` (plus ${kb(report.offloadedBytes)} of site lists stored separately)` : ''));
-    console.table(report.keys.slice(0, 25).map(k => ({ key: k.key, KB: Math.round(k.bytes / 1024) })));
+    const entries = new Map(settingsIndexReport(data).keys.map(k => [k.key, k.entries]));
+    console.table(report.keys.slice(0, 25).map(k => ({ key: k.key, KB: Math.round(k.bytes / 1024), 'index entries': entries.get(k.key) })));
     return report;
   };
+}
+
+// Firestore's other per-document cap: 40,000 index entries. Every field is
+// indexed (ascending and descending), every key of a map included, and an
+// array also gets an array-contains entry per distinct element. A settings
+// map keyed by company grows an entry or two per company, and crossing the
+// line is refused as "too many index entries for entity", naming no field.
+// firestore.field-exemptions.json turns indexing off for the big maps; this
+// estimates what each key costs so a refusal can say which keys are to blame
+// and whether they are on that list.
+export const FIRESTORE_INDEX_ENTRY_LIMIT = 40000;
+
+/** Roughly how many index entries one value costs, the field itself included. */
+export function valueIndexEntries(value) {
+  if (value === null || value === undefined || typeof value !== 'object') return 2;
+  if (Array.isArray(value)) {
+    const distinct = new Set(value.map(v => (v && typeof v === 'object' ? JSON.stringify(v) : String(v))));
+    return 2 + distinct.size;
+  }
+  let total = 2;
+  for (const v of Object.values(value)) if (v !== undefined) total += valueIndexEntries(v);
+  return total;
+}
+
+/**
+ * Per-key index entry estimates, largest first. `exempt` is the set of
+ * top-level keys Firestore is told not to index; they cost nothing once
+ * that is live, so `total` leaves them out and `totalIfNoExemptions`
+ * counts them, which is the document's cost while the exemption isn't live.
+ */
+export function settingsIndexReport(settings, exempt = new Set()) {
+  const keys = [];
+  let total = 0;
+  let totalIfNoExemptions = 0;
+  for (const [key, value] of Object.entries(settings || {})) {
+    if (value === undefined || OFFLOADED_KEYS.has(key)) continue;
+    const entries = valueIndexEntries(value);
+    const isExempt = exempt.has(key);
+    keys.push({ key, entries, exempt: isExempt });
+    totalIfNoExemptions += entries;
+    if (!isExempt) total += entries;
+  }
+  keys.sort((a, b) => b.entries - a.entries);
+  return { keys, total, totalIfNoExemptions, limit: FIRESTORE_INDEX_ENTRY_LIMIT };
+}
+
+export function isIndexEntryLimitError(err) {
+  return /too many index entries/i.test(String(err?.message || err || ''));
+}
+
+/** The message for a save Firestore refused over index entries. */
+export function indexLimitMessage(report) {
+  const n = (x) => Math.round(x).toLocaleString();
+  const top = report.keys.slice(0, 6)
+    .map(k => `  • ${k.key} - about ${n(k.entries)}${k.exempt ? ' (on the exemption list)' : ' (NOT on the exemption list)'}`)
+    .join('\n');
+  const verdict = report.total > report.limit
+    ? 'Even with the exemptions in place this is over the limit, so a key marked NOT on the list needs adding to firestore.field-exemptions.json.'
+    : 'With the exemptions in place this fits, so the exemptions are not live on Firestore yet. They are released by the production build (look for "firestore index exemptions" in the Vercel build log); if that line says NOT RELEASED, the service account needs the Cloud Datastore Index Admin role. They can also take a few minutes to finish after a deploy.';
+  return `Firestore refused this save: your settings need more search-index entries than the ${n(report.limit)} it allows for one document `
+    + `(about ${n(report.totalIfNoExemptions)} counting every key, ${n(report.total)} without the exempted ones).\n\n`
+    + `Nothing was changed on the server, and a local backup of your current settings was taken.\n\n`
+    + `The keys that cost the most:\n${top}\n\n${verdict}`;
 }

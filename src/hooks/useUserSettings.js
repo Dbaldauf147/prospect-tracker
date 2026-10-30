@@ -4,7 +4,8 @@ import { pushBackup } from '../utils/settingsBackup';
 import { autoMergeValue, mergeSettingsKey, foldWriteResult } from '../utils/settingsMerge';
 import { guardLeadLinks, recordLeadLinks, LEAD_LINK_LEDGER_KEY } from '../utils/leadLinks';
 import { guardLeadMappings, recordLeadMappings, LEAD_MAPPING_LEDGER_KEY } from '../utils/leadMappings';
-import { SETTINGS_SIZE_BUDGET, overBudgetMessage, settingsDocReport } from '../utils/settingsDocSize';
+import { SETTINGS_SIZE_BUDGET, overBudgetMessage, settingsDocReport, settingsIndexReport, isIndexEntryLimitError, indexLimitMessage } from '../utils/settingsDocSize';
+import fieldExemptions from '../../firestore.field-exemptions.json';
 import {
   isClientWedged, isClientWedgedError, shouldAnnounceWedgedClient, wedgedClientMessage, watchForClientCrash, autoReloadWhenWedged,
 } from '../utils/firestoreClientHealth';
@@ -49,6 +50,15 @@ function setDottedPath(obj, path, value) {
 // no way to tell which of a hundred settings keys filled the document —
 // this refuses the save and names the biggest ones. Returns true when the
 // caller should stop.
+// The settings keys Firestore is told not to index
+// (firestore.field-exemptions.json), for naming the culprits when a save is
+// refused over index entries.
+const INDEX_EXEMPT_KEYS = new Set(
+  (fieldExemptions?.fieldOverrides || [])
+    .filter(f => f.collectionGroup === 'userSettings')
+    .map(f => String(f.fieldPath).split('.')[0]),
+);
+
 function refuseIfOverBudget(next) {
   const report = settingsDocReport(next);
   if (report.bytes <= SETTINGS_SIZE_BUDGET) return false;
@@ -293,7 +303,13 @@ export function useUserSettings(user) {
       if (viaRest) reportWedgedSave(true);
     } catch (err) {
       console.error('Failed to save user settings:', err);
-      if (!reportSaveFailure(err)) {
+      if (isIndexEntryLimitError(err)) {
+        // Firestore names no field for this one, so say which keys cost
+        // the most and whether they are meant to be exempt.
+        const report = settingsIndexReport(optimistic, INDEX_EXEMPT_KEYS);
+        console.error('userSettings is over the index entry limit', report);
+        alert(indexLimitMessage(report));
+      } else if (!reportSaveFailure(err)) {
         alert('Failed to save settings: ' + err.message + '\n\nA backup of your pre-save state was saved locally.');
       }
     } finally {
@@ -412,7 +428,8 @@ export function useUserSettings(user) {
       if (viaRest) reportWedgedSave(true);
     } catch (err) {
       console.error('Failed path-based save:', err);
-      if (!reportSaveFailure(err)) alert('Failed to save: ' + err.message);
+      if (isIndexEntryLimitError(err)) alert(indexLimitMessage(settingsIndexReport(optimistic, INDEX_EXEMPT_KEYS)));
+      else if (!reportSaveFailure(err)) alert('Failed to save: ' + err.message);
     } finally {
       writingRef.current -= 1;
       const pending = pendingRemoteRef.current;
