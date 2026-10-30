@@ -12,6 +12,8 @@
 // short document as an empty one — which looks exactly like a user with
 // no data.
 
+import { withoutDuplicateRows } from '../../src/utils/targetDuplicates.js';
+
 /**
  * Join a chunked document back into the JSON string it was written from.
  *
@@ -66,13 +68,15 @@ export async function loadOpps2(db, uid) {
 // Written by utils/chunkedDoc (slices under `s`); a document from before
 // that kept the JSON under `json`, and the oldest kept the workbook's own
 // fields on the document, which is returned as is.
+// Rows flagged as duplicates on the Target Accounts page are left out:
+// every caller reads the list, none writes it back.
 export async function loadTargetAccounts(db, uid) {
   const ref = db.collection('targetAccounts').doc(uid);
   const value = await readChunkedValue(ref, { field: 's' });
-  if (value) return value;
+  if (value) return withoutDuplicateRows(value);
   const snap = await ref.get();
   const raw = snap.exists ? (snap.data() || {}) : null;
-  return raw?.sheets ? raw : null;
+  return raw?.sheets ? withoutDuplicateRows(raw) : null;
 }
 
 // A localStorage / IndexedDB mirror. `id` is the document id

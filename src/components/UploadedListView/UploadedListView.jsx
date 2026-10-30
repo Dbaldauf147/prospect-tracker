@@ -14,6 +14,7 @@ import { loadOppsFromCache } from '../../utils/oppsCache';
 import { buildOppStagesByClient, effectiveServiceStatus } from '../../utils/serviceCoverage';
 import { serviceStatusColor } from '../../utils/serviceStatusColors';
 import { normalizeTierText } from '../../utils/tierText';
+import { withoutDuplicateRows } from '../../utils/targetDuplicates';
 import styles from './UploadedListView.module.css';
 
 function loadMapping(key) {
@@ -995,7 +996,8 @@ export function UploadedListView({
     (async () => {
       try {
         const payload = await dbGet('target-accounts', 'data');
-        if (!cancelled) setTargetAccountData(payload || null);
+        // Rows flagged as duplicates on the Target Accounts page don't count.
+        if (!cancelled) setTargetAccountData(withoutDuplicateRows(payload) || null);
       } catch { if (!cancelled) setTargetAccountData(null); }
     })();
     return () => { cancelled = true; };

@@ -338,8 +338,13 @@ function App() {
     // dependency) into the entry chunk for the sake of one function. The
     // fetch still starts at login — it's just off the critical path.
     let cancelled = false;
-    import('./components/TargetAccountsView/TargetAccountsView')
-      .then(m => m.loadTargetAccountsFromDB(user.uid))
+    // Rows flagged as duplicates on that page are left out, as they are
+    // everywhere else the list is read.
+    Promise.all([
+      import('./components/TargetAccountsView/TargetAccountsView'),
+      import('./utils/targetDuplicates'),
+    ])
+      .then(([m, d]) => m.loadTargetAccountsFromDB(user.uid).then(d.withoutDuplicateRows))
       .then(data => { if (!cancelled && data) setTargetAccountsData(data); })
       .catch(err => console.warn('Target accounts load failed:', err));
     return () => { cancelled = true; };
