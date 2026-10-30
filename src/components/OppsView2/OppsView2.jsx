@@ -455,12 +455,18 @@ function renderScheduledOppCell(key, row, onManage) {
   return <span style={{ color: '#CBD5E1' }} />;
 }
 
+// Free-text notes on why an opp was lost, captured at close-out.
+const LOSS_NOTES_COLUMN = 'Loss Notes';
+
 const DEFAULT_HEADERS = [
   'Account', 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type', 'Sales Partner',
   'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Age',
   'Last Client Heard From Us', 'Last Spoke', 'Follow Up', 'Call In', 'Notes',
   'Next Steps', 'No Further Action Today', 'Competition', 'Waiting On', 'Close Date', 'BFO Link', 'BFO Company Name',
   'Pricing Option',
+  // Why a deal was lost, in the user's own words. Filled in on the Not Sold
+  // close-out popup beside Competition / Reason Not Sold.
+  LOSS_NOTES_COLUMN,
   // Quote-stage detail columns. Captured via the QuotedFollowUpModal that
   // pops when an opp moves into the "Quoted" stage.
   // The margin pair: when it went for review, and when it came back
@@ -574,7 +580,7 @@ const NEW_OPPS_REPORT_COLUMNS = [
 // the two stages that end an opp (see utils/recentlyClosedOpps.js).
 const CLOSED_OPPS_REPORT_COLUMNS = [
   'Account', 'Stage', 'Scope', 'Source', 'Type', 'Sales Partner',
-  'Close Date', 'Quoted Amount', 'Reason Not Sold', 'Competition',
+  'Close Date', 'Quoted Amount', 'Reason Not Sold', 'Competition', LOSS_NOTES_COLUMN,
   'BFO Link', 'BFO Address',
 ];
 
@@ -740,7 +746,9 @@ const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'N
   'Vertical',
   // Ticked in the Scope picker, never sent by BFO, so it only exists if it
   // is ensured here.
-  COMMODITY_COLUMN];
+  COMMODITY_COLUMN,
+  // Written by the Not Sold close-out popup; never in an imported sheet.
+  LOSS_NOTES_COLUMN];
 
 // Strips zero-width / BOM characters. Built with fromCharCode so the
 // source stays pure ASCII — embedding the literal invisible characters
@@ -6731,6 +6739,7 @@ function NotSoldFollowUpModal({ opp, optionLink = null, reasonOptions, competiti
   const [reason, setReason] = useState(String(opp?.['Reason Not Sold'] ?? ''));
   const [finalMargin, setFinalMargin] = useState(String(opp?.['Final Margin'] ?? ''));
   const [competition, setCompetition] = useState(String(opp?.['Competition'] ?? ''));
+  const [lossNotes, setLossNotes] = useState(String(opp?.[LOSS_NOTES_COLUMN] ?? ''));
 
   // Everything in the opp's Scope is what this close-out gives up, listed
   // compactly so a multi-service deal reads at a glance instead of as one
@@ -6808,6 +6817,7 @@ function NotSoldFollowUpModal({ opp, optionLink = null, reasonOptions, competiti
       reason,
       finalMargin: finalMargin.trim(),
       competition: competition.trim(),
+      lossNotes: lossNotes.trim(),
       nextSteps: kept.map(r => encodeNoteLine(r.note)).join('\n'),
       nextStepsWaiting: kept.map(r => (r.waitingOn || '').trim()),
       nextStepsDone: kept.map(r => (r.doneOn || '').trim()),
@@ -6960,6 +6970,18 @@ function NotSoldFollowUpModal({ opp, optionLink = null, reasonOptions, competiti
             reason={reason}
             mappedHint={<>The AI assistant enters those when it closes this opp out in BFO.</>}
           />
+          {/* Why it was lost, in your own words: what the Reason Not Sold
+              list can't say. Kept on the opp as its own Loss Notes column. */}
+          <div>
+            <label style={labelStyle}>Loss Notes</label>
+            <textarea
+              value={lossNotes}
+              onChange={(e) => setLossNotes(e.target.value)}
+              rows={3}
+              placeholder="Why was this lost? What would you do differently?"
+              style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.45 }}
+            />
+          </div>
           <div>
             <label style={labelStyle}>Notes</label>
             <LastCallLine opp={opp} />
@@ -9324,6 +9346,7 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   'Close Date': 'stage7',
   'Competition': 'stage7',
   'Reason Not Sold': 'stage7',
+  [LOSS_NOTES_COLUMN]: 'stage7',
 }));
 
 // Same map keyed by the normalised header, so a saved or imported label
@@ -16309,7 +16332,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       .map(h => ({
         key: h,
         label: headerLabel(h),
-        defaultWidth: h === 'Notes' ? 250 : h === 'Next Steps' ? 240 : h === 'Account' ? 200 : h === 'BFO Link' ? 220 : h === 'Scope' ? 220 : TRISTATE_COLUMNS.has(h) || h === PULL_THROUGH_COLUMN ? 90 : h.length > 20 ? 160 : 120,
+        defaultWidth: h === 'Notes' || h === LOSS_NOTES_COLUMN ? 250 : h === 'Next Steps' ? 240 : h === 'Account' ? 200 : h === 'BFO Link' ? 220 : h === 'Scope' ? 220 : TRISTATE_COLUMNS.has(h) || h === PULL_THROUGH_COLUMN ? 90 : h.length > 20 ? 160 : 120,
         sticky: h === 'Account',
         // Every cell is click-to-edit so a freshly created opp can be
         // filled in directly. getFilterValue exposes the raw text to
@@ -18294,7 +18317,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             reasonOptions={listRegistry.get('reasonNotSold')?.options || []}
             competitionOptions={listRegistry.get('competition')?.options || []}
             solutionOptions={listRegistry.get('solutions')?.options || []}
-            onSave={({ closeDate, reason, finalMargin, competition, nextSteps, nextStepsWaiting, nextStepsDone, nextStepsHold, nextStepsWait }) => {
+            onSave={({ closeDate, reason, finalMargin, competition, lossNotes, nextSteps, nextStepsWaiting, nextStepsDone, nextStepsHold, nextStepsWait }) => {
               // Only push fields whose value actually changed so the
               // undo stack stays uncluttered with no-op snapshots.
               if (closeDate !== (toISODate(opp['Close Date']) || '')) {
@@ -18308,6 +18331,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               }
               if (competition !== String(opp['Competition'] ?? '').trim()) {
                 updateOppField(opp._id, 'Competition', competition);
+              }
+              if (lossNotes !== String(opp[LOSS_NOTES_COLUMN] ?? '').trim()) {
+                updateOppField(opp._id, LOSS_NOTES_COLUMN, lossNotes);
               }
               // Notes travel as the same pair the Follow Up Notes popup writes:
               // the newline-joined 'Next Steps' text plus the index-aligned
