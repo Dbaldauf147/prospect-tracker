@@ -12,6 +12,10 @@
     { "collectionGroup": "userSettings", "fieldPath": "ccMap" },
     { "collectionGroup": "userSettings", "fieldPath": "toAlsoMap" },
     { "collectionGroup": "userSettings", "fieldPath": "ignoredTargetSuggestions" },
-    { "collectionGroup": "userSettings", "fieldPath": "marketingLeadLinks" }
+    { "collectionGroup": "userSettings", "fieldPath": "marketingLeadLinks" },
+    { "collectionGroup": "userSettings", "fieldPath": "contactTagReview" },
+    { "collectionGroup": "userSettings", "fieldPath": "listMappings" },
+    { "collectionGroup": "userSettings", "fieldPath": "companyResearch" },
+    { "collectionGroup": "userSettings", "fieldPath": "contactLocalFields" }
   ]
 }
