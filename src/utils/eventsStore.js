@@ -60,3 +60,33 @@ export function toggleContactInEvents(events, eventId, contact) {
     return { ...ev, attendees };
   });
 }
+
+/**
+ * The title-only attendees (saved on the Events page with no name or
+ * email) at a company, for the company popup's Contacts tab: one entry per
+ * title, with every event it attended, newest first. A record counts when
+ * its company or the lookup row's company it was added from is one of
+ * `names` (the company's name, goes-by and aliases), compared normalized.
+ *   [{ key, title, company, decisionMaker, events: [{ id, name, date }] }]
+ */
+export function titleOnlyAttendeesForCompany(events, names, normalize) {
+  const wanted = new Set((names || []).map(n => normalize(n)).filter(Boolean));
+  if (!wanted.size) return [];
+  const byKey = new Map();
+  for (const ev of (Array.isArray(events) ? events : [])) {
+    for (const a of (ev?.attendees || [])) {
+      if (!a?.titleOnly) continue;
+      const title = String(a.title || '').trim();
+      if (!title) continue;
+      if (![a.company, a.lookupCompany].some(c => wanted.has(normalize(c)))) continue;
+      const key = title.toLowerCase();
+      if (!byKey.has(key)) byKey.set(key, { key, title, company: a.company || a.lookupCompany || '', decisionMaker: false, events: [] });
+      const entry = byKey.get(key);
+      if (a.decisionMaker) entry.decisionMaker = true;
+      if (!entry.events.some(e => e.id === ev.id)) entry.events.push({ id: ev.id, name: ev.name || 'Untitled event', date: ev.date || '' });
+    }
+  }
+  const out = [...byKey.values()];
+  for (const e of out) e.events.sort((x, y) => String(y.date).localeCompare(String(x.date)));
+  return out.sort((x, y) => (x.decisionMaker === y.decisionMaker ? x.title.localeCompare(y.title) : x.decisionMaker ? -1 : 1));
+}
