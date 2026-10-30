@@ -423,196 +423,102 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
 // left as a game plan.
 // Same 13-column grid, brand band, section bands and cell styles as the
 // Pipeline Report tab beside it.
-const DATE_FMT = 'mmm d, yyyy';
-const PRIORITY_TINT = {
-  High: { fill: BAD_FILL, fg: BAD_FG },
-  Medium: { fill: WARN_FILL, fg: WARN_FG },
-  Low: { fill: OK_FILL, fg: OK_FG },
-};
-
-// A YYYY-MM-DD day as an Excel date. UTC midnight, which is how ExcelJS
-// writes dates, so the cell shows the same day in every time zone.
-function excelDay(day) {
-  const m = String(day || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  return m ? new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))) : null;
-}
-const shortDay = (day) => {
-  const d = excelDay(day);
-  return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) : '';
-};
-
-// Row height for wrapped text in a merged block `cols` grid columns wide.
-function wrapHeight(text, widthChars, min = 17) {
-  const lines = String(text || '').split('\n')
-    .reduce((n, line) => n + Math.max(1, Math.ceil(line.length / Math.max(10, widthChars))), 0);
-  return Math.max(min, lines * 13 + 4);
-}
-
+// ── Q4 Focus tab ────────────────────────────────────────────────────────
+// Laid out like the one-page summary Dan sends: four KPI cards, the deals
+// behind the projection with room for their risks, the largest Stage 5
+// deals, and a block for what to avoid. Nothing wraps; a long name is cut
+// off at its cell's edge instead. The blank blocks are there to be typed
+// into.
 function buildQ4Sheet(wb, q, { sub }) {
   const COLS = 13;
-  // The Pipeline Report's grid, with the Close Date and Flag columns given
-  // room for a full date and a flag's words.
   const widths = [20, 11, 12, 11, 16, 13, 13, 10, 11, 13, 11, 11, 25];
   const ws = wb.addWorksheet(`Q4 ${q.year} Focus`, {
     properties: { tabColor: { argb: SE_GREEN_DARK } },
     views: [{ state: 'frozen', ySplit: 2 }],
   });
   ws.columns = widths.map(w => ({ width: w }));
-  const span = (c1, c2) => widths.slice(c1 - 1, c2).reduce((a, b) => a + b, 0);
   const put = blockWriter(ws);
+  const LINE = 17;
 
   let r = brandBand(ws, COLS, sub);
-  const gap = (h = 6) => { ws.getRow(r).height = h; r++; };
+  const gap = (h = LINE) => { ws.getRow(r).height = h; r++; };
   const title = (text) => { sectionTitle(ws, r, COLS, text); r++; };
+  const head = (cols, labels, { center = [], height = LINE } = {}) => {
+    labels.forEach((h, i) => put(r, cols[i][0], r, cols[i][1], h, { ...HEAD, wrap: false, align: center.includes(i) ? 'center' : 'left' }));
+    ws.getRow(r).height = height;
+    r++;
+  };
+  const blank = (cols, opts = {}) => cols.forEach(([c0, c1]) => put(r, c0, r, c1, null, { fill: 'FFFFFFFF', ...opts }));
 
   // ── KPI strip ──
-  // The top of the tab is laid out like the one-page summary Dan sends:
-  // five cards, then the deals behind the projection. Nothing up here
-  // wraps; a long name is cut off at its cell's edge instead.
-  gap(17);
+  gap();
   const hasProj = q.projected != null;
   const kpis = [
     { label: 'Target', cols: [1, 2], value: num(q.target), fmt: MONEY },
     { label: 'Sold YTD', cols: [3, 4], value: num(q.soldYTD), fmt: MONEY },
     { label: 'Projected Total', cols: [5, 6], value: hasProj ? num(q.projected) : null, fmt: MONEY, tint: hasProj && q.target > 0 ? cmpTint(q.projected, q.target, 'higher') : null },
-    { label: hasProj && q.projectedShort < 0 ? 'Projected Over Target' : 'Projected Short of Target', cols: [7, 10], value: hasProj && q.target > 0 ? num(Math.abs(q.projectedShort)) : null, fmt: MONEY,
-      tint: hasProj && q.target > 0 ? (q.projectedShort > 0 ? { fill: BAD_FILL, fg: BAD_FG } : { fill: OK_FILL, fg: OK_FG }) : null },
-    { label: 'Days Left', cols: [11, COLS], value: num(q.daysLeft), fmt: INT },
+    { label: 'Workdays Left This Year', cols: [7, 8], value: num(q.workdaysLeft), fmt: INT },
   ];
   kpis.forEach((k) => {
     const [c0, c1] = k.cols;
-    put(r, c0, r, c1, k.label.toUpperCase(), { align: 'center', bold: true, size: 8, fg: SE_MUTED, fill: 'FFEFF7F0' });
+    put(r, c0, r, c1, k.label.toUpperCase(), { align: 'center', bold: true, size: 8, fg: SE_MUTED, fill: 'FFEFF7F0', wrap: true });
     put(r + 1, c0, r + 1, c1, k.value, { align: 'center', bold: true, size: 15, numFmt: k.fmt, fill: k.tint ? k.tint.fill : 'FFFFFFFF', fg: k.tint ? k.tint.fg : SE_TEXT_DARK });
   });
-  ws.getRow(r).height = 15; ws.getRow(r + 1).height = 26;
+  // Tall enough for the Workdays label's two lines.
+  ws.getRow(r).height = 30; ws.getRow(r + 1).height = 26;
   r += 2;
 
-  // Deal tables share one column map: Account | Opportunity | Stage |
-  // Close Date | Amount | Share of the gap | Flag | Risks. The Risks block
-  // is left empty and wide, to be typed into.
-  const dealTable = (rows, { empty, flagOf, share = false, lastHead = 'Risks' }) => {
-    const cols = share
-      ? [[1, 2], [3, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 10], [11, 13]]
-      : [[1, 2], [3, 4], [5, 5], [6, 6], [7, 7], null, [8, 10], [11, 13]];
-    const heads = ['Account', 'Opportunity', 'Stage', 'Close Date', 'Amount', '% of Gap', 'Flag', lastHead];
-    heads.forEach((h, i) => {
-      if (!cols[i]) return;
-      put(r, cols[i][0], r, cols[i][1], h, { ...HEAD, align: i >= 3 && i <= 5 ? 'center' : 'left' });
-    });
-    r++;
-    if (!rows.length) { put(r, 1, r, COLS, empty, { fg: SE_MUTED }); r++; return; }
-    rows.forEach((d, idx) => {
-      const zebra = idx % 2 === 1 ? { zebra: true } : {};
-      const flag = flagOf(d);
-      const at = (i, value, opts) => put(r, cols[i][0], r, cols[i][1], value, opts);
-      at(0, d.account, { wrap: true, vertical: 'top', ...zebra });
-      at(1, d.opp, { wrap: true, vertical: 'top', ...zebra });
-      at(2, d.stage, { vertical: 'top', ...zebra });
-      at(3, excelDay(d.closeDate), { align: 'center', vertical: 'top', numFmt: DATE_FMT, ...((d.pastDue || d.nextYear) ? { fill: BAD_FILL, fg: BAD_FG } : zebra) });
-      at(4, num(d.amount), { align: 'center', vertical: 'top', numFmt: MONEY, bold: true, ...zebra });
-      if (share) at(5, num(d.share), { align: 'center', vertical: 'top', numFmt: PCT, ...zebra });
-      at(6, flag, { wrap: true, vertical: 'top', ...(flag ? { fill: WARN_FILL, fg: WARN_FG } : zebra) });
-      at(7, null, { wrap: true, vertical: 'top', fill: 'FFFFFFFF' });
-      ws.getRow(r).height = Math.max(30, wrapHeight(d.account, span(...cols[0])), wrapHeight(d.opp, span(...cols[1])), wrapHeight(flag, span(...cols[6])));
-      r++;
-    });
-  };
-  const dateFlag = (d) => (!d.closeDate ? 'No close date'
-    : d.pastDue ? 'Close date has passed'
-      : d.nextYear ? `Dated ${q.year + 1}: needs a Dec 31 signature`
-        : '');
-
-  // ── Projected total: the deals between Sold YTD and the projection ──
-  // Account | Opportunity | Stage | Amount, then an Opportunity and a
-  // Risks block left empty to be typed into. One line per deal.
-  gap(17); gap(17);
+  // ── The deals between Sold YTD and the projection ──
+  gap();
   title(hasProj ? `$${Math.round(q.projected).toLocaleString('en-US')} Projected` : 'Projected');
   const pCols = [[1, 2], [3, 4], [5, 5], [6, 6], [7, 10], [11, COLS]];
-  ['Account', 'Opportunity', 'Stage', 'Amount', 'Opportunity', 'Risks'].forEach((h, i) => {
-    put(r, pCols[i][0], r, pCols[i][1], h, { ...HEAD, wrap: false, align: i === 3 ? 'center' : 'left' });
-  });
-  ws.getRow(r).height = 17;
-  r++;
+  head(pCols, ['Account', 'Scope', 'Stage', 'Amount', 'Opportunity Risks', 'Risk Mitigation'], { center: [3] });
   const projDeals = q.projectionDeals || [];
   if (!projDeals.length) {
     put(r, 1, r, COLS, hasProj ? 'No open deals at Agreement Sent or Contracting.' : 'Load the Opps tab to list the deals behind the projection.', { fg: SE_MUTED });
-    ws.getRow(r).height = 17;
-    r++;
+    gap();
   }
   projDeals.forEach((d, idx) => {
     const zebra = idx % 2 === 1 ? { zebra: true } : {};
     const at = (i, value, opts) => put(r, pCols[i][0], r, pCols[i][1], value, opts);
     at(0, d.account, zebra);
-    at(1, d.opp, zebra);
+    at(1, d.scope || null, zebra);
     at(2, d.stage, zebra);
     at(3, num(d.amount), { align: 'center', numFmt: MONEY, bold: true, ...zebra });
-    at(4, null, { fill: 'FFFFFFFF' });
-    at(5, null, { fill: 'FFFFFFFF' });
-    ws.getRow(r).height = 17;
-    r++;
+    blank([pCols[4], pCols[5]]);
+    gap();
   });
   if (projDeals.length) {
-    put(r, 1, r, 5, `Sold YTD + these deals = $${Math.round(q.soldYTD + q.projectionDealsTotal).toLocaleString('en-US')}${q.overridden ? `  (chart pinned at $${Math.round(q.projected).toLocaleString('en-US')})` : ''}`, { bold: true });
+    put(r, 1, r, 5, null, {});
     put(r, 6, r, 6, num(q.projectionDealsTotal), { align: 'center', numFmt: MONEY, bold: true });
     put(r, 7, r, COLS, null, {});
-    ws.getRow(r).height = 17;
-    r++;
+    gap();
   }
 
-  // ── Where to focus ──
+  // ── Largest Stage 5 deals ──
   gap();
-  title(`Where to Focus: Closing Q4 ${q.year} Strong`);
-  const fCols = [[1, 1], [2, 2], [3, 5], [6, 9], [10, 13]]; // # | Priority | Focus | Why | Action
-  ['#', 'Priority', 'Focus', 'Why (from this report)', 'Action'].forEach((h, i) => put(r, fCols[i][0], r, fCols[i][1], h, { ...HEAD, align: i < 2 ? 'center' : 'left' }));
-  r++;
-  if (!q.priorities.length) {
-    put(r, 1, r, COLS, 'Nothing to flag: load BFO Activity and the Opps tab and set a Target for a Q4 plan.', { fg: SE_MUTED });
-    r++;
+  const minAmt = q.largeDealMin || 100000;
+  title(`Largest Stage 5 Deals: Above $${minAmt >= 1000 ? `${Math.round(minAmt / 1000)}k` : minAmt}`);
+  const bCols = [[1, 6], [7, 9], [10, 11], [12, COLS]];
+  head(bCols, ['Account', 'Existing Client?', 'Stage', 'Amount'], { height: 26 });
+  const big = q.largeStage5 || [];
+  if (!big.length) {
+    put(r, 1, r, COLS, `No Stage 5 deals above $${minAmt.toLocaleString('en-US')}.`, { fg: SE_MUTED });
+    gap();
   }
-  q.priorities.forEach((pr, idx) => {
+  big.forEach((d, idx) => {
     const zebra = idx % 2 === 1 ? { zebra: true } : {};
-    put(r, 1, r, 1, idx + 1, { align: 'center', bold: true, vertical: 'top', ...zebra });
-    put(r, 2, r, 2, pr.priority, { align: 'center', bold: true, vertical: 'top', ...(PRIORITY_TINT[pr.priority] || {}) });
-    put(r, 3, r, 5, pr.focus, { bold: true, wrap: true, vertical: 'top', ...zebra });
-    put(r, 6, r, 9, pr.why, { wrap: true, vertical: 'top', ...zebra });
-    put(r, 10, r, 13, pr.action, { wrap: true, vertical: 'top', ...zebra });
-    ws.getRow(r).height = Math.max(
-      wrapHeight(pr.focus, span(3, 5)), wrapHeight(pr.why, span(6, 9)), wrapHeight(pr.action, span(10, 13)),
-    );
-    r++;
+    put(r, 1, r, 6, d.account || '-', zebra);
+    put(r, 7, r, 9, d.existingClient ? 'Yes' : 'No', zebra);
+    put(r, 10, r, 11, d.stage || '-', zebra);
+    put(r, 12, r, COLS, num(d.amount), { numFmt: MONEY, bold: true, ...zebra });
+    gap();
   });
 
-  // ── Upside outside the projection ──
+  // ── What to avoid ──
   gap();
-  title(`Upside: Other Open Deals Dated by Dec 31, ${q.year}`);
-  dealTable(q.upside || [], {
-    empty: 'No other open deals have a close date this year.',
-    flagOf: dateFlag,
-    lastHead: 'Next Step',
-  });
-
-  // ── Pull-in candidates ──
-  gap();
-  title(`Pull-In Candidates: Quoted Deals Dated Jan to Mar ${q.year + 1}`);
-  dealTable(q.pullIn || [], {
-    empty: `No quoted deals are dated for early ${q.year + 1}.`,
-    flagOf: () => 'Ask for a December close',
-    lastHead: 'Next Step',
-  });
-
-  // ── Game plan ──
-  gap();
-  title(`Q4 Game Plan: ${q.weeksLeft} Week${q.weeksLeft === 1 ? '' : 's'} Left`);
-  put(r, 1, r, 3, 'Window', { ...HEAD, align: 'left' });
-  put(r, 4, r, COLS, 'Focus', { ...HEAD, align: 'left' });
-  r++;
-  q.plan.forEach((w, idx) => {
-    const zebra = idx % 2 === 1 ? { zebra: true } : {};
-    put(r, 1, r, 3, `${shortDay(w.from)} to ${shortDay(w.to)}`, { bold: true, vertical: 'top', ...zebra });
-    put(r, 4, r, COLS, w.focus, { wrap: true, vertical: 'top', ...zebra });
-    ws.getRow(r).height = wrapHeight(w.focus, span(4, COLS));
-    r++;
-  });
+  title('What to avoid during this time');
+  for (let i = 0; i < 4; i++) { blank([[1, COLS]]); gap(); }
 
   ws.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
 }

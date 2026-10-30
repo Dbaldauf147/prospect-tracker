@@ -13,6 +13,7 @@
 // Pure, with `today` passed in (scripts/q4Focus.test.mjs).
 import { parseMoney, annualSalesProjection, applyProjectionOverride } from './oppsMetrics.js';
 import { bfoOppNameOf } from './pipelineFunnelData.js';
+import { accountMatchesCompany } from './companyRenameCascade.js';
 
 // Which numbered BFO stage an Opps-tab stage rolls up into (stageBands.js,
 // with Repricing alongside Quoted the way activeStageRank places it).
@@ -42,6 +43,30 @@ function daysBetween(a, b) {
   return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / DAY);
 }
 
+// Weekdays from `today` through Dec 31, both ends counted, less
+// Thanksgiving and Christmas Day when they fall in that stretch.
+function workdaysLeft(today, year) {
+  const off = new Set([thanksgiving(year), `${year}-12-25`]);
+  const [y, m, d] = today.split('-').map(Number);
+  let n = 0;
+  for (let t = Date.UTC(y, m - 1, d); t <= Date.UTC(year, 11, 31); t += DAY) {
+    const day = new Date(t);
+    const dow = day.getUTCDay();
+    if (dow === 0 || dow === 6) continue;
+    if (off.has(day.toISOString().slice(0, 10))) continue;
+    n++;
+  }
+  return n;
+}
+
+// "Park Hotels & Resorts - Headquarters" is the Park Hotels & Resorts
+// account: BFO tacks the site on after a spaced hyphen.
+function isClientAccount(account, clientCompanies) {
+  const site = String(account || '').split(' - ')[0];
+  return clientCompanies.some(c => accountMatchesCompany(c, account) || accountMatchesCompany(c, site)
+    || (!!site.trim() && site.trim().toLowerCase() === String(c || '').trim().toLowerCase()));
+}
+
 // Fourth Thursday of November.
 function thanksgiving(year) {
   const first = new Date(year, 10, 1).getDay();
@@ -65,6 +90,7 @@ function openDeal(r) {
   return {
     account: String(r.Account || '').trim() || '(no account)',
     opp: bfoOppNameOf(r) || String(r.Scope || '').trim() || '-',
+    scope: String(r.Scope || '').trim(),
     stage,
     stageNumber: n,
     closeDate: parseDay(r['Close Date']),
@@ -78,7 +104,7 @@ function openDeal(r) {
  * input: { today: 'YYYY-MM-DD', oppsRecords, yoyOverrides, stages,
  * quota: { target, closedYTD }, coverage: { goal, actual },
  * renewals: { rows }, postSaleFollowUp: { rows }, newOppsByMonth,
- * serviceCoverage: { rows } }
+ * serviceCoverage: { rows }, largeDeals: { rows }, clientCompanies }
  */
 export function buildQ4Focus(input) {
   const today = input.today;
@@ -87,6 +113,7 @@ export function buildQ4Focus(input) {
   const yearEnd = `${year}-12-31`;
   const daysLeft = Math.max(0, daysBetween(today, yearEnd) + 1);
   const weeksLeft = Math.max(0, Math.ceil(daysLeft / 7));
+  const workdays = workdaysLeft(today, year);
   const records = input.oppsRecords || [];
 
   // The Annual Sales chart's Projected bar: sold this year plus every open
@@ -311,8 +338,17 @@ export function buildQ4Focus(input) {
     { from: `${year}-12-13`, to: yearEnd, focus: 'Signatures and POs only. Decision makers start leaving around Dec 19, so the last week is for paperwork, not new asks. Book Q1 kickoff meetings.' },
   ].filter(w => w.to >= today).map(w => ({ ...w, from: w.from < today ? today : w.from }));
 
+  // The report's Largest Stage 5 & 6 deals, Stage 5 only, each marked
+  // with whether its account is a company already set to Client.
+  const clientCompanies = (input.clientCompanies || []).filter(Boolean);
+  const largeStage5 = (input.largeDeals?.rows || [])
+    .filter(d => String(d.stage || '').trim() === 'Stage 5')
+    .map(d => ({ ...d, existingClient: isClientAccount(d.account, clientCompanies) }))
+    .sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0));
+
   return {
-    year, today, daysLeft, weeksLeft,
+    year, today, daysLeft, weeksLeft, workdaysLeft: workdays,
+    largeStage5, largeDealMin: Number(input.largeDeals?.minAmount) || 100000,
     target, soldYTD, gap, closedQ4,
     projected, overridden, toProjected, projectedShort,
     projectionDeals, projectionDealsTotal,
