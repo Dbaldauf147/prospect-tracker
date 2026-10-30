@@ -1,0 +1,17 @@
+{
+  "_about": "Fields Firestore must not index. Released by scripts/deployFirestoreIndexExemptions.mjs on every production build. Nothing queries these fields: they are read whole, by document id. Indexing every key of these maps is what took userSettings past Firestore's 40,000 index entries per document ('too many index entries for entity'). An exemption on a map covers every key inside it.",
+  "fieldOverrides": [
+    { "collectionGroup": "userSettings", "fieldPath": "targetMap" },
+    { "collectionGroup": "userSettings", "fieldPath": "tablePrefs" },
+    { "collectionGroup": "userSettings", "fieldPath": "serviceOverrides" },
+    { "collectionGroup": "userSettings", "fieldPath": "companyContactLinks" },
+    { "collectionGroup": "userSettings", "fieldPath": "companyOpportunities" },
+    { "collectionGroup": "userSettings", "fieldPath": "companyComplianceLinks" },
+    { "collectionGroup": "userSettings", "fieldPath": "divisionsMap" },
+    { "collectionGroup": "userSettings", "fieldPath": "hqRegionMap" },
+    { "collectionGroup": "userSettings", "fieldPath": "ccMap" },
+    { "collectionGroup": "userSettings", "fieldPath": "toAlsoMap" },
+    { "collectionGroup": "userSettings", "fieldPath": "ignoredTargetSuggestions" },
+    { "collectionGroup": "userSettings", "fieldPath": "marketingLeadLinks" }
+  ]
+}
