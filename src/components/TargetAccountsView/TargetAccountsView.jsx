@@ -499,9 +499,20 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
     setAcceptError(null);
     setAccepting({ done: 0, total: plans.length });
     try {
-      const nextMap = { ...(settings?.targetMap || {}) };
-      for (const pl of plans) nextMap[pl.id] = [pl.target];
-      updateSettings({ targetMap: nextMap });
+      // Built from the settings as they are when the save runs, not as this
+      // render saw them, and waited for: a save that was refused (the
+      // settings document is full) or failed used to be ignored, so the
+      // companies' CDM, Tier and Vertical changed while none of the
+      // mappings were kept and the button came back with the same count.
+      const saved = await updateSettings(prev => {
+        const nextMap = { ...(prev?.targetMap || {}) };
+        for (const pl of plans) nextMap[pl.id] = [pl.target];
+        return { targetMap: nextMap };
+      });
+      if (saved === false) {
+        setAcceptError(`Couldn't save the ${plans.length.toLocaleString()} mappings, so nothing was changed. If a message said your settings are too big to store, clear some saved data and try again; otherwise reload the page and try again.`);
+        return;
+      }
       const failed = [];
       let done = 0;
       for (const pl of plans) {

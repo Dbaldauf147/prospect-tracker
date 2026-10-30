@@ -260,9 +260,17 @@ export function HubspotMappingTab({ accounts = [], prospects = [], search = '', 
     }
     setAccepting(true);
     try {
-      const nextMap = { ...(settings?.targetMap || {}) };
-      for (const pl of plans) nextMap[pl.id] = [pl.row.name];
-      updateSettings({ targetMap: nextMap });
+      // Waited for, and built from the settings as they are when it runs:
+      // see the Targets List page's bulk map, which had the same gap.
+      const saved = await updateSettings(prev => {
+        const nextMap = { ...(prev?.targetMap || {}) };
+        for (const pl of plans) nextMap[pl.id] = [pl.row.name];
+        return { targetMap: nextMap };
+      });
+      if (saved === false) {
+        setError(`Couldn't save the ${plans.length} Targets list mapping${plans.length === 1 ? '' : 's'}, so nothing was changed. Reload the page and try again.`);
+        return;
+      }
       const failed = [];
       for (const pl of plans) {
         if (!Object.keys(pl.patch).length || !onUpdate) continue;
