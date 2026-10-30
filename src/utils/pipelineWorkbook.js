@@ -382,8 +382,8 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     const sa = p.strategicAccounts || {};
     gap();
     title(sa.title || 'Strategic Accounts: My Accounts');
-    const saCols = [[1, 6], [7, 10], [11, 13]]; // Account | Account Owner | Type
-    const saHdr = sa.headers || ['Account', 'Account Owner', 'Type'];
+    const saCols = [[1, 6], [7, 13]]; // Company Name | Contact
+    const saHdr = sa.headers || ['Company Name', 'Contact'];
     saHdr.forEach((h, i) => put(r, saCols[i][0], r, saCols[i][1], h, { ...HEAD, align: 'left' }));
     r++;
     const saRows = sa.rows || [];
@@ -393,8 +393,10 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
     } else {
       saRows.forEach((row, idx) => {
         const zebra = idx % 2 === 1;
-        const vals = [row.account || '-', row.owner || '-', row.type || '-'];
-        vals.forEach((v, i) => put(r, saCols[i][0], r, saCols[i][1], v, { align: 'left', wrap: i === 0, ...(zebra ? { zebra: true } : {}) }));
+        const contacts = row.contacts || [];
+        const vals = [row.account || '-', contacts.join('\n') || '-'];
+        vals.forEach((v, i) => put(r, saCols[i][0], r, saCols[i][1], v, { align: 'left', wrap: true, vertical: 'top', ...(zebra ? { zebra: true } : {}) }));
+        ws.getRow(r).height = Math.max(15, contacts.length * 15);
         r++;
       });
     }
