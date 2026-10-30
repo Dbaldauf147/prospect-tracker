@@ -99,6 +99,23 @@ function cmpTint(actual, goal, dir = 'higher') {
   return good ? { fill: OK_FILL, fg: OK_FG } : { fill: BAD_FILL, fg: BAD_FG };
 }
 
+// Merge a block and style every covered cell (so the full outline renders),
+// writing `value` into the anchor. Shared by the one-page report and its
+// Q4 Focus tab so the two are drawn with the same pen.
+function blockWriter(ws) {
+  return (r1, c1, r2, c2, value, opts = {}) => {
+    if (r2 > r1 || c2 > c1) ws.mergeCells(r1, c1, r2, c2);
+    for (let rr = r1; rr <= r2; rr++) {
+      for (let cc = c1; cc <= c2; cc++) {
+        const cell = ws.getCell(rr, cc);
+        if (rr === r1 && cc === c1) cell.value = value === '' || value == null ? null : value;
+        styleBody(cell, opts);
+      }
+    }
+  };
+}
+const HEAD = { bold: true, fg: 'FFFFFFFF', fill: SE_GREEN_DARK, align: 'center', wrap: true };
+
 // ── Single-tab layout ───────────────────────────────────────────────────
 // Everything on one polished worksheet: a brand band, a KPI card strip, the
 // per-stage metrics table (grouped two-row header), Current-Client-vs-
@@ -113,19 +130,7 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
   });
   ws.columns = [20, 11, 12, 11, 12, 12, 12, 10, 11, 13, 11, 11, 22].map(w => ({ width: w }));
 
-  // Merge a block and style every covered cell (so the full outline renders),
-  // writing `value` into the anchor.
-  const put = (r1, c1, r2, c2, value, opts = {}) => {
-    if (r2 > r1 || c2 > c1) ws.mergeCells(r1, c1, r2, c2);
-    for (let rr = r1; rr <= r2; rr++) {
-      for (let cc = c1; cc <= c2; cc++) {
-        const cell = ws.getCell(rr, cc);
-        if (rr === r1 && cc === c1) cell.value = value === '' || value == null ? null : value;
-        styleBody(cell, opts);
-      }
-    }
-  };
-  const HEAD = { bold: true, fg: 'FFFFFFFF', fill: SE_GREEN_DARK, align: 'center', wrap: true };
+  const put = blockWriter(ws);
 
   let r = brandBand(ws, COLS, sub);
   const gap = (h = 6) => { ws.getRow(r).height = h; r++; };
@@ -407,6 +412,163 @@ function buildSingleSheet(wb, p, { lbl, sub }) {
   });
 }
 
+// ── Q4 Focus tab (one-page layout only) ─────────────────────────────────
+// What to work on to close the year out: a KPI strip for the year-end
+// number, a ranked list of focus areas built from the report's own figures
+// (utils/q4Focus.js), the deals dated to close by Dec 31, the late-stage
+// deals a push could bring into Q4, and the weeks left as a game plan.
+// Same 13-column grid, brand band, section bands and cell styles as the
+// Pipeline Report tab beside it.
+const DATE_FMT = 'mmm d, yyyy';
+const PRIORITY_TINT = {
+  High: { fill: BAD_FILL, fg: BAD_FG },
+  Medium: { fill: WARN_FILL, fg: WARN_FG },
+  Low: { fill: OK_FILL, fg: OK_FG },
+};
+
+// A YYYY-MM-DD day as an Excel date. UTC midnight, which is how ExcelJS
+// writes dates, so the cell shows the same day in every time zone.
+function excelDay(day) {
+  const m = String(day || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))) : null;
+}
+const shortDay = (day) => {
+  const d = excelDay(day);
+  return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) : '';
+};
+
+// Row height for wrapped text in a merged block `cols` grid columns wide.
+function wrapHeight(text, widthChars, min = 17) {
+  const lines = String(text || '').split('\n')
+    .reduce((n, line) => n + Math.max(1, Math.ceil(line.length / Math.max(10, widthChars))), 0);
+  return Math.max(min, lines * 13 + 4);
+}
+
+function buildQ4Sheet(wb, q, { sub }) {
+  const COLS = 13;
+  // The Pipeline Report's grid, with the Close Date and Flag columns given
+  // room for a full date and a flag's words.
+  const widths = [20, 11, 12, 11, 12, 12, 12, 10, 13, 13, 11, 11, 26];
+  const ws = wb.addWorksheet(`Q4 ${q.year} Focus`, {
+    properties: { tabColor: { argb: SE_GREEN_DARK } },
+    views: [{ state: 'frozen', ySplit: 2 }],
+  });
+  ws.columns = widths.map(w => ({ width: w }));
+  const span = (c1, c2) => widths.slice(c1 - 1, c2).reduce((a, b) => a + b, 0);
+  const put = blockWriter(ws);
+
+  let r = brandBand(ws, COLS, sub);
+  const gap = (h = 6) => { ws.getRow(r).height = h; r++; };
+  const title = (text) => { sectionTitle(ws, r, COLS, text); r++; };
+
+  // ── KPI strip ──
+  gap();
+  const projTint = q.target > 0 ? cmpTint(q.projected, q.target, 'higher') : null;
+  const kpis = [
+    { label: 'Target', value: num(q.target), fmt: MONEY },
+    { label: 'Closed YTD', value: num(q.closedYTD), fmt: MONEY },
+    { label: 'Gap to Target', value: num(q.gap), fmt: MONEY, tint: q.target > 0 ? (q.gap > 0 ? { fill: BAD_FILL, fg: BAD_FG } : { fill: OK_FILL, fg: OK_FG }) : null },
+    { label: 'Weighted Q4 Pipeline', value: num(q.weightedQ4), fmt: MONEY },
+    { label: 'Projected Finish', value: num(q.projected), fmt: MONEY, tint: projTint },
+    { label: 'Days Left', value: num(q.daysLeft), fmt: INT },
+  ];
+  kpis.forEach((k, i) => {
+    const c0 = Math.floor((i * COLS) / kpis.length) + 1;
+    const c1 = Math.floor(((i + 1) * COLS) / kpis.length);
+    put(r, c0, r, c1, k.label.toUpperCase(), { align: 'center', bold: true, size: 8, fg: SE_MUTED, fill: 'FFEFF7F0' });
+    put(r + 1, c0, r + 1, c1, k.value, { align: 'center', bold: true, size: 15, numFmt: k.fmt, fill: k.tint ? k.tint.fill : 'FFFFFFFF', fg: k.tint ? k.tint.fg : SE_TEXT_DARK });
+  });
+  ws.getRow(r).height = 15; ws.getRow(r + 1).height = 26;
+  r += 2;
+  put(r, 1, r, COLS, `Projected Finish = Closed YTD + every open deal dated to close by Dec 31, weighted by its stage's close rate. Closed so far this quarter: $${Math.round(q.closedQ4).toLocaleString('en-US')}.`, { fg: SE_MUTED, size: 9, wrap: true });
+  ws.getRow(r).height = 16;
+  r++;
+
+  // ── Where to focus ──
+  gap();
+  title(`Where to Focus: Closing Q4 ${q.year} Strong`);
+  const fCols = [[1, 1], [2, 2], [3, 5], [6, 9], [10, 13]]; // # | Priority | Focus | Why | Action
+  ['#', 'Priority', 'Focus', 'Why (from this report)', 'Action'].forEach((h, i) => put(r, fCols[i][0], r, fCols[i][1], h, { ...HEAD, align: i < 2 ? 'center' : 'left' }));
+  r++;
+  if (!q.priorities.length) {
+    put(r, 1, r, COLS, 'Nothing to flag: load BFO Activity and the Opps tab and set a Target for a Q4 plan.', { fg: SE_MUTED });
+    r++;
+  }
+  q.priorities.forEach((pr, idx) => {
+    const zebra = idx % 2 === 1 ? { zebra: true } : {};
+    put(r, 1, r, 1, idx + 1, { align: 'center', bold: true, vertical: 'top', ...zebra });
+    put(r, 2, r, 2, pr.priority, { align: 'center', bold: true, vertical: 'top', ...(PRIORITY_TINT[pr.priority] || {}) });
+    put(r, 3, r, 5, pr.focus, { bold: true, wrap: true, vertical: 'top', ...zebra });
+    put(r, 6, r, 9, pr.why, { wrap: true, vertical: 'top', ...zebra });
+    put(r, 10, r, 13, pr.action, { wrap: true, vertical: 'top', ...zebra });
+    ws.getRow(r).height = Math.max(
+      wrapHeight(pr.focus, span(3, 5)), wrapHeight(pr.why, span(6, 9)), wrapHeight(pr.action, span(10, 13)),
+    );
+    r++;
+  });
+
+  // Deal tables share one column map.
+  const dCols = [[1, 3], [4, 6], [7, 8], [9, 9], [10, 10], [11, 11], [12, 12], [13, 13]];
+  const dealHead = ['Account', 'Opportunity', 'Stage', 'Close Date', 'Amount', 'Close Rate', 'Weighted', 'Flag'];
+  const dealRows = (rows, empty, flagOf) => {
+    dealHead.forEach((h, i) => put(r, dCols[i][0], r, dCols[i][1], h, { ...HEAD, align: i >= 3 && i <= 6 ? 'center' : 'left' }));
+    r++;
+    if (!rows.length) { put(r, 1, r, COLS, empty, { fg: SE_MUTED }); r++; return; }
+    rows.forEach((d, idx) => {
+      const zebra = idx % 2 === 1 ? { zebra: true } : {};
+      const flag = flagOf(d);
+      put(r, 1, r, 3, d.account, { wrap: true, ...zebra });
+      put(r, 4, r, 6, d.opp, { wrap: true, ...zebra });
+      put(r, 7, r, 8, `${d.stageNumber}: ${d.stage}`, zebra);
+      put(r, 9, r, 9, excelDay(d.closeDate), { align: 'center', numFmt: DATE_FMT, ...(d.pastDue ? { fill: BAD_FILL, fg: BAD_FG } : zebra) });
+      put(r, 10, r, 10, num(d.amount), { align: 'center', numFmt: MONEY, ...zebra });
+      put(r, 11, r, 11, num(d.odds), { align: 'center', numFmt: PCT, ...zebra });
+      put(r, 12, r, 12, num(d.weighted), { align: 'center', numFmt: MONEY, bold: true, ...zebra });
+      put(r, 13, r, 13, flag, flag ? { fill: WARN_FILL, fg: WARN_FG } : zebra);
+      ws.getRow(r).height = Math.max(wrapHeight(d.account, span(1, 3)), wrapHeight(d.opp, span(4, 6)));
+      r++;
+    });
+  };
+
+  // ── Deals to close by Dec 31 ──
+  gap();
+  title(`Deals to Close by Dec 31, ${q.year}: Biggest Weighted Value First`);
+  dealRows(
+    q.deals,
+    'No open deals on the Opps tab have a close date this year.',
+    d => (d.pastDue ? 'Past due: update the date' : (d.stageNumber === 6 ? 'Chase the signature' : '')),
+  );
+  if (q.deals.length) {
+    put(r, 1, r, 9, 'Total', { bold: true });
+    put(r, 10, r, 10, num(q.faceQ4), { align: 'center', numFmt: MONEY, bold: true });
+    put(r, 11, r, 11, null, {});
+    put(r, 12, r, 12, num(q.weightedQ4), { align: 'center', numFmt: MONEY, bold: true });
+    put(r, 13, r, 13, null, {});
+    r++;
+  }
+
+  // ── Pull-in candidates ──
+  gap();
+  title(`Pull-In Candidates: Stage 5 & 6 Deals Dated Jan to Mar ${q.year + 1}`);
+  dealRows(q.pullIn, `No Stage 5 or 6 deals are dated for early ${q.year + 1}.`, () => 'Ask for a December close');
+
+  // ── Game plan ──
+  gap();
+  title(`Q4 Game Plan: ${q.weeksLeft} Week${q.weeksLeft === 1 ? '' : 's'} Left`);
+  put(r, 1, r, 3, 'Window', { ...HEAD, align: 'left' });
+  put(r, 4, r, COLS, 'Focus', { ...HEAD, align: 'left' });
+  r++;
+  q.plan.forEach((w, idx) => {
+    const zebra = idx % 2 === 1 ? { zebra: true } : {};
+    put(r, 1, r, 3, `${shortDay(w.from)} to ${shortDay(w.to)}`, { bold: true, vertical: 'top', ...zebra });
+    put(r, 4, r, COLS, w.focus, { wrap: true, vertical: 'top', ...zebra });
+    ws.getRow(r).height = wrapHeight(w.focus, span(4, COLS));
+    r++;
+  });
+
+  ws.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+}
+
 import { sanitizeExcelWorkbook, stripDashes } from './exportSanitize.js';
 
 export async function downloadPipelineWorkbook(p) {
@@ -425,6 +587,11 @@ export async function downloadPipelineWorkbook(p) {
 
   if (p.layout === 'single') {
     buildSingleSheet(wb, p, { lbl, sub });
+    if (p.q4Focus) {
+      buildQ4Sheet(wb, p.q4Focus, {
+        sub: `Q4 ${p.q4Focus.year} Focus: Close the Year Strong${p.cdmName ? `  ·  ${p.cdmName}` : ''}  ·  ${dateStr}`,
+      });
+    }
   } else {
 
   // ── Sheet 1: Summary (KV blocks) ──────────────────────────────────────
