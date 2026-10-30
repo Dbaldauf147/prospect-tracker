@@ -18,6 +18,8 @@ import { targetAccountRows } from '../../utils/targetAccountMatch';
 import { buildCdmOptions } from '../../utils/prospectOptions';
 import { canonicalCdmOption, rowsForCdm } from '../../utils/targetAccountCdm';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
+import { DUPLICATE_FLAG, isDuplicateRow, withoutDuplicateRows, carryDuplicateFlags, possibleDuplicateNames } from '../../utils/targetDuplicates';
+import { normalizeCompany } from '../../utils/companyNorm';
 
 const STORE_NAME = 'target-accounts';
 
@@ -199,7 +201,13 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
   // per-company active-opp count and flag opps for companies that aren't
   // tied to the configured CDM on the list.
   const [oppsRecords, setOppsRecords] = useState([]);
+  // Rows flagged as duplicates are left off the list unless this is on.
+  const [showDuplicates, setShowDuplicates] = useState(false);
   const fileRef = useRef(null);
+  // Every other page gets the list without its flagged duplicates.
+  const publish = (d) => { if (onDataLoaded) onDataLoaded(withoutDuplicateRows(d)); };
+  // The list as every other page sees it: flagged duplicates taken out.
+  const liveData = useMemo(() => withoutDuplicateRows(data), [data]);
   function toggleBlockedAccount(rawName) {
     const key = String(rawName || '').toLowerCase().trim();
     if (!key) return;
@@ -217,7 +225,7 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
     loadTargetAccountsFromDB(user?.uid).then(cached => {
       if (cached) {
         setData(cached);
-        if (onDataLoaded) onDataLoaded(cached);
+        publish(cached);
         if (cached.sheetNames?.length > 0) setActiveSheet(cached.sheetNames[0]);
       }
       setLoading(false);
@@ -246,7 +254,7 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
   useEffect(() => {
     if (!settings) return;
     const tid = 'target-accounts';
-    const pending = [['__activeOpps__', 'mig-active-opps-col'], ['__tableView__', 'mig-table-view-col'], ['__matchPct__', 'mig-match-pct-col']]
+    const pending = [['__activeOpps__', 'mig-active-opps-col'], ['__tableView__', 'mig-table-view-col'], ['__matchPct__', 'mig-match-pct-col'], ['__duplicate__', 'mig-duplicate-col']]
       .filter(([, f]) => {
         let done = true;
         try { done = !!localStorage.getItem(`${tid}:${f}`); } catch { /* storage blocked */ }
@@ -284,8 +292,8 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
   // company isn't tied to the configured CDM on the target list.
   const oppsIndex = useMemo(() => buildActiveOppsIndex(oppsRecords), [oppsRecords]);
   const untiedOpps = useMemo(
-    () => findUntiedActiveOpps(oppsRecords, data, cdmName, settings?.targetCdmColumn),
-    [oppsRecords, data, cdmName, settings?.targetCdmColumn]
+    () => findUntiedActiveOpps(oppsRecords, liveData, cdmName, settings?.targetCdmColumn),
+    [oppsRecords, liveData, cdmName, settings?.targetCdmColumn]
   );
 
   function processFile(file) {
@@ -337,23 +345,26 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
           return;
         }
 
-        const result = {
+        // Rows flagged as duplicates on the old list stay flagged when the
+        // same row comes back in the new file.
+        const carried = carryDuplicateFlags(data, {
           fileName: file.name,
           sheets,
           sheetNames,
           uploadedAt: new Date().toISOString(),
-        };
+        });
+        const result = carried.data;
 
         setData(result);
         saveCache(result);
         if (user?.uid) saveToFirestore(user.uid, result);
-        if (onDataLoaded) onDataLoaded(result);
+        publish(result);
         // A new list is a fresh slate — clear any previously-dismissed tier
         // mismatches so they re-surface against the newly uploaded tiers.
-        let clearedNote = '';
+        let clearedNote = carried.count ? `: kept ${carried.count} duplicate flag${carried.count > 1 ? 's' : ''}` : '';
         if (onListUploaded) {
           const cleared = onListUploaded();
-          if (cleared) clearedNote = `: reset ${cleared} tier-mismatch dismissal${cleared > 1 ? 's' : ''}`;
+          if (cleared) clearedNote += `: reset ${cleared} tier-mismatch dismissal${cleared > 1 ? 's' : ''}`;
         }
         setActiveSheet(sheetNames[0]);
         setStatus(`Uploaded "${file.name}": ${sheetNames.length} sheet${sheetNames.length > 1 ? 's' : ''}, ${sheetNames.map(n => `${sheets[n].records.length} rows in ${n}`).join(', ')}${clearedNote}`);
@@ -379,7 +390,7 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
       const updated = { ...prev, sheets: { ...prev.sheets, [activeSheet]: { ...sheet, records: sheet.records.map((r, i) => i === rowIndex ? { ...r, [colKey]: newValue } : r) } } };
       saveCache(updated);
       if (user?.uid) saveToFirestore(user.uid, updated);
-      if (onDataLoaded) onDataLoaded(updated);
+      publish(updated);
       return updated;
     });
   }
@@ -409,7 +420,7 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
       };
       saveCache(updated);
       if (user?.uid) saveToFirestore(user.uid, updated);
-      if (onDataLoaded) onDataLoaded(updated);
+      publish(updated);
       return updated;
     });
     // Drop the deleted name from the blocked-list too — keeping it
@@ -426,6 +437,26 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
     }
   }
 
+  // Flag (or unflag) a row as a duplicate. A flagged row stays in the saved
+  // workbook but is left off this list and out of every other page.
+  function toggleDuplicate(record) {
+    if (!record) return;
+    setData(prev => {
+      if (!prev?.sheets || !activeSheet) return prev;
+      const sheet = prev.sheets[activeSheet];
+      const records = sheet.records.map(r => {
+        if (r._id !== record._id) return r;
+        if (isDuplicateRow(r)) { const { [DUPLICATE_FLAG]: _drop, ...rest } = r; return rest; }
+        return { ...r, [DUPLICATE_FLAG]: true };
+      });
+      const updated = { ...prev, sheets: { ...prev.sheets, [activeSheet]: { ...sheet, records } } };
+      saveCache(updated);
+      if (user?.uid) saveToFirestore(user.uid, updated);
+      publish(updated);
+      return updated;
+    });
+  }
+
   function handleDrop(e) {
     e.preventDefault();
     setDragOver(false);
@@ -436,7 +467,9 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
   // Current sheet data
   const currentSheet = data?.sheets?.[activeSheet || data?.sheetNames?.[0]];
   const headers = currentSheet?.headers || [];
-  const records = currentSheet?.records || [];
+  const allRecords = useMemo(() => currentSheet?.records || [], [currentSheet]);
+  const records = useMemo(() => allRecords.filter(r => !isDuplicateRow(r)), [allRecords]);
+  const duplicateCount = allRecords.length - records.length;
 
   // Build columns from headers — all cells are editable. The leftmost
   // "Blocked" column toggles per-row; blocked accounts are suppressed
@@ -447,14 +480,14 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
   // sheet), by the same saved mapping / name match My Accounts uses.
   const allTargetNames = useMemo(() => {
     const out = [];
-    for (const n of data?.sheetNames || []) {
-      const sh = data?.sheets?.[n];
+    for (const n of liveData?.sheetNames || []) {
+      const sh = liveData?.sheets?.[n];
       const k = sh?.headers?.[0];
       if (!k) continue;
       for (const r of sh.records || []) out.push(r[k]);
     }
     return out;
-  }, [data]);
+  }, [liveData]);
   const tableViewByTarget = useMemo(
     () => tableViewCompaniesByTarget(prospects, allTargetNames, settings?.targetMap),
     [prospects, allTargetNames, settings?.targetMap]
@@ -470,13 +503,13 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
   const [onScreen, setOnScreen] = useState([]);
   const targetRowsByName = useMemo(() => {
     const m = new Map();
-    for (const r of (data ? targetAccountRows(data, {
+    for (const r of (liveData ? targetAccountRows(liveData, {
       targetCdmColumn: settings?.targetCdmColumn,
       targetVerticalColumn: settings?.targetVerticalColumn,
       targetVerticalNames: settings?.targetVerticalNames,
     }) : [])) m.set(r.name.toLowerCase(), r);
     return m;
-  }, [data, settings?.targetCdmColumn, settings?.targetVerticalColumn, settings?.targetVerticalNames]);
+  }, [liveData, settings?.targetCdmColumn, settings?.targetVerticalColumn, settings?.targetVerticalNames]);
   const prospectsById = useMemo(() => new Map(prospects.map(p => [p.id, p])), [prospects]);
   const cdmOptions = useMemo(() => buildCdmOptions(prospects, settings || {}), [prospects, settings]);
   const verticalOptions = useMemo(
@@ -544,6 +577,13 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
     [records, nameKey, tableViewByTarget, cdmName, settings?.targetCdmColumn]
   );
 
+  // Names more than one unflagged row on this sheet shares, so the
+  // Duplicate column can point at the rows still to be flagged.
+  const possibleDupes = useMemo(() => possibleDuplicateNames(allRecords, nameKey), [allRecords, nameKey]);
+  const duplicateStatus = (row) => isDuplicateRow(row)
+    ? 'Duplicate'
+    : (possibleDupes.has(normalizeCompany(nameKey ? row[nameKey] : '')) ? 'Possible duplicate' : 'Unique');
+
   const columns = useMemo(() => {
     const seen = new Set();
     const dataCols = headers
@@ -555,8 +595,9 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
         sticky: h === headers[0],
         render: (row) => {
           const isBlocked = nameKey ? blockedAccountNames.has(String(row[nameKey] || '').toLowerCase().trim()) : false;
+          const muted = isBlocked || isDuplicateRow(row);
           return (
-            <span style={{ textDecoration: isBlocked ? 'line-through' : 'none', color: isBlocked ? 'var(--color-text-muted)' : 'inherit', display: 'inline-block' }}>
+            <span style={{ textDecoration: muted ? 'line-through' : 'none', color: muted ? 'var(--color-text-muted)' : 'inherit', display: 'inline-block' }}>
               <InlineEditCell value={row[h]} rowIndex={row._id - 1} colKey={h} onSave={handleCellEdit} />
             </span>
           );
@@ -582,6 +623,43 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
             style={{ cursor: accountName ? 'pointer' : 'not-allowed', accentColor: '#DC2626' }}
             aria-label={`Block ${accountName} from fuzzy lookups`}
           />
+        );
+      },
+    };
+    // Flag a row as a duplicate: it leaves this list (unless "Show
+    // duplicates" is on) and every other page stops seeing the company.
+    // Rows whose name another row shares get an amber "Possible" tag.
+    const dupCol = {
+      key: '__duplicate__',
+      label: 'Duplicate',
+      defaultWidth: 110,
+      getSortValue: (row) => ({ Duplicate: 0, 'Possible duplicate': 1, Unique: 2 })[duplicateStatus(row)],
+      getFilterValue: (row) => duplicateStatus(row),
+      render: (row) => {
+        const accountName = nameKey ? String(row[nameKey] || '').trim() : '';
+        const status = duplicateStatus(row);
+        const flagged = status === 'Duplicate';
+        return (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <input
+              type="checkbox"
+              checked={flagged}
+              onChange={() => toggleDuplicate(row)}
+              onClick={e => e.stopPropagation()}
+              title={flagged
+                ? `"${accountName}" is flagged as a duplicate and hidden from every other page. Uncheck to bring it back.`
+                : `Flag "${accountName}" as a duplicate: hides it from this list and every other page, without deleting it`}
+              style={{ cursor: 'pointer', accentColor: '#B45309' }}
+              aria-label={`Flag ${accountName} as a duplicate`}
+            />
+            {status === 'Possible duplicate' && (
+              <span
+                title={`Another row on this sheet has the same name as "${accountName}"`}
+                style={{ padding: '0 6px', borderRadius: 999, fontSize: '0.64rem', fontWeight: 700, background: '#FEF3C7', color: '#92400E' }}
+              >Possible</span>
+            )}
+            {flagged && <span style={{ fontSize: '0.64rem', fontWeight: 700, color: '#B45309' }}>Hidden</span>}
+          </span>
         );
       },
     };
@@ -718,8 +796,8 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
         ? <span title={data?.uploadedAt ? `Uploaded ${new Date(data.uploadedAt).toLocaleString()}` : undefined}>{sourceFile}</span>
         : <span style={{ color: '#CBD5E1' }}>-</span>),
     };
-    return [blockCol, deleteCol, ...(dataCols.length > 0 ? [dataCols[0], tableViewCol, matchCol, oppsCol, ...dataCols.slice(1)] : [tableViewCol, matchCol, oppsCol]), sourceCol];
-  }, [headers, blockedAccountNames, nameKey, oppsIndex, tableViewByTarget, prospects, onSelectProspect, accepting, targetRowsByName, settings?.targetMap, verticalOptions, cdmOptions, data?.fileName, data?.uploadedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+    return [blockCol, deleteCol, ...(dataCols.length > 0 ? [dataCols[0], dupCol, tableViewCol, matchCol, oppsCol, ...dataCols.slice(1)] : [dupCol, tableViewCol, matchCol, oppsCol]), sourceCol];
+  }, [headers, blockedAccountNames, possibleDupes, activeSheet, nameKey, oppsIndex, tableViewByTarget, prospects, onSelectProspect, accepting, targetRowsByName, settings?.targetMap, verticalOptions, cdmOptions, data?.fileName, data?.uploadedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Union of column headers across every sheet — feeds the "Salesperson /
   // CDM column" picker so the mapping works no matter which sheet is
@@ -748,7 +826,7 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
 
   // Filtered records — text search only.
   const filtered = useMemo(() => {
-    let result = records;
+    let result = showDuplicates ? allRecords : records;
     if (search.trim()) {
       const term = search.toLowerCase();
       result = result.filter(r =>
@@ -756,7 +834,7 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
       );
     }
     return result;
-  }, [records, search]);
+  }, [records, allRecords, showDuplicates, search]);
 
   // Company count per tier on the current sheet, for the header legend.
   // Tier is read the same way the prospect popup reads it: an "Account
@@ -899,6 +977,9 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
           onAcceptBulk={() => acceptSuggestions(bulkPlans)}
           accepting={accepting}
           acceptError={acceptError}
+          duplicateCount={duplicateCount}
+          showDuplicates={showDuplicates}
+          setShowDuplicates={setShowDuplicates}
         />
       )}
     </div>
@@ -974,6 +1055,7 @@ function ListSection({
   activeSheet, setActiveSheet, search, setSearch, filtered, handleFileChange,
   columns, settings, updateSettings, cdmColumn, verticalColumn, allHeaderOptions,
   untiedOpps, cdmName, onFilteredRowsChange, bulkPlans, onAcceptBulk, accepting, acceptError,
+  duplicateCount, showDuplicates, setShowDuplicates,
 }) {
   return (
     <>
@@ -1061,7 +1143,7 @@ function ListSection({
               onClick={() => setActiveSheet(name)}
             >
               {name}
-              <span className={styles.tabCount}>{data.sheets[name]?.records.length}</span>
+              <span className={styles.tabCount}>{(data.sheets[name]?.records || []).filter(r => !isDuplicateRow(r)).length}</span>
             </button>
           ))}
         </div>
@@ -1086,6 +1168,15 @@ function ListSection({
             >{accepting
               ? `Mapping ${accepting.done} of ${accepting.total}...`
               : `Map ${(bulkPlans?.length || 0).toLocaleString()} suggested match${bulkPlans?.length === 1 ? '' : 'es'}`}</button>
+            {duplicateCount > 0 && (
+              <label
+                title="Rows flagged as duplicates are hidden from this list and from every other page. Show them here to review or unflag them."
+                style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', fontWeight: 600, color: '#92400E', whiteSpace: 'nowrap', cursor: 'pointer' }}
+              >
+                <input type="checkbox" checked={showDuplicates} onChange={e => setShowDuplicates(e.target.checked)} style={{ accentColor: '#B45309' }} />
+                Show {duplicateCount.toLocaleString()} duplicate{duplicateCount === 1 ? '' : 's'}
+              </label>
+            )}
             <label
               title="Pick which column holds the salesperson / CDM who owns each account. My Accounts (and the prospect modal, Agenda, and other pages) use this column to decide whose account a row is, instead of guessing by header name: leave on Auto to keep the keyword guess."
               style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}
