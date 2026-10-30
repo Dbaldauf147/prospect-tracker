@@ -3835,16 +3835,35 @@ Fix that now?
     [tableVisibleRows, filteredAccounts, verticalSuggestions],
   );
   const [acceptingVerticals, setAcceptingVerticals] = useState(false);
+  // The preview popup: the changes the button would make, frozen at the
+  // moment it was clicked, each with a tick so one can be left out.
+  const [verticalPreview, setVerticalPreview] = useState(null);
+  function openVerticalPreview() {
+    if (acceptingVerticals || visibleVerticalSuggestions.length === 0) return;
+    setVerticalPreview({ items: visibleVerticalSuggestions, skipped: new Set() });
+  }
+  function toggleVerticalPreviewRow(id) {
+    setVerticalPreview(prev => {
+      if (!prev) return prev;
+      const skipped = new Set(prev.skipped);
+      if (skipped.has(id)) skipped.delete(id); else skipped.add(id);
+      return { ...prev, skipped };
+    });
+  }
+  function toggleAllVerticalPreviewRows() {
+    setVerticalPreview(prev => prev && ({
+      ...prev,
+      skipped: prev.skipped.size === 0 ? new Set(prev.items.map(x => x.row.id)) : new Set(),
+    }));
+  }
   async function acceptAllVerticalSuggestions() {
-    const todo = visibleVerticalSuggestions;
-    if (acceptingVerticals || todo.length === 0) return;
-    const replacing = todo.filter(x => String(x.row.vertical || '').trim()).length;
-    const n = `${todo.length} account${todo.length === 1 ? '' : 's'}`;
-    const detail = replacing > 0 ? ` ${replacing} of them already ${replacing === 1 ? 'has' : 'have'} a different Vertical, which will be replaced.` : '';
-    if (!window.confirm(`Set Vertical from the Target Accounts list on ${n}?${detail}`)) return;
+    if (acceptingVerticals || !verticalPreview) return;
+    const todo = verticalPreview.items.filter(x => !verticalPreview.skipped.has(x.row.id));
+    if (todo.length === 0) return;
     setAcceptingVerticals(true);
     try {
       await Promise.all(todo.map(x => onUpdate(x.row.id, { vertical: x.hit.vertical })));
+      setVerticalPreview(null);
     } catch (err) {
       console.error('Accept vertical suggestions failed:', err);
       alert('Accepting the suggested verticals failed: ' + (err?.message || err));
@@ -4600,7 +4619,7 @@ Fix that now?
         )}
         {visibleVerticalSuggestions.length > 0 && (
           <button
-            onClick={acceptAllVerticalSuggestions}
+            onClick={openVerticalPreview}
             disabled={acceptingVerticals}
             title="Set Vertical to the Suggested Vertical on every account on screen that has one on the Dropdowns > Vertical list"
             style={{ marginLeft: 'auto', padding: '0.25rem 0.7rem', borderRadius: '6px', border: '1px solid #059669', background: '#ECFDF5', color: '#047857', fontSize: '0.7rem', fontWeight: 600, cursor: acceptingVerticals ? 'default' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
@@ -4633,6 +4652,67 @@ Fix that now?
           updateSettings={updateSettings}
         />
       </div>
+
+      {verticalPreview && createPortal(
+        (() => {
+          const { items, skipped } = verticalPreview;
+          const chosen = items.length - skipped.size;
+          const replacing = items.filter(x => !skipped.has(x.row.id) && String(x.row.vertical || '').trim()).length;
+          const close = () => { if (!acceptingVerticals) setVerticalPreview(null); };
+          const th = { textAlign: 'left', padding: '0.4rem 0.5rem', fontSize: '0.68rem', fontWeight: 700, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 0, background: '#fff' };
+          const td = { padding: '0.4rem 0.5rem', fontSize: '0.78rem', borderBottom: '1px solid var(--color-border)', verticalAlign: 'top' };
+          return (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={close}>
+              <div role="dialog" aria-label="Accept suggested verticals" style={{ background: '#fff', borderRadius: '12px', padding: '1.5rem', width: '760px', maxWidth: '95vw', maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }} onClick={e => e.stopPropagation()}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Accept suggested verticals</h3>
+                  <button onClick={close} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer' }}>&times;</button>
+                </div>
+                <p style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', margin: '0 0 0.75rem 0' }}>
+                  {`These changes would be made, using the Vertical from the Target Accounts list. Untick any you want to leave alone.${replacing > 0 ? ` ${replacing} of them replace${replacing === 1 ? 's' : ''} a Vertical already set.` : ''}`}
+                </p>
+                <div style={{ overflowY: 'auto', flex: 1, border: '1px solid var(--color-border)', borderRadius: '8px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...th, width: 28 }}>
+                          <input type="checkbox" checked={skipped.size === 0} ref={el => { if (el) el.indeterminate = skipped.size > 0 && chosen > 0; }} onChange={toggleAllVerticalPreviewRows} title="Tick or untick all" />
+                        </th>
+                        <th style={th}>Company</th>
+                        <th style={th}>Current Vertical</th>
+                        <th style={th}>New Vertical</th>
+                        <th style={th}>From Target Accounts row</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.map(({ row, hit }) => {
+                        const on = !skipped.has(row.id);
+                        const current = String(row.vertical || '').trim();
+                        return (
+                          <tr key={row.id} onClick={() => toggleVerticalPreviewRow(row.id)} style={{ cursor: 'pointer', opacity: on ? 1 : 0.45 }}>
+                            <td style={td}><input type="checkbox" checked={on} onChange={() => toggleVerticalPreviewRow(row.id)} onClick={e => e.stopPropagation()} /></td>
+                            <td style={{ ...td, fontWeight: 600, color: 'var(--color-text)' }}>{row.company}</td>
+                            <td style={{ ...td, color: current ? '#B45309' : 'var(--color-text-muted)', textDecoration: current && on ? 'line-through' : 'none' }}>{current || '(blank)'}</td>
+                            <td style={{ ...td, color: '#047857', fontWeight: 600 }}>{hit.vertical}</td>
+                            <td style={{ ...td, color: 'var(--color-text-secondary)' }}>{hit.from}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+                  <button onClick={close} disabled={acceptingVerticals} style={{ padding: '0.5rem 1rem', border: '1px solid var(--color-border)', borderRadius: '6px', background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: 'var(--color-text-secondary)' }}>Cancel</button>
+                  <button onClick={acceptAllVerticalSuggestions} disabled={acceptingVerticals || chosen === 0} style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', background: chosen === 0 ? '#A7F3D0' : '#059669', color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: chosen === 0 || acceptingVerticals ? 'default' : 'pointer', fontWeight: 600 }}>
+                    {acceptingVerticals ? 'Applying...' : `Apply ${chosen} change${chosen === 1 ? '' : 's'}`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })(),
+        document.body
+      )}
 
       {/* Zoom Import Column Mapping Modal */}
       {zoomImportPreview && createPortal(
