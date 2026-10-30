@@ -30,6 +30,8 @@ const accts = [
   { id: 'o', company: 'Other Co', status: 'Prospect' },
   { id: 'n', company: 'Nobody Co', status: 'Prospect' },
   { id: 'i', company: 'Gone Co', status: 'Old Client' },
+  { id: 'x', company: 'Absent Co', status: 'Prospect', website: 'https://www.absent.com/' },
+  { id: 'y', company: 'Gone Missing Co', status: 'Old Client' },
 ];
 const cos = compactMappingCompanies([
   { 'Company ID': '11', 'Company name': 'Mine Co', 'Company owner': 'Dan Baldauf', 'Company Domain Name': 'mine.com', 'Last Activity Date': '2026-10-01' },
@@ -50,12 +52,16 @@ check('an activity row carries the record', act.find(r => r.company === 'Mine Co
 const own = ownerAgentRows(mp, 'Dan Baldauf', inactive);
 check('owner changes: others and nobody to Dan, a HubSpot-only company of his to no owner',
   own.map(r => [r.hubspotName, r.newOwner]).sort(),
-  [['Loose Co', NO_OWNER], ['Nobody Co', 'Dan Baldauf'], ['Other Co', 'Dan Baldauf']]);
+  [['', 'Dan Baldauf'], ['Loose Co', NO_OWNER], ['Nobody Co', 'Dan Baldauf'], ['Other Co', 'Dan Baldauf']]);
+const missing = own.find(r => r.company === 'Absent Co');
+check('an active account missing from the export goes to Dan, found by domain', missing && [missing.recordId, missing.domain, missing.owner, missing.newOwner, missing.why],
+  ['', 'absent.com', '', 'Dan Baldauf', 'Not in your HubSpot export']);
+check('an inactive account missing from the export is left alone', own.some(r => r.company === 'Gone Missing Co'), false);
 check('no CDM name, no owner changes', ownerAgentRows(mp, '', inactive), []);
 
 // copying
 const block = agentDataBlock(AGENT_DATA.owners, own.filter(r => r.hubspotName === 'Other Co'));
-check('the block is a header line and tab-separated rows', block, 'HubSpot Company\tRecord ID\tDomain\tCurrent Owner\tNew Owner\tWhy\nOther Co\t12\t\tSam Ouimet\tDan Baldauf\tOne of My Accounts');
+check('the block is a header line and tab-separated rows', block, 'My Accounts Company\tHubSpot Company\tRecord ID\tDomain\tCurrent Owner\tNew Owner\tWhy\nOther Co\tOther Co\t12\t\tSam Ouimet\tDan Baldauf\tOne of My Accounts');
 check('no rows, no block', agentDataBlock(AGENT_DATA.activity, []), '');
 check('prompt only copies the prompt', fullAgentPrompt(' Do it. ', ''), 'Do it.');
 check('a prompt with rows has them after a blank line', fullAgentPrompt('Do it.', 'A\tB'), 'Do it.\n\nA\tB');
