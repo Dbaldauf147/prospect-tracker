@@ -38,6 +38,7 @@ import {
 import { mirrorDbPut } from '../../utils/localMirrorSync';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { downloadPipelineWorkbook } from '../../utils/pipelineWorkbook';
+import { buildQ4Focus } from '../../utils/q4Focus';
 import { loadList as loadUploadedList } from '../../utils/uploadedListStore';
 import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
 import { userLsGet } from '../../utils/userLs';
@@ -1629,7 +1630,19 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
     if (exporting) return;
     setExporting(layout);
     try {
-      await downloadPipelineWorkbook({ ...buildExportPayload(), layout });
+      const payload = buildExportPayload();
+      // The one-page export carries a second tab proposing what to work on
+      // to close the year out, built from the same figures plus the Opps
+      // tab's close dates (utils/q4Focus.js).
+      if (layout === 'single') {
+        const now = payload.generatedAt;
+        payload.q4Focus = buildQ4Focus({
+          ...payload,
+          today: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
+          oppsRecords,
+        });
+      }
+      await downloadPipelineWorkbook({ ...payload, layout });
     } catch (err) {
       alert('Failed to build the Excel report: ' + (err?.message || err));
     } finally {
@@ -1667,7 +1680,7 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
             type="button"
             onClick={() => handleExportExcel('single')}
             disabled={!!exporting}
-            title="Download the whole Pipeline tab on a single, polished Excel sheet"
+            title="Download the whole Pipeline tab on a single, polished Excel sheet, plus a Q4 Focus tab proposing what to work on to close the year out"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
               padding: '0.4rem 0.8rem', borderRadius: 6, border: '1px solid #009530',
