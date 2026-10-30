@@ -24,6 +24,7 @@ import { useContactCountRecorder } from './hooks/useContactCountRecorder';
 import { useProspectingLadder } from './hooks/useProspectingLadder';
 import { useDecisionMakerCoverage } from './hooks/useDecisionMakerCoverage';
 import { useGranolaAutoSync } from './hooks/useGranolaAutoSync';
+import { useCampaignSchedules } from './hooks/useCampaignSchedules';
 import { AGENTS_SETTINGS_KEY, AGENTS_SNOOZE_SETTINGS_KEY } from './utils/agentsRunReminder';
 import { Sidebar } from './components/Sidebar';
 import { SettingsBackupsModal } from './components/SettingsBackupsModal';
@@ -203,6 +204,10 @@ function App() {
   // sync watermark is in there, and syncing without it re-walks the whole
   // back-fill window.
   useGranolaAutoSync(user, settings, updateSettings, prospects, settingsLoaded);
+  // Make the yearly email campaigns whose day has come (Email Campaigns >
+  // Yearly schedules). App-level for the same reason: that tab is lazily
+  // mounted.
+  useCampaignSchedules(user, settings, settingsLoaded);
   const {
     filtered, searchTerm, setSearchTerm,
     filters, filterOptions, toggleFilter, clearFilters, loadSavedFilter, activeFilterCount,

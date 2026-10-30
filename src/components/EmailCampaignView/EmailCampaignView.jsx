@@ -51,6 +51,8 @@ import { contactName } from '../../utils/contactSuggest';
 import { mergeCampaignContacts, adoptedCount, withoutInternalRows, isInternalAddress } from '../../utils/campaignRoster';
 import { addTargetCompany, removeTargetCompany, targetCompanyStatus, campaignTargetCompanies, patchTargetCompany, targetOutreachFor } from '../../utils/campaignTargetCompanies';
 import { buildCampaignTierLookup, tierRank } from '../../utils/campaignTier';
+import { buildScheduledCampaign, cannotCreateReason } from '../../utils/campaignSchedules';
+import { CampaignSchedulesPanel } from './CampaignSchedulesPanel';
 
 // The contact table's columns, and how wide each one starts.
 //
@@ -296,6 +298,10 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
   const [newSubject, setNewSubject] = useState('');
   const [newEventUrl, setNewEventUrl] = useState('');
   const [creating, setCreating] = useState(false); // manual create in flight
+  // A saved campaign handed to the Yearly Schedules panel by its row's
+  // "Repeat yearly", to start a schedule from.
+  const [scheduleSeed, setScheduleSeed] = useState(null);
+  const clearScheduleSeed = useCallback(() => setScheduleSeed(null), []);
   // What has been typed into the contact lookup at the top of the page: an
   // address, or any part of one. It searches ACROSS saved campaigns and
   // changes nothing — the campaign below it stays open while you look
@@ -693,6 +699,25 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
     setSubjectDraft('');
     cancelEventEdit();
     setSubject(nextSubjects[0]);
+    setResults(campaign);
+    setViewingSaved(0);
+  }
+
+  // "Create {year} now" on a yearly schedule: the campaign it would make on
+  // its day, made today, through the same save as a hand-made one so this
+  // tab's list stays the one written. The App-level check sees it exists
+  // and leaves the year alone.
+  async function createScheduledNow(schedule, year) {
+    if (cannotCreateReason(schedule, year, savedCampaigns)) return;
+    const campaign = buildScheduledCampaign(schedule, year, savedCampaigns);
+    await saveCampaigns([campaign, ...savedCampaigns]);
+    viewTokenRef.current++;
+    setRefreshing(false);
+    setEditingIndex(null);
+    setEditingSubjectInline(false);
+    setSubjectDraft('');
+    cancelEventEdit();
+    setSubject(campaign.subject);
     setResults(campaign);
     setViewingSaved(0);
   }
@@ -3417,6 +3442,14 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
                   ) : (
                     <>
                       <button
+                        onClick={e => { e.stopPropagation(); setScheduleSeed(c); }}
+                        style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '0.85rem', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
+                        onMouseEnter={e => e.currentTarget.style.color = 'var(--color-accent)'}
+                        onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
+                        title={c.scheduleId ? 'Made by a yearly schedule (see Yearly Schedules below). Click to start another schedule from it' : 'Repeat yearly: have this campaign made again on the same day every year, starting from its contacts'}
+                        aria-label="Repeat yearly"
+                      >↻</button>
+                      <button
                         onClick={e => startEdit(i, e)}
                         style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '0.85rem', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
                         onMouseEnter={e => e.currentTarget.style.color = 'var(--color-accent)'}
@@ -3441,6 +3474,18 @@ export function EmailCampaignView({ openSubject, onOpened, prospects, cdmName = 
             </table>
           </div>
         </div>
+      )}
+
+      {campaignsLoaded && (
+        <CampaignSchedulesPanel
+          savedCampaigns={savedCampaigns}
+          settings={settings}
+          updateSettings={updateSettings}
+          onCreateNow={createScheduledNow}
+          onOpenCampaign={viewCampaign}
+          seed={scheduleSeed}
+          onSeedUsed={clearScheduleSeed}
+        />
       )}
 
       {editingContact && createPortal(
