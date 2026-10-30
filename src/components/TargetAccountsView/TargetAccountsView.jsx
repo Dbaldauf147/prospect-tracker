@@ -704,8 +704,22 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdm
         return <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: best >= 90 ? '#166534' : best >= 75 ? '#92400E' : '#991B1B' }}>{best}%</span>;
       },
     };
-    return [blockCol, deleteCol, ...(dataCols.length > 0 ? [dataCols[0], tableViewCol, matchCol, oppsCol, ...dataCols.slice(1)] : [tableViewCol, matchCol, oppsCol])];
-  }, [headers, blockedAccountNames, nameKey, oppsIndex, tableViewByTarget, prospects, onSelectProspect, accepting, targetRowsByName, settings?.targetMap, verticalOptions, cdmOptions]); // eslint-disable-line react-hooks/exhaustive-deps
+    // The file the list was uploaded from. Each upload replaces the whole
+    // list, so every row carries the same file.
+    const sourceFile = String(data?.fileName || '').trim();
+    const sourceCol = {
+      key: '__sourceFile__',
+      label: 'Source File',
+      defaultWidth: 200,
+      getSortValue: () => sourceFile.toLowerCase() || null,
+      getFilterValue: () => sourceFile,
+      exportValue: () => sourceFile,
+      render: () => (sourceFile
+        ? <span title={data?.uploadedAt ? `Uploaded ${new Date(data.uploadedAt).toLocaleString()}` : undefined}>{sourceFile}</span>
+        : <span style={{ color: '#CBD5E1' }}>-</span>),
+    };
+    return [blockCol, deleteCol, ...(dataCols.length > 0 ? [dataCols[0], tableViewCol, matchCol, oppsCol, ...dataCols.slice(1)] : [tableViewCol, matchCol, oppsCol]), sourceCol];
+  }, [headers, blockedAccountNames, nameKey, oppsIndex, tableViewByTarget, prospects, onSelectProspect, accepting, targetRowsByName, settings?.targetMap, verticalOptions, cdmOptions, data?.fileName, data?.uploadedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Union of column headers across every sheet — feeds the "Salesperson /
   // CDM column" picker so the mapping works no matter which sheet is
