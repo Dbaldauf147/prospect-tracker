@@ -8,13 +8,16 @@
 // somebody made from one the matcher guessed.
 
 import { buildCompanyIndex, findMatchesInIndex } from './companyIndex.js';
+import { nameSimilarity, targetAcceptPatch } from './targetAccountMatch.js';
 
 const key = (s) => String(s || '').toLowerCase().trim();
 
 /**
- * Map of lowercased target name -> [{ id, company, auto }], one entry per
- * Table View company mapped to that name. `auto` is true when the link
- * came from the name matcher rather than a saved mapping.
+ * Map of lowercased target name -> [{ id, company, auto, score }], one
+ * entry per Table View company mapped to that name. `auto` is true when
+ * the link came from the name matcher rather than a saved mapping, and
+ * `score` is then how alike the two names are, 0..100 (nameSimilarity,
+ * the score the Hubspot Mapping suggestions rank by); null on a saved one.
  */
 export function tableViewCompaniesByTarget(prospects, targetNames, targetMap) {
   const out = new Map();
@@ -27,7 +30,8 @@ export function tableViewCompaniesByTarget(prospects, targetNames, targetMap) {
     if (!onList.has(k)) return;
     const list = out.get(k) || [];
     if (list.some(x => x.id === p.id)) return;
-    list.push({ id: p.id, company: p.company, auto });
+    const score = auto ? Math.round(nameSimilarity(p.company, name) * 100) : null;
+    list.push({ id: p.id, company: p.company, auto, score });
     out.set(k, list);
   };
   for (const p of prospects || []) {
@@ -39,8 +43,56 @@ export function tableViewCompaniesByTarget(prospects, targetNames, targetMap) {
     }
     for (const n of findMatchesInIndex(index, p.company)) add(n, p, true);
   }
-  for (const list of out.values()) list.sort((a, b) => String(a.company).localeCompare(String(b.company)));
+  // Saved mappings first, then suggestions best match first.
+  for (const list of out.values()) {
+    list.sort((a, b) => (a.auto - b.auto) || ((b.score ?? 0) - (a.score ?? 0)) || String(a.company).localeCompare(String(b.company)));
+  }
   return out;
+}
+
+/** The best suggestion's score on a row, null when it has none. */
+export function bestSuggestionScore(list) {
+  let best = null;
+  for (const x of list || []) if (x.auto && (best == null || x.score > best)) best = x.score;
+  return best;
+}
+
+/** The Match % column's filter buckets. */
+export function matchScoreBucket(score) {
+  if (score == null) return 'No suggestion';
+  if (score >= 100) return '100%';
+  if (score >= 90) return '90-99%';
+  if (score >= 75) return '75-89%';
+  if (score >= 50) return '50-74%';
+  return 'Under 50%';
+}
+
+/**
+ * What mapping a set of suggestions writes. `pairs` is [{ target, entry }]:
+ * a target row's name and one of its suggested companies. A company
+ * suggested for two rows maps to the closer name only (ties: the first
+ * given), and a company with a saved mapping is left alone. Each plan
+ * carries the CDM / Tier / Vertical patch accepting it sets on the
+ * company (targetAcceptPatch, as the Hubspot Mapping Accept does).
+ *
+ * rowsByName: Map(lowercased name -> targetAccountRows row).
+ * Returns [{ id, company, target, score, patch }].
+ */
+export function planSuggestionAccepts(pairs, { prospectsById, rowsByName, targetMap, verticalOptions = [], canonicalCdm } = {}) {
+  const best = new Map();
+  for (const { target, entry } of pairs || []) {
+    if (!entry?.auto || entry.id == null) continue;
+    if (targetMap && Object.prototype.hasOwnProperty.call(targetMap, entry.id)) continue;
+    const row = rowsByName?.get(key(target));
+    if (!row) continue;
+    const had = best.get(entry.id);
+    if (had && had.score >= entry.score) continue;
+    best.set(entry.id, { id: entry.id, company: entry.company, target: row.name, score: entry.score, row });
+  }
+  return [...best.values()].map(({ row, ...pl }) => {
+    const card = prospectsById?.get(pl.id) || { company: pl.company };
+    return { ...pl, patch: targetAcceptPatch(row, card, { verticalOptions, canonicalCdm }) };
+  });
 }
 
 /**

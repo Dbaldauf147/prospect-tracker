@@ -424,7 +424,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
       <div className={styles.content}>
         <Suspense fallback={<div className="loading">Loading view…</div>}>
         {subtab === 'raclients' && <RAClientsView settings={settings} updateSettings={updateSettings} />}
-        {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} settings={settings} updateSettings={updateSettings} cdmName={cdmName} onListUploaded={clearTierMismatchIgnores} prospects={prospects} onSelectProspect={onSelectProspect} />}
+        {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} settings={settings} updateSettings={updateSettings} cdmName={cdmName} onListUploaded={clearTierMismatchIgnores} prospects={prospects} onSelectProspect={onSelectProspect} updateProspect={updateProspect} />}
         {subtab === 'recaclients' && <RECAClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />}
         {subtab === 'ecoactclients' && <EcoActClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />}
         {subtab === 'strategic' && (
