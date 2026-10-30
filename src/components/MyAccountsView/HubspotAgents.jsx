@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import {
-  AGENT_DATA, AGENT_DATA_LABELS, builtInAgent, agentDataBlock, fullAgentPrompt,
+  AGENT_DATA, AGENT_DATA_LABELS, builtInAgent, agentDataBlock, fullAgentPrompt, moveAgent,
 } from '../../utils/hubspotAgents';
 
 const fmt = (n) => Number(n || 0).toLocaleString();
@@ -28,7 +28,9 @@ const TABLE_COLUMNS = {
   ],
 };
 
-function AgentCard({ agent, rows, blurb, onSave, onDelete, settings, updateSettings }) {
+const arrowBtn = { border: '1px solid #CBD5E1', background: '#fff', color: '#475569', borderRadius: 4, padding: '0 6px', fontSize: '0.72rem', lineHeight: '1.3rem', fontFamily: 'inherit', cursor: 'pointer' };
+
+function AgentCard({ agent, rows, blurb, onSave, onDelete, settings, updateSettings, order }) {
   // A new agent opens ready to write its prompt.
   const [editing, setEditing] = useState(() => !agent.prompt);
   const [draft, setDraft] = useState(agent);
@@ -50,8 +52,21 @@ function AgentCard({ agent, rows, blurb, onSave, onDelete, settings, updateSetti
   const save = () => { onSave({ ...draft, title: draft.title.trim() || 'Untitled agent' }); setEditing(false); };
 
   return (
-    <section style={card}>
+    <section
+      style={{ ...card, ...(order.dragging ? { opacity: 0.5 } : null), ...(order.over ? { boxShadow: '0 -3px 0 #1D4ED8' } : null) }}
+      onDragOver={order.onDragOver}
+      onDragLeave={order.onDragLeave}
+      onDrop={order.onDrop}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+        {/* Drag the handle to reorder; the arrows move one place. */}
+        <span
+          draggable
+          onDragStart={order.onDragStart}
+          onDragEnd={order.onDragEnd}
+          title="Drag to reorder the agents"
+          style={{ cursor: 'grab', color: '#94A3B8', fontSize: '0.95rem', userSelect: 'none', lineHeight: 1 }}
+        >{'\u283F'}</span>
         <h2 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>{agent.title}</h2>
         {hasData && (
           <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#1D4ED8', background: '#EFF6FF', border: '1px solid #BFDBFE', padding: '0 7px', borderRadius: 999 }}>
@@ -59,6 +74,10 @@ function AgentCard({ agent, rows, blurb, onSave, onDelete, settings, updateSetti
           </span>
         )}
         <span style={{ fontSize: '0.7rem', color: '#64748B' }}>{AGENT_DATA_LABELS[agent.data]}</span>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 4 }}>
+          <button type="button" style={{ ...arrowBtn, opacity: order.first ? 0.35 : 1, cursor: order.first ? 'default' : 'pointer' }} disabled={order.first} onClick={order.onUp} title="Move up" aria-label={`Move ${agent.title} up`}>{'\u2191'}</button>
+          <button type="button" style={{ ...arrowBtn, opacity: order.last ? 0.35 : 1, cursor: order.last ? 'default' : 'pointer' }} disabled={order.last} onClick={order.onDown} title="Move down" aria-label={`Move ${agent.title} down`}>{'\u2193'}</button>
+        </span>
       </div>
       {blurb && <div style={{ fontSize: '0.74rem', color: '#64748B', lineHeight: 1.45 }}>{blurb}</div>}
 
@@ -120,6 +139,28 @@ function AgentCard({ agent, rows, blurb, onSave, onDelete, settings, updateSetti
 }
 
 export function HubspotAgents({ agents, onChange, rowsByData, blurbs = {}, hasExport, settings, updateSettings }) {
+  // The order is the saved list's order, so moving an agent is a save.
+  const [dragId, setDragId] = useState(null);
+  const [overId, setOverId] = useState(null);
+  const move = (id, to) => { const next = moveAgent(agents, id, to); if (next !== agents) onChange(next); };
+  const orderFor = (a, i) => ({
+    first: i === 0,
+    last: i === agents.length - 1,
+    dragging: dragId === a.id,
+    over: overId === a.id && dragId && dragId !== a.id,
+    onUp: () => move(a.id, i - 1),
+    onDown: () => move(a.id, i + 1),
+    onDragStart: (e) => { setDragId(a.id); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', a.id); },
+    onDragEnd: () => { setDragId(null); setOverId(null); },
+    onDragOver: (e) => { if (!dragId) return; e.preventDefault(); if (overId !== a.id) setOverId(a.id); },
+    onDragLeave: () => { if (overId === a.id) setOverId(null); },
+    // Dropped on a card: the dragged agent takes that card's place.
+    onDrop: (e) => {
+      e.preventDefault();
+      if (dragId && dragId !== a.id) move(dragId, i);
+      setDragId(null); setOverId(null);
+    },
+  });
   const add = () => {
     const id = `a_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     onChange([...agents, { id, title: 'New agent', data: AGENT_DATA.none, prompt: '' }]);
@@ -128,13 +169,13 @@ export function HubspotAgents({ agents, onChange, rowsByData, blurbs = {}, hasEx
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', overflowY: 'auto', minHeight: 0, flex: 1 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
         <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.45 }}>
-          Prompts for a browser agent working in HubSpot. <strong>Copy full prompt</strong> copies the prompt with the rows it should work through underneath, read off the HubSpot export on the Mapping subtab. Edit any prompt, or add your own. They sync across your devices.
+          Prompts for a browser agent working in HubSpot. <strong>Copy full prompt</strong> copies the prompt with the rows it should work through underneath, read off the HubSpot export on the Mapping subtab. Edit any prompt, or add your own. Drag {'\u283F'} or use the arrows to change the order. They sync across your devices.
           {!hasExport && <> <strong style={{ color: '#B45309' }}>Drop a HubSpot companies export on the Mapping subtab first, or the agents have no rows.</strong></>}
         </div>
         <button type="button" style={{ ...btn, marginLeft: 'auto' }} onClick={add}>+ New agent</button>
       </div>
       {agents.length === 0 && <div style={{ fontSize: '0.8rem', color: '#64748B' }}>No agents. Click + New agent to add one.</div>}
-      {agents.map(a => (
+      {agents.map((a, i) => (
         <AgentCard
           key={a.id}
           agent={a}
@@ -142,6 +183,7 @@ export function HubspotAgents({ agents, onChange, rowsByData, blurbs = {}, hasEx
           blurb={blurbs[a.data]}
           onSave={(next) => onChange(agents.map(x => (x.id === a.id ? next : x)))}
           onDelete={() => onChange(agents.filter(x => x.id !== a.id))}
+          order={orderFor(a, i)}
           settings={settings}
           updateSettings={updateSettings}
         />
