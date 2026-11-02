@@ -57,6 +57,26 @@ export function alignedRowStyle(row) {
   return null;
 }
 
+// What the row colours mean, printed under the table in the email so the
+// reader doesn't need the tab to decode them. Each swatch is the exact
+// background alignedRowStyle paints (white = no style). Shared by
+// the PE Monthly and New Opps emails.
+export const DIGEST_ROW_LEGEND = [
+  { background: '#F1F5F9', label: 'Grey', text: 'Not on the tier list, direct PE deals, or Tier 1 accounts (non finance)' },
+  { background: '#DCFCE7', label: 'Green', text: 'Aligned with the CDM' },
+  { background: '#FFFFFF', label: 'White', text: 'Outstanding' },
+];
+
+export function buildDigestLegendHtml() {
+  // A table, not floated spans: Outlook ignores most box CSS but keeps cell
+  // backgrounds and borders, so the swatches survive.
+  const rows = DIGEST_ROW_LEGEND.map(({ background, label, text }) =>
+    `<tr><td width="18" style="width:18px;min-width:18px;height:14px;padding:0;background:${background};border:1px solid #000000">&nbsp;</td>`
+    + `<td style="padding:2px 8px;font:12px Arial,sans-serif;color:#000000"><b>${label}</b> - ${text}</td></tr>`
+  ).join('');
+  return `<table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0 4px;margin:4px 0 8px">${rows}</table>`;
+}
+
 /**
  * Copies of the opps with Tier and CDMs aligned filled in, read the way
  * the PE Monthly list reads them: the account's tier (its company card's,
@@ -120,8 +140,15 @@ function escapeHtmlMultiline(s) {
 // The Notes cell: the summary bullets the New Opps table shows (attached as
 // `_notesSummary` by withNotesSummaries), so the draft reads like the page;
 // the raw notes when there's no summary (short notes, or not back yet).
+// The "[waiting on: Name]" tags the notes carry (notesSummary.js feeds them
+// to the summary) are left out of the emails: the user asked for the Next
+// Steps cell to read as the steps alone.
+export function stripWaitingOn(text) {
+  return String(text ?? '').replace(/\s*[\[(]\s*waiting on:[^\])]*[\])]/gi, '').trim();
+}
+
 function notesHtml(r, raw) {
-  const bullets = Array.isArray(r?._notesSummary) ? r._notesSummary.filter(Boolean) : [];
+  const bullets = Array.isArray(r?._notesSummary) ? r._notesSummary.map(stripWaitingOn).filter(Boolean) : [];
   if (bullets.length === 1) return escapeHtml(bullets[0]);
   if (bullets.length > 1) {
     // Outlook ignores padding on a list and falls back to its own half-inch
@@ -129,7 +156,7 @@ function notesHtml(r, raw) {
     // so the bullets sit near the left edge of the cell.
     return `<ul style="margin:0 0 0 16px;padding:0">${bullets.map((b) => `<li style="margin:0;padding:0 0 0 2px">${escapeHtml(b)}</li>`).join('')}</ul>`;
   }
-  return escapeHtmlMultiline(raw);
+  return escapeHtmlMultiline(String(raw ?? '').split('\n').map(stripWaitingOn).join('\n'));
 }
 
 // Each opp with its ready notes summary attached as `_notesSummary`, given
@@ -157,11 +184,13 @@ const cellValue = (r, c) => (c.value ? c.value(r) : (r[c.key] ?? ''));
 // The New Opps digest table, in the PE Monthly colours. The scheduled send
 // (api/_lib/newOpps.js buildNewOppsTableHtml) builds the same one.
 export function buildNewOppsDigestTableHtml(records) {
-  return buildDigestTableHtml(records, DIGEST_COLUMNS, 'No new opportunities to report.', {
+  const table = buildDigestTableHtml(records, DIGEST_COLUMNS, 'No new opportunities to report.', {
     headStyle: DIGEST_HEADER_STYLE,
     rowStyle: alignedRowStyle,
     fit: true,
   });
+  // The colour legend under the table, as on PE Monthly.
+  return Array.isArray(records) && records.length ? `${table}${buildDigestLegendHtml()}` : table;
 }
 
 // The same table over any column set - { key, label, align?, value?,

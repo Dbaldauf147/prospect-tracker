@@ -14,6 +14,7 @@
 
 import {
   buildDigestTableHtml, buildDigestEmailHtml, downloadEml, DIGEST_HEADER_STYLE, alignedRowStyle, verticalCdmFor,
+  DIGEST_ROW_LEGEND, buildDigestLegendHtml,
 } from './newOppsDigestEmail.js';
 import { buildPeOverlapDeals, tierRank, cdmsAlignedLabel } from './keithPeDeals.js';
 import { buildTargetTierResolver, buildTargetCdmResolver } from './targetTier.js';
@@ -169,24 +170,10 @@ export function resolvePeMonthlyDraftTemplate(saved) {
   return out;
 }
 
-// What the row colours mean, printed under the table in the email so the
-// reader doesn't need the tab to decode them. Each swatch is the exact
-// background peMonthlyRowStyle paints (white = no style).
-export const PE_MONTHLY_LEGEND = [
-  { background: '#F1F5F9', label: 'Grey', text: 'Not on the tier list, direct PE deals, or Tier 1 accounts (non finance)' },
-  { background: '#DCFCE7', label: 'Green', text: 'Aligned with the CDM' },
-  { background: '#FFFFFF', label: 'White', text: 'Outstanding' },
-];
-
-export function buildPeMonthlyLegendHtml() {
-  // A table, not floated spans: Outlook ignores most box CSS but keeps cell
-  // backgrounds and borders, so the swatches survive.
-  const rows = PE_MONTHLY_LEGEND.map(({ background, label, text }) =>
-    `<tr><td width="18" style="width:18px;min-width:18px;height:14px;padding:0;background:${background};border:1px solid #000000">&nbsp;</td>`
-    + `<td style="padding:2px 8px;font:12px Arial,sans-serif;color:#000000"><b>${label}</b> - ${text}</td></tr>`
-  ).join('');
-  return `<table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0 4px;margin:4px 0 8px">${rows}</table>`;
-}
+// The colour legend lives with the shared row colours (newOppsDigestEmail.js)
+// so the New Opps email carries the same one.
+export const PE_MONTHLY_LEGEND = DIGEST_ROW_LEGEND;
+export const buildPeMonthlyLegendHtml = buildDigestLegendHtml;
 
 export function buildPeMonthlyTableHtml(rows) {
   const table = buildDigestTableHtml(rows, PE_MONTHLY_EMAIL_COLUMNS, 'No PE or portfolio company deals at Stage 3 or later right now.', {
