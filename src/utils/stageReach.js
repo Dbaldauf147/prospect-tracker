@@ -23,6 +23,18 @@
 // Pull-throughs are left out, as they are on the board and in the close
 // rates: they are not opps somebody worked through the pipeline.
 //
+// By default only CLOSED opps count (Sold or Not Sold): the question is
+// "of the deals that finished, how far did they get before they closed".
+// An open opp is still moving, so counting it would make every recent
+// cohort look worse than it is. `closedOnly: false` gives the old view
+// (every opp that started, wherever it is now).
+//
+// Each period also carries how many of its closed losses had no history
+// (`unknown`), so the page can say when a period's percentages rest on
+// only a small share of its closed deals: older periods are mostly losses
+// recorded before stage history existed, and what is left is nearly all
+// Sold, which reads as 100% at every stage.
+//
 // Pure, so scripts/stageReach.test.mjs can assert it without a browser.
 
 import { toISODate } from './oppsCallIn.js';
@@ -114,9 +126,9 @@ function periodRange(first, last, period) {
  * Stage reach by Start Date cohort.
  *
  *   {
- *     rows: [{ key, label, total, reached: { [stage]: n }, pct: { [stage]: 0-100 | null } }],
- *     overall: { total, reached, pct },
- *     counted, undated, unknown, pullThrough,
+ *     rows: [{ key, label, total, unknown, coverage, reached: { [stage]: n }, pct: { [stage]: 0-100 | null } }],
+ *     overall: { total, unknown, coverage, reached, pct },
+ *     counted, undated, unknown, pullThrough, open, closedOnly,
  *   }
  *
  * `rows` runs oldest first with gaps filled. `pct` is null for an empty
@@ -124,28 +136,36 @@ function periodRange(first, last, period) {
  *
  *   period   'month' | 'quarter' | 'year'
  *   from/to  ISO dates bounding the Start Date (inclusive); blank = open
+ *   closedOnly  true (default) counts only Sold / Not Sold opps
  */
-export function stageReachByPeriod(records, { period = 'quarter', from = '', to = '' } = {}) {
+export function stageReachByPeriod(records, { period = 'quarter', from = '', to = '', closedOnly = true } = {}) {
   const buckets = new Map();
+  const bucketFor = (key) => {
+    let b = buckets.get(key);
+    if (!b) {
+      b = { total: 0, unknown: 0, reached: Object.fromEntries(REACH_STAGES.map(s => [s, 0])) };
+      buckets.set(key, b);
+    }
+    return b;
+  };
   const overallReached = Object.fromEntries(REACH_STAGES.map(s => [s, 0]));
   let counted = 0;
   let undated = 0;
   let unknown = 0;
   let pullThrough = 0;
+  let open = 0;
 
   for (const r of (Array.isArray(records) ? records : [])) {
     if (isPullThroughOpp(r)) { pullThrough += 1; continue; }
     const iso = toISODate(r?.['Start Date']);
     if (!iso) { undated += 1; continue; }
     if ((from && iso < from) || (to && iso > to)) continue;
-    const rank = furthestStageRank(r);
-    if (rank == null) { unknown += 1; continue; }
+    const stage = String(r?.['Stage'] ?? '').trim();
+    if (closedOnly && stage !== 'Sold' && !NOT_SOLD.has(stage)) { open += 1; continue; }
     const key = startPeriodOf(r, period);
-    let b = buckets.get(key);
-    if (!b) {
-      b = { total: 0, reached: Object.fromEntries(REACH_STAGES.map(s => [s, 0])) };
-      buckets.set(key, b);
-    }
+    const rank = furthestStageRank(r);
+    if (rank == null) { unknown += 1; bucketFor(key).unknown += 1; continue; }
+    const b = bucketFor(key);
     b.total += 1;
     counted += 1;
     REACH_STAGES.forEach((s, i) => {
@@ -159,13 +179,20 @@ export function stageReachByPeriod(records, { period = 'quarter', from = '', to 
 
   const keys = [...buckets.keys()].sort();
   const rows = periodRange(keys[0], keys[keys.length - 1], period).map(key => {
-    const b = buckets.get(key) || { total: 0, reached: Object.fromEntries(REACH_STAGES.map(s => [s, 0])) };
-    return { key, label: reachPeriodLabel(key, period), total: b.total, reached: b.reached, pct: pctOf(b.reached, b.total) };
+    const b = buckets.get(key) || { total: 0, unknown: 0, reached: Object.fromEntries(REACH_STAGES.map(s => [s, 0])) };
+    // Share of the period's closed deals the percentages are taken over;
+    // null when the period has none at all.
+    const seen = b.total + b.unknown;
+    const coverage = seen > 0 ? Math.round((b.total / seen) * 1000) / 10 : null;
+    return { key, label: reachPeriodLabel(key, period), total: b.total, unknown: b.unknown, coverage, reached: b.reached, pct: pctOf(b.reached, b.total) };
   });
 
   return {
     rows,
-    overall: { total: counted, reached: overallReached, pct: pctOf(overallReached, counted) },
-    counted, undated, unknown, pullThrough,
+    overall: {
+      total: counted, unknown, reached: overallReached, pct: pctOf(overallReached, counted),
+      coverage: counted + unknown > 0 ? Math.round((counted / (counted + unknown)) * 1000) / 10 : null,
+    },
+    counted, undated, unknown, pullThrough, open, closedOnly,
   };
 }
