@@ -144,7 +144,7 @@ function escapeHtmlMultiline(s) {
 // to the summary) are left out of the emails: the user asked for the Next
 // Steps cell to read as the steps alone.
 export function stripWaitingOn(text) {
-  return String(text ?? '').replace(/\s*[\[(]\s*waiting on:[^\])]*[\])]/gi, '').trim();
+  return String(text ?? '').replace(/\s*[[(]\s*waiting on:[^\])]*[\])]/gi, '').trim();
 }
 
 function notesHtml(r, raw) {
