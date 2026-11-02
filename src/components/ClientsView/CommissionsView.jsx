@@ -17,6 +17,7 @@ import { buildOppIndex, suggestOpps, fieldsFromOpp, commissionProjectName } from
 import { CommissionOppPicker } from './CommissionOppPicker';
 import { CommissionsMonthlyView } from './CommissionsMonthlyView';
 import { readCommissionsFile, isCommissionsFileName } from '../../utils/commissionsMonthFile';
+import { recordCommissionUpload, COMMISSION_UPLOADS_KEY } from '../../utils/commissionMonthUploads';
 
 // Lookup columns the user adds at the front of the table. Account Name
 // is an autocomplete against the Table View prospect roster; BFO Name is
@@ -1502,6 +1503,12 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     for (const i of touched) next[i] = { ...next[i], [UPDATED_AT_KEY]: stamp };
     try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
     setStore({ data: next, source: 'override' });
+    // A file dropped on a month card marks that month's file as uploaded
+    // (the card goes green and the Issues tab's warning clears).
+    if (fileImport && fileImport.monthIdx != null && updateSettings) {
+      const { monthIdx, fileName } = fileImport;
+      updateSettings((prev) => ({ [COMMISSION_UPLOADS_KEY]: recordCommissionUpload(prev?.[COMMISSION_UPLOADS_KEY], monthIdx, fileName) }));
+    }
     setPasteNote(describeCommissionsPaste(summary));
     setShowPaste(false);
     setInitialPaste('');
