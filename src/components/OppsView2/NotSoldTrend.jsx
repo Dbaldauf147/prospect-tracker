@@ -7,7 +7,7 @@ import { NOT_SOLD_OPPS_SHEET } from '../../utils/notSoldStageDays';
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import {
   notSoldTrend, notSoldFacets, periodLabel, closePeriodOf, reasonOf, sourceOf, TREND_OTHER,
-  trendChartRows, sanitizeTrendViews, saveTrendView, deleteTrendView, trendViewMatches, TREND_VIEWS_KEY,
+  trendChartRows, trendDetailRows, sanitizeTrendViews, saveTrendView, deleteTrendView, trendViewMatches, TREND_VIEWS_KEY,
 } from '../../utils/notSoldAnalysis';
 import styles from './OppsView2.module.css';
 
@@ -137,6 +137,15 @@ export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRow
     map.set(TREND_OTHER, OTHER_COLOUR);
     return map;
   }, [records, from, to, years, groupBy, trend.series]);
+
+  // The opps behind the numbers, for the "Export details" sheet both
+  // exports carry: same filters, same placement rules as the chart.
+  const detailRows = useMemo(
+    () => trendDetailRows(records, {
+      from, to, years, period, groupBy, sources, reasons, hideReasons, topN: TOP_N, hiddenSeries: [...hidden],
+    }),
+    [records, from, to, years, period, groupBy, sources, reasons, hideReasons, hidden],
+  );
 
   const colourOf = (key) => colourMap.get(key) || OTHER_COLOUR;
   const visibleSeries = trend.series.filter(s => !hidden.has(s.key));
@@ -319,6 +328,10 @@ export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRow
     const ws = XLSX.utils.json_to_sheet(rows);
     ws['!cols'] = Object.keys(rows[0] || { Period: '' }).map(h => ({ wch: Math.max(h.length + 2, 12) }));
     XLSX.utils.book_append_sheet(wb, ws, 'Chart data');
+    const wsD = XLSX.utils.json_to_sheet(detailRows.length ? detailRows : [{ Account: 'No opps match these filters' }]);
+    wsD['!cols'] = Object.keys(detailRows[0] || { Account: '' }).map(h => ({ wch: h === 'Account' || h === 'Reason Not Sold' || h === 'BFO Link' ? 34 : Math.max(h.length + 2, 14) }));
+    wsD['!autofilter'] = { ref: wsD['!ref'] };
+    XLSX.utils.book_append_sheet(wb, wsD, 'Export details');
     const list = (a, none) => (a.length ? a.join(', ') : none);
     const about = [
       { Setting: 'View', Value: activeView ? activeView.name : '(unsaved)' },
@@ -333,6 +346,7 @@ export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRow
       { Setting: 'Hidden reasons', Value: list(hideReasons, 'None') },
       { Setting: 'Series hidden on chart', Value: list([...hidden], 'None') },
       ...extraFilters,
+      { Setting: 'Opps in Export details', Value: `${detailRows.filter(r => r.Stage === 'Not Sold').length} lost, ${detailRows.filter(r => r.Stage === 'Sold').length} won` },
       { Setting: 'Exported', Value: new Date().toLocaleString() },
     ];
     const ws2 = XLSX.utils.json_to_sheet(about);
@@ -515,7 +529,10 @@ export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRow
               alwaysVisible={['name']}
               rowGroup={(row) => (row.kind === 'series' ? 0 : 1)}
               exportFileName={`Not Sold trend by ${groupBy} by ${period}`}
-              exportExtraSheets={oppsSheet()}
+              exportPrimarySheetName="Trend table"
+              // Export details (every opp the trend counts) first, so it is
+              // the second tab, then the lost opps' days in each stage.
+              exportExtraSheets={[{ name: 'Export details', rows: detailRows }, ...(oppsSheet() || [])]}
               emptyMessage="No dated losses match these filters."
               onRowClick={(row) => {
                 if (row.kind === 'series') drill(row.name, null);

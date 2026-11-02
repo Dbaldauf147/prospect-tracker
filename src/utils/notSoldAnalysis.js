@@ -380,9 +380,15 @@ function periodRange(first, last, period) {
  *   topN               series past this many fold into "Other" so the chart
  *                      stays readable; 0 keeps them all
  */
-export function notSoldTrend(records, {
-  from = '', to = '', years = [], period = 'quarter', groupBy = 'reason',
-  sources = [], reasons = [], hideReasons = [], topN = 0,
+// Where one record falls in the trend, under the given filters:
+//   null                       not part of it (open, filtered out, outside window)
+//   { stage, undated: true }   a loss that can't be placed, no Close Date
+//   { stage, period }          counted in that period
+// One rule for the chart and for the opps exported beside it, so the two
+// can never disagree about which deals are in.
+function trendPlacer({
+  from = '', to = '', years = [], period = 'quarter',
+  sources = [], reasons = [], hideReasons = [],
 } = {}) {
   const fromTs = from ? Date.parse(from) : null;
   const toTs = to ? Date.parse(to) + 86399999 : null;
@@ -391,6 +397,23 @@ export function notSoldTrend(records, {
   const sourceSet = sources && sources.length ? new Set(sources) : null;
   const reasonSet = reasons && reasons.length ? new Set(reasons) : null;
   const hideSet = hideReasons && hideReasons.length ? new Set(hideReasons) : null;
+  return (r) => {
+    const stage = stageOf(r);
+    if (stage !== NOT_SOLD && stage !== SOLD) return null;
+    if (sourceSet && !sourceSet.has(sourceOf(r))) return null;
+    if (stage === NOT_SOLD && reasonSet && !reasonSet.has(reasonOf(r))) return null;
+    if (stage === NOT_SOLD && hideSet && hideSet.has(reasonOf(r))) return null;
+    const within = inWindow(r, fromTs, toTs, yearSet);
+    if (within === false) return null;
+    const ym = within === null ? null : closeYearMonth(r['Close Date']);
+    if (!ym) return stage === NOT_SOLD ? { stage, undated: true } : null;
+    return { stage, period: periodKey(ym, period) };
+  };
+}
+
+export function notSoldTrend(records, opts = {}) {
+  const { period = 'quarter', groupBy = 'reason', topN = 0 } = opts;
+  const place = trendPlacer(opts);
   const keyOf = groupBy === 'source' ? sourceOf : reasonOf;
 
   const bySeries = new Map();
@@ -404,19 +427,10 @@ export function notSoldTrend(records, {
   };
 
   for (const r of records || []) {
-    const stage = stageOf(r);
-    if (stage !== NOT_SOLD && stage !== SOLD) continue;
-    if (sourceSet && !sourceSet.has(sourceOf(r))) continue;
-    if (stage === NOT_SOLD && reasonSet && !reasonSet.has(reasonOf(r))) continue;
-    if (stage === NOT_SOLD && hideSet && hideSet.has(reasonOf(r))) continue;
-    const within = inWindow(r, fromTs, toTs, yearSet);
-    if (within === false) continue;
-    const ym = within === null ? null : closeYearMonth(r['Close Date']);
-    if (!ym) {
-      if (stage === NOT_SOLD) undated += 1;
-      continue;
-    }
-    const p = periodKey(ym, period);
+    const at = place(r);
+    if (!at) continue;
+    if (at.undated) { undated += 1; continue; }
+    const { stage, period: p } = at;
     const t = bump(p);
     if (stage === SOLD) { t.wins += 1; continue; }
     t.losses += 1;
@@ -569,4 +583,62 @@ export function deleteTrendView(views, id) {
 export function trendViewMatches(view, state) {
   if (!view) return false;
   return JSON.stringify(normaliseTrendState(view.state)) === JSON.stringify(normaliseTrendState(state));
+}
+
+/**
+ * The opps behind the trend, one row each, for the export's details sheet:
+ * every loss AND every win the chart counted (wins are the other half of
+ * the loss rate), under exactly the filters on screen. A loss with no Close
+ * Date is listed too, marked as not counted, since the screen says it was
+ * left out and the file should be able to show which ones.
+ *
+ * `series` is the bar segment the opp sits in; a loss folded into Other
+ * says so. `hiddenSeries` (legend-hidden) marks rows the chart isn't
+ * drawing but that still count toward the totals.
+ */
+export function trendDetailRows(records, opts = {}) {
+  const { period = 'quarter', groupBy = 'reason', topN = 0, hiddenSeries = [] } = opts;
+  const place = trendPlacer(opts);
+  const keyOf = groupBy === 'source' ? sourceOf : reasonOf;
+  const trend = notSoldTrend(records, opts);
+  const named = new Set(trend.series.filter(s => s.key !== TREND_OTHER).map(s => s.key));
+  const folded = topN > 0 && trend.series.some(s => s.key === TREND_OTHER);
+  const hidden = new Set(hiddenSeries || []);
+  const out = [];
+  for (const r of records || []) {
+    const at = place(r);
+    if (!at) continue;
+    const lost = at.stage === NOT_SOLD;
+    const key = keyOf(r);
+    const series = !lost ? '' : (named.has(key) || !folded ? key : TREND_OTHER);
+    let counted = 'Yes';
+    if (at.undated) counted = 'No, no Close Date';
+    else if (lost && hidden.has(series)) counted = 'In totals, hidden on chart';
+    out.push({
+      Account: r['Account'] || '',
+      Stage: at.stage,
+      'Close Date': r['Close Date'] || '',
+      Period: at.period ? periodLabel(at.period, period) : '',
+      Source: sourceOf(r),
+      'Reason Not Sold': lost ? reasonOf(r) : '',
+      'Chart Series': series,
+      'BFO Status': lost ? bfoStatusOf(r) : '',
+      Competition: r['Competition'] || '',
+      Scope: r['Scope'] || '',
+      'Quoted Amount': r['Quoted Amount'] || '',
+      'Start Date': r['Start Date'] || '',
+      Contact: r['Contact'] || '',
+      'Sales Partner': r['Sales Partner'] || '',
+      'PE Owner': r['PE Owner'] || '',
+      'BFO Link': r['BFO Link'] || '',
+      Counted: counted,
+      _sort: at.period || '',
+    });
+  }
+  // Oldest period first like the chart, losses before wins inside a
+  // period, then by account.
+  out.sort((a, b) => (a._sort === b._sort ? 0 : !a._sort ? 1 : !b._sort ? -1 : a._sort < b._sort ? -1 : 1)
+    || (a.Stage === b.Stage ? 0 : a.Stage === NOT_SOLD ? -1 : 1)
+    || String(a.Account).localeCompare(String(b.Account)));
+  return out.map((row) => { const copy = { ...row }; delete copy._sort; return copy; });
 }

@@ -8,7 +8,7 @@
 import {
   notSoldTrend, notSoldFacets, periodLabel, closePeriodOf, TREND_OTHER, NO_REASON,
   trendChartRows, saveTrendView, deleteTrendView, sanitizeTrendViews, trendViewMatches,
-  normaliseTrendState,
+  normaliseTrendState, trendDetailRows,
 } from '../src/utils/notSoldAnalysis.js';
 
 let failures = 0;
@@ -103,6 +103,23 @@ check('facets list every reason and source among losses', notSoldFacets(R),
   check('delete removes it', deleteTrendView(v, v[0].id), []);
   check('junk in settings is dropped', sanitizeTrendViews([null, { id: 'x' }, 'y']), []);
   check('defaults fill gaps', normaliseTrendState({ period: 'decade' }).period, 'quarter');
+}
+
+// --- the details sheet lists exactly the opps the chart counts ------------
+{
+  const opts = { period: 'year', sources: ['Cold Call'], hideReasons: ['Timing'] };
+  const rows = trendDetailRows(R, opts);
+  const t = notSoldTrend(R, opts);
+  check('details: every counted loss and win, nothing else',
+    rows.map(r => [r.Stage, r.Period, r['Reason Not Sold']]),
+    [['Not Sold', '2026', 'Price'], ['Not Sold', '2026', NO_REASON], ['Sold', '2026', '']]);
+  check('details agree with the chart totals',
+    [rows.filter(r => r.Stage === 'Not Sold').length, rows.filter(r => r.Stage === 'Sold').length],
+    [t.lossCount, t.totals['2026'].wins]);
+  const all = trendDetailRows(R, { period: 'year', topN: 1, hiddenSeries: ['Price'] });
+  check('undated loss listed as not counted', all.filter(r => r.Counted === 'No, no Close Date').length, 1);
+  check('folded losses say Other', all.filter(r => r['Chart Series'] === TREND_OTHER).length, 2);
+  check('legend-hidden losses marked', all.filter(r => r.Counted === 'In totals, hidden on chart').length, 3);
 }
 
 if (failures) { console.log(`\n${failures} failing`); process.exit(1); }
