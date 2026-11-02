@@ -6,6 +6,10 @@ import { parseMoney } from '../../utils/oppsMetrics';
 import {
   bfoStatusOf, notSoldBreakdown, notSoldYears, reasonOf, sourceOf, sourceReasonRows,
 } from '../../utils/notSoldAnalysis';
+import {
+  NOT_SOLD_STAGE_COLUMNS, NOT_SOLD_OPPS_SHEET, STAGE_DAYS_TOTAL,
+  filterByStageDays, notSoldOppRows, stageDaysFilterActive, stageDaysOf,
+} from '../../utils/notSoldStageDays';
 import { NotSoldTrend } from './NotSoldTrend';
 import styles from './OppsView2.module.css';
 
@@ -93,6 +97,7 @@ function LossDrilldown({ title, subtitle, rows, onOpenOpp, onClose }) {
               <th style={{ padding: '0.4rem 0.5rem' }}>BFO Status</th>
               <th style={{ padding: '0.4rem 0.5rem', textAlign: 'right', whiteSpace: 'nowrap' }}>Quoted $</th>
               <th style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>Close Date</th>
+              <th style={{ padding: '0.4rem 0.5rem', textAlign: 'right', whiteSpace: 'nowrap' }}>Days in stages</th>
             </tr>
           </thead>
           <tbody>
@@ -112,6 +117,7 @@ function LossDrilldown({ title, subtitle, rows, onOpenOpp, onClose }) {
                   {money(r['Quoted Amount'])}
                 </td>
                 <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>{r['Close Date'] || '-'}</td>
+                <StageDaysCell row={r} />
               </tr>
             ))}
           </tbody>
@@ -119,6 +125,59 @@ function LossDrilldown({ title, subtitle, rows, onOpenOpp, onClose }) {
       </div>
     </div>,
     document.body,
+  );
+}
+
+// An opp's total days across the stages, with the stage-by-stage split in
+// the tooltip. Blank when it closed before stage history was recorded.
+function StageDaysCell({ row }) {
+  const d = stageDaysOf(row);
+  const style = { padding: '0.4rem 0.5rem', textAlign: 'right', whiteSpace: 'nowrap' };
+  if (!d.hasHistory) return <td style={{ ...style, ...muted }} title="No stage history recorded for this opp">-</td>;
+  const split = NOT_SOLD_STAGE_COLUMNS.filter(c => d.byStage[c.stage] > 0).map(c => `${c.label}: ${d.byStage[c.stage]}`).join('\n');
+  return <td style={style} title={split || 'No days logged in any stage'}>{d.total}</td>;
+}
+
+// The Days in stage filter: which stage (or all of them together) and a
+// min / max day count. Blank bounds mean no filter.
+function StageDaysFilter({ stage, min, max, onStage, onMin, onMax }) {
+  return (
+    <span className={styles.filterLabel}>
+      Days in stage
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, textTransform: 'none', fontWeight: 400, letterSpacing: 0 }}>
+        <select
+          className={styles.filterInput}
+          value={stage}
+          onChange={e => onStage(e.target.value)}
+          title="Which stage's days to filter on"
+        >
+          <option value={STAGE_DAYS_TOTAL}>All stages (total)</option>
+          {NOT_SOLD_STAGE_COLUMNS.map(c => <option key={c.stage} value={c.stage}>{c.label}</option>)}
+        </select>
+        <input
+          type="number"
+          min="0"
+          className={styles.filterInput}
+          style={{ width: 72 }}
+          placeholder="Min"
+          value={min}
+          onChange={e => onMin(e.target.value)}
+          title="At least this many days"
+        />
+        to
+        <input
+          type="number"
+          min="0"
+          className={styles.filterInput}
+          style={{ width: 72 }}
+          placeholder="Max"
+          value={max}
+          onChange={e => onMax(e.target.value)}
+          title="At most this many days"
+        />
+        days
+      </span>
+    </span>
   );
 }
 
@@ -210,11 +269,29 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
   const [drill, setDrill] = useState(null);
   // Breakdown (the two tables) or Trend (the same losses over time).
   const [view, setView] = useState('breakdown');
+  // Days in stage filter: a stage (or the total) and a min / max.
+  const [daysStage, setDaysStage] = useState(STAGE_DAYS_TOTAL);
+  const [daysMin, setDaysMin] = useState('');
+  const [daysMax, setDaysMax] = useState('');
+  const daysActive = stageDaysFilterActive({ min: daysMin, max: daysMax });
 
   const yearOptions = useMemo(() => notSoldYears(records), [records]);
+  // Applied ahead of everything else, so both views, both tables and the
+  // trend count only the opps that meet it - wins as well as losses, so a
+  // loss rate compares like with like.
+  const stageFiltered = useMemo(
+    () => filterByStageDays(records, { stage: daysStage, min: daysMin, max: daysMax }),
+    [records, daysStage, daysMin, daysMax],
+  );
+  const filteredRecords = stageFiltered.records;
   const data = useMemo(
-    () => notSoldBreakdown(records, { from, to, years }),
-    [records, from, to, years],
+    () => notSoldBreakdown(filteredRecords, { from, to, years }),
+    [filteredRecords, from, to, years],
+  );
+  // Every loss in the window with its days in each stage, for the exports.
+  const oppsSheet = useMemo(
+    () => ({ name: NOT_SOLD_OPPS_SHEET, rows: notSoldOppRows(data.rows) }),
+    [data.rows],
   );
 
   function toggleYear(y) {
@@ -409,10 +486,10 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
           onToggle={toggleYear}
           onClear={() => setYears([])}
         />
-        {windowed && (
+        {(windowed || daysActive) && (
           <button
             className={styles.clearFiltersBtn}
-            onClick={() => { setFrom(''); setTo(''); setYears([]); }}
+            onClick={() => { setFrom(''); setTo(''); setYears([]); setDaysMin(''); setDaysMax(''); }}
           >Clear filters</button>
         )}
         <span className={styles.resultCount}>
@@ -429,16 +506,39 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
           </span>
         )}
       </div>
+      {/* Its own row: the toolbar above is already full at laptop width. */}
+      <div className={styles.searchRow} style={{ paddingTop: 0 }}>
+        <StageDaysFilter
+          stage={daysStage}
+          min={daysMin}
+          max={daysMax}
+          onStage={setDaysStage}
+          onMin={setDaysMin}
+          onMax={setDaysMax}
+        />
+        {/* Same idea as the Close Date note: an opp closed before stage
+            history was kept has no days to judge, so it sits out. */}
+        {daysActive && stageFiltered.noHistory > 0 && (
+          <span className={styles.resultCount} style={{ color: '#92400E' }}>
+            {stageFiltered.noHistory} not counted - no stage history
+          </span>
+        )}
+      </div>
 
       {view === 'trend' && (
         <NotSoldTrend
-          records={records}
+          records={filteredRecords}
           from={from}
           to={to}
           years={years}
           onWindowChange={(w) => { setFrom(w.from); setTo(w.to); setYears(w.years); }}
           lossRows={data.rows}
           onDrill={setDrill}
+          oppsSheetRows={notSoldOppRows}
+          extraFilters={daysActive ? [{
+            Setting: 'Days in stage',
+            Value: `${daysStage === STAGE_DAYS_TOTAL ? 'All stages (total)' : (NOT_SOLD_STAGE_COLUMNS.find(c => c.stage === daysStage)?.label || daysStage)}: ${daysMin || 0} to ${daysMax || 'any'} days`,
+          }] : []}
           settings={settings}
           updateSettings={updateSettings}
         />
@@ -454,6 +554,7 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
             rows={data.reasons.map(r => ({ ...r, id: r.reason }))}
             alwaysVisible={['reason']}
             exportFileName="Not Sold by reason"
+            exportExtraSheets={[oppsSheet]}
             emptyMessage={windowed ? 'No opps were closed Not Sold in this range.' : 'No opps are marked Not Sold yet.'}
             onRowClick={(row) => setDrill({
               title: `Reason: ${row.reason}`,
@@ -489,7 +590,7 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
             // The reason breakdown is an on-screen expansion, so it would
             // otherwise be the one part of this tab you couldn't take away
             // with you.
-            exportExtraSheets={[{ name: 'Reasons by source', rows: sourceReasonRows(data.sources) }]}
+            exportExtraSheets={[{ name: 'Reasons by source', rows: sourceReasonRows(data.sources) }, oppsSheet]}
             emptyMessage={windowed ? 'No opps were closed Not Sold in this range.' : 'No opps are marked Not Sold yet.'}
             onRowClick={(row) => setDrill({
               title: `Source: ${row.source}`,

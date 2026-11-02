@@ -3,6 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { DataTable } from '../common/DataTable';
+import { NOT_SOLD_OPPS_SHEET } from '../../utils/notSoldStageDays';
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import {
   notSoldTrend, notSoldFacets, periodLabel, closePeriodOf, reasonOf, sourceOf, TREND_OTHER,
@@ -66,7 +67,7 @@ function pct(n, d) {
  * The close window (dates and year chips) comes from the tab above, so the
  * two views always describe the same losses.
  */
-export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRows, onDrill, settings, updateSettings }) {
+export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRows, onDrill, oppsSheetRows, extraFilters = [], settings, updateSettings }) {
   const [groupBy, setGroupBy] = useState('reason');
   const [period, setPeriod] = useState('quarter');
   const [mode, setMode] = useState('count');
@@ -302,6 +303,15 @@ export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRow
   // The chart's numbers as a workbook: what the bars show, period by period,
   // plus a sheet saying which filters produced them, so a file opened next
   // month still says what it is.
+  // The losses behind the trend as one row each with their days in every
+  // stage (oppsSheetRows), honouring the Source / Reason / hidden-reason
+  // filters here. Both exports carry it.
+  const trendLosses = () => lossRows.filter(r => (!sources.length || sources.includes(sourceOf(r)))
+    && (!reasons.length || reasons.includes(reasonOf(r)))
+    && !hideReasons.includes(reasonOf(r))
+    && closePeriodOf(r, period));
+  const oppsSheet = () => (oppsSheetRows ? [{ name: NOT_SOLD_OPPS_SHEET, rows: oppsSheetRows(trendLosses()) }] : undefined);
+
   async function exportChart() {
     const XLSX = await import('xlsx');
     const rows = trendChartRows(trend, { period, mode, hiddenSeries: [...hidden] });
@@ -322,11 +332,18 @@ export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRow
       { Setting: 'Reasons', Value: list(reasons, 'All') },
       { Setting: 'Hidden reasons', Value: list(hideReasons, 'None') },
       { Setting: 'Series hidden on chart', Value: list([...hidden], 'None') },
+      ...extraFilters,
       { Setting: 'Exported', Value: new Date().toLocaleString() },
     ];
     const ws2 = XLSX.utils.json_to_sheet(about);
     ws2['!cols'] = [{ wch: 24 }, { wch: 60 }];
     XLSX.utils.book_append_sheet(wb, ws2, 'Filters');
+    for (const extra of oppsSheet() || []) {
+      if (!extra.rows.length) continue;
+      const ws3 = XLSX.utils.json_to_sheet(extra.rows);
+      ws3['!cols'] = Object.keys(extra.rows[0]).map(h => ({ wch: Math.max(h.length + 2, 14) }));
+      XLSX.utils.book_append_sheet(wb, ws3, extra.name.slice(0, 31));
+    }
     const base = activeView ? `Not Sold trend - ${activeView.name}` : `Not Sold trend by ${groupBy} by ${period}`;
     XLSX.writeFile(wb, `${base.replace(/[\\/:*?"<>|]+/g, '-')} - ${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
@@ -498,6 +515,7 @@ export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRow
               alwaysVisible={['name']}
               rowGroup={(row) => (row.kind === 'series' ? 0 : 1)}
               exportFileName={`Not Sold trend by ${groupBy} by ${period}`}
+              exportExtraSheets={oppsSheet()}
               emptyMessage="No dated losses match these filters."
               onRowClick={(row) => {
                 if (row.kind === 'series') drill(row.name, null);
