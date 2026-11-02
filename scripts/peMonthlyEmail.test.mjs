@@ -245,7 +245,7 @@ process.exit(failed ? 1 : 0);
 // The email explains its row colours under the table.
 {
   const html = buildPeMonthlyTableHtml([{ Account: 'X', 'CDMs Aligned': 'Yes' }]);
-  check('legend follows the table', html.indexOf('Aligned with the CDM') > html.indexOf('</table>'), true);
+  check('legend sits above the table', html.indexOf('Aligned with the CDM') < html.indexOf('>Account<'), true);
   check('legend names all three colours', ['Grey', 'Green', 'White'].every(c => html.includes(`<b>${c}</b>`)), true);
   check('legend swatches match the row colours',
     [peMonthlyRowStyle({ 'CDMs Aligned': 'N/A' }).background, peMonthlyRowStyle({ 'CDMs Aligned': 'Yes' }).background].every(bg => html.includes(`background:${bg};border`)), true);
