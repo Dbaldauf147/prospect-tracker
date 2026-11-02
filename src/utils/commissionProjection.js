@@ -12,6 +12,10 @@
 //
 // Projected 12-mo = expected monthly x 12. Still to come = that, less what
 // has already been paid on the row.
+//
+// The upcoming-months helpers at the bottom spread that expected monthly
+// amount over this month and the next three, inside each commission's
+// start-to-end window.
 
 import { asNumber, asDate } from './dealsFormat.js';
 
@@ -135,4 +139,55 @@ export function projectionTotals(items) {
     }
   }
   return out;
+}
+
+// ---- Upcoming months -------------------------------------------------------
+// This month plus the next `ahead` months, each as { year, monthIdx, key,
+// label }: in November 2026 with ahead = 3, that is Nov 2026 - Feb 2027.
+export const UPCOMING_MONTHS_AHEAD = 3;
+
+export function upcomingMonths(today = new Date(), ahead = UPCOMING_MONTHS_AHEAD) {
+  const out = [];
+  for (let k = 0; k <= ahead; k++) {
+    const d = new Date(today.getFullYear(), today.getMonth() + k, 1);
+    const monthIdx = d.getMonth();
+    out.push({
+      year: d.getFullYear(),
+      monthIdx,
+      key: `${d.getFullYear()}-${String(monthIdx + 1).padStart(2, '0')}`,
+      label: `${MONTHS[monthIdx].slice(0, 3)} ${d.getFullYear()}`,
+    });
+  }
+  return out;
+}
+
+function monthNumber(d) { return d.getFullYear() * 12 + d.getMonth(); }
+
+// The commission's window as month numbers: Comm Start Date's month through
+// Comm End Date's month, or 12 months from the start when no end is on file.
+// Null when there's no start date to anchor it.
+function windowMonths(row) {
+  const start = asDate(row?.['Comm Start Date']);
+  if (!start) return null;
+  const end = asDate(row?.['Comm End Date']);
+  const first = monthNumber(start);
+  const last = end ? monthNumber(end) : first + PROJECTION_MONTHS - 1;
+  return { first, last };
+}
+
+// Expected commission for one row in one upcoming month: 0 outside the
+// commission's window; inside it, the amount already recorded for the
+// current month if that month has paid, otherwise the expected monthly
+// amount (null when there's nothing to price it from). A row with no Comm
+// Start Date can't be placed in time, so it is projected for every month.
+export function expectedForMonth(row, projection, month, today = new Date()) {
+  if (!projection) return null;
+  const n = month.year * 12 + month.monthIdx;
+  const w = windowMonths(row);
+  if (w && (n < w.first || n > w.last)) return 0;
+  if (n === monthNumber(today)) {
+    const actual = asNumber(row?.[MONTHS[month.monthIdx]]);
+    if (actual != null && actual !== 0 && projection.category === 'paying') return actual;
+  }
+  return projection.expectedMonthly;
 }
