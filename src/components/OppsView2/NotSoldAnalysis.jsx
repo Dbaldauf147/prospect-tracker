@@ -436,6 +436,7 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
           from={from}
           to={to}
           years={years}
+          onWindowChange={(w) => { setFrom(w.from); setTo(w.to); setYears(w.years); }}
           lossRows={data.rows}
           onDrill={setDrill}
           settings={settings}

@@ -7,6 +7,8 @@
 // can't drop wins, which carry no reason.
 import {
   notSoldTrend, notSoldFacets, periodLabel, closePeriodOf, TREND_OTHER, NO_REASON,
+  trendChartRows, saveTrendView, deleteTrendView, sanitizeTrendViews, trendViewMatches,
+  normaliseTrendState,
 } from '../src/utils/notSoldAnalysis.js';
 
 let failures = 0;
@@ -70,6 +72,38 @@ const R = [
 
 check('facets list every reason and source among losses', notSoldFacets(R),
   { reasons: [NO_REASON, 'Price', 'Timing'], sources: ['Cold Call', 'Referral'] });
+
+// --- hiding reasons takes them out of everything ---------------------------
+{
+  const t = notSoldTrend(R, { period: 'year', hideReasons: ['Price'] });
+  check('hidden reason drops out of the series', t.series.map(s => s.key), [NO_REASON, 'Timing']);
+  check('and out of the totals and loss rate', t.totals['2025'], { losses: 1, wins: 1, lossRate: 50 });
+}
+
+// --- chart export is what the bars show -----------------------------------
+{
+  const t = notSoldTrend(R, { period: 'year' });
+  check('one row per period, series then totals', trendChartRows(t, { period: 'year', hiddenSeries: ['Timing'] }), [
+    { Period: '2025', Price: 2, [NO_REASON]: 0, 'Total losses': 3, 'Won (Sold)': 1, 'Loss rate %': 75 },
+    { Period: '2026', Price: 1, [NO_REASON]: 1, 'Total losses': 2, 'Won (Sold)': 1, 'Loss rate %': 66.7 },
+  ]);
+  check('percent mode exports shares', trendChartRows(t, { period: 'year', mode: 'percent' })[0].Price, 66.7);
+}
+
+// --- saved views -----------------------------------------------------------
+{
+  const a = { groupBy: 'source', period: 'year', hideReasons: ['Unknown', 'Price'] };
+  let v = saveTrendView([], { name: ' No noise ', state: a, now: 1 });
+  check('saves a named view', v.map(x => x.name), ['No noise']);
+  v = saveTrendView(v, { name: 'no NOISE', state: { ...a, mode: 'percent' }, now: 2 });
+  check('same name replaces rather than duplicates', [v.length, v[0].state.mode], [1, 'percent']);
+  check('an empty name saves nothing', saveTrendView(v, { name: '  ', state: a }).length, 1);
+  check('matching ignores list order', trendViewMatches(v[0], { ...a, mode: 'percent', hideReasons: ['Price', 'Unknown'] }), true);
+  check('and notices a difference', trendViewMatches(v[0], a), false);
+  check('delete removes it', deleteTrendView(v, v[0].id), []);
+  check('junk in settings is dropped', sanitizeTrendViews([null, { id: 'x' }, 'y']), []);
+  check('defaults fill gaps', normaliseTrendState({ period: 'decade' }).period, 'quarter');
+}
 
 if (failures) { console.log(`\n${failures} failing`); process.exit(1); }
 console.log('\nall passing');
