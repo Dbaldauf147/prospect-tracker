@@ -1937,11 +1937,27 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     setError(null);
     setCompanyNote('');
     try {
-      const allProps = { ...snap.f, company: companyCommittedRef.current, dans_tags: buildTagsStringFrom(snap.checkedTags) };
+      const existingIdForTags = contact.id || contact.vid;
+      const savesTagsSeparately = !!existingIdForTags
+        && !(typeof existingIdForTags === 'string' && existingIdForTags.startsWith('local-'));
+      // For a contact HubSpot already has, the tags are NOT this save's to
+      // write. Every tick went out through persistDansTags (flushed above),
+      // which merges against the live record; sending the popup's own list
+      // here as well overwrote that merge with an unmerged copy, deleting
+      // every tag the popup never showed. Because tag clicks also make the
+      // form dirty, the autosave did that a moment after each click. The tag
+      // history audit traced ~144 lost tags (Mar to Oct 2026) to this.
+      const tagsStr = buildTagsStringFrom(snap.checkedTags);
+      const allProps = {
+        ...snap.f,
+        company: companyCommittedRef.current,
+        dans_tags: savesTagsSeparately ? String(savedTagsRef.current ?? contact.dans_tags ?? '') : tagsStr,
+      };
       // HubSpot doesn't have these local-only fields — save them separately via settings.
       const { notes, oldEmails, oldCompany, nickname, teamName, partner, kids, ...localStripped } = allProps;
       // ...and leave out the blanks this form can't speak for — see touchedRef.
       const hsProps = withoutUnknownBlanks(localStripped, contact, touchedRef.current);
+      if (savesTagsSeparately) delete hsProps.dans_tags;
       const noteValue = notes || '';
       const oldEmailsValue = oldEmails || '';
       const oldCompanyValue = oldCompany || '';
@@ -1971,7 +1987,9 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         replacedId = existingId;
         isNew = true;
         action = 'create-contact';
-        body = { properties: { ...hsProps, email: String(hsProps.email || snap.f.email).trim() } };
+        // Recreating the record: nothing on HubSpot to merge with, so the
+        // popup's tags go with it.
+        body = { properties: { ...hsProps, dans_tags: tagsStr, email: String(hsProps.email || snap.f.email).trim() } };
         res = await apiFetch(`/api/hubspot?action=${action}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

@@ -2716,10 +2716,36 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
   const [restoreError, setRestoreError] = useState('');
 
   // What the audit says to put back, as the endpoint wants it. Only rows that
-  // lost something, and never more than one call's worth.
+  // lost something; postRestoreChunks splits it into calls of 100.
   const restoreInput = useMemo(() => (auditResult?.rows || [])
     .filter(r => r.removed?.length)
     .map(r => ({ id: r.id, tags: r.removed })), [auditResult]);
+
+  // The endpoint takes at most 100 contacts a call, so a bigger audit goes
+  // out in chunks and the answers are added up.
+  async function postRestoreChunks(dryRun) {
+    const out = { plans: [], willWrite: 0, written: 0, skipped: 0, errors: [] };
+    for (let i = 0; i < restoreInput.length; i += 100) {
+      const res = await apiFetch('/api/hubspot?action=restore-tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun, restores: restoreInput.slice(i, i + 100) }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json.error) {
+        const msg = json?.error || `HubSpot ${res.status}`;
+        // A write that fails partway still reports what already landed.
+        if (!dryRun && out.written) throw new Error(`${msg} (after ${out.written} contacts were already restored)`);
+        throw new Error(msg);
+      }
+      out.plans.push(...(json.plans || []));
+      out.willWrite += json.willWrite || 0;
+      out.written += json.written || 0;
+      out.skipped += json.skipped || 0;
+      out.errors.push(...(json.errors || []));
+    }
+    return out;
+  }
 
   async function planRestore() {
     if (restoreState) return;
@@ -2728,14 +2754,8 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     setRestorePlan(null);
     setRestoreState('planning');
     try {
-      const res = await apiFetch('/api/hubspot?action=restore-tags', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dryRun: true, restores: restoreInput }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || json.error) throw new Error(json?.error || `HubSpot ${res.status}`);
-      setRestorePlan(json);
+      const json = await postRestoreChunks(true);
+      setRestorePlan({ dryRun: true, plans: json.plans, willWrite: json.willWrite });
     } catch (err) {
       console.error('[tag restore] plan', err);
       setRestoreError(err?.message || 'Could not work out what to restore.');
@@ -2755,13 +2775,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     setRestoreError('');
     setRestoreState('writing');
     try {
-      const res = await apiFetch('/api/hubspot?action=restore-tags', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dryRun: false, restores: restoreInput }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || json.error) throw new Error(json?.error || `HubSpot ${res.status}`);
+      const json = await postRestoreChunks(false);
       const parts = [`Put tags back on ${(json.written || 0).toLocaleString()} contact${json.written === 1 ? '' : 's'}`];
       if (json.skipped) parts.push(`${json.skipped} skipped (HubSpot has no such contact)`);
       if (json.errors?.length) parts.push(`${json.errors.length} batch error${json.errors.length === 1 ? '' : 's'}: ${json.errors.join('; ')}`);
