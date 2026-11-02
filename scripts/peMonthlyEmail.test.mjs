@@ -221,7 +221,7 @@ check('scheduled body: intro then table, nothing else', [sched.includes('Monthly
 {
   check('row style: Yes is green', peMonthlyRowStyle({ 'CDMs Aligned': 'Yes' })?.background, '#DCFCE7');
   check('row style: N/A is grey', peMonthlyRowStyle({ 'CDMs Aligned': 'N/A' }), { background: '#F1F5F9', color: '#64748B' });
-  check('row style: No is plain', peMonthlyRowStyle({ 'CDMs Aligned': 'No' }), null);
+  check('row style: No is yellow (outstanding)', peMonthlyRowStyle({ 'CDMs Aligned': 'No' })?.background, '#FEF9C3');
   const cov = () => [{ name: 'Dan Baldauf' }];
   const pe = peMonthlyRows([{ id: 1, name: 'Platinum Equity', vertical: 'Industrials', tier: 'Tier 2' }], [], cov, { cdmName: 'Dan Baldauf' });
   check('Platinum Equity on your vertical: N/A and grey', [pe[0]['CDMs Aligned'], peMonthlyRowStyle(pe[0])?.background], ['N/A', '#F1F5F9']);
@@ -234,7 +234,7 @@ check('scheduled body: intro then table, nothing else', [sched.includes('Monthly
   const rowOf = (name) => (html.match(new RegExp(`<tr>(?:(?!</tr>).)*${name}(?:(?!</tr>).)*</tr>`, 's')) || [''])[0];
   check('email: aligned row green', rowOf('Green Co').includes('background:#DCFCE7'), true);
   check('email: N/A row grey', [rowOf('Grey Co').includes('background:#F1F5F9'), rowOf('Grey Co').includes('color:#64748B')], [true, true]);
-  check('email: No row plain', rowOf('Plain Co').includes('background:'), false);
+  check('email: No row yellow (outstanding)', rowOf('Plain Co').includes('background:#FEF9C3'), true);
   check('New Opps email wears the same header band',
     /<th style="[^"]*color:#FFFFFF;background:#009530;/.test(buildNewOppsDigestTableHtml([{ Account: 'X' }])), true);
 }
@@ -246,7 +246,8 @@ process.exit(failed ? 1 : 0);
 {
   const html = buildPeMonthlyTableHtml([{ Account: 'X', 'CDMs Aligned': 'Yes' }]);
   check('legend sits above the table', html.indexOf('Aligned with the CDM') < html.indexOf('>Account<'), true);
-  check('legend names all three colours', ['Grey', 'Green', 'White'].every(c => html.includes(`<b>${c}</b>`)), true);
+  check('legend names grey, green, yellow', ['Grey', 'Green', 'Yellow'].every(c => html.includes(`<b>${c}</b>`)), true);
+  check('PE Monthly legend has no White (all PE)', html.includes('Non PE deals'), false);
   check('legend swatches match the row colours',
     [peMonthlyRowStyle({ 'CDMs Aligned': 'N/A' }).background, peMonthlyRowStyle({ 'CDMs Aligned': 'Yes' }).background].every(bg => html.includes(`background:${bg};border`)), true);
   check('no legend when there are no deals', buildPeMonthlyTableHtml([]).includes('Outstanding'), false);

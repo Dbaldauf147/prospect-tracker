@@ -173,7 +173,7 @@ export function resolvePeMonthlyDraftTemplate(saved) {
 // The colour legend lives with the shared row colours (newOppsDigestEmail.js)
 // so the New Opps email carries the same one.
 export const PE_MONTHLY_LEGEND = DIGEST_ROW_LEGEND;
-export const buildPeMonthlyLegendHtml = buildDigestLegendHtml;
+export const buildPeMonthlyLegendHtml = () => buildDigestLegendHtml({ withNonPe: false });
 
 export function buildPeMonthlyTableHtml(rows) {
   const table = buildDigestTableHtml(rows, PE_MONTHLY_EMAIL_COLUMNS, 'No PE or portfolio company deals at Stage 3 or later right now.', {
