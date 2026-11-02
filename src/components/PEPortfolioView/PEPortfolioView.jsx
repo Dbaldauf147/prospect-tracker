@@ -18,6 +18,7 @@ import { computePortfolioFitScore, siteCountNumber, downloadPortfolioCompaniesWo
 import { pickTopPortfolioCompany, pickCurrentPortfolioCompany, buildStatusIndex, buildProspectPcIndex, lookupProspectByPc, TOP_PC_EXCLUDED_STATUSES } from '../../utils/topPortfolioCompany';
 import { activeStageRank } from '../../utils/oppStages';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
+import { PESoldDealsTab } from './PESoldDealsTab';
 import { CompanyNewsScheduleModal } from './CompanyNewsScheduleModal';
 import { PEServicesReportModal } from './PEServicesReportModal';
 import { DataTable, ColumnFilterCell } from '../common/DataTable';
@@ -758,6 +759,15 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     () => computeFirmScopedOpps(BLACKSTONE_FIRM, peOpps, oppsRecords, prospects),
     [peOpps, oppsRecords, prospects],
   );
+
+  // An opp's account to its company record, the same loose match the PE
+  // Opps tab uses to open the company popup. Stable so the PE Sold tab's
+  // per-account lookup only reruns when the prospects change.
+  const findProspectForAccount = useCallback((account) => {
+    const name = String(account || '').toLowerCase();
+    if (!name) return null;
+    return prospects.find(p => companiesMatch((p.company || '').toLowerCase(), name)) || null;
+  }, [prospects]);
 
   const filteredBlackstoneOpps = useMemo(() => {
     const q = blackstoneQuery.trim().toLowerCase();
@@ -1680,6 +1690,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           { key: 'blueOwl', label: 'PE Overview' },
           { key: 'blueOwlServices', label: 'PE Overview - Services' },
           { key: 'opps', label: 'PE Opps' },
+          { key: 'peSold', label: 'PE Sold' },
           { key: 'stageDays', label: 'Days in Stage' },
           { key: 'strategies', label: 'Strategies' },
           { key: 'caseStudy', label: 'Case Study' },
@@ -1726,6 +1737,15 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
           onSelectProspect={onSelectProspect}
           onEditField={updateOppField}
           user={user}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      ) : subtab === 'peSold' ? (
+        <PESoldDealsTab
+          oppsRecords={oppsRecords}
+          oppsMissing={oppsRead && oppsRecords.length === 0}
+          findProspect={findProspectForAccount}
+          onSelectProspect={onSelectProspect}
           settings={settings}
           updateSettings={updateSettings}
         />
