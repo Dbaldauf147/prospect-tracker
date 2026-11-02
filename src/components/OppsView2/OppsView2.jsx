@@ -14388,18 +14388,29 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // Show dropdown. That dropdown is gone, so derive the By Service
   // default per-tab instead of mutating shared state.
   const effectiveActivityFilter = activeTab === 'services' ? 'active' : activityFilter;
-  const [hiddenServices, setHiddenServices] = useState(() => new Set());
+  // Services hidden on the By Service tab. Saved in settings so they stay
+  // hidden by default on every visit (and on Dan's other machine), and
+  // shared by all three subtabs: hide one anywhere and it's gone from each.
+  const hiddenServices = useMemo(
+    () => new Set(Array.isArray(settings?.oppsHiddenServices) ? settings.oppsHiddenServices : []),
+    [settings?.oppsHiddenServices],
+  );
   const [showHidden, setShowHidden] = useState(false);
   // By Service subtab: the live table, each service's share of the opps
   // started over time, or each service's close rate over time.
   const [servicesView, setServicesView] = useState('table');
-  // Services hidden on the table stay off the trend subtabs too (unless the
-  // table is showing hidden ones). Memoised so the trends don't recompute
-  // on every render.
-  const trendHiddenServices = useMemo(
-    () => (showHidden ? [] : [...hiddenServices]),
-    [showHidden, hiddenServices],
+  // The services the trend charts draw (the Chart box) and the legend
+  // lines switched off. Held here rather than in each subtab so a pick on
+  // "% of total" is still there on "Close rate", and the other way round.
+  // The picks are saved; the legend toggles last the session.
+  const servicePicks = useMemo(
+    () => (Array.isArray(settings?.oppsServiceTrendPicks) ? settings.oppsServiceTrendPicks : []),
+    [settings?.oppsServiceTrendPicks],
   );
+  const setServicePicks = useCallback((next) => {
+    updateSettings({ oppsServiceTrendPicks: next });
+  }, [updateSettings]);
+  const [serviceLinesOff, setServiceLinesOff] = useState(() => new Set());
   const [linkModalOpen, setLinkModalOpen] = useState(false);
   // null when idle; { account } when the user clicked + New Opp (or
   // committed the Add Company combobox) and the Source-picker modal
@@ -16143,12 +16154,10 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   }, [settings?.oppsServiceSMEs, updateSettings]);
 
   const toggleHideService = useCallback((scope) => {
-    setHiddenServices(prev => {
-      const next = new Set(prev);
-      if (next.has(scope)) next.delete(scope); else next.add(scope);
-      return next;
-    });
-  }, []);
+    const next = new Set(Array.isArray(settings?.oppsHiddenServices) ? settings.oppsHiddenServices : []);
+    if (next.has(scope)) next.delete(scope); else next.add(scope);
+    updateSettings({ oppsHiddenServices: [...next].sort() });
+  }, [settings?.oppsHiddenServices, updateSettings]);
 
   // Run the configured "No Further Action Today" clear schedules. For each
   // enabled type, if its most recent scheduled occurrence (Eastern weekday
@@ -19354,7 +19363,14 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           key={servicesView}
           mode={servicesView}
           records={records}
-          hiddenServices={trendHiddenServices}
+          picked={servicePicks}
+          onPickedChange={setServicePicks}
+          linesOff={serviceLinesOff}
+          onLinesOffChange={setServiceLinesOff}
+          hiddenSet={hiddenServices}
+          showHidden={showHidden}
+          onShowHiddenChange={setShowHidden}
+          onToggleHide={toggleHideService}
           settings={settings}
           updateSettings={updateSettings}
         />
