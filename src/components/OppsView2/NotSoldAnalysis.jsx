@@ -535,6 +535,10 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
           lossRows={data.rows}
           onDrill={setDrill}
           oppsSheetRows={notSoldOppRows}
+          extraFilters={daysActive ? [{
+            Setting: 'Days in stage',
+            Value: `${daysStage === STAGE_DAYS_TOTAL ? 'All stages (total)' : (NOT_SOLD_STAGE_COLUMNS.find(c => c.stage === daysStage)?.label || daysStage)}: ${daysMin || 0} to ${daysMax || 'any'} days`,
+          }] : []}
           settings={settings}
           updateSettings={updateSettings}
         />
