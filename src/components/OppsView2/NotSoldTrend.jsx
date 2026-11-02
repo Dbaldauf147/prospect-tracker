@@ -74,7 +74,7 @@ export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRow
   const [sources, setSources] = useState([]);
   const [reasons, setReasons] = useState([]);
   // Reasons taken out of the picture altogether: chart, table, totals and
-  // loss rate. Unlike the legend, which only stops drawing a series.
+  // close rate. Unlike the legend, which only stops drawing a series.
   const [hideReasons, setHideReasons] = useState([]);
   // Series switched off from the legend.
   const [hidden, setHidden] = useState(() => new Set());
@@ -152,7 +152,7 @@ export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRow
 
   const chartData = useMemo(() => trend.periods.map(p => {
     const t = trend.totals[p];
-    const row = { period: p, label: periodLabel(p, period), losses: t.losses, wins: t.wins, lossRate: t.lossRate };
+    const row = { period: p, label: periodLabel(p, period), losses: t.losses, wins: t.wins, closeRate: t.closeRate };
     for (const s of trend.series) {
       const n = s.counts[p] || 0;
       row[s.key] = mode === 'percent' ? pct(n, t.losses) : n;
@@ -204,13 +204,13 @@ export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRow
     for (const p of trend.periods) {
       tot[p] = trend.totals[p].losses;
       wins[p] = trend.totals[p].wins;
-      rate[p] = trend.totals[p].lossRate;
+      rate[p] = trend.totals[p].closeRate;
       winTotal += wins[p];
     }
     const decided = trend.lossCount + winTotal;
     rows.push({ id: TOTAL_ID, name: 'Total losses', kind: 'total', counts: tot, total: trend.lossCount });
     rows.push({ id: WINS_ID, name: 'Won (Sold)', kind: 'wins', counts: wins, total: winTotal });
-    rows.push({ id: RATE_ID, name: 'Loss rate', kind: 'rate', counts: rate, total: decided > 0 ? pct(trend.lossCount, decided) : null });
+    rows.push({ id: RATE_ID, name: 'Close rate', kind: 'rate', counts: rate, total: decided > 0 ? pct(winTotal, decided) : null });
     return rows;
   }, [trend]);
 
@@ -300,7 +300,7 @@ export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRow
         ))}
         <div style={{ borderTop: '1px solid var(--color-border, #E2E8F0)', marginTop: 4, paddingTop: 4, display: 'flex', justifyContent: 'space-between' }}>
           <span>{row.losses} lost, {row.wins} won</span>
-          <span style={{ fontWeight: 600 }}>{row.lossRate == null ? '' : `${row.lossRate.toFixed(0)}% loss rate`}</span>
+          <span style={{ fontWeight: 600 }}>{row.closeRate == null ? '' : `${row.closeRate.toFixed(0)}% close rate`}</span>
         </div>
         <div style={{ ...muted, marginTop: 2 }}>Click a bar to see those opps</div>
       </div>
@@ -444,7 +444,7 @@ export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRow
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 260, maxWidth: 460, flex: '1 1 260px' }}>
-          <span className={styles.filterLabel} title="Take these reasons out of the chart, the table and the loss rate">Hide reasons</span>
+          <span className={styles.filterLabel} title="Take these reasons out of the chart, the table and the close rate">Hide reasons</span>
           <div style={{ flex: 1 }}>
             <TagMultiSelect options={facets.reasons} selected={hideReasons} onToggle={toggleIn(setHideReasons)} placeholder="None hidden" />
           </div>

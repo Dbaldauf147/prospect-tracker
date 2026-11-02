@@ -117,7 +117,7 @@ function inWindow(r, fromTs, toTs, yearSet) {
  *     undated,        // losses left out because they carry no Close Date
  *     reasons: [{ reason, count, percent, sources: [{ source, count }],
  *                 competitions: [{ value, count }], bfoStatuses: [{ value, count }] }],
- *     sources: [{ source, losses, wins, lossRate, percent,
+ *     sources: [{ source, losses, wins, closeRate, percent,
  *                 reasons: [{ reason, count, percent, percentAll }],
  *                 topReason }],
  *     rows,           // the Not Sold opps themselves, newest close first
@@ -241,11 +241,10 @@ export function notSoldBreakdown(records, { from = '', to = '', years = [] } = {
         source,
         losses: v.count,
         wins,
-        // Share of that source's decided opps that were lost. Null when
-        // nothing has closed, which can't happen here — a source only
-        // appears because it lost something — but kept for the same shape
-        // the win-rate column uses.
-        lossRate: decided > 0 ? (v.count / decided) * 100 : null,
+        // Close rate: share of that source's decided opps (Sold + Not
+        // Sold) that were won, the same rule as By Source's Win Rate. This
+        // page reports close rates only, never the loss-side mirror.
+        closeRate: decided > 0 ? (wins / decided) * 100 : null,
         percent: share(v.count),
         reasons: ranked,
         topReason: ranked.length ? ranked[0] : null,
@@ -362,7 +361,7 @@ function periodRange(first, last, period) {
  *   {
  *     periods: ['2025-Q1', ...],            // oldest first, gaps filled
  *     series:  [{ key, total, counts: { [period]: n } }],  // commonest first
- *     totals:  { [period]: { losses, wins, lossRate } },
+ *     totals:  { [period]: { losses, wins, closeRate } },
  *     lossCount, undated,
  *   }
  *
@@ -371,10 +370,10 @@ function periodRange(first, last, period) {
  *   sources            only opps from these sources (wins too, so the loss
  *                      rate is that slice's own)
  *   reasons            only losses filed under these reasons. Wins carry no
- *                      reason, so they stay in: the loss rate then reads as
- *                      "share of decided deals lost to these reasons".
+ *                      reason, so they stay in: the close rate then reads as
+ *                      wins over (wins + losses to these reasons).
  *   hideReasons        losses filed under these reasons are taken out of
- *                      everything: series, totals and the loss rate, as if
+ *                      everything: series, totals and the close rate, as if
  *                      they had never been lost. For reading the picture
  *                      without the noise of, say, "Cancelled internally".
  *   topN               series past this many fold into "Other" so the chart
@@ -406,7 +405,7 @@ function trendPlacer({
     const within = inWindow(r, fromTs, toTs, yearSet);
     if (within === false) return null;
     const ym = within === null ? null : closeYearMonth(r['Close Date']);
-    if (!ym) return stage === NOT_SOLD ? { stage, undated: true } : null;
+    if (!ym) return { stage, undated: true };
     return { stage, period: periodKey(ym, period) };
   };
 }
@@ -429,7 +428,7 @@ export function notSoldTrend(records, opts = {}) {
   for (const r of records || []) {
     const at = place(r);
     if (!at) continue;
-    if (at.undated) { undated += 1; continue; }
+    if (at.undated) { if (at.stage === NOT_SOLD) undated += 1; continue; }
     const { stage, period: p } = at;
     const t = bump(p);
     if (stage === SOLD) { t.wins += 1; continue; }
@@ -462,7 +461,7 @@ export function notSoldTrend(records, opts = {}) {
   for (const p of periods) {
     const t = totals.get(p) || { losses: 0, wins: 0 };
     const decided = t.losses + t.wins;
-    totalsOut[p] = { ...t, lossRate: decided > 0 ? (t.losses / decided) * 100 : null };
+    totalsOut[p] = { ...t, closeRate: decided > 0 ? (t.wins / decided) * 100 : null };
   }
 
   return { periods, series, totals: totalsOut, lossCount, undated };
@@ -507,7 +506,7 @@ export function trendChartRows(trend, { period = 'quarter', mode = 'count', hidd
     }
     row['Total losses'] = t.losses;
     row['Won (Sold)'] = t.wins;
-    row['Loss rate %'] = t.lossRate == null ? '' : Number(t.lossRate.toFixed(1));
+    row['Close rate %'] = t.closeRate == null ? '' : Number(t.closeRate.toFixed(1));
     return row;
   });
 }
@@ -588,7 +587,7 @@ export function trendViewMatches(view, state) {
 /**
  * The opps behind the trend, one row each, for the export's details sheet:
  * every loss AND every win the chart counted (wins are the other half of
- * the loss rate), under exactly the filters on screen. A loss with no Close
+ * the close rate), under exactly the filters on screen. A loss with no Close
  * Date is listed too, marked as not counted, since the screen says it was
  * left out and the file should be able to show which ones.
  *
@@ -641,4 +640,111 @@ export function trendDetailRows(records, opts = {}) {
     || (a.Stage === b.Stage ? 0 : a.Stage === NOT_SOLD ? -1 : 1)
     || String(a.Account).localeCompare(String(b.Account)));
   return out.map((row) => { const copy = { ...row }; delete copy._sort; return copy; });
+}
+
+// ---------------------------------------------------------------------------
+// Close rate by source over time
+//
+// The other side of the same deals: of the opps from each source that were
+// decided in a period (Sold + Not Sold, by Close Date), how many were won.
+// Same rule as By Source's Win Rate, bucketed by close period so you can see
+// whether a source is getting better or worse.
+
+/**
+ *   {
+ *     periods: [...],                               // oldest first, gaps filled
+ *     series:  [{ key, wins, decided, rate,
+ *                 byPeriod: { [p]: { wins, decided, rate } } }],  // most decided first
+ *     overall: { [p]: { wins, decided, rate } },    // every source shown, together
+ *     wins, decided, rate,                          // the whole window
+ *     undated,                                      // decided opps with no Close Date
+ *   }
+ *
+ * `rate` is null where nothing was decided, so a chart can leave a gap
+ * rather than draw a misleading 0%. Past `topN` sources the rest fold into
+ * "Other" (their wins and decided summed, then the rate taken).
+ */
+export function closeRateTrend(records, opts = {}) {
+  const { period = 'quarter', topN = 0 } = opts;
+  // Reasons only describe losses; a close rate needs both sides untouched.
+  const place = trendPlacer({ ...opts, reasons: [], hideReasons: [] });
+  const rate = (w, d) => (d > 0 ? (w / d) * 100 : null);
+  const bySource = new Map();
+  const overall = new Map();
+  const seen = new Set();
+  let undated = 0;
+  const add = (map, k, won) => {
+    const c = map.get(k) || { wins: 0, decided: 0 };
+    c.decided += 1;
+    if (won) c.wins += 1;
+    map.set(k, c);
+  };
+  for (const r of records || []) {
+    const at = place(r);
+    if (!at) continue;
+    if (at.undated) { undated += 1; continue; }
+    const won = at.stage === SOLD;
+    const src = sourceOf(r);
+    seen.add(at.period);
+    add(overall, at.period, won);
+    const s = bySource.get(src) || { key: src, wins: 0, decided: 0, cells: new Map() };
+    s.decided += 1;
+    if (won) s.wins += 1;
+    add(s.cells, at.period, won);
+    bySource.set(src, s);
+  }
+  const sorted = [...seen].sort();
+  const periods = periodRange(sorted[0], sorted[sorted.length - 1], period);
+
+  let list = [...bySource.values()].sort((a, b) => b.decided - a.decided || a.key.localeCompare(b.key));
+  if (topN > 0 && list.length > topN) {
+    const other = { key: TREND_OTHER, wins: 0, decided: 0, cells: new Map(), folded: [] };
+    for (const s of list.slice(topN)) {
+      other.wins += s.wins;
+      other.decided += s.decided;
+      other.folded.push(s.key);
+      for (const [p, c] of s.cells) {
+        const o = other.cells.get(p) || { wins: 0, decided: 0 };
+        o.wins += c.wins; o.decided += c.decided;
+        other.cells.set(p, o);
+      }
+    }
+    list = [...list.slice(0, topN), other];
+  }
+  const cellsOut = (cells) => {
+    const out = {};
+    for (const p of periods) {
+      const c = cells.get(p) || { wins: 0, decided: 0 };
+      out[p] = { wins: c.wins, decided: c.decided, rate: rate(c.wins, c.decided) };
+    }
+    return out;
+  };
+  const series = list.map(s => ({
+    key: s.key, wins: s.wins, decided: s.decided, rate: rate(s.wins, s.decided),
+    byPeriod: cellsOut(s.cells), ...(s.folded ? { folded: s.folded } : {}),
+  }));
+  let wins = 0; let decided = 0;
+  for (const c of overall.values()) { wins += c.wins; decided += c.decided; }
+  return { periods, series, overall: cellsOut(overall), wins, decided, rate: rate(wins, decided), undated };
+}
+
+/** The close-rate chart as a sheet: a row per period, a rate column per source shown. */
+export function closeRateChartRows(cr, { period = 'quarter', hiddenSeries = [] } = {}) {
+  const hidden = new Set(hiddenSeries || []);
+  const shown = (cr?.series || []).filter(s => !hidden.has(s.key));
+  const r1 = (v) => (v == null ? '' : Number(v.toFixed(1)));
+  return (cr?.periods || []).map((p) => {
+    const row = { Period: periodLabel(p, period) };
+    for (const s of shown) {
+      const c = s.byPeriod[p];
+      row[`${s.key} close rate %`] = r1(c.rate);
+      row[`${s.key} won`] = c.wins;
+      row[`${s.key} decided`] = c.decided;
+    }
+    const o = cr.overall[p];
+    row['Overall close rate %'] = r1(o.rate);
+    row['Overall won'] = o.wins;
+    row['Overall decided'] = o.decided;
+    return row;
+  });
 }
