@@ -364,7 +364,11 @@ export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRow
   const toggleIn = (setter) => (v) => setter(prev => (prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v]));
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '0 1.25rem 1.25rem', overflow: 'auto' }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '0 1.25rem 1.25rem' }}>
+      {/* The controls stay put and only the chart and table scroll. They
+          used to share one scroll box, so scrolling down to the table
+          carried Views (and + Save view) and Group by off the top. */}
+      <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
       {/* Saved views: one chip per view, lit when the screen matches it. */}
       <div className={styles.notSoldYears} style={{ gap: '0.35rem' }}>
         <span className={styles.filterLabel} style={{ marginRight: 2 }}>Views</span>
@@ -460,6 +464,9 @@ export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRow
         </span>
       </div>
 
+      </div>
+
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
       <h3 className={styles.notSoldSectionTitle}>
         Losses by {period}, by {groupBy}{mode === 'percent' ? ' (share of each period)' : ''}
       </h3>
@@ -544,6 +551,7 @@ export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRow
           </div>
         </>
       )}
+      </div>
     </div>
   );
 }
