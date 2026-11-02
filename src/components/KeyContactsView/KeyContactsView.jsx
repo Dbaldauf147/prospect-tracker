@@ -942,22 +942,24 @@ function KeyContactsViewInner({
   async function applyHideTag(contactIds) {
     if (!contactIds || contactIds.length === 0) return { updated: 0, errors: 0, errorMessage: '' };
     const idSet = new Set(contactIds.map(String));
-    const cache = hubspotCache?.contacts || [];
     let updated = 0;
     let errors = 0;
     let firstErrorMessage = '';
     const successfulIds = new Set();
+    // dans_tags is one string, so adding Hide rewrites the whole list. It
+    // used to be built from the cached contact, which deleted any tag added
+    // since the last sync. Read HubSpot first and refuse if that fails.
+    const live = await fetchLiveContactTags([...idSet]);
+    const writtenTags = new Map();
+    if (!live) {
+      return { updated: 0, errors: idSet.size, errorMessage: "Couldn't read these contacts' current tags from HubSpot, so nothing was changed." };
+    }
     for (const id of idSet) {
-      const c = cache.find(x => String(x.id) === id) || cache.find(x => String(x.vid) === id);
-      const raw = (c?.dans_tags || c?.dan_s_tags || c?.dans_tag || '');
-      const parts = raw.split(';').map(s => s.trim()).filter(Boolean);
-      const lower = new Set(parts.map(p => p.toLowerCase()));
-      if (lower.has('hide')) { updated += 1; successfulIds.add(id); continue; }
-      parts.push('Hide');
-      // Use ';' (no space) to match the separator HubSpotView's tag
-      // picker uses; some HubSpot enum properties reject leading
-      // whitespace on values.
-      const nextTags = parts.join(';');
+      const plan = planTagEdit('add', ['Hide'], live.get(id));
+      if (plan.action === 'unchanged') { updated += 1; successfulIds.add(id); continue; }
+      if (plan.action !== 'write') { errors += 1; if (!firstErrorMessage) firstErrorMessage = 'HubSpot has no such contact'; continue; }
+      const nextTags = plan.tags;
+      writtenTags.set(id, nextTags);
       try {
         const res = await apiFetch('/api/hubspot?action=update-contact', {
           method: 'POST',
@@ -984,6 +986,8 @@ function KeyContactsViewInner({
         await updateHubspotCache(draft => {
           for (const c of draft.contacts) {
             if (!successfulIds.has(String(c.id || c.vid))) continue;
+            const written = writtenTags.get(String(c.id || c.vid));
+            if (written != null) { c.dans_tags = written; continue; }
             const existing = (c.dans_tags || c.dan_s_tags || c.dans_tag || '');
             const parts = existing.split(';').map(s => s.trim()).filter(Boolean);
             if (parts.some(p => p.toLowerCase() === 'hide')) continue;
@@ -1042,11 +1046,6 @@ function KeyContactsViewInner({
     // be written as if they had no tags at all — wiping the rest. The cache
     // is only the fallback for a read that fails outright.
     const live = await fetchLiveContactTags(ids);
-    const cache = hubspotCache?.contacts || [];
-    const cachedTags = (id) => {
-      const c = cache.find(x => String(x.id) === id) || cache.find(x => String(x.vid) === id);
-      return c ? String(c.dans_tags || c.dan_s_tags || c.dans_tag || '') : undefined;
-    };
     const nextById = new Map();
     let updated = 0;
     let unchanged = 0;
@@ -1054,7 +1053,9 @@ function KeyContactsViewInner({
     let errors = 0;
     let firstErrorMessage = '';
     for (const id of ids) {
-      const current = live ? live.get(id) : cachedTags(id);
+      // No fallback to the cached copy when the read fails: writing a
+      // whole-list overwrite from a stale cache is how tags were lost.
+      const current = live ? live.get(id) : undefined;
       const plan = planTagEdit(mode, chosen, current);
       if (plan.action === 'skip') { skipped += 1; continue; }
       if (plan.action === 'unchanged') { unchanged += 1; continue; }
