@@ -3,6 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { DataTable } from '../common/DataTable';
+import { NOT_SOLD_OPPS_SHEET } from '../../utils/notSoldStageDays';
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import {
   notSoldTrend, notSoldFacets, periodLabel, closePeriodOf, reasonOf, sourceOf, TREND_OTHER,
@@ -66,7 +67,7 @@ function pct(n, d) {
  * The close window (dates and year chips) comes from the tab above, so the
  * two views always describe the same losses.
  */
-export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRows, onDrill, settings, updateSettings }) {
+export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRows, onDrill, oppsSheetRows, settings, updateSettings }) {
   const [groupBy, setGroupBy] = useState('reason');
   const [period, setPeriod] = useState('quarter');
   const [mode, setMode] = useState('count');
@@ -498,6 +499,12 @@ export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRow
               alwaysVisible={['name']}
               rowGroup={(row) => (row.kind === 'series' ? 0 : 1)}
               exportFileName={`Not Sold trend by ${groupBy} by ${period}`}
+              // The losses behind the trend, one row each with their days
+              // in every stage, honouring the Source / Reason filters here.
+              exportExtraSheets={oppsSheetRows ? [{
+                name: NOT_SOLD_OPPS_SHEET,
+                rows: oppsSheetRows(lossRows.filter(r => (!sources.length || sources.includes(sourceOf(r))) && (!reasons.length || reasons.includes(reasonOf(r))) && !hideReasons.includes(reasonOf(r)) && closePeriodOf(r, period))),
+              }] : undefined}
               emptyMessage="No dated losses match these filters."
               onRowClick={(row) => {
                 if (row.kind === 'series') drill(row.name, null);
