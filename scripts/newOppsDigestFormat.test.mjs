@@ -77,3 +77,14 @@ check('empty list still says so', buildNewOppsDigestTableHtml([]).includes('No n
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
+
+// Legend under the table, and no "[waiting on: ...]" in Next Steps.
+{
+  const { buildNewOppsDigestTableHtml: t, stripWaitingOn } = await import('../src/utils/newOppsDigestEmail.js');
+  const h = t([{ Account: 'W', _notesSummary: ['Call Dec 7th', 'Shannon needs a quote [waiting on: Sean Richard]'], 'Next Steps': '' }]);
+  check('New Opps legend follows the table', h.indexOf('Aligned with the CDM') > h.indexOf('</table>'), true);
+  check('waiting on tags dropped from bullets', h.includes('waiting on'), false);
+  check('the step itself stays', h.includes('Shannon needs a quote<'), true);
+  check('raw notes lose it too', stripWaitingOn('Grant strategy open [Waiting on: Stephanie D/Kendra]'), 'Grant strategy open');
+  check('no legend when empty', t([]).includes('Outstanding'), false);
+}

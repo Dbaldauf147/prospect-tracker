@@ -14,6 +14,7 @@
 
 import {
   buildDigestTableHtml, buildDigestEmailHtml, downloadEml, DIGEST_HEADER_STYLE, alignedRowStyle, verticalCdmFor,
+  DIGEST_ROW_LEGEND, buildDigestLegendHtml,
 } from './newOppsDigestEmail.js';
 import { buildPeOverlapDeals, tierRank, cdmsAlignedLabel } from './keithPeDeals.js';
 import { buildTargetTierResolver, buildTargetCdmResolver } from './targetTier.js';
@@ -169,12 +170,19 @@ export function resolvePeMonthlyDraftTemplate(saved) {
   return out;
 }
 
+// The colour legend lives with the shared row colours (newOppsDigestEmail.js)
+// so the New Opps email carries the same one.
+export const PE_MONTHLY_LEGEND = DIGEST_ROW_LEGEND;
+export const buildPeMonthlyLegendHtml = buildDigestLegendHtml;
+
 export function buildPeMonthlyTableHtml(rows) {
-  return buildDigestTableHtml(rows, PE_MONTHLY_EMAIL_COLUMNS, 'No PE or portfolio company deals at Stage 3 or later right now.', {
+  const table = buildDigestTableHtml(rows, PE_MONTHLY_EMAIL_COLUMNS, 'No PE or portfolio company deals at Stage 3 or later right now.', {
     headStyle: PE_MONTHLY_HEADER_STYLE,
     rowStyle: peMonthlyRowStyle,
     fit: true,
   });
+  // No legend under the "nothing to report" line.
+  return Array.isArray(rows) && rows.length ? `${table}${buildPeMonthlyLegendHtml()}` : table;
 }
 
 export function buildPeMonthlyEmailHtml(rows, { message = '', greeting = '', signature = '' } = {}) {
