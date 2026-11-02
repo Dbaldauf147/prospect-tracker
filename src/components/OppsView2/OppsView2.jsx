@@ -154,6 +154,7 @@ import {
 } from '../../utils/newOppsDigestEmail';
 import { NewOppsDraftEmailModal } from './NewOppsDraftEmailModal';
 import { StageReach } from './StageReach';
+import { ServiceTrends } from './ServiceTrends';
 import {
   peMonthlyRows, peMonthlyTierRank, PE_MONTHLY_COLUMNS, PE_MONTHLY_DRAFT_DEFAULTS, resolvePeMonthlyDraftTemplate,
   buildPeMonthlyEmailHtml, downloadPeMonthlyOutlookDraft, peMonthlyRowStyle,
@@ -14389,6 +14390,16 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   const effectiveActivityFilter = activeTab === 'services' ? 'active' : activityFilter;
   const [hiddenServices, setHiddenServices] = useState(() => new Set());
   const [showHidden, setShowHidden] = useState(false);
+  // By Service subtab: the live table, each service's share of the opps
+  // started over time, or each service's close rate over time.
+  const [servicesView, setServicesView] = useState('table');
+  // Services hidden on the table stay off the trend subtabs too (unless the
+  // table is showing hidden ones). Memoised so the trends don't recompute
+  // on every render.
+  const trendHiddenServices = useMemo(
+    () => (showHidden ? [] : [...hiddenServices]),
+    [showHidden, hiddenServices],
+  );
   const [linkModalOpen, setLinkModalOpen] = useState(false);
   // null when idle; { account } when the user clicked + New Opp (or
   // committed the Add Company combobox) and the Source-picker modal
@@ -19316,6 +19327,40 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       )}
 
       {activeTab === 'services' && (
+        <div className={styles.notSoldYears} style={{ padding: '0.5rem 1.25rem 0' }}>
+          <button
+            type="button"
+            className={servicesView === 'table' ? styles.notSoldYearOn : styles.notSoldYear}
+            onClick={() => setServicesView('table')}
+            title="Each service across the live pipeline"
+          >By service</button>
+          <button
+            type="button"
+            className={servicesView === 'share' ? styles.notSoldYearOn : styles.notSoldYear}
+            onClick={() => setServicesView('share')}
+            title="Each service's share of the opps started, by month, quarter or year"
+          >% of total over time</button>
+          <button
+            type="button"
+            className={servicesView === 'closeRate' ? styles.notSoldYearOn : styles.notSoldYear}
+            onClick={() => setServicesView('closeRate')}
+            title="Each service's close rate (won / decided), by month, quarter or year"
+          >Close rate over time</button>
+        </div>
+      )}
+
+      {activeTab === 'services' && servicesView !== 'table' && (
+        <ServiceTrends
+          key={servicesView}
+          mode={servicesView}
+          records={records}
+          hiddenServices={trendHiddenServices}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      )}
+
+      {activeTab === 'services' && servicesView === 'table' && (
         <>
           <div className={styles.searchRow}>
             <span className={styles.resultCount}>

@@ -336,7 +336,7 @@ export function periodLabel(key, period) {
 // Every period from the first key to the last, so a quarter with no losses
 // shows as a zero rather than vanishing and making the line look smoother
 // than it was.
-function periodRange(first, last, period) {
+export function periodRange(first, last, period) {
   if (!first) return [];
   const out = [];
   if (period === 'year') {
