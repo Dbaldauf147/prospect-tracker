@@ -16,7 +16,7 @@
 // received message — so the user can review, tweak, and send it themselves.
 
 import { OPP_VERTICAL_KEY, OPP_SALESPERSON_KEY } from './oppVerticalCoverage.js';
-import { accountTier, accountCdmAligned, accountTargetCdm, cdmsAlignedLabel } from './keithPeDeals.js';
+import { accountTier, accountCdmAligned, accountTargetCdm, cdmsAlignedLabel, isPeOpp, ownedByNonPeFirm } from './keithPeDeals.js';
 import { matchesCdm } from './cdmMatch.js';
 
 // The record keys withTierAndAlignment fills in. Not 'Tier': an opp row
@@ -48,35 +48,45 @@ const DIGEST_COLUMNS = NEW_OPPS_DIGEST_COLUMNS;
 
 // The SE header band (Schneider dark green, white type) and the row
 // colours keyed off CDMs aligned: green once aligned, grey when there is
-// nothing to align (N/A: not on the tier list, or the vertical is yours).
-// Shared by PE Monthly (tab and email) and the New Opps email.
+// nothing to align (N/A: not on the tier list, or the vertical is yours),
+// yellow while alignment is still outstanding (No). A row flagged as not a
+// PE deal (`_peDeal === false`, set by withTierAndAlignment on New Opps)
+// stays white whatever its CDMs aligned says. PE Monthly's rows are all PE
+// deals and carry no flag. Shared by PE Monthly (tab and email) and the
+// New Opps email.
 export const DIGEST_HEADER_STYLE = { background: '#009530', color: '#FFFFFF' };
+export const PE_DEAL_KEY = '_peDeal';
 export function alignedRowStyle(row) {
+  if (row?.[PE_DEAL_KEY] === false) return null;
   if (row?.[NEW_OPPS_CDMS_ALIGNED_KEY] === 'Yes') return { background: '#DCFCE7', color: '#000000' };
   if (row?.[NEW_OPPS_CDMS_ALIGNED_KEY] === 'N/A') return { background: '#F1F5F9', color: '#64748B' };
+  if (row?.[NEW_OPPS_CDMS_ALIGNED_KEY] === 'No') return { background: '#FEF9C3', color: '#000000' };
   return null;
 }
 
-// What the row colours mean, printed under the table in the email so the
+// What the row colours mean, printed above the table in the email so the
 // reader doesn't need the tab to decode them. Each swatch is the exact
-// background alignedRowStyle paints (white = no style). Shared by
-// the PE Monthly and New Opps emails.
+// background alignedRowStyle paints (white = no style). Shared by the PE
+// Monthly and New Opps emails; PE Monthly leaves White off (`withNonPe`),
+// since every deal on it is a PE deal.
 export const DIGEST_ROW_LEGEND = [
   { background: '#F1F5F9', label: 'Grey', text: 'Not on the tier list, direct PE deals, or Tier 1 accounts (non finance)' },
   { background: '#DCFCE7', label: 'Green', text: 'Aligned with the CDM' },
-  { background: '#FFFFFF', label: 'White', text: 'Outstanding' },
+  { background: '#FEF9C3', label: 'Yellow', text: 'Outstanding' },
+  { background: '#FFFFFF', label: 'White', text: 'Non PE deals', nonPe: true },
 ];
 
-export function buildDigestLegendHtml() {
+export function buildDigestLegendHtml({ withNonPe = true } = {}) {
+  const items = DIGEST_ROW_LEGEND.filter(x => withNonPe || !x.nonPe);
   // One row across the top of the table: swatch, label, swatch, label...
   // A table, not floated spans: Outlook ignores most box CSS but keeps cell
   // backgrounds, borders and widths. The swatch's font-size / line-height
   // pin its height, or Outlook stretches it to the row. The spacer div
   // after it (explicit height, not a margin Outlook can collapse) opens a
   // gap between the legend and the deals table.
-  const cells = DIGEST_ROW_LEGEND.map(({ background, label, text }, i) =>
+  const cells = items.map(({ background, label, text }, i) =>
     `<td width="14" height="14" style="width:14px;height:14px;padding:0;font-size:1px;line-height:1px;background:${background};border:1px solid #000000">&nbsp;</td>`
-    + `<td style="padding:0 ${i === DIGEST_ROW_LEGEND.length - 1 ? 0 : 18}px 0 6px;font:12px Arial,sans-serif;color:#000000;white-space:nowrap"><b>${label}</b> - ${text}</td>`
+    + `<td style="padding:0 ${i === items.length - 1 ? 0 : 18}px 0 6px;font:12px Arial,sans-serif;color:#000000;white-space:nowrap"><b>${label}</b> - ${text}</td>`
   ).join('');
   return `<table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin:4px 0 0"><tr>${cells}</tr></table>`
     + '<div style="height:12px;line-height:12px;font-size:12px">&nbsp;</div>';
@@ -106,6 +116,9 @@ export function withTierAndAlignment(records, { prospects = [], targetTierFor = 
       [OPP_SALESPERSON_KEY]: vertCdm,
       [NEW_OPPS_TIER_KEY]: tier,
       [NEW_OPPS_CDMS_ALIGNED_KEY]: cdmsAlignedLabel(tier, accountCdmAligned(r, prospects), { ownVertical }),
+      // Read the way the PE overlap list reads it (keithPeDeals), so a
+      // deal is PE on New Opps exactly when it would be on PE Monthly.
+      [PE_DEAL_KEY]: isPeOpp(r, prospects) && !ownedByNonPeFirm(r, prospects),
     };
   });
 }

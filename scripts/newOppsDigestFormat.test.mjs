@@ -87,4 +87,11 @@ if (failed) process.exit(1);
   check('the step itself stays', h.includes('Shannon needs a quote<'), true);
   check('raw notes lose it too', stripWaitingOn('Grant strategy open [Waiting on: Stephanie D/Kendra]'), 'Grant strategy open');
   check('no legend when empty', t([]).includes('Outstanding'), false);
+  check('New Opps legend lists White for non PE', h.includes('Non PE deals'), true);
+  const { alignedRowStyle } = await import('../src/utils/newOppsDigestEmail.js');
+  check('outstanding PE deal is yellow', alignedRowStyle({ 'CDMs Aligned': 'No', _peDeal: true })?.background, '#FEF9C3');
+  check('non PE deal stays white', alignedRowStyle({ 'CDMs Aligned': 'Yes', _peDeal: false }), null);
+  const { withTierAndAlignment } = await import('../src/utils/newOppsDigestEmail.js');
+  const flagged = withTierAndAlignment([{ Account: 'Acme', Type: 'Portfolio Company' }, { Account: 'Plain Co', Type: 'End User' }]);
+  check('withTierAndAlignment flags PE deals', flagged.map(r => r._peDeal), [true, false]);
 }
