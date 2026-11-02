@@ -373,12 +373,16 @@ function periodRange(first, last, period) {
  *   reasons            only losses filed under these reasons. Wins carry no
  *                      reason, so they stay in: the loss rate then reads as
  *                      "share of decided deals lost to these reasons".
+ *   hideReasons        losses filed under these reasons are taken out of
+ *                      everything: series, totals and the loss rate, as if
+ *                      they had never been lost. For reading the picture
+ *                      without the noise of, say, "Cancelled internally".
  *   topN               series past this many fold into "Other" so the chart
  *                      stays readable; 0 keeps them all
  */
 export function notSoldTrend(records, {
   from = '', to = '', years = [], period = 'quarter', groupBy = 'reason',
-  sources = [], reasons = [], topN = 0,
+  sources = [], reasons = [], hideReasons = [], topN = 0,
 } = {}) {
   const fromTs = from ? Date.parse(from) : null;
   const toTs = to ? Date.parse(to) + 86399999 : null;
@@ -386,6 +390,7 @@ export function notSoldTrend(records, {
   const yearSet = yearList.length ? new Set(yearList) : null;
   const sourceSet = sources && sources.length ? new Set(sources) : null;
   const reasonSet = reasons && reasons.length ? new Set(reasons) : null;
+  const hideSet = hideReasons && hideReasons.length ? new Set(hideReasons) : null;
   const keyOf = groupBy === 'source' ? sourceOf : reasonOf;
 
   const bySeries = new Map();
@@ -403,6 +408,7 @@ export function notSoldTrend(records, {
     if (stage !== NOT_SOLD && stage !== SOLD) continue;
     if (sourceSet && !sourceSet.has(sourceOf(r))) continue;
     if (stage === NOT_SOLD && reasonSet && !reasonSet.has(reasonOf(r))) continue;
+    if (stage === NOT_SOLD && hideSet && hideSet.has(reasonOf(r))) continue;
     const within = inWindow(r, fromTs, toTs, yearSet);
     if (within === false) continue;
     const ym = within === null ? null : closeYearMonth(r['Close Date']);
@@ -465,4 +471,102 @@ export function notSoldFacets(records) {
 export function closePeriodOf(r, period) {
   const ym = closeYearMonth(r?.['Close Date']);
   return ym ? periodKey(ym, period) : null;
+}
+
+/**
+ * The chart as a sheet: one row per period, one column per series showing,
+ * then the period's totals. What you export is what the bars say, so
+ * series switched off in the legend are left out, and in "% of losses" mode
+ * the series cells are shares rather than counts.
+ */
+export function trendChartRows(trend, { period = 'quarter', mode = 'count', hiddenSeries = [] } = {}) {
+  const hidden = new Set(hiddenSeries || []);
+  const shown = (trend?.series || []).filter(s => !hidden.has(s.key));
+  return (trend?.periods || []).map((p) => {
+    const t = trend.totals[p];
+    const row = { Period: periodLabel(p, period) };
+    for (const s of shown) {
+      const n = s.counts[p] || 0;
+      row[s.key] = mode === 'percent'
+        ? Number((t.losses > 0 ? (n / t.losses) * 100 : 0).toFixed(1))
+        : n;
+    }
+    row['Total losses'] = t.losses;
+    row['Won (Sold)'] = t.wins;
+    row['Loss rate %'] = t.lossRate == null ? '' : Number(t.lossRate.toFixed(1));
+    return row;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Saved views
+//
+// A view is everything on the Trend screen that decides what the chart
+// shows, saved under a name so it is one click to get back. Stored in the
+// user's settings (settings.notSoldTrendViews) so it follows them to their
+// other machine.
+
+export const TREND_VIEWS_KEY = 'notSoldTrendViews';
+
+const VIEW_FIELDS = {
+  groupBy: ['reason', 'source'],
+  period: ['month', 'quarter', 'year'],
+  mode: ['count', 'percent'],
+};
+const VIEW_LISTS = ['sources', 'reasons', 'hideReasons', 'hiddenSeries', 'years'];
+
+/** A view's state with anything missing or malformed set to its default. */
+export function normaliseTrendState(raw) {
+  const v = raw && typeof raw === 'object' ? raw : {};
+  const out = {
+    groupBy: VIEW_FIELDS.groupBy.includes(v.groupBy) ? v.groupBy : 'reason',
+    period: VIEW_FIELDS.period.includes(v.period) ? v.period : 'quarter',
+    mode: VIEW_FIELDS.mode.includes(v.mode) ? v.mode : 'count',
+    from: typeof v.from === 'string' ? v.from : '',
+    to: typeof v.to === 'string' ? v.to : '',
+  };
+  for (const k of VIEW_LISTS) {
+    const list = Array.isArray(v[k]) ? v[k] : [];
+    out[k] = k === 'years'
+      ? list.map(Number).filter(Number.isFinite).sort((a, b) => b - a)
+      : [...new Set(list.filter(x => typeof x === 'string'))].sort((a, b) => a.localeCompare(b));
+  }
+  return out;
+}
+
+/** The saved views list, cleaned: bad entries dropped, oldest first. */
+export function sanitizeTrendViews(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter(v => v && typeof v === 'object' && typeof v.id === 'string' && typeof v.name === 'string' && v.name.trim())
+    .map(v => ({ id: v.id, name: v.name.trim(), createdAt: Number(v.createdAt) || 0, state: normaliseTrendState(v.state) }));
+}
+
+/**
+ * Save the current state under a name. Saving over an existing name
+ * (ignoring case) replaces that view rather than making a second chip with
+ * the same label.
+ */
+export function saveTrendView(views, { name, state, now = Date.now(), id } = {}) {
+  const clean = String(name || '').trim();
+  if (!clean) return sanitizeTrendViews(views);
+  const list = sanitizeTrendViews(views);
+  const existing = list.find(v => v.name.toLowerCase() === clean.toLowerCase());
+  const entry = {
+    id: existing?.id || id || `v${now.toString(36)}`,
+    name: clean,
+    createdAt: existing?.createdAt || now,
+    state: normaliseTrendState(state),
+  };
+  return existing ? list.map(v => (v.id === existing.id ? entry : v)) : [...list, entry];
+}
+
+export function deleteTrendView(views, id) {
+  return sanitizeTrendViews(views).filter(v => v.id !== id);
+}
+
+/** Is the screen showing exactly this view right now? Lights up its chip. */
+export function trendViewMatches(view, state) {
+  if (!view) return false;
+  return JSON.stringify(normaliseTrendState(view.state)) === JSON.stringify(normaliseTrendState(state));
 }

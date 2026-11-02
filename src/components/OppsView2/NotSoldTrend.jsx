@@ -6,6 +6,7 @@ import { DataTable } from '../common/DataTable';
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import {
   notSoldTrend, notSoldFacets, periodLabel, closePeriodOf, reasonOf, sourceOf, TREND_OTHER,
+  trendChartRows, sanitizeTrendViews, saveTrendView, deleteTrendView, trendViewMatches, TREND_VIEWS_KEY,
 } from '../../utils/notSoldAnalysis';
 import styles from './OppsView2.module.css';
 
@@ -65,19 +66,54 @@ function pct(n, d) {
  * The close window (dates and year chips) comes from the tab above, so the
  * two views always describe the same losses.
  */
-export function NotSoldTrend({ records, from, to, years, lossRows, onDrill, settings, updateSettings }) {
+export function NotSoldTrend({ records, from, to, years, onWindowChange, lossRows, onDrill, settings, updateSettings }) {
   const [groupBy, setGroupBy] = useState('reason');
   const [period, setPeriod] = useState('quarter');
   const [mode, setMode] = useState('count');
   const [sources, setSources] = useState([]);
   const [reasons, setReasons] = useState([]);
+  // Reasons taken out of the picture altogether: chart, table, totals and
+  // loss rate. Unlike the legend, which only stops drawing a series.
+  const [hideReasons, setHideReasons] = useState([]);
   // Series switched off from the legend.
   const [hidden, setHidden] = useState(() => new Set());
+  // The name being typed for a new saved view, or null when not saving.
+  const [viewName, setViewName] = useState(null);
+
+  // Everything that decides what the chart shows: what a saved view holds.
+  const currentState = {
+    groupBy, period, mode, sources, reasons, hideReasons,
+    hiddenSeries: [...hidden], from, to, years,
+  };
+  const views = sanitizeTrendViews(settings?.[TREND_VIEWS_KEY]);
+  const activeView = views.find(v => trendViewMatches(v, currentState));
+
+  function applyView(v) {
+    const st = v.state;
+    setGroupBy(st.groupBy);
+    setPeriod(st.period);
+    setMode(st.mode);
+    setSources(st.sources);
+    setReasons(st.reasons);
+    setHideReasons(st.hideReasons);
+    setHidden(new Set(st.hiddenSeries));
+    onWindowChange?.({ from: st.from, to: st.to, years: st.years });
+  }
+  function commitView() {
+    const name = (viewName || '').trim();
+    if (!name) { setViewName(null); return; }
+    updateSettings?.((cur) => ({ [TREND_VIEWS_KEY]: saveTrendView(cur?.[TREND_VIEWS_KEY], { name, state: currentState }) }));
+    setViewName(null);
+  }
+  function removeView(v) {
+    if (!window.confirm(`Delete the saved view "${v.name}"?`)) return;
+    updateSettings?.((cur) => ({ [TREND_VIEWS_KEY]: deleteTrendView(cur?.[TREND_VIEWS_KEY], v.id) }));
+  }
 
   const facets = useMemo(() => notSoldFacets(records), [records]);
   const trend = useMemo(
-    () => notSoldTrend(records, { from, to, years, period, groupBy, sources, reasons, topN: TOP_N }),
-    [records, from, to, years, period, groupBy, sources, reasons],
+    () => notSoldTrend(records, { from, to, years, period, groupBy, sources, reasons, hideReasons, topN: TOP_N }),
+    [records, from, to, years, period, groupBy, sources, reasons, hideReasons],
   );
 
   // Colour follows the series, not its rank in the current filter: slots go
@@ -88,9 +124,13 @@ export function NotSoldTrend({ records, from, to, years, lossRows, onDrill, sett
     const base = notSoldTrend(records, { from, to, years, period: 'year', groupBy });
     const map = new Map();
     base.series.slice(0, TOP_N).forEach((s, i) => map.set(s.key, PALETTE[i]));
-    const free = PALETTE.filter(c => ![...map.values()].includes(c));
+    // A slot is free when nothing showing holds it, so a reason taken out
+    // with Hide reasons hands its colour on instead of a newcomer going grey.
+    const shown = new Set(trend.series.map(s => s.key));
+    const taken = new Set([...map.entries()].filter(([k]) => shown.has(k)).map(([, c]) => c));
+    const free = PALETTE.filter(c => !taken.has(c));
     for (const s of trend.series) {
-      if (s.key === TREND_OTHER || map.has(s.key)) continue;
+      if (s.key === TREND_OTHER || (map.has(s.key) && taken.has(map.get(s.key)))) continue;
       map.set(s.key, free.shift() || OTHER_COLOUR);
     }
     map.set(TREND_OTHER, OTHER_COLOUR);
@@ -128,6 +168,7 @@ export function NotSoldTrend({ records, from, to, years, lossRows, onDrill, sett
     const rows = lossRows.filter(r => {
       if (sources.length && !sources.includes(sourceOf(r))) return false;
       if (reasons.length && !reasons.includes(reasonOf(r))) return false;
+      if (hideReasons.includes(reasonOf(r))) return false;
       const rp = closePeriodOf(r, period);
       if (!rp) return false;
       if (p && rp !== p) return false;
@@ -136,7 +177,7 @@ export function NotSoldTrend({ records, from, to, years, lossRows, onDrill, sett
     const what = seriesKey == null ? 'All losses' : `${groupBy === 'source' ? 'Source' : 'Reason'}: ${seriesKey}`;
     onDrill({
       title: p ? `${what}, ${periodLabel(p, period)}` : what,
-      subtitle: `Losses closed ${p ? `in ${periodLabel(p, period)}` : 'in the trend window'}, with the Source and Reason filters applied.`,
+      subtitle: `Losses closed ${p ? `in ${periodLabel(p, period)}` : 'in the trend window'}, with the Source, Reason and Hide reasons filters applied.`,
       rows,
     });
   }
@@ -256,11 +297,103 @@ export function NotSoldTrend({ records, from, to, years, lossRows, onDrill, sett
     );
   }
 
-  const filtered = sources.length > 0 || reasons.length > 0;
+  const filtered = sources.length > 0 || reasons.length > 0 || hideReasons.length > 0;
+
+  // The chart's numbers as a workbook: what the bars show, period by period,
+  // plus a sheet saying which filters produced them, so a file opened next
+  // month still says what it is.
+  async function exportChart() {
+    const XLSX = await import('xlsx');
+    const rows = trendChartRows(trend, { period, mode, hiddenSeries: [...hidden] });
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = Object.keys(rows[0] || { Period: '' }).map(h => ({ wch: Math.max(h.length + 2, 12) }));
+    XLSX.utils.book_append_sheet(wb, ws, 'Chart data');
+    const list = (a, none) => (a.length ? a.join(', ') : none);
+    const about = [
+      { Setting: 'View', Value: activeView ? activeView.name : '(unsaved)' },
+      { Setting: 'Group by', Value: groupBy === 'source' ? 'Source' : 'Reason' },
+      { Setting: 'Period', Value: period },
+      { Setting: 'Values', Value: mode === 'percent' ? '% of that period\'s losses' : 'Count of losses' },
+      { Setting: 'Closed from', Value: from || '(any)' },
+      { Setting: 'Closed to', Value: to || '(any)' },
+      { Setting: 'Years', Value: list(years, 'All') },
+      { Setting: 'Sources', Value: list(sources, 'All') },
+      { Setting: 'Reasons', Value: list(reasons, 'All') },
+      { Setting: 'Hidden reasons', Value: list(hideReasons, 'None') },
+      { Setting: 'Series hidden on chart', Value: list([...hidden], 'None') },
+      { Setting: 'Exported', Value: new Date().toLocaleString() },
+    ];
+    const ws2 = XLSX.utils.json_to_sheet(about);
+    ws2['!cols'] = [{ wch: 24 }, { wch: 60 }];
+    XLSX.utils.book_append_sheet(wb, ws2, 'Filters');
+    const base = activeView ? `Not Sold trend - ${activeView.name}` : `Not Sold trend by ${groupBy} by ${period}`;
+    XLSX.writeFile(wb, `${base.replace(/[\\/:*?"<>|]+/g, '-')} - ${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
   const toggleIn = (setter) => (v) => setter(prev => (prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v]));
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '0 1.25rem 1.25rem', overflow: 'auto' }}>
+      {/* Saved views: one chip per view, lit when the screen matches it. */}
+      <div className={styles.notSoldYears} style={{ gap: '0.35rem' }}>
+        <span className={styles.filterLabel} style={{ marginRight: 2 }}>Views</span>
+        {views.length === 0 && viewName == null && (
+          <span style={{ fontSize: '0.72rem', ...muted }}>None saved yet</span>
+        )}
+        {views.map(v => (
+          <span key={v.id} style={{ display: 'inline-flex', alignItems: 'center' }}>
+            <button
+              type="button"
+              className={activeView?.id === v.id ? styles.notSoldYearOn : styles.notSoldYear}
+              onClick={() => applyView(v)}
+              title={`Show the "${v.name}" view`}
+              style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+            >{v.name}</button>
+            <button
+              type="button"
+              className={styles.notSoldYear}
+              onClick={() => removeView(v)}
+              title={`Delete "${v.name}"`}
+              aria-label={`Delete ${v.name}`}
+              style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: 'none', padding: '2px 6px' }}
+            >&times;</button>
+          </span>
+        ))}
+        {viewName == null ? (
+          <button
+            type="button"
+            className={styles.notSoldYear}
+            onClick={() => setViewName(activeView ? activeView.name : '')}
+            disabled={!updateSettings}
+            title="Save the filters, grouping and period showing now under a name"
+          >+ Save view</button>
+        ) : (
+          <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+            <input
+              autoFocus
+              className={styles.filterInput}
+              style={{ padding: '2px 8px', fontSize: '0.74rem', width: 180 }}
+              placeholder="View name"
+              value={viewName}
+              onChange={e => setViewName(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') commitView();
+                if (e.key === 'Escape') setViewName(null);
+              }}
+            />
+            <button type="button" className={styles.notSoldYearOn} onClick={commitView} disabled={!viewName.trim()}>Save</button>
+            <button type="button" className={styles.notSoldYear} onClick={() => setViewName(null)}>Cancel</button>
+          </span>
+        )}
+        <button
+          type="button"
+          className={styles.clearFiltersBtn}
+          style={{ marginLeft: 'auto' }}
+          onClick={exportChart}
+          disabled={trend.periods.length === 0}
+          title="Download the chart's numbers, as shown, with the filters that produced them"
+        >Export chart</button>
+      </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.5rem 1rem' }}>
         <Segmented label="Group by" options={GROUPS} value={groupBy} onChange={(v) => { setGroupBy(v); setHidden(new Set()); }} />
         <Segmented label="Period" options={PERIODS} value={period} onChange={setPeriod} />
@@ -279,9 +412,15 @@ export function NotSoldTrend({ records, from, to, years, lossRows, onDrill, sett
             <TagMultiSelect options={facets.reasons} selected={reasons} onToggle={toggleIn(setReasons)} placeholder="All reasons" />
           </div>
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 260, maxWidth: 460, flex: '1 1 260px' }}>
+          <span className={styles.filterLabel} title="Take these reasons out of the chart, the table and the loss rate">Hide reasons</span>
+          <div style={{ flex: 1 }}>
+            <TagMultiSelect options={facets.reasons} selected={hideReasons} onToggle={toggleIn(setHideReasons)} placeholder="None hidden" />
+          </div>
+        </div>
         {filtered && (
-          <button className={styles.clearFiltersBtn} onClick={() => { setSources([]); setReasons([]); }}>
-            Clear source / reason
+          <button className={styles.clearFiltersBtn} onClick={() => { setSources([]); setReasons([]); setHideReasons([]); }}>
+            Clear filters
           </button>
         )}
         <span className={styles.resultCount}>
