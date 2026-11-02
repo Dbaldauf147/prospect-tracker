@@ -16,6 +16,8 @@ import { loadOppsFromCache, findOppByBfoLink } from '../../utils/oppsCache';
 import { buildOppIndex, suggestOpps, fieldsFromOpp, commissionProjectName } from '../../utils/commissionOppMatch';
 import { CommissionOppPicker } from './CommissionOppPicker';
 import { CommissionsMonthlyView } from './CommissionsMonthlyView';
+import { CommissionsProjectedView } from './CommissionsProjectedView';
+import { projectCommissionRow } from '../../utils/commissionProjection';
 import { readCommissionsFile, isCommissionsFileName } from '../../utils/commissionsMonthFile';
 import { recordCommissionUpload, COMMISSION_UPLOADS_KEY } from '../../utils/commissionMonthUploads';
 
@@ -1432,6 +1434,21 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     [rows],
   );
 
+  // Projected subtab: the rows being paid now plus the ones not paid yet,
+  // each with its 12-month projection. Read off `data`, not `rows`, so a
+  // selection or cell-edit callback change doesn't re-project every row.
+  const projectedItems = useMemo(() => {
+    const out = [];
+    data.forEach((row, i) => {
+      const projection = projectCommissionRow(row, {
+        status: paymentStatusFor(row).state,
+        opp: findOppByBfoLink(oppsCache, row?.[BFO_NAME_KEY]),
+      });
+      if (projection) out.push({ ...row, id: i, projection });
+    });
+    return out;
+  }, [data, oppsCache]);
+
   const filtered = useMemo(() => {
     let base = rows;
     if (subtab === 'activelyPaid') base = base.filter(r => paymentStatusFor(r).state === 'active');
@@ -1694,6 +1711,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
             { key: 'all', label: 'All', count: rows.length },
             { key: 'activelyPaid', label: 'Actively Paid', count: activeCount },
             { key: 'monthly', label: 'Monthly', count: null },
+            { key: 'projected', label: 'Projected', count: projectedItems.length },
           ].map(t => {
             const isActive = subtab === t.key;
             return (
@@ -1705,7 +1723,9 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
                   ? 'Commissions still paying out (Payment Status: Active): the same set as the green Active only button'
                   : t.key === 'monthly'
                     ? 'Commission and revenue totals by month. Drop a commissions Excel file on a month to add it.'
-                    : 'Every commission row on file'}
+                    : t.key === 'projected'
+                      ? 'Commissions being paid now and ones not paid yet, projected over 12 months of payments'
+                      : 'Every commission row on file'}
                 style={{
                   background: 'none',
                   border: 'none',
@@ -1743,6 +1763,12 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           busyMonth={fileBusyMonth}
           fileError={fileError}
           onDismissError={() => setFileError('')}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      ) : subtab === 'projected' ? (
+        <CommissionsProjectedView
+          items={projectedItems}
           settings={settings}
           updateSettings={updateSettings}
         />
