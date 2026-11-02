@@ -285,3 +285,184 @@ export function sourceReasonRows(sources) {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Trend over time
+//
+// The two tables above answer "why do we lose, and where" for one window.
+// They can't say whether a reason is growing or fading, which is the
+// question you actually act on. This buckets the same losses by the period
+// they closed in, so each reason (or source) becomes a row of counts across
+// quarters, months or years.
+//
+// A loss with no Close Date can't be put in a period at all, so it is always
+// left out here and counted in `undated`, the same disclosure the tables
+// make once a window is set.
+
+export const TREND_OTHER = 'Other';
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Year and 0-based month of a close, read off the digits for ISO strings so
+// a 2026-01-01 close can't slip into December 2025 west of Greenwich.
+function closeYearMonth(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+  const iso = s.match(/^(\d{4})-(\d{2})/);
+  if (iso) return { y: Number(iso[1]), m: Number(iso[2]) - 1 };
+  const ts = Date.parse(s);
+  if (isNaN(ts)) return null;
+  const d = new Date(ts);
+  return { y: d.getFullYear(), m: d.getMonth() };
+}
+
+// A sortable key per period: "2026", "2026-Q1", "2026-03".
+function periodKey(ym, period) {
+  if (period === 'year') return String(ym.y);
+  if (period === 'month') return `${ym.y}-${String(ym.m + 1).padStart(2, '0')}`;
+  return `${ym.y}-Q${Math.floor(ym.m / 3) + 1}`;
+}
+
+/** What a period key reads as on screen: "2026", "Q1 2026", "Mar 2026". */
+export function periodLabel(key, period) {
+  if (period === 'year') return key;
+  if (period === 'month') {
+    const [y, m] = key.split('-');
+    return `${MONTHS[Number(m) - 1]} ${y}`;
+  }
+  const [y, q] = key.split('-');
+  return `${q} ${y}`;
+}
+
+// Every period from the first key to the last, so a quarter with no losses
+// shows as a zero rather than vanishing and making the line look smoother
+// than it was.
+function periodRange(first, last, period) {
+  if (!first) return [];
+  const out = [];
+  if (period === 'year') {
+    for (let y = Number(first); y <= Number(last); y += 1) out.push(String(y));
+    return out;
+  }
+  const step = period === 'month' ? 1 : 3;
+  const toIdx = (k) => {
+    const [y, rest] = k.split('-');
+    const n = period === 'month' ? Number(rest) - 1 : (Number(rest.slice(1)) - 1) * 3;
+    return Number(y) * 12 + n;
+  };
+  for (let i = toIdx(first); i <= toIdx(last); i += step) {
+    out.push(periodKey({ y: Math.floor(i / 12), m: i % 12 }, period));
+  }
+  return out;
+}
+
+/**
+ * Losses per period, broken out by reason or by source.
+ *
+ *   {
+ *     periods: ['2025-Q1', ...],            // oldest first, gaps filled
+ *     series:  [{ key, total, counts: { [period]: n } }],  // commonest first
+ *     totals:  { [period]: { losses, wins, lossRate } },
+ *     lossCount, undated,
+ *   }
+ *
+ * Filters:
+ *   from / to / years  the same close window the tables use
+ *   sources            only opps from these sources (wins too, so the loss
+ *                      rate is that slice's own)
+ *   reasons            only losses filed under these reasons. Wins carry no
+ *                      reason, so they stay in: the loss rate then reads as
+ *                      "share of decided deals lost to these reasons".
+ *   topN               series past this many fold into "Other" so the chart
+ *                      stays readable; 0 keeps them all
+ */
+export function notSoldTrend(records, {
+  from = '', to = '', years = [], period = 'quarter', groupBy = 'reason',
+  sources = [], reasons = [], topN = 0,
+} = {}) {
+  const fromTs = from ? Date.parse(from) : null;
+  const toTs = to ? Date.parse(to) + 86399999 : null;
+  const yearList = (years || []).map(Number).filter(Number.isFinite);
+  const yearSet = yearList.length ? new Set(yearList) : null;
+  const sourceSet = sources && sources.length ? new Set(sources) : null;
+  const reasonSet = reasons && reasons.length ? new Set(reasons) : null;
+  const keyOf = groupBy === 'source' ? sourceOf : reasonOf;
+
+  const bySeries = new Map();
+  const totals = new Map();
+  const seen = [];
+  let lossCount = 0;
+  let undated = 0;
+  const bump = (p) => {
+    if (!totals.has(p)) { totals.set(p, { losses: 0, wins: 0 }); seen.push(p); }
+    return totals.get(p);
+  };
+
+  for (const r of records || []) {
+    const stage = stageOf(r);
+    if (stage !== NOT_SOLD && stage !== SOLD) continue;
+    if (sourceSet && !sourceSet.has(sourceOf(r))) continue;
+    if (stage === NOT_SOLD && reasonSet && !reasonSet.has(reasonOf(r))) continue;
+    const within = inWindow(r, fromTs, toTs, yearSet);
+    if (within === false) continue;
+    const ym = within === null ? null : closeYearMonth(r['Close Date']);
+    if (!ym) {
+      if (stage === NOT_SOLD) undated += 1;
+      continue;
+    }
+    const p = periodKey(ym, period);
+    const t = bump(p);
+    if (stage === SOLD) { t.wins += 1; continue; }
+    t.losses += 1;
+    lossCount += 1;
+    const k = keyOf(r);
+    const s = bySeries.get(k) || { key: k, total: 0, counts: {} };
+    s.total += 1;
+    s.counts[p] = (s.counts[p] || 0) + 1;
+    bySeries.set(k, s);
+  }
+
+  seen.sort();
+  const periods = periodRange(seen[0], seen[seen.length - 1], period);
+
+  let series = [...bySeries.values()]
+    .sort((a, b) => b.total - a.total || a.key.localeCompare(b.key));
+  if (topN > 0 && series.length > topN) {
+    const kept = series.slice(0, topN);
+    const other = { key: TREND_OTHER, total: 0, counts: {}, folded: [] };
+    for (const s of series.slice(topN)) {
+      other.total += s.total;
+      other.folded.push(s.key);
+      for (const [p, n] of Object.entries(s.counts)) other.counts[p] = (other.counts[p] || 0) + n;
+    }
+    series = [...kept, other];
+  }
+
+  const totalsOut = {};
+  for (const p of periods) {
+    const t = totals.get(p) || { losses: 0, wins: 0 };
+    const decided = t.losses + t.wins;
+    totalsOut[p] = { ...t, lossRate: decided > 0 ? (t.losses / decided) * 100 : null };
+  }
+
+  return { periods, series, totals: totalsOut, lossCount, undated };
+}
+
+/** Every distinct reason and source among the losses, for the filter pickers. */
+export function notSoldFacets(records) {
+  const reasons = new Set();
+  const sources = new Set();
+  for (const r of records || []) {
+    if (stageOf(r) !== NOT_SOLD) continue;
+    reasons.add(reasonOf(r));
+    sources.add(sourceOf(r));
+  }
+  const sort = (s) => [...s].sort((a, b) => a.localeCompare(b));
+  return { reasons: sort(reasons), sources: sort(sources) };
+}
+
+/** The period a loss closed in, for drilling a chart bar down to its opps. */
+export function closePeriodOf(r, period) {
+  const ym = closeYearMonth(r?.['Close Date']);
+  return ym ? periodKey(ym, period) : null;
+}
