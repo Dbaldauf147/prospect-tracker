@@ -99,16 +99,26 @@ function TrendTooltip({ active, payload, mode, trend, lines, period, showOverall
  * is each service's share of the opps started per period, 'closeRate' is
  * each service's won / decided per close period. The chart draws the
  * services picked in the Services box, or the busiest eight when none are;
- * the table underneath lists every service. Services hidden on the By
- * Service table stay hidden here.
+ * the table underneath lists every service.
+ *
+ * The service choices belong to the By Service tab, not to this subtab, so
+ * they carry between the two trend subtabs: `picked` / `onPickedChange` is
+ * the Chart box, `linesOff` / `onLinesOffChange` the legend's lines switched
+ * off. Hidden services (`hiddenSet`, saved in settings) are left out unless
+ * `showHidden`, and `onToggleHide` hides or unhides one from this table the
+ * same as from the By service table.
  */
-export function ServiceTrends({ mode, records, hiddenServices = [], settings, updateSettings }) {
+export function ServiceTrends({
+  mode, records, settings, updateSettings,
+  picked = [], onPickedChange, linesOff, onLinesOffChange,
+  hiddenSet = new Set(), showHidden = false, onShowHiddenChange, onToggleHide,
+}) {
   const cfg = MODES[mode] || MODES.share;
   const [period, setPeriod] = useState(cfg.defaultPeriod);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  const [picked, setPicked] = useState([]);
-  const [hidden, setHidden] = useState(() => new Set());
+  const hidden = linesOff || new Set();
+  const hiddenServices = useMemo(() => (showHidden ? [] : [...hiddenSet]), [showHidden, hiddenSet]);
 
   const trend = useMemo(() => (mode === 'share'
     ? serviceShareTrend(records, { period, from, to, hidden: hiddenServices })
@@ -134,23 +144,23 @@ export function ServiceTrends({ mode, records, hiddenServices = [], settings, up
     return row;
   }), [trend, lines, period, mode]);
 
-  const toggle = (key) => setHidden(prev => {
-    const next = new Set(prev);
+  const toggle = (key) => {
+    const next = new Set(hidden);
     if (next.has(key)) next.delete(key); else next.add(key);
-    return next;
-  });
-  const togglePick = (v) => setPicked(prev => (prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v]));
+    onLinesOffChange?.(next);
+  };
+  const togglePick = (v) => onPickedChange?.(picked.includes(v) ? picked.filter(x => x !== v) : [...picked, v]);
 
   // ---- table: every service, then the total row ------------------------
   const tableRows = useMemo(() => {
-    const rows = trend.series.map(s => ({ id: s.key, name: s.key, kind: 'series', s }));
+    const rows = trend.series.map(s => ({ id: s.key, name: s.key, kind: 'series', s, _hidden: hiddenSet.has(s.key) }));
     if (mode === 'closeRate') {
       rows.push({ id: OVERALL_KEY, name: 'Overall', kind: 'total', s: { wins: trend.wins, decided: trend.decided, rate: trend.rate, byPeriod: trend.overall } });
     } else {
       rows.push({ id: OVERALL_KEY, name: 'Opps started', kind: 'total' });
     }
     return rows;
-  }, [trend, mode]);
+  }, [trend, mode, hiddenSet]);
 
   const columns = useMemo(() => {
     const cell = (row, p) => {
@@ -208,9 +218,24 @@ export function ServiceTrends({ mode, records, hiddenServices = [], settings, up
       exportValue: (row) => cell(row, null).text,
       getSortValue: (row) => cell(row, null).sort,
     });
+    if (onToggleHide) {
+      cols.push({
+        key: '_actions',
+        label: '',
+        defaultWidth: 90,
+        exportValue: () => '',
+        render: (row) => (row.kind !== 'series' ? null : (
+          <button
+            className={styles.hideServiceBtn}
+            onClick={(e) => { e.stopPropagation(); onToggleHide(row.name); }}
+            title={row._hidden ? 'Unhide service (on every By Service subtab)' : 'Hide service (on every By Service subtab, saved for next time)'}
+          >{row._hidden ? 'Unhide' : 'Hide'}</button>
+        )),
+      });
+    }
     return cols;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trend, period, mode, colourMap]);
+  }, [trend, period, mode, colourMap, onToggleHide]);
 
   const legend = [
     ...(mode === 'closeRate' ? [{ key: OVERALL_KEY, label: 'Overall', v: trend.rate }] : []),
@@ -249,7 +274,13 @@ export function ServiceTrends({ mode, records, hiddenServices = [], settings, up
           </div>
         </div>
         {(picked.length > 0 || from || to) && (
-          <button className={styles.clearFiltersBtn} onClick={() => { setPicked([]); setFrom(''); setTo(''); }}>Clear</button>
+          <button className={styles.clearFiltersBtn} onClick={() => { onPickedChange?.([]); setFrom(''); setTo(''); }}>Clear</button>
+        )}
+        {hiddenSet.size > 0 && (
+          <label className={styles.showHiddenLabel}>
+            <input type="checkbox" checked={showHidden} onChange={e => onShowHiddenChange?.(e.target.checked)} />
+            Show {hiddenSet.size} hidden
+          </label>
         )}
         <span className={styles.resultCount}>{summary}</span>
       </div>
@@ -313,6 +344,7 @@ export function ServiceTrends({ mode, records, hiddenServices = [], settings, up
                 columns={columns}
                 rows={tableRows}
                 alwaysVisible={['name']}
+                rowStyle={(row) => (row._hidden ? { opacity: 0.5 } : undefined)}
                 rowGroup={(row) => (row.kind === 'total' ? 1 : 0)}
                 exportFileName={`${cfg.exportName} by ${period}`}
                 emptyMessage={cfg.empty}
