@@ -68,13 +68,18 @@ export const DIGEST_ROW_LEGEND = [
 ];
 
 export function buildDigestLegendHtml() {
+  // One row across the top of the table: swatch, label, swatch, label...
   // A table, not floated spans: Outlook ignores most box CSS but keeps cell
-  // backgrounds and borders, so the swatches survive.
-  const rows = DIGEST_ROW_LEGEND.map(({ background, label, text }) =>
-    `<tr><td width="18" style="width:18px;min-width:18px;height:14px;padding:0;background:${background};border:1px solid #000000">&nbsp;</td>`
-    + `<td style="padding:2px 8px;font:12px Arial,sans-serif;color:#000000"><b>${label}</b> - ${text}</td></tr>`
+  // backgrounds, borders and widths. The swatch's font-size / line-height
+  // pin its height, or Outlook stretches it to the row. The spacer div
+  // after it (explicit height, not a margin Outlook can collapse) opens a
+  // gap between the legend and the deals table.
+  const cells = DIGEST_ROW_LEGEND.map(({ background, label, text }, i) =>
+    `<td width="14" height="14" style="width:14px;height:14px;padding:0;font-size:1px;line-height:1px;background:${background};border:1px solid #000000">&nbsp;</td>`
+    + `<td style="padding:0 ${i === DIGEST_ROW_LEGEND.length - 1 ? 0 : 18}px 0 6px;font:12px Arial,sans-serif;color:#000000;white-space:nowrap"><b>${label}</b> - ${text}</td>`
   ).join('');
-  return `<table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0 4px;margin:4px 0 8px">${rows}</table>`;
+  return `<table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin:4px 0 0"><tr>${cells}</tr></table>`
+    + '<div style="height:12px;line-height:12px;font-size:12px">&nbsp;</div>';
 }
 
 /**
@@ -189,8 +194,8 @@ export function buildNewOppsDigestTableHtml(records) {
     rowStyle: alignedRowStyle,
     fit: true,
   });
-  // The colour legend under the table, as on PE Monthly.
-  return Array.isArray(records) && records.length ? `${table}${buildDigestLegendHtml()}` : table;
+  // The colour legend across the top of the table, as on PE Monthly.
+  return Array.isArray(records) && records.length ? `${buildDigestLegendHtml()}${table}` : table;
 }
 
 // The same table over any column set - { key, label, align?, value?,

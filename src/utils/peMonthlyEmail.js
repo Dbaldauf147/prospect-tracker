@@ -182,7 +182,7 @@ export function buildPeMonthlyTableHtml(rows) {
     fit: true,
   });
   // No legend under the "nothing to report" line.
-  return Array.isArray(rows) && rows.length ? `${table}${buildPeMonthlyLegendHtml()}` : table;
+  return Array.isArray(rows) && rows.length ? `${buildPeMonthlyLegendHtml()}${table}` : table;
 }
 
 export function buildPeMonthlyEmailHtml(rows, { message = '', greeting = '', signature = '' } = {}) {
