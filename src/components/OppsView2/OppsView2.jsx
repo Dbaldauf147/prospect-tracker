@@ -153,6 +153,7 @@ import {
   withTierAndAlignment, NEW_OPPS_TIER_KEY, NEW_OPPS_CDMS_ALIGNED_KEY,
 } from '../../utils/newOppsDigestEmail';
 import { NewOppsDraftEmailModal } from './NewOppsDraftEmailModal';
+import { StageReach } from './StageReach';
 import {
   peMonthlyRows, peMonthlyTierRank, PE_MONTHLY_COLUMNS, PE_MONTHLY_DRAFT_DEFAULTS, resolvePeMonthlyDraftTemplate,
   buildPeMonthlyEmailHtml, downloadPeMonthlyOutlookDraft, peMonthlyRowStyle,
@@ -14377,6 +14378,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // backlog), so we let the user hide that column without losing the
   // data. Defaulted to visible so the column is discoverable.
   const [hideNotStarted, setHideNotStarted] = useState(false);
+  // Days in Stage subtab: the live board, or Stage Reach (the share of
+  // each start-date cohort that got to each stage, over time).
+  const [stageDaysView, setStageDaysView] = useState('board');
   // By Service reads as active-only. This used to be a one-time effect
   // that flipped the shared activityFilter, which meant visiting the tab
   // left every other tab stuck on "active" — recoverable only via the
@@ -19424,11 +19428,34 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
 
       {activeTab === 'stageDays' && (
         <div style={{ padding: '0 1.25rem' }}>
-          <StageDaysBoard
-            byStage={stageDaysByStage}
-            hideNotStarted={hideNotStarted}
-            setHideNotStarted={setHideNotStarted}
-          />
+          <div className={styles.notSoldYears} style={{ padding: '0.5rem 0' }}>
+            <button
+              type="button"
+              className={stageDaysView === 'board' ? styles.notSoldYearOn : styles.notSoldYear}
+              onClick={() => setStageDaysView('board')}
+              title="How long each live opp has sat in its current stage"
+            >Board</button>
+            <button
+              type="button"
+              className={stageDaysView === 'reach' ? styles.notSoldYearOn : styles.notSoldYear}
+              onClick={() => setStageDaysView('reach')}
+              title="The share of opps that reach each stage, by when they started"
+            >Stage Reach</button>
+          </div>
+          {stageDaysView === 'board' && (
+            <StageDaysBoard
+              byStage={stageDaysByStage}
+              hideNotStarted={hideNotStarted}
+              setHideNotStarted={setHideNotStarted}
+            />
+          )}
+          {stageDaysView === 'reach' && (
+            <StageReach
+              records={records}
+              settings={settings}
+              updateSettings={updateSettings}
+            />
+          )}
         </div>
       )}
 
