@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -103,14 +103,17 @@ function TrendTooltip({ active, payload, mode, trend, lines, period, showOverall
  *
  * The service choices belong to the By Service tab, not to this subtab, so
  * they carry between the two trend subtabs: `picked` / `onPickedChange` is
- * the Chart box, `linesOff` / `onLinesOffChange` the legend's lines switched
- * off. Hidden services (`hiddenSet`, saved in settings) are left out unless
+ * the Chart box, `linesOff` the legend's lines switched off. Clicking a
+ * legend entry opens a small popup: "Show on chart" (`onLineShownChange`,
+ * this visit) and "Visible by default" (`linesOffDefault` /
+ * `onLineDefaultChange`, saved in settings). Hidden services (`hiddenSet`, saved in settings) are left out unless
  * `showHidden`, and `onToggleHide` hides or unhides one from this table the
  * same as from the By service table.
  */
 export function ServiceTrends({
   mode, records, settings, updateSettings,
-  picked = [], onPickedChange, linesOff, onLinesOffChange,
+  picked = [], onPickedChange, linesOff, onLineShownChange,
+  linesOffDefault = new Set(), onLineDefaultChange,
   hiddenSet = new Set(), showHidden = false, onShowHiddenChange, onToggleHide,
 }) {
   const cfg = MODES[mode] || MODES.share;
@@ -144,10 +147,27 @@ export function ServiceTrends({
     return row;
   }), [trend, lines, period, mode]);
 
-  const toggle = (key) => {
-    const next = new Set(hidden);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    onLinesOffChange?.(next);
+  // The legend popup: which entry it's open for, and where under it.
+  const [linePopup, setLinePopup] = useState(null);
+  const legendRef = useRef(null);
+  const popupRef = useRef(null);
+  useEffect(() => {
+    if (!linePopup) return undefined;
+    const onDown = (e) => {
+      if (popupRef.current?.contains(e.target)) return;
+      if (e.target.closest?.('[data-legend-key]')) return;
+      setLinePopup(null);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setLinePopup(null); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [linePopup]);
+  const openLinePopup = (e, key) => {
+    if (linePopup?.key === key) { setLinePopup(null); return; }
+    const box = legendRef.current?.getBoundingClientRect();
+    const btn = e.currentTarget.getBoundingClientRect();
+    setLinePopup({ key, left: btn.left - (box?.left || 0), top: btn.bottom - (box?.top || 0) + 4 });
   };
   const togglePick = (v) => onPickedChange?.(picked.includes(v) ? picked.filter(x => x !== v) : [...picked, v]);
 
@@ -294,19 +314,49 @@ export function ServiceTrends({
           <div style={{ padding: '2rem', textAlign: 'center', ...muted }}>{cfg.empty}</div>
         ) : (
           <>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem 0.85rem', fontSize: '0.74rem' }}>
+            <div ref={legendRef} style={{ position: 'relative', display: 'flex', flexWrap: 'wrap', gap: '0.25rem 0.85rem', fontSize: '0.74rem' }}>
               {legend.map(l => (
                 <button
                   key={l.key}
                   type="button"
-                  onClick={() => toggle(l.key)}
-                  title={hidden.has(l.key) ? `Show ${l.label}` : `Hide ${l.label}`}
+                  data-legend-key={l.key}
+                  onClick={(e) => openLinePopup(e, l.key)}
+                  title={`${l.label}: show or hide, and set whether it's visible by default`}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', color: 'var(--color-text)', fontWeight: l.key === OVERALL_KEY ? 700 : 400, opacity: hidden.has(l.key) ? 0.4 : 1, textDecoration: hidden.has(l.key) ? 'line-through' : 'none' }}
                 >
                   <span style={{ width: 12, height: l.key === OVERALL_KEY ? 3 : 10, borderRadius: l.key === OVERALL_KEY ? 0 : 999, background: colourOf(l.key) }} />
                   {l.label} <span style={muted}>({fmtPct(l.v)})</span>
+                  {linesOffDefault.has(l.key) && <span style={{ ...muted, fontSize: '0.66rem' }} title="Hidden by default">(off by default)</span>}
                 </button>
               ))}
+              {linePopup && legend.some(l => l.key === linePopup.key) && (() => {
+                const l = legend.find(x => x.key === linePopup.key);
+                const shown = !hidden.has(l.key);
+                const byDefault = !linesOffDefault.has(l.key);
+                const row = { display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', cursor: 'pointer', whiteSpace: 'nowrap' };
+                return (
+                  <div
+                    ref={popupRef}
+                    role="dialog"
+                    aria-label={`${l.label} line`}
+                    style={{ position: 'absolute', left: linePopup.left, top: linePopup.top, zIndex: 20, background: 'var(--color-surface, #fff)', color: 'var(--color-text)', border: '1px solid var(--color-border, #E2E8F0)', borderRadius: 8, padding: '0.55rem 0.75rem', boxShadow: '0 6px 20px rgba(0,0,0,0.14)', fontSize: '0.78rem', minWidth: 210 }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, marginBottom: 4 }}>
+                      <span style={{ width: 12, height: l.key === OVERALL_KEY ? 3 : 10, borderRadius: l.key === OVERALL_KEY ? 0 : 999, background: colourOf(l.key) }} />
+                      <span style={{ flex: 1 }}>{l.label}</span>
+                      <button type="button" onClick={() => setLinePopup(null)} aria-label="Close" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted, #64748B)', fontSize: '0.9rem', lineHeight: 1, padding: 0 }}>×</button>
+                    </div>
+                    <label style={row} title="Switch the line on or off for this visit">
+                      <input type="checkbox" checked={shown} onChange={e => onLineShownChange?.(l.key, e.target.checked)} />
+                      Show on chart now
+                    </label>
+                    <label style={row} title="Saved: the line starts this way on every visit and on both trend subtabs">
+                      <input type="checkbox" checked={byDefault} onChange={e => onLineDefaultChange?.(l.key, e.target.checked)} />
+                      Visible by default
+                    </label>
+                  </div>
+                );
+              })()}
             </div>
             <div style={{ height: 300, flexShrink: 0 }}>
               <ResponsiveContainer width="100%" height="100%">

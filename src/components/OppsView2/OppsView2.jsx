@@ -14402,7 +14402,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // The services the trend charts draw (the Chart box) and the legend
   // lines switched off. Held here rather than in each subtab so a pick on
   // "% of total" is still there on "Close rate", and the other way round.
-  // The picks are saved; the legend toggles last the session.
+  // The picks are saved. Clicking a legend line opens a popup: "Show on
+  // chart" switches the line for this visit, "Visible by default" saves it
+  // (oppsServiceLinesOffDefault) so it starts that way on every visit.
   const servicePicks = useMemo(
     () => (Array.isArray(settings?.oppsServiceTrendPicks) ? settings.oppsServiceTrendPicks : []),
     [settings?.oppsServiceTrendPicks],
@@ -14410,7 +14412,27 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   const setServicePicks = useCallback((next) => {
     updateSettings({ oppsServiceTrendPicks: next });
   }, [updateSettings]);
-  const [serviceLinesOff, setServiceLinesOff] = useState(() => new Set());
+  const serviceLinesOffDefault = useMemo(
+    () => new Set(Array.isArray(settings?.oppsServiceLinesOffDefault) ? settings.oppsServiceLinesOffDefault : []),
+    [settings?.oppsServiceLinesOffDefault],
+  );
+  // This visit's switches on top of the saved defaults: key -> true (off) / false (on).
+  const [serviceLineOverrides, setServiceLineOverrides] = useState(() => new Map());
+  const serviceLinesOff = useMemo(() => {
+    const off = new Set(serviceLinesOffDefault);
+    for (const [k, isOff] of serviceLineOverrides) { if (isOff) off.add(k); else off.delete(k); }
+    return off;
+  }, [serviceLinesOffDefault, serviceLineOverrides]);
+  const setServiceLineShown = useCallback((key, shown) => {
+    setServiceLineOverrides(prev => new Map(prev).set(key, !shown));
+  }, []);
+  const setServiceLineDefault = useCallback((key, shown) => {
+    const next = new Set(Array.isArray(settings?.oppsServiceLinesOffDefault) ? settings.oppsServiceLinesOffDefault : []);
+    if (shown) next.delete(key); else next.add(key);
+    updateSettings({ oppsServiceLinesOffDefault: [...next].sort() });
+    // Changing the default applies now too.
+    setServiceLineOverrides(prev => { const m = new Map(prev); m.delete(key); return m; });
+  }, [settings?.oppsServiceLinesOffDefault, updateSettings]);
   const [linkModalOpen, setLinkModalOpen] = useState(false);
   // null when idle; { account } when the user clicked + New Opp (or
   // committed the Add Company combobox) and the Source-picker modal
@@ -19366,7 +19388,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           picked={servicePicks}
           onPickedChange={setServicePicks}
           linesOff={serviceLinesOff}
-          onLinesOffChange={setServiceLinesOff}
+          onLineShownChange={setServiceLineShown}
+          linesOffDefault={serviceLinesOffDefault}
+          onLineDefaultChange={setServiceLineDefault}
           hiddenSet={hiddenServices}
           showHidden={showHidden}
           onShowHiddenChange={setShowHidden}
