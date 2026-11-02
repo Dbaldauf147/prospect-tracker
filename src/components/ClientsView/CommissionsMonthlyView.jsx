@@ -3,6 +3,7 @@ import { DataTable } from '../common/DataTable';
 import { asNumber, fmtCurrency } from '../../utils/dealsFormat';
 import { COMMISSION_MONTH_NAMES } from '../../utils/commissionsStore';
 import { commissionMonthlyTotals } from '../../utils/commissionsMonthFile';
+import { commissionUploadFor, COMMISSION_UPLOADS_KEY } from '../../utils/commissionMonthUploads';
 
 // Commissions > Monthly. One card per calendar month with that month's
 // commission and revenue totals. Each card is also a drop target: drop a
@@ -13,10 +14,11 @@ import { commissionMonthlyTotals } from '../../utils/commissionsMonthFile';
 
 const ACCEPT = '.xlsx,.xls,.xlsm,.csv';
 
-function MonthCard({ idx, totals, selected, isCurrent, busy, onSelect, onFile }) {
+function MonthCard({ idx, totals, selected, isCurrent, busy, upload, onSelect, onFile }) {
   const [over, setOver] = useState(false);
   const inputRef = useRef(null);
   const month = COMMISSION_MONTH_NAMES[idx];
+  const uploadedOn = upload?.at ? new Date(upload.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
 
   function takeFiles(list) {
     const files = [...(list || [])];
@@ -32,10 +34,12 @@ function MonthCard({ idx, totals, selected, isCurrent, busy, onSelect, onFile })
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; if (!over) setOver(true); }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOver(false); }}
       onDrop={(e) => { e.preventDefault(); setOver(false); takeFiles(e.dataTransfer.files); }}
-      title={`Drop a commissions Excel file here to add it to ${month}. Click to see ${month}'s rows below.`}
+      title={upload
+        ? `${month}'s file is uploaded${upload.fileName ? ` (${upload.fileName})` : ''}${uploadedOn ? ` on ${uploadedOn}` : ''}. Drop another file to add to it. Click to see ${month}'s rows below.`
+        : `Drop a commissions Excel file here to add it to ${month}. Click to see ${month}'s rows below.`}
       style={{
-        background: over ? '#EFF6FF' : '#fff',
-        border: over ? '2px dashed #3B82F6' : selected ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
+        background: over ? '#EFF6FF' : upload ? '#F0FDF4' : '#fff',
+        border: over ? '2px dashed #3B82F6' : selected ? `2px solid ${upload ? '#16A34A' : 'var(--color-accent)'}` : upload ? '1px solid #86EFAC' : '1px solid var(--color-border)',
         borderRadius: 8,
         padding: over || selected ? '0.55rem 0.7rem' : '0.6rem 0.75rem',
         cursor: 'pointer',
@@ -65,11 +69,14 @@ function MonthCard({ idx, totals, selected, isCurrent, busy, onSelect, onFile })
         onClick={(e) => { e.stopPropagation(); inputRef.current?.click(); }}
         style={{
           marginTop: 2, padding: '0.35rem', borderRadius: 6,
-          border: '1px dashed #CBD5E1', background: over ? '#DBEAFE' : '#F8FAFC',
-          color: '#475569', fontSize: '0.66rem', textAlign: 'center',
+          border: upload && !over ? '1px solid #86EFAC' : '1px dashed #CBD5E1',
+          background: over ? '#DBEAFE' : upload ? '#DCFCE7' : '#F8FAFC',
+          color: upload && !over ? '#166534' : '#475569', fontSize: '0.66rem', textAlign: 'center',
+          fontWeight: upload && !over ? 600 : 400,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}
       >
-        {busy ? 'Reading file…' : over ? `Drop to add to ${month}` : 'Drop Excel file here or browse'}
+        {busy ? 'Reading file…' : over ? `Drop to add to ${month}` : upload ? `✓ Uploaded${uploadedOn ? ` ${uploadedOn}` : ''}` : 'Drop Excel file here or browse'}
       </div>
       <input
         ref={inputRef}
@@ -156,6 +163,7 @@ export function CommissionsMonthlyView({ data, onFile, busyMonth, fileError, onD
               selected={i === selected}
               isCurrent={i === currentMonth}
               busy={busyMonth === i}
+              upload={commissionUploadFor(settings?.[COMMISSION_UPLOADS_KEY], i)}
               onSelect={setSelected}
               onFile={onFile}
             />

@@ -123,6 +123,21 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   const siteLists = settings?.companySiteLists;
   const oversizedKey = useMemo(() => JSON.stringify(findOversizedSiteLists(siteLists)), [siteLists]);
   const oversizedSiteLists = useMemo(() => JSON.parse(oversizedKey), [oversizedKey]);
+  // Months whose commissions file was uploaded (Commissions > Monthly), for
+  // the "Commission file not uploaded" row. `issuesNow` only changes when
+  // the calendar month rolls over with the app left open, which re-runs
+  // the check against the new "last month".
+  const commissionUploads = settings?.commissionMonthUploads || null;
+  const [issuesNow, setIssuesNow] = useState(() => new Date());
+  useEffect(() => {
+    function check() {
+      const d = new Date();
+      setIssuesNow(prev => (prev.getFullYear() === d.getFullYear() && prev.getMonth() === d.getMonth() ? prev : d));
+    }
+    const t = setInterval(check, 60 * 60 * 1000);
+    window.addEventListener('focus', check);
+    return () => { clearInterval(t); window.removeEventListener('focus', check); };
+  }, []);
 
   // Re-read once the per-user localStorage scope is established (and on any
   // later account switch), since the initial reads above may have run
@@ -211,12 +226,12 @@ export function useIssues({ prospects = NO_PROSPECTS, cdmName, user, marketingLe
   }, [setBfoActivity]);
 
   const issues = useMemo(() => {
-    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists });
+    const rows = computeIssues({ prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, commissionUploads, now: issuesNow });
     return rows.map((r) => {
       const { snoozed, until } = issueSnoozeState(snoozedMap, r.id);
       return { ...r, snoozed, snoozeUntil: until };
     });
-  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists]);
+  }, [prospects, cdmName, dealsList, clientMap, untrackedMap, clientStatusMap, snoozedMap, myAccountsFlags, marketingLeads, bfoActivity, oppsCache, serviceOverrides, knownServices, ignoredScopeServices, coverageSettings, localOnlyFiles, oversizedSiteLists, commissionUploads, issuesNow]);
 
   // Services the client base hasn't explored yet. Not issues — outreach —
   // so they're returned alongside rather than mixed in, and the snooze map
