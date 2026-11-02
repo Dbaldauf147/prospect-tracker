@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { DataTable } from '../common/DataTable';
 import { fmtCurrency, fmtDate, fmtPercent, asDate } from '../../utils/dealsFormat';
-import { projectionTotals, PROJECTION_MONTHS } from '../../utils/commissionProjection';
+import { projectionTotals, PROJECTION_MONTHS, upcomingMonths, expectedForMonth } from '../../utils/commissionProjection';
 
 // Commissions > Projected. A 12-month projection for the commissions being
 // paid now and the ones not paid yet (see utils/commissionProjection). The
@@ -40,6 +40,31 @@ function Tile({ label, totals, note }) {
 export function CommissionsProjectedView({ items, settings, updateSettings }) {
   const totals = useMemo(() => projectionTotals(items), [items]);
   const unpriced = useMemo(() => (items || []).filter(r => r.projection.expectedMonthly == null).length, [items]);
+
+  // This month and the next three, with each row's expected commission in
+  // each (0 outside its Comm Start - End window).
+  const months = useMemo(() => upcomingMonths(new Date()), []);
+  const rows = useMemo(() => {
+    const today = new Date();
+    return (items || []).map((r) => {
+      const byMonth = {};
+      let upcoming = 0;
+      let anyPriced = false;
+      for (const m of months) {
+        const v = expectedForMonth(r, r.projection, m, today);
+        byMonth[m.key] = v;
+        if (v != null) { upcoming += v; anyPriced = true; }
+      }
+      return { ...r, __byMonth: byMonth, __upcoming: anyPriced ? upcoming : null };
+    });
+  }, [items, months]);
+  const monthTotals = useMemo(() => months.map(m => ({
+    ...m,
+    total: rows.reduce((s, r) => s + (r.__byMonth[m.key] || 0), 0),
+    deals: rows.reduce((n, r) => n + (r.__byMonth[m.key] ? 1 : 0), 0),
+  })), [months, rows]);
+  const upcomingTotal = monthTotals.reduce((s, m) => s + m.total, 0);
+  const upcomingLabel = `${months[0].label.split(' ')[0]} - ${months[months.length - 1].label}`;
 
   const columns = useMemo(() => [
     {
@@ -106,25 +131,57 @@ export function CommissionsProjectedView({ items, settings, updateSettings }) {
       render: (row) => <span title={`Projected ${PROJECTION_MONTHS}-month commission less what has been paid so far`}>{money(row.projection.remaining)}</span>,
       exportValue: (row) => row.projection.remaining ?? '',
     },
-  ], []);
+    ...months.map((m, i) => ({
+      key: `__month:${i}`,
+      label: i === 0 ? `${m.label} (This Month)` : m.label,
+      defaultWidth: i === 0 ? 150 : 110,
+      getSortValue: (row) => row.__byMonth[m.key],
+      render: (row) => {
+        const v = row.__byMonth[m.key];
+        if (v === 0) return <span title={`${m.label} is outside this commission's Comm Start - End window`} style={{ color: 'var(--color-text-muted)' }}>$0</span>;
+        return <span title={`Expected commission for ${m.label}`}>{money(v)}</span>;
+      },
+      exportValue: (row) => row.__byMonth[m.key] ?? '',
+    })),
+    {
+      key: '__upcoming', label: `Next ${months.length} Months`, defaultWidth: 130,
+      getSortValue: (row) => row.__upcoming,
+      render: (row) => <span title={`Expected commission ${upcomingLabel}`}>{money(row.__upcoming, true)}</span>,
+      exportValue: (row) => row.__upcoming ?? '',
+    },
+  ], [months, upcomingLabel]);
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
         <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.5rem' }}>
-          Commissions being paid now and ones not paid yet, projected over {PROJECTION_MONTHS} months of payments. A deal being paid is projected at its latest month&apos;s commission. A deal not paid yet is projected from its monthly revenue x %, or from the linked opp&apos;s Quoted Amount x % / 12. Hover an Expected Monthly cell to see where it came from.
+          Commissions being paid now and ones not paid yet, projected over {PROJECTION_MONTHS} months of payments. A deal being paid is projected at its latest month&apos;s commission. A deal not paid yet is projected from its monthly revenue x %, or from the linked opp&apos;s Quoted Amount x % / 12. Hover an Expected Monthly cell to see where it came from. The month columns spread the expected monthly amount over this month and the next three, inside each deal's Comm Start - End window.
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.5rem' }}>
           <Tile label="Being paid" totals={totals.paying} />
           <Tile label="Not yet paid" totals={totals.notYet} note={unpriced ? `${unpriced} deal${unpriced === 1 ? ' has' : 's have'} no expected amount yet (no revenue or Quoted Amount to go on).` : ''} />
           <Tile label="Total" totals={totals.all} />
         </div>
+        <div style={{ display: 'flex', alignItems: 'stretch', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+          {monthTotals.map((m, i) => (
+            <div key={m.key} title={`Expected commission for ${m.label} across ${m.deals} deal${m.deals === 1 ? '' : 's'}`} style={{ background: i === 0 ? '#EFF6FF' : '#fff', border: `1px solid ${i === 0 ? '#BFDBFE' : 'var(--color-border)'}`, borderRadius: 8, padding: '0.4rem 0.7rem', minWidth: 130 }}>
+              <div style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600 }}>{m.label}{i === 0 ? ' (this month)' : ''}</div>
+              <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#0F172A', fontVariantNumeric: 'tabular-nums' }}>{fmtCurrency(m.total)}</div>
+              <div style={{ fontSize: '0.62rem', color: '#94A3B8' }}>{m.deals} deal{m.deals === 1 ? '' : 's'}</div>
+            </div>
+          ))}
+          <div style={{ background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: 8, padding: '0.4rem 0.7rem', minWidth: 150 }}>
+            <div style={{ fontSize: '0.68rem', color: '#166534', fontWeight: 600 }}>{upcomingLabel}</div>
+            <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#14532D', fontVariantNumeric: 'tabular-nums' }}>{fmtCurrency(upcomingTotal)}</div>
+            <div style={{ fontSize: '0.62rem', color: '#16A34A' }}>Export Excel includes each month</div>
+          </div>
+        </div>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         <DataTable
           tableId="commissions-projected"
           columns={columns}
-          rows={items}
+          rows={rows}
           defaultSort={{ key: '__projected', direction: 'desc' }}
           emptyMessage="No commissions being paid or waiting to start."
           exportFileName="Commissions Projected"
