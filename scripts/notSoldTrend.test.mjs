@@ -8,7 +8,7 @@
 import {
   notSoldTrend, notSoldFacets, periodLabel, closePeriodOf, TREND_OTHER, NO_REASON,
   trendChartRows, saveTrendView, deleteTrendView, sanitizeTrendViews, trendViewMatches,
-  normaliseTrendState, trendDetailRows,
+  normaliseTrendState, trendDetailRows, closeRateTrend, closeRateChartRows,
 } from '../src/utils/notSoldAnalysis.js';
 
 let failures = 0;
@@ -38,8 +38,8 @@ const R = [
   check('series add up to the dated losses', t.series.reduce((n, s) => n + s.total, 0), t.lossCount);
   check('Jan 1 stays in Q1 of its own year', t.series.find(s => s.key === 'Price').counts['2025-Q1'], 2);
   check('series rank commonest first', t.series.map(s => s.key), ['Price', NO_REASON, 'Timing']);
-  check('loss rate per period', t.totals['2025-Q1'], { losses: 2, wins: 1, lossRate: (2 / 3) * 100 });
-  check('an empty period has no rate', t.totals['2025-Q2'].lossRate, null);
+  check('close rate per period', t.totals['2025-Q1'], { losses: 2, wins: 1, closeRate: (1 / 3) * 100 });
+  check('an empty period has no rate', t.totals['2025-Q2'].closeRate, null);
 }
 
 {
@@ -51,7 +51,7 @@ const R = [
 {
   const t = notSoldTrend(R, { period: 'year', sources: ['Referral'] });
   check('source filter narrows losses and wins', [t.lossCount, t.totals['2025']],
-    [2, { losses: 2, wins: 1, lossRate: (2 / 3) * 100 }]);
+    [2, { losses: 2, wins: 1, closeRate: (1 / 3) * 100 }]);
   const r = notSoldTrend(R, { period: 'year', reasons: ['Price'] });
   check('reason filter keeps the wins', [r.lossCount, r.totals['2026'].wins], [3, 1]);
 }
@@ -77,15 +77,15 @@ check('facets list every reason and source among losses', notSoldFacets(R),
 {
   const t = notSoldTrend(R, { period: 'year', hideReasons: ['Price'] });
   check('hidden reason drops out of the series', t.series.map(s => s.key), [NO_REASON, 'Timing']);
-  check('and out of the totals and loss rate', t.totals['2025'], { losses: 1, wins: 1, lossRate: 50 });
+  check('and out of the totals and close rate', t.totals['2025'], { losses: 1, wins: 1, closeRate: 50 });
 }
 
 // --- chart export is what the bars show -----------------------------------
 {
   const t = notSoldTrend(R, { period: 'year' });
   check('one row per period, series then totals', trendChartRows(t, { period: 'year', hiddenSeries: ['Timing'] }), [
-    { Period: '2025', Price: 2, [NO_REASON]: 0, 'Total losses': 3, 'Won (Sold)': 1, 'Loss rate %': 75 },
-    { Period: '2026', Price: 1, [NO_REASON]: 1, 'Total losses': 2, 'Won (Sold)': 1, 'Loss rate %': 66.7 },
+    { Period: '2025', Price: 2, [NO_REASON]: 0, 'Total losses': 3, 'Won (Sold)': 1, 'Close rate %': 25 },
+    { Period: '2026', Price: 1, [NO_REASON]: 1, 'Total losses': 2, 'Won (Sold)': 1, 'Close rate %': 33.3 },
   ]);
   check('percent mode exports shares', trendChartRows(t, { period: 'year', mode: 'percent' })[0].Price, 66.7);
 }
@@ -120,6 +120,26 @@ check('facets list every reason and source among losses', notSoldFacets(R),
   check('undated loss listed as not counted', all.filter(r => r.Counted === 'No, no Close Date').length, 1);
   check('folded losses say Other', all.filter(r => r['Chart Series'] === TREND_OTHER).length, 2);
   check('legend-hidden losses marked', all.filter(r => r.Counted === 'In totals, hidden on chart').length, 3);
+}
+
+// --- close rate by source over time ---------------------------------------
+{
+  const c = closeRateTrend(R, { period: 'year' });
+  check('sources ranked by decided opps', c.series.map(s => [s.key, s.wins, s.decided]),
+    [['Cold Call', 1, 4], ['Referral', 1, 3]]);
+  check('per-period close rate', c.series[0].byPeriod, {
+    2025: { wins: 0, decided: 1, rate: 0 }, 2026: { wins: 1, decided: 3, rate: (1 / 3) * 100 },
+  });
+  check('nothing decided is a gap, not 0%', closeRateTrend(R, { period: 'quarter' }).series[1].byPeriod['2025-Q2'].rate, null);
+  check('overall across sources', [c.wins, c.decided, c.overall['2025']], [2, 7, { wins: 1, decided: 4, rate: 25 }]);
+  check('undated decided opps are counted out', c.undated, 1);
+  check('the reason filters never touch a close rate',
+    closeRateTrend(R, { period: 'year', reasons: ['Price'], hideReasons: ['Timing'] }).decided, 7);
+  check('source filter narrows it', closeRateTrend(R, { period: 'year', sources: ['Referral'] }).series.map(s => s.key), ['Referral']);
+  const o = closeRateTrend(R, { period: 'year', topN: 1 });
+  check('the rest fold into Other', o.series.map(s => [s.key, s.wins, s.decided]), [['Cold Call', 1, 4], [TREND_OTHER, 1, 3]]);
+  check('chart export columns', Object.keys(closeRateChartRows(c, { period: 'year', hiddenSeries: ['Referral'] })[0]),
+    ['Period', 'Cold Call close rate %', 'Cold Call won', 'Cold Call decided', 'Overall close rate %', 'Overall won', 'Overall decided']);
 }
 
 if (failures) { console.log(`\n${failures} failing`); process.exit(1); }

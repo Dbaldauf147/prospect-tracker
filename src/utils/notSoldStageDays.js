@@ -75,7 +75,7 @@ export function stageDaysFilterActive({ min = '', max = '' } = {}) {
 /**
  * The records the Days in stage filter keeps. Only decided opps (Sold /
  * Not Sold) are judged - nothing else reaches the analysis anyway - so the
- * loss rate stays the losses and wins that both meet the same bar.
+ * close rate stays the losses and wins that both meet the same bar.
  *
  *   stage  a stage name, or STAGE_DAYS_TOTAL for every stage together
  *   min    at least this many days ('' = no floor)

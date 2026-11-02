@@ -99,9 +99,9 @@ const RECORDS = [
   check('a loss with no Close Date is excluded, and said so', [q1.lossCount, q1.undated], [2, 1]);
   check('a set window is reported as one', q1.windowed, true);
   check('the wins in the window narrow with it', q1.winCount, 1);
-  check('loss rate is losses over decided, in-window',
-    q1.sources.map(s => [s.source, s.losses, s.wins, Math.round(s.lossRate)]),
-    [['Referral', 2, 1, 67]]);
+  check('close rate is wins over decided, in-window',
+    q1.sources.map(s => [s.source, s.losses, s.wins, Math.round(s.closeRate)]),
+    [['Referral', 2, 1, 33]]);
 
   const may = notSoldBreakdown(RECORDS, { from: '2026-05-01' });
   check('an open-ended range still bounds one side', may.rows.map(r => r._id), [3]);

@@ -11,6 +11,7 @@ import {
   filterByStageDays, notSoldOppRows, stageDaysFilterActive, stageDaysOf,
 } from '../../utils/notSoldStageDays';
 import { NotSoldTrend } from './NotSoldTrend';
+import { NotSoldCloseRate } from './NotSoldCloseRate';
 import styles from './OppsView2.module.css';
 
 const muted = { color: 'var(--color-text-muted, #64748B)' };
@@ -278,7 +279,7 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
   const yearOptions = useMemo(() => notSoldYears(records), [records]);
   // Applied ahead of everything else, so both views, both tables and the
   // trend count only the opps that meet it - wins as well as losses, so a
-  // loss rate compares like with like.
+  // close rate compares like with like.
   const stageFiltered = useMemo(
     () => filterByStageDays(records, { stage: daysStage, min: daysMin, max: daysMax }),
     [records, daysStage, daysMin, daysMax],
@@ -401,14 +402,14 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
       render: (row) => <div style={{ textAlign: 'right', fontWeight: 600 }}>{row.losses}</div>,
     },
     {
-      key: 'lossRate',
-      label: 'Loss Rate',
+      key: 'closeRate',
+      label: 'Close Rate',
       defaultWidth: 110,
       render: (row) => (
         <div
           style={{ textAlign: 'right' }}
-          title={`${row.losses} lost of ${row.losses + row.wins} decided (Sold + Not Sold) from this source, closed in this window.`}
-        >{row.lossRate == null ? '-' : `${row.lossRate.toFixed(1)}%`}</div>
+          title={`${row.wins} won of ${row.losses + row.wins} decided (Sold + Not Sold) from this source, closed in this window.`}
+        >{row.closeRate == null ? '-' : `${row.closeRate.toFixed(1)}%`}</div>
       ),
     },
     {
@@ -443,6 +444,12 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
 
   const windowed = data.windowed;
 
+  // The Days in stage filter as a line for an export's Filters sheet.
+  const daysFilterNote = daysActive ? [{
+    Setting: 'Days in stage',
+    Value: `${daysStage === STAGE_DAYS_TOTAL ? 'All stages (total)' : (NOT_SOLD_STAGE_COLUMNS.find(c => c.stage === daysStage)?.label || daysStage)}: ${daysMin || 0} to ${daysMax || 'any'} days`,
+  }] : [];
+
   return (
     <>
       <div className={styles.searchRow}>
@@ -459,6 +466,12 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
             onClick={() => setView('trend')}
             title="The same losses by month, quarter or year"
           >Trend over time</button>
+          <button
+            type="button"
+            className={view === 'closeRate' ? styles.notSoldYearOn : styles.notSoldYear}
+            onClick={() => setView('closeRate')}
+            title="Each source's close rate (Sold / decided) by month, quarter or year"
+          >Close rate by source</button>
         </span>
         <label className={styles.filterLabel}>
           Closed from
@@ -496,7 +509,7 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
           {data.lossCount} loss{data.lossCount === 1 ? '' : 'es'}
           {windowed ? ' closed in range' : ''}
           {` · ${data.winCount} won in the same window`}
-          {' · click a row to see the opps'}
+          {view !== 'closeRate' ? ' · click a row to see the opps' : ''}
         </span>
         {/* Said rather than silently done: with a window set there's no way
             to place a loss that never got a Close Date, so it sits out. */}
@@ -525,6 +538,18 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
         )}
       </div>
 
+      {view === 'closeRate' && (
+        <NotSoldCloseRate
+          records={filteredRecords}
+          from={from}
+          to={to}
+          years={years}
+          extraFilters={daysFilterNote}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      )}
+
       {view === 'trend' && (
         <NotSoldTrend
           records={filteredRecords}
@@ -535,10 +560,7 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
           lossRows={data.rows}
           onDrill={setDrill}
           oppsSheetRows={notSoldOppRows}
-          extraFilters={daysActive ? [{
-            Setting: 'Days in stage',
-            Value: `${daysStage === STAGE_DAYS_TOTAL ? 'All stages (total)' : (NOT_SOLD_STAGE_COLUMNS.find(c => c.stage === daysStage)?.label || daysStage)}: ${daysMin || 0} to ${daysMax || 'any'} days`,
-          }] : []}
+          extraFilters={daysFilterNote}
           settings={settings}
           updateSettings={updateSettings}
         />
