@@ -6,6 +6,7 @@ import { parseMoney } from '../../utils/oppsMetrics';
 import {
   bfoStatusOf, notSoldBreakdown, notSoldYears, reasonOf, sourceOf, sourceReasonRows,
 } from '../../utils/notSoldAnalysis';
+import { NotSoldTrend } from './NotSoldTrend';
 import styles from './OppsView2.module.css';
 
 const muted = { color: 'var(--color-text-muted, #64748B)' };
@@ -207,6 +208,8 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
   const [expanded, setExpanded] = useState(() => new Set());
   // What the open drilldown is showing: { title, subtitle, rows }.
   const [drill, setDrill] = useState(null);
+  // Breakdown (the two tables) or Trend (the same losses over time).
+  const [view, setView] = useState('breakdown');
 
   const yearOptions = useMemo(() => notSoldYears(records), [records]);
   const data = useMemo(
@@ -366,6 +369,20 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
   return (
     <>
       <div className={styles.searchRow}>
+        <span className={styles.notSoldYears}>
+          <button
+            type="button"
+            className={view === 'breakdown' ? styles.notSoldYearOn : styles.notSoldYear}
+            onClick={() => setView('breakdown')}
+            title="Reasons and sources for the window"
+          >Breakdown</button>
+          <button
+            type="button"
+            className={view === 'trend' ? styles.notSoldYearOn : styles.notSoldYear}
+            onClick={() => setView('trend')}
+            title="The same losses by month, quarter or year"
+          >Trend over time</button>
+        </span>
         <label className={styles.filterLabel}>
           Closed from
           <input
@@ -413,6 +430,20 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
         )}
       </div>
 
+      {view === 'trend' && (
+        <NotSoldTrend
+          records={records}
+          from={from}
+          to={to}
+          years={years}
+          lossRows={data.rows}
+          onDrill={setDrill}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      )}
+
+      {view === 'breakdown' && (
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '0 1.25rem 1.25rem' }}>
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           <h3 className={styles.notSoldSectionTitle}>Top reasons</h3>
@@ -469,6 +500,7 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
           />
         </div>
       </div>
+      )}
 
       {drill && (
         <LossDrilldown
