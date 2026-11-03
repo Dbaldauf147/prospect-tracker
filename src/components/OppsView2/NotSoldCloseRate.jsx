@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList,
 } from 'recharts';
 import { DataTable } from '../common/DataTable';
 import { TagMultiSelect } from '../common/TagMultiSelect';
@@ -41,6 +41,19 @@ function Segmented({ label, options, value, onChange }) {
   );
 }
 
+// Chart look, saved per user in settings[CHART_STYLE_KEY] so it follows Dan
+// between machines: { labels: bool, series: { [key]: { color, width, dash, dots } } }.
+const CHART_STYLE_KEY = 'closeRateChartStyle';
+const DASHES = [
+  { key: 'solid', label: 'Solid', value: undefined },
+  { key: 'dashed', label: 'Dashed', value: '6 4' },
+  { key: 'dotted', label: 'Dotted', value: '2 3' },
+];
+const dashValue = (k) => DASHES.find(d => d.key === k)?.value;
+const seriesDefaults = (isOverall) => (isOverall
+  ? { width: 3, dash: 'dashed', dots: false }
+  : { width: 2, dash: 'solid', dots: true });
+
 const fmtRate = (v) => (v == null ? '-' : `${v.toFixed(1)}%`);
 
 /**
@@ -61,6 +74,25 @@ export function NotSoldCloseRate({ records, from, to, years, extraFilters = [], 
   const [period, setPeriod] = useState('year');
   const [sources, setSources] = useState([]);
   const [hidden, setHidden] = useState(() => new Set());
+  const [styleOpen, setStyleOpen] = useState(false);
+
+  const chartStyle = settings?.[CHART_STYLE_KEY] || {};
+  const showLabels = !!chartStyle.labels;
+  const seriesStyle = chartStyle.series || {};
+  function saveChartStyle(patch) {
+    if (!updateSettings) return;
+    updateSettings({ [CHART_STYLE_KEY]: { ...chartStyle, ...patch } });
+  }
+  function setSeriesStyle(key, patch) {
+    saveChartStyle({ series: { ...seriesStyle, [key]: { ...(seriesStyle[key] || {}), ...patch } } });
+  }
+  function resetSeriesStyle(key) {
+    const next = { ...seriesStyle };
+    delete next[key];
+    saveChartStyle({ series: next });
+  }
+  // Colour, width, dash and dots for one line, saved choices over defaults.
+  const lineStyleOf = (key) => ({ ...seriesDefaults(key === OVERALL_KEY), ...(seriesStyle[key] || {}) });
 
   const facets = useMemo(() => notSoldFacets(records), [records]);
   const cr = useMemo(
@@ -85,7 +117,7 @@ export function NotSoldCloseRate({ records, from, to, years, extraFilters = [], 
     map.set(OVERALL_KEY, OVERALL_COLOUR);
     return map;
   }, [records, from, to, years, cr.series]);
-  const colourOf = (k) => colourMap.get(k) || OTHER_COLOUR;
+  const colourOf = (k) => seriesStyle[k]?.color || colourMap.get(k) || OTHER_COLOUR;
 
   const legend = [{ key: OVERALL_KEY, label: 'Overall', wins: cr.wins, decided: cr.decided }, ...cr.series.map(s => ({ key: s.key, label: s.key, wins: s.wins, decided: s.decided }))];
   const visible = cr.series.filter(s => !hidden.has(s.key));
@@ -115,7 +147,7 @@ export function NotSoldCloseRate({ records, from, to, years, extraFilters = [], 
         <div style={{ fontWeight: 700, marginBottom: 4 }}>{periodLabel(p, period)}</div>
         {!hidden.has(OVERALL_KEY) && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0', fontWeight: 700 }}>
-            <span style={{ width: 10, height: 2, background: OVERALL_COLOUR }} />
+            <span style={{ width: 10, height: 2, background: colourOf(OVERALL_KEY) }} />
             <span style={{ flex: 1 }}>Overall</span>
             <span>{fmtRate(o.rate)}</span>
             <span style={{ ...muted, minWidth: 48, textAlign: 'right', fontWeight: 400 }}>{o.wins}/{o.decided}</span>
@@ -188,7 +220,7 @@ export function NotSoldCloseRate({ records, from, to, years, extraFilters = [], 
     });
     return cols;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cr, period, colourMap]);
+  }, [cr, period, colourMap, seriesStyle]);
 
   // The decided opps behind every rate, for the Export details sheet.
   const detailRows = useMemo(
@@ -275,6 +307,46 @@ export function NotSoldCloseRate({ records, from, to, years, extraFilters = [], 
                 </button>
               ))}
             </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className={showLabels ? styles.notSoldYearOn : styles.notSoldYear}
+                onClick={() => saveChartStyle({ labels: !showLabels })}
+                title={showLabels ? 'Hide the close rate on each point' : 'Show the close rate on each point'}
+              >Data labels {showLabels ? 'on' : 'off'}</button>
+              <button
+                type="button"
+                className={styleOpen ? styles.notSoldYearOn : styles.notSoldYear}
+                onClick={() => setStyleOpen(o => !o)}
+                title="Change each line's colour, width and style"
+              >Line styles</button>
+            </div>
+            {styleOpen && (
+              <div style={{ border: '1px solid var(--color-border, #E2E8F0)', borderRadius: 6, padding: '0.5rem 0.65rem', fontSize: '0.75rem', display: 'grid', gridTemplateColumns: 'minmax(140px, max-content) auto auto auto auto auto', gap: '0.35rem 0.75rem', alignItems: 'center', alignSelf: 'flex-start', background: 'var(--color-surface, #fff)' }}>
+                <span style={{ ...muted, fontWeight: 600 }}>Line</span>
+                <span style={{ ...muted, fontWeight: 600 }}>Colour</span>
+                <span style={{ ...muted, fontWeight: 600 }}>Width</span>
+                <span style={{ ...muted, fontWeight: 600 }}>Style</span>
+                <span style={{ ...muted, fontWeight: 600 }}>Points</span>
+                <span />
+                {legend.map(l => {
+                  const ls = lineStyleOf(l.key);
+                  const custom = !!seriesStyle[l.key];
+                  return [
+                    <span key={`${l.key}-n`} style={{ fontWeight: l.key === OVERALL_KEY ? 700 : 400 }}>{l.label}</span>,
+                    <input key={`${l.key}-c`} type="color" value={colourOf(l.key)} onChange={(e) => setSeriesStyle(l.key, { color: e.target.value })} style={{ width: 32, height: 22, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }} aria-label={`${l.label} colour`} />,
+                    <select key={`${l.key}-w`} value={ls.width} onChange={(e) => setSeriesStyle(l.key, { width: Number(e.target.value) })} aria-label={`${l.label} width`}>
+                      {[1, 2, 3, 4, 5].map(w => <option key={w} value={w}>{w}px</option>)}
+                    </select>,
+                    <select key={`${l.key}-d`} value={ls.dash} onChange={(e) => setSeriesStyle(l.key, { dash: e.target.value })} aria-label={`${l.label} style`}>
+                      {DASHES.map(d => <option key={d.key} value={d.key}>{d.label}</option>)}
+                    </select>,
+                    <input key={`${l.key}-p`} type="checkbox" checked={ls.dots} onChange={(e) => setSeriesStyle(l.key, { dots: e.target.checked })} aria-label={`${l.label} points`} />,
+                    <button key={`${l.key}-r`} type="button" className={styles.clearFiltersBtn} disabled={!custom} onClick={() => resetSeriesStyle(l.key)} style={{ padding: '1px 8px' }}>Reset</button>,
+                  ];
+                })}
+              </div>
+            )}
             <div style={{ height: 300, flexShrink: 0 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
@@ -282,31 +354,34 @@ export function NotSoldCloseRate({ records, from, to, years, extraFilters = [], 
                   <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval="preserveStartEnd" minTickGap={8} />
                   <YAxis tick={{ fontSize: 11, fill: '#64748B' }} tickLine={false} axisLine={false} width={44} domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={(v) => `${v}%`} />
                   <Tooltip content={<CloseRateTooltip />} cursor={{ stroke: '#94a3b8', strokeDasharray: '3 3' }} />
-                  {visible.map(s => (
-                    <Line
-                      key={s.key}
-                      dataKey={s.key}
-                      name={s.key}
-                      stroke={colourOf(s.key)}
-                      strokeWidth={2}
-                      dot={{ r: 4, strokeWidth: 2, stroke: 'var(--color-surface, #fff)', fill: colourOf(s.key) }}
-                      activeDot={{ r: 5 }}
-                      isAnimationActive={false}
-                      connectNulls
-                    />
-                  ))}
-                  {!hidden.has(OVERALL_KEY) && (
-                    <Line
-                      dataKey={OVERALL_KEY}
-                      name="Overall"
-                      stroke={OVERALL_COLOUR}
-                      strokeWidth={3}
-                      strokeDasharray="6 4"
-                      dot={false}
-                      isAnimationActive={false}
-                      connectNulls
-                    />
-                  )}
+                  {[...visible.map(s => s.key), ...(hidden.has(OVERALL_KEY) ? [] : [OVERALL_KEY])].map(key => {
+                    const ls = lineStyleOf(key);
+                    const colour = colourOf(key);
+                    return (
+                      <Line
+                        key={key}
+                        dataKey={key}
+                        name={key === OVERALL_KEY ? 'Overall' : key}
+                        stroke={colour}
+                        strokeWidth={ls.width}
+                        strokeDasharray={dashValue(ls.dash)}
+                        dot={ls.dots ? { r: 4, strokeWidth: 2, stroke: 'var(--color-surface, #fff)', fill: colour, strokeDasharray: undefined } : false}
+                        activeDot={{ r: 5 }}
+                        isAnimationActive={false}
+                        connectNulls
+                      >
+                        {showLabels && (
+                          <LabelList
+                            dataKey={key}
+                            position="top"
+                            offset={8}
+                            formatter={(v) => (v == null ? '' : `${Math.round(v)}%`)}
+                            style={{ fontSize: 10, fontWeight: key === OVERALL_KEY ? 700 : 600, fill: colour, stroke: 'var(--color-surface, #fff)', strokeWidth: 3, paintOrder: 'stroke' }}
+                          />
+                        )}
+                      </Line>
+                    );
+                  })}
                 </LineChart>
               </ResponsiveContainer>
             </div>
