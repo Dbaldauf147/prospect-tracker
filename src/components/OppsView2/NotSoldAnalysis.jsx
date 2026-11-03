@@ -4,13 +4,15 @@ import { DataTable } from '../common/DataTable';
 import { fmtMoneyWhole } from '../../utils/pricingOptionCalc';
 import { parseMoney } from '../../utils/oppsMetrics';
 import {
-  bfoStatusOf, notSoldBreakdown, notSoldYears, reasonOf, sourceOf, sourceReasonRows,
+  NOT_SOLD, SOLD, bfoStatusOf, notSoldBreakdown, notSoldYears, reasonOf, sourceOf, sourceReasonRows, stageOf,
 } from '../../utils/notSoldAnalysis';
 import {
   NOT_SOLD_STAGE_COLUMNS, NOT_SOLD_OPPS_SHEET, STAGE_DAYS_TOTAL,
   filterByStageDays, notSoldOppRows, stageDaysFilterActive, stageDaysOf,
 } from '../../utils/notSoldStageDays';
 import { NotSoldTrend } from './NotSoldTrend';
+import { isPullThroughOpp } from '../../utils/pullThrough';
+import { hasBfoField } from '../../utils/bfoFields';
 import { NotSoldCloseRate } from './NotSoldCloseRate';
 import styles from './OppsView2.module.css';
 
@@ -274,15 +276,37 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
   const [daysStage, setDaysStage] = useState(STAGE_DAYS_TOTAL);
   const [daysMin, setDaysMin] = useState('');
   const [daysMax, setDaysMax] = useState('');
+  // Only opps that exist in BFO (have a BFO Opportunity Name).
+  const [bfoNamedOnly, setBfoNamedOnly] = useState(false);
   const daysActive = stageDaysFilterActive({ min: daysMin, max: daysMax });
 
-  const yearOptions = useMemo(() => notSoldYears(records), [records]);
+  // Pull-throughs ride along with a parent sale and aren't counted as
+  // opportunities anywhere else (close rates, Days in Stage), so they sit
+  // out of every view here too, wins as well as losses. The BFO name
+  // filter applies at the same point so all three views agree.
+  const scoped = useMemo(() => {
+    let pullThroughs = 0;
+    let unnamed = 0;
+    const out = [];
+    for (const r of (records || [])) {
+      // Counted only among closed opps, the only ones this page looks at,
+      // so the "left out" notes match what would otherwise have shown.
+      const closed = stageOf(r) === SOLD || stageOf(r) === NOT_SOLD;
+      if (isPullThroughOpp(r)) { if (closed) pullThroughs += 1; continue; }
+      if (bfoNamedOnly && !hasBfoField(r?.['BFO Link'])) { if (closed) unnamed += 1; continue; }
+      out.push(r);
+    }
+    return { records: out, pullThroughs, unnamed };
+  }, [records, bfoNamedOnly]);
+  const scopedRecords = scoped.records;
+
+  const yearOptions = useMemo(() => notSoldYears(scopedRecords), [scopedRecords]);
   // Applied ahead of everything else, so both views, both tables and the
   // trend count only the opps that meet it - wins as well as losses, so a
   // close rate compares like with like.
   const stageFiltered = useMemo(
-    () => filterByStageDays(records, { stage: daysStage, min: daysMin, max: daysMax }),
-    [records, daysStage, daysMin, daysMax],
+    () => filterByStageDays(scopedRecords, { stage: daysStage, min: daysMin, max: daysMax }),
+    [scopedRecords, daysStage, daysMin, daysMax],
   );
   const filteredRecords = stageFiltered.records;
   const data = useMemo(
@@ -445,10 +469,14 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
   const windowed = data.windowed;
 
   // The Days in stage filter as a line for an export's Filters sheet.
-  const daysFilterNote = daysActive ? [{
-    Setting: 'Days in stage',
-    Value: `${daysStage === STAGE_DAYS_TOTAL ? 'All stages (total)' : (NOT_SOLD_STAGE_COLUMNS.find(c => c.stage === daysStage)?.label || daysStage)}: ${daysMin || 0} to ${daysMax || 'any'} days`,
-  }] : [];
+  const daysFilterNote = [
+    ...(daysActive ? [{
+      Setting: 'Days in stage',
+      Value: `${daysStage === STAGE_DAYS_TOTAL ? 'All stages (total)' : (NOT_SOLD_STAGE_COLUMNS.find(c => c.stage === daysStage)?.label || daysStage)}: ${daysMin || 0} to ${daysMax || 'any'} days`,
+    }] : []),
+    { Setting: 'Pull-through opps', Value: 'Excluded' },
+    ...(bfoNamedOnly ? [{ Setting: 'BFO Opportunity Name', Value: 'Only opps that have one' }] : []),
+  ];
 
   return (
     <>
@@ -499,10 +527,10 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
           onToggle={toggleYear}
           onClear={() => setYears([])}
         />
-        {(windowed || daysActive) && (
+        {(windowed || daysActive || bfoNamedOnly) && (
           <button
             className={styles.clearFiltersBtn}
-            onClick={() => { setFrom(''); setTo(''); setYears([]); setDaysMin(''); setDaysMax(''); }}
+            onClick={() => { setFrom(''); setTo(''); setYears([]); setDaysMin(''); setDaysMax(''); setBfoNamedOnly(false); }}
           >Clear filters</button>
         )}
         <span className={styles.resultCount}>
@@ -531,6 +559,26 @@ export function NotSoldAnalysis({ records, settings, updateSettings, onOpenOpp }
         />
         {/* Same idea as the Close Date note: an opp closed before stage
             history was kept has no days to judge, so it sits out. */}
+        <button
+          type="button"
+          className={bfoNamedOnly ? styles.notSoldYearOn : styles.notSoldYear}
+          onClick={() => setBfoNamedOnly(v => !v)}
+          title="Only count opps that have a BFO Opportunity Name"
+          aria-pressed={bfoNamedOnly}
+        >Has BFO Opp Name only</button>
+        {bfoNamedOnly && scoped.unnamed > 0 && (
+          <span className={styles.resultCount} style={{ color: '#92400E' }}>
+            {scoped.unnamed} left out - no BFO Opportunity Name
+          </span>
+        )}
+        {scoped.pullThroughs > 0 && (
+          <span
+            className={styles.resultCount}
+            title="Pull-through opps ride along with a parent sale and aren't counted as opportunities, so they're left out of every view on this page."
+          >
+            {scoped.pullThroughs} pull-through opp{scoped.pullThroughs === 1 ? '' : 's'} left out
+          </span>
+        )}
         {daysActive && stageFiltered.noHistory > 0 && (
           <span className={styles.resultCount} style={{ color: '#92400E' }}>
             {stageFiltered.noHistory} not counted - no stage history
