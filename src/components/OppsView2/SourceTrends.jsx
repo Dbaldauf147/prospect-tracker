@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import {
-  AreaChart, Area, BarChart, Bar, LabelList, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  ComposedChart, Area, Line, BarChart, Bar, LabelList, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { DataTable } from '../common/DataTable';
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { sourceShareTrend, periodLabel } from '../../utils/sourceTrends';
+import { closeRateTrend } from '../../utils/notSoldAnalysis';
 import styles from './OppsView2.module.css';
 
 const muted = { color: 'var(--color-text-muted, #64748B)' };
@@ -16,6 +17,10 @@ const MAX_SOURCES = PALETTE.length;
 const OTHER_COLOUR = '#cbd5e1';
 const OTHER_KEY = '__other';
 const TOTAL_KEY = '__total';
+// The close-rate line over the % chart. Dark so it reads on top of every
+// source colour; drawn with a white halo underneath.
+const CLOSE_KEY = '__closeRate';
+const CLOSE_COLOUR = '#0f172a';
 
 const PERIODS = [
   { key: 'month', label: 'Month' },
@@ -26,9 +31,10 @@ const PERIODS = [
 const fmtPct = (v) => (v == null ? '-' : `${v.toFixed(1)}%`);
 const axisTick = { fontSize: 11, fill: '#64748B' };
 
-function TrendTooltip({ active, payload, trend, items, period, colourOf }) {
+function TrendTooltip({ active, payload, trend, items, period, colourOf, closeRate }) {
   if (!active || !payload || !payload.length) return null;
   const p = payload[0].payload.period;
+  const cr = closeRate ? closeRate.overall[p] : null;
   const d = trend.totals[p];
   const rows = items
     .map(i => ({ ...i, n: i.countAt(p) }))
@@ -50,6 +56,14 @@ function TrendTooltip({ active, payload, trend, items, period, colourOf }) {
         </div>
       ))}
       <div style={{ ...muted, marginTop: 4 }}>Opps from the source / opps started</div>
+      {cr && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, paddingTop: 5, borderTop: '1px solid var(--color-border, #E2E8F0)' }}>
+          <span style={{ width: 12, height: 2, background: CLOSE_COLOUR }} />
+          <span style={{ flex: 1 }}>Close rate (closed in {periodLabel(p, period)})</span>
+          <span style={{ fontWeight: 600 }}>{fmtPct(cr.rate)}</span>
+          <span style={{ ...muted, minWidth: 48, textAlign: 'right' }}>{cr.wins}/{cr.decided}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -71,11 +85,16 @@ export function SourceTrends({ records, settings, updateSettings, onSourceClick 
   const [activity, setActivity] = useState('all');
   const [picked, setPicked] = useState([]);
   const [off, setOff] = useState(() => new Set());
+  const [showCloseRate, setShowCloseRate] = useState(true);
 
   const trend = useMemo(
     () => sourceShareTrend(records, { period, from, to, activity }),
     [records, period, from, to, activity],
   );
+  // Close rate of the opps CLOSED in each period (Sold / (Sold + Not Sold),
+  // by Close Date), the same rule as Not Sold Analysis. Every source, so it
+  // doesn't move when sources are hidden or picked.
+  const closeRate = useMemo(() => closeRateTrend(records, { period }), [records, period]);
   const allKeys = useMemo(() => trend.series.map(s => s.key), [trend]);
   const lines = useMemo(() => {
     const keep = picked.filter(k => allKeys.includes(k));
@@ -107,8 +126,9 @@ export function SourceTrends({ records, settings, updateSettings, onSourceClick 
       row[`n:${i.key}`] = n;
       row[`s:${i.key}`] = d > 0 ? (n / d) * 100 : null;
     }
+    row[CLOSE_KEY] = closeRate.overall[p]?.rate ?? null;
     return row;
-  }), [trend, items, period]);
+  }), [trend, items, period, closeRate]);
 
   const toggleOff = (key) => setOff(prev => {
     const next = new Set(prev);
@@ -185,7 +205,7 @@ export function SourceTrends({ records, settings, updateSettings, onSourceClick 
 
   const activityWord = activity === 'active' ? 'active ' : activity === 'closed' ? 'closed ' : '';
   const summary = `${trend.total} ${activityWord}opp${trend.total === 1 ? '' : 's'} started${trend.undated ? ` · ${trend.undated} without a Start Date left out` : ''}`;
-  const tooltip = <TrendTooltip trend={trend} items={visible} period={period} colourOf={colourOf} />;
+  const tooltip = <TrendTooltip trend={trend} items={visible} period={period} colourOf={colourOf} closeRate={showCloseRate ? closeRate : null} />;
   const chartTitle = { fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text)', margin: '0.25rem 0 0.15rem' };
 
   return (
@@ -252,12 +272,21 @@ export function SourceTrends({ records, settings, updateSettings, onSourceClick 
                   {i.label} <span style={muted}>({fmtPct(trend.total ? (i.count / trend.total) * 100 : null)}, {i.count})</span>
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => setShowCloseRate(v => !v)}
+                title={`${showCloseRate ? 'Hide' : 'Show'} the close rate line: Sold / (Sold + Not Sold) of the opps closed in each period, by Close Date`}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', color: 'var(--color-text)', opacity: showCloseRate ? 1 : 0.4, textDecoration: showCloseRate ? 'none' : 'line-through' }}
+              >
+                <span style={{ width: 14, height: 3, borderRadius: 999, background: CLOSE_COLOUR }} />
+                Close rate <span style={muted}>({fmtPct(closeRate.rate)}, {closeRate.wins}/{closeRate.decided})</span>
+              </button>
             </div>
 
-            <div style={chartTitle}>% of total</div>
+            <div style={chartTitle}>% of total{showCloseRate ? ', with the close rate of opps closed in each period' : ''}</div>
             <div style={{ height: 260, flexShrink: 0 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+                <ComposedChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
                   <XAxis dataKey="label" tick={axisTick} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval="preserveStartEnd" minTickGap={8} />
                   <YAxis tick={axisTick} tickLine={false} axisLine={false} width={44} domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} allowDataOverflow tickFormatter={(v) => `${v}%`} />
@@ -265,7 +294,27 @@ export function SourceTrends({ records, settings, updateSettings, onSourceClick 
                   {visible.map(i => (
                     <Area key={i.key} type="linear" dataKey={`s:${i.key}`} name={i.label} stackId="share" stroke={colourOf(i.key)} strokeWidth={1} fill={colourOf(i.key)} fillOpacity={0.85} isAnimationActive={false} />
                   ))}
-                </AreaChart>
+                  {showCloseRate && (
+                    <Line key="halo" type="linear" dataKey={CLOSE_KEY} stroke="#ffffff" strokeWidth={5} dot={false} activeDot={false} legendType="none" tooltipType="none" isAnimationActive={false} />
+                  )}
+                  {showCloseRate && (
+                    <Line
+                      key="close"
+                      type="linear"
+                      dataKey={CLOSE_KEY}
+                      name="Close rate"
+                      stroke={CLOSE_COLOUR}
+                      strokeWidth={2}
+                      dot={{ r: 3, fill: CLOSE_COLOUR, stroke: '#fff', strokeWidth: 1.5 }}
+                      activeDot={{ r: 5, fill: CLOSE_COLOUR, stroke: '#fff', strokeWidth: 2 }}
+                      isAnimationActive={false}
+                    >
+                      {period === 'year' && (
+                        <LabelList dataKey={CLOSE_KEY} position="top" formatter={(v) => (v == null ? '' : `${Math.round(v)}%`)} style={{ fontSize: 10, fill: CLOSE_COLOUR, fontWeight: 700, paintOrder: 'stroke', stroke: '#fff', strokeWidth: 3 }} />
+                      )}
+                    </Line>
+                  )}
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
 
