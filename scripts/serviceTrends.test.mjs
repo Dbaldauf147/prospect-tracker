@@ -45,4 +45,17 @@ const crHidden = serviceCloseRateTrend(recs, { period: 'year', hidden: ['A'] });
 check('close: hiding A drops A-only opps from overall', [crHidden.decided, crHidden.series.map(s => s.key)], [1, ['B']]);
 check('close: Close Date window', serviceCloseRateTrend(recs, { from: '2025-06-15', to: '2025-12-31' }).decided, 1);
 
+// Groups: A and B filed together count an opp once toward the group.
+const G = [{ name: 'AB', services: ['A', 'B'] }];
+const shG = serviceShareTrend(recs, { period: 'quarter', groups: G });
+const AB = shG.series.find(s => s.key === 'AB');
+check('group: series keys', shG.series.map(s => s.key), ['AB', 'C']);
+check('group: opp with A and B counts once', [AB.count, AB.byPeriod['2025-Q1'].count, shG.tagTotals['2025-Q1']], [4, 2, 2]);
+check('group: mix still sums to 100', Math.round(shG.series.reduce((a, s) => a + (s.byPeriod['2025-Q1'].mix || 0), 0)), 100);
+check('group: hidden member left out of the group', serviceShareTrend(recs, { period: 'quarter', groups: G, hidden: ['A'] }).series.find(s => s.key === 'AB').count, 2);
+check('group: hiding the group name drops it', serviceShareTrend(recs, { period: 'quarter', groups: G, hidden: ['AB'] }).series.map(s => s.key), ['C']);
+const crG = serviceCloseRateTrend(recs, { period: 'year', groups: G });
+check('group: close rate per group', crG.series.find(s => s.key === 'AB').byPeriod['2025'], { wins: 1, decided: 2, rate: 50 });
+check('group: blank and empty groups ignored', serviceShareTrend(recs, { groups: [{ name: ' ', services: ['A'] }, { name: 'X', services: [] }] }).series.map(s => s.key), ['A', 'B', 'C']);
+
 process.exit(failures ? 1 : 0);

@@ -4,7 +4,8 @@ import {
 } from 'recharts';
 import { DataTable } from '../common/DataTable';
 import { TagMultiSelect } from '../common/TagMultiSelect';
-import { serviceShareTrend, serviceCloseRateTrend, periodLabel } from '../../utils/serviceTrends';
+import { serviceShareTrend, serviceCloseRateTrend, periodLabel, servicesOf } from '../../utils/serviceTrends';
+import { getServiceCategories } from '../../utils/serviceCategoriesStore';
 import styles from './OppsView2.module.css';
 
 const muted = { color: 'var(--color-text-muted, #64748B)' };
@@ -54,6 +55,79 @@ const MODES = {
     exportName: 'Close rate by service',
   },
 };
+
+// Saved service groups for both trend subtabs: settings.oppsServiceTrendGroups
+// = { on, groups: [{ name, services }] }. `on` is the Group toggle.
+function groupsFromSettings(settings) {
+  const g = settings?.oppsServiceTrendGroups;
+  return {
+    on: !!g?.on,
+    groups: Array.isArray(g?.groups) ? g.groups.filter(x => x && typeof x.name === 'string' && Array.isArray(x.services)) : [],
+  };
+}
+
+// The editor for the groups: a name and its services per row, edited as a
+// draft and saved together so a half-typed name never reaches the chart.
+function GroupEditor({ groups, services, settings, onSave, onClose }) {
+  const [draft, setDraft] = useState(() => groups.map(g => ({ name: g.name, services: [...g.services] })));
+  const edit = (i, patch) => setDraft(d => d.map((g, j) => (j === i ? { ...g, ...patch } : g)));
+  // A service sits in one group at a time, so each picker offers the
+  // services no other group has taken.
+  const takenElsewhere = (i) => new Set(draft.flatMap((g, j) => (j === i ? [] : g.services)));
+  const fromBuckets = () => {
+    const have = new Set(services);
+    const next = getServiceCategories(settings)
+      .map(c => ({ name: c.name, services: c.items.filter(x => have.has(x)) }))
+      .filter(c => c.services.length > 0);
+    setDraft(next);
+  };
+  const names = draft.map(g => g.name.trim().toLowerCase()).filter(Boolean);
+  const dupe = names.some((n, i) => names.indexOf(n) !== i);
+  const save = () => {
+    onSave(draft
+      .map(g => ({ name: g.name.trim(), services: g.services }))
+      .filter(g => g.name && g.services.length));
+  };
+  const btn = { fontSize: '0.74rem', padding: '3px 10px', border: '1px solid var(--color-border, #E2E8F0)', borderRadius: 6, background: 'var(--color-surface, #fff)', color: 'var(--color-text)', cursor: 'pointer', fontFamily: 'inherit' };
+  return (
+    <div style={{ border: '1px solid var(--color-border, #E2E8F0)', borderRadius: 8, padding: '0.6rem 0.75rem', background: 'var(--color-surface, #fff)', display: 'flex', flexDirection: 'column', gap: 6, fontSize: '0.78rem' }}>
+      <div style={{ fontWeight: 700 }}>Service groups</div>
+      <div style={muted}>Each group draws as one line, and an opp counts once toward a group however many of its services it carries. Services in no group stay on their own.</div>
+      {draft.length === 0 && <div style={muted}>No groups yet.</div>}
+      {draft.map((g, i) => {
+        const taken = takenElsewhere(i);
+        return (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              className={styles.filterInput}
+              style={{ width: 200 }}
+              placeholder="Group name"
+              value={g.name}
+              onChange={e => edit(i, { name: e.target.value })}
+            />
+            <div style={{ flex: '1 1 320px', minWidth: 240 }}>
+              <TagMultiSelect
+                options={services.filter(x => !taken.has(x))}
+                selected={g.services}
+                onToggle={(v) => edit(i, { services: g.services.includes(v) ? g.services.filter(x => x !== v) : [...g.services, v] })}
+                placeholder="Pick services"
+              />
+            </div>
+            <button type="button" style={btn} onClick={() => setDraft(d => d.filter((_, j) => j !== i))} title="Remove this group">Remove</button>
+          </div>
+        );
+      })}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 2 }}>
+        <button type="button" style={btn} onClick={() => setDraft(d => [...d, { name: '', services: [] }])}>+ Add group</button>
+        <button type="button" style={btn} onClick={fromBuckets} title="Replace these groups with the service buckets from the services board">Start from service buckets</button>
+        <span style={{ flex: 1 }} />
+        {dupe && <span style={{ color: '#b91c1c' }}>Two groups share a name</span>}
+        <button type="button" style={btn} onClick={onClose}>Cancel</button>
+        <button type="button" style={{ ...btn, background: '#2563eb', borderColor: '#2563eb', color: '#fff', opacity: dupe ? 0.5 : 1 }} disabled={dupe} onClick={save}>Save groups</button>
+      </div>
+    </div>
+  );
+}
 
 const fmtPct = (v) => (v == null ? '-' : `${v.toFixed(1)}%`);
 
@@ -147,10 +221,23 @@ export function ServiceTrends({
   const hidden = linesOff || new Set();
   const hiddenServices = useMemo(() => (showHidden ? [] : [...hiddenSet]), [showHidden, hiddenSet]);
 
+  // Service groups, saved and shared by both trend subtabs.
+  const savedGroups = useMemo(() => groupsFromSettings(settings), [settings]);
+  const grouping = savedGroups.on && savedGroups.groups.length > 0;
+  const activeGroups = useMemo(() => (grouping ? savedGroups.groups : []), [grouping, savedGroups]);
+  const groupMembers = useMemo(() => new Map(activeGroups.map(g => [g.name, g.services])), [activeGroups]);
+  const [editingGroups, setEditingGroups] = useState(false);
+  const allServices = useMemo(() => {
+    const seen = new Set();
+    for (const r of records || []) for (const sv of servicesOf(r)) seen.add(sv);
+    return [...seen].sort((a, b) => a.localeCompare(b));
+  }, [records]);
+  const saveGroups = (patch) => updateSettings?.({ oppsServiceTrendGroups: { ...savedGroups, ...patch } });
+
   const trend = useMemo(() => (mode === 'share'
-    ? serviceShareTrend(records, { period, from, to, hidden: hiddenServices })
-    : serviceCloseRateTrend(records, { period, from, to, hidden: hiddenServices })
-  ), [mode, records, period, from, to, hiddenServices]);
+    ? serviceShareTrend(records, { period, from, to, hidden: hiddenServices, groups: activeGroups })
+    : serviceCloseRateTrend(records, { period, from, to, hidden: hiddenServices, groups: activeGroups })
+  ), [mode, records, period, from, to, hiddenServices, activeGroups]);
 
   const allKeys = useMemo(() => trend.series.map(s => s.key), [trend]);
   const lines = useMemo(() => {
@@ -252,6 +339,11 @@ export function ServiceTrends({
             <span style={{ width: 10, height: row.kind === 'total' ? 3 : 10, borderRadius: 2, background: colourOf(row.kind === 'total' ? OVERALL_KEY : row.name), flexShrink: 0 }} />
           )}
           {row.name}
+          {groupMembers.has(row.name) && (
+            <span style={{ ...muted, fontSize: '0.72rem' }} title={groupMembers.get(row.name).join(', ')}>
+              (group of {groupMembers.get(row.name).length})
+            </span>
+          )}
         </span>
       ),
     }];
@@ -281,7 +373,7 @@ export function ServiceTrends({
         label: '',
         defaultWidth: 90,
         exportValue: () => '',
-        render: (row) => (row.kind !== 'series' ? null : (
+        render: (row) => (row.kind !== 'series' || groupMembers.has(row.name) ? null : (
           <button
             className={styles.hideServiceBtn}
             onClick={(e) => { e.stopPropagation(); onToggleHide(row.name); }}
@@ -292,7 +384,7 @@ export function ServiceTrends({
     }
     return cols;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trend, period, mode, scale, isMix, colourMap, onToggleHide]);
+  }, [trend, period, mode, scale, isMix, colourMap, onToggleHide, groupMembers]);
 
   const legend = [
     ...(mode === 'closeRate' ? [{ key: OVERALL_KEY, label: 'Overall', v: trend.rate }] : []),
@@ -346,9 +438,30 @@ export function ServiceTrends({
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 260, maxWidth: 460, flex: '1 1 260px' }}>
           <span className={styles.filterLabel}>Chart</span>
           <div style={{ flex: 1 }} title={`Pick up to ${MAX_LINES} services to draw; none picked draws the ${MAX_LINES} busiest`}>
-            <TagMultiSelect options={allKeys} selected={picked} onToggle={togglePick} placeholder={`Top ${MAX_LINES} services`} />
+            <TagMultiSelect options={allKeys} selected={picked} onToggle={togglePick} placeholder={`Top ${MAX_LINES} ${grouping ? 'lines' : 'services'}`} />
           </div>
         </div>
+        <span className={styles.notSoldYears}>
+          <span className={styles.filterLabel} style={{ marginRight: 2 }}>Group</span>
+          <button
+            type="button"
+            className={!grouping ? styles.notSoldYearOn : styles.notSoldYear}
+            onClick={() => saveGroups({ on: false })}
+            title="Each service on its own"
+          >Off</button>
+          <button
+            type="button"
+            className={grouping ? styles.notSoldYearOn : styles.notSoldYear}
+            onClick={() => (savedGroups.groups.length ? saveGroups({ on: true }) : setEditingGroups(true))}
+            title={savedGroups.groups.length ? 'Draw each service group as one line' : 'Set up service groups'}
+          >Groups{savedGroups.groups.length ? ` (${savedGroups.groups.length})` : ''}</button>
+          <button
+            type="button"
+            className={styles.notSoldYear}
+            onClick={() => setEditingGroups(v => !v)}
+            title="Add, rename or change the service groups"
+          >Edit</button>
+        </span>
         {(picked.length > 0 || from || to) && (
           <button className={styles.clearFiltersBtn} onClick={() => { onPickedChange?.([]); setFrom(''); setTo(''); }}>Clear</button>
         )}
@@ -360,7 +473,17 @@ export function ServiceTrends({
         )}
         <span className={styles.resultCount}>{summary}</span>
       </div>
+      {editingGroups && (
+        <GroupEditor
+          groups={savedGroups.groups}
+          services={allServices}
+          settings={settings}
+          onClose={() => setEditingGroups(false)}
+          onSave={(groups) => { saveGroups({ groups, on: groups.length > 0 }); setEditingGroups(false); }}
+        />
+      )}
       <div style={{ fontSize: '0.72rem', ...muted }}>
+        {grouping && `Grouped: ${activeGroups.map(g => g.name).join(', ')}. `}
         {isMix ? MIX_BLURB : cfg.blurb}
         {picked.length > MAX_LINES && ` The chart draws the first ${MAX_LINES} picked; the table has them all.`}
       </div>
