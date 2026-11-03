@@ -27,8 +27,13 @@ check('share: undated counted', sh.undated, 1);
 const A = sh.series.find(s => s.key === 'A');
 check('share: A by period', sh.periods.map(p => A.byPeriod[p].share), [100, null, 50, null, 0]);
 check('share: A overall', [A.count, A.share], [3, 60]);
+check('share: tag totals per period', Object.values(sh.tagTotals), [3, 0, 2, 0, 1]);
+check('share: A mix by period', sh.periods.map(p => A.byPeriod[p].mix), [(2 / 3) * 100, null, 50, null, 0]);
+check('share: each period mix sums to 100', sh.periods.filter(p => sh.tagTotals[p]).map(p => Math.round(sh.series.reduce((a, s) => a + (s.byPeriod[p].mix || 0), 0))), [100, 100, 100]);
+check('share: A whole-window mix', A.mix, 50);
 const shHidden = serviceShareTrend(recs, { period: 'quarter', hidden: ['A'] });
 check('share: hiding A keeps the totals', [shHidden.series.map(s => s.key), shHidden.totals['2025-Q1']], [['B', 'C'], 2]);
+check('share: hiding A drops it from the mix', [shHidden.tagTotals['2025-Q1'], shHidden.series[0].byPeriod['2025-Q1'].mix], [1, 100]);
 
 const cr = serviceCloseRateTrend(recs, { period: 'year' });
 check('close: periods', cr.periods, ['2025', '2026']);

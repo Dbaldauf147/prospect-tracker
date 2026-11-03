@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { DataTable } from '../common/DataTable';
 import { TagMultiSelect } from '../common/TagMultiSelect';
@@ -15,6 +15,18 @@ const PALETTE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300
 const MAX_LINES = PALETTE.length;
 const OVERALL_COLOUR = '#334155';
 const OVERALL_KEY = '__overall';
+const OTHER_COLOUR = '#cbd5e1';
+const OTHER_KEY = '__other';
+const TAGS_KEY = '__tags';
+
+// The share mode's two scales. 'mix' (the default) is each service's slice
+// of every service tag in the period, so a period stacks to 100%; 'opps' is
+// the share of opps that include the service, which can top 100%.
+const SCALES = [
+  { key: 'mix', label: '% of 100', title: 'Each period stacks to 100%: each service\'s slice of all the services on the opps started' },
+  { key: 'opps', label: '% of opps', title: 'Each service\'s share of the opps started (an opp with several services counts toward each)' },
+];
+const MIX_BLURB = 'Each period\'s service mix, adding up to 100%: of every service on the opps that started in the period (by Start Date, open or closed), the slice each service makes up. An opp with several services counts once toward each. Services not drawn are grouped as Other.';
 
 const PERIODS = [
   { key: 'month', label: 'Month' },
@@ -46,29 +58,38 @@ const MODES = {
 const fmtPct = (v) => (v == null ? '-' : `${v.toFixed(1)}%`);
 
 // A period cell's numbers, the same in both modes: the % and what it's of.
-function cellOf(mode, trend, series, p) {
+// `scale` only matters for share: 'mix' is out of the period's service tags.
+function cellOf(mode, trend, series, p, scale = 'opps') {
   if (mode === 'share') {
-    const d = p == null ? trend.total : trend.totals[p];
+    const mix = scale === 'mix';
+    const d = p == null ? (mix ? trend.tagTotal : trend.total) : (mix ? trend.tagTotals[p] : trend.totals[p]);
     const n = p == null ? series.count : series.byPeriod[p].count;
-    const v = p == null ? series.share : series.byPeriod[p].share;
+    const field = mix ? 'mix' : 'share';
+    const v = p == null ? series[field] : series.byPeriod[p][field];
     return { v, n, d };
   }
   const c = p == null ? series : series.byPeriod[p];
   return { v: c.rate, n: c.wins, d: c.decided };
 }
 
-function TrendTooltip({ active, payload, mode, trend, lines, period, showOverall, colourOf }) {
+function TrendTooltip({ active, payload, mode, scale, trend, lines, period, showOverall, showOther, colourOf }) {
   if (!active || !payload || !payload.length) return null;
   const p = payload[0].payload.period;
-  const items = lines.map(s => ({ key: s.key, ...cellOf(mode, trend, s, p) }))
+  const mix = mode === 'share' && scale === 'mix';
+  const items = lines.map(s => ({ key: s.key, ...cellOf(mode, trend, s, p, scale) }))
     .filter(i => i.d > 0 && (mode === 'share' ? i.n > 0 : true))
     .sort((a, b) => (b.v ?? -1) - (a.v ?? -1));
+  if (mix && showOther) {
+    const o = payload[0].payload[OTHER_KEY];
+    const n = trend.tagTotals[p] - lines.reduce((a, s) => a + s.byPeriod[p].count, 0);
+    if (n > 0) items.push({ key: OTHER_KEY, label: 'Other', v: o, n, d: trend.tagTotals[p] });
+  }
   const o = mode === 'share' ? null : trend.overall[p];
   return (
     <div style={{ background: 'var(--color-surface, #fff)', border: '1px solid var(--color-border, #E2E8F0)', borderRadius: 6, padding: '0.5rem 0.65rem', fontSize: '0.75rem', boxShadow: '0 4px 14px rgba(0,0,0,0.12)', minWidth: 230 }}>
       <div style={{ fontWeight: 700, marginBottom: 4 }}>
         {periodLabel(p, period)}
-        {mode === 'share' && <span style={{ ...muted, fontWeight: 400 }}> · {trend.totals[p]} opp{trend.totals[p] === 1 ? '' : 's'} started</span>}
+        {mode === 'share' && <span style={{ ...muted, fontWeight: 400 }}> · {trend.totals[p]} opp{trend.totals[p] === 1 ? '' : 's'} started{mix ? `, ${trend.tagTotals[p]} service${trend.tagTotals[p] === 1 ? '' : 's'}` : ''}</span>}
       </div>
       {o && showOverall && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0', fontWeight: 700 }}>
@@ -82,12 +103,12 @@ function TrendTooltip({ active, payload, mode, trend, lines, period, showOverall
       {items.map(i => (
         <div key={i.key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0' }}>
           <span style={{ width: 8, height: 8, borderRadius: 999, background: colourOf(i.key) }} />
-          <span style={{ flex: 1 }}>{i.key}</span>
+          <span style={{ flex: 1 }}>{i.label || i.key}</span>
           <span style={{ fontWeight: 600 }}>{fmtPct(i.v)}</span>
           <span style={{ ...muted, minWidth: 48, textAlign: 'right' }}>{i.n}/{i.d}</span>
         </div>
       ))}
-      <div style={{ ...muted, marginTop: 4 }}>{mode === 'share' ? 'Opps with the service / opps started' : 'Won / decided (Sold + Not Sold)'}</div>
+      <div style={{ ...muted, marginTop: 4 }}>{mix ? 'Service count / all services on the opps started' : mode === 'share' ? 'Opps with the service / opps started' : 'Won / decided (Sold + Not Sold)'}</div>
     </div>
   );
 }
@@ -118,6 +139,9 @@ export function ServiceTrends({
 }) {
   const cfg = MODES[mode] || MODES.share;
   const [period, setPeriod] = useState(cfg.defaultPeriod);
+  const [scaleChoice, setScale] = useState('mix');
+  const scale = mode === 'share' ? scaleChoice : 'opps';
+  const isMix = mode === 'share' && scale === 'mix';
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const hidden = linesOff || new Set();
@@ -136,16 +160,24 @@ export function ServiceTrends({
       : trend.series.slice(0, MAX_LINES);
   }, [trend, picked, allKeys]);
   const colourMap = useMemo(() => new Map(lines.map((s, i) => [s.key, PALETTE[i]])), [lines]);
-  const colourOf = (k) => (k === OVERALL_KEY ? OVERALL_COLOUR : colourMap.get(k) || '#9ca3af');
+  const colourOf = (k) => (k === OVERALL_KEY ? OVERALL_COLOUR : k === OTHER_KEY ? OTHER_COLOUR : colourMap.get(k) || '#9ca3af');
   const visible = lines.filter(s => !hidden.has(s.key));
   const showOverall = mode === 'closeRate' && !hidden.has(OVERALL_KEY);
+  // The services left out of the chart, so the % of 100 stack still adds up.
+  const hasOther = isMix && trend.series.length > lines.length;
+  const showOther = hasOther && !hidden.has(OTHER_KEY);
 
   const chartData = useMemo(() => trend.periods.map(p => {
     const row = { period: p, label: periodLabel(p, period) };
-    for (const s of lines) row[s.key] = cellOf(mode, trend, s, p).v;
+    for (const s of lines) row[s.key] = cellOf(mode, trend, s, p, scale).v;
     if (mode === 'closeRate') row[OVERALL_KEY] = trend.overall[p].rate;
+    if (isMix) {
+      const d = trend.tagTotals[p];
+      const drawn = lines.reduce((a, s) => a + s.byPeriod[p].count, 0);
+      row[OTHER_KEY] = d > 0 ? ((d - drawn) / d) * 100 : null;
+    }
     return row;
-  }), [trend, lines, period, mode]);
+  }), [trend, lines, period, mode, scale, isMix]);
 
   // The legend popup: which entry it's open for, and where under it.
   const [linePopup, setLinePopup] = useState(null);
@@ -177,22 +209,27 @@ export function ServiceTrends({
     if (mode === 'closeRate') {
       rows.push({ id: OVERALL_KEY, name: 'Overall', kind: 'total', s: { wins: trend.wins, decided: trend.decided, rate: trend.rate, byPeriod: trend.overall } });
     } else {
+      if (isMix) rows.push({ id: TAGS_KEY, name: 'Services on those opps', kind: 'total' });
       rows.push({ id: OVERALL_KEY, name: 'Opps started', kind: 'total' });
     }
     return rows;
-  }, [trend, mode, hiddenSet]);
+  }, [trend, mode, hiddenSet, isMix]);
 
   const columns = useMemo(() => {
     const cell = (row, p) => {
       if (mode === 'share' && row.kind === 'total') {
+        if (row.id === TAGS_KEY) {
+          const n = p == null ? trend.tagTotal : trend.tagTotals[p];
+          return { text: String(n), sort: n, title: `${n} services across the opps started` };
+        }
         const n = p == null ? trend.total : trend.totals[p];
         return { text: String(n), sort: n, title: `${n} opps started` };
       }
-      const c = cellOf(mode, trend, row.s, p);
+      const c = cellOf(mode, trend, row.s, p, scale);
       if (!c.d || (mode === 'closeRate' && c.d === 0)) return { text: '-', sort: -1, title: '' };
       return {
         text: `${fmtPct(c.v)} (${c.n}/${c.d})`, pct: fmtPct(c.v), n: c.n, d: c.d, sort: c.v ?? -1,
-        title: mode === 'share' ? `${c.n} of ${c.d} opps started` : `${c.n} won of ${c.d} decided`,
+        title: isMix ? `${c.n} of ${c.d} services on the opps started` : mode === 'share' ? `${c.n} of ${c.d} opps started` : `${c.n} won of ${c.d} decided`,
       };
     };
     const render = (row, p) => {
@@ -255,11 +292,16 @@ export function ServiceTrends({
     }
     return cols;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trend, period, mode, colourMap, onToggleHide]);
+  }, [trend, period, mode, scale, isMix, colourMap, onToggleHide]);
 
   const legend = [
     ...(mode === 'closeRate' ? [{ key: OVERALL_KEY, label: 'Overall', v: trend.rate }] : []),
-    ...lines.map(s => ({ key: s.key, label: s.key, v: cellOf(mode, trend, s, null).v })),
+    ...lines.map(s => ({ key: s.key, label: s.key, v: cellOf(mode, trend, s, null, scale).v })),
+    ...(hasOther ? [{
+      key: OTHER_KEY,
+      label: 'Other',
+      v: trend.tagTotal ? ((trend.tagTotal - lines.reduce((a, s) => a + s.count, 0)) / trend.tagTotal) * 100 : null,
+    }] : []),
   ];
   const summary = mode === 'share'
     ? `${trend.total} opp${trend.total === 1 ? '' : 's'} started${trend.undated ? ` · ${trend.undated} without a Start Date left out` : ''}`
@@ -279,6 +321,20 @@ export function ServiceTrends({
             >{o.label}</button>
           ))}
         </span>
+        {mode === 'share' && (
+          <span className={styles.notSoldYears}>
+            <span className={styles.filterLabel} style={{ marginRight: 2 }}>Scale</span>
+            {SCALES.map(o => (
+              <button
+                key={o.key}
+                type="button"
+                title={o.title}
+                className={scale === o.key ? styles.notSoldYearOn : styles.notSoldYear}
+                onClick={() => setScale(o.key)}
+              >{o.label}</button>
+            ))}
+          </span>
+        )}
         <label className={styles.filterLabel}>
           {cfg.dateLabel} from
           <input type="date" className={styles.filterInput} value={from} max={to || undefined} onChange={e => setFrom(e.target.value)} />
@@ -305,7 +361,7 @@ export function ServiceTrends({
         <span className={styles.resultCount}>{summary}</span>
       </div>
       <div style={{ fontSize: '0.72rem', ...muted }}>
-        {cfg.blurb}
+        {isMix ? MIX_BLURB : cfg.blurb}
         {picked.length > MAX_LINES && ` The chart draws the first ${MAX_LINES} picked; the table has them all.`}
       </div>
 
@@ -360,12 +416,40 @@ export function ServiceTrends({
             </div>
             <div style={{ height: 300, flexShrink: 0 }}>
               <ResponsiveContainer width="100%" height="100%">
+                {isMix ? (
+                  <AreaChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval="preserveStartEnd" minTickGap={8} />
+                    <YAxis tick={{ fontSize: 11, fill: '#64748B' }} tickLine={false} axisLine={false} width={44} domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} allowDataOverflow tickFormatter={(v) => `${v}%`} />
+                    <Tooltip
+                      content={<TrendTooltip mode={mode} scale={scale} trend={trend} lines={visible} period={period} showOther={showOther} colourOf={colourOf} />}
+                      cursor={{ stroke: '#94a3b8', strokeDasharray: '3 3' }}
+                    />
+                    {visible.map(s => (
+                      <Area
+                        key={s.key}
+                        type="linear"
+                        dataKey={s.key}
+                        name={s.key}
+                        stackId="mix"
+                        stroke={colourOf(s.key)}
+                        strokeWidth={1}
+                        fill={colourOf(s.key)}
+                        fillOpacity={0.85}
+                        isAnimationActive={false}
+                      />
+                    ))}
+                    {showOther && (
+                      <Area type="linear" dataKey={OTHER_KEY} name="Other" stackId="mix" stroke={OTHER_COLOUR} strokeWidth={1} fill={OTHER_COLOUR} fillOpacity={0.85} isAnimationActive={false} />
+                    )}
+                  </AreaChart>
+                ) : (
                 <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval="preserveStartEnd" minTickGap={8} />
                   <YAxis tick={{ fontSize: 11, fill: '#64748B' }} tickLine={false} axisLine={false} width={44} domain={mode === 'closeRate' ? [0, 100] : [0, 'auto']} tickFormatter={(v) => `${v}%`} />
                   <Tooltip
-                    content={<TrendTooltip mode={mode} trend={trend} lines={visible} period={period} showOverall={showOverall} colourOf={colourOf} />}
+                    content={<TrendTooltip mode={mode} scale={scale} trend={trend} lines={visible} period={period} showOverall={showOverall} colourOf={colourOf} />}
                     cursor={{ stroke: '#94a3b8', strokeDasharray: '3 3' }}
                   />
                   {visible.map(s => (
@@ -385,6 +469,7 @@ export function ServiceTrends({
                     <Line dataKey={OVERALL_KEY} name="Overall" stroke={OVERALL_COLOUR} strokeWidth={3} strokeDasharray="6 4" dot={false} isAnimationActive={false} connectNulls />
                   )}
                 </LineChart>
+                )}
               </ResponsiveContainer>
             </div>
 

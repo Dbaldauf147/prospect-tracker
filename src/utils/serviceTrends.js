@@ -8,7 +8,9 @@
 //   serviceShareTrend      of the opps that STARTED in a period (Start
 //                          Date), the share that include each service.
 //                          An opp can carry several services, so a period's
-//                          shares can add up to more than 100%.
+//                          shares can add up to more than 100%. `mix` is
+//                          the same count over every service tag in the
+//                          period instead, so a period's mix sums to 100%.
 //   serviceCloseRateTrend  of the opps DECIDED in a period (Sold or Not
 //                          Sold, by Close Date), the share of each service's
 //                          that were won. The table's Win Rate, over time.
@@ -51,21 +53,25 @@ function periodsOf(seen, period) {
  *   {
  *     periods: [...],                                   // oldest first, gaps filled
  *     totals:  { [p]: n },                              // opps started in the period
- *     series:  [{ key, count, share,
- *                 byPeriod: { [p]: { count, share } } }],   // most opps first
- *     total, undated,
+ *     tagTotals: { [p]: n },                            // service tags on those opps (shown services only)
+ *     series:  [{ key, count, share, mix,
+ *                 byPeriod: { [p]: { count, share, mix } } }],   // most opps first
+ *     total, tagTotal, undated,
  *   }
  *
  *   period    'month' | 'quarter' | 'year'
  *   from/to   ISO Start Date bounds, inclusive; blank = open
  *   hidden    services to leave out of the series (still in the totals,
- *             so the other shares don't change when one is hidden)
+ *             so the other shares don't change when one is hidden; left
+ *             out of the tag totals, so the mix still sums to 100%)
  */
 export function serviceShareTrend(records, { period = 'quarter', from = '', to = '', hidden = [] } = {}) {
   const hide = new Set(hidden || []);
   const totals = new Map();
+  const tags = new Map();
   const bySvc = new Map();
   let total = 0;
+  let tagTotal = 0;
   let undated = 0;
   for (const r of records || []) {
     const iso = toISODate(r?.['Start Date']);
@@ -76,6 +82,8 @@ export function serviceShareTrend(records, { period = 'quarter', from = '', to =
     totals.set(p, (totals.get(p) || 0) + 1);
     for (const s of servicesOf(r)) {
       if (hide.has(s)) continue;
+      tagTotal += 1;
+      tags.set(p, (tags.get(p) || 0) + 1);
       const e = bySvc.get(s) || { key: s, count: 0, cells: new Map() };
       e.count += 1;
       e.cells.set(p, (e.cells.get(p) || 0) + 1);
@@ -84,18 +92,20 @@ export function serviceShareTrend(records, { period = 'quarter', from = '', to =
   }
   const periods = periodsOf(totals.keys(), period);
   const totalsOut = Object.fromEntries(periods.map(p => [p, totals.get(p) || 0]));
+  const tagTotals = Object.fromEntries(periods.map(p => [p, tags.get(p) || 0]));
   const series = [...bySvc.values()]
     .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key))
     .map(e => ({
       key: e.key,
       count: e.count,
       share: pct(e.count, total),
+      mix: pct(e.count, tagTotal),
       byPeriod: Object.fromEntries(periods.map(p => {
         const n = e.cells.get(p) || 0;
-        return [p, { count: n, share: pct(n, totalsOut[p]) }];
+        return [p, { count: n, share: pct(n, totalsOut[p]), mix: pct(n, tagTotals[p]) }];
       })),
     }));
-  return { periods, totals: totalsOut, series, total, undated };
+  return { periods, totals: totalsOut, tagTotals, series, total, tagTotal, undated };
 }
 
 /**
