@@ -155,6 +155,7 @@ import {
 import { NewOppsDraftEmailModal } from './NewOppsDraftEmailModal';
 import { StageReach } from './StageReach';
 import { ServiceTrends } from './ServiceTrends';
+import { SourceTrends } from './SourceTrends';
 import {
   peMonthlyRows, peMonthlyTierRank, PE_MONTHLY_COLUMNS, PE_MONTHLY_DRAFT_DEFAULTS, resolvePeMonthlyDraftTemplate,
   buildPeMonthlyEmailHtml, downloadPeMonthlyOutlookDraft, peMonthlyRowStyle,
@@ -14366,6 +14367,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // "By Source" drilldown: the Source whose opps the user clicked through
   // to. null when the list modal is closed.
   const [sourceDrillDown, setSourceDrillDown] = useState(null);
+  // By Source subtab: the summary table, or each source's share and count over time.
+  const [sourceView, setSourceView] = useState('table');
   const [statusFilter, setStatusFilter] = useState('all');
   const [activityFilter, setActivityFilter] = useState('all');
   const [showHiddenByFilter, setShowHiddenByFilter] = useState(false);
@@ -19436,6 +19439,27 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       )}
 
       {activeTab === 'bySource' && (
+        <div className={styles.notSoldYears} style={{ padding: '0.5rem 1.25rem 0' }}>
+          <button
+            type="button"
+            className={sourceView === 'table' ? styles.notSoldYearOn : styles.notSoldYear}
+            onClick={() => setSourceView('table')}
+            title="Leads, wins and money per source over one window"
+          >By source</button>
+          <button
+            type="button"
+            className={sourceView === 'trend' ? styles.notSoldYearOn : styles.notSoldYear}
+            onClick={() => setSourceView('trend')}
+            title="Each source's % of total and count of the opps started, by month, quarter or year"
+          >Over time</button>
+        </div>
+      )}
+
+      {activeTab === 'bySource' && sourceView === 'trend' && (
+        <SourceTrends records={records} settings={settings} updateSettings={updateSettings} />
+      )}
+
+      {activeTab === 'bySource' && sourceView === 'table' && (
         <>
           <div className={styles.searchRow}>
             <label className={styles.filterLabel}>
