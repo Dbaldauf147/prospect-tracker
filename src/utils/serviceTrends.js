@@ -35,6 +35,35 @@ export function servicesOf(r) {
     : [UNSPECIFIED_SERVICE];
 }
 
+/**
+ * A lookup from service to the group it's filed under, for the trend
+ * subtabs' "Group services" option. `groups` is [{ name, services }]; a
+ * service named in two groups goes to the first. Blank names and empty
+ * groups are skipped.
+ */
+export function groupLookup(groups) {
+  const m = new Map();
+  for (const g of groups || []) {
+    const name = String(g?.name || '').trim();
+    if (!name || !Array.isArray(g?.services)) continue;
+    for (const s of g.services) if (!m.has(s)) m.set(s, name);
+  }
+  return m;
+}
+
+// An opp's series keys: its services after the hidden ones are dropped,
+// each swapped for its group, so an opp with two services from one group
+// counts once toward that group. A hidden group name drops the group too.
+function keysOf(r, hide, lookup) {
+  const out = new Set();
+  for (const s of servicesOf(r)) {
+    if (hide.has(s)) continue;
+    const k = lookup.get(s) || s;
+    if (!hide.has(k)) out.add(k);
+  }
+  return [...out];
+}
+
 const pct = (n, d) => (d > 0 ? (n / d) * 100 : null);
 
 function inRange(iso, from, to) {
@@ -64,9 +93,13 @@ function periodsOf(seen, period) {
  *   hidden    services to leave out of the series (still in the totals,
  *             so the other shares don't change when one is hidden; left
  *             out of the tag totals, so the mix still sums to 100%)
+ *   groups    [{ name, services }]: each group's services count as one
+ *             series under its name (an opp once toward the group, however
+ *             many of its services it carries); see groupLookup
  */
-export function serviceShareTrend(records, { period = 'quarter', from = '', to = '', hidden = [] } = {}) {
+export function serviceShareTrend(records, { period = 'quarter', from = '', to = '', hidden = [], groups = [] } = {}) {
   const hide = new Set(hidden || []);
+  const lookup = groupLookup(groups);
   const totals = new Map();
   const tags = new Map();
   const bySvc = new Map();
@@ -80,8 +113,7 @@ export function serviceShareTrend(records, { period = 'quarter', from = '', to =
     const p = startPeriodOf(r, period);
     total += 1;
     totals.set(p, (totals.get(p) || 0) + 1);
-    for (const s of servicesOf(r)) {
-      if (hide.has(s)) continue;
+    for (const s of keysOf(r, hide, lookup)) {
       tagTotal += 1;
       tags.set(p, (tags.get(p) || 0) + 1);
       const e = bySvc.get(s) || { key: s, count: 0, cells: new Map() };
@@ -122,9 +154,11 @@ export function serviceShareTrend(records, { period = 'quarter', from = '', to =
  *   hidden    services left out of the series AND the overall, as if those
  *             opps were not there (an opp is dropped only when every one of
  *             its services is hidden)
+ *   groups    as serviceShareTrend
  */
-export function serviceCloseRateTrend(records, { period = 'year', from = '', to = '', hidden = [] } = {}) {
+export function serviceCloseRateTrend(records, { period = 'year', from = '', to = '', hidden = [], groups = [] } = {}) {
   const hide = new Set(hidden || []);
+  const lookup = groupLookup(groups);
   const overall = new Map();
   const bySvc = new Map();
   let undated = 0;
@@ -137,7 +171,7 @@ export function serviceCloseRateTrend(records, { period = 'year', from = '', to 
   for (const r of records || []) {
     const stage = String(r?.['Stage'] ?? '').trim();
     if (stage !== 'Sold' && stage !== 'Not Sold') continue;
-    const services = servicesOf(r).filter(s => !hide.has(s));
+    const services = keysOf(r, hide, lookup);
     if (services.length === 0) continue;
     const iso = toISODate(r?.['Close Date']);
     if (!iso) { undated += 1; continue; }
