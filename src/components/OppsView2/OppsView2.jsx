@@ -47,6 +47,7 @@ import {
 } from '../../utils/clientCoaFlags';
 import { KeithAgenda } from './KeithAgenda';
 import { KeithNotes } from './KeithNotes';
+import { ScheduledOppsTab } from './ScheduledOppsTab';
 import { buildPeOverlapDeals, oppStageNumber } from '../../utils/keithPeDeals';
 import { buildTargetTierResolver, buildTargetCdmResolver } from '../../utils/targetTier';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
@@ -18905,6 +18906,11 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           onClick={() => setActiveTab('newOpps')}
         >New Opps{newOpps.length ? ` (${newOpps.length})` : ''}</button>
         <button
+          className={activeTab === 'scheduled' ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab('scheduled')}
+          title="Opps queued to be created on a future date that don't exist yet"
+        >Scheduled{pendingScheduledOpps.length ? ` (${pendingScheduledOpps.length})` : ''}</button>
+        <button
           className={activeTab === 'peMonthly' ? styles.tabActive : styles.tab}
           onClick={() => setActiveTab('peMonthly')}
         >PE Monthly{peMonthly.length ? ` (${peMonthly.length})` : ''}</button>
@@ -19254,6 +19260,17 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             </div>
           )}
         </>
+      )}
+
+      {activeTab === 'scheduled' && (
+        <ScheduledOppsTab
+          entries={scheduledOpps}
+          onChangeEntry={updateScheduledOpp}
+          onCreateNow={(id) => fireScheduledOpps([id])}
+          onCancelEntry={cancelScheduledOpp}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
       )}
 
       {activeTab === 'waitingKeith' && (
