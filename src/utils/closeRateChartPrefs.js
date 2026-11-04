@@ -5,7 +5,11 @@
 //   { labels: boolean,                                  // data labels: every line's default
 //     lineLabels: { [chart]: { [seriesKey]: boolean } },  // a line's own choice over that
 //     colours: { [chart]: { [seriesKey]: '#rrggbb' } },  // per-chart overrides
-//     targets: { [chart]: 0-100 } }                       // a target line per chart
+//     targets: { [chart]: [{ id, value: 0-100, colour: '#rrggbb', name }] } }
+//                                                         // target lines, as many as wanted per chart
+//
+// An older save holds one number per chart; it reads as a single target in
+// the default slate, so nothing set before is lost.
 //
 // chart is 'source' | 'service' | 'stage' | 'reach'. A series with no
 // override keeps the palette colour the page gives it. Pure, for tests.
@@ -37,8 +41,8 @@ export function readChartPrefs(settings) {
   const targets = {};
   if (prefs.targets && typeof prefs.targets === 'object') {
     for (const [chart, v] of Object.entries(prefs.targets)) {
-      const n = cleanTarget(v);
-      if (n != null) targets[chart] = n;
+      const list = cleanTargets(v);
+      if (list.length) targets[chart] = list;
     }
   }
   return { labels: prefs.labels === true, lineLabels, colours, targets };
@@ -52,13 +56,57 @@ export function cleanTarget(v) {
   return Math.round(n * 10) / 10;
 }
 
-/** Set a chart's target (a number 0-100), or clear it with null / ''. */
-export function withTarget(prefs, chart, value) {
+// Target line colours offered in turn as targets are added: the old slate
+// first, then hues that sit apart from it. Any colour can be picked after.
+export const TARGET_COLOURS = ['#64748b', '#0f766e', '#b45309', '#7c3aed', '#be185d', '#1d4ed8'];
+export const DEFAULT_TARGET_COLOUR = TARGET_COLOURS[0];
+
+/**
+ * A chart's saved targets, cleaned: a legacy number becomes one target;
+ * entries with no usable value or colour are dropped or defaulted.
+ */
+export function cleanTargets(v) {
+  if (typeof v === 'number' || typeof v === 'string') {
+    const n = cleanTarget(v);
+    return n == null ? [] : [{ id: 't1', value: n, colour: DEFAULT_TARGET_COLOUR, name: '' }];
+  }
+  if (!Array.isArray(v)) return [];
+  const out = [];
+  v.forEach((t, i) => {
+    if (!t || typeof t !== 'object') return;
+    const n = cleanTarget(t.value);
+    if (n == null) return;
+    out.push({
+      id: typeof t.id === 'string' && t.id ? t.id : `t${i + 1}`,
+      value: n,
+      colour: typeof t.colour === 'string' && HEX.test(t.colour) ? t.colour.toLowerCase() : DEFAULT_TARGET_COLOUR,
+      name: typeof t.name === 'string' ? t.name.trim().slice(0, 40) : '',
+    });
+  });
+  return out;
+}
+
+/** A chart's targets (always a list). */
+export function targetsOf(prefs, chart) {
+  return prefs.targets?.[chart] || [];
+}
+
+/** Store a chart's targets; an empty (or all-invalid) list clears them. */
+export function withTargets(prefs, chart, list) {
   const targets = { ...(prefs.targets || {}) };
-  const n = cleanTarget(value);
-  if (n == null) delete targets[chart]; else targets[chart] = n;
+  const clean = cleanTargets(list);
+  if (clean.length) targets[chart] = clean; else delete targets[chart];
   return { ...prefs, targets };
 }
+
+/** The colour the next added target gets: the first one not yet in use. */
+export function nextTargetColour(list) {
+  const used = new Set((list || []).map(t => t.colour));
+  return TARGET_COLOURS.find(c => !used.has(c)) || TARGET_COLOURS[(list || []).length % TARGET_COLOURS.length];
+}
+
+/** What a target line is labelled: its name (or "Target") and value. */
+export const targetLabel = (t) => `${t.name || 'Target'} ${labelText(t.value)}`;
 
 /** Does this line show its data labels? Its own choice, else the default. */
 export function isLabelled(prefs, chart, key) {
@@ -102,3 +150,27 @@ export function labelsState(prefs) {
 
 /** A point's label: whole points, blank where nothing closed. */
 export const labelText = (v) => (v == null || Number.isNaN(Number(v)) ? '' : `${Math.round(Number(v))}%`);
+
+/**
+ * Props for each target's <ReferenceLine>, in value order. Two targets
+ * within a few points of each other would print their labels on top of
+ * one another, so a close neighbour's label drops below its line instead.
+ * Label text stays in ink (not the line colour) so it reads on any chart.
+ */
+export function targetLineProps(list) {
+  const sorted = [...(list || [])].sort((a, b) => a.value - b.value);
+  let prevTop = null;
+  return sorted.map((t) => {
+    const crowded = prevTop != null && Math.abs(t.value - prevTop) < 6;
+    const position = crowded ? 'insideBottomRight' : 'insideTopRight';
+    if (!crowded) prevTop = t.value;
+    return {
+      key: t.id,
+      y: t.value,
+      stroke: t.colour,
+      strokeWidth: 1.5,
+      ifOverflow: 'extendDomain',
+      label: { value: targetLabel(t), position, fill: '#334155', fontSize: 10, fontWeight: 600, stroke: '#fff', strokeWidth: 3, paintOrder: 'stroke' },
+    };
+  });
+}

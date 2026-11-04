@@ -45,21 +45,36 @@ console.log('PASS closeRateChartPrefs');
   console.log('PASS closeRateChartPrefs line labels');
 }
 
-// Targets.
+// Targets: several per chart, each with a colour and an optional name.
 {
-  const { withTarget, cleanTarget } = await import('../src/utils/closeRateChartPrefs.js');
+  const { cleanTarget, cleanTargets, targetsOf, withTargets, nextTargetColour, targetLabel, DEFAULT_TARGET_COLOUR } = await import('../src/utils/closeRateChartPrefs.js');
   assert.equal(cleanTarget('25'), 25);
   assert.equal(cleanTarget('22.55%'), 22.6);
   assert.equal(cleanTarget(''), null);
   assert.equal(cleanTarget('abc'), null);
   assert.equal(cleanTarget(120), null);
   assert.equal(cleanTarget(-1), null);
+  // An older single-number save still reads, as one slate target.
+  const legacy = readChartPrefs({ closeRatesChartPrefs: { targets: { source: 40, stage: 'x', service: 200 } } });
+  assert.deepEqual(legacy.targets, { source: [{ id: 't1', value: 40, colour: DEFAULT_TARGET_COLOUR, name: '' }] });
   let t = readChartPrefs({});
-  t = withTarget(t, 'source', '30');
-  assert.deepEqual(t.targets, { source: 30 });
-  t = withTarget(t, 'reach', 45);
-  t = withTarget(t, 'source', '');
-  assert.deepEqual(t.targets, { reach: 45 }, 'blank clears');
-  assert.deepEqual(readChartPrefs({ closeRatesChartPrefs: { targets: { source: 40, stage: 'x', service: 200 } } }).targets, { source: 40 });
+  assert.deepEqual(targetsOf(t, 'source'), []);
+  t = withTargets(t, 'source', [
+    { id: 'a', value: '30', colour: '#FF0000', name: ' Floor ' },
+    { id: 'b', value: 45, colour: 'nope', name: 'Stretch' },
+    { id: 'c', value: '', colour: '#00ff00' },
+  ]);
+  assert.deepEqual(targetsOf(t, 'source'), [
+    { id: 'a', value: 30, colour: '#ff0000', name: 'Floor' },
+    { id: 'b', value: 45, colour: DEFAULT_TARGET_COLOUR, name: 'Stretch' },
+  ], 'blank value dropped, bad colour defaulted, names trimmed');
+  assert.deepEqual(readChartPrefs({ closeRatesChartPrefs: { targets: t.targets } }).targets, t.targets, 'round-trips');
+  t = withTargets(t, 'source', []);
+  assert.deepEqual(t.targets, {}, 'empty clears');
+  assert.equal(nextTargetColour([]), DEFAULT_TARGET_COLOUR);
+  assert.notEqual(nextTargetColour([{ colour: DEFAULT_TARGET_COLOUR }]), DEFAULT_TARGET_COLOUR);
+  assert.equal(targetLabel({ value: 30, name: '' }), 'Target 30%');
+  assert.equal(targetLabel({ value: 45, name: 'Stretch' }), 'Stretch 45%');
+  assert.deepEqual(cleanTargets('35'), [{ id: 't1', value: 35, colour: DEFAULT_TARGET_COLOUR, name: '' }]);
   console.log('PASS closeRateChartPrefs targets');
 }
