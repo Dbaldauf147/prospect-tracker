@@ -9,6 +9,7 @@ import { GroupEditor, ServiceSettingsPopup } from './ServiceTrends';
 import { ColourPickDot } from '../common/ColourPickDot';
 import {
   CHART_PREFS_KEY, readChartPrefs, withColour, withoutColours, withLabels, labelText,
+  isLabelled, withLineLabel, labelsState,
 } from '../../utils/closeRateChartPrefs';
 import { closeRateTrendByStage } from '../../utils/pipelineFunnelData';
 import { closeRateTrend, periodLabel } from '../../utils/notSoldAnalysis';
@@ -113,7 +114,7 @@ function ChartTooltip({ active, payload, label, lines }) {
 //   headerExtra              controls for the section header
 function TrendSection({
   title, subtitle, nameHeader, trend, period, tableId, exportName, note, keepOrder = false, fitYAxis = false,
-  colours, onColourChange, onResetColours, showLabels = false,
+  colours, onColourChange, onResetColours, labelled = () => false, onLabelToggle,
   lineState, exclude, picked, onNameClick, nameBadge, headerExtra, settings, updateSettings,
 }) {
   // Colour by entity: fixed by the series' place in the full list (most
@@ -284,6 +285,16 @@ function TrendSection({
                   onClick={() => toggle(l.key)}
                   title={off.has(l.key) ? 'Show on the chart' : 'Hide from the chart'}
                 >{l.name}</button>
+                {onLabelToggle && (
+                  <button
+                    type="button"
+                    className={labelled(l.key) ? styles.labelOn : styles.labelOff}
+                    aria-pressed={labelled(l.key)}
+                    aria-label={`Data labels for ${l.name}`}
+                    onClick={() => onLabelToggle(l.key)}
+                    title={labelled(l.key) ? `Hide ${l.name}'s data labels` : `Show ${l.name}'s data labels`}
+                  >%</button>
+                )}
               </span>
             ))}
             {colours && Object.keys(colours).length > 0 && (
@@ -295,7 +306,7 @@ function TrendSection({
           </div>
           <div className={styles.chart}>
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data} margin={{ top: showLabels ? 22 : 8, right: 16, bottom: 0, left: -8 }}>
+              <LineChart data={data} margin={{ top: lines.some(l => labelled(l.key)) ? 22 : 8, right: 16, bottom: 0, left: -8 }}>
                 <CartesianGrid stroke="#eef2f7" vertical={false} />
                 <XAxis dataKey="period" tick={axisTick} tickLine={false} axisLine={{ stroke: '#e2e8f0' }} />
                 <YAxis domain={yAxis?.domain || [0, 100]} ticks={yAxis?.ticks || [0, 25, 50, 75, 100]} allowDataOverflow={false} tickFormatter={(v) => `${v}%`} tick={axisTick} tickLine={false} axisLine={false} />
@@ -315,7 +326,7 @@ function TrendSection({
                   >
                     {/* Text ink, not the series colour, so labels stay
                         readable whatever colour the line is given. */}
-                    {showLabels && <LabelList dataKey={l.key} position="top" offset={7} formatter={labelText} style={{ fontSize: 10, fill: '#475569', fontWeight: l.overall ? 700 : 400 }} />}
+                    {labelled(l.key) && <LabelList dataKey={l.key} position="top" offset={7} formatter={labelText} style={{ fontSize: 10, fill: '#475569', fontWeight: l.overall ? 700 : 400 }} />}
                   </Line>
                 ))}
               </LineChart>
@@ -480,6 +491,7 @@ export function CloseRateDeepDive({
   const savedPrefs = useMemo(() => readChartPrefs(settings), [settings]);
   const [draftPrefs, setDraftPrefs] = useState(null);
   const prefs = draftPrefs || savedPrefs;
+  const labelsMode = labelsState(prefs);
   const saveTimer = useRef(null);
   const savePrefs = useCallback((next, { now = false } = {}) => {
     setDraftPrefs(next);
@@ -492,7 +504,8 @@ export function CloseRateDeepDive({
     colours: prefs.colours[chart],
     onColourChange: (key, hex) => savePrefs(withColour(prefs, chart, key, hex)),
     onResetColours: () => savePrefs(withoutColours(prefs, chart), { now: true }),
-    showLabels: prefs.labels,
+    labelled: (key) => isLabelled(prefs, chart, key),
+    onLabelToggle: (key) => savePrefs(withLineLabel(prefs, chart, key, !isLabelled(prefs, chart, key)), { now: true }),
   });
 
   const filtered = useMemo(
@@ -622,12 +635,12 @@ export function CloseRateDeepDive({
         </label>
         <button
           type="button"
-          className={prefs.labels ? styles.filterOn : styles.filterOff}
-          aria-pressed={prefs.labels}
-          onClick={() => savePrefs(withLabels(prefs, !prefs.labels), { now: true })}
-          title="Show the % on every point of every chart. Saved, so the charts open this way next time."
+          className={labelsMode !== 'none' ? styles.filterOn : styles.filterOff}
+          aria-pressed={labelsMode === 'all' ? true : labelsMode === 'some' ? 'mixed' : false}
+          onClick={() => savePrefs(withLabels(prefs, labelsMode !== 'all'), { now: true })}
+          title={labelsMode === 'all' ? 'Turn data labels off on every line of every chart' : 'Turn data labels on for every line of every chart. To label only some lines, use the % button on each legend chip.'}
         >
-          <span className={styles.check} aria-hidden="true">{prefs.labels ? '✓' : ''}</span>
+          <span className={styles.check} aria-hidden="true">{labelsMode === 'all' ? '✓' : labelsMode === 'some' ? '–' : ''}</span>
           Data labels
         </button>
         <div className={styles.filterButtons} role="group" aria-label="Filters">
@@ -800,7 +813,8 @@ export function CloseRateDeepDive({
           collapsibleTable
           colours={prefs.colours.reach}
           onColourChange={(st, hex) => savePrefs(withColour(prefs, 'reach', st, hex))}
-          showLabels={prefs.labels}
+          labelled={(st) => isLabelled(prefs, 'reach', st)}
+          onLabelToggle={(st) => savePrefs(withLineLabel(prefs, 'reach', st, !isLabelled(prefs, 'reach', st)), { now: true })}
           settings={settings}
           updateSettings={updateSettings}
         />
