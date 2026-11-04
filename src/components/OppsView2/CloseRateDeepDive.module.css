@@ -484,3 +484,32 @@
   cursor: pointer;
   text-decoration: underline;
 }
+
+.nameBtn {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.badge {
+  margin-left: 0.35rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+  font-weight: 600;
+  vertical-align: 1px;
+}
+
+.filterOn:disabled,
+.filterOff:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
