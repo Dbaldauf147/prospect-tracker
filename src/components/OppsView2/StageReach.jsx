@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  LabelList, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { DataTable } from '../common/DataTable';
+import { ColourPickDot } from '../common/ColourPickDot';
+import { labelText } from '../../utils/closeRateChartPrefs';
 import { stageReachByPeriod, REACH_STAGES } from '../../utils/stageReach';
 import styles from './OppsView2.module.css';
 
@@ -36,7 +38,7 @@ const fmtPct = (v) => (v == null ? '-' : `${v.toFixed(v % 1 === 0 ? 0 : 1)}%`);
 
 // The hover for one period: its cohort size and each visible stage's
 // count and share.
-function ReachTooltip({ active, payload, hidden, closedOnly }) {
+function ReachTooltip({ active, payload, hidden, closedOnly, colourOf = (s) => COLOUR[s] }) {
   if (!active || !payload || !payload.length) return null;
   const row = payload[0].payload;
   const noun = closedOnly ? 'closed' : 'started';
@@ -53,7 +55,7 @@ function ReachTooltip({ active, payload, hidden, closedOnly }) {
       {row.total === 0 && <div style={muted}>No {noun} opps with stage history in this period</div>}
       {row.total > 0 && REACH_STAGES.filter(s => !hidden.has(s)).map(s => (
         <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0' }}>
-          <span style={{ width: 8, height: 8, borderRadius: 2, background: COLOUR[s] }} />
+          <span style={{ width: 8, height: 8, borderRadius: 2, background: colourOf(s) }} />
           <span style={{ flex: 1 }}>{s}</span>
           <span style={muted}>{row[`${s}__n`]}</span>
           <span style={{ fontWeight: 600, minWidth: 44, textAlign: 'right' }}>{fmtPct(row[s])}</span>
@@ -80,7 +82,11 @@ function ReachTooltip({ active, payload, hidden, closedOnly }) {
 //             change, so a parent can export the same figures.
 //   collapsibleTable  optional: the table starts hidden behind a Show table
 //             button (the Close Rates tab, which exports from its header).
-export function StageReach({ records, settings, updateSettings, period: periodProp, onState, collapsibleTable = false }) {
+//   colours   optional { [stage]: '#rrggbb' } over the default palette, and
+//   onColourChange(stage, hex)  makes each legend dot a colour picker.
+//   showLabels  optional: a % label on every point.
+export function StageReach({ records, settings, updateSettings, period: periodProp, onState, collapsibleTable = false, colours, onColourChange, showLabels = false }) {
+  const colourOf = useCallback((st) => colours?.[st] || COLOUR[st], [colours]);
   const [showTable, setShowTable] = useState(!collapsibleTable);
   const [ownPeriod, setPeriod] = useState('quarter');
   const period = periodProp || ownPeriod;
@@ -184,7 +190,7 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
         exportValue: (row) => fmtPct(row.pct[s]),
         renderHeader: (label) => (
           <span title={`Share of the period's opps that got at least as far as ${s}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: COLOUR[s], flexShrink: 0 }} />
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: colourOf(s), flexShrink: 0 }} />
             {label}
           </span>
         ),
@@ -197,7 +203,7 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
       });
     }
     return cols;
-  }, [closedOnly]);
+  }, [closedOnly, colourOf]);
 
   const toggleStage = (s) => setHidden(prev => {
     const next = new Set(prev);
@@ -269,18 +275,22 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
         {REACH_STAGES.map(s => {
           const off = hidden.has(s);
           return (
-            <button
-              key={s}
-              type="button"
-              className={styles.notSoldYear}
-              onClick={() => toggleStage(s)}
-              title={off ? `Show ${s}` : `Hide ${s}`}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, opacity: off ? 0.45 : 1, textDecoration: off ? 'line-through' : 'none' }}
-            >
-              <span style={{ width: 12, height: 3, borderRadius: 2, background: COLOUR[s] }} />
-              {s}
-              <span style={{ fontWeight: 400, opacity: 0.8 }}>{fmtPct(overall.pct[s])}</span>
-            </button>
+            <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              {onColourChange && (
+                <ColourPickDot colour={colourOf(s)} label={s} shape="bar" onChange={(hex) => onColourChange(s, hex)} />
+              )}
+              <button
+                type="button"
+                className={styles.notSoldYear}
+                onClick={() => toggleStage(s)}
+                title={off ? `Show ${s}` : `Hide ${s}`}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, opacity: off ? 0.45 : 1, textDecoration: off ? 'line-through' : 'none' }}
+              >
+                {!onColourChange && <span style={{ width: 12, height: 3, borderRadius: 2, background: colourOf(s) }} />}
+                {s}
+                <span style={{ fontWeight: 400, opacity: 0.8 }}>{fmtPct(overall.pct[s])}</span>
+              </button>
+            </span>
           );
         })}
       </div>
@@ -290,23 +300,25 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
       ) : (
         <div style={{ height: 320, background: '#fff', border: `1px solid ${GRID}`, borderRadius: 6, padding: '8px 8px 0' }}>
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{ top: 8, right: 24, bottom: 4, left: 4 }}>
+            <LineChart data={chartData} margin={{ top: showLabels ? 22 : 8, right: 24, bottom: 4, left: 4 }}>
               <CartesianGrid stroke={GRID} strokeDasharray="2 4" vertical={false} />
               <XAxis dataKey="label" tick={{ fontSize: 10, fill: AXIS_TEXT }} tickLine={false} axisLine={{ stroke: GRID }} minTickGap={12} />
               <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tick={{ fontSize: 10, fill: AXIS_TEXT }} tickLine={false} axisLine={false} width={40} tickFormatter={v => `${v}%`} />
-              <Tooltip content={<ReachTooltip hidden={hidden} closedOnly={closedOnly} />} cursor={{ stroke: AXIS_TEXT, strokeDasharray: '3 3' }} />
+              <Tooltip content={<ReachTooltip hidden={hidden} closedOnly={closedOnly} colourOf={colourOf} />} cursor={{ stroke: AXIS_TEXT, strokeDasharray: '3 3' }} />
               {REACH_STAGES.filter(s => !hidden.has(s)).map(s => (
                 <Line
                   key={s}
                   type="linear"
                   dataKey={s}
                   name={s}
-                  stroke={COLOUR[s]}
+                  stroke={colourOf(s)}
                   strokeWidth={2}
-                  dot={{ r: 2.5, strokeWidth: 0, fill: COLOUR[s] }}
+                  dot={{ r: 2.5, strokeWidth: 0, fill: colourOf(s) }}
                   activeDot={{ r: 4, strokeWidth: 2, stroke: '#fff' }}
                   isAnimationActive={false}
-                />
+                >
+                  {showLabels && <LabelList dataKey={s} position="top" offset={6} formatter={labelText} style={{ fontSize: 10, fill: '#475569' }} />}
+                </Line>
               ))}
             </LineChart>
           </ResponsiveContainer>
