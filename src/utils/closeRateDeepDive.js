@@ -5,14 +5,19 @@
 // was missing (by stage, over any period and window) plus the shaping that
 // turns any of them into table rows and Excel sheets.
 //
-// One rule across the whole page: pull-through opps are left out, the same
-// as the Weekly email's table and the funnel (closedOppEntry). The By Source
-// and By Service tabs count them; here they'd make the four sections
-// disagree about the same deals.
+// Two filters run over the whole page, both on by default:
+//   - Lead stage or higher: an opp counts only once it is known to have
+//     reached Lead (utils/stageReach furthestStageRank: its Stage or any
+//     stage in its history). Opps closed straight from Not Started are
+//     left out. A loss with no stage history can't be placed, so it is
+//     KEPT rather than guessed out; the page reports how many.
+//   - No pull-throughs (isPullThroughOpp), the same as the Weekly email's
+//     table and the funnel. Turning it off counts them in sections 2-4.
 
 import { CLOSE_RATE_STAGES, bfoOppNameOf, closedOppEntry } from './pipelineFunnelData.js';
 import { closePeriodOf, periodLabel, periodRange, sourceOf } from './notSoldAnalysis.js';
-import { isPullThroughOpp } from './pullThrough.js';
+import { PULL_THROUGH_COLUMN, isPullThroughOpp } from './pullThrough.js';
+import { furthestStageRank } from './stageReach.js';
 
 const pct = (w, d) => (d > 0 ? (w / d) * 100 : null);
 
@@ -20,6 +25,57 @@ const pct = (w, d) => (d > 0 ? (w / d) * 100 : null);
 export function withoutPullThroughs(records) {
   return (records || []).filter(r => r && !isPullThroughOpp(r));
 }
+
+// Rank of Lead in stageReach's progression (Not Started is 0).
+const LEAD_RANK = 1;
+
+/**
+ * Reached Lead or further? True when the opp's furthest known stage is Lead
+ * or later (a Sold opp always is). Null - kept - when it can't be told: a
+ * Not Sold opp with no stage history.
+ */
+export function reachedLead(r) {
+  const rank = furthestStageRank(r);
+  if (rank == null) return null;
+  return rank >= LEAD_RANK;
+}
+
+const isClosed = (r) => {
+  const st = String(r?.Stage || '').trim();
+  return st === 'Sold' || st === 'Not Sold';
+};
+
+/**
+ * The page's two filters over the records, plus what they left out (closed
+ * opps only, since nothing else is counted anywhere on the page):
+ *   { records, belowLead, pullThroughs, unknownStage }
+ */
+export function applyCloseRateFilters(records, { leadOrHigher = true, noPullThroughs = true } = {}) {
+  let belowLead = 0; let pullThroughs = 0; let unknownStage = 0;
+  const out = [];
+  for (const r of records || []) {
+    if (!r) continue;
+    const closed = isClosed(r);
+    if (noPullThroughs && isPullThroughOpp(r)) { if (closed) pullThroughs += 1; continue; }
+    if (leadOrHigher) {
+      const lead = reachedLead(r);
+      if (lead === false) { if (closed) belowLead += 1; continue; }
+      if (lead === null && closed) unknownStage += 1;
+    }
+    out.push(r);
+  }
+  return { records: out, belowLead, pullThroughs, unknownStage };
+}
+
+// closedOppEntry always drops pull-throughs (it is the Weekly email's rule).
+// With pull-throughs switched back on, it reads a copy whose Pull Through
+// column says No, which is the one input isPullThroughOpp lets override
+// the Scope.
+const entryOf = (r, includePullThroughs) => (
+  includePullThroughs && isPullThroughOpp(r)
+    ? closedOppEntry({ ...r, [PULL_THROUGH_COLUMN]: 'No' })
+    : closedOppEntry(r)
+);
 
 // ISO day of a Close Date for the window test, local reading so a bare
 // '2026-04-01' stays April 1st.
@@ -51,16 +107,16 @@ export const STAGE_SERIES = [
  * An opp counts toward every stage it reached (the Weekly email's rule), so
  * the stage rows don't add up; `overall` is the All closed row.
  */
-export function stageCloseRateTrend(records, { period = 'quarter', from = '', to = '' } = {}) {
+export function stageCloseRateTrend(records, { period = 'quarter', from = '', to = '', includePullThroughs = false } = {}) {
   const cells = STAGE_SERIES.map(() => new Map());
   const seen = new Set();
   let undated = 0;
   for (const r of records || []) {
     const stage = String(r?.Stage || '').trim();
     if (stage !== 'Sold' && stage !== 'Not Sold') continue;
-    const entry = closedOppEntry(r);
+    const entry = entryOf(r, includePullThroughs);
     if (!entry) {
-      if (!isPullThroughOpp(r)) undated += 1;
+      if (includePullThroughs || !isPullThroughOpp(r)) undated += 1;
       continue;
     }
     const iso = closeIso(entry.closeDate);
@@ -171,10 +227,10 @@ export function weeklyTrendSheetRows(trend) {
  * figure can be rebuilt in Excel: its source, scope, the stages it reached
  * and the period it lands in.
  */
-export function closedOppSheetRows(records, { period = 'quarter', from = '', to = '' } = {}) {
+export function closedOppSheetRows(records, { period = 'quarter', from = '', to = '', includePullThroughs = false } = {}) {
   const out = [];
   for (const r of records || []) {
-    const entry = closedOppEntry(r);
+    const entry = entryOf(r, includePullThroughs);
     if (!entry) continue;
     const iso = closeIso(entry.closeDate);
     if (!iso || !inRange(iso, from, to)) continue;
@@ -188,6 +244,8 @@ export function closedOppSheetRows(records, { period = 'quarter', from = '', to 
       'Close Date': iso,
       Period: p ? periodLabel(p, period) : '',
       'Quoted Amount': entry.amount || '',
+      'Pull-through': isPullThroughOpp(r) ? 'Yes' : '',
+      'Reached Lead': (() => { const l = reachedLead(r); return l === null ? 'Unknown (no stage history)' : l ? 'Yes' : 'No'; })(),
     };
     for (const def of STAGE_SERIES.slice(0, -1)) row[`Reached ${def.key}`] = def.test(r) ? 'Yes' : '';
     out.push(row);
