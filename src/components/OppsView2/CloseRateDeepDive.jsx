@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -13,6 +13,10 @@ import {
   weeklyTrendSheetRows, closedOppSheetRows, stageReachSheetRows, fmtRate,
   fittedRateAxis,
 } from '../../utils/closeRateDeepDive';
+import {
+  SETTINGS_KEY as SAVED_FILTERS_KEY, readSavedFilters, snapshotFilters, filtersFromEntry,
+  matchesEntry, withSaved, withoutSaved, withDefault,
+} from '../../utils/closeRateSavedFilters';
 import styles from './CloseRateDeepDive.module.css';
 
 // Opps > Close Rates: every close-rate trend on one page, each exportable.
@@ -299,15 +303,124 @@ function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exp
   );
 }
 
+// "Saved filters" menu: name and save the tab's top controls, apply a saved
+// set, delete one, or star one so the tab opens with it.
+function SavedFiltersMenu({ saved, current, onApply, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+  const active = saved.list.find(e => matchesEntry(current, e));
+  const save = () => {
+    const label = name.trim();
+    if (!label) return;
+    onChange(withSaved(saved, snapshotFilters(current, label)));
+    setName('');
+  };
+  const replacing = name.trim() && saved.list.some(e => e.name.trim().toLowerCase() === name.trim().toLowerCase());
+  return (
+    <div className={styles.savedWrap} ref={ref}>
+      <button
+        type="button"
+        className={styles.savedBtn}
+        onClick={() => setOpen(v => !v)}
+        aria-expanded={open}
+        title="Save these filters, or apply a saved set"
+      >
+        Saved filters{active ? `: ${active.name}` : ''}
+        {saved.list.length > 0 && <span className={styles.savedCount}>{saved.list.length}</span>}
+        <span aria-hidden="true"> ▾</span>
+      </button>
+      {open && (
+        <div className={styles.savedMenu} role="menu">
+          <div className={styles.savedSaveRow}>
+            <input
+              type="text"
+              placeholder="Name these filters..."
+              value={name}
+              autoFocus
+              onChange={e => setName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setOpen(false); }}
+            />
+            <button type="button" className={styles.savedSaveBtn} onClick={save} disabled={!name.trim()}>
+              {replacing ? 'Replace' : 'Save'}
+            </button>
+          </div>
+          {saved.list.length === 0 && <div className={styles.savedEmpty}>No saved filters yet</div>}
+          {saved.list.map(e => {
+            const isDefault = saved.defaultId === e.id;
+            return (
+              <div key={e.id} className={styles.savedItem}>
+                <button
+                  type="button"
+                  className={isDefault ? styles.savedStarOn : styles.savedStar}
+                  onClick={() => onChange(withDefault(saved, e.id))}
+                  title={isDefault ? 'The tab opens with these filters. Click to stop.' : 'Open the tab with these filters'}
+                  aria-label={isDefault ? `Stop opening with ${e.name}` : `Open with ${e.name}`}
+                >{isDefault ? '★' : '☆'}</button>
+                <button
+                  type="button"
+                  className={active?.id === e.id ? styles.savedNameOn : styles.savedName}
+                  onClick={() => { onApply(e); setOpen(false); }}
+                >{e.name}</button>
+                <button
+                  type="button"
+                  className={styles.savedDelete}
+                  onClick={() => onChange(withoutSaved(saved, e.id))}
+                  title={`Delete ${e.name}`}
+                  aria-label={`Delete ${e.name}`}
+                >×</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function CloseRateDeepDive({ records = [], hiddenServices, settings, updateSettings }) {
-  const [period, setPeriod] = useState('quarter');
-  const [preset, setPreset] = useState('2y');
-  const [from, setFrom] = useState(() => PRESETS.find(p => p.key === '2y').from());
-  const [to, setTo] = useState('');
+  const saved = useMemo(() => readSavedFilters(settings), [settings]);
+  // The tab opens on the starred saved filter, if there is one; otherwise on
+  // Quarter, "Since Jan, 2 yrs ago" and both filter buttons on.
+  const [initial] = useState(() => {
+    const def = saved.list.find(e => e.id === saved.defaultId);
+    return def ? filtersFromEntry(def, PRESETS) : {
+      period: 'quarter', preset: '2y', from: PRESETS.find(p => p.key === '2y').from(), to: '',
+      leadOrHigher: true, noPullThroughs: true,
+    };
+  });
+  const [period, setPeriod] = useState(initial.period);
+  const [preset, setPreset] = useState(initial.preset);
+  const [from, setFrom] = useState(initial.from);
+  const [to, setTo] = useState(initial.to);
   const [exporting, setExporting] = useState(false);
-  // Both on whenever the tab opens.
-  const [leadOrHigher, setLeadOrHigher] = useState(true);
-  const [noPullThroughs, setNoPullThroughs] = useState(true);
+  const [leadOrHigher, setLeadOrHigher] = useState(initial.leadOrHigher);
+  const [noPullThroughs, setNoPullThroughs] = useState(initial.noPullThroughs);
+  const applyFilters = useCallback((entry) => {
+    const f = filtersFromEntry(entry, PRESETS);
+    setPeriod(f.period); setPreset(f.preset); setFrom(f.from); setTo(f.to);
+    setLeadOrHigher(f.leadOrHigher); setNoPullThroughs(f.noPullThroughs);
+  }, []);
+  // Settings can arrive after the tab has mounted (first load on a machine).
+  // Apply the starred filter then, once, unless the user has already
+  // touched the controls.
+  const touched = useRef(false);
+  const startedWithDefault = useRef(saved.defaultId != null);
+  useEffect(() => {
+    if (startedWithDefault.current || touched.current) return;
+    const def = saved.list.find(e => e.id === saved.defaultId);
+    if (!def) return;
+    startedWithDefault.current = true;
+    applyFilters(def);
+  }, [saved, applyFilters]);
+  const currentFilters = { period, preset, from, to, leadOrHigher, noPullThroughs };
+  const saveFilters = (next) => updateSettings?.({ [SAVED_FILTERS_KEY]: next });
 
   const filtered = useMemo(
     () => applyCloseRateFilters(records, { leadOrHigher, noPullThroughs }),
@@ -387,32 +500,32 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
       <div className={styles.controls}>
         <div className={styles.group} role="group" aria-label="Period">
           {PERIODS.map(p => (
-            <button key={p.key} type="button" className={period === p.key ? styles.toggleOn : styles.toggle} onClick={() => setPeriod(p.key)}>
+            <button key={p.key} type="button" className={period === p.key ? styles.toggleOn : styles.toggle} onClick={() => { touched.current = true; setPeriod(p.key); }}>
               {p.label}
             </button>
           ))}
         </div>
         <div className={styles.group} role="group" aria-label="Close Date window">
           {PRESETS.map(p => (
-            <button key={p.key} type="button" className={preset === p.key ? styles.toggleOn : styles.toggle} onClick={() => pickPreset(p.key)}>
+            <button key={p.key} type="button" className={preset === p.key ? styles.toggleOn : styles.toggle} onClick={() => { touched.current = true; pickPreset(p.key); }}>
               {p.label}
             </button>
           ))}
         </div>
         <label className={styles.dateField}>
           From
-          <input type="date" value={from} onChange={e => { setFrom(e.target.value); setPreset(''); }} />
+          <input type="date" value={from} onChange={e => { touched.current = true; setFrom(e.target.value); setPreset(''); }} />
         </label>
         <label className={styles.dateField}>
           To
-          <input type="date" value={to} onChange={e => { setTo(e.target.value); setPreset(''); }} />
+          <input type="date" value={to} onChange={e => { touched.current = true; setTo(e.target.value); setPreset(''); }} />
         </label>
         <div className={styles.filterButtons} role="group" aria-label="Filters">
           <button
             type="button"
             className={leadOrHigher ? styles.filterOn : styles.filterOff}
             aria-pressed={leadOrHigher}
-            onClick={() => setLeadOrHigher(v => !v)}
+            onClick={() => { touched.current = true; setLeadOrHigher(v => !v); }}
             title="Only count opps known to have reached Lead or a later stage (from the opp's Stage or its stage history). Losses with no stage history can't be placed, so they stay in."
           >
             <span className={styles.check} aria-hidden="true">{leadOrHigher ? '✓' : ''}</span>
@@ -422,13 +535,19 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
             type="button"
             className={noPullThroughs ? styles.filterOn : styles.filterOff}
             aria-pressed={noPullThroughs}
-            onClick={() => setNoPullThroughs(v => !v)}
+            onClick={() => { touched.current = true; setNoPullThroughs(v => !v); }}
             title="Leave pull-through opps out of every section"
           >
             <span className={styles.check} aria-hidden="true">{noPullThroughs ? '✓' : ''}</span>
             Do not include pull-through opps
           </button>
         </div>
+        <SavedFiltersMenu
+          saved={saved}
+          current={currentFilters}
+          onApply={(e) => { touched.current = true; applyFilters(e); }}
+          onChange={saveFilters}
+        />
         <button type="button" className={styles.exportBtn} onClick={exportAll} disabled={exporting}>
           {exporting ? 'Exporting...' : 'Export all to Excel'}
         </button>
