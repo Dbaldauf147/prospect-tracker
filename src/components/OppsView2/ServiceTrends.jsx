@@ -8,6 +8,7 @@ import { TagMultiSelect } from '../common/TagMultiSelect';
 import {
   EXCLUDED_KEY, GROUPS_KEY, excludedFromSettings, groupsFromSettings, withExcluded, withServiceGroup,
 } from '../../utils/serviceTrendSettings';
+import { groupRenameProblem } from '../../utils/serviceGroupRename';
 import { serviceShareTrend, serviceCloseRateTrend, serviceDealSizeTrend, periodLabel, servicesOf } from '../../utils/serviceTrends';
 import { getServiceCategories } from '../../utils/serviceCategoriesStore';
 import styles from './OppsView2.module.css';
@@ -390,9 +391,12 @@ export function GroupEditor({ groups, services, settings, onSave, onClose }) {
 export function ServiceSettingsPopup({
   popup, groups, groupMembers, offDefault, excluded, hidden,
   onSetGroup, onRemoveFromGroup, onDefaultChange, onOtherChange, onToggleHide, onClose,
+  onRenameGroup,
 }) {
   const ref = useRef(null);
   const [newName, setNewName] = useState(null);
+  // Renaming a group (only offered when the parent passes onRenameGroup).
+  const [rename, setRename] = useState(popup.name);
   useEffect(() => {
     const onDown = (e) => {
       if (ref.current?.contains(e.target)) return;
@@ -427,6 +431,29 @@ export function ServiceSettingsPopup({
         <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }} title={name}>{name}{isGroup ? ' (group)' : ''}</span>
         <button type="button" onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted, #64748B)', fontSize: '0.9rem', lineHeight: 1, padding: 0 }}>×</button>
       </div>
+
+      {isGroup && onRenameGroup && (() => {
+        const problem = groupRenameProblem(groups, name, rename);
+        const changed = rename.trim() !== name;
+        const commit = () => { if (changed && !problem) onRenameGroup(name, rename.trim()); };
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={label}>Group name</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                className={styles.filterInput}
+                style={{ flex: 1, minWidth: 0 }}
+                value={rename}
+                aria-label={`Rename ${name}`}
+                onChange={e => setRename(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') commit(); }}
+              />
+              <button type="button" style={{ ...btn, opacity: changed && !problem ? 1 : 0.5 }} disabled={!changed || !!problem} onClick={commit}>Rename</button>
+            </div>
+            {changed && problem && <div style={{ color: '#b91c1c', fontSize: '0.7rem' }}>{problem}</div>}
+          </div>
+        );
+      })()}
 
       {isGroup ? (
         <div>

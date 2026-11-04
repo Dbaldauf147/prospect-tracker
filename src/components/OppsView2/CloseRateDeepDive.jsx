@@ -30,6 +30,7 @@ import {
   CHART_IDS, readChartSaved, chartSavedPatch, snapshotChart, chartMatchesEntry, chartFromEntry,
 } from '../../utils/closeRateSavedFilters';
 import { PRESET_LIST, WEEKLY_MONTHS, cleanWeeklyMonths } from '../../utils/closeRateWindows';
+import { renameServiceGroupPatch } from '../../utils/serviceGroupRename';
 import { StageProgression } from './StageProgression';
 import styles from './CloseRateDeepDive.module.css';
 
@@ -484,17 +485,19 @@ function SavedFiltersMenu({ saved, isActive, makeEntry, onApply, onChange, what 
 // Period, Close Date window and the two filter buttons, as one value. The
 // per-chart filter bar uses it; `showWindow={false}` drops the Close Date
 // window for Stage reach, which groups by Start Date instead.
-function FilterControls({ value, onChange, showWindow = true }) {
+function FilterControls({ value, onChange, showWindow = true, showPeriod = true, lockPullThroughs = false }) {
   const set = (patch) => onChange({ ...value, ...patch });
   return (
     <>
-      <div className={styles.group} role="group" aria-label="Period">
-        {PERIODS.map(p => (
-          <button key={p.key} type="button" className={value.period === p.key ? styles.toggleOn : styles.toggle} onClick={() => set({ period: p.key })}>
-            {p.label}
-          </button>
-        ))}
-      </div>
+      {showPeriod && (
+        <div className={styles.group} role="group" aria-label="Period">
+          {PERIODS.map(p => (
+            <button key={p.key} type="button" className={value.period === p.key ? styles.toggleOn : styles.toggle} onClick={() => set({ period: p.key })}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+      )}
       {showWindow && (
         <>
           <WindowSelect
@@ -511,6 +514,19 @@ function FilterControls({ value, onChange, showWindow = true }) {
           </label>
         </>
       )}
+      <FilterButtons value={value} onChange={onChange} lockPullThroughs={lockPullThroughs} />
+    </>
+  );
+}
+
+// The two filter buttons. `lockPullThroughs` shows the pull-through one
+// ticked and locked, for the Weekly email table, which always leaves
+// pull-throughs out.
+function FilterButtons({ value, onChange, lockPullThroughs = false }) {
+  const set = (patch) => onChange({ ...value, ...patch });
+  const pullOn = lockPullThroughs || value.noPullThroughs;
+  return (
+    <>
       <button
         type="button"
         className={value.leadOrHigher ? styles.filterOn : styles.filterOff}
@@ -523,12 +539,13 @@ function FilterControls({ value, onChange, showWindow = true }) {
       </button>
       <button
         type="button"
-        className={value.noPullThroughs ? styles.filterOn : styles.filterOff}
-        aria-pressed={value.noPullThroughs}
+        className={pullOn ? styles.filterOn : styles.filterOff}
+        aria-pressed={pullOn}
+        disabled={lockPullThroughs}
         onClick={() => set({ noPullThroughs: !value.noPullThroughs })}
-        title="Leave pull-through opps out of this chart"
+        title={lockPullThroughs ? 'The Weekly email table always leaves pull-throughs out' : 'Leave pull-through opps out of this chart'}
       >
-        <span className={styles.check} aria-hidden="true">{value.noPullThroughs ? '✓' : ''}</span>
+        <span className={styles.check} aria-hidden="true">{pullOn ? '✓' : ''}</span>
         Do not include pull-through opps
       </button>
     </>
@@ -548,9 +565,63 @@ function describeFilters(f, { showWindow = true } = {}) {
   ].join(' · ');
 }
 
+// The charts' standard titles. Each can be renamed on the page; the name is
+// saved in settings.closeRateChartTitles, and clearing it brings this back.
+const CHART_TITLES_KEY = 'closeRateChartTitles';
+const DEFAULT_TITLES = {
+  weekly: '1. Close rate trend (Weekly email)',
+  source: '2. Close rate by source',
+  service: '3. Close rate by service',
+  stage: '4. Close rate by stage',
+  reach: '5. % of deals that reached each stage',
+  progress: '6. Chance of moving to the next stage, by days in stage',
+};
+
+// A chart title with a pencil to rename it. Enter or leaving the box saves;
+// Escape cancels; an empty box goes back to the standard title.
+function EditableTitle({ value, fallback, onSave }) {
+  const [draft, setDraft] = useState(null);
+  const text = String(value || '').trim() || fallback;
+  if (draft != null) {
+    const commit = () => {
+      const t = draft.trim();
+      setDraft(null);
+      if ((t || fallback) !== text) onSave(t === fallback ? '' : t);
+    };
+    return (
+      <input
+        className={styles.titleInput}
+        value={draft}
+        autoFocus
+        aria-label="Chart title"
+        placeholder={fallback}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') setDraft(null);
+        }}
+      />
+    );
+  }
+  return (
+    <span className={styles.titleWrap}>
+      {text}
+      <button type="button" className={styles.titleEdit} onClick={() => setDraft(text)} title="Rename this chart" aria-label={`Rename ${text}`}>✎</button>
+      {value && String(value).trim() && (
+        <button type="button" className={styles.resetLink} onClick={() => onSave('')} title={`Back to "${fallback}"`}>Reset</button>
+      )}
+    </span>
+  );
+}
+
 // The filter row under a chart's title: follow the tab's filters or run on
 // the chart's own, plus the chart's own saved filters.
-function ChartFilterBar({ filters, own, onOwnChange, saved, onSavedChange, current, onApply, showWindow = true }) {
+function ChartFilterBar({ filters, own, onOwnChange, saved, onSavedChange, current, onApply, showWindow = true, showPeriod = true, lockPullThroughs = false }) {
+  const period = PERIODS.find(p => p.key === filters.period)?.label || filters.period;
+  const preset = PRESETS.find(p => p.key === filters.preset);
+  const win = preset ? preset.label : (filters.from || filters.to ? `${filters.from || 'start'} to ${filters.to || 'today'}` : 'All time');
+  const summary = [...(showPeriod ? [period] : []), ...(showWindow ? [win] : [])].join(' · ');
   return (
     <div className={styles.chartFilters}>
       <div className={styles.group} role="group" aria-label="Chart filters">
@@ -564,12 +635,19 @@ function ChartFilterBar({ filters, own, onOwnChange, saved, onSavedChange, curre
           type="button"
           className={own ? styles.toggleOn : styles.toggle}
           onClick={() => { if (!own) onOwnChange({ ...filters }); }}
-          title="Give this chart its own Period, window and filters"
+          title={showPeriod ? 'Give this chart its own Period, window and filters' : 'Give this chart its own filters'}
         >Own filters</button>
       </div>
       {own
-        ? <FilterControls value={filters} onChange={onOwnChange} showWindow={showWindow} />
-        : <span className={styles.muted}>{describeFilters(filters, { showWindow })}</span>}
+        ? <FilterControls value={filters} onChange={onOwnChange} showWindow={showWindow} showPeriod={showPeriod} lockPullThroughs={lockPullThroughs} />
+        : (
+          <>
+            {summary && <span className={styles.muted}>{summary}</span>}
+            {/* The tab's buttons, shown here too. Clicking one gives this
+                chart its own filters, starting from the tab's. */}
+            <FilterButtons value={filters} onChange={onOwnChange} lockPullThroughs={lockPullThroughs} />
+          </>
+        )}
       <SavedFiltersMenu
         saved={saved}
         isActive={(e) => chartMatchesEntry(current, e)}
@@ -591,6 +669,10 @@ export function CloseRateDeepDive({
   servicePicks, serviceLinesOff, onServiceLineShown, serviceLinesOffDefault, onServiceLineDefault, onToggleHideService,
 }) {
   const saved = useMemo(() => readSavedFilters(settings), [settings]);
+  const chartTitles = useMemo(() => {
+    const raw = settings?.[CHART_TITLES_KEY];
+    return raw && typeof raw === 'object' ? raw : {};
+  }, [settings]);
   // The tab opens on the starred saved filter, if there is one; otherwise on
   // Quarter, "Since Jan, 2 yrs ago" and both filter buttons on.
   const [initial] = useState(() => {
@@ -651,6 +733,7 @@ export function CloseRateDeepDive({
   const [linesOff, setLinesOff] = useState(() => ({
     source: chartStart.source?.off || new Set(),
     stage: chartStart.stage?.off || new Set(),
+    progress: chartStart.progress?.off || new Set(),
   }));
   const lineStateFor = (chart) => ({
     off: linesOff[chart],
@@ -684,7 +767,7 @@ export function CloseRateDeepDive({
   const applyChart = (chart, entry) => {
     const st = chartFromEntry(entry, PRESETS);
     setOwnFor(chart, st.filters);
-    if (chart === 'source' || chart === 'stage') setLinesOff(prev => ({ ...prev, [chart]: st.off }));
+    if (chart === 'source' || chart === 'stage' || chart === 'progress') setLinesOff(prev => ({ ...prev, [chart]: st.off }));
     if (chart === 'service') setServiceOff(st.off);
     if (chart === 'reach') setReachMount(prev => ({ key: prev.key + 1, start: { ...(st.reach || {}), hidden: st.off } }));
   };
@@ -764,7 +847,6 @@ export function CloseRateDeepDive({
   const savedWeeklyMonths = cleanWeeklyMonths(settings?.closeRateWeeklyMonths);
   const [weeklyPick, setWeeklyPick] = useState(null);
   const weeklyMonths = weeklyPick ?? savedWeeklyMonths;
-  const weekly = useMemo(() => closeRateTrendByStage(counted, { months: weeklyMonths }), [counted, weeklyMonths]);
   // Each chart's opps, through its own two filter buttons. The four
   // combinations are worked out once each, however many charts share one.
   const countedFor = useMemo(() => {
@@ -792,9 +874,16 @@ export function CloseRateDeepDive({
     [countedFor, fStage],
   );
   const reachRecords = countedFor(fReach);
+  // Chart 1 (the Weekly email table) runs on its own 6-month-style window,
+  // so only its two filter buttons follow the tab (or its own).
+  const fProgress = eff('progress');
+  const progressRecords = countedFor(fProgress);
+  const fWeekly = eff('weekly');
+  const weeklyRecords = countedFor(fWeekly);
+  const weekly = useMemo(() => closeRateTrendByStage(weeklyRecords, { months: weeklyMonths }), [weeklyRecords, weeklyMonths]);
   const periodNameOf = (f) => PERIODS.find(p => p.key === f.period)?.label || f.period;
   const windowTextOf = (f) => (f.from || f.to ? `Close Date ${f.from || 'start'} to ${f.to || 'today'}` : 'all Close Dates');
-  const chartBar = (chart, current, { showWindow = true } = {}) => (
+  const chartBar = (chart, current, { showWindow = true, showPeriod = true, lockPullThroughs = false } = {}) => (
     <ChartFilterBar
       filters={eff(chart)}
       own={!!own[chart]}
@@ -804,8 +893,28 @@ export function CloseRateDeepDive({
       current={current}
       onApply={(e) => applyChart(chart, e)}
       showWindow={showWindow}
+      showPeriod={showPeriod}
+      lockPullThroughs={lockPullThroughs}
     />
   );
+  // Chart titles, editable and saved (settings.closeRateChartTitles).
+  const titleProps = (chart) => ({
+    value: chartTitles[chart],
+    fallback: DEFAULT_TITLES[chart],
+    onSave: (text) => {
+      const next = { ...(settings?.[CHART_TITLES_KEY] || {}) };
+      if (text) next[chart] = text; else delete next[chart];
+      updateSettings?.({ [CHART_TITLES_KEY]: next });
+    },
+  });
+  const renameGroup = (from, to) => {
+    const patch = renameServiceGroupPatch(settings, from, to);
+    if (!patch) return;
+    // This visit's line switch moves with the name too.
+    if (serviceLinesOff?.has(from) && onServiceLineShown) onServiceLineShown(to, false);
+    updateSettings?.(patch);
+    setSvcPopup(prev => (prev && prev.name === from ? { ...prev, name: to } : prev));
+  };
   const filterText = [
     leadOrHigher ? 'Lead stage or higher only' : 'every stage',
     noPullThroughs ? 'pull-throughs left out' : 'pull-throughs included',
@@ -845,9 +954,9 @@ export function CloseRateDeepDive({
             { Item: 'By stage', Value: 'An opp counts toward every stage it reached, so stage rows do not add up.' },
             { Item: 'Stage reach', Value: `% of ${reachState.closedOnly ? 'closed ' : ''}opps that got at least as far as each stage, grouped by Start Date${reachState.from || reachState.to ? ` (${reachState.from || 'start'} to ${reachState.to || 'today'})` : ''}. Pull-throughs always left out; Not Sold opps with no stage history left out.` },
             { Item: 'By service', Value: 'An opp counts toward each service on its Scope. Hidden services are left out.' },
-            ...[['source', 'By source', fSource], ['service', 'By service', fService], ['stage', 'By stage', fStage], ['reach', 'Stage reach', fReach]]
+            ...[['weekly', 'Weekly email trend', fWeekly], ['source', 'By source', fSource], ['service', 'By service', fService], ['stage', 'By stage', fStage], ['reach', 'Stage reach', fReach], ['progress', 'Chance of moving on', fProgress]]
               .filter(([c]) => own[c])
-              .map(([c, label, f]) => ({ Item: `${label} filters`, Value: `Own: ${describeFilters(f, { showWindow: c !== 'reach' })}` })),
+              .map(([c, label, f]) => ({ Item: `${label} filters`, Value: `Own: ${c === 'weekly' ? (f.leadOrHigher ? 'Lead stage or higher' : 'every stage') : describeFilters(f, { showWindow: c !== 'reach' })}` })),
             { Item: 'Exported', Value: new Date().toLocaleString() },
           ],
         },
@@ -944,8 +1053,8 @@ export function CloseRateDeepDive({
       <section className={styles.section}>
         <div className={styles.sectionHead}>
           <div>
-            <h2 className={styles.sectionTitle}>1. Close rate trend (Weekly email)</h2>
-            <div className={styles.sectionSub}>Last {weeklyMonths} months by the stage each closed deal reached: the Weekly email's table{weeklyMonths !== 6 ? ' (the email itself shows 6)' : ''} with the filters above applied. It always leaves pull-throughs out, as the email does.</div>
+            <h2 className={styles.sectionTitle}><EditableTitle {...titleProps('weekly')} /></h2>
+            <div className={styles.sectionSub}>Last {weeklyMonths} months by the stage each closed deal reached: the Weekly email's table{weeklyMonths !== 6 ? ' (the email itself shows 6)' : ''} with {own.weekly ? 'this chart\'s' : 'the tab\'s'} filters applied. It always leaves pull-throughs out, as the email does.</div>
           </div>
           <div className={styles.headActions}>
             <label className={styles.windowField}>
@@ -960,11 +1069,12 @@ export function CloseRateDeepDive({
             <button type="button" className={styles.smallBtn} onClick={exportWeekly}>Export Excel</button>
           </div>
         </div>
+        {chartBar('weekly', { filters: fWeekly, off: new Set() }, { showWindow: false, showPeriod: false, lockPullThroughs: true })}
         <CloseRateTrend trend={weekly} />
       </section>
 
       <TrendSection
-        title="2. Close rate by source"
+        title={<EditableTitle {...titleProps('source')} />}
         subtitle={`Each source's close rate per ${periodNameOf(fSource).toLowerCase()}, ${windowTextOf(fSource)}.`}
         nameHeader="Source"
         trend={bySource}
@@ -981,7 +1091,7 @@ export function CloseRateDeepDive({
       />
 
       <TrendSection
-        title="3. Close rate by service"
+        title={<EditableTitle {...titleProps('service')} />}
         subtitle={`Each service's close rate per ${periodNameOf(fService).toLowerCase()}, ${windowTextOf(fService)}.`}
         nameHeader="Service"
         trend={byService}
@@ -1036,7 +1146,9 @@ export function CloseRateDeepDive({
           onDefaultChange={(k, shown) => onServiceLineDefault?.(k, shown)}
           onOtherChange={(k, on) => updateSettings?.({ [EXCLUDED_KEY]: withExcluded(excludedServices, k, on) })}
           onToggleHide={onToggleHideService}
+          onRenameGroup={renameGroup}
           onClose={() => setSvcPopup(null)}
+          key={svcPopup.name}
         />
       )}
       {editingGroups && (
@@ -1050,7 +1162,7 @@ export function CloseRateDeepDive({
       )}
 
       <TrendSection
-        title="4. Close rate by stage"
+        title={<EditableTitle {...titleProps('stage')} />}
         subtitle={`By the stages each closed opp reached, per ${periodNameOf(fStage).toLowerCase()}, ${windowTextOf(fStage)}.`}
         nameHeader="Stage"
         trend={byStage}
@@ -1071,7 +1183,7 @@ export function CloseRateDeepDive({
       <section className={styles.section}>
         <div className={styles.sectionHead}>
           <div>
-            <h2 className={styles.sectionTitle}>5. % of deals that reached each stage</h2>
+            <h2 className={styles.sectionTitle}><EditableTitle {...titleProps('reach')} /></h2>
             <div className={styles.sectionSub}>
               Of the opps that started in each {periodNameOf(fReach).toLowerCase()} (by Start Date), the share that got at least as far as each stage.
               The same view as Days in Stage &gt; Stage Reach, with {own.reach ? 'this chart\'s' : 'the tab\'s'} filters applied{fReach.leadOrHigher ? ', so Lead reads 100%' : ''}.
@@ -1111,10 +1223,13 @@ export function CloseRateDeepDive({
       </section>
 
       <StageProgression
-        records={counted}
-        from={from}
-        to={to}
-        windowText={from || to ? `between ${from || 'the start'} and ${to || 'today'}` : 'at any time'}
+        records={progressRecords}
+        from={fProgress.from}
+        to={fProgress.to}
+        windowText={fProgress.from || fProgress.to ? `between ${fProgress.from || 'the start'} and ${fProgress.to || 'today'}` : 'at any time'}
+        title={<EditableTitle {...titleProps('progress')} />}
+        lineState={lineStateFor('progress')}
+        filterBar={chartBar('progress', { filters: fProgress, off: linesOff.progress }, { showPeriod: false })}
         settings={settings}
         updateSettings={updateSettings}
       />

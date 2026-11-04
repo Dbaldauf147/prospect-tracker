@@ -72,12 +72,16 @@ const rateCell = (c) => {
  *   records   the tab's opps, its filters already applied
  *   from/to   the tab's window, read against each stint's exit date
  */
-export function StageProgression({ records, from = '', to = '', windowText = '', settings, updateSettings }) {
+// Optional, from the Close Rates tab: `title` (a node, e.g. an editable
+// title), `filterBar` (rendered under the header), and `lineState`
+// ({ off: Set, onShown(stage, shown) }) to own the legend's on / off.
+export function StageProgression({ records, from = '', to = '', windowText = '', settings, updateSettings, title, filterBar, lineState }) {
   const prog = useMemo(() => stageProgression(records, { from, to }), [records, from, to]);
   const open = useMemo(() => openOppChances(records, prog), [records, prog]);
   const shown = useMemo(() => prog.stages.filter(s => s.stints > 0), [prog]);
   const colourOf = useMemo(() => new Map(prog.stages.map((s, i) => [s.stage, PALETTE[i % PALETTE.length]])), [prog]);
-  const [off, setOff] = useState(() => new Set());
+  const [ownOff, setOff] = useState(() => new Set());
+  const off = lineState?.off || ownOff;
   const [showTable, setShowTable] = useState(false);
   const lines = shown.filter(s => !off.has(s.stage)).map(s => ({ stage: s.stage, next: s.next, colour: colourOf.get(s.stage) }));
 
@@ -92,11 +96,11 @@ export function StageProgression({ records, from = '', to = '', windowText = '',
   }), [shown]);
   const yAxis = useMemo(() => fittedRateAxis(data, lines.map(l => l.stage)), [data, lines]);
 
-  const toggle = (k) => setOff(prev => {
+  const toggle = (k) => (lineState ? lineState.onShown(k, off.has(k)) : setOff(prev => {
     const next = new Set(prev);
     if (next.has(k)) next.delete(k); else next.add(k);
     return next;
-  });
+  }));
 
   const bandColumns = useMemo(() => [
     {
@@ -190,7 +194,7 @@ export function StageProgression({ records, from = '', to = '', windowText = '',
     <section className={styles.section}>
       <div className={styles.sectionHead}>
         <div>
-          <h2 className={styles.sectionTitle}>6. Chance of moving to the next stage, by days in stage</h2>
+          <h2 className={styles.sectionTitle}>{title || '6. Chance of moving to the next stage, by days in stage'}</h2>
           <div className={styles.sectionSub}>
             Of the past deals that sat in a stage at least this many days, the share that still moved on to a later stage (going back or Not Sold counts as not).
             Read from the stage history of {prog.withHistory} opp{prog.withHistory === 1 ? '' : 's'}, stints that ended {windowText || 'in any window'}.
@@ -206,6 +210,7 @@ export function StageProgression({ records, from = '', to = '', windowText = '',
           )}
         </div>
       </div>
+      {filterBar}
 
       {shown.length === 0 ? (
         <div className={styles.empty}>No stage history in this window yet.</div>

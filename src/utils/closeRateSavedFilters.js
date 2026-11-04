@@ -87,7 +87,7 @@ export function withDefault(saved, id) {
 
 // ---- Per-chart saved filters -------------------------------------------
 //
-// Each chart on the tab (source, service, stage, reach) can run on its own
+// Each chart on the tab (weekly, source, service, stage, reach, progress) can run on its own
 // filters instead of the tab's, and keeps its own saved sets in
 // settings.closeRateChartFilters:
 //
@@ -97,7 +97,7 @@ export function withDefault(saved, id) {
 //             reach?: { scope: 'closed' | 'all', from, to } }  // Stage reach only
 
 export const CHART_SETTINGS_KEY = 'closeRateChartFilters';
-export const CHART_IDS = ['source', 'service', 'stage', 'reach'];
+export const CHART_IDS = ['weekly', 'source', 'service', 'stage', 'reach', 'progress'];
 
 const filtersOnly = (state) => {
   const { id: _id, name: _name, ...rest } = snapshotFilters(state, 'x', 0);
