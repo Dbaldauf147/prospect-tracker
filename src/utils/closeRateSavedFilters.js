@@ -84,3 +84,67 @@ export function withoutSaved(saved, id) {
 export function withDefault(saved, id) {
   return { ...saved, defaultId: saved.defaultId === id ? null : id };
 }
+
+// ---- Per-chart saved filters -------------------------------------------
+//
+// Each chart on the tab (source, service, stage, reach) can run on its own
+// filters instead of the tab's, and keeps its own saved sets in
+// settings.closeRateChartFilters:
+//
+//   { [chart]: { list: [entry], defaultId } }
+//   entry = { id, name, filters: <snapshotFilters shape, no id/name>,
+//             off: [line keys switched off in the legend],
+//             reach?: { scope: 'closed' | 'all', from, to } }  // Stage reach only
+
+export const CHART_SETTINGS_KEY = 'closeRateChartFilters';
+export const CHART_IDS = ['source', 'service', 'stage', 'reach'];
+
+const filtersOnly = (state) => {
+  const { id: _id, name: _name, ...rest } = snapshotFilters(state, 'x', 0);
+  return rest;
+};
+
+export function readChartSaved(settings, chart) {
+  const raw = settings?.[CHART_SETTINGS_KEY]?.[chart];
+  const list = Array.isArray(raw?.list)
+    ? raw.list.filter(e => e && e.id != null && String(e.name || '').trim() && e.filters && typeof e.filters === 'object')
+    : [];
+  const defaultId = list.some(e => e.id === raw?.defaultId) ? raw.defaultId : null;
+  return { list, defaultId };
+}
+
+// The settings patch that stores `saved` for `chart`, keeping the others.
+export function chartSavedPatch(settings, chart, saved) {
+  return { [CHART_SETTINGS_KEY]: { ...(settings?.[CHART_SETTINGS_KEY] || {}), [chart]: saved } };
+}
+
+const sortedKeys = (off) => [...(off || [])].map(String).sort();
+const cleanReach = (reach) => (reach ? {
+  scope: reach.scope === 'all' ? 'all' : 'closed',
+  from: reach.from || '',
+  to: reach.to || '',
+} : undefined);
+
+// What a chart is showing, as an entry to store.
+export function snapshotChart({ filters, off, reach }, name, id = Date.now()) {
+  const entry = { id, name: String(name || '').trim(), filters: filtersOnly(filters), off: sortedKeys(off) };
+  const r = cleanReach(reach);
+  if (r) entry.reach = r;
+  return entry;
+}
+
+// Is the chart showing exactly this saved entry?
+export function chartMatchesEntry(current, entry) {
+  const a = snapshotChart(current, 'x', 0);
+  const b = snapshotChart({ filters: entry.filters, off: entry.off, reach: entry.reach }, 'x', 0);
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+// The chart state an entry restores. `presets` as for filtersFromEntry.
+export function chartFromEntry(entry, presets) {
+  return {
+    filters: filtersFromEntry(entry.filters || {}, presets),
+    off: new Set(Array.isArray(entry.off) ? entry.off.map(String) : []),
+    reach: cleanReach(entry.reach) || null,
+  };
+}

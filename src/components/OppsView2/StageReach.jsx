@@ -78,31 +78,34 @@ function ReachTooltip({ active, payload, hidden, closedOnly, colourOf = (s) => C
 //   period    optional: when given, the period follows it (the Close Rates
 //             tab drives it from its own Month / Quarter / Year) and the
 //             Group by start buttons are hidden.
-//   onState   optional: told { period, closedOnly, from, to } whenever they
-//             change, so a parent can export the same figures.
+//   onState   optional: told { period, closedOnly, from, to, hidden } whenever
+//             they change, so a parent can export (and save) the same view.
+//   applyState  optional { scope, from, to, hidden }: the chart's own
+//             controls to start from (a saved filter). Read on mount, so a
+//             parent applying a new one remounts the chart (a new `key`).
 //   collapsibleTable  optional: the table starts hidden behind a Show table
 //             button (the Close Rates tab, which exports from its header).
 //   colours   optional { [stage]: '#rrggbb' } over the default palette, and
 //   onColourChange(stage, hex)  makes each legend dot a colour picker.
 //   showLabels  optional: a % label on every point.
-export function StageReach({ records, settings, updateSettings, period: periodProp, onState, collapsibleTable = false, colours, onColourChange, showLabels = false }) {
+export function StageReach({ records, settings, updateSettings, period: periodProp, onState, applyState, collapsibleTable = false, colours, onColourChange, showLabels = false }) {
   const colourOf = useCallback((st) => colours?.[st] || COLOUR[st], [colours]);
   const [showTable, setShowTable] = useState(!collapsibleTable);
   const [ownPeriod, setPeriod] = useState('quarter');
   const period = periodProp || ownPeriod;
   // Closed only by default: how far finished deals got before they closed.
-  const [scope, setScope] = useState('closed');
+  const [scope, setScope] = useState(() => (applyState?.scope === 'all' ? 'all' : 'closed'));
   const closedOnly = scope === 'closed';
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  const [from, setFrom] = useState(() => applyState?.from || '');
+  const [to, setTo] = useState(() => applyState?.to || '');
   // Stages switched off from the legend.
-  const [hidden, setHidden] = useState(() => new Set());
+  const [hidden, setHidden] = useState(() => new Set(applyState?.hidden || []));
 
   const data = useMemo(
     () => stageReachByPeriod(records, { period, from, to, closedOnly }),
     [records, period, from, to, closedOnly],
   );
-  useEffect(() => { onState?.({ period, closedOnly, from, to }); }, [onState, period, closedOnly, from, to]);
+  useEffect(() => { onState?.({ period, closedOnly, from, to, hidden }); }, [onState, period, closedOnly, from, to, hidden]);
 
   // The overall line (legend, All periods row) over the periods that are
   // not thin, so old all-Sold remnants don't lift it.

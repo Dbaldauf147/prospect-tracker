@@ -513,3 +513,22 @@
   opacity: 0.5;
   cursor: default;
 }
+
+/* Per-chart filter bar, under a chart's title */
+.chartFilters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.6rem;
+  margin: 0.15rem 0 0.6rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--color-border-light, #eef2f7);
+  border-radius: 6px;
+  background: #f8fafc;
+  font-size: 0.78rem;
+}
+
+.savedBtnSmall {
+  padding: 0.3rem 0.6rem;
+  font-weight: 500;
+}
