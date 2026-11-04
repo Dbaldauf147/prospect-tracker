@@ -78,7 +78,10 @@ function ReachTooltip({ active, payload, hidden, closedOnly }) {
 //             Group by start buttons are hidden.
 //   onState   optional: told { period, closedOnly, from, to } whenever they
 //             change, so a parent can export the same figures.
-export function StageReach({ records, settings, updateSettings, period: periodProp, onState }) {
+//   collapsibleTable  optional: the table starts hidden behind a Show table
+//             button (the Close Rates tab, which exports from its header).
+export function StageReach({ records, settings, updateSettings, period: periodProp, onState, collapsibleTable = false }) {
+  const [showTable, setShowTable] = useState(!collapsibleTable);
   const [ownPeriod, setPeriod] = useState('quarter');
   const period = periodProp || ownPeriod;
   // Closed only by default: how far finished deals got before they closed.
@@ -313,7 +316,17 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
       {/* DataTable's scroll body is flex: 1 1 0, so it needs a parent with a
           height. Sized to the rows (capped) so a short table doesn't leave
           a tall empty box under it. */}
-      <div style={{ display: 'flex', flexDirection: 'column', height: Math.min(640, 140 + tableRows.length * 36) }}>
+      {collapsibleTable && (
+        <div>
+          <button
+            type="button"
+            className={styles.notSoldYear}
+            aria-expanded={showTable}
+            onClick={() => setShowTable(v => !v)}
+          >{showTable ? 'Hide table' : 'Show table'}</button>
+        </div>
+      )}
+      {showTable && <div style={{ display: 'flex', flexDirection: 'column', height: Math.min(640, 140 + tableRows.length * 36) }}>
       <DataTable
         tableId="opps2-stage-reach"
         columns={columns}
@@ -324,7 +337,7 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
         settings={settings}
         updateSettings={updateSettings}
       />
-      </div>
+      </div>}
     </div>
   );
 }
