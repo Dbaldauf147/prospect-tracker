@@ -119,11 +119,14 @@ export function chartSavedPatch(settings, chart, saved) {
 }
 
 const sortedKeys = (off) => [...(off || [])].map(String).sort();
-const cleanReach = (reach) => (reach ? {
-  scope: reach.scope === 'all' ? 'all' : 'closed',
-  from: reach.from || '',
-  to: reach.to || '',
-} : undefined);
+// A rolling Start Date window is kept as its preset key (no dates), so it
+// still moves with today when the saved filter is applied later.
+const cleanReach = (reach) => {
+  if (!reach) return undefined;
+  const scope = reach.scope === 'all' ? 'all' : 'closed';
+  if (typeof reach.preset === 'string' && reach.preset) return { scope, preset: reach.preset, from: '', to: '' };
+  return { scope, from: reach.from || '', to: reach.to || '' };
+};
 
 // What a chart is showing, as an entry to store.
 export function snapshotChart({ filters, off, reach }, name, id = Date.now()) {
