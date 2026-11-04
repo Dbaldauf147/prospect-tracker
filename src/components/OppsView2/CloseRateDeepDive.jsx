@@ -28,6 +28,7 @@ import {
   matchesEntry, withSaved, withoutSaved, withDefault,
   CHART_IDS, readChartSaved, chartSavedPatch, snapshotChart, chartMatchesEntry, chartFromEntry,
 } from '../../utils/closeRateSavedFilters';
+import { PRESET_LIST, WEEKLY_MONTHS, cleanWeeklyMonths } from '../../utils/closeRateWindows';
 import styles from './CloseRateDeepDive.module.css';
 
 // Opps > Close Rates: every close-rate trend on one page, each exportable.
@@ -60,12 +61,24 @@ const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,
 
 // Window presets, all by Close Date. Default is two calendar years back so a
 // quarter view has eight-plus points without reaching into stale history.
-const PRESETS = [
-  { key: '1y', label: 'Last 12 months', from: () => { const d = new Date(); d.setFullYear(d.getFullYear() - 1); return isoDay(d); } },
-  { key: '2y', label: 'Since Jan, 2 yrs ago', from: () => `${new Date().getFullYear() - 2}-01-01` },
-  { key: 'ytd', label: 'This year', from: () => `${new Date().getFullYear()}-01-01` },
-  { key: 'all', label: 'All time', from: () => '' },
-];
+// Rolling windows (utils/closeRateWindows), resolved from today each time.
+const PRESETS = PRESET_LIST;
+
+/**
+ * The Close Date window as one dropdown: a rolling preset, or Custom dates
+ * while the From / To boxes beside it hold a fixed range.
+ */
+function WindowSelect({ preset, onPick }) {
+  return (
+    <label className={styles.windowField}>
+      Window
+      <select value={preset || ''} onChange={e => onPick(e.target.value)} aria-label="Close Date window">
+        {!preset && <option value="">Custom dates</option>}
+        {PRESETS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+      </select>
+    </label>
+  );
+}
 
 const sheetName = (s) => s.replace(/[\\/?*[\]:]/g, ' ').slice(0, 31);
 
@@ -510,13 +523,10 @@ function FilterControls({ value, onChange, showWindow = true }) {
       </div>
       {showWindow && (
         <>
-          <div className={styles.group} role="group" aria-label="Close Date window">
-            {PRESETS.map(p => (
-              <button key={p.key} type="button" className={value.preset === p.key ? styles.toggleOn : styles.toggle} onClick={() => set({ preset: p.key, from: p.from(), to: '' })}>
-                {p.label}
-              </button>
-            ))}
-          </div>
+          <WindowSelect
+            preset={value.preset}
+            onPick={(key) => { const p = PRESETS.find(x => x.key === key); if (p) set({ preset: p.key, from: p.from(), to: '' }); }}
+          />
           <label className={styles.dateField}>
             From
             <input type="date" value={value.from} onChange={e => set({ from: e.target.value, preset: '' })} />
@@ -775,7 +785,12 @@ export function CloseRateDeepDive({
   // 1. The Weekly email's table: always its own 6-month window, whatever the
   // window controls say. The filter buttons do apply; it leaves pull-throughs
   // out either way, as the email does.
-  const weekly = useMemo(() => closeRateTrendByStage(counted, { months: 6 }), [counted]);
+  // How many months the Weekly email table shows: this visit's pick over
+  // the saved default (settings.closeRateWeeklyMonths, 6 when unset).
+  const savedWeeklyMonths = cleanWeeklyMonths(settings?.closeRateWeeklyMonths);
+  const [weeklyPick, setWeeklyPick] = useState(null);
+  const weeklyMonths = weeklyPick ?? savedWeeklyMonths;
+  const weekly = useMemo(() => closeRateTrendByStage(counted, { months: weeklyMonths }), [counted, weeklyMonths]);
   // Each chart's opps, through its own two filter buttons. The four
   // combinations are worked out once each, however many charts share one.
   const countedFor = useMemo(() => {
@@ -852,7 +867,7 @@ export function CloseRateDeepDive({
             { Item: 'Close rate', Value: 'Sold / (Sold + Not Sold), by Close Date. Rates are whole percentage points.' },
             { Item: 'Lead stage or higher', Value: leadOrHigher ? `On: opps closed before reaching Lead left out (${filtered.belowLead}). ${filtered.unknownStage} losses with no stage history kept.` : 'Off: every closed opp counted.' },
             { Item: 'Pull-throughs', Value: noPullThroughs ? `Left out (${filtered.pullThroughs}).` : 'Included, except in the Weekly email trend, which always leaves them out.' },
-            { Item: 'Weekly email trend', Value: 'Last 6 months by stage, the Weekly email table with the filters above applied, whatever the window.' },
+            { Item: 'Weekly email trend', Value: `Last ${weeklyMonths} months by stage, the Weekly email table with the filters above applied, whatever the window.` },
             { Item: 'By stage', Value: 'An opp counts toward every stage it reached, so stage rows do not add up.' },
             { Item: 'Stage reach', Value: `% of ${reachState.closedOnly ? 'closed ' : ''}opps that got at least as far as each stage, grouped by Start Date${reachState.from || reachState.to ? ` (${reachState.from || 'start'} to ${reachState.to || 'today'})` : ''}. Pull-throughs always left out; Not Sold opps with no stage history left out.` },
             { Item: 'By service', Value: 'An opp counts toward each service on its Scope. Hidden services are left out.' },
@@ -893,13 +908,7 @@ export function CloseRateDeepDive({
             </button>
           ))}
         </div>
-        <div className={styles.group} role="group" aria-label="Close Date window">
-          {PRESETS.map(p => (
-            <button key={p.key} type="button" className={preset === p.key ? styles.toggleOn : styles.toggle} onClick={() => { touched.current = true; pickPreset(p.key); }}>
-              {p.label}
-            </button>
-          ))}
-        </div>
+        <WindowSelect preset={preset} onPick={(key) => { if (!key) return; touched.current = true; pickPreset(key); }} />
         <label className={styles.dateField}>
           From
           <input type="date" value={from} onChange={e => { touched.current = true; setFrom(e.target.value); setPreset(''); }} />
@@ -962,9 +971,20 @@ export function CloseRateDeepDive({
         <div className={styles.sectionHead}>
           <div>
             <h2 className={styles.sectionTitle}>1. Close rate trend (Weekly email)</h2>
-            <div className={styles.sectionSub}>Last 6 months by the stage each closed deal reached: the Weekly email's table with the filters above applied. It always leaves pull-throughs out, as the email does.</div>
+            <div className={styles.sectionSub}>Last {weeklyMonths} months by the stage each closed deal reached: the Weekly email's table{weeklyMonths !== 6 ? ' (the email itself shows 6)' : ''} with the filters above applied. It always leaves pull-throughs out, as the email does.</div>
           </div>
-          <button type="button" className={styles.smallBtn} onClick={exportWeekly}>Export Excel</button>
+          <div className={styles.headActions}>
+            <label className={styles.windowField}>
+              Show
+              <select value={weeklyMonths} onChange={e => setWeeklyPick(Number(e.target.value))} aria-label="Months in the Weekly email table">
+                {WEEKLY_MONTHS.map(n => <option key={n} value={n}>Last {n} months{n === savedWeeklyMonths ? ' (default)' : ''}</option>)}
+              </select>
+            </label>
+            {weeklyMonths !== savedWeeklyMonths && (
+              <button type="button" className={styles.resetLink} onClick={() => updateSettings?.({ closeRateWeeklyMonths: weeklyMonths })} title="Open the table with this many months every visit (saved)">Save as default</button>
+            )}
+            <button type="button" className={styles.smallBtn} onClick={exportWeekly}>Export Excel</button>
+          </div>
         </div>
         <CloseRateTrend trend={weekly} />
       </section>
@@ -1096,7 +1116,7 @@ export function CloseRateDeepDive({
         {chartBar('reach', {
           filters: fReach,
           off: reachState.hidden,
-          reach: { scope: reachState.closedOnly ? 'closed' : 'all', from: reachState.from, to: reachState.to },
+          reach: { scope: reachState.closedOnly ? 'closed' : 'all', preset: reachState.preset || '', from: reachState.from, to: reachState.to },
         }, { showWindow: false })}
         <StageReach
           key={reachMount.key}

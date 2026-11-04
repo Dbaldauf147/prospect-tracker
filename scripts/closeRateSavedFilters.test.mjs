@@ -82,3 +82,11 @@ assert.deepEqual(readChartSaved({}, 'reach'), { list: [], defaultId: null });
 assert.deepEqual(readChartSaved({ [CHART_SETTINGS_KEY]: { source: { list: [{ id: 2, name: 'x' }], defaultId: 2 } } }, 'source'), { list: [], defaultId: null });
 
 console.log('closeRateSavedFilters: ok');
+
+// A rolling Start Date window on Stage reach is saved as its preset key.
+{
+  const rolling = snapshotChart({ filters: { period: 'quarter', preset: '1y', from: '', to: '', leadOrHigher: true, noPullThroughs: true }, off: new Set(), reach: { scope: 'closed', preset: '24m', from: '2024-11-04', to: '' } }, 'Two years', 9);
+  assert.deepEqual(rolling.reach, { scope: 'closed', preset: '24m', from: '', to: '' }, 'no frozen dates');
+  assert.deepEqual(chartFromEntry(rolling, PRESETS).reach, { scope: 'closed', preset: '24m', from: '', to: '' });
+  console.log('PASS closeRateSavedFilters rolling reach');
+}

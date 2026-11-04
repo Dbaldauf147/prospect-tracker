@@ -5,6 +5,7 @@ import {
 import { DataTable } from '../common/DataTable';
 import { ColourPickDot } from '../common/ColourPickDot';
 import { labelText } from '../../utils/closeRateChartPrefs';
+import { WINDOW_PRESETS, presetFrom } from '../../utils/closeRateWindows';
 import { stageReachByPeriod, REACH_STAGES } from '../../utils/stageReach';
 import styles from './OppsView2.module.css';
 
@@ -80,7 +81,7 @@ function ReachTooltip({ active, payload, hidden, closedOnly, colourOf = (s) => C
 //             Group by start buttons are hidden.
 //   onState   optional: told { period, closedOnly, from, to, hidden } whenever
 //             they change, so a parent can export (and save) the same view.
-//   applyState  optional { scope, from, to, hidden }: the chart's own
+//   applyState  optional { scope, preset, from, to, hidden }: the chart's own
 //             controls to start from (a saved filter). Read on mount, so a
 //             parent applying a new one remounts the chart (a new `key`).
 //   collapsibleTable  optional: the table starts hidden behind a Show table
@@ -98,8 +99,13 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
   // Closed only by default: how far finished deals got before they closed.
   const [scope, setScope] = useState(() => (applyState?.scope === 'all' ? 'all' : 'closed'));
   const closedOnly = scope === 'closed';
-  const [from, setFrom] = useState(() => applyState?.from || '');
-  const [to, setTo] = useState(() => applyState?.to || '');
+  // The Start Date window: a rolling preset (worked out from today, so it
+  // keeps moving) or, with no preset, the dates typed in the boxes.
+  const [startPreset, setStartPreset] = useState(() => (WINDOW_PRESETS.some(p => p.key === applyState?.preset) ? applyState.preset : ''));
+  const [ownFrom, setFrom] = useState(() => applyState?.from || '');
+  const [ownTo, setTo] = useState(() => applyState?.to || '');
+  const from = startPreset ? presetFrom(startPreset) : ownFrom;
+  const to = startPreset ? '' : ownTo;
   // Stages switched off from the legend.
   const [hidden, setHidden] = useState(() => new Set(applyState?.hidden || []));
 
@@ -107,7 +113,7 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
     () => stageReachByPeriod(records, { period, from, to, closedOnly }),
     [records, period, from, to, closedOnly],
   );
-  useEffect(() => { onState?.({ period, closedOnly, from, to, hidden }); }, [onState, period, closedOnly, from, to, hidden]);
+  useEffect(() => { onState?.({ period, closedOnly, preset: startPreset, from, to, hidden }); }, [onState, period, closedOnly, startPreset, from, to, hidden]);
 
   // The overall line (legend, All periods row) over the periods that are
   // not thin, so old all-Sold remnants don't lift it.
@@ -248,14 +254,27 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
           ))}
         </span>}
         <label className={styles.filterLabel}>
+          Started
+          <select
+            className={styles.filterInput}
+            value={startPreset}
+            onChange={e => setStartPreset(e.target.value)}
+            aria-label="Start Date window"
+            title="A rolling window moves with today; Custom dates uses the boxes beside it"
+          >
+            <option value="">Custom dates</option>
+            {WINDOW_PRESETS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+          </select>
+        </label>
+        {!startPreset && <label className={styles.filterLabel}>
           Started from
           <input type="date" className={styles.filterInput} value={from} max={to || undefined} onChange={e => setFrom(e.target.value)} />
-        </label>
-        <label className={styles.filterLabel}>
+        </label>}
+        {!startPreset && <label className={styles.filterLabel}>
           to
           <input type="date" className={styles.filterInput} value={to} min={from || undefined} onChange={e => setTo(e.target.value)} />
-        </label>
-        {(from || to) && (
+        </label>}
+        {!startPreset && (from || to) && (
           <button type="button" className={styles.notSoldYear} onClick={() => { setFrom(''); setTo(''); }}>Clear dates</button>
         )}
         {onTargetChange && TargetBox && <TargetBox value={target} onChange={onTargetChange} />}
