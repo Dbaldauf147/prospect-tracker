@@ -11,6 +11,7 @@ import { serviceCloseRateTrend } from '../../utils/serviceTrends';
 import {
   stageCloseRateTrend, applyCloseRateFilters, trendTableRows, trendSheetRows,
   weeklyTrendSheetRows, closedOppSheetRows, stageReachSheetRows, fmtRate,
+  fittedRateAxis,
 } from '../../utils/closeRateDeepDive';
 import styles from './CloseRateDeepDive.module.css';
 
@@ -90,7 +91,7 @@ function ChartTooltip({ active, payload, label, lines }) {
  * One trend (by source / service / stage): a line chart of the biggest
  * series plus Overall, and the full table under it.
  */
-function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exportName, note, keepOrder = false, settings, updateSettings }) {
+function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exportName, note, keepOrder = false, fitYAxis = false, settings, updateSettings }) {
   // Colour by entity: fixed by the series' place in the full list (most
   // decided first), so hiding one in the legend never repaints the rest.
   const colourOf = useMemo(() => {
@@ -117,6 +118,13 @@ function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exp
     }
     return point;
   }), [trend, period, lines]);
+
+  // fitYAxis: the axis tops out 1 point over the highest visible rate
+  // instead of 100%, so low close rates use the chart's height.
+  const yAxis = useMemo(
+    () => (fitYAxis ? fittedRateAxis(data, lines.map(l => l.key)) : null),
+    [fitYAxis, data, lines],
+  );
 
   const toggle = (key) => setOff(prev => {
     const next = new Set(prev);
@@ -223,7 +231,7 @@ function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exp
               <LineChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: -8 }}>
                 <CartesianGrid stroke="#eef2f7" vertical={false} />
                 <XAxis dataKey="period" tick={axisTick} tickLine={false} axisLine={{ stroke: '#e2e8f0' }} />
-                <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={(v) => `${v}%`} tick={axisTick} tickLine={false} axisLine={false} />
+                <YAxis domain={yAxis?.domain || [0, 100]} ticks={yAxis?.ticks || [0, 25, 50, 75, 100]} allowDataOverflow={false} tickFormatter={(v) => `${v}%`} tick={axisTick} tickLine={false} axisLine={false} />
                 <Tooltip content={<ChartTooltip lines={lines} />} cursor={{ stroke: '#94a3b8', strokeDasharray: '3 3' }} />
                 {lines.map(l => (
                   <Line
@@ -430,6 +438,7 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
         period={period}
         tableId={`close-rates-source-${period}`}
         exportName="Close rate by source"
+        fitYAxis
         settings={settings}
         updateSettings={updateSettings}
       />
