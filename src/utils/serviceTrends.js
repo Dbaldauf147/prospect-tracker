@@ -14,6 +14,12 @@
 //   serviceCloseRateTrend  of the opps DECIDED in a period (Sold or Not
 //                          Sold, by Close Date), the share of each service's
 //                          that were won. The table's Win Rate, over time.
+//   serviceDealSizeTrend   of the opps that STARTED in a period (Start
+//                          Date) with a Quoted Amount above 0, the average
+//                          Quoted Amount for each service. An opp with
+//                          several services counts its whole amount toward
+//                          each (there's no per-service split to go on);
+//                          the overall average counts each opp once.
 //
 // Percentages are null where the period had nothing to measure, so a chart
 // leaves a gap rather than drawing a 0% that never happened.
@@ -23,6 +29,7 @@
 import { toISODate } from './oppsCallIn.js';
 import { periodLabel, periodRange, closePeriodOf } from './notSoldAnalysis.js';
 import { startPeriodOf } from './stageReach.js';
+import { parseMoney } from './oppsMetrics.js';
 
 export const UNSPECIFIED_SERVICE = '(Unspecified)';
 
@@ -199,6 +206,71 @@ export function serviceCloseRateTrend(records, { period = 'year', from = '', to 
   let wins = 0; let decided = 0;
   for (const c of overall.values()) { wins += c.wins; decided += c.decided; }
   return { periods, series, overall: cellsOut(overall), wins, decided, rate: pct(wins, decided), undated };
+}
+
+/**
+ *   {
+ *     periods: [...],
+ *     series:  [{ key, sized, sum, avg,
+ *                 byPeriod: { [p]: { sized, sum, avg } } }],   // most sized first
+ *     overall: { [p]: { sized, sum, avg } },          // each opp once, whatever its services
+ *     sized, sum, avg, undated, unsized,
+ *   }
+ *
+ *   period    'month' | 'quarter' | 'year'
+ *   from/to   ISO Start Date bounds, inclusive; blank = open
+ *   sold      true = only Sold opps (the average won deal)
+ *   hidden    services left out of the series AND the overall (an opp is
+ *             dropped only when every one of its services is hidden)
+ *   groups    as serviceShareTrend (an opp's amount once toward a group)
+ *
+ *   `unsized` counts the dated opps in the window left out for having no
+ *   Quoted Amount above 0. avg is null where nothing was sized.
+ */
+export function serviceDealSizeTrend(records, { period = 'quarter', from = '', to = '', sold = false, hidden = [], groups = [] } = {}) {
+  const hide = new Set(hidden || []);
+  const lookup = groupLookup(groups);
+  const overall = new Map();
+  const bySvc = new Map();
+  let undated = 0;
+  let unsized = 0;
+  const bump = (map, p, amt) => {
+    const c = map.get(p) || { sized: 0, sum: 0 };
+    c.sized += 1;
+    c.sum += amt;
+    map.set(p, c);
+  };
+  for (const r of records || []) {
+    if (sold && String(r?.['Stage'] ?? '').trim() !== 'Sold') continue;
+    const services = keysOf(r, hide, lookup);
+    if (services.length === 0) continue;
+    const iso = toISODate(r?.['Start Date']);
+    if (!iso) { undated += 1; continue; }
+    if (!inRange(iso, from, to)) continue;
+    const amt = parseMoney(r?.['Quoted Amount']);
+    if (amt == null || !(amt > 0)) { unsized += 1; continue; }
+    const p = startPeriodOf(r, period);
+    bump(overall, p, amt);
+    for (const s of services) {
+      const e = bySvc.get(s) || { key: s, sized: 0, sum: 0, cells: new Map() };
+      e.sized += 1;
+      e.sum += amt;
+      bump(e.cells, p, amt);
+      bySvc.set(s, e);
+    }
+  }
+  const periods = overall.size ? periodsOf(overall.keys(), period) : [];
+  const avg = (sum, n) => (n > 0 ? sum / n : null);
+  const cellsOut = (cells) => Object.fromEntries(periods.map(p => {
+    const c = cells.get(p) || { sized: 0, sum: 0 };
+    return [p, { sized: c.sized, sum: c.sum, avg: avg(c.sum, c.sized) }];
+  }));
+  const series = [...bySvc.values()]
+    .sort((a, b) => b.sized - a.sized || a.key.localeCompare(b.key))
+    .map(e => ({ key: e.key, sized: e.sized, sum: e.sum, avg: avg(e.sum, e.sized), byPeriod: cellsOut(e.cells) }));
+  let sized = 0; let sum = 0;
+  for (const c of overall.values()) { sized += c.sized; sum += c.sum; }
+  return { periods, series, overall: cellsOut(overall), sized, sum, avg: avg(sum, sized), undated, unsized };
 }
 
 export { periodLabel };

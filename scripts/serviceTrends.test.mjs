@@ -1,6 +1,6 @@
 // Assertion tests for Opps > By Service's trend subtabs. Plain Node. Run:
 //   node scripts/serviceTrends.test.mjs
-import { servicesOf, serviceShareTrend, serviceCloseRateTrend } from '../src/utils/serviceTrends.js';
+import { servicesOf, serviceShareTrend, serviceCloseRateTrend, serviceDealSizeTrend } from '../src/utils/serviceTrends.js';
 
 let failures = 0;
 function check(label, actual, expected) {
@@ -57,5 +57,24 @@ check('group: hiding the group name drops it', serviceShareTrend(recs, { period:
 const crG = serviceCloseRateTrend(recs, { period: 'year', groups: G });
 check('group: close rate per group', crG.series.find(s => s.key === 'AB').byPeriod['2025'], { wins: 1, decided: 2, rate: 50 });
 check('group: blank and empty groups ignored', serviceShareTrend(recs, { groups: [{ name: ' ', services: ['A'] }, { name: 'X', services: [] }] }).series.map(s => s.key), ['A', 'B', 'C']);
+
+const dsRecs = [
+  { Scope: 'A, B', Stage: 'Sold', 'Start Date': '2025-01-10', 'Quoted Amount': '$10,000' },
+  { Scope: 'A', Stage: 'Not Sold', 'Start Date': '2025-02-10', 'Quoted Amount': 'USD 20,000.00' },
+  { Scope: 'B', Stage: 'Lead', 'Start Date': '2025-08-10', 'Quoted Amount': '' },
+  { Scope: 'A', Stage: 'Sold', 'Start Date': '2025-09-01', 'Quoted Amount': '6000' },
+  { Scope: 'C', Stage: 'Lead', 'Quoted Amount': '5000' },
+];
+const ds = serviceDealSizeTrend(dsRecs, { period: 'quarter' });
+check('deal size: periods', ds.periods, ['2025-Q1', '2025-Q2', '2025-Q3']);
+check('deal size: unsized and undated counted', [ds.unsized, ds.undated], [1, 1]);
+const dA = ds.series.find(s => s.key === 'A');
+check('deal size: A by period', ds.periods.map(p => dA.byPeriod[p].avg), [15000, null, 6000]);
+check('deal size: A whole window', [dA.sized, dA.avg], [3, 12000]);
+check('deal size: B gets the shared opp\'s full amount', ds.series.find(s => s.key === 'B').avg, 10000);
+check('deal size: overall counts each opp once', [ds.sized, ds.avg, ds.overall['2025-Q1'].avg], [3, 12000, 15000]);
+const dsSold = serviceDealSizeTrend(dsRecs, { period: 'year', sold: true });
+check('deal size: sold only', [dsSold.sized, dsSold.series.find(s => s.key === 'A').avg], [2, 8000]);
+check('deal size: nothing sized', serviceDealSizeTrend([], {}).periods, []);
 
 process.exit(failures ? 1 : 0);
