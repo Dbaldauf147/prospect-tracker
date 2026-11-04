@@ -463,6 +463,8 @@
 .savedNameOn {
   font-weight: 700;
   color: var(--color-accent);
+}
+
 .legendToggle {
   border: none;
   background: none;
