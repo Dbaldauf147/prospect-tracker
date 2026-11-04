@@ -1,15 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { DataTable } from '../common/DataTable';
 import { CloseRateTrend } from '../WeeklyReportView/CloseRateTrend';
+import { StageReach } from './StageReach';
 import { closeRateTrendByStage } from '../../utils/pipelineFunnelData';
 import { closeRateTrend, periodLabel } from '../../utils/notSoldAnalysis';
 import { serviceCloseRateTrend } from '../../utils/serviceTrends';
 import {
   stageCloseRateTrend, applyCloseRateFilters, trendTableRows, trendSheetRows,
-  weeklyTrendSheetRows, closedOppSheetRows, fmtRate,
+  weeklyTrendSheetRows, closedOppSheetRows, stageReachSheetRows, fmtRate,
 } from '../../utils/closeRateDeepDive';
 import styles from './CloseRateDeepDive.module.css';
 
@@ -286,6 +287,12 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
   const counted = filtered.records;
   const includePullThroughs = !noPullThroughs;
   const hidden = useMemo(() => [...(hiddenServices || [])], [hiddenServices]);
+  // Section 5's own controls (closed only, Start Date range), reported back
+  // so Export all writes the figures on screen.
+  const [reachState, setReachState] = useState({ closedOnly: true, from: '', to: '' });
+  const onReachState = useCallback((st) => setReachState(prev => (
+    prev.closedOnly === st.closedOnly && prev.from === st.from && prev.to === st.to ? prev : st
+  )), []);
 
   // 1. The Weekly email's table: always its own 6-month window, whatever the
   // window controls say. The filter buttons do apply; it leaves pull-throughs
@@ -319,6 +326,7 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
         { name: `By source (${periodName})`, rows: trendSheetRows(bySource, { period, nameHeader: 'Source' }) },
         { name: `By service (${periodName})`, rows: trendSheetRows(byService, { period, nameHeader: 'Service' }) },
         { name: `By stage (${periodName})`, rows: trendSheetRows(byStage, { period, nameHeader: 'Stage' }) },
+        { name: `Stage reach (${periodName})`, rows: stageReachSheetRows(counted, { period, closedOnly: reachState.closedOnly, from: reachState.from, to: reachState.to }) },
         { name: 'Closed opps', rows: closedOppSheetRows(counted, { period, from, to, includePullThroughs }) },
         {
           name: 'About',
@@ -330,6 +338,7 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
             { Item: 'Pull-throughs', Value: noPullThroughs ? `Left out (${filtered.pullThroughs}).` : 'Included, except in the Weekly email trend, which always leaves them out.' },
             { Item: 'Weekly email trend', Value: 'Last 6 months by stage, the Weekly email table with the filters above applied, whatever the window.' },
             { Item: 'By stage', Value: 'An opp counts toward every stage it reached, so stage rows do not add up.' },
+            { Item: 'Stage reach', Value: `% of ${reachState.closedOnly ? 'closed ' : ''}opps that got at least as far as each stage, grouped by Start Date${reachState.from || reachState.to ? ` (${reachState.from || 'start'} to ${reachState.to || 'today'})` : ''}. Pull-throughs always left out; Not Sold opps with no stage history left out.` },
             { Item: 'By service', Value: 'An opp counts toward each service on its Scope. Hidden services are left out.' },
             { Item: 'Exported', Value: new Date().toLocaleString() },
           ],
@@ -451,6 +460,25 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
         settings={settings}
         updateSettings={updateSettings}
       />
+
+      <section className={styles.section}>
+        <div className={styles.sectionHead}>
+          <div>
+            <h2 className={styles.sectionTitle}>5. % of deals that reached each stage</h2>
+            <div className={styles.sectionSub}>
+              Of the opps that started in each {periodName.toLowerCase()} (by Start Date), the share that got at least as far as each stage.
+              The same view as Days in Stage &gt; Stage Reach, with the filters above applied{leadOrHigher ? ', so Lead reads 100%' : ''}.
+            </div>
+          </div>
+        </div>
+        <StageReach
+          records={counted}
+          period={period}
+          onState={onReachState}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      </section>
     </div>
   );
 }

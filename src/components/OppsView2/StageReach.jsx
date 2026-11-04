@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -73,8 +73,14 @@ function ReachTooltip({ active, payload, hidden, closedOnly }) {
  * are taken of. The rules (furthest stage reached, which opps are left
  * out) live in utils/stageReach.js.
  */
-export function StageReach({ records, settings, updateSettings }) {
-  const [period, setPeriod] = useState('quarter');
+//   period    optional: when given, the period follows it (the Close Rates
+//             tab drives it from its own Month / Quarter / Year) and the
+//             Group by start buttons are hidden.
+//   onState   optional: told { period, closedOnly, from, to } whenever they
+//             change, so a parent can export the same figures.
+export function StageReach({ records, settings, updateSettings, period: periodProp, onState }) {
+  const [ownPeriod, setPeriod] = useState('quarter');
+  const period = periodProp || ownPeriod;
   // Closed only by default: how far finished deals got before they closed.
   const [scope, setScope] = useState('closed');
   const closedOnly = scope === 'closed';
@@ -87,6 +93,7 @@ export function StageReach({ records, settings, updateSettings }) {
     () => stageReachByPeriod(records, { period, from, to, closedOnly }),
     [records, period, from, to, closedOnly],
   );
+  useEffect(() => { onState?.({ period, closedOnly, from, to }); }, [onState, period, closedOnly, from, to]);
 
   // The overall line (legend, All periods row) over the periods that are
   // not thin, so old all-Sold remnants don't lift it.
@@ -215,7 +222,7 @@ export function StageReach({ records, settings, updateSettings }) {
             >{o.label}</button>
           ))}
         </span>
-        <span className={styles.notSoldYears}>
+        {!periodProp && <span className={styles.notSoldYears}>
           <span className={styles.filterLabel} style={{ marginRight: 2 }}>Group by start</span>
           {PERIODS.map(o => (
             <button
@@ -225,7 +232,7 @@ export function StageReach({ records, settings, updateSettings }) {
               onClick={() => setPeriod(o.key)}
             >{o.label}</button>
           ))}
-        </span>
+        </span>}
         <label className={styles.filterLabel}>
           Started from
           <input type="date" className={styles.filterInput} value={from} max={to || undefined} onChange={e => setFrom(e.target.value)} />

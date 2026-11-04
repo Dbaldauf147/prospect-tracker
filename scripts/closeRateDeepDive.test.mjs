@@ -84,3 +84,22 @@ console.log('PASS closeRateDeepDive');
   assert.equal(sct(off.records, { period: 'year', includePullThroughs: true }).decided, 5);
   console.log('PASS closeRateDeepDive filters');
 }
+
+// Stage reach sheet.
+{
+  const { stageReachSheetRows } = await import('../src/utils/closeRateDeepDive.js');
+  const recs = [
+    { Stage: 'Sold', 'Start Date': '2026-01-05', 'Close Date': '2026-03-01' },
+    { Stage: 'Not Sold', 'Start Date': '2026-02-05', 'Close Date': '2026-03-02', _stageHistory: [{ stage: 'Quoting' }] },
+    { Stage: 'Not Sold', 'Start Date': '2026-02-06', 'Close Date': '2026-03-03' }, // no history
+  ];
+  const rows = stageReachSheetRows(recs, { period: 'quarter' });
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].Started, 'Q1 2026');
+  assert.equal(rows[0]['Closed opps'], 2);
+  assert.equal(rows[0]['No stage history (left out)'], 1);
+  assert.equal(rows[0]['Quoting %'], 100);
+  assert.equal(rows[0]['Sold %'], 50);
+  assert.equal(rows[1].Started, 'All periods');
+  console.log('PASS closeRateDeepDive stage reach');
+}
