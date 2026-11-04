@@ -17,7 +17,7 @@
 import { CLOSE_RATE_STAGES, bfoOppNameOf, closedOppEntry } from './pipelineFunnelData.js';
 import { closePeriodOf, periodLabel, periodRange, sourceOf } from './notSoldAnalysis.js';
 import { PULL_THROUGH_COLUMN, isPullThroughOpp } from './pullThrough.js';
-import { furthestStageRank } from './stageReach.js';
+import { REACH_STAGES, furthestStageRank, stageReachByPeriod } from './stageReach.js';
 
 const pct = (w, d) => (d > 0 ? (w / d) * 100 : null);
 
@@ -251,4 +251,24 @@ export function closedOppSheetRows(records, { period = 'quarter', from = '', to 
     out.push(row);
   }
   return out.sort((a, b) => (a['Close Date'] < b['Close Date'] ? 1 : a['Close Date'] > b['Close Date'] ? -1 : 0));
+}
+
+/**
+ * Stage reach (the % of deals that got at least as far as each stage) as
+ * Excel rows: one per Start Date period, newest first, then All periods.
+ * Same figures as the Stage Reach view (utils/stageReach).
+ */
+export function stageReachSheetRows(records, { period = 'quarter', closedOnly = true, from = '', to = '' } = {}) {
+  const data = stageReachByPeriod(records, { period, closedOnly, from, to });
+  const row = (label, r) => {
+    const out = { Started: label, [closedOnly ? 'Closed opps' : 'Opps']: r.total, 'No stage history (left out)': r.unknown };
+    for (const st of REACH_STAGES) {
+      out[`${st} %`] = r.pct[st] == null ? '' : r.pct[st];
+      out[`${st} count`] = r.reached[st];
+    }
+    return out;
+  };
+  const rows = data.rows.slice().reverse().map(r => row(r.label, r));
+  if (data.overall.total) rows.push(row('All periods', data.overall));
+  return rows;
 }
