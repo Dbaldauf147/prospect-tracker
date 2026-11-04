@@ -2,10 +2,10 @@
 import assert from 'node:assert/strict';
 import { readChartPrefs, withColour, withoutColours, withLabels, labelText } from '../src/utils/closeRateChartPrefs.js';
 
-assert.deepEqual(readChartPrefs(undefined), { labels: false, lineLabels: {}, colours: {} });
-assert.deepEqual(readChartPrefs({ closeRatesChartPrefs: 'junk' }), { labels: false, lineLabels: {}, colours: {} });
+assert.deepEqual(readChartPrefs(undefined), { labels: false, lineLabels: {}, colours: {}, targets: {} });
+assert.deepEqual(readChartPrefs({ closeRatesChartPrefs: 'junk' }), { labels: false, lineLabels: {}, colours: {}, targets: {} });
 const messy = readChartPrefs({ closeRatesChartPrefs: { labels: true, colours: { source: { BFO: '#AABBCC', Bad: 'red' }, stage: null } } });
-assert.deepEqual(messy, { labels: true, lineLabels: {}, colours: { source: { BFO: '#AABBCC' } } });
+assert.deepEqual(messy, { labels: true, lineLabels: {}, colours: { source: { BFO: '#AABBCC' } }, targets: {} });
 
 let p = readChartPrefs({});
 p = withColour(p, 'source', 'BFO', '#FF0000');
@@ -43,4 +43,23 @@ console.log('PASS closeRateChartPrefs');
   const cleaned = readChartPrefs({ closeRatesChartPrefs: { lineLabels: { source: { A: true, B: 'yes' }, x: 3 } } });
   assert.deepEqual(cleaned.lineLabels, { source: { A: true } });
   console.log('PASS closeRateChartPrefs line labels');
+}
+
+// Targets.
+{
+  const { withTarget, cleanTarget } = await import('../src/utils/closeRateChartPrefs.js');
+  assert.equal(cleanTarget('25'), 25);
+  assert.equal(cleanTarget('22.55%'), 22.6);
+  assert.equal(cleanTarget(''), null);
+  assert.equal(cleanTarget('abc'), null);
+  assert.equal(cleanTarget(120), null);
+  assert.equal(cleanTarget(-1), null);
+  let t = readChartPrefs({});
+  t = withTarget(t, 'source', '30');
+  assert.deepEqual(t.targets, { source: 30 });
+  t = withTarget(t, 'reach', 45);
+  t = withTarget(t, 'source', '');
+  assert.deepEqual(t.targets, { reach: 45 }, 'blank clears');
+  assert.deepEqual(readChartPrefs({ closeRatesChartPrefs: { targets: { source: 40, stage: 'x', service: 200 } } }).targets, { source: 40 });
+  console.log('PASS closeRateChartPrefs targets');
 }

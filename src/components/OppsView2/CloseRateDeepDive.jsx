@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  LabelList, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  LabelList, LineChart, Line, ReferenceLine, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { DataTable } from '../common/DataTable';
 import { CloseRateTrend } from '../WeeklyReportView/CloseRateTrend';
@@ -9,7 +9,7 @@ import { GroupEditor, ServiceSettingsPopup } from './ServiceTrends';
 import { ColourPickDot } from '../common/ColourPickDot';
 import {
   CHART_PREFS_KEY, readChartPrefs, withColour, withoutColours, withLabels, labelText,
-  isLabelled, withLineLabel, labelsState,
+  isLabelled, withLineLabel, labelsState, withTarget,
 } from '../../utils/closeRateChartPrefs';
 import { closeRateTrendByStage } from '../../utils/pipelineFunnelData';
 import { closeRateTrend, periodLabel } from '../../utils/notSoldAnalysis';
@@ -80,7 +80,7 @@ async function writeWorkbook(fileBase, sheets) {
   XLSX.writeFile(wb, `${fileBase} - ${isoDay(new Date())}.xlsx`);
 }
 
-function ChartTooltip({ active, payload, label, lines }) {
+function ChartTooltip({ active, payload, label, lines, target }) {
   if (!active || !payload?.length) return null;
   const point = payload[0].payload;
   return (
@@ -97,7 +97,38 @@ function ChartTooltip({ active, payload, label, lines }) {
           </div>
         );
       })}
+      {target != null && <div className={styles.tooltipTarget}>Target {labelText(target)}</div>}
     </div>
+  );
+}
+
+// The target line's colour: a recessive slate, solid, so it can't be read
+// as the dashed black Overall line or as a series.
+const TARGET_COLOUR = '#64748b';
+
+/**
+ * A chart's target %: typed, saved on blur or Enter, cleared by emptying it.
+ * Keyed by the saved value so a change from elsewhere shows.
+ */
+export function TargetInput({ value, onChange, label = 'Target' }) {
+  const [draft, setDraft] = useState(value == null ? '' : String(value));
+  const [seen, setSeen] = useState(value);
+  if (seen !== value) { setSeen(value); setDraft(value == null ? '' : String(value)); }
+  const commit = () => { if (String(value ?? '') !== draft.trim()) onChange(draft.trim()); };
+  return (
+    <label className={styles.targetField} title="Draws a target line on the chart. Saved; clear the box to remove it.">
+      {label}
+      <input
+        inputMode="decimal"
+        value={draft}
+        placeholder="-"
+        aria-label={`${label} %`}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setDraft(value == null ? '' : String(value)); e.currentTarget.blur(); } }}
+      />
+      %
+    </label>
   );
 }
 
@@ -115,7 +146,7 @@ function ChartTooltip({ active, payload, label, lines }) {
 //   headerExtra              controls for the section header
 function TrendSection({
   title, subtitle, nameHeader, trend, period, tableId, exportName, note, keepOrder = false, fitYAxis = false,
-  colours, onColourChange, onResetColours, labelled = () => false, onLabelToggle,
+  colours, onColourChange, onResetColours, labelled = () => false, onLabelToggle, target = null, onTargetChange,
   lineState, exclude, picked, onNameClick, nameBadge, headerExtra, filterBar, settings, updateSettings,
 }) {
   // Colour by entity: fixed by the series' place in the full list (most
@@ -154,8 +185,9 @@ function TrendSection({
   // fitYAxis: the axis tops out 1 point over the highest visible rate
   // instead of 100%, so low close rates use the chart's height.
   const yAxis = useMemo(
-    () => (fitYAxis ? fittedRateAxis(data, lines.map(l => l.key)) : null),
-    [fitYAxis, data, lines],
+    // The target counts as a point, so a target above every rate still shows.
+    () => (fitYAxis ? fittedRateAxis(target == null ? data : [...data, { __target: target }], [...lines.map(l => l.key), '__target']) : null),
+    [fitYAxis, data, lines, target],
   );
 
   const toggle = (key) => {
@@ -248,6 +280,7 @@ function TrendSection({
           {subtitle && <div className={styles.sectionSub}>{subtitle}</div>}
         </div>
         <div className={styles.headActions}>
+          {onTargetChange && <TargetInput value={target} onChange={onTargetChange} />}
           {headerExtra}
           <span className={styles.headline}>
             Overall {fmtRate(trend.rate)} <span className={styles.muted}>({trend.wins}/{trend.decided})</span>
@@ -312,7 +345,16 @@ function TrendSection({
                 <CartesianGrid stroke="#eef2f7" vertical={false} />
                 <XAxis dataKey="period" tick={axisTick} tickLine={false} axisLine={{ stroke: '#e2e8f0' }} />
                 <YAxis domain={yAxis?.domain || [0, 100]} ticks={yAxis?.ticks || [0, 25, 50, 75, 100]} allowDataOverflow={false} tickFormatter={(v) => `${v}%`} tick={axisTick} tickLine={false} axisLine={false} />
-                <Tooltip content={<ChartTooltip lines={lines} />} cursor={{ stroke: '#94a3b8', strokeDasharray: '3 3' }} />
+                <Tooltip content={<ChartTooltip lines={lines} target={target} />} cursor={{ stroke: '#94a3b8', strokeDasharray: '3 3' }} />
+                {target != null && (
+                  <ReferenceLine
+                    y={target}
+                    stroke={TARGET_COLOUR}
+                    strokeWidth={1.5}
+                    ifOverflow="extendDomain"
+                    label={{ value: `Target ${labelText(target)}`, position: 'insideTopRight', fill: '#475569', fontSize: 10, fontWeight: 600, stroke: '#fff', strokeWidth: 3, paintOrder: 'stroke' }}
+                  />
+                )}
                 {lines.map(l => (
                   <Line
                     key={l.key}
@@ -680,6 +722,8 @@ export function CloseRateDeepDive({
     onResetColours: () => savePrefs(withoutColours(prefs, chart), { now: true }),
     labelled: (key) => isLabelled(prefs, chart, key),
     onLabelToggle: (key) => savePrefs(withLineLabel(prefs, chart, key, !isLabelled(prefs, chart, key)), { now: true }),
+    target: prefs.targets[chart] ?? null,
+    onTargetChange: (v) => savePrefs(withTarget(prefs, chart, v), { now: true }),
   });
 
   const filtered = useMemo(
@@ -1043,6 +1087,9 @@ export function CloseRateDeepDive({
           onColourChange={(st, hex) => savePrefs(withColour(prefs, 'reach', st, hex))}
           labelled={(st) => isLabelled(prefs, 'reach', st)}
           onLabelToggle={(st) => savePrefs(withLineLabel(prefs, 'reach', st, !isLabelled(prefs, 'reach', st)), { now: true })}
+          target={prefs.targets.reach ?? null}
+          targetInput={TargetInput}
+          onTargetChange={(v) => savePrefs(withTarget(prefs, 'reach', v), { now: true })}
           settings={settings}
           updateSettings={updateSettings}
         />
