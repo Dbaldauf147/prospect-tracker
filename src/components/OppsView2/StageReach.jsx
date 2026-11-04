@@ -87,8 +87,9 @@ function ReachTooltip({ active, payload, hidden, closedOnly, colourOf = (s) => C
 //             button (the Close Rates tab, which exports from its header).
 //   colours   optional { [stage]: '#rrggbb' } over the default palette, and
 //   onColourChange(stage, hex)  makes each legend dot a colour picker.
-//   showLabels  optional: a % label on every point.
-export function StageReach({ records, settings, updateSettings, period: periodProp, onState, applyState, collapsibleTable = false, colours, onColourChange, showLabels = false }) {
+//   labelled(stage)  optional: does that line show a % on its points, and
+//   onLabelToggle(stage)  adds a % button to each legend chip to switch it.
+export function StageReach({ records, settings, updateSettings, period: periodProp, onState, applyState, collapsibleTable = false, colours, onColourChange, labelled = () => false, onLabelToggle }) {
   const colourOf = useCallback((st) => colours?.[st] || COLOUR[st], [colours]);
   const [showTable, setShowTable] = useState(!collapsibleTable);
   const [ownPeriod, setPeriod] = useState('quarter');
@@ -293,6 +294,16 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
                 {s}
                 <span style={{ fontWeight: 400, opacity: 0.8 }}>{fmtPct(overall.pct[s])}</span>
               </button>
+              {onLabelToggle && (
+                <button
+                  type="button"
+                  aria-pressed={labelled(s)}
+                  aria-label={`Data labels for ${s}`}
+                  onClick={() => onLabelToggle(s)}
+                  title={labelled(s) ? `Hide ${s}'s data labels` : `Show ${s}'s data labels`}
+                  style={{ border: `1px solid ${labelled(s) ? 'var(--color-accent)' : 'var(--color-border, #E2E8F0)'}`, background: labelled(s) ? 'var(--color-accent)' : '#fff', color: labelled(s) ? '#fff' : 'var(--color-text-muted, #64748B)', borderRadius: 4, fontSize: '0.66rem', fontWeight: 700, lineHeight: 1, padding: '2px 4px', cursor: 'pointer' }}
+                >%</button>
+              )}
             </span>
           );
         })}
@@ -303,7 +314,7 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
       ) : (
         <div style={{ height: 320, background: '#fff', border: `1px solid ${GRID}`, borderRadius: 6, padding: '8px 8px 0' }}>
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{ top: showLabels ? 22 : 8, right: 24, bottom: 4, left: 4 }}>
+            <LineChart data={chartData} margin={{ top: REACH_STAGES.some(st => !hidden.has(st) && labelled(st)) ? 22 : 8, right: 24, bottom: 4, left: 4 }}>
               <CartesianGrid stroke={GRID} strokeDasharray="2 4" vertical={false} />
               <XAxis dataKey="label" tick={{ fontSize: 10, fill: AXIS_TEXT }} tickLine={false} axisLine={{ stroke: GRID }} minTickGap={12} />
               <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tick={{ fontSize: 10, fill: AXIS_TEXT }} tickLine={false} axisLine={false} width={40} tickFormatter={v => `${v}%`} />
@@ -320,7 +331,7 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
                   activeDot={{ r: 4, strokeWidth: 2, stroke: '#fff' }}
                   isAnimationActive={false}
                 >
-                  {showLabels && <LabelList dataKey={s} position="top" offset={6} formatter={labelText} style={{ fontSize: 10, fill: '#475569' }} />}
+                  {labelled(s) && <LabelList dataKey={s} position="top" offset={6} formatter={labelText} style={{ fontSize: 10, fill: '#475569' }} />}
                 </Line>
               ))}
             </LineChart>

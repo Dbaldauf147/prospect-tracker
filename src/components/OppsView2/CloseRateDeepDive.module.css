@@ -514,6 +514,30 @@
   cursor: default;
 }
 
+.labelOn,
+.labelOff {
+  margin-left: 0.1rem;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 0.64rem;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.labelOn {
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.labelOff {
+  border: 1px solid var(--color-border);
+  background: #fff;
+  color: var(--color-text-muted);
+}
+
 /* Per-chart filter bar, under a chart's title */
 .chartFilters {
   display: flex;
