@@ -472,6 +472,7 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
         period={period}
         tableId={`close-rates-service-${period}`}
         exportName="Close rate by service"
+        fitYAxis
         note={`An opp counts toward each service on its Scope, so service rows don't add up to Overall.${hidden.length ? ` ${hidden.length} service${hidden.length === 1 ? '' : 's'} hidden on By Service ${hidden.length === 1 ? 'is' : 'are'} left out.` : ''}`}
         settings={settings}
         updateSettings={updateSettings}
@@ -485,6 +486,7 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
         period={period}
         tableId={`close-rates-stage-${period}`}
         exportName="Close rate by stage"
+        fitYAxis
         keepOrder
         note="An opp counts toward every stage it reached, so Stage 3 has the widest base and Stage 6 the narrowest; the rows aren't meant to add up. Overall is every closed opp."
         settings={settings}
