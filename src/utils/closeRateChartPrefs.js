@@ -4,7 +4,8 @@
 //
 //   { labels: boolean,                                  // data labels: every line's default
 //     lineLabels: { [chart]: { [seriesKey]: boolean } },  // a line's own choice over that
-//     colours: { [chart]: { [seriesKey]: '#rrggbb' } } }  // per-chart overrides
+//     colours: { [chart]: { [seriesKey]: '#rrggbb' } },  // per-chart overrides
+//     targets: { [chart]: 0-100 } }                       // a target line per chart
 //
 // chart is 'source' | 'service' | 'stage' | 'reach'. A series with no
 // override keeps the palette colour the page gives it. Pure, for tests.
@@ -33,7 +34,30 @@ export function readChartPrefs(settings) {
       if (Object.keys(clean).length) lineLabels[chart] = clean;
     }
   }
-  return { labels: prefs.labels === true, lineLabels, colours };
+  const targets = {};
+  if (prefs.targets && typeof prefs.targets === 'object') {
+    for (const [chart, v] of Object.entries(prefs.targets)) {
+      const n = cleanTarget(v);
+      if (n != null) targets[chart] = n;
+    }
+  }
+  return { labels: prefs.labels === true, lineLabels, colours, targets };
+}
+
+/** A target as typed: a number from 0 to 100 (one decimal), else null. */
+export function cleanTarget(v) {
+  if (v === '' || v == null) return null;
+  const n = Number(String(v).replace(/[%\s]/g, ''));
+  if (!Number.isFinite(n) || n < 0 || n > 100) return null;
+  return Math.round(n * 10) / 10;
+}
+
+/** Set a chart's target (a number 0-100), or clear it with null / ''. */
+export function withTarget(prefs, chart, value) {
+  const targets = { ...(prefs.targets || {}) };
+  const n = cleanTarget(value);
+  if (n == null) delete targets[chart]; else targets[chart] = n;
+  return { ...prefs, targets };
 }
 
 /** Does this line show its data labels? Its own choice, else the default. */
