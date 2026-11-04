@@ -3,6 +3,7 @@ import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { DataTable } from '../common/DataTable';
+import { TagMultiSelect } from '../common/TagMultiSelect';
 import { serviceShareTrend, serviceCloseRateTrend, periodLabel, servicesOf } from '../../utils/serviceTrends';
 import { getServiceCategories } from '../../utils/serviceCategoriesStore';
 import styles from './OppsView2.module.css';
@@ -236,6 +237,114 @@ function GroupEditor({ groups, services, settings, onSave, onClose }) {
   );
 }
 
+// The popup a service (or group) name in the table opens: which group the
+// service sits in, whether its line is visible by default, whether it always
+// counts in Other, and Hide. Every choice saves straight away and is shared
+// by both trend subtabs.
+function ServiceSettingsPopup({
+  popup, groups, groupMembers, offDefault, excluded, hidden,
+  onSetGroup, onRemoveFromGroup, onDefaultChange, onOtherChange, onToggleHide, onClose,
+}) {
+  const ref = useRef(null);
+  const [newName, setNewName] = useState(null);
+  useEffect(() => {
+    const onDown = (e) => {
+      if (ref.current?.contains(e.target)) return;
+      if (e.target.closest?.('[data-service-name]')) return;
+      onClose();
+    };
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [onClose]);
+  const { name } = popup;
+  const isGroup = groupMembers.has(name);
+  const current = groups.find(g => g.services.includes(name))?.name || '';
+  const row = { display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', cursor: 'pointer', whiteSpace: 'nowrap' };
+  const btn = { fontSize: '0.72rem', padding: '2px 8px', border: '1px solid var(--color-border, #E2E8F0)', borderRadius: 6, background: 'var(--color-surface, #fff)', color: 'var(--color-text)', cursor: 'pointer', fontFamily: 'inherit' };
+  const label = { fontSize: '0.66rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', ...muted };
+  const taken = new Set(groups.map(g => g.name.trim().toLowerCase()));
+  const trimmed = (newName || '').trim();
+  const nameOk = trimmed && !taken.has(trimmed.toLowerCase());
+  const addNew = () => { if (nameOk) { onSetGroup(name, trimmed); setNewName(null); } };
+  const left = Math.max(8, Math.min(popup.left, window.innerWidth - 290));
+  const top = popup.top + 300 > window.innerHeight ? Math.max(8, popup.top - 310) : popup.top;
+  return (
+    <div
+      ref={ref}
+      role="dialog"
+      aria-label={`${name} settings`}
+      style={{ position: 'fixed', left, top, zIndex: 40, width: 270, background: 'var(--color-surface, #fff)', color: 'var(--color-text)', border: '1px solid var(--color-border, #E2E8F0)', borderRadius: 8, padding: '0.6rem 0.75rem', boxShadow: '0 6px 20px rgba(0,0,0,0.14)', fontSize: '0.78rem', display: 'flex', flexDirection: 'column', gap: 6 }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700 }}>
+        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }} title={name}>{name}{isGroup ? ' (group)' : ''}</span>
+        <button type="button" onClick={onClose} aria-label="Close" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted, #64748B)', fontSize: '0.9rem', lineHeight: 1, padding: 0 }}>×</button>
+      </div>
+
+      {isGroup ? (
+        <div>
+          <div style={label}>Services in this group</div>
+          {groupMembers.get(name).map(sv => (
+            <div key={sv} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 0' }}>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sv}>{sv}</span>
+              <button type="button" style={btn} onClick={() => onRemoveFromGroup(sv)} title={`Take ${sv} out of ${name}`}>Remove</button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={label}>Group</div>
+          {newName == null ? (
+            <select
+              className={styles.filterInput}
+              value={current}
+              onChange={e => (e.target.value === '__new' ? setNewName('') : onSetGroup(name, e.target.value || null))}
+              aria-label={`Group for ${name}`}
+            >
+              <option value="">No group (on its own)</option>
+              {groups.map(g => <option key={g.name} value={g.name}>{g.name}</option>)}
+              <option value="__new">+ New group...</option>
+            </select>
+          ) : (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                className={styles.filterInput}
+                style={{ flex: 1, minWidth: 0 }}
+                placeholder="Group name"
+                value={newName}
+                autoFocus
+                onChange={e => setNewName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') addNew(); }}
+              />
+              <button type="button" style={{ ...btn, opacity: nameOk ? 1 : 0.5 }} disabled={!nameOk} onClick={addNew}>Add</button>
+              <button type="button" style={btn} onClick={() => setNewName(null)}>Cancel</button>
+            </div>
+          )}
+          {newName != null && trimmed && !nameOk && <div style={{ color: '#b91c1c', fontSize: '0.7rem' }}>A group already has that name</div>}
+        </div>
+      )}
+
+      <div style={{ borderTop: '1px solid var(--color-border, #E2E8F0)', paddingTop: 4 }}>
+        <label style={row} title="Saved: the line starts switched on or off on every visit">
+          <input type="checkbox" checked={!offDefault.has(name)} onChange={e => onDefaultChange(name, e.target.checked)} />
+          Visible by default
+        </label>
+        <label style={row} title="Saved: never drawn as its own line; on % of 100 it counts in Other">
+          <input type="checkbox" checked={excluded.includes(name)} onChange={e => onOtherChange(name, e.target.checked)} />
+          Count in Other by default
+        </label>
+      </div>
+      {onToggleHide && !isGroup && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button type="button" style={btn} onClick={() => onToggleHide(name)}>{hidden ? 'Unhide service' : 'Hide service'}</button>
+          <span style={{ ...muted, fontSize: '0.68rem' }}>{hidden ? 'Back into the counts' : 'Out of every count'}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const fmtPct = (v) => (v == null ? '-' : `${v.toFixed(1)}%`);
 
 // A period cell's numbers, the same in both modes: the % and what it's of.
@@ -340,6 +449,24 @@ export function ServiceTrends({
     return [...seen].sort((a, b) => a.localeCompare(b));
   }, [records]);
   const saveGroups = (patch) => updateSettings?.({ oppsServiceTrendGroups: { ...savedGroups, ...patch } });
+  // Move a service into a group (or out of every group with null). Putting
+  // a service in a group switches grouping on so the change shows.
+  const setServiceGroup = (service, groupName) => {
+    let next = savedGroups.groups.map(g => ({ ...g, services: g.services.filter(x => x !== service) }));
+    if (groupName) {
+      if (next.some(g => g.name === groupName)) next = next.map(g => (g.name === groupName ? { ...g, services: [...g.services, service] } : g));
+      else next = [...next, { name: groupName, services: [service] }];
+    }
+    next = next.filter(g => g.services.length > 0);
+    saveGroups({ groups: next, on: groupName ? true : savedGroups.on && next.length > 0 });
+  };
+  const [svcPopup, setSvcPopup] = useState(null);
+  const openSvcPopup = (e, name) => {
+    e.stopPropagation();
+    if (svcPopup?.name === name) { setSvcPopup(null); return; }
+    const r = e.currentTarget.getBoundingClientRect();
+    setSvcPopup({ name, left: r.left, top: r.bottom + 4 });
+  };
 
   const trend = useMemo(() => (mode === 'share'
     ? serviceShareTrend(records, { period, from, to, hidden: hiddenServices, groups: activeGroups })
@@ -450,7 +577,17 @@ export function ServiceTrends({
           {(colourMap.has(row.name) || (row.kind === 'total' && mode === 'closeRate')) && (
             <span style={{ width: 10, height: row.kind === 'total' ? 3 : 10, borderRadius: 2, background: colourOf(row.kind === 'total' ? OVERALL_KEY : row.name), flexShrink: 0 }} />
           )}
-          {row.name}
+          {row.kind === 'series' ? (
+            <button
+              type="button"
+              data-service-name={row.name}
+              onClick={(e) => openSvcPopup(e, row.name)}
+              title="Group, visible by default, count in Other"
+              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'inherit', textAlign: 'left', textDecoration: 'underline dotted', textUnderlineOffset: 3 }}
+            >{row.name}</button>
+          ) : row.name}
+          {excluded.includes(row.name) && <span style={{ ...muted, fontSize: '0.72rem' }} title="Counts in Other by default">(Other)</span>}
+          {linesOffDefault.has(row.name) && <span style={{ ...muted, fontSize: '0.72rem' }} title="Off by default">(off)</span>}
           {groupMembers.has(row.name) && (
             <span style={{ ...muted, fontSize: '0.72rem' }} title={groupMembers.get(row.name).join(', ')}>
               (group of {groupMembers.get(row.name).length})
@@ -496,7 +633,7 @@ export function ServiceTrends({
     }
     return cols;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trend, period, mode, scale, isMix, colourMap, onToggleHide, groupMembers]);
+  }, [trend, period, mode, scale, isMix, colourMap, onToggleHide, groupMembers, excluded, linesOffDefault, svcPopup]);
 
   const legend = [
     ...(mode === 'closeRate' ? [{ key: OVERALL_KEY, label: 'Overall', v: trend.rate }] : []),
@@ -592,6 +729,22 @@ export function ServiceTrends({
         )}
         <span className={styles.resultCount}>{summary}</span>
       </div>
+      {svcPopup && trend.series.some(s => s.key === svcPopup.name) && (
+        <ServiceSettingsPopup
+          popup={svcPopup}
+          groups={savedGroups.groups}
+          groupMembers={groupMembers}
+          offDefault={linesOffDefault}
+          excluded={excluded}
+          hidden={hiddenSet.has(svcPopup.name)}
+          onSetGroup={setServiceGroup}
+          onRemoveFromGroup={(sv) => setServiceGroup(sv, null)}
+          onDefaultChange={(k, shown) => onLineDefaultChange?.(k, shown)}
+          onOtherChange={(k, on) => setExcluded(on ? [...excluded.filter(x => x !== k), k].sort((a, b) => a.localeCompare(b)) : excluded.filter(x => x !== k))}
+          onToggleHide={onToggleHide}
+          onClose={() => setSvcPopup(null)}
+        />
+      )}
       {editingGroups && (
         <GroupEditor
           groups={savedGroups.groups}
