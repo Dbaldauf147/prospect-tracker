@@ -157,6 +157,7 @@ import { NewOppsDraftEmailModal } from './NewOppsDraftEmailModal';
 import { StageReach } from './StageReach';
 import { ServiceTrends } from './ServiceTrends';
 import { SourceTrends } from './SourceTrends';
+import { CloseRateDeepDive } from './CloseRateDeepDive';
 import {
   peMonthlyRows, peMonthlyTierRank, PE_MONTHLY_COLUMNS, PE_MONTHLY_DRAFT_DEFAULTS, resolvePeMonthlyDraftTemplate,
   buildPeMonthlyEmailHtml, downloadPeMonthlyOutlookDraft, peMonthlyRowStyle,
@@ -18938,6 +18939,11 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           onClick={() => setActiveTab('notSold')}
         >Not Sold Analysis</button>
         <button
+          className={activeTab === 'closeRates' ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab('closeRates')}
+          title="Close rate trends in one place: the Weekly email table, by source, by service and by stage, all exportable to Excel"
+        >Close Rates</button>
+        <button
           className={activeTab === 'stageDays' ? styles.tabActive : styles.tab}
           onClick={() => setActiveTab('stageDays')}
         >Days in Stage</button>
@@ -19572,6 +19578,15 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       )}
 
       {activeTab === 'coverage' && <Coverage settings={settings} updateSettings={updateSettings} />}
+
+      {activeTab === 'closeRates' && (
+        <CloseRateDeepDive
+          records={records}
+          hiddenServices={hiddenServices}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      )}
 
       {activeTab === 'notSold' && (
         <NotSoldAnalysis
