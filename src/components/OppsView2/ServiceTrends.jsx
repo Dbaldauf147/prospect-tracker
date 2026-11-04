@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -166,8 +167,8 @@ const MODES = {
     title: 'Avg deal size',
     dateLabel: 'Started',
     defaultPeriod: 'quarter',
-    blurb: 'Of each service\'s opps that started in a period (by Start Date, open or closed) with a Quoted Amount, the average Quoted Amount. An opp with several services counts its whole amount toward each. Overall counts each opp once, whatever its services. Opps with no Quoted Amount are left out.',
-    soldBlurb: 'Of each service\'s Sold opps that started in a period (by Start Date) with a Quoted Amount, the average Quoted Amount. An opp with several services counts its whole amount toward each. Overall counts each opp once, whatever its services.',
+    blurb: 'Of each service\'s opps that started in a period (by Start Date, open or closed) with a Quoted Amount, the average Quoted Amount. Overall counts each opp once, at its full amount, whatever its services. Opps with no Quoted Amount are left out.',
+    soldBlurb: 'Of each service\'s Sold opps that started in a period (by Start Date) with a Quoted Amount, the average Quoted Amount. Overall counts each opp once, at its full amount, whatever its services.',
     empty: 'No opps with a Start Date and a Quoted Amount match these filters.',
     tableId: 'opps2-service-deal-size-trend',
     exportName: 'Avg deal size by service',
@@ -179,6 +180,140 @@ const DEAL_SETS = [
   { key: 'all', label: 'All quoted', title: 'Every opp with a Quoted Amount, open or closed' },
   { key: 'sold', label: 'Sold only', title: 'Only Sold opps: the average won deal' },
 ];
+
+// Deal size mode: how an opp with several services is credited.
+const SPLITS = [
+  { key: 'full', label: 'Full to each', title: 'An opp scoped "A, B" counts its whole Quoted Amount toward A and toward B' },
+  { key: 'split', label: 'Split evenly', title: 'An opp scoped "A, B" counts half its Quoted Amount toward A and half toward B' },
+];
+const SPLIT_BLURB = {
+  full: 'An opp with several services counts its whole amount toward each.',
+  split: 'An opp with several services is split evenly: a $30,000 opp scoped "A, B, C" counts $10,000 toward each.',
+};
+
+/**
+ * The popup behind one Avg deal size number: the opps averaged, what each
+ * one put toward the line, and the sum / count that makes the average.
+ * Chips across the top switch between Overall and the services that have
+ * opps in the same period, so a click on the chart can be followed down
+ * to any line. `onOpenOpp` (optional) opens an opp's details.
+ */
+function DealBreakdown({ trend, pick, period, split, sold, colourOf, onPick, onClose, onOpenOpp, settings, updateSettings }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const p = pick.period;
+  const isOverall = pick.key === OVERALL_KEY;
+  const series = isOverall ? null : trend.series.find(x => x.key === pick.key);
+  const src = useMemo(() => (isOverall
+    ? (p == null ? { opps: trend.opps, sum: trend.sum, sized: trend.sized, avg: trend.avg } : trend.overall[p])
+    : series && (p == null ? series : series.byPeriod[p])), [isOverall, p, trend, series]);
+  const opps = useMemo(() => [...(src?.opps || [])].sort((a, b) => b.counted - a.counted), [src]);
+  const chips = [OVERALL_KEY, ...trend.series.filter(x => (p == null ? x.sized : x.byPeriod[p]?.sized) > 0).map(x => x.key)];
+  const when = p == null ? 'whole window' : periodLabel(p, period);
+  const name = isOverall ? 'Overall' : pick.key;
+  const shared = opps.filter(o => o.of > 1).length;
+  const multi = opps.filter(o => servicesOf(o.r).length > 1).length;
+  const rows = opps.map((o, i) => ({ ...o, id: o.r._id || `${i}` }));
+  const columns = [
+    { key: 'account', label: 'Account', defaultWidth: 200, render: (o) => String(o.r['Account'] || '').trim() || '-', getFilterValue: (o) => String(o.r['Account'] || ''), exportValue: (o) => String(o.r['Account'] || '') },
+    { key: 'scope', label: 'Scope', defaultWidth: 230, render: (o) => o.r['Scope'] || '-', getFilterValue: (o) => String(o.r['Scope'] || ''), exportValue: (o) => String(o.r['Scope'] || '') },
+    { key: 'stage', label: 'Stage', defaultWidth: 110, render: (o) => o.r['Stage'] || '-', getFilterValue: (o) => String(o.r['Stage'] || ''), exportValue: (o) => String(o.r['Stage'] || '') },
+    { key: 'start', label: 'Start Date', defaultWidth: 110, render: (o) => o.r['Start Date'] || '-', getFilterValue: (o) => String(o.r['Start Date'] || ''), exportValue: (o) => String(o.r['Start Date'] || '') },
+    {
+      key: 'amount', label: 'Quoted Amount', defaultWidth: 130,
+      render: (o) => <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(o.amount)}</div>,
+      getSortValue: (o) => o.amount, getFilterValue: (o) => fmtMoney(o.amount), exportValue: (o) => o.amount,
+    },
+    {
+      key: 'counted', label: isOverall ? 'Counted' : `Counted toward ${name}`, defaultWidth: 210,
+      render: (o) => (
+        <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }} title={o.of > 1 ? `${fmtMoney(o.amount)} shared over the ${o.of} services on the Scope` : 'The whole Quoted Amount'}>
+          {fmtMoney(o.counted)}
+          {o.of > 1 && <span style={{ ...muted, fontWeight: 400 }}> ({Math.round((o.counted / o.amount) * o.of)}/{o.of} of it)</span>}
+        </div>
+      ),
+      getSortValue: (o) => o.counted, getFilterValue: (o) => fmtMoney(o.counted), exportValue: (o) => o.counted,
+    },
+  ];
+  const chip = (k) => {
+    const on = k === pick.key;
+    return (
+      <button
+        key={k}
+        type="button"
+        onClick={() => onPick({ key: k, period: p })}
+        className={on ? styles.notSoldYearOn : styles.notSoldYear}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+      >
+        <span style={{ width: 8, height: k === OVERALL_KEY ? 3 : 8, borderRadius: k === OVERALL_KEY ? 0 : 999, background: colourOf(k) }} />
+        {k === OVERALL_KEY ? 'Overall' : k}
+      </button>
+    );
+  };
+  return createPortal(
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+    >
+      <div
+        role="dialog"
+        aria-label={`${name}, ${when}: deal size breakdown`}
+        onClick={e => e.stopPropagation()}
+        style={{ background: 'var(--color-surface, #fff)', color: 'var(--color-text)', borderRadius: 8, padding: '1.1rem 1.25rem', width: 'min(1100px, 100%)', maxHeight: '86vh', display: 'flex', flexDirection: 'column', gap: '0.6rem', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <h3 style={{ margin: 0, fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ width: 12, height: isOverall ? 3 : 12, borderRadius: isOverall ? 0 : 999, background: colourOf(pick.key) }} />
+            {name}, {when}
+            <span style={{ ...muted, fontWeight: 400, fontSize: '0.8rem' }}>Avg deal size breakdown</span>
+          </h3>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ background: 'transparent', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: 'inherit' }}>×</button>
+        </div>
+        <div className={styles.notSoldYears} style={{ flexWrap: 'wrap' }}>
+          <span className={styles.filterLabel} style={{ marginRight: 2 }}>Line</span>
+          {chips.map(chip)}
+        </div>
+        {!src || !src.sized ? (
+          <div style={{ padding: '1rem', ...muted }}>No opps with a Quoted Amount here.</div>
+        ) : (
+          <>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0.4rem 1rem', padding: '0.6rem 0.75rem', border: '1px solid var(--color-border, #E2E8F0)', borderRadius: 6, background: 'var(--color-surface-alt, #F8FAFC)', fontSize: '0.85rem' }}>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                {fmtMoney(src.sum)} counted <span style={muted}>÷</span> {src.sized} opp{src.sized === 1 ? '' : 's'} <span style={muted}>=</span>{' '}
+                <strong style={{ fontSize: '1.05rem' }}>{fmtMoney(src.avg)}</strong> average
+              </span>
+              <span style={{ ...muted, fontSize: '0.78rem' }}>
+                {isOverall
+                  ? `Each ${sold ? 'Sold ' : ''}opp counts once at its full Quoted Amount${multi ? `, including the ${multi} with several services` : ''}.`
+                  : split
+                    ? (shared ? `${shared} of these opp${shared === 1 ? ' has' : 's have'} several services, so only ${name}'s even share of the amount is counted. Switch to Full to each to count the whole amount.` : `None of these opps share their amount with another service, so Split evenly and Full to each give the same average here.`)
+                    : (multi ? `${multi} of these opp${multi === 1 ? ' has' : 's have'} other services too, and the whole amount still counts toward ${name}. Switch to Split evenly to count only ${name}'s share.` : `Each opp here is ${name} only, so its whole amount counts.`)}
+              </span>
+            </div>
+            <div style={{ flex: '0 1 auto', minHeight: 220, height: Math.min(130 + rows.length * 36, 560), display: 'flex', flexDirection: 'column' }}>
+              <DataTable
+                tableId="opps2-service-deal-size-breakdown"
+                columns={columns}
+                rows={rows}
+                alwaysVisible={['account']}
+                onRowClick={onOpenOpp ? (o) => o.r._id && onOpenOpp(o.r._id) : undefined}
+                exportFileName={`Avg deal size, ${name}, ${when}`}
+                emptyMessage="No opps"
+                settings={settings}
+                updateSettings={updateSettings}
+              />
+            </div>
+            {onOpenOpp && <div style={{ ...muted, fontSize: '0.72rem' }}>Click a row to open the opp.</div>}
+          </>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
 
 // Saved service groups for both trend subtabs: settings.oppsServiceTrendGroups
 // = { on, groups: [{ name, services }] }. `on` is the Group toggle.
@@ -426,7 +561,7 @@ function TrendTooltip({ active, payload, mode, scale, trend, lines, period, show
           <span style={{ ...muted, minWidth: 48, textAlign: 'right' }}>{countOf(i)}</span>
         </div>
       ))}
-      <div style={{ ...muted, marginTop: 4 }}>{mix ? 'Service count / all services on the opps started' : mode === 'share' ? 'Opps with the service / opps started' : mode === 'dealSize' ? 'Average Quoted Amount, over the opps with one' : 'Won / decided (Sold + Not Sold)'}</div>
+      <div style={{ ...muted, marginTop: 4 }}>{mix ? 'Service count / all services on the opps started' : mode === 'share' ? 'Opps with the service / opps started' : mode === 'dealSize' ? 'Average Quoted Amount, over the opps with one. Click for the breakdown' : 'Won / decided (Sold + Not Sold)'}</div>
     </div>
   );
 }
@@ -456,11 +591,17 @@ export function ServiceTrends({
   picked = [], onPickedChange, linesOff, onLineShownChange,
   linesOffDefault = new Set(), onLineDefaultChange,
   hiddenSet = new Set(), showHidden = false, onShowHiddenChange, onToggleHide,
+  onOpenOpp,
 }) {
   const cfg = MODES[mode] || MODES.share;
   const [period, setPeriod] = useState(cfg.defaultPeriod);
   const [scaleChoice, setScale] = useState('mix');
   const [dealSet, setDealSet] = useState('all');
+  const [splitChoice, setSplit] = useState('full');
+  const split = mode === 'dealSize' && splitChoice === 'split';
+  // The deal size breakdown popup: { key, period } (period null = whole window).
+  const [breakdown, setBreakdown] = useState(null);
+  const hoverPeriod = useRef(null);
   const hasOverall = mode === 'closeRate' || mode === 'dealSize';
   const fmt = fmtOf(mode);
   const scale = mode === 'share' ? scaleChoice : 'opps';
@@ -504,9 +645,9 @@ export function ServiceTrends({
   const trend = useMemo(() => {
     const opts = { period, from, to, hidden: hiddenServices, groups: activeGroups };
     if (mode === 'share') return serviceShareTrend(records, opts);
-    if (mode === 'dealSize') return serviceDealSizeTrend(records, { ...opts, sold: dealSet === 'sold' });
+    if (mode === 'dealSize') return serviceDealSizeTrend(records, { ...opts, sold: dealSet === 'sold', split });
     return serviceCloseRateTrend(records, opts);
-  }, [mode, records, period, from, to, hiddenServices, activeGroups, dealSet]);
+  }, [mode, records, period, from, to, hiddenServices, activeGroups, dealSet, split]);
 
   const allKeys = useMemo(() => trend.series.map(s => s.key), [trend]);
   const excluded = useMemo(
@@ -570,7 +711,7 @@ export function ServiceTrends({
     if (mode === 'closeRate') {
       rows.push({ id: OVERALL_KEY, name: 'Overall', kind: 'total', s: { wins: trend.wins, decided: trend.decided, rate: trend.rate, byPeriod: trend.overall } });
     } else if (mode === 'dealSize') {
-      rows.push({ id: OVERALL_KEY, name: 'Overall', kind: 'total', s: { sized: trend.sized, sum: trend.sum, avg: trend.avg, byPeriod: trend.overall } });
+      rows.push({ id: OVERALL_KEY, name: 'Overall', kind: 'total', s: { sized: trend.sized, sum: trend.sum, avg: trend.avg, opps: trend.opps, byPeriod: trend.overall } });
     } else {
       if (isMix) rows.push({ id: TAGS_KEY, name: 'Services on those opps', kind: 'total' });
       rows.push({ id: OVERALL_KEY, name: 'Opps started', kind: 'total' });
@@ -606,6 +747,20 @@ export function ServiceTrends({
       const c = cell(row, p);
       const bold = row.kind === 'total' || p == null;
       if (c.pct == null) return <div style={{ textAlign: 'right', fontWeight: bold ? 700 : 400, ...(c.text === '-' ? muted : null) }} title={c.title}>{c.text}</div>;
+      if (mode === 'dealSize') {
+        return (
+          <div style={{ textAlign: 'right' }}>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setBreakdown({ key: row.kind === 'total' ? OVERALL_KEY : row.name, period: p }); }}
+              title={`${c.title}. Click to see the opps behind it.`}
+              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'var(--color-link, #2563EB)', fontWeight: bold ? 700 : 400, fontVariantNumeric: 'tabular-nums', textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: 3 }}
+            >
+              {c.pct} <span style={{ ...muted, fontWeight: 400 }}>({c.count})</span>
+            </button>
+          </div>
+        );
+      }
       return (
         <div style={{ textAlign: 'right', fontWeight: bold ? 700 : 400, fontVariantNumeric: 'tabular-nums' }} title={c.title}>
           {c.pct} <span style={{ ...muted, fontWeight: 400 }}>({c.count})</span>
@@ -679,6 +834,23 @@ export function ServiceTrends({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trend, period, mode, scale, isMix, hasOverall, colourMap, onToggleHide, groupMembers, excluded, linesOffDefault, svcPopup]);
 
+  // "See an example": the busiest service cell with an opp that carries
+  // other services too, so the popup shows the Full / Split difference.
+  const exampleCell = useMemo(() => {
+    if (mode !== 'dealSize') return null;
+    let best = null;
+    for (const sr of trend.series) {
+      for (const p of trend.periods) {
+        const c = sr.byPeriod[p];
+        if (!c.sized) continue;
+        const multi = c.opps.filter(o => servicesOf(o.r).length > 1).length;
+        const score = (multi ? 1000 : 0) + Math.min(c.sized, 12) * 10 + multi;
+        if (!best || score > best.score) best = { key: sr.key, period: p, score };
+      }
+    }
+    return best;
+  }, [mode, trend]);
+
   const legend = [
     ...(mode === 'closeRate' ? [{ key: OVERALL_KEY, label: 'Overall', v: trend.rate }] : []),
     ...(mode === 'dealSize' ? [{ key: OVERALL_KEY, label: 'Overall', v: trend.avg }] : []),
@@ -733,6 +905,20 @@ export function ServiceTrends({
                 title={o.title}
                 className={dealSet === o.key ? styles.notSoldYearOn : styles.notSoldYear}
                 onClick={() => setDealSet(o.key)}
+              >{o.label}</button>
+            ))}
+          </span>
+        )}
+        {mode === 'dealSize' && (
+          <span className={styles.notSoldYears}>
+            <span className={styles.filterLabel} style={{ marginRight: 2 }} title="How an opp with several services on its Scope is credited">Multi-service</span>
+            {SPLITS.map(o => (
+              <button
+                key={o.key}
+                type="button"
+                title={o.title}
+                className={splitChoice === o.key ? styles.notSoldYearOn : styles.notSoldYear}
+                onClick={() => setSplit(o.key)}
               >{o.label}</button>
             ))}
           </span>
@@ -818,6 +1004,17 @@ export function ServiceTrends({
       <div style={{ fontSize: '0.72rem', ...muted }}>
         {grouping && `Grouped: ${activeGroups.map(g => g.name).join(', ')}. `}
         {isMix ? MIX_BLURB : mode === 'dealSize' && dealSet === 'sold' ? cfg.soldBlurb : cfg.blurb}
+        {mode === 'dealSize' && <> {SPLIT_BLURB[splitChoice]} Click any amount in the table, or a point on the chart, to see the opps behind it.</>}
+        {exampleCell && (
+          <>
+            {' '}
+            <button
+              type="button"
+              onClick={() => setBreakdown({ key: exampleCell.key, period: exampleCell.period })}
+              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'var(--color-link, #2563EB)', fontWeight: 600, textDecoration: 'underline' }}
+            >See an example: {exampleCell.key}, {periodLabel(exampleCell.period, period)}</button>
+          </>
+        )}
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -899,7 +1096,23 @@ export function ServiceTrends({
                     )}
                   </AreaChart>
                 ) : (
-                <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+                <LineChart
+                  data={chartData}
+                  margin={{ top: 8, right: 16, left: 0, bottom: 4 }}
+                  // Recharts 3 reports the hovered index (sometimes as a
+                  // string); the last hovered period covers a click that
+                  // lands before the tooltip has caught up.
+                  onMouseMove={mode === 'dealSize' ? (st) => {
+                    const idx = st?.activeTooltipIndex ?? st?.activeIndex;
+                    if (idx != null && idx !== '') hoverPeriod.current = chartData[Number(idx)]?.period ?? null;
+                  } : undefined}
+                  onClick={mode === 'dealSize' ? (st) => {
+                    const idx = st?.activeTooltipIndex ?? st?.activeIndex;
+                    const pp = (idx != null && idx !== '' ? chartData[Number(idx)]?.period : null) ?? hoverPeriod.current;
+                    if (pp) setBreakdown({ key: OVERALL_KEY, period: pp });
+                  } : undefined}
+                  style={mode === 'dealSize' ? { cursor: 'pointer', outline: 'none' } : undefined}
+                >
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval="preserveStartEnd" minTickGap={8} />
                   <YAxis tick={{ fontSize: 11, fill: '#64748B' }} tickLine={false} axisLine={false} width={mode === 'dealSize' ? 56 : 44} domain={mode === 'closeRate' ? [0, 100] : [0, 'auto']} tickFormatter={mode === 'dealSize' ? fmtMoneyAxis : (v) => `${v}%`} />
@@ -936,7 +1149,7 @@ export function ServiceTrends({
                 alwaysVisible={['name']}
                 rowStyle={(row) => (row._hidden ? { opacity: 0.5 } : undefined)}
                 rowGroup={(row) => (row.kind === 'total' ? 1 : 0)}
-                exportFileName={`${cfg.exportName}${mode === 'dealSize' && dealSet === 'sold' ? ' (Sold)' : ''} by ${period}`}
+                exportFileName={`${cfg.exportName}${mode === 'dealSize' && dealSet === 'sold' ? ' (Sold)' : ''}${split ? ' (split)' : ''} by ${period}`}
                 emptyMessage={cfg.empty}
                 settings={settings}
                 updateSettings={updateSettings}
@@ -945,6 +1158,21 @@ export function ServiceTrends({
           </>
         )}
       </div>
+      {mode === 'dealSize' && breakdown && (
+        <DealBreakdown
+          trend={trend}
+          pick={breakdown}
+          period={period}
+          split={split}
+          sold={dealSet === 'sold'}
+          colourOf={colourOf}
+          onPick={setBreakdown}
+          onClose={() => setBreakdown(null)}
+          onOpenOpp={onOpenOpp ? (id) => { setBreakdown(null); onOpenOpp(id); } : undefined}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      )}
     </div>
   );
 }

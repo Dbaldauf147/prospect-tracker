@@ -77,4 +77,16 @@ const dsSold = serviceDealSizeTrend(dsRecs, { period: 'year', sold: true });
 check('deal size: sold only', [dsSold.sized, dsSold.series.find(s => s.key === 'A').avg], [2, 8000]);
 check('deal size: nothing sized', serviceDealSizeTrend([], {}).periods, []);
 
+const dsSplit = serviceDealSizeTrend(dsRecs, { period: 'quarter', split: true });
+const sA = dsSplit.series.find(s => s.key === 'A');
+check('deal size split: shared opp halves', sA.byPeriod['2025-Q1'].opps.map(o => o.counted), [5000, 20000]);
+check('deal size split: A average', [sA.byPeriod['2025-Q1'].avg, sA.avg], [12500, (5000 + 20000 + 6000) / 3]);
+check('deal size split: B gets half', dsSplit.series.find(s => s.key === 'B').avg, 5000);
+check('deal size split: overall still full amounts', dsSplit.avg, 12000);
+const dsSplitG = serviceDealSizeTrend(dsRecs, { period: 'year', split: true, groups: [{ name: 'AB', services: ['A', 'B'] }] });
+check('deal size split: a group gets both shares', dsSplitG.series.find(s => s.key === 'AB').opps.map(o => o.counted), [10000, 20000, 6000]);
+const dsSplitH = serviceDealSizeTrend(dsRecs, { period: 'year', split: true, hidden: ['B'] });
+check('deal size split: hiding B keeps A at half', dsSplitH.series.find(s => s.key === 'A').opps[0].counted, 5000);
+check('deal size: cell lists its opps', ds.overall['2025-Q1'].opps.length, 2);
+
 process.exit(failures ? 1 : 0);

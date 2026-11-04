@@ -19421,6 +19421,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           showHidden={showHidden}
           onShowHiddenChange={setShowHidden}
           onToggleHide={toggleHideService}
+          onOpenOpp={setInfoOppId}
           settings={settings}
           updateSettings={updateSettings}
         />
