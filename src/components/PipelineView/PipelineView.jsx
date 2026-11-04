@@ -4,6 +4,8 @@
 // the layout persists across reloads.
 
 import { Component, createContext, Fragment, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { PipelineEvents } from './PipelineEvents';
+import { sanitizeEvents } from '../../utils/pipelineEvents';
 import styles from './PipelineView.module.css';
 import { PipelineFunnel } from './PipelineFunnel';
 import { dbGet, dbDelete } from '../../utils/db';
@@ -221,6 +223,8 @@ const DEFAULT_STATE = {
   // KPI Trends targets, { [kpiKey]: number } in the units the box is typed
   // in (utils/kpiTrends.js). Start unset.
   kpiTargets: {},
+  // Events table near the bottom: { id, name, date } (PipelineEvents.jsx).
+  events: [],
 };
 
 // Per-stage numeric fields. Anything not in this list is left to the
@@ -307,6 +311,7 @@ function fromRecord(saved) {
     wentWellNotes: typeof saved.wentWellNotes === 'string' ? saved.wentWellNotes : '',
     notWellNotes: typeof saved.notWellNotes === 'string' ? saved.notWellNotes : '',
     kpiTargets: sanitizeKpiTargets(saved.kpiTargets),
+    events: sanitizeEvents(saved.events),
   };
 }
 
@@ -842,10 +847,10 @@ function ServiceCoverageSection({ prospects = [], cdmName = '', settings = {}, o
   );
 }
 
-export function PipelineView({ prospects = [], cdmName = '', settings = {}, onSelectProspect }) {
+export function PipelineView({ prospects = [], cdmName = '', settings = {}, updateSettings, onSelectProspect }) {
   return (
     <PipelineRootBoundary>
-      <PipelineViewInner prospects={prospects} cdmName={cdmName} settings={settings} onSelectProspect={onSelectProspect} />
+      <PipelineViewInner prospects={prospects} cdmName={cdmName} settings={settings} updateSettings={updateSettings} onSelectProspect={onSelectProspect} />
     </PipelineRootBoundary>
   );
 }
@@ -863,7 +868,7 @@ function readClientStores() {
   };
 }
 
-function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSelectProspect }) {
+function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, updateSettings, onSelectProspect }) {
   const [state, setState] = useState(DEFAULT_STATE);
   const [hydrated, setHydrated] = useState(false);
   // What storage last gave us, as JSON. The save effect writes only when the
@@ -2620,6 +2625,16 @@ function PipelineViewInner({ prospects = [], cdmName = '', settings = {}, onSele
           <div className={styles.notesBody}>
             <NotesBox value={state.notesEfficientTime} onCommit={(v) => setField('notesEfficientTime', v)} minRows={6} />
           </div>
+        </div>
+
+        <div className={styles.section}>
+          <div className={styles.sectionTitle}><EL id="events-title">Events</EL></div>
+          <PipelineEvents
+            events={state.events || []}
+            setEvents={(fn) => setState(s => ({ ...s, events: fn(s.events || []) }))}
+            settings={settings}
+            updateSettings={updateSettings}
+          />
         </div>
 
         {/* What I Tried on the left; on the right, the two buckets each
