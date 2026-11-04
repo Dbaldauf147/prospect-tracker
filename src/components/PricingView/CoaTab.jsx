@@ -7,26 +7,28 @@ import styles from './CoaTab.module.css';
 // user's settings (settings.pricingCoaItems) and follows them to their other
 // machine rather than being cleared with the workbook.
 //
-// Each row: { id, item, approved }.
+// Each row: { id, item, approved, notes }.
 const SETTINGS_KEY = 'pricingCoaItems';
 
 const newId = () => `coa-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
 // Typed into a draft and saved on blur / Enter, so every keystroke doesn't
 // write the settings document.
-function ItemInput({ value, onSave }) {
+// allowEmpty lets a cell be cleared (Notes); the COA Item itself can't be.
+function CellInput({ value, onSave, label, placeholder, allowEmpty = false }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => { setDraft(value); }, [value]);
   const commit = () => {
     const next = draft.trim();
-    if (next && next !== value) onSave(next);
+    if ((next || allowEmpty) && next !== value) onSave(next);
     else setDraft(value);
   };
   return (
     <input
       className={styles.cellInput}
       value={draft}
-      aria-label="COA item"
+      aria-label={label}
+      placeholder={placeholder}
       onChange={e => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={e => {
@@ -50,7 +52,7 @@ export function CoaTab({ settings, updateSettings }) {
   const addItem = () => {
     const item = newItem.trim();
     if (!item) return;
-    save([...items, { id: newId(), item, approved: false }]);
+    save([...items, { id: newId(), item, approved: false, notes: '' }]);
     setNewItem('');
   };
 
@@ -69,7 +71,7 @@ export function CoaTab({ settings, updateSettings }) {
       getSortValue: (row) => row.item.toLowerCase(),
       getFilterValue: (row) => row.item,
       exportValue: (row) => row.item,
-      render: (row) => <ItemInput value={row.item} onSave={(item) => patchRow(row.id, { item })} />,
+      render: (row) => <CellInput label="COA item" value={row.item} onSave={(item) => patchRow(row.id, { item })} />,
     },
     {
       key: 'approved',
@@ -87,6 +89,23 @@ export function CoaTab({ settings, updateSettings }) {
           />
           <span className={row.approved ? styles.yes : styles.no}>{row.approved ? 'Yes' : 'No'}</span>
         </label>
+      ),
+    },
+    {
+      key: 'notes',
+      label: 'Notes',
+      defaultWidth: 320,
+      getSortValue: (row) => (row.notes || '').toLowerCase(),
+      getFilterValue: (row) => row.notes || '',
+      exportValue: (row) => row.notes || '',
+      render: (row) => (
+        <CellInput
+          label="Notes"
+          placeholder="Add a note"
+          allowEmpty
+          value={row.notes || ''}
+          onSave={(notes) => patchRow(row.id, { notes })}
+        />
       ),
     },
     {
