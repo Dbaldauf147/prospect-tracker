@@ -238,6 +238,9 @@ export function closeRateTrendByStage(oppsRecords, { months = 6, nowMs = Date.no
 
   let closed = 0;
   let closedRolling = 0;
+  // The opps behind the table (the months shown or the trailing year), for
+  // an export's Details sheet: which month column, if any, and the stages.
+  const opps = [];
   for (const r of Array.isArray(oppsRecords) ? oppsRecords : []) {
     const entry = closedOppEntry(r);
     if (!entry) continue;
@@ -253,6 +256,12 @@ export function closeRateTrendByStage(oppsRecords, { months = 6, nowMs = Date.no
     if (col === undefined && !inRolling) continue;
     if (col !== undefined) closed += 1;
     if (inRolling) closedRolling += 1;
+    opps.push({
+      r, won: entry.stage === 'Sold',
+      month: col === undefined ? null : monthCols[col].label,
+      inRolling,
+      counted: defs.filter(df => df.num != null && df.test(r)).map(df => df.short),
+    });
     for (let i = 0; i < defs.length; i += 1) {
       if (!defs[i].test(r)) continue;
       if (col !== undefined) buckets[i][col].push(entry);
@@ -275,7 +284,7 @@ export function closeRateTrendByStage(oppsRecords, { months = 6, nowMs = Date.no
     };
   });
 
-  return { months: monthCols, rows, closed, closedRolling };
+  return { months: monthCols, rows, closed, closedRolling, opps };
 }
 
 // A close rate as the app prints it, everywhere it is printed. Rounded to

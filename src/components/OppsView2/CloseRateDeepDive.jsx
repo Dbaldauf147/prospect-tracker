@@ -20,6 +20,7 @@ import {
 import {
   stageCloseRateTrend, applyCloseRateFilters, trendTableRows, trendSheetRows,
   weeklyTrendSheetRows, closedOppSheetRows, stageReachSheetRows, fmtRate,
+  oppDetailSheetRows, stageReachDetailRows,
   fittedRateAxis,
 } from '../../utils/closeRateDeepDive';
 import {
@@ -148,6 +149,7 @@ function TrendSection({
   title, subtitle, nameHeader, trend, period, tableId, exportName, note, keepOrder = false, fitYAxis = false,
   colours, onColourChange, onResetColours, labelled = () => false, onLabelToggle, target = null, onTargetChange,
   lineState, exclude, picked, onNameClick, nameBadge, headerExtra, filterBar, settings, updateSettings,
+  countedHeader = 'Counted toward',
 }) {
   // Colour by entity: fixed by the series' place in the full list (most
   // decided first), so hiding one in the legend never repaints the rest.
@@ -268,6 +270,9 @@ function TrendSection({
   }, [trend, period, nameHeader, colourOf, candidates, onNameClick, nameBadge]);
 
   const detail = useMemo(() => trendSheetRows(trend, { period, nameHeader }), [trend, period, nameHeader]);
+  // The Details sheet: every opp behind the chart, the whole record. Built
+  // when an export asks for it rather than on every render.
+  const details = () => oppDetailSheetRows(trend.opps, { period, countedHeader });
   // Tables start folded away; the chart is what a visit is for, and the
   // header's Export Excel writes the full table either way.
   const [showTable, setShowTable] = useState(false);
@@ -296,8 +301,8 @@ function TrendSection({
               <button
                 type="button"
                 className={styles.smallBtn}
-                onClick={() => writeWorkbook(exportName, [{ name: exportName, rows: detail }])}
-                title="Every row and period with its close rate and Sold / Closed, whether or not the table is showing"
+                onClick={() => writeWorkbook(exportName, [{ name: exportName, rows: detail }, { name: 'Details', rows: details() }])}
+                title="Every row and period with its close rate and Sold / Closed, whether or not the table is showing, plus a Details tab of every opp behind the chart"
               >Export Excel</button>
             </>
           )}
@@ -392,7 +397,7 @@ function TrendSection({
               defaultSort={keepOrder ? undefined : { key: 'decided', direction: 'desc' }}
               emptyMessage="No closed opps in this window."
               exportFileName={exportName}
-              exportExtraSheets={[{ name: 'Sold-Closed detail', rows: detail }]}
+              exportExtraSheets={[{ name: 'Sold-Closed detail', rows: detail }, { name: 'Details', rows: details() }]}
               settings={settings}
               updateSettings={updateSettings}
             />
@@ -863,8 +868,19 @@ export function CloseRateDeepDive({
     }
   };
 
+  // The Weekly table's opps: each in its month column, or in the trailing
+  // year only (the 12-month figure reaches further back than the months).
+  const weeklyDetails = () => oppDetailSheetRows(weekly.opps, {
+    periodHeader: 'Month',
+    periodText: (o) => o.month || 'Trailing 12 months only',
+    countedHeader: 'Stages reached',
+    extra: (o) => ({ 'In trailing 12 months': o.inRolling ? 'Yes' : '' }),
+  });
+  const reachDetails = () => stageReachDetailRows(reachRecords, { period: fReach.period, closedOnly: reachState.closedOnly, from: reachState.from, to: reachState.to });
+
   const exportWeekly = () => writeWorkbook('Close rate trend (Weekly email)', [
     { name: 'Weekly email trend', rows: weeklyTrendSheetRows(weekly) },
+    { name: 'Details', rows: weeklyDetails() },
   ]);
 
   return (
@@ -964,6 +980,7 @@ export function CloseRateDeepDive({
         filterBar={chartBar('source', { filters: fSource, off: linesOff.source })}
         {...colourProps('source')}
         exportName="Close rate by source"
+        countedHeader="Source counted"
         fitYAxis
         settings={settings}
         updateSettings={updateSettings}
@@ -979,6 +996,7 @@ export function CloseRateDeepDive({
         filterBar={chartBar('service', { filters: fService, off: serviceLinesOff || new Set() })}
         {...colourProps('service')}
         exportName="Close rate by service"
+        countedHeader="Services counted"
         fitYAxis
         lineState={serviceLineState}
         exclude={excludedServices}
@@ -1048,6 +1066,7 @@ export function CloseRateDeepDive({
         filterBar={chartBar('stage', { filters: fStage, off: linesOff.stage })}
         {...colourProps('stage')}
         exportName="Close rate by stage"
+        countedHeader="Stages reached"
         fitYAxis
         keepOrder
         note="An opp counts toward every stage it reached, so Stage 3 has the widest base and Stage 6 the narrowest; the rows aren't meant to add up. Overall is every closed opp."
@@ -1067,8 +1086,11 @@ export function CloseRateDeepDive({
           <button
             type="button"
             className={styles.smallBtn}
-            onClick={() => writeWorkbook('Stage reach', [{ name: 'Stage reach', rows: stageReachSheetRows(reachRecords, { period: fReach.period, closedOnly: reachState.closedOnly, from: reachState.from, to: reachState.to }) }])}
-            title="Each period's % and count per stage, whether or not the table is showing"
+            onClick={() => writeWorkbook('Stage reach', [
+              { name: 'Stage reach', rows: stageReachSheetRows(reachRecords, { period: fReach.period, closedOnly: reachState.closedOnly, from: reachState.from, to: reachState.to }) },
+              { name: 'Details', rows: reachDetails() },
+            ])}
+            title="Each period's % and count per stage, whether or not the table is showing, plus a Details tab of every opp behind it"
           >Export Excel</button>
         </div>
         {chartBar('reach', {

@@ -171,6 +171,8 @@ export function serviceCloseRateTrend(records, { period = 'year', from = '', to 
   const lookup = groupLookup(groups);
   const overall = new Map();
   const bySvc = new Map();
+  // The opps behind the figures, for the export's Details sheet.
+  const opps = [];
   let undated = 0;
   const bump = (map, p, won) => {
     const c = map.get(p) || { wins: 0, decided: 0 };
@@ -189,6 +191,7 @@ export function serviceCloseRateTrend(records, { period = 'year', from = '', to 
     const p = closePeriodOf(r, period);
     if (!p) { undated += 1; continue; }
     const won = stage === 'Sold';
+    opps.push({ r, period: p, won, counted: services });
     bump(overall, p, won);
     for (const s of services) {
       const e = bySvc.get(s) || { key: s, wins: 0, decided: 0, cells: new Map() };
@@ -208,7 +211,7 @@ export function serviceCloseRateTrend(records, { period = 'year', from = '', to 
     .map(e => ({ key: e.key, wins: e.wins, decided: e.decided, rate: pct(e.wins, e.decided), byPeriod: cellsOut(e.cells) }));
   let wins = 0; let decided = 0;
   for (const c of overall.values()) { wins += c.wins; decided += c.decided; }
-  return { periods, series, overall: cellsOut(overall), wins, decided, rate: pct(wins, decided), undated };
+  return { periods, series, overall: cellsOut(overall), wins, decided, rate: pct(wins, decided), undated, opps };
 }
 
 /**

@@ -672,6 +672,8 @@ export function closeRateTrend(records, opts = {}) {
   const bySource = new Map();
   const overall = new Map();
   const seen = new Set();
+  // The opps behind the figures, for the export's Details sheet.
+  const opps = [];
   let undated = 0;
   const add = (map, k, won) => {
     const c = map.get(k) || { wins: 0, decided: 0 };
@@ -685,6 +687,7 @@ export function closeRateTrend(records, opts = {}) {
     if (at.undated) { undated += 1; continue; }
     const won = at.stage === SOLD;
     const src = sourceOf(r);
+    opps.push({ r, period: at.period, won, counted: [src] });
     seen.add(at.period);
     add(overall, at.period, won);
     const s = bySource.get(src) || { key: src, wins: 0, decided: 0, cells: new Map() };
@@ -725,7 +728,7 @@ export function closeRateTrend(records, opts = {}) {
   }));
   let wins = 0; let decided = 0;
   for (const c of overall.values()) { wins += c.wins; decided += c.decided; }
-  return { periods, series, overall: cellsOut(overall), wins, decided, rate: rate(wins, decided), undated };
+  return { periods, series, overall: cellsOut(overall), wins, decided, rate: rate(wins, decided), undated, opps };
 }
 
 /** The close-rate chart as a sheet: a row per period, a rate column per source shown. */
