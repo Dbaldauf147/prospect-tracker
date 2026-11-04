@@ -18,8 +18,11 @@
 //                          Date) with a Quoted Amount above 0, the average
 //                          Quoted Amount for each service. An opp with
 //                          several services counts its whole amount toward
-//                          each (there's no per-service split to go on);
-//                          the overall average counts each opp once.
+//                          each, or with `split` an even share per service
+//                          (a $30k opp scoped "A, B, C" puts $10k on each);
+//                          the overall average counts each opp once, at its
+//                          full amount. Each cell keeps the opps behind it
+//                          (`opps`) for the click-through breakdown.
 //
 // Percentages are null where the period had nothing to measure, so a chart
 // leaves a gap rather than drawing a 0% that never happened.
@@ -220,6 +223,15 @@ export function serviceCloseRateTrend(records, { period = 'year', from = '', to 
  *   period    'month' | 'quarter' | 'year'
  *   from/to   ISO Start Date bounds, inclusive; blank = open
  *   sold      true = only Sold opps (the average won deal)
+ *   split     true = an opp's amount is shared evenly over the services
+ *             on its Scope, and each service is credited its share (a
+ *             group, the shares of its services on the opp); false = the
+ *             whole amount to each
+ *
+ *   Every cell (and series / overall) carries `opps`: [{ r, amount,
+ *   counted, of }], the opps averaged, with the amount credited to that
+ *   cell (`counted`) and how many services the amount was shared over
+ *   (`of`, 1 when not split).
  *   hidden    services left out of the series AND the overall (an opp is
  *             dropped only when every one of its services is hidden)
  *   groups    as serviceShareTrend (an opp's amount once toward a group)
@@ -227,17 +239,18 @@ export function serviceCloseRateTrend(records, { period = 'year', from = '', to 
  *   `unsized` counts the dated opps in the window left out for having no
  *   Quoted Amount above 0. avg is null where nothing was sized.
  */
-export function serviceDealSizeTrend(records, { period = 'quarter', from = '', to = '', sold = false, hidden = [], groups = [] } = {}) {
+export function serviceDealSizeTrend(records, { period = 'quarter', from = '', to = '', sold = false, split = false, hidden = [], groups = [] } = {}) {
   const hide = new Set(hidden || []);
   const lookup = groupLookup(groups);
   const overall = new Map();
   const bySvc = new Map();
   let undated = 0;
   let unsized = 0;
-  const bump = (map, p, amt) => {
-    const c = map.get(p) || { sized: 0, sum: 0 };
+  const bump = (map, p, item) => {
+    const c = map.get(p) || { sized: 0, sum: 0, opps: [] };
     c.sized += 1;
-    c.sum += amt;
+    c.sum += item.counted;
+    c.opps.push(item);
     map.set(p, c);
   };
   for (const r of records || []) {
@@ -250,27 +263,41 @@ export function serviceDealSizeTrend(records, { period = 'quarter', from = '', t
     const amt = parseMoney(r?.['Quoted Amount']);
     if (amt == null || !(amt > 0)) { unsized += 1; continue; }
     const p = startPeriodOf(r, period);
-    bump(overall, p, amt);
+    bump(overall, p, { r, amount: amt, counted: amt, of: 1 });
+    // Each series key's credit: the whole amount, or (split) one even
+    // share per raw service on the Scope that files under the key. Hidden
+    // services keep their share, so hiding one doesn't inflate the rest.
+    const raw = servicesOf(r);
+    const shares = new Map();
+    for (const sv of raw) {
+      if (hide.has(sv)) continue;
+      const k = lookup.get(sv) || sv;
+      if (hide.has(k)) continue;
+      shares.set(k, (shares.get(k) || 0) + 1);
+    }
     for (const s of services) {
-      const e = bySvc.get(s) || { key: s, sized: 0, sum: 0, cells: new Map() };
+      const counted = split ? (amt * (shares.get(s) || 0)) / raw.length : amt;
+      const item = { r, amount: amt, counted, of: split ? raw.length : 1 };
+      const e = bySvc.get(s) || { key: s, sized: 0, sum: 0, opps: [], cells: new Map() };
       e.sized += 1;
-      e.sum += amt;
-      bump(e.cells, p, amt);
+      e.sum += counted;
+      e.opps.push(item);
+      bump(e.cells, p, item);
       bySvc.set(s, e);
     }
   }
   const periods = overall.size ? periodsOf(overall.keys(), period) : [];
   const avg = (sum, n) => (n > 0 ? sum / n : null);
   const cellsOut = (cells) => Object.fromEntries(periods.map(p => {
-    const c = cells.get(p) || { sized: 0, sum: 0 };
-    return [p, { sized: c.sized, sum: c.sum, avg: avg(c.sum, c.sized) }];
+    const c = cells.get(p) || { sized: 0, sum: 0, opps: [] };
+    return [p, { sized: c.sized, sum: c.sum, avg: avg(c.sum, c.sized), opps: c.opps }];
   }));
   const series = [...bySvc.values()]
     .sort((a, b) => b.sized - a.sized || a.key.localeCompare(b.key))
-    .map(e => ({ key: e.key, sized: e.sized, sum: e.sum, avg: avg(e.sum, e.sized), byPeriod: cellsOut(e.cells) }));
-  let sized = 0; let sum = 0;
-  for (const c of overall.values()) { sized += c.sized; sum += c.sum; }
-  return { periods, series, overall: cellsOut(overall), sized, sum, avg: avg(sum, sized), undated, unsized };
+    .map(e => ({ key: e.key, sized: e.sized, sum: e.sum, avg: avg(e.sum, e.sized), opps: e.opps, byPeriod: cellsOut(e.cells) }));
+  let sized = 0; let sum = 0; const opps = [];
+  for (const c of overall.values()) { sized += c.sized; sum += c.sum; opps.push(...c.opps); }
+  return { periods, series, overall: cellsOut(overall), opps, sized, sum, avg: avg(sum, sized), undated, unsized };
 }
 
 export { periodLabel };
