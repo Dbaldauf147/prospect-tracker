@@ -537,3 +537,30 @@
   background: #fff;
   color: var(--color-text-muted);
 }
+
+.targetField {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.targetField input {
+  width: 3.2rem;
+  padding: 0.25rem 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-family: inherit;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tooltipTarget {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--color-border, #e2e8f0);
+  color: var(--color-text-muted);
+}
