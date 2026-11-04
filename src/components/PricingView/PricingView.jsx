@@ -41,6 +41,7 @@ import { updateForOption, copyPicksBetweenOptions, pickedStructureFor } from '..
 import { dealFor, snapshotFeeBuilder, restoreFeeBuilder, savedFor, putSaved, removeSaved, listSaved, scenariosFor, newScenario, scenarioName } from '../../utils/feeBuilderSaved';
 import { sheetRows, parseExport, parsePastedCostDeltas, recoverFeeStructures, addRecoveredStructures, recoveredName } from '../../utils/feeStructureRecovery';
 import { SiaHistoryTab } from './SiaHistoryTab';
+import { CoaTab } from './CoaTab';
 import { buildSiaHistoryEntry, siaKeyFacts } from '../../utils/siaHistoryEntry';
 import { saveSiaHistoryEntry } from '../../utils/siaLoadHistory';
 import { buildServiceRows } from '../../utils/serviceRows';
@@ -2451,7 +2452,7 @@ function mirroredStateFrom(key, v) {
 const isEmptyMirrorValue = (v) => v == null
   || (Array.isArray(v) ? v.length === 0 : (typeof v === 'object' && Object.values(v).every(x => Array.isArray(x) ? x.length === 0 : x == null)));
 
-export function PricingView({ settings } = {}) {
+export function PricingView({ settings, updateSettings } = {}) {
   const { user, isAdmin } = useAuth();
   const solutionsOptions = useMemo(() => {
     const lists = getEffectiveDropdownLists(settings);
@@ -2549,7 +2550,7 @@ export function PricingView({ settings } = {}) {
   // Linked To > Earlier versions: the cloud's kept copies of the Pricing
   // mappings, to put one back after it was lost or overwritten.
   const [showMappingVersions, setShowMappingVersions] = useState(false);
-  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'services' | 'feeBuilder' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c' | 'calculator' | 'escAnalysis' | 'history'
+  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'services' | 'feeBuilder' | 'linkedTo' | 'options' | 'compare' | 'brokerFees' | 's2c' | 'calculator' | 'escAnalysis' | 'coa' | 'history'
   const [optionsTabData, setOptionsTabData] = useState(null); // OptionsTab state: array of { name, years, escPct, rows: [...] }
   const [compareTabData, setCompareTabData] = useState(null); // CompareTab state: { currentLabel, nextLabel, current: [...], next: [...] }
   const [brokerFeesData, setBrokerFeesData] = useState(null); // BrokerFeesTab state: array of { company, loadEp, feeEp, rfps, loadNg, feeNg }
@@ -2764,7 +2765,7 @@ export function PricingView({ settings } = {}) {
         if (typeof saved.hideEmptyCtsRows === 'boolean') setHideEmptyCtsRows(saved.hideEmptyCtsRows);
         if (saved.summaryColWidths) setSummaryColWidths(saved.summaryColWidths);
         if (saved.summaryColVisibility) setSummaryColVisibility(saved.summaryColVisibility);
-        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'services' || saved.pageSubtab === 'feeBuilder' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options' || saved.pageSubtab === 'compare' || saved.pageSubtab === 'brokerFees' || saved.pageSubtab === 's2c' || saved.pageSubtab === 'calculator' || saved.pageSubtab === 'escAnalysis' || saved.pageSubtab === 'history') setPageSubtab(saved.pageSubtab);
+        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'services' || saved.pageSubtab === 'feeBuilder' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options' || saved.pageSubtab === 'compare' || saved.pageSubtab === 'brokerFees' || saved.pageSubtab === 's2c' || saved.pageSubtab === 'calculator' || saved.pageSubtab === 'escAnalysis' || saved.pageSubtab === 'coa' || saved.pageSubtab === 'history') setPageSubtab(saved.pageSubtab);
         if (Array.isArray(saved.s2cTabData)) setS2cTabData(saved.s2cTabData);
         if (Array.isArray(saved.optionsTabData)) setOptionsTabData(saved.optionsTabData);
         if (saved.compareTabData && typeof saved.compareTabData === 'object') setCompareTabData(saved.compareTabData);
@@ -6498,6 +6499,13 @@ export function PricingView({ settings } = {}) {
         </button>
         <button
           type="button"
+          className={pageSubtab === 'coa' ? styles.subtabActive : styles.subtab}
+          onClick={() => setPageSubtab('coa')}
+        >
+          COA
+        </button>
+        <button
+          type="button"
           className={pageSubtab === 'history' ? styles.subtabActive : styles.subtab}
           onClick={() => setPageSubtab('history')}
         >
@@ -6705,6 +6713,8 @@ export function PricingView({ settings } = {}) {
       )}
 
       {pageSubtab === 'escAnalysis' && <EscAnalysisTab />}
+
+      {pageSubtab === 'coa' && <CoaTab settings={settings} updateSettings={updateSettings} />}
 
       {pageSubtab === 'calculator' && (
         <>

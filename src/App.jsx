@@ -733,7 +733,7 @@ function App() {
           ) : view === 'vibe' ? (
             <VibeProspecting prospects={prospects} onUpdate={updateProspect} cdmName={cdmName} />
           ) : view === 'pricing' ? (
-            <PricingView settings={settings} />
+            <PricingView settings={settings} updateSettings={updateSettings} />
           ) : view === 'bfo' ? (
             <BFOActivityView prospects={prospects} settings={settings} updateSettings={updateSettings} />
           ) : view === 'recordings' || view === 'activity' ? (
