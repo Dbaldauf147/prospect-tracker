@@ -5,6 +5,7 @@ import {
 import { DataTable } from '../common/DataTable';
 import { stageProgression, openOppChances, DAY_BANDS } from '../../utils/stageProgression';
 import { fittedRateAxis } from '../../utils/closeRateDeepDive';
+import { fitMoveOnModel, scoreLikelihood, calibrationOf, modelWeights, MIN_TRAINING } from '../../utils/closeLikelihood';
 import styles from './CloseRateDeepDive.module.css';
 
 // Same categorical order as the other Close Rates charts, one per stage.
@@ -83,7 +84,11 @@ const rateCell = (c) => {
 // ({ off: Set, onShown(stage, shown) }) to own the legend's on / off.
 export function StageProgression({ records, from = '', to = '', windowText = '', settings, updateSettings, title, filterBar, lineState }) {
   const prog = useMemo(() => stageProgression(records, { from, to }), [records, from, to]);
-  const open = useMemo(() => openOppChances(records, prog), [records, prog]);
+  // One likelihood to close per open opp: the stage-move model (fitted to
+  // the history) times each later stage's usual rate. See closeLikelihood.
+  const model = useMemo(() => fitMoveOnModel(prog.stints), [prog]);
+  const open = useMemo(() => scoreLikelihood(openOppChances(records, prog), prog, model), [records, prog, model]);
+  const calibration = useMemo(() => calibrationOf(model, prog.stints), [model, prog]);
   const shown = useMemo(() => prog.stages.filter(s => s.stints > 0), [prog]);
   const colourOf = useMemo(() => new Map(prog.stages.map((s, i) => [s.stage, PALETTE[i % PALETTE.length]])), [prog]);
   const [ownOff, setOff] = useState(() => new Set());
@@ -158,6 +163,27 @@ export function StageProgression({ records, from = '', to = '', windowText = '',
       ),
     },
     { key: 'next', label: 'Next stage', defaultWidth: 130, getFilterValue: (o) => o.next, exportValue: (o) => o.next, render: (o) => o.next },
+    {
+      key: 'likelihood', label: 'Likelihood to close', defaultWidth: 150,
+      getSortValue: (o) => o.likelihood ?? -1, getFilterValue: (o) => fmtPct(o.likelihood == null ? null : o.likelihood * 100),
+      exportValue: (o) => (o.likelihood == null ? '' : Math.round(o.likelihood * 100)),
+      render: (o) => {
+        if (o.likelihood == null) return <div className={styles.cellEmpty} title={`Needs ${MIN_TRAINING}+ past stage moves to learn from`}>-</div>;
+        const pct = o.likelihood * 100;
+        const tone = pct >= 40 ? '#15803D' : pct >= 15 ? '#B45309' : '#B91C1C';
+        const why = [
+          `Moves on from ${o.stage}: ${fmtPct(o.moveOn * 100)} (${o.days} day${o.days === 1 ? '' : 's'} in stage, ${o.silence == null ? 'never heard from' : `${o.silence} day${o.silence === 1 ? '' : 's'} since heard from`})`,
+          ...o.steps.slice(1).map(st => `then ${st.stage} to ${st.next}: ${fmtPct(st.chance * 100)} (usual rate)`),
+          `= ${fmtPct(pct)} to close`,
+        ].join('\n');
+        return (
+          <div className={styles.cell} title={why}>
+            <span className={styles.cellRate} style={{ color: tone }}>{fmtPct(pct)}</span>
+            <span className={styles.cellCount}>{fmtPct(o.moveOn * 100)} next</span>
+          </div>
+        );
+      },
+    },
     { key: 'days', label: 'Days in stage', defaultWidth: 120, getSortValue: (o) => o.days, getFilterValue: (o) => String(o.days), exportValue: (o) => o.days, render: (o) => <div className={styles.cell}>{o.days}</div> },
     {
       key: 'chance', label: 'Chance of moving on', defaultWidth: 160,
@@ -231,9 +257,20 @@ export function StageProgression({ records, from = '', to = '', windowText = '',
       rows: open.map(o => ({
         Account: String(o.r.Account || '').trim(), Scope: o.r.Scope || '', Stage: o.stage, 'Next stage': o.next,
         'Days in stage': o.days, Band: o.band, 'Chance of moving on %': o.rate == null ? '' : Math.round(o.rate), 'Based on (deals)': o.n,
+        'Likelihood to close %': o.likelihood == null ? '' : Math.round(o.likelihood * 100),
+        'Chance of moving on now (model) %': o.moveOn == null ? '' : Math.round(o.moveOn * 100),
+        'How it multiplies': o.steps.map(st => `${st.stage} to ${st.next} ${Math.round(st.chance * 100)}%${st.from === 'model' ? ' (model)' : ''}`).join(' x '),
         'Contact (starred)': o.contact, 'Days since heard from': o.silence ?? '', 'Usual gap (days)': o.usualGap == null ? '' : Math.round(o.usualGap),
         'Chance by silence %': o.silenceRate == null ? '' : Math.round(o.silenceRate), 'Silence based on (deals)': o.silenceN,
       })),
+    },
+    {
+      name: 'Model check',
+      rows: [
+        ...calibration.map(c => ({ Item: `Past stage moves it scored ${c.label}`, 'Stage moves': c.n, 'It said (avg)': c.predicted == null ? '' : `${Math.round(c.predicted * 100)}%`, 'Moved on': c.actual == null ? '' : `${Math.round(c.actual * 100)}%` })),
+        ...modelWeights(model).map(w => ({ Item: `Weight: ${w.Input}`, 'Stage moves': '', 'It said (avg)': w.Weight, 'Moved on': w.Weight > 0 ? 'pushes up' : w.Weight < 0 ? 'pushes down' : '' })),
+        { Item: 'Learned from', 'Stage moves': model ? model.trainedOn : 0, 'It said (avg)': '', 'Moved on': '' },
+      ],
     },
     {
       name: 'Details',
@@ -331,7 +368,23 @@ export function StageProgression({ records, from = '', to = '', windowText = '',
               />
             </div>
           )}
-          <h3 className={styles.sectionTitle} style={{ fontSize: '0.9rem', margin: '0.9rem 0 0.25rem' }}>Open opps: chance of moving on from where they are now</h3>
+          <h3 className={styles.sectionTitle} style={{ fontSize: '0.9rem', margin: '0.9rem 0 0.25rem' }}>Open opps: likelihood to close</h3>
+          <div className={styles.sectionSub} style={{ marginBottom: 4 }}>
+            {model ? (
+              <>
+                <strong>Likelihood to close</strong> = the chance it moves on from its stage now, times each later stage's usual rate up to Sold.
+                The first step comes from a model of {model.trainedOn} past stage moves, which weighs the stage, days in stage, days since heard from the contact and the opp's age by how much each mattered before. Hover a score for the steps.
+                {(() => {
+                  const filled = calibration.filter(c => c.n >= 10);
+                  return filled.length >= 2
+                    ? <> Check of that first step on past deals: {filled.map(c => `scored ${c.label}, ${Math.round(c.actual * 100)}% moved on`).join('; ')}.</>
+                    : null;
+                })()}
+              </>
+            ) : (
+              <>Likelihood to close needs at least {MIN_TRAINING} past stage moves with both outcomes to learn from; {prog.stints.length} so far.</>
+            )}
+          </div>
           <div className={styles.sectionSub} style={{ marginBottom: 6 }}>
             Each open opp's days in its current stage (since it entered, else its Start Date), scored against that stage's history above. Days since heard from is from Last Client Heard From Us (red when longer than the starred contact's usual gap), and Chance (by silence) scores that against past deals in the same stage. Faint figures rest on fewer than {MIN_N} deals.
           </div>
