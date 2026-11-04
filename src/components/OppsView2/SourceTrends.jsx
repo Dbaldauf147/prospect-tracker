@@ -6,6 +6,7 @@ import { DataTable } from '../common/DataTable';
 import { TagMultiSelect } from '../common/TagMultiSelect';
 import { sourceShareTrend, periodLabel } from '../../utils/sourceTrends';
 import { closeRateTrend } from '../../utils/notSoldAnalysis';
+import { hasBfoField } from '../../utils/bfoFields';
 import styles from './OppsView2.module.css';
 
 const muted = { color: 'var(--color-text-muted, #64748B)' };
@@ -78,7 +79,7 @@ function TrendTooltip({ active, payload, trend, items, period, colourOf, closeRa
  * busiest eight, with the rest grouped as Other; the table lists them all.
  * Clicking a legend entry switches that source off in both charts.
  */
-export function SourceTrends({ records, settings, updateSettings, onSourceClick }) {
+export function SourceTrends({ records: allRecords, settings, updateSettings, onSourceClick }) {
   const [period, setPeriod] = useState('quarter');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -86,6 +87,19 @@ export function SourceTrends({ records, settings, updateSettings, onSourceClick 
   const [picked, setPicked] = useState([]);
   const [off, setOff] = useState(() => new Set());
   const [showCloseRate, setShowCloseRate] = useState(true);
+  // "Has BFO Opp Name only": keep just the opps tied to a BFO opportunity
+  // (a real BFO Link, not blank / "-" / #N/A). Narrows both charts, the
+  // close-rate line and the table, same rule as Not Sold Analysis.
+  const [bfoNamedOnly, setBfoNamedOnly] = useState(false);
+  const { records, unnamed } = useMemo(() => {
+    if (!bfoNamedOnly) return { records: allRecords, unnamed: 0 };
+    const out = [];
+    let left = 0;
+    for (const r of allRecords || []) {
+      if (hasBfoField(r?.['BFO Link'])) out.push(r); else left += 1;
+    }
+    return { records: out, unnamed: left };
+  }, [allRecords, bfoNamedOnly]);
 
   const trend = useMemo(
     () => sourceShareTrend(records, { period, from, to, activity }),
@@ -244,10 +258,22 @@ export function SourceTrends({ records, settings, updateSettings, onSourceClick 
             <TagMultiSelect options={allKeys} selected={picked} onToggle={togglePick} placeholder={`Top ${MAX_SOURCES} sources`} />
           </div>
         </div>
-        {(picked.length > 0 || from || to || activity !== 'all') && (
-          <button className={styles.clearFiltersBtn} onClick={() => { setPicked([]); setFrom(''); setTo(''); setActivity('all'); }}>Clear</button>
+        <button
+          type="button"
+          className={bfoNamedOnly ? styles.notSoldYearOn : styles.notSoldYear}
+          onClick={() => setBfoNamedOnly(v => !v)}
+          title="Only count opps that have a BFO Opportunity Name"
+          aria-pressed={bfoNamedOnly}
+        >Has BFO Opp Name only</button>
+        {(picked.length > 0 || from || to || activity !== 'all' || bfoNamedOnly) && (
+          <button className={styles.clearFiltersBtn} onClick={() => { setPicked([]); setFrom(''); setTo(''); setActivity('all'); setBfoNamedOnly(false); }}>Clear</button>
         )}
         <span className={styles.resultCount}>{summary}</span>
+        {bfoNamedOnly && unnamed > 0 && (
+          <span className={styles.resultCount} style={{ color: '#92400E' }}>
+            {unnamed} left out - no BFO Opportunity Name
+          </span>
+        )}
       </div>
       <div style={{ fontSize: '0.72rem', ...muted }}>
         The opps that started in each period (by Start Date), split by Source. Each opp has one Source, so a period's % of total adds up to 100%. Sources not drawn are grouped as Other.
