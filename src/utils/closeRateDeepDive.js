@@ -272,3 +272,29 @@ export function stageReachSheetRows(records, { period = 'quarter', closedOnly = 
   if (data.overall.total) rows.push(row('All periods', data.overall));
   return rows;
 }
+
+// A y axis that stops just above the highest rate drawn: `headroom`
+// percentage points over it, rounded up to a whole percent and never past
+// 100, with ticks on a round step under that top. Null (the fixed 0-100
+// axis) when nothing is drawn.
+export function fittedRateAxis(data, keys, headroom = 1) {
+  let top = null;
+  for (const point of data) {
+    for (const k of keys) {
+      const v = point[k];
+      if (typeof v === 'number' && Number.isFinite(v) && (top == null || v > top)) top = v;
+    }
+  }
+  if (top == null) return null;
+  const max = Math.min(100, Math.max(1, Math.ceil(top + headroom)));
+  const step = [1, 2, 5, 10, 20, 25].find(st => max / st <= 6) || 25;
+  const ticks = [];
+  for (let t = 0; t <= max; t += step) ticks.push(t);
+  // The top is always labelled; a step tick within half a step of it would
+  // crowd that label, so it gives way.
+  if (ticks[ticks.length - 1] !== max) {
+    if (ticks.length > 1 && max - ticks[ticks.length - 1] < step / 2) ticks.pop();
+    ticks.push(max);
+  }
+  return { domain: [0, max], ticks };
+}

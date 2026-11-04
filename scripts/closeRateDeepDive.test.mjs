@@ -1,7 +1,7 @@
 // Close Rate deep dive: the by-stage trend and the Excel shaping.
 import assert from 'node:assert/strict';
 import {
-  stageCloseRateTrend, trendSheetRows, trendTableRows, withoutPullThroughs, closedOppSheetRows, fmtRate,
+  stageCloseRateTrend, trendSheetRows, trendTableRows, withoutPullThroughs, closedOppSheetRows, fmtRate, fittedRateAxis,
 } from '../src/utils/closeRateDeepDive.js';
 import { closeRateTrend } from '../src/utils/notSoldAnalysis.js';
 
@@ -102,4 +102,17 @@ console.log('PASS closeRateDeepDive');
   assert.equal(rows[0]['Sold %'], 50);
   assert.equal(rows[1].Started, 'All periods');
   console.log('PASS closeRateDeepDive stage reach');
+}
+
+{
+  // Fitted y axis: 1 point over the top rate, rounded up, ticks on a round step.
+  const data = [{ a: 12.5, b: 30, o: 8 }, { a: null, b: 37.2, o: 9 }];
+  assert.deepEqual(fittedRateAxis(data, ['a', 'b', 'o']), { domain: [0, 39], ticks: [0, 10, 20, 30, 39] });
+  assert.deepEqual(fittedRateAxis([{ a: 4 }], ['a']), { domain: [0, 5], ticks: [0, 1, 2, 3, 4, 5] });
+  assert.deepEqual(fittedRateAxis([{ a: 100 }], ['a']).domain, [0, 100]);
+  assert.deepEqual(fittedRateAxis([{ a: 0 }], ['a']).domain, [0, 1]);
+  assert.equal(fittedRateAxis([{ a: null }], ['a']), null);
+  assert.deepEqual(fittedRateAxis([{ a: 42.86 }], ['a']), { domain: [0, 44], ticks: [0, 10, 20, 30, 44] }, 'a step tick next to the top gives way');
+  assert.deepEqual(fittedRateAxis([{ a: 60, b: 90 }], ['a']).domain, [0, 61], 'only the drawn keys count');
+  console.log('PASS closeRateDeepDive fitted y axis');
 }
