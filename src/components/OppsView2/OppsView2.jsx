@@ -513,7 +513,15 @@ const KEY_COLS = [
 // blank → "Yes" (renders ✓) → "No" (renders ✗) → blank. Stored as
 // the literal string so existing string-based filters / exports /
 // downstream consumers still work without special handling.
-const TRISTATE_COLUMNS = new Set(['No Further Action Today']);
+// Ticked from the Qualifying prompt ("I spoke with this company about this
+// opp"); a ✓ / ✗ / blank cell like No Further Action Today.
+const SPOKE_WITH_COMPANY_COLUMN = 'Spoke With Company';
+// Read the way TristateCheckCell does, so the prompt and the cell agree.
+const spokeWithCompany = (row) => {
+  const v = String(row?.[SPOKE_WITH_COMPANY_COLUMN] ?? '').trim().toLowerCase();
+  return v === 'yes' || v === 'true' || v === '✓';
+};
+const TRISTATE_COLUMNS = new Set(['No Further Action Today', SPOKE_WITH_COMPANY_COLUMN]);
 
 // On-screen display label for an opp column key. The underlying data keys
 // stay stable (so stored records, dedup, currency formatting and the stage
@@ -753,7 +761,9 @@ const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'N
   // is ensured here.
   COMMODITY_COLUMN,
   // Written by the Not Sold close-out popup; never in an imported sheet.
-  LOSS_NOTES_COLUMN];
+  LOSS_NOTES_COLUMN,
+  // Ticked on the Qualifying prompt; never in an imported sheet.
+  SPOKE_WITH_COMPANY_COLUMN];
 
 // Strips zero-width / BOM characters. Built with fromCharCode so the
 // source stays pure ASCII — embedding the literal invisible characters
@@ -7557,7 +7567,9 @@ function LeadQuotedAmountModal({
 // needsUsdFlag), so this asks for the figure at the moment the gap would
 // otherwise open rather than leaving it to be chased off the Flags column
 // later. Pre-populated, so an opp that already carries a USD? value shows
-// it for review instead of a blank box.
+// it for review instead of a blank box. It also asks whether the user has
+// spoken with the company about this opp (SPOKE_WITH_COMPANY_COLUMN),
+// ticked already when the opp's answer is Yes.
 function QualifyingUsdModal({ opp, columnLinks, listRegistry, onSave, onClose }) {
   // Same resolution the Quoted / Agreement Sent prompts use, so USD? shows
   // the identical menu here that it does everywhere else — the user's
@@ -7580,9 +7592,10 @@ function QualifyingUsdModal({ opp, columnLinks, listRegistry, onSave, onClose })
   const curUsd = opp?.['USD?'] ?? '';
   const [usd, setUsd] = useState(String(curUsd ?? ''));
   const usdOptions = optionsFor('USD?');
+  const [spoke, setSpoke] = useState(spokeWithCompany(opp));
 
   function handleSave() {
-    onSave({ usd: usd.trim() });
+    onSave({ usd: usd.trim(), spoke });
   }
 
   const labelStyle = { fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)', display: 'block', marginBottom: 4 };
@@ -7621,17 +7634,29 @@ function QualifyingUsdModal({ opp, columnLinks, listRegistry, onSave, onClose })
       >
         <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
-            Enter the USD value
+            Moved to Qualifying
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
             <strong>{opp?.['Account'] || 'This opp'}</strong>
             {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
             {' '}just moved to <strong>Qualifying</strong>.
-            {' '}Add the <strong>USD?</strong> value below.
+            {' '}Confirm you've spoken with them and add the <strong>USD?</strong> value below.
           </div>
         </div>
 
         <div style={{ padding: '0.85rem 1rem' }}>
+          <label
+            style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '0.85rem', fontSize: '0.85rem', color: 'var(--color-text)', cursor: 'pointer' }}
+            title={`Saved on the opp as ${SPOKE_WITH_COMPANY_COLUMN}`}
+          >
+            <input
+              type="checkbox"
+              checked={spoke}
+              onChange={(e) => setSpoke(e.target.checked)}
+              style={{ width: 16, height: 16, margin: 0, cursor: 'pointer' }}
+            />
+            I spoke with this company about this opp
+          </label>
           <label style={labelStyle}>USD?</label>
           {usdOptions ? (
             <select
@@ -9168,6 +9193,8 @@ const OPP_DETAIL_SUBSECTION_BY_FIELD = new Map(Object.entries({
   // step after the estimate it measures.
   [QUOTED_VARIANCE_COLUMN]: 'Quoted',
   'USD?': 'Qualifying',
+  // Answered on the way into Qualifying, beside the USD? it's asked with.
+  [SPOKE_WITH_COMPANY_COLUMN]: 'Qualifying',
   'Margin Email Date - Sales Leader Review Date': 'Quoting',
   'Margin Email Date': 'Quoting',
   'Sales Leader Review Date': 'Quoting',
@@ -9328,6 +9355,7 @@ const OPP_DETAIL_TAB_BY_FIELD = new Map(Object.entries({
   [ESTIMATED_FEE_COLUMN]: 'stage4',
   [QUOTED_VARIANCE_COLUMN]: 'stage4',
   'USD?': 'stage4',
+  [SPOKE_WITH_COMPANY_COLUMN]: 'stage4',
   'Margin Email Date - Sales Leader Review Date': 'stage4',
   'Margin Email Date': 'stage4',
   'Sales Leader Review Date': 'stage4',
@@ -18513,12 +18541,18 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             opp={opp}
             columnLinks={columnLinks}
             listRegistry={listRegistry}
-            onSave={({ usd }) => {
+            onSave={({ usd, spoke }) => {
               // Only push when the value actually changed so the undo
               // stack stays uncluttered with no-op snapshots.
               if (usd !== String(opp['USD?'] ?? '').trim()) {
                 updateOppField(opp._id, 'USD?', usd);
               }
+              // Ticked writes Yes (the cell's ✓). Unticking clears only a
+              // Yes, so a No (✗) set from the table survives a Save that
+              // left the box alone.
+              const spokeWas = spokeWithCompany(opp);
+              if (spoke && !spokeWas) updateOppField(opp._id, SPOKE_WITH_COMPANY_COLUMN, 'Yes');
+              else if (!spoke && spokeWas) updateOppField(opp._id, SPOKE_WITH_COMPANY_COLUMN, '');
               setQualifyingUsdPromptId(null);
             }}
             onClose={() => setQualifyingUsdPromptId(null)}
