@@ -154,6 +154,9 @@ export function stageReachByPeriod(records, { period = 'quarter', from = '', to 
   let unknown = 0;
   let pullThrough = 0;
   let open = 0;
+  // The opps placed in a period (counted, or left out for having no stage
+  // history), for an export's Details sheet.
+  const opps = [];
 
   for (const r of (Array.isArray(records) ? records : [])) {
     if (isPullThroughOpp(r)) { pullThrough += 1; continue; }
@@ -164,7 +167,8 @@ export function stageReachByPeriod(records, { period = 'quarter', from = '', to 
     if (closedOnly && stage !== 'Sold' && !NOT_SOLD.has(stage)) { open += 1; continue; }
     const key = startPeriodOf(r, period);
     const rank = furthestStageRank(r);
-    if (rank == null) { unknown += 1; bucketFor(key).unknown += 1; continue; }
+    if (rank == null) { unknown += 1; bucketFor(key).unknown += 1; opps.push({ r, period: key, counted: null }); continue; }
+    opps.push({ r, period: key, counted: REACH_STAGES.filter((s, i) => rank >= REACH_RANK[i]) });
     const b = bucketFor(key);
     b.total += 1;
     counted += 1;
@@ -193,6 +197,6 @@ export function stageReachByPeriod(records, { period = 'quarter', from = '', to 
       total: counted, unknown, reached: overallReached, pct: pctOf(overallReached, counted),
       coverage: counted + unknown > 0 ? Math.round((counted / (counted + unknown)) * 1000) / 10 : null,
     },
-    counted, undated, unknown, pullThrough, open, closedOnly,
+    counted, undated, unknown, pullThrough, open, closedOnly, opps,
   };
 }

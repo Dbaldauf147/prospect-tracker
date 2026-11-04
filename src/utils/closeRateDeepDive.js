@@ -17,7 +17,7 @@
 import { CLOSE_RATE_STAGES, bfoOppNameOf, closedOppEntry } from './pipelineFunnelData.js';
 import { closePeriodOf, periodLabel, periodRange, sourceOf } from './notSoldAnalysis.js';
 import { PULL_THROUGH_COLUMN, isPullThroughOpp } from './pullThrough.js';
-import { REACH_STAGES, furthestStageRank, stageReachByPeriod } from './stageReach.js';
+import { REACH_STAGES, furthestStageRank, stageReachByPeriod, reachPeriodLabel } from './stageReach.js';
 
 const pct = (w, d) => (d > 0 ? (w / d) * 100 : null);
 
@@ -110,6 +110,8 @@ export const STAGE_SERIES = [
 export function stageCloseRateTrend(records, { period = 'quarter', from = '', to = '', includePullThroughs = false } = {}) {
   const cells = STAGE_SERIES.map(() => new Map());
   const seen = new Set();
+  // The opps behind the figures, for the export's Details sheet.
+  const opps = [];
   let undated = 0;
   for (const r of records || []) {
     const stage = String(r?.Stage || '').trim();
@@ -126,6 +128,7 @@ export function stageCloseRateTrend(records, { period = 'quarter', from = '', to
     if (!p) { undated += 1; continue; }
     seen.add(p);
     const won = entry.stage === 'Sold';
+    opps.push({ r, period: p, won, counted: STAGE_SERIES.slice(0, -1).filter(def => def.test(r)).map(def => def.key) });
     STAGE_SERIES.forEach((def, i) => {
       if (!def.test(r)) return;
       const c = cells[i].get(p) || { wins: 0, decided: 0 };
@@ -153,6 +156,7 @@ export function stageCloseRateTrend(records, { period = 'quarter', from = '', to
     wins: all.wins,
     decided: all.decided,
     rate: all.rate,
+    opps,
     undated,
   };
 }
@@ -297,4 +301,87 @@ export function fittedRateAxis(data, keys, headroom = 1) {
     ticks.push(max);
   }
   return { domain: [0, max], ticks };
+}
+
+// Opp fields that are bookkeeping, not data anyone reads.
+const DETAIL_SKIP = new Set(['id']);
+const detailValue = (v) => {
+  if (v == null) return '';
+  if (typeof v === 'object') return null; // snapshots, maps: not cell data
+  return v;
+};
+
+/**
+ * The Details sheet behind one chart's export: every opp the chart counted,
+ * one row each. The analysis columns lead (what the chart read off the opp,
+ * and where it put it), then every other field on the opp, so the sheet is
+ * the whole record and the figures can be rebuilt from it.
+ *
+ *   opps     the `opps` list a trend returns: [{ r, period, won, counted }]
+ *   period   'month' | 'quarter' | 'year', to label `period`
+ *   periodHeader / periodText   override the Period column (the Weekly
+ *            trend's month, Stage reach's Start Date period)
+ *   countedHeader   what `counted` lists ('Source', 'Services counted',
+ *            'Stages reached'); `counted: null` reads as countedNull
+ *   result   false to leave out the Won / Lost column (Stage reach)
+ */
+export function oppDetailSheetRows(opps, {
+  period = 'quarter', periodHeader = 'Period', periodText,
+  countedHeader = 'Counted toward', countedNull = '', result = true, extra,
+} = {}) {
+  const list = Array.isArray(opps) ? opps : [];
+  const lead = (o) => {
+    const r = o.r || {};
+    const row = {
+      Account: String(r.Account ?? '').trim(),
+      'BFO Opp Name': bfoOppNameOf(r) || '',
+      Scope: String(r.Scope ?? '').trim(),
+      Source: sourceOf(r),
+      Stage: String(r.Stage ?? '').trim(),
+      'Start Date': r['Start Date'] ?? '',
+      'Close Date': r['Close Date'] ?? '',
+      [periodHeader]: periodText ? periodText(o) : (o.period ? periodLabel(o.period, period) : ''),
+    };
+    if (result) row.Result = o.won ? 'Won' : 'Lost';
+    row[countedHeader] = o.counted == null ? countedNull : o.counted.join(', ');
+    if (extra) Object.assign(row, extra(o));
+    row['Quoted Amount'] = r['Quoted Amount'] ?? '';
+    row['Pull-through'] = isPullThroughOpp(r) ? 'Yes' : '';
+    return row;
+  };
+  const leadRows = list.map(lead);
+  const used = new Set(leadRows.length ? Object.keys(leadRows[0]) : []);
+  // Every other field, in the order it first turns up across the opps.
+  const rest = [];
+  const restSeen = new Set();
+  for (const o of list) {
+    for (const [k, v] of Object.entries(o.r || {})) {
+      if (restSeen.has(k) || used.has(k) || k.startsWith('_') || DETAIL_SKIP.has(k)) continue;
+      if (detailValue(v) === null) continue;
+      restSeen.add(k);
+      rest.push(k);
+    }
+  }
+  const rows = list.map((o, i) => {
+    const row = leadRows[i];
+    for (const k of rest) {
+      const v = detailValue(o.r?.[k]);
+      row[k] = v === null ? '' : v;
+    }
+    return row;
+  });
+  const closeKey = (row) => String(row['Close Date'] || row['Start Date'] || '');
+  return rows.sort((a, b) => closeKey(b).localeCompare(closeKey(a)) || a.Account.localeCompare(b.Account));
+}
+
+/** Stage reach's opps as Details rows: Start Date period, stages reached. */
+export function stageReachDetailRows(records, { period = 'quarter', closedOnly = true, from = '', to = '' } = {}) {
+  const { opps } = stageReachByPeriod(records, { period, closedOnly, from, to });
+  return oppDetailSheetRows(opps, {
+    periodHeader: 'Started',
+    periodText: (o) => reachPeriodLabel(o.period, period),
+    countedHeader: 'Stages reached',
+    countedNull: 'No stage history (left out)',
+    result: false,
+  });
 }

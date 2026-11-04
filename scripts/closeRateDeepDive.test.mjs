@@ -2,7 +2,11 @@
 import assert from 'node:assert/strict';
 import {
   stageCloseRateTrend, trendSheetRows, trendTableRows, withoutPullThroughs, closedOppSheetRows, fmtRate, fittedRateAxis,
+  oppDetailSheetRows, stageReachDetailRows,
 } from '../src/utils/closeRateDeepDive.js';
+import { serviceCloseRateTrend } from '../src/utils/serviceTrends.js';
+import { closeRateTrendByStage } from '../src/utils/pipelineFunnelData.js';
+import { stageReachByPeriod } from '../src/utils/stageReach.js';
 import { closeRateTrend } from '../src/utils/notSoldAnalysis.js';
 
 const opp = (o) => ({ Account: 'A', Scope: 'Audits', Source: 'Referral', ...o });
@@ -115,4 +119,39 @@ console.log('PASS closeRateDeepDive');
   assert.deepEqual(fittedRateAxis([{ a: 42.86 }], ['a']), { domain: [0, 44], ticks: [0, 10, 20, 30, 44] }, 'a step tick next to the top gives way');
   assert.deepEqual(fittedRateAxis([{ a: 60, b: 90 }], ['a']).domain, [0, 61], 'only the drawn keys count');
   console.log('PASS closeRateDeepDive fitted y axis');
+}
+
+{
+  // Details sheets: exactly the opps behind each chart, whole record.
+  const recs = records.map((r, i) => ({ ...r, _id: `x${i}`, id: `x${i}`, 'Next Steps': `step ${i}`, _pricingOption: { a: 1 } }));
+  const st = stageCloseRateTrend(recs, { period: 'quarter', from: '2026-01-01' });
+  assert.equal(st.opps.length, st.decided, 'stage trend lists every decided opp it counted');
+  const d = oppDetailSheetRows(st.opps, { period: 'quarter', countedHeader: 'Stages reached' });
+  assert.equal(d.length, 3);
+  assert.deepEqual(d.map(r => r['Close Date']), ['2026-08-01', '2026-02-10', '2026-01-15'], 'newest close first');
+  assert.equal(d[2].Result, 'Won');
+  assert.equal(d[2].Period, 'Q1 2026');
+  assert.ok(d[2]['Stages reached'].includes('Stage 5'));
+  assert.equal(d[0]['Next Steps'], 'step 2', 'every other opp field rides along');
+  assert.ok(!('_id' in d[0]) && !('id' in d[0]) && !('_pricingOption' in d[0]), 'bookkeeping fields left out');
+  assert.equal(Object.keys(d[0])[0], 'Account', 'analysis columns lead');
+
+  const src = closeRateTrend(recs, { period: 'quarter', from: '2026-01-01' });
+  assert.equal(src.opps.length, src.decided, 'source trend lists every opp it counted');
+  assert.equal(oppDetailSheetRows(src.opps, { countedHeader: 'Source counted' }).find(r => r['Close Date'] === '2026-02-10')['Source counted'], 'Event');
+
+  const svc = serviceCloseRateTrend(recs, { period: 'quarter', from: '2026-01-01' });
+  assert.equal(svc.opps.length, svc.decided, 'service trend lists every opp it counted');
+
+  const wk = closeRateTrendByStage(recs, { months: 6, nowMs: Date.parse('2026-09-15T12:00:00') });
+  assert.equal(wk.opps.length, wk.closedRolling, 'weekly lists the trailing-year opps');
+  assert.equal(wk.opps.filter(o => o.month).length, wk.closed, 'and which of them sit in a month column');
+
+  const reachRecs = recs.map(r => ({ ...r, 'Start Date': r['Close Date'] }));
+  const reach = stageReachByPeriod(reachRecs, { period: 'quarter' });
+  assert.equal(reach.opps.length, reach.counted + reach.unknown);
+  const rd = stageReachDetailRows(reachRecs, { period: 'quarter' });
+  assert.equal(rd.length, reach.opps.length);
+  assert.ok(!('Result' in rd[0]), 'stage reach has no Won / Lost column');
+  console.log('PASS closeRateDeepDive details sheets');
 }
