@@ -4,7 +4,8 @@ import {
 } from 'recharts';
 import { DataTable } from '../common/DataTable';
 import { ColourPickDot } from '../common/ColourPickDot';
-import { labelText } from '../../utils/closeRateChartPrefs';
+import { labelText, targetLineProps } from '../../utils/closeRateChartPrefs';
+import { TargetsMenu } from './CloseRateTargets';
 import { WINDOW_PRESETS, presetFrom } from '../../utils/closeRateWindows';
 import { stageReachByPeriod, REACH_STAGES } from '../../utils/stageReach';
 import styles from './OppsView2.module.css';
@@ -90,8 +91,9 @@ function ReachTooltip({ active, payload, hidden, closedOnly, colourOf = (s) => C
 //   onColourChange(stage, hex)  makes each legend dot a colour picker.
 //   labelled(stage)  optional: does that line show a % on its points, and
 //   onLabelToggle(stage)  adds a % button to each legend chip to switch it.
-//   target / onTargetChange  optional: a target % line, and a box to set it.
-export function StageReach({ records, settings, updateSettings, period: periodProp, onState, applyState, collapsibleTable = false, colours, onColourChange, labelled = () => false, onLabelToggle, target = null, onTargetChange, targetInput: TargetBox }) {
+//   targets / onTargetsChange  optional: target % lines ([{ id, value, colour, name }])
+//             and the Targets menu to edit them.
+export function StageReach({ records, settings, updateSettings, period: periodProp, onState, applyState, collapsibleTable = false, colours, onColourChange, labelled = () => false, onLabelToggle, targets = [], onTargetsChange }) {
   const colourOf = useCallback((st) => colours?.[st] || COLOUR[st], [colours]);
   const [showTable, setShowTable] = useState(!collapsibleTable);
   const [ownPeriod, setPeriod] = useState('quarter');
@@ -277,7 +279,7 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
         {!startPreset && (from || to) && (
           <button type="button" className={styles.notSoldYear} onClick={() => { setFrom(''); setTo(''); }}>Clear dates</button>
         )}
-        {onTargetChange && TargetBox && <TargetBox value={target} onChange={onTargetChange} />}
+        {onTargetsChange && <TargetsMenu targets={targets} onChange={onTargetsChange} />}
       </div>
 
       <div style={{ fontSize: '0.72rem', ...muted }}>
@@ -340,14 +342,7 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
               <XAxis dataKey="label" tick={{ fontSize: 10, fill: AXIS_TEXT }} tickLine={false} axisLine={{ stroke: GRID }} minTickGap={12} />
               <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tick={{ fontSize: 10, fill: AXIS_TEXT }} tickLine={false} axisLine={false} width={40} tickFormatter={v => `${v}%`} />
               <Tooltip content={<ReachTooltip hidden={hidden} closedOnly={closedOnly} colourOf={colourOf} />} cursor={{ stroke: AXIS_TEXT, strokeDasharray: '3 3' }} />
-              {target != null && (
-                <ReferenceLine
-                  y={target}
-                  stroke="#64748b"
-                  strokeWidth={1.5}
-                  label={{ value: `Target ${labelText(target)}`, position: 'insideTopRight', fill: '#475569', fontSize: 10, fontWeight: 600, stroke: '#fff', strokeWidth: 3, paintOrder: 'stroke' }}
-                />
-              )}
+              {targetLineProps(targets).map(({ key, ...props }) => <ReferenceLine key={key} {...props} />)}
               {REACH_STAGES.filter(s => !hidden.has(s)).map(s => (
                 <Line
                   key={s}

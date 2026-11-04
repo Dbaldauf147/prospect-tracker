@@ -70,6 +70,8 @@ import { isClientWedged, subscribeToClientWedged, wedgedClientError, crashCauseI
 import { remoteChangesCallInOrder, callInSortKey } from '../../utils/oppsCallIn';
 import { loadOptionLinks, setOppOptionLink, optionLinkName, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
 import { suggestedFinalMargin } from '../../utils/closeOutMargin';
+import { HEARD_FROM_FIELD, HEARD_FROM_LOG, nextHeardFromLog } from '../../utils/contactResponse';
+import { ContactResponseLog } from './ContactResponseLog';
 import { PULL_THROUGH_COLUMN, isPullThroughOpp, pullThroughSource } from '../../utils/pullThrough';
 import { COMMODITY_COLUMN, COMMODITY_LIST_KEY, formatCommodities } from '../../utils/commodities';
 import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
@@ -11206,6 +11208,7 @@ export function OppInfoModal({
 
           {/* Call recordings tagged to this opp on the Call Recordings
               page. Renders nothing when there are none. */}
+          {currentTab === callsTab && <ContactResponseLog opp={opp} settings={settings} />}
           {currentTab === callsTab && <LinkedCalls oppId={opp._id} />}
 
           {/* Every call's next steps, down the deal's history. Its own tab
@@ -15913,6 +15916,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
       const fields = [snap(field)];
       if (field === 'Follow Up' && 'Call In' in row) fields.push(snap('Call In'));
       if (field === 'Last Client Heard From Us' && 'Last Spoke' in row) fields.push(snap('Last Spoke'));
+      // The contact response log grows with the heard-from date, so one
+      // undo takes the entry back off too.
+      if (field === HEARD_FROM_FIELD) fields.push(snap(HEARD_FROM_LOG));
       // Snapshot the auto-stamped Close Date (+ derived columns) so one
       // undo of the Sold / Not Sold stage change also restores them.
       if (closeStamp) {
@@ -15967,6 +15973,12 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           // blank forever even after the user picks a new Follow Up.
           if (field === 'Follow Up' && 'Call In' in next) delete next['Call In'];
           if (field === 'Last Client Heard From Us' && 'Last Spoke' in next) delete next['Last Spoke'];
+          // Log the heard-from against the starred contact (see
+          // utils/contactResponse) so the opp keeps a response history.
+          if (field === HEARD_FROM_FIELD) {
+            const log = nextHeardFromLog(r, next);
+            if (log) next[HEARD_FROM_LOG] = log;
+          }
           // Auto-fill the derived Close Year / Close Month columns from
           // the new Close Date (computed above).
           if (closeDerived) {
@@ -16218,6 +16230,12 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           if (!idSet.has(r._id)) return r;
           const now = Date.now();
           const next = { ...r, [field]: value, _rowUpdatedAt: now };
+          // Same contact response log as a single edit.
+          if (field === HEARD_FROM_FIELD) {
+            if ('Last Spoke' in next) delete next['Last Spoke'];
+            const log = nextHeardFromLog(r, next);
+            if (log) next[HEARD_FROM_LOG] = log;
+          }
           // Same stage-entry stamp the single-row path applies, so bulk
           // moves through Days-in-Stage start the clock at the bulk
           // edit instead of the rows' original Start Date. Also append

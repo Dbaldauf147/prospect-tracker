@@ -7,9 +7,10 @@ import { CloseRateTrend } from '../WeeklyReportView/CloseRateTrend';
 import { StageReach } from './StageReach';
 import { GroupEditor, ServiceSettingsPopup } from './ServiceTrends';
 import { ColourPickDot } from '../common/ColourPickDot';
+import { TargetsMenu } from './CloseRateTargets';
 import {
   CHART_PREFS_KEY, readChartPrefs, withColour, withoutColours, withLabels, labelText,
-  isLabelled, withLineLabel, labelsState, withTarget,
+  isLabelled, withLineLabel, labelsState, withTargets, targetsOf, targetLineProps, targetLabel,
 } from '../../utils/closeRateChartPrefs';
 import { closeRateTrendByStage } from '../../utils/pipelineFunnelData';
 import { closeRateTrend, periodLabel } from '../../utils/notSoldAnalysis';
@@ -30,6 +31,7 @@ import {
 } from '../../utils/closeRateSavedFilters';
 import { PRESET_LIST, WEEKLY_MONTHS, cleanWeeklyMonths } from '../../utils/closeRateWindows';
 import { renameServiceGroupPatch } from '../../utils/serviceGroupRename';
+import { StageProgression } from './StageProgression';
 import styles from './CloseRateDeepDive.module.css';
 
 // Opps > Close Rates: every close-rate trend on one page, each exportable.
@@ -95,7 +97,7 @@ async function writeWorkbook(fileBase, sheets) {
   XLSX.writeFile(wb, `${fileBase} - ${isoDay(new Date())}.xlsx`);
 }
 
-function ChartTooltip({ active, payload, label, lines, target }) {
+function ChartTooltip({ active, payload, label, lines, targets = [] }) {
   if (!active || !payload?.length) return null;
   const point = payload[0].payload;
   return (
@@ -112,40 +114,20 @@ function ChartTooltip({ active, payload, label, lines, target }) {
           </div>
         );
       })}
-      {target != null && <div className={styles.tooltipTarget}>Target {labelText(target)}</div>}
+      {targets.length > 0 && (
+        <div className={styles.tooltipTarget}>
+          {[...targets].sort((a, b) => b.value - a.value).map(t => (
+            <div key={t.id} className={styles.tooltipRow}>
+              <span className={styles.swatch} style={{ background: t.colour, borderRadius: 2, height: 3 }} />
+              <span className={styles.tooltipName}>{targetLabel(t)}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-// The target line's colour: a recessive slate, solid, so it can't be read
-// as the dashed black Overall line or as a series.
-const TARGET_COLOUR = '#64748b';
-
-/**
- * A chart's target %: typed, saved on blur or Enter, cleared by emptying it.
- * Keyed by the saved value so a change from elsewhere shows.
- */
-export function TargetInput({ value, onChange, label = 'Target' }) {
-  const [draft, setDraft] = useState(value == null ? '' : String(value));
-  const [seen, setSeen] = useState(value);
-  if (seen !== value) { setSeen(value); setDraft(value == null ? '' : String(value)); }
-  const commit = () => { if (String(value ?? '') !== draft.trim()) onChange(draft.trim()); };
-  return (
-    <label className={styles.targetField} title="Draws a target line on the chart. Saved; clear the box to remove it.">
-      {label}
-      <input
-        inputMode="decimal"
-        value={draft}
-        placeholder="-"
-        aria-label={`${label} %`}
-        onChange={e => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setDraft(value == null ? '' : String(value)); e.currentTarget.blur(); } }}
-      />
-      %
-    </label>
-  );
-}
 
 /**
  * One trend (by source / service / stage): a line chart of the biggest
@@ -161,7 +143,7 @@ export function TargetInput({ value, onChange, label = 'Target' }) {
 //   headerExtra              controls for the section header
 function TrendSection({
   title, subtitle, nameHeader, trend, period, tableId, exportName, note, keepOrder = false, fitYAxis = false,
-  colours, onColourChange, onResetColours, labelled = () => false, onLabelToggle, target = null, onTargetChange,
+  colours, onColourChange, onResetColours, labelled = () => false, onLabelToggle, targets = [], onTargetsChange,
   lineState, exclude, picked, onNameClick, nameBadge, headerExtra, filterBar, settings, updateSettings,
   countedHeader = 'Counted toward',
 }) {
@@ -201,9 +183,9 @@ function TrendSection({
   // fitYAxis: the axis tops out 1 point over the highest visible rate
   // instead of 100%, so low close rates use the chart's height.
   const yAxis = useMemo(
-    // The target counts as a point, so a target above every rate still shows.
-    () => (fitYAxis ? fittedRateAxis(target == null ? data : [...data, { __target: target }], [...lines.map(l => l.key), '__target']) : null),
-    [fitYAxis, data, lines, target],
+    // Targets count as points, so a target above every rate still shows.
+    () => (fitYAxis ? fittedRateAxis([...data, ...targets.map(t => ({ __target: t.value }))], [...lines.map(l => l.key), '__target']) : null),
+    [fitYAxis, data, lines, targets],
   );
 
   const toggle = (key) => {
@@ -299,7 +281,7 @@ function TrendSection({
           {subtitle && <div className={styles.sectionSub}>{subtitle}</div>}
         </div>
         <div className={styles.headActions}>
-          {onTargetChange && <TargetInput value={target} onChange={onTargetChange} />}
+          {onTargetsChange && <TargetsMenu targets={targets} onChange={onTargetsChange} />}
           {headerExtra}
           <span className={styles.headline}>
             Overall {fmtRate(trend.rate)} <span className={styles.muted}>({trend.wins}/{trend.decided})</span>
@@ -364,16 +346,8 @@ function TrendSection({
                 <CartesianGrid stroke="#eef2f7" vertical={false} />
                 <XAxis dataKey="period" tick={axisTick} tickLine={false} axisLine={{ stroke: '#e2e8f0' }} />
                 <YAxis domain={yAxis?.domain || [0, 100]} ticks={yAxis?.ticks || [0, 25, 50, 75, 100]} allowDataOverflow={false} tickFormatter={(v) => `${v}%`} tick={axisTick} tickLine={false} axisLine={false} />
-                <Tooltip content={<ChartTooltip lines={lines} target={target} />} cursor={{ stroke: '#94a3b8', strokeDasharray: '3 3' }} />
-                {target != null && (
-                  <ReferenceLine
-                    y={target}
-                    stroke={TARGET_COLOUR}
-                    strokeWidth={1.5}
-                    ifOverflow="extendDomain"
-                    label={{ value: `Target ${labelText(target)}`, position: 'insideTopRight', fill: '#475569', fontSize: 10, fontWeight: 600, stroke: '#fff', strokeWidth: 3, paintOrder: 'stroke' }}
-                  />
-                )}
+                <Tooltip content={<ChartTooltip lines={lines} targets={targets} />} cursor={{ stroke: '#94a3b8', strokeDasharray: '3 3' }} />
+                {targetLineProps(targets).map(({ key, ...props }) => <ReferenceLine key={key} {...props} />)}
                 {lines.map(l => (
                   <Line
                     key={l.key}
@@ -600,6 +574,7 @@ const DEFAULT_TITLES = {
   service: '3. Close rate by service',
   stage: '4. Close rate by stage',
   reach: '5. % of deals that reached each stage',
+  progress: '6. Chance of moving to the next stage, by days in stage',
 };
 
 // A chart title with a pencil to rename it. Enter or leaving the box saves;
@@ -758,6 +733,7 @@ export function CloseRateDeepDive({
   const [linesOff, setLinesOff] = useState(() => ({
     source: chartStart.source?.off || new Set(),
     stage: chartStart.stage?.off || new Set(),
+    progress: chartStart.progress?.off || new Set(),
   }));
   const lineStateFor = (chart) => ({
     off: linesOff[chart],
@@ -791,7 +767,7 @@ export function CloseRateDeepDive({
   const applyChart = (chart, entry) => {
     const st = chartFromEntry(entry, PRESETS);
     setOwnFor(chart, st.filters);
-    if (chart === 'source' || chart === 'stage') setLinesOff(prev => ({ ...prev, [chart]: st.off }));
+    if (chart === 'source' || chart === 'stage' || chart === 'progress') setLinesOff(prev => ({ ...prev, [chart]: st.off }));
     if (chart === 'service') setServiceOff(st.off);
     if (chart === 'reach') setReachMount(prev => ({ key: prev.key + 1, start: { ...(st.reach || {}), hidden: st.off } }));
   };
@@ -818,8 +794,8 @@ export function CloseRateDeepDive({
     onResetColours: () => savePrefs(withoutColours(prefs, chart), { now: true }),
     labelled: (key) => isLabelled(prefs, chart, key),
     onLabelToggle: (key) => savePrefs(withLineLabel(prefs, chart, key, !isLabelled(prefs, chart, key)), { now: true }),
-    target: prefs.targets[chart] ?? null,
-    onTargetChange: (v) => savePrefs(withTarget(prefs, chart, v), { now: true }),
+    targets: targetsOf(prefs, chart),
+    onTargetsChange: (list) => savePrefs(withTargets(prefs, chart, list)),
   });
 
   const filtered = useMemo(
@@ -900,6 +876,8 @@ export function CloseRateDeepDive({
   const reachRecords = countedFor(fReach);
   // Chart 1 (the Weekly email table) runs on its own 6-month-style window,
   // so only its two filter buttons follow the tab (or its own).
+  const fProgress = eff('progress');
+  const progressRecords = countedFor(fProgress);
   const fWeekly = eff('weekly');
   const weeklyRecords = countedFor(fWeekly);
   const weekly = useMemo(() => closeRateTrendByStage(weeklyRecords, { months: weeklyMonths }), [weeklyRecords, weeklyMonths]);
@@ -976,7 +954,7 @@ export function CloseRateDeepDive({
             { Item: 'By stage', Value: 'An opp counts toward every stage it reached, so stage rows do not add up.' },
             { Item: 'Stage reach', Value: `% of ${reachState.closedOnly ? 'closed ' : ''}opps that got at least as far as each stage, grouped by Start Date${reachState.from || reachState.to ? ` (${reachState.from || 'start'} to ${reachState.to || 'today'})` : ''}. Pull-throughs always left out; Not Sold opps with no stage history left out.` },
             { Item: 'By service', Value: 'An opp counts toward each service on its Scope. Hidden services are left out.' },
-            ...[['weekly', 'Weekly email trend', fWeekly], ['source', 'By source', fSource], ['service', 'By service', fService], ['stage', 'By stage', fStage], ['reach', 'Stage reach', fReach]]
+            ...[['weekly', 'Weekly email trend', fWeekly], ['source', 'By source', fSource], ['service', 'By service', fService], ['stage', 'By stage', fStage], ['reach', 'Stage reach', fReach], ['progress', 'Chance of moving on', fProgress]]
               .filter(([c]) => own[c])
               .map(([c, label, f]) => ({ Item: `${label} filters`, Value: `Own: ${c === 'weekly' ? (f.leadOrHigher ? 'Lead stage or higher' : 'every stage') : describeFilters(f, { showWindow: c !== 'reach' })}` })),
             { Item: 'Exported', Value: new Date().toLocaleString() },
@@ -1237,13 +1215,24 @@ export function CloseRateDeepDive({
           onColourChange={(st, hex) => savePrefs(withColour(prefs, 'reach', st, hex))}
           labelled={(st) => isLabelled(prefs, 'reach', st)}
           onLabelToggle={(st) => savePrefs(withLineLabel(prefs, 'reach', st, !isLabelled(prefs, 'reach', st)), { now: true })}
-          target={prefs.targets.reach ?? null}
-          targetInput={TargetInput}
-          onTargetChange={(v) => savePrefs(withTarget(prefs, 'reach', v), { now: true })}
+          targets={targetsOf(prefs, 'reach')}
+          onTargetsChange={(list) => savePrefs(withTargets(prefs, 'reach', list))}
           settings={settings}
           updateSettings={updateSettings}
         />
       </section>
+
+      <StageProgression
+        records={progressRecords}
+        from={fProgress.from}
+        to={fProgress.to}
+        windowText={fProgress.from || fProgress.to ? `between ${fProgress.from || 'the start'} and ${fProgress.to || 'today'}` : 'at any time'}
+        title={<EditableTitle {...titleProps('progress')} />}
+        lineState={lineStateFor('progress')}
+        filterBar={chartBar('progress', { filters: fProgress, off: linesOff.progress }, { showPeriod: false })}
+        settings={settings}
+        updateSettings={updateSettings}
+      />
     </div>
   );
 }
