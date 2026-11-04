@@ -14365,6 +14365,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // for this tab), 'closed' (Sold / Not Sold), or 'all'. Mirrors the
   // main tab's Show control.
   const [sourceActivityFilter, setSourceActivityFilter] = useState('active');
+  // "By Source" table: "Has BFO Opp Name only" keeps just the opps with a
+  // real BFO Opportunity Name (BFO Link not blank / "-" / #N/A).
+  const [sourceBfoNamedOnly, setSourceBfoNamedOnly] = useState(false);
   // "By Source" drilldown: the Source whose opps the user clicked through
   // to. null when the list modal is closed.
   const [sourceDrillDown, setSourceDrillDown] = useState(null);
@@ -17909,7 +17912,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
 
   // Apply the "By Source" tab's own Start Date range + activity filter to
   // a single record. Returns true when the opp should be counted.
-  const sourceRowMatches = useCallback((r) => {
+  // sourceBaseMatches is everything but the BFO name rule, so the tab can
+  // say how many opps that rule alone left out.
+  const sourceBaseMatches = useCallback((r) => {
     const fromTs = sourceFrom ? Date.parse(sourceFrom) : null;
     const toTs = sourceTo ? Date.parse(sourceTo) + 86399999 : null;
     if (fromTs != null || toTs != null) {
@@ -17926,13 +17931,19 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     if (sourceActivityFilter === 'closed' && !CLOSED_STAGES.has(stage)) return false;
     return true;
   }, [sourceFrom, sourceTo, sourceActivityFilter, CLOSED_STAGES]);
+  const sourceRowMatches = useCallback(
+    (r) => sourceBaseMatches(r) && !(sourceBfoNamedOnly && bfoFieldMissing(r['BFO Link'])),
+    [sourceBaseMatches, sourceBfoNamedOnly],
+  );
 
   const sourceBreakdown = useMemo(() => {
-    if (activeTab !== 'bySource') return { rows: [], total: 0 };
+    if (activeTab !== 'bySource') return { rows: [], total: 0, unnamed: 0 };
     const stats = {};
     let total = 0;
+    let unnamed = 0;
     for (const r of records) {
-      if (!sourceRowMatches(r)) continue;
+      if (!sourceBaseMatches(r)) continue;
+      if (!sourceRowMatches(r)) { unnamed += 1; continue; }
       const stage = (r['Stage'] || '').trim();
       const source = sourceKeyOf(r);
       if (!stats[source]) stats[source] = { total: 0, wins: 0, losses: 0, opps: [] };
@@ -17955,8 +17966,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
         };
       })
       .sort((a, b) => b.count - a.count);
-    return { rows, total };
-  }, [activeTab, records, sourceRowMatches, sourceKeyOf]);
+    return { rows, total, unnamed };
+  }, [activeTab, records, sourceBaseMatches, sourceRowMatches, sourceKeyOf]);
 
   // The opps behind the source the user clicked in the summary table.
   // Scoped to the same filters so the count matches the row they clicked.
@@ -19518,16 +19529,28 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
                 <option value="all">All</option>
               </select>
             </label>
-            {(sourceFrom || sourceTo || sourceActivityFilter !== 'active') && (
+            <button
+              type="button"
+              className={sourceBfoNamedOnly ? styles.notSoldYearOn : styles.notSoldYear}
+              onClick={() => setSourceBfoNamedOnly(v => !v)}
+              title="Only count opps that have a BFO Opportunity Name"
+              aria-pressed={sourceBfoNamedOnly}
+            >Has BFO Opp Name only</button>
+            {(sourceFrom || sourceTo || sourceActivityFilter !== 'active' || sourceBfoNamedOnly) && (
               <button
                 className={styles.clearFiltersBtn}
-                onClick={() => { setSourceFrom(''); setSourceTo(''); setSourceActivityFilter('active'); }}
+                onClick={() => { setSourceFrom(''); setSourceTo(''); setSourceActivityFilter('active'); setSourceBfoNamedOnly(false); }}
               >Clear filters</button>
             )}
             <span className={styles.resultCount}>
               {sourceBreakdown.rows.length} source{sourceBreakdown.rows.length === 1 ? '' : 's'} · {sourceBreakdown.total} {sourceActivityFilter === 'active' ? 'active ' : sourceActivityFilter === 'closed' ? 'closed ' : ''}lead{sourceBreakdown.total === 1 ? '' : 's'}
               {(sourceFrom || sourceTo) ? ' in range' : ''} · click a source to see its opps
             </span>
+            {sourceBfoNamedOnly && sourceBreakdown.unnamed > 0 && (
+              <span className={styles.resultCount} style={{ color: '#92400E' }}>
+                {sourceBreakdown.unnamed} left out - no BFO Opportunity Name
+              </span>
+            )}
           </div>
           {/* tableId bumped from "opps2-source" when Avg Deal $ / Avg Won $
               and the two reason columns were added: DataTable treats a saved
