@@ -25,6 +25,7 @@ import {
 import {
   SETTINGS_KEY as SAVED_FILTERS_KEY, readSavedFilters, snapshotFilters, filtersFromEntry,
   matchesEntry, withSaved, withoutSaved, withDefault,
+  CHART_IDS, readChartSaved, chartSavedPatch, snapshotChart, chartMatchesEntry, chartFromEntry,
 } from '../../utils/closeRateSavedFilters';
 import styles from './CloseRateDeepDive.module.css';
 
@@ -146,7 +147,7 @@ export function TargetInput({ value, onChange, label = 'Target' }) {
 function TrendSection({
   title, subtitle, nameHeader, trend, period, tableId, exportName, note, keepOrder = false, fitYAxis = false,
   colours, onColourChange, onResetColours, labelled = () => false, onLabelToggle, target = null, onTargetChange,
-  lineState, exclude, picked, onNameClick, nameBadge, headerExtra, settings, updateSettings,
+  lineState, exclude, picked, onNameClick, nameBadge, headerExtra, filterBar, settings, updateSettings,
 }) {
   // Colour by entity: fixed by the series' place in the full list (most
   // decided first), so hiding one in the legend never repaints the rest.
@@ -302,6 +303,7 @@ function TrendSection({
           )}
         </div>
       </div>
+      {filterBar}
 
       {trend.periods.length === 0 ? (
         <div className={styles.empty}>No closed opps in this window.</div>
@@ -404,7 +406,11 @@ function TrendSection({
 
 // "Saved filters" menu: name and save the tab's top controls, apply a saved
 // set, delete one, or star one so the tab opens with it.
-function SavedFiltersMenu({ saved, current, onApply, onChange }) {
+//   saved     { list, defaultId }
+//   isActive(entry)  does the view match this entry (named on the button)
+//   makeEntry(name)  the entry to store for what is on screen
+//   what      the thing a star opens with ("the tab", "this chart")
+function SavedFiltersMenu({ saved, isActive, makeEntry, onApply, onChange, what = 'the tab', small = false }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const ref = useRef(null);
@@ -414,11 +420,11 @@ function SavedFiltersMenu({ saved, current, onApply, onChange }) {
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
-  const active = saved.list.find(e => matchesEntry(current, e));
+  const active = saved.list.find(e => isActive(e));
   const save = () => {
     const label = name.trim();
     if (!label) return;
-    onChange(withSaved(saved, snapshotFilters(current, label)));
+    onChange(withSaved(saved, makeEntry(label)));
     setName('');
   };
   const replacing = name.trim() && saved.list.some(e => e.name.trim().toLowerCase() === name.trim().toLowerCase());
@@ -426,7 +432,7 @@ function SavedFiltersMenu({ saved, current, onApply, onChange }) {
     <div className={styles.savedWrap} ref={ref}>
       <button
         type="button"
-        className={styles.savedBtn}
+        className={small ? `${styles.savedBtn} ${styles.savedBtnSmall}` : styles.savedBtn}
         onClick={() => setOpen(v => !v)}
         aria-expanded={open}
         title="Save these filters, or apply a saved set"
@@ -459,7 +465,7 @@ function SavedFiltersMenu({ saved, current, onApply, onChange }) {
                   type="button"
                   className={isDefault ? styles.savedStarOn : styles.savedStar}
                   onClick={() => onChange(withDefault(saved, e.id))}
-                  title={isDefault ? 'The tab opens with these filters. Click to stop.' : 'Open the tab with these filters'}
+                  title={isDefault ? `${what[0].toUpperCase()}${what.slice(1)} opens with these filters. Click to stop.` : `Open ${what} with these filters`}
                   aria-label={isDefault ? `Stop opening with ${e.name}` : `Open with ${e.name}`}
                 >{isDefault ? '★' : '☆'}</button>
                 <button
@@ -479,6 +485,111 @@ function SavedFiltersMenu({ saved, current, onApply, onChange }) {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// Period, Close Date window and the two filter buttons, as one value. The
+// per-chart filter bar uses it; `showWindow={false}` drops the Close Date
+// window for Stage reach, which groups by Start Date instead.
+function FilterControls({ value, onChange, showWindow = true }) {
+  const set = (patch) => onChange({ ...value, ...patch });
+  return (
+    <>
+      <div className={styles.group} role="group" aria-label="Period">
+        {PERIODS.map(p => (
+          <button key={p.key} type="button" className={value.period === p.key ? styles.toggleOn : styles.toggle} onClick={() => set({ period: p.key })}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+      {showWindow && (
+        <>
+          <div className={styles.group} role="group" aria-label="Close Date window">
+            {PRESETS.map(p => (
+              <button key={p.key} type="button" className={value.preset === p.key ? styles.toggleOn : styles.toggle} onClick={() => set({ preset: p.key, from: p.from(), to: '' })}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <label className={styles.dateField}>
+            From
+            <input type="date" value={value.from} onChange={e => set({ from: e.target.value, preset: '' })} />
+          </label>
+          <label className={styles.dateField}>
+            To
+            <input type="date" value={value.to} onChange={e => set({ to: e.target.value, preset: '' })} />
+          </label>
+        </>
+      )}
+      <button
+        type="button"
+        className={value.leadOrHigher ? styles.filterOn : styles.filterOff}
+        aria-pressed={value.leadOrHigher}
+        onClick={() => set({ leadOrHigher: !value.leadOrHigher })}
+        title="Only count opps known to have reached Lead or a later stage"
+      >
+        <span className={styles.check} aria-hidden="true">{value.leadOrHigher ? '✓' : ''}</span>
+        Lead stage or higher
+      </button>
+      <button
+        type="button"
+        className={value.noPullThroughs ? styles.filterOn : styles.filterOff}
+        aria-pressed={value.noPullThroughs}
+        onClick={() => set({ noPullThroughs: !value.noPullThroughs })}
+        title="Leave pull-through opps out of this chart"
+      >
+        <span className={styles.check} aria-hidden="true">{value.noPullThroughs ? '✓' : ''}</span>
+        Do not include pull-through opps
+      </button>
+    </>
+  );
+}
+
+// One line describing a set of filters, for a chart that follows the tab.
+function describeFilters(f, { showWindow = true } = {}) {
+  const period = PERIODS.find(p => p.key === f.period)?.label || f.period;
+  const preset = PRESETS.find(p => p.key === f.preset);
+  const win = preset ? preset.label : (f.from || f.to ? `${f.from || 'start'} to ${f.to || 'today'}` : 'All time');
+  return [
+    period,
+    ...(showWindow ? [win] : []),
+    f.leadOrHigher ? 'Lead stage or higher' : 'every stage',
+    f.noPullThroughs ? 'no pull-throughs' : 'pull-throughs included',
+  ].join(' · ');
+}
+
+// The filter row under a chart's title: follow the tab's filters or run on
+// the chart's own, plus the chart's own saved filters.
+function ChartFilterBar({ filters, own, onOwnChange, saved, onSavedChange, current, onApply, showWindow = true }) {
+  return (
+    <div className={styles.chartFilters}>
+      <div className={styles.group} role="group" aria-label="Chart filters">
+        <button
+          type="button"
+          className={own ? styles.toggle : styles.toggleOn}
+          onClick={() => onOwnChange(null)}
+          title="This chart uses the filters at the top of the tab"
+        >Tab filters</button>
+        <button
+          type="button"
+          className={own ? styles.toggleOn : styles.toggle}
+          onClick={() => { if (!own) onOwnChange({ ...filters }); }}
+          title="Give this chart its own Period, window and filters"
+        >Own filters</button>
+      </div>
+      {own
+        ? <FilterControls value={filters} onChange={onOwnChange} showWindow={showWindow} />
+        : <span className={styles.muted}>{describeFilters(filters, { showWindow })}</span>}
+      <SavedFiltersMenu
+        saved={saved}
+        isActive={(e) => chartMatchesEntry(current, e)}
+        makeEntry={(name) => snapshotChart(current, name)}
+        onApply={onApply}
+        onChange={onSavedChange}
+        what="this chart"
+        small
+      />
     </div>
   );
 }
@@ -524,8 +635,71 @@ export function CloseRateDeepDive({
     startedWithDefault.current = true;
     applyFilters(def);
   }, [saved, applyFilters]);
-  const currentFilters = { period, preset, from, to, leadOrHigher, noPullThroughs };
+  const currentFilters = useMemo(
+    () => ({ period, preset, from, to, leadOrHigher, noPullThroughs }),
+    [period, preset, from, to, leadOrHigher, noPullThroughs],
+  );
   const saveFilters = (next) => updateSettings?.({ [SAVED_FILTERS_KEY]: next });
+
+  // ---- Per-chart filters -------------------------------------------------
+  // Each chart (source, service, stage, reach) follows the tab's filters until
+  // it is given its own (`own[chart]`), and keeps its own saved sets. A chart
+  // with a starred saved set opens on it, lines and all.
+  const chartSaved = useMemo(
+    () => Object.fromEntries(CHART_IDS.map(c => [c, readChartSaved(settings, c)])),
+    [settings],
+  );
+  const [chartStart] = useState(() => Object.fromEntries(CHART_IDS.map(c => {
+    const sv = chartSaved[c];
+    const def = sv.list.find(e => e.id === sv.defaultId);
+    return [c, def ? chartFromEntry(def, PRESETS) : null];
+  })));
+  const [own, setOwn] = useState(() => Object.fromEntries(CHART_IDS.map(c => [c, chartStart[c]?.filters || null])));
+  const setOwnFor = (chart, f) => setOwn(prev => ({ ...prev, [chart]: f }));
+  const eff = (chart) => own[chart] || currentFilters;
+  // Lines switched off in the source / stage legends. The service chart's
+  // are OppsView2's (shared with By Service); Stage reach keeps its own.
+  const [linesOff, setLinesOff] = useState(() => ({
+    source: chartStart.source?.off || new Set(),
+    stage: chartStart.stage?.off || new Set(),
+  }));
+  const lineStateFor = (chart) => ({
+    off: linesOff[chart],
+    onShown: (key, shown) => setLinesOff(prev => {
+      const next = new Set(prev[chart]);
+      if (shown) next.delete(key); else next.add(key);
+      return { ...prev, [chart]: next };
+    }),
+  });
+  // Stage reach reads its own controls on mount, so applying a saved set
+  // remounts it with them.
+  const [reachMount, setReachMount] = useState(() => ({
+    key: 0,
+    start: chartStart.reach ? { ...(chartStart.reach.reach || {}), hidden: chartStart.reach.off } : null,
+  }));
+  const setServiceOff = useCallback((wanted) => {
+    if (!onServiceLineShown) return;
+    const have = serviceLinesOff || new Set();
+    for (const k of new Set([...have, ...wanted])) {
+      if (have.has(k) !== wanted.has(k)) onServiceLineShown(k, !wanted.has(k));
+    }
+  }, [serviceLinesOff, onServiceLineShown]);
+  // The service chart's starred lines can only be applied once its line
+  // state (OppsView2's) is here to change.
+  const serviceStarted = useRef(false);
+  useEffect(() => {
+    if (serviceStarted.current || !chartStart.service || !onServiceLineShown) return;
+    serviceStarted.current = true;
+    setServiceOff(chartStart.service.off);
+  }, [chartStart, onServiceLineShown, setServiceOff]);
+  const applyChart = (chart, entry) => {
+    const st = chartFromEntry(entry, PRESETS);
+    setOwnFor(chart, st.filters);
+    if (chart === 'source' || chart === 'stage') setLinesOff(prev => ({ ...prev, [chart]: st.off }));
+    if (chart === 'service') setServiceOff(st.off);
+    if (chart === 'reach') setReachMount(prev => ({ key: prev.key + 1, start: { ...(st.reach || {}), hidden: st.off } }));
+  };
+  const saveChart = (chart, next) => updateSettings?.(chartSavedPatch(settings, chart, next));
 
   // Chart colours and data labels, saved on settings (closeRatesChartPrefs).
   // A colour drag fires many changes, so they show at once from a draft and
@@ -588,18 +762,56 @@ export function CloseRateDeepDive({
   );
   // Section 5's own controls (closed only, Start Date range), reported back
   // so Export all writes the figures on screen.
-  const [reachState, setReachState] = useState({ closedOnly: true, from: '', to: '' });
+  const [reachState, setReachState] = useState({ closedOnly: true, from: '', to: '', hidden: new Set() });
   const onReachState = useCallback((st) => setReachState(prev => (
-    prev.closedOnly === st.closedOnly && prev.from === st.from && prev.to === st.to ? prev : st
+    prev.closedOnly === st.closedOnly && prev.from === st.from && prev.to === st.to && prev.hidden === st.hidden ? prev : st
   )), []);
 
   // 1. The Weekly email's table: always its own 6-month window, whatever the
   // window controls say. The filter buttons do apply; it leaves pull-throughs
   // out either way, as the email does.
   const weekly = useMemo(() => closeRateTrendByStage(counted, { months: 6 }), [counted]);
-  const bySource = useMemo(() => closeRateTrend(counted, { period, from, to }), [counted, period, from, to]);
-  const byService = useMemo(() => serviceCloseRateTrend(counted, { period, from, to, hidden, groups: activeGroups }), [counted, period, from, to, hidden, activeGroups]);
-  const byStage = useMemo(() => stageCloseRateTrend(counted, { period, from, to, includePullThroughs }), [counted, period, from, to, includePullThroughs]);
+  // Each chart's opps, through its own two filter buttons. The four
+  // combinations are worked out once each, however many charts share one.
+  const countedFor = useMemo(() => {
+    const cache = new Map();
+    return (f) => {
+      const k = `${f.leadOrHigher}|${f.noPullThroughs}`;
+      if (!cache.has(k)) cache.set(k, applyCloseRateFilters(records, { leadOrHigher: f.leadOrHigher, noPullThroughs: f.noPullThroughs }).records);
+      return cache.get(k);
+    };
+  }, [records]);
+  const fSource = eff('source');
+  const fService = eff('service');
+  const fStage = eff('stage');
+  const fReach = eff('reach');
+  const bySource = useMemo(
+    () => closeRateTrend(countedFor(fSource), { period: fSource.period, from: fSource.from, to: fSource.to }),
+    [countedFor, fSource],
+  );
+  const byService = useMemo(
+    () => serviceCloseRateTrend(countedFor(fService), { period: fService.period, from: fService.from, to: fService.to, hidden, groups: activeGroups }),
+    [countedFor, fService, hidden, activeGroups],
+  );
+  const byStage = useMemo(
+    () => stageCloseRateTrend(countedFor(fStage), { period: fStage.period, from: fStage.from, to: fStage.to, includePullThroughs: !fStage.noPullThroughs }),
+    [countedFor, fStage],
+  );
+  const reachRecords = countedFor(fReach);
+  const periodNameOf = (f) => PERIODS.find(p => p.key === f.period)?.label || f.period;
+  const windowTextOf = (f) => (f.from || f.to ? `Close Date ${f.from || 'start'} to ${f.to || 'today'}` : 'all Close Dates');
+  const chartBar = (chart, current, { showWindow = true } = {}) => (
+    <ChartFilterBar
+      filters={eff(chart)}
+      own={!!own[chart]}
+      onOwnChange={(f) => setOwnFor(chart, f)}
+      saved={chartSaved[chart]}
+      onSavedChange={(next) => saveChart(chart, next)}
+      current={current}
+      onApply={(e) => applyChart(chart, e)}
+      showWindow={showWindow}
+    />
+  );
   const filterText = [
     leadOrHigher ? 'Lead stage or higher only' : 'every stage',
     noPullThroughs ? 'pull-throughs left out' : 'pull-throughs included',
@@ -622,10 +834,10 @@ export function CloseRateDeepDive({
     try {
       await writeWorkbook('Close rate deep dive', [
         { name: 'Weekly email trend', rows: weeklyTrendSheetRows(weekly) },
-        { name: `By source (${periodName})`, rows: trendSheetRows(bySource, { period, nameHeader: 'Source' }) },
-        { name: `By service (${periodName})`, rows: trendSheetRows(byService, { period, nameHeader: 'Service' }) },
-        { name: `By stage (${periodName})`, rows: trendSheetRows(byStage, { period, nameHeader: 'Stage' }) },
-        { name: `Stage reach (${periodName})`, rows: stageReachSheetRows(counted, { period, closedOnly: reachState.closedOnly, from: reachState.from, to: reachState.to }) },
+        { name: `By source (${periodNameOf(fSource)})`, rows: trendSheetRows(bySource, { period: fSource.period, nameHeader: 'Source' }) },
+        { name: `By service (${periodNameOf(fService)})`, rows: trendSheetRows(byService, { period: fService.period, nameHeader: 'Service' }) },
+        { name: `By stage (${periodNameOf(fStage)})`, rows: trendSheetRows(byStage, { period: fStage.period, nameHeader: 'Stage' }) },
+        { name: `Stage reach (${periodNameOf(fReach)})`, rows: stageReachSheetRows(reachRecords, { period: fReach.period, closedOnly: reachState.closedOnly, from: reachState.from, to: reachState.to }) },
         { name: 'Closed opps', rows: closedOppSheetRows(counted, { period, from, to, includePullThroughs }) },
         {
           name: 'About',
@@ -639,6 +851,9 @@ export function CloseRateDeepDive({
             { Item: 'By stage', Value: 'An opp counts toward every stage it reached, so stage rows do not add up.' },
             { Item: 'Stage reach', Value: `% of ${reachState.closedOnly ? 'closed ' : ''}opps that got at least as far as each stage, grouped by Start Date${reachState.from || reachState.to ? ` (${reachState.from || 'start'} to ${reachState.to || 'today'})` : ''}. Pull-throughs always left out; Not Sold opps with no stage history left out.` },
             { Item: 'By service', Value: 'An opp counts toward each service on its Scope. Hidden services are left out.' },
+            ...[['source', 'By source', fSource], ['service', 'By service', fService], ['stage', 'By stage', fStage], ['reach', 'Stage reach', fReach]]
+              .filter(([c]) => own[c])
+              .map(([c, label, f]) => ({ Item: `${label} filters`, Value: `Own: ${describeFilters(f, { showWindow: c !== 'reach' })}` })),
             { Item: 'Exported', Value: new Date().toLocaleString() },
           ],
         },
@@ -711,7 +926,8 @@ export function CloseRateDeepDive({
         </div>
         <SavedFiltersMenu
           saved={saved}
-          current={currentFilters}
+          isActive={(e) => matchesEntry(currentFilters, e)}
+          makeEntry={(name) => snapshotFilters(currentFilters, name)}
           onApply={(e) => { touched.current = true; applyFilters(e); }}
           onChange={saveFilters}
         />
@@ -723,7 +939,7 @@ export function CloseRateDeepDive({
         Close rate = Sold / (Sold + Not Sold), by Close Date, {filterText}.
         {leadOrHigher && ` ${filtered.belowLead} closed opp${filtered.belowLead === 1 ? '' : 's'} never reached Lead and ${filtered.belowLead === 1 ? 'is' : 'are'} left out${filtered.unknownStage ? `; ${filtered.unknownStage} loss${filtered.unknownStage === 1 ? '' : 'es'} with no stage history can't be placed and stay in` : ''}.`}
         {noPullThroughs && ` ${filtered.pullThroughs} closed pull-through${filtered.pullThroughs === 1 ? '' : 's'} left out.`}
-        {' '}Sections 2 to 4 use {periodName.toLowerCase()}s over {windowText}.
+        {' '}Charts 2 to 5 use {periodName.toLowerCase()}s over {windowText} unless a chart is set to its own filters.
       </div>
 
       <section className={styles.section}>
@@ -739,11 +955,13 @@ export function CloseRateDeepDive({
 
       <TrendSection
         title="2. Close rate by source"
-        subtitle={`Each source's close rate per ${periodName.toLowerCase()}.`}
+        subtitle={`Each source's close rate per ${periodNameOf(fSource).toLowerCase()}, ${windowTextOf(fSource)}.`}
         nameHeader="Source"
         trend={bySource}
-        period={period}
-        tableId={`close-rates-source-${period}`}
+        period={fSource.period}
+        tableId={`close-rates-source-${fSource.period}`}
+        lineState={lineStateFor('source')}
+        filterBar={chartBar('source', { filters: fSource, off: linesOff.source })}
         {...colourProps('source')}
         exportName="Close rate by source"
         fitYAxis
@@ -753,11 +971,12 @@ export function CloseRateDeepDive({
 
       <TrendSection
         title="3. Close rate by service"
-        subtitle={`Each service's close rate per ${periodName.toLowerCase()}.`}
+        subtitle={`Each service's close rate per ${periodNameOf(fService).toLowerCase()}, ${windowTextOf(fService)}.`}
         nameHeader="Service"
         trend={byService}
-        period={period}
-        tableId={`close-rates-service-${period}`}
+        period={fService.period}
+        tableId={`close-rates-service-${fService.period}`}
+        filterBar={chartBar('service', { filters: fService, off: serviceLinesOff || new Set() })}
         {...colourProps('service')}
         exportName="Close rate by service"
         fitYAxis
@@ -820,11 +1039,13 @@ export function CloseRateDeepDive({
 
       <TrendSection
         title="4. Close rate by stage"
-        subtitle={`By the stages each closed opp reached, per ${periodName.toLowerCase()}, over the window above.`}
+        subtitle={`By the stages each closed opp reached, per ${periodNameOf(fStage).toLowerCase()}, ${windowTextOf(fStage)}.`}
         nameHeader="Stage"
         trend={byStage}
-        period={period}
-        tableId={`close-rates-stage-${period}`}
+        period={fStage.period}
+        tableId={`close-rates-stage-${fStage.period}`}
+        lineState={lineStateFor('stage')}
+        filterBar={chartBar('stage', { filters: fStage, off: linesOff.stage })}
         {...colourProps('stage')}
         exportName="Close rate by stage"
         fitYAxis
@@ -839,20 +1060,27 @@ export function CloseRateDeepDive({
           <div>
             <h2 className={styles.sectionTitle}>5. % of deals that reached each stage</h2>
             <div className={styles.sectionSub}>
-              Of the opps that started in each {periodName.toLowerCase()} (by Start Date), the share that got at least as far as each stage.
-              The same view as Days in Stage &gt; Stage Reach, with the filters above applied{leadOrHigher ? ', so Lead reads 100%' : ''}.
+              Of the opps that started in each {periodNameOf(fReach).toLowerCase()} (by Start Date), the share that got at least as far as each stage.
+              The same view as Days in Stage &gt; Stage Reach, with {own.reach ? 'this chart\'s' : 'the tab\'s'} filters applied{fReach.leadOrHigher ? ', so Lead reads 100%' : ''}.
             </div>
           </div>
           <button
             type="button"
             className={styles.smallBtn}
-            onClick={() => writeWorkbook('Stage reach', [{ name: 'Stage reach', rows: stageReachSheetRows(counted, { period, closedOnly: reachState.closedOnly, from: reachState.from, to: reachState.to }) }])}
+            onClick={() => writeWorkbook('Stage reach', [{ name: 'Stage reach', rows: stageReachSheetRows(reachRecords, { period: fReach.period, closedOnly: reachState.closedOnly, from: reachState.from, to: reachState.to }) }])}
             title="Each period's % and count per stage, whether or not the table is showing"
           >Export Excel</button>
         </div>
+        {chartBar('reach', {
+          filters: fReach,
+          off: reachState.hidden,
+          reach: { scope: reachState.closedOnly ? 'closed' : 'all', from: reachState.from, to: reachState.to },
+        }, { showWindow: false })}
         <StageReach
-          records={counted}
-          period={period}
+          key={reachMount.key}
+          applyState={reachMount.start}
+          records={reachRecords}
+          period={fReach.period}
           onState={onReachState}
           collapsibleTable
           colours={prefs.colours.reach}

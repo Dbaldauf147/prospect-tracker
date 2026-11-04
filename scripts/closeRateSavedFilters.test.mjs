@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   readSavedFilters, snapshotFilters, filtersFromEntry, matchesEntry,
   withSaved, withoutSaved, withDefault, SETTINGS_KEY,
+  CHART_SETTINGS_KEY, readChartSaved, chartSavedPatch, snapshotChart, chartMatchesEntry, chartFromEntry,
 } from '../src/utils/closeRateSavedFilters.js';
 
 const PRESETS = [
@@ -46,5 +47,38 @@ assert.deepEqual(saved, { list: [saved.list[0]], defaultId: null });
 // Reading settings drops junk and a dangling default.
 assert.deepEqual(readSavedFilters({ [SETTINGS_KEY]: { list: [null, { id: 3, name: ' ' }, { id: 4, name: 'Ok' }], defaultId: 3 } }),
   { list: [{ id: 4, name: 'Ok' }], defaultId: null });
+
+// ---- per chart ----------------------------------------------------------
+const chartFilters = { period: 'year', preset: '1y', from: '2025-11-04', to: '', leadOrHigher: true, noPullThroughs: false };
+const src = snapshotChart({ filters: chartFilters, off: new Set(['PE partner', 'Inside Sales']) }, 'No partners', 7);
+assert.deepEqual(src, {
+  id: 7, name: 'No partners',
+  filters: { period: 'year', preset: '1y', from: '', to: '', leadOrHigher: true, noPullThroughs: false },
+  off: ['Inside Sales', 'PE partner'],
+});
+// Matching ignores line order; a different line set or filter does not match.
+assert.equal(chartMatchesEntry({ filters: chartFilters, off: new Set(['PE partner', 'Inside Sales']) }, src), true);
+assert.equal(chartMatchesEntry({ filters: chartFilters, off: new Set(['PE partner']) }, src), false);
+assert.equal(chartMatchesEntry({ filters: { ...chartFilters, period: 'month' }, off: new Set(['PE partner', 'Inside Sales']) }, src), false);
+// Restoring re-resolves the preset and gives the lines back as a Set.
+const back = chartFromEntry(src, PRESETS);
+assert.deepEqual(back.filters, { period: 'year', preset: '1y', from: '2025-11-04', to: '', leadOrHigher: true, noPullThroughs: false });
+assert.deepEqual([...back.off].sort(), ['Inside Sales', 'PE partner']);
+assert.equal(back.reach, null);
+
+// Stage reach also keeps its own Closed only and Start Date range.
+const reach = snapshotChart({ filters: chartFilters, off: new Set(['Quoted']), reach: { scope: 'all', from: '2025-01-01', to: '' } }, 'All opps', 8);
+assert.deepEqual(reach.reach, { scope: 'all', from: '2025-01-01', to: '' });
+assert.deepEqual(chartFromEntry(reach, PRESETS).reach, { scope: 'all', from: '2025-01-01', to: '' });
+
+// Charts are stored side by side; saving one keeps the others.
+const settings = { [CHART_SETTINGS_KEY]: { stage: { list: [{ id: 1, name: 'S', filters: {}, off: [] }], defaultId: 1 } } };
+const patch = chartSavedPatch(settings, 'source', { list: [src], defaultId: null });
+assert.deepEqual(Object.keys(patch[CHART_SETTINGS_KEY]).sort(), ['source', 'stage']);
+assert.equal(readChartSaved({ ...settings, ...patch }, 'stage').defaultId, 1);
+assert.deepEqual(readChartSaved({ ...settings, ...patch }, 'source').list, [src]);
+assert.deepEqual(readChartSaved({}, 'reach'), { list: [], defaultId: null });
+// Entries without filters are dropped.
+assert.deepEqual(readChartSaved({ [CHART_SETTINGS_KEY]: { source: { list: [{ id: 2, name: 'x' }], defaultId: 2 } } }, 'source'), { list: [], defaultId: null });
 
 console.log('closeRateSavedFilters: ok');
