@@ -1,10 +1,11 @@
 // Saved filters for Opps > Close Rates.
 //
-// A saved filter is the tab's top controls: Period, the Close Date window
-// (a preset or a fixed From / To) and the two filter buttons. They live in
+// A saved filter is the tab's top controls: Period, the date basis (Close
+// Date or Open Date, which decides the date a closed deal is placed by), the
+// window (a preset or a fixed From / To) and the two filter buttons. They live in
 // settings.closeRateSavedFilters, so they follow the user to every machine:
 //
-//   { list: [{ id, name, period, preset, from, to, leadOrHigher, noPullThroughs }],
+//   { list: [{ id, name, period, dateBasis, preset, from, to, leadOrHigher, noPullThroughs }],
 //     defaultId }   // the one the tab opens with, or null
 //
 // A filter saved on a preset keeps the preset, not the dates it resolved to,
@@ -14,6 +15,9 @@
 export const SETTINGS_KEY = 'closeRateSavedFilters';
 
 const PERIOD_KEYS = new Set(['month', 'quarter', 'year']);
+// 'close' (the default, and what an entry saved before the choice existed
+// means) or 'open'.
+const basisOf = (v) => (v === 'open' ? 'open' : 'close');
 
 // The stored value, cleaned: a list of well-formed entries and a defaultId
 // that points at one of them (or null).
@@ -32,6 +36,7 @@ export function snapshotFilters(state, name, id = Date.now()) {
     id,
     name: String(name || '').trim(),
     period: PERIOD_KEYS.has(state.period) ? state.period : 'quarter',
+    dateBasis: basisOf(state.dateBasis),
     preset: state.preset || '',
     from: state.preset ? '' : (state.from || ''),
     to: state.preset ? '' : (state.to || ''),
@@ -47,6 +52,7 @@ export function filtersFromEntry(entry, presets) {
   const p = entry.preset ? presets.find(x => x.key === entry.preset) : null;
   return {
     period: PERIOD_KEYS.has(entry.period) ? entry.period : 'quarter',
+    dateBasis: basisOf(entry.dateBasis),
     preset: p ? p.key : '',
     from: p ? p.from() : (entry.from || ''),
     to: p ? '' : (entry.to || ''),
