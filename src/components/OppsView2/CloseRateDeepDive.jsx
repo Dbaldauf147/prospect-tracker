@@ -5,13 +5,17 @@ import {
 import { DataTable } from '../common/DataTable';
 import { CloseRateTrend } from '../WeeklyReportView/CloseRateTrend';
 import { StageReach } from './StageReach';
+import { GroupEditor, ServiceSettingsPopup } from './ServiceTrends';
 import { ColourPickDot } from '../common/ColourPickDot';
 import {
   CHART_PREFS_KEY, readChartPrefs, withColour, withoutColours, withLabels, labelText,
 } from '../../utils/closeRateChartPrefs';
 import { closeRateTrendByStage } from '../../utils/pipelineFunnelData';
 import { closeRateTrend, periodLabel } from '../../utils/notSoldAnalysis';
-import { serviceCloseRateTrend } from '../../utils/serviceTrends';
+import { serviceCloseRateTrend, servicesOf } from '../../utils/serviceTrends';
+import {
+  GROUPS_KEY, EXCLUDED_KEY, groupsFromSettings, excludedFromSettings, withServiceGroup, withExcluded,
+} from '../../utils/serviceTrendSettings';
 import {
   stageCloseRateTrend, applyCloseRateFilters, trendTableRows, trendSheetRows,
   weeklyTrendSheetRows, closedOppSheetRows, stageReachSheetRows, fmtRate,
@@ -99,7 +103,19 @@ function ChartTooltip({ active, payload, label, lines }) {
  * One trend (by source / service / stage): a line chart of the biggest
  * series plus Overall, and the full table under it.
  */
-function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exportName, note, keepOrder = false, fitYAxis = false, colours, onColourChange, onResetColours, showLabels = false, settings, updateSettings }) {
+// Optional, for the service chart (all off elsewhere):
+//   lineState   { off: Set, onShown(key, shown) } - which lines are switched
+//               off, owned by the parent (By Service's shared state)
+//   exclude     keys never drawn as their own line (Count in Other)
+//   picked      keys to draw instead of the busiest few, when any are here
+//   onNameClick(event, row)  makes each table name a button (the settings popup)
+//   nameBadge(row)           a note after a name, e.g. "(group)"
+//   headerExtra              controls for the section header
+function TrendSection({
+  title, subtitle, nameHeader, trend, period, tableId, exportName, note, keepOrder = false, fitYAxis = false,
+  colours, onColourChange, onResetColours, showLabels = false,
+  lineState, exclude, picked, onNameClick, nameBadge, headerExtra, settings, updateSettings,
+}) {
   // Colour by entity: fixed by the series' place in the full list (most
   // decided first), so hiding one in the legend never repaints the rest.
   const colourOf = useMemo(() => {
@@ -109,11 +125,15 @@ function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exp
     return m;
   }, [trend, colours]);
   const overallColour = colours?.__overall || OVERALL_COLOUR;
-  const candidates = useMemo(
-    () => trend.series.filter(s => s.decided > 0).slice(0, MAX_LINES),
-    [trend],
-  );
-  const [off, setOff] = useState(() => new Set());
+  const candidates = useMemo(() => {
+    const out = new Set(exclude || []);
+    const pool = trend.series.filter(s => s.decided > 0 && !out.has(s.key));
+    const keep = new Set(picked || []);
+    const chosen = pool.filter(s => keep.has(s.key));
+    return chosen.length ? chosen : pool.slice(0, MAX_LINES);
+  }, [trend, exclude, picked]);
+  const [ownOff, setOwnOff] = useState(() => new Set());
+  const off = lineState?.off || ownOff;
   const lines = useMemo(() => [
     ...candidates.filter(s => !off.has(s.key)).map(s => ({ key: s.key, name: s.label || s.key, colour: colourOf.get(s.key), cells: s.byPeriod })),
     ...(off.has('__overall') ? [] : [{ key: '__overall', name: 'Overall', colour: overallColour, cells: trend.overall, overall: true }]),
@@ -136,11 +156,14 @@ function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exp
     [fitYAxis, data, lines],
   );
 
-  const toggle = (key) => setOff(prev => {
-    const next = new Set(prev);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    return next;
-  });
+  const toggle = (key) => {
+    if (lineState) { lineState.onShown(key, off.has(key)); return; }
+    setOwnOff(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
 
   const rows = useMemo(() => trendTableRows(trend), [trend]);
   const columns = useMemo(() => {
@@ -158,7 +181,16 @@ function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exp
             {!row.isOverall && colourOf.has(row.key) && candidates.some(c => c.key === row.key) && (
               <span className={styles.swatch} style={{ background: colourOf.get(row.key) }} />
             )}
-            {row.label}
+            {onNameClick && !row.isOverall ? (
+              <button
+                type="button"
+                className={styles.nameBtn}
+                data-service-name={row.key}
+                onClick={(e) => onNameClick(e, row)}
+                title="Group, visible by default, count in Other, hide"
+              >{row.label}</button>
+            ) : row.label}
+            {nameBadge && !row.isOverall && nameBadge(row)}
           </span>
         ),
       },
@@ -199,7 +231,7 @@ function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exp
         },
       })),
     ];
-  }, [trend, period, nameHeader, colourOf, candidates]);
+  }, [trend, period, nameHeader, colourOf, candidates, onNameClick, nameBadge]);
 
   const detail = useMemo(() => trendSheetRows(trend, { period, nameHeader }), [trend, period, nameHeader]);
   // Tables start folded away; the chart is what a visit is for, and the
@@ -214,6 +246,7 @@ function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exp
           {subtitle && <div className={styles.sectionSub}>{subtitle}</div>}
         </div>
         <div className={styles.headActions}>
+          {headerExtra}
           <span className={styles.headline}>
             Overall {fmtRate(trend.rate)} <span className={styles.muted}>({trend.wins}/{trend.decided})</span>
           </span>
@@ -397,7 +430,13 @@ function SavedFiltersMenu({ saved, current, onApply, onChange }) {
   );
 }
 
-export function CloseRateDeepDive({ records = [], hiddenServices, settings, updateSettings }) {
+// The service props come from OppsView2 and are the By Service trend
+// subtabs' own, so a change here (group, visible by default, count in
+// Other, hide) shows there too and the other way round.
+export function CloseRateDeepDive({
+  records = [], hiddenServices, settings, updateSettings,
+  servicePicks, serviceLinesOff, onServiceLineShown, serviceLinesOffDefault, onServiceLineDefault, onToggleHideService,
+}) {
   const saved = useMemo(() => readSavedFilters(settings), [settings]);
   // The tab opens on the starred saved filter, if there is one; otherwise on
   // Quarter, "Since Jan, 2 yrs ago" and both filter buttons on.
@@ -463,6 +502,33 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
   const counted = filtered.records;
   const includePullThroughs = !noPullThroughs;
   const hidden = useMemo(() => [...(hiddenServices || [])], [hiddenServices]);
+  const hiddenSet = useMemo(() => new Set(hiddenServices || []), [hiddenServices]);
+
+  // Service settings, the By Service trend subtabs' own (see above).
+  const savedGroups = useMemo(() => groupsFromSettings(settings), [settings]);
+  const grouping = savedGroups.on && savedGroups.groups.length > 0;
+  const activeGroups = useMemo(() => (grouping ? savedGroups.groups : []), [grouping, savedGroups]);
+  const groupMembers = useMemo(() => new Map(activeGroups.map(g => [g.name, g.services])), [activeGroups]);
+  const excludedServices = useMemo(() => excludedFromSettings(settings), [settings]);
+  const offDefault = useMemo(() => serviceLinesOffDefault || new Set(), [serviceLinesOffDefault]);
+  const allServices = useMemo(() => {
+    const seen = new Set();
+    for (const r of records || []) for (const sv of servicesOf(r)) seen.add(sv);
+    return [...seen].sort((a, b) => a.localeCompare(b));
+  }, [records]);
+  const [svcPopup, setSvcPopup] = useState(null);
+  const [editingGroups, setEditingGroups] = useState(false);
+  const openSvcPopup = (e, row) => {
+    e.stopPropagation();
+    if (svcPopup?.name === row.key) { setSvcPopup(null); return; }
+    const rect = e.currentTarget.getBoundingClientRect();
+    setSvcPopup({ name: row.key, left: rect.left, top: rect.bottom + 4 });
+  };
+  const setServiceGroup = (service, groupName) => updateSettings?.({ [GROUPS_KEY]: withServiceGroup(savedGroups, service, groupName) });
+  const serviceLineState = useMemo(
+    () => (serviceLinesOff && onServiceLineShown ? { off: serviceLinesOff, onShown: onServiceLineShown } : undefined),
+    [serviceLinesOff, onServiceLineShown],
+  );
   // Section 5's own controls (closed only, Start Date range), reported back
   // so Export all writes the figures on screen.
   const [reachState, setReachState] = useState({ closedOnly: true, from: '', to: '' });
@@ -475,7 +541,7 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
   // out either way, as the email does.
   const weekly = useMemo(() => closeRateTrendByStage(counted, { months: 6 }), [counted]);
   const bySource = useMemo(() => closeRateTrend(counted, { period, from, to }), [counted, period, from, to]);
-  const byService = useMemo(() => serviceCloseRateTrend(counted, { period, from, to, hidden }), [counted, period, from, to, hidden]);
+  const byService = useMemo(() => serviceCloseRateTrend(counted, { period, from, to, hidden, groups: activeGroups }), [counted, period, from, to, hidden, activeGroups]);
   const byStage = useMemo(() => stageCloseRateTrend(counted, { period, from, to, includePullThroughs }), [counted, period, from, to, includePullThroughs]);
   const filterText = [
     leadOrHigher ? 'Lead stage or higher only' : 'every stage',
@@ -638,10 +704,62 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
         {...colourProps('service')}
         exportName="Close rate by service"
         fitYAxis
-        note={`An opp counts toward each service on its Scope, so service rows don't add up to Overall.${hidden.length ? ` ${hidden.length} service${hidden.length === 1 ? '' : 's'} hidden on By Service ${hidden.length === 1 ? 'is' : 'are'} left out.` : ''}`}
+        lineState={serviceLineState}
+        exclude={excludedServices}
+        picked={servicePicks}
+        onNameClick={openSvcPopup}
+        nameBadge={(row) => (
+          <>
+            {groupMembers.has(row.key) && <span className={styles.badge} title={groupMembers.get(row.key).join(', ')}>group</span>}
+            {excludedServices.includes(row.key) && <span className={styles.badge} title="Counts in Other by default: never drawn as its own line">Other</span>}
+            {offDefault.has(row.key) && !excludedServices.includes(row.key) && <span className={styles.badge} title="Starts switched off on the chart">off by default</span>}
+          </>
+        )}
+        headerExtra={(
+          <>
+            <button
+              type="button"
+              className={grouping ? styles.filterOn : styles.filterOff}
+              aria-pressed={grouping}
+              disabled={!savedGroups.groups.length}
+              onClick={() => updateSettings?.({ [GROUPS_KEY]: { ...savedGroups, on: !savedGroups.on } })}
+              title={savedGroups.groups.length ? 'Draw each group as one line (shared with By Service)' : 'No groups yet: click a service, or Edit groups'}
+            >
+              <span className={styles.check} aria-hidden="true">{grouping ? '✓' : ''}</span>
+              Group
+            </button>
+            <button type="button" className={styles.smallBtn} onClick={() => setEditingGroups(true)}>Edit groups</button>
+          </>
+        )}
+        note={`An opp counts toward each service on its Scope, so service rows don't add up to Overall. Click a service in the table to group it, set whether it shows by default, count it in Other, or hide it; the same settings as By Service.${hidden.length ? ` ${hidden.length} service${hidden.length === 1 ? '' : 's'} hidden on By Service ${hidden.length === 1 ? 'is' : 'are'} left out.` : ''}`}
         settings={settings}
         updateSettings={updateSettings}
       />
+      {svcPopup && byService.series.some(sv => sv.key === svcPopup.name) && (
+        <ServiceSettingsPopup
+          popup={svcPopup}
+          groups={savedGroups.groups}
+          groupMembers={groupMembers}
+          offDefault={offDefault}
+          excluded={excludedServices}
+          hidden={hiddenSet.has(svcPopup.name)}
+          onSetGroup={setServiceGroup}
+          onRemoveFromGroup={(sv) => setServiceGroup(sv, null)}
+          onDefaultChange={(k, shown) => onServiceLineDefault?.(k, shown)}
+          onOtherChange={(k, on) => updateSettings?.({ [EXCLUDED_KEY]: withExcluded(excludedServices, k, on) })}
+          onToggleHide={onToggleHideService}
+          onClose={() => setSvcPopup(null)}
+        />
+      )}
+      {editingGroups && (
+        <GroupEditor
+          groups={savedGroups.groups}
+          services={allServices}
+          settings={settings}
+          onClose={() => setEditingGroups(false)}
+          onSave={(groups) => { updateSettings?.({ [GROUPS_KEY]: { ...savedGroups, groups, on: groups.length > 0 } }); setEditingGroups(false); }}
+        />
+      )}
 
       <TrendSection
         title="4. Close rate by stage"

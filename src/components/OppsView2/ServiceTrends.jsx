@@ -5,6 +5,9 @@ import {
 } from 'recharts';
 import { DataTable } from '../common/DataTable';
 import { TagMultiSelect } from '../common/TagMultiSelect';
+import {
+  EXCLUDED_KEY, GROUPS_KEY, excludedFromSettings, groupsFromSettings, withExcluded, withServiceGroup,
+} from '../../utils/serviceTrendSettings';
 import { serviceShareTrend, serviceCloseRateTrend, serviceDealSizeTrend, periodLabel, servicesOf } from '../../utils/serviceTrends';
 import { getServiceCategories } from '../../utils/serviceCategoriesStore';
 import styles from './OppsView2.module.css';
@@ -26,7 +29,6 @@ function lineColour(i) {
 // Services switched off the chart for good (the Hide column of the
 // Services picker), saved and shared by both trend subtabs. They are never
 // drawn, picked or not; on the % of 100 scale they fall into Other.
-const EXCLUDED_KEY = 'oppsServiceTrendExcluded';
 
 /**
  * The Chart box: a button that opens a list of every service with a Show
@@ -315,19 +317,12 @@ function DealBreakdown({ trend, pick, period, split, sold, colourOf, onPick, onC
   );
 }
 
-// Saved service groups for both trend subtabs: settings.oppsServiceTrendGroups
-// = { on, groups: [{ name, services }] }. `on` is the Group toggle.
-function groupsFromSettings(settings) {
-  const g = settings?.oppsServiceTrendGroups;
-  return {
-    on: !!g?.on,
-    groups: Array.isArray(g?.groups) ? g.groups.filter(x => x && typeof x.name === 'string' && Array.isArray(x.services)) : [],
-  };
-}
+// Saved service groups (settings.oppsServiceTrendGroups) and the Count in
+// Other list live in utils/serviceTrendSettings, shared with Close Rates.
 
 // The editor for the groups: a name and its services per row, edited as a
 // draft and saved together so a half-typed name never reaches the chart.
-function GroupEditor({ groups, services, settings, onSave, onClose }) {
+export function GroupEditor({ groups, services, settings, onSave, onClose }) {
   const [draft, setDraft] = useState(() => groups.map(g => ({ name: g.name, services: [...g.services] })));
   const edit = (i, patch) => setDraft(d => d.map((g, j) => (j === i ? { ...g, ...patch } : g)));
   // A service sits in one group at a time, so each picker offers the
@@ -392,7 +387,7 @@ function GroupEditor({ groups, services, settings, onSave, onClose }) {
 // service sits in, whether its line is visible by default, whether it always
 // counts in Other, and Hide. Every choice saves straight away and is shared
 // by both trend subtabs.
-function ServiceSettingsPopup({
+export function ServiceSettingsPopup({
   popup, groups, groupMembers, offDefault, excluded, hidden,
   onSetGroup, onRemoveFromGroup, onDefaultChange, onOtherChange, onToggleHide, onClose,
 }) {
@@ -622,18 +617,9 @@ export function ServiceTrends({
     for (const r of records || []) for (const sv of servicesOf(r)) seen.add(sv);
     return [...seen].sort((a, b) => a.localeCompare(b));
   }, [records]);
-  const saveGroups = (patch) => updateSettings?.({ oppsServiceTrendGroups: { ...savedGroups, ...patch } });
-  // Move a service into a group (or out of every group with null). Putting
-  // a service in a group switches grouping on so the change shows.
-  const setServiceGroup = (service, groupName) => {
-    let next = savedGroups.groups.map(g => ({ ...g, services: g.services.filter(x => x !== service) }));
-    if (groupName) {
-      if (next.some(g => g.name === groupName)) next = next.map(g => (g.name === groupName ? { ...g, services: [...g.services, service] } : g));
-      else next = [...next, { name: groupName, services: [service] }];
-    }
-    next = next.filter(g => g.services.length > 0);
-    saveGroups({ groups: next, on: groupName ? true : savedGroups.on && next.length > 0 });
-  };
+  const saveGroups = (patch) => updateSettings?.({ [GROUPS_KEY]: { ...savedGroups, ...patch } });
+  // Move a service into a group (or out of every group with null).
+  const setServiceGroup = (service, groupName) => updateSettings?.({ [GROUPS_KEY]: withServiceGroup(savedGroups, service, groupName) });
   const [svcPopup, setSvcPopup] = useState(null);
   const openSvcPopup = (e, name) => {
     e.stopPropagation();
@@ -650,10 +636,7 @@ export function ServiceTrends({
   }, [mode, records, period, from, to, hiddenServices, activeGroups, dealSet, split]);
 
   const allKeys = useMemo(() => trend.series.map(s => s.key), [trend]);
-  const excluded = useMemo(
-    () => (Array.isArray(settings?.[EXCLUDED_KEY]) ? settings[EXCLUDED_KEY] : []),
-    [settings],
-  );
+  const excluded = useMemo(() => excludedFromSettings(settings), [settings]);
   const setExcluded = (next) => updateSettings?.({ [EXCLUDED_KEY]: next });
   const lines = useMemo(() => {
     const off = new Set(excluded);
@@ -987,7 +970,7 @@ export function ServiceTrends({
           onSetGroup={setServiceGroup}
           onRemoveFromGroup={(sv) => setServiceGroup(sv, null)}
           onDefaultChange={(k, shown) => onLineDefaultChange?.(k, shown)}
-          onOtherChange={(k, on) => setExcluded(on ? [...excluded.filter(x => x !== k), k].sort((a, b) => a.localeCompare(b)) : excluded.filter(x => x !== k))}
+          onOtherChange={(k, on) => setExcluded(withExcluded(excluded, k, on))}
           onToggleHide={onToggleHide}
           onClose={() => setSvcPopup(null)}
         />

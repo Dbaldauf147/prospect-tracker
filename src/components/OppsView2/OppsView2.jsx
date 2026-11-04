@@ -19730,6 +19730,12 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           hiddenServices={hiddenServices}
           settings={settings}
           updateSettings={updateSettings}
+          servicePicks={servicePicks}
+          serviceLinesOff={serviceLinesOff}
+          onServiceLineShown={setServiceLineShown}
+          serviceLinesOffDefault={serviceLinesOffDefault}
+          onServiceLineDefault={setServiceLineDefault}
+          onToggleHideService={toggleHideService}
         />
       )}
 
