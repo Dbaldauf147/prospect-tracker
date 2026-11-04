@@ -14,6 +14,7 @@ import {
   annualSalesProjection,
 } from '../../utils/oppsMetrics';
 import { loadOppsFromCache } from '../../utils/oppsCache';
+import { liveQuotedFigures } from '../../utils/quotedLiveSnapshot';
 import { loadCommissions, COMMISSIONS_LIST_EVENT } from '../../utils/commissionsStore';
 import { loadDealsList } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
@@ -274,21 +275,6 @@ function changedSinceMonthEnd(record, cutoffMs, exclude) {
   return { label: hits.length ? hits.join(', ') : 'No', latest };
 }
 
-// Total pipeline $ from the BFO Activity table — sum of its "Amount"
-// column across every pasted row. Returns null when no BFO data is
-// cached so the chart leaves that point blank instead of plotting $0.
-function sumBfoPipe(bfo) {
-  if (!bfo || !Array.isArray(bfo.rows) || bfo.rows.length === 0 || !Array.isArray(bfo.headers)) return null;
-  const amountCol = bfo.headers.find(h => /^amount$/i.test(h));
-  if (!amountCol) return null;
-  let sum = 0;
-  let any = false;
-  for (const r of bfo.rows) {
-    const amt = parseMoney(r[amountCol]);
-    if (typeof amt === 'number' && Number.isFinite(amt)) { sum += amt; any = true; }
-  }
-  return any ? sum : null;
-}
 
 // Calendar-month key ("YYYY-MM") matching the Quoted Projections table
 // keys, for the month `nowMs` falls in.
@@ -580,31 +566,7 @@ export function YOYView() {
   // agreements = open Quoted-$ with Status "Agreement Sent"; bfoPipe =
   // total BFO Activity Amount. All in $K. A 0 bucket → null so the line
   // doesn't dip to $0 for an empty category.
-  const liveCurrentMonth = useMemo(() => {
-    if (records.length === 0) return null;
-    let weak = 0, ok = 0, expected = 0, agreements = 0;
-    for (const r of records) {
-      const stage = String(r.Stage || '').trim();
-      if (CLOSED_STAGES.has(stage)) continue;
-      const amt = parseMoney(r['Quoted Amount']) || 0;
-      if (!amt) continue;
-      const chance = String(r['Chance?'] ?? r['Chance'] ?? '').trim().toLowerCase();
-      if (chance === 'weak') weak += amt;
-      else if (chance === 'ok') ok += amt;
-      else if (chance === 'expected') expected += amt;
-      // "Agreement Sent" is a Stage value (the Stage column uses the
-      // `status` dropdown list — see OppsView2 DROPDOWN config), not the
-      // free-text Status column. Match on Stage so the live month's
-      // Agreements Sent total isn't always $0.
-      if (stage === 'Agreement Sent') agreements += amt;
-    }
-    const toK = (n) => (n > 0 ? n / 1000 : null);
-    const pipe = sumBfoPipe(bfo);
-    return {
-      weak: toK(weak), ok: toK(ok), expected: toK(expected),
-      agreements: toK(agreements), bfoPipe: pipe != null ? pipe / 1000 : null,
-    };
-  }, [records, bfo]);
+  const liveCurrentMonth = useMemo(() => liveQuotedFigures(records, bfo), [records, bfo]);
 
   const quotedData = useMemo(() => {
     const num = (x) => {

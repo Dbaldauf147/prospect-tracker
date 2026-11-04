@@ -56,7 +56,7 @@ function rowCount(json) {
 }
 
 // Write `json` the way utils/localMirrorSync writes a mirror document.
-async function writeMirrorDoc(db, ref, json, updatedAt) {
+export async function writeMirrorDoc(db, ref, json, updatedAt) {
   if (json.length <= SINGLE_DOC_MAX_BYTES / 4) {
     await ref.set({ chunkCount: 0, updatedAt, json }, { merge: true });
     return;
