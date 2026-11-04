@@ -192,6 +192,9 @@ function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exp
   }, [trend, period, nameHeader, colourOf, candidates]);
 
   const detail = useMemo(() => trendSheetRows(trend, { period, nameHeader }), [trend, period, nameHeader]);
+  // Tables start folded away; the chart is what a visit is for, and the
+  // header's Export Excel writes the full table either way.
+  const [showTable, setShowTable] = useState(false);
 
   return (
     <section className={styles.section}>
@@ -200,9 +203,27 @@ function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exp
           <h2 className={styles.sectionTitle}>{title}</h2>
           {subtitle && <div className={styles.sectionSub}>{subtitle}</div>}
         </div>
-        <span className={styles.headline}>
-          Overall {fmtRate(trend.rate)} <span className={styles.muted}>({trend.wins}/{trend.decided})</span>
-        </span>
+        <div className={styles.headActions}>
+          <span className={styles.headline}>
+            Overall {fmtRate(trend.rate)} <span className={styles.muted}>({trend.wins}/{trend.decided})</span>
+          </span>
+          {trend.periods.length > 0 && (
+            <>
+              <button
+                type="button"
+                className={styles.smallBtn}
+                aria-expanded={showTable}
+                onClick={() => setShowTable(v => !v)}
+              >{showTable ? 'Hide table' : 'Show table'}</button>
+              <button
+                type="button"
+                className={styles.smallBtn}
+                onClick={() => writeWorkbook(exportName, [{ name: exportName, rows: detail }])}
+                title="Every row and period with its close rate and Sold / Closed, whether or not the table is showing"
+              >Export Excel</button>
+            </>
+          )}
+        </div>
       </div>
 
       {trend.periods.length === 0 ? (
@@ -252,7 +273,7 @@ function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exp
           </div>
           {/* DataTable's scroll body is flex: 1 1 0, so it needs a sized
               parent. Sized to the rows, capped. */}
-          <div style={{ display: 'flex', flexDirection: 'column', height: Math.min(560, 132 + rows.length * 37) }}>
+          {showTable && <div style={{ display: 'flex', flexDirection: 'column', height: Math.min(560, 132 + rows.length * 37) }}>
             <DataTable
               key={tableId}
               tableId={tableId}
@@ -270,7 +291,7 @@ function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exp
               settings={settings}
               updateSettings={updateSettings}
             />
-          </div>
+          </div>}
         </>
       )}
       {note && <div className={styles.note}>{note}</div>}
@@ -479,11 +500,18 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
               The same view as Days in Stage &gt; Stage Reach, with the filters above applied{leadOrHigher ? ', so Lead reads 100%' : ''}.
             </div>
           </div>
+          <button
+            type="button"
+            className={styles.smallBtn}
+            onClick={() => writeWorkbook('Stage reach', [{ name: 'Stage reach', rows: stageReachSheetRows(counted, { period, closedOnly: reachState.closedOnly, from: reachState.from, to: reachState.to }) }])}
+            title="Each period's % and count per stage, whether or not the table is showing"
+          >Export Excel</button>
         </div>
         <StageReach
           records={counted}
           period={period}
           onState={onReachState}
+          collapsibleTable
           settings={settings}
           updateSettings={updateSettings}
         />
