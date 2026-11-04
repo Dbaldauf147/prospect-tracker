@@ -257,3 +257,51 @@
   font-size: 0.75rem;
   color: var(--color-text-muted);
 }
+
+.filterButtons {
+  display: inline-flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.filterOn,
+.filterOff {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.32rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.filterOn {
+  border: 1px solid var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, #fff);
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.filterOff {
+  border: 1px solid var(--color-border);
+  background: #fff;
+  color: var(--color-text-muted);
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  font-size: 0.65rem;
+  line-height: 1;
+}
+
+.filterOn .check {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}

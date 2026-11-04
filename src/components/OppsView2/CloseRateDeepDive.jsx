@@ -8,7 +8,7 @@ import { closeRateTrendByStage } from '../../utils/pipelineFunnelData';
 import { closeRateTrend, periodLabel } from '../../utils/notSoldAnalysis';
 import { serviceCloseRateTrend } from '../../utils/serviceTrends';
 import {
-  stageCloseRateTrend, withoutPullThroughs, trendTableRows, trendSheetRows,
+  stageCloseRateTrend, applyCloseRateFilters, trendTableRows, trendSheetRows,
   weeklyTrendSheetRows, closedOppSheetRows, fmtRate,
 } from '../../utils/closeRateDeepDive';
 import styles from './CloseRateDeepDive.module.css';
@@ -23,7 +23,8 @@ import styles from './CloseRateDeepDive.module.css';
 //
 // "Export all to Excel" writes one workbook with a sheet per section plus
 // the closed opps behind them; each table also has its own Export Excel.
-// Pull-throughs are left out everywhere (see utils/closeRateDeepDive).
+// Two filter buttons, both on by default, run over every section: Lead stage
+// or higher, and no pull-throughs (see utils/closeRateDeepDive).
 
 // The same validated categorical order as the By Service / By Source trend
 // charts, so a series reads in the same colour on all three tabs.
@@ -274,16 +275,29 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
   const [from, setFrom] = useState(() => PRESETS.find(p => p.key === '2y').from());
   const [to, setTo] = useState('');
   const [exporting, setExporting] = useState(false);
+  // Both on whenever the tab opens.
+  const [leadOrHigher, setLeadOrHigher] = useState(true);
+  const [noPullThroughs, setNoPullThroughs] = useState(true);
 
-  const counted = useMemo(() => withoutPullThroughs(records), [records]);
+  const filtered = useMemo(
+    () => applyCloseRateFilters(records, { leadOrHigher, noPullThroughs }),
+    [records, leadOrHigher, noPullThroughs],
+  );
+  const counted = filtered.records;
+  const includePullThroughs = !noPullThroughs;
   const hidden = useMemo(() => [...(hiddenServices || [])], [hiddenServices]);
 
   // 1. The Weekly email's table: always its own 6-month window, whatever the
-  // controls say, so it matches what went out.
-  const weekly = useMemo(() => closeRateTrendByStage(records, { months: 6 }), [records]);
+  // window controls say. The filter buttons do apply; it leaves pull-throughs
+  // out either way, as the email does.
+  const weekly = useMemo(() => closeRateTrendByStage(counted, { months: 6 }), [counted]);
   const bySource = useMemo(() => closeRateTrend(counted, { period, from, to }), [counted, period, from, to]);
   const byService = useMemo(() => serviceCloseRateTrend(counted, { period, from, to, hidden }), [counted, period, from, to, hidden]);
-  const byStage = useMemo(() => stageCloseRateTrend(records, { period, from, to }), [records, period, from, to]);
+  const byStage = useMemo(() => stageCloseRateTrend(counted, { period, from, to, includePullThroughs }), [counted, period, from, to, includePullThroughs]);
+  const filterText = [
+    leadOrHigher ? 'Lead stage or higher only' : 'every stage',
+    noPullThroughs ? 'pull-throughs left out' : 'pull-throughs included',
+  ].join(', ');
 
   const periodName = PERIODS.find(p => p.key === period)?.label || period;
   const windowText = from || to
@@ -305,15 +319,16 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
         { name: `By source (${periodName})`, rows: trendSheetRows(bySource, { period, nameHeader: 'Source' }) },
         { name: `By service (${periodName})`, rows: trendSheetRows(byService, { period, nameHeader: 'Service' }) },
         { name: `By stage (${periodName})`, rows: trendSheetRows(byStage, { period, nameHeader: 'Stage' }) },
-        { name: 'Closed opps', rows: closedOppSheetRows(records, { period, from, to }) },
+        { name: 'Closed opps', rows: closedOppSheetRows(counted, { period, from, to, includePullThroughs }) },
         {
           name: 'About',
           rows: [
             { Item: 'Window', Value: windowText },
             { Item: 'Period', Value: periodName },
             { Item: 'Close rate', Value: 'Sold / (Sold + Not Sold), by Close Date. Rates are whole percentage points.' },
-            { Item: 'Pull-throughs', Value: 'Left out of every sheet.' },
-            { Item: 'Weekly email trend', Value: 'Last 6 months by stage, the same table as the Weekly email, whatever the window above.' },
+            { Item: 'Lead stage or higher', Value: leadOrHigher ? `On: opps closed before reaching Lead left out (${filtered.belowLead}). ${filtered.unknownStage} losses with no stage history kept.` : 'Off: every closed opp counted.' },
+            { Item: 'Pull-throughs', Value: noPullThroughs ? `Left out (${filtered.pullThroughs}).` : 'Included, except in the Weekly email trend, which always leaves them out.' },
+            { Item: 'Weekly email trend', Value: 'Last 6 months by stage, the Weekly email table with the filters above applied, whatever the window.' },
             { Item: 'By stage', Value: 'An opp counts toward every stage it reached, so stage rows do not add up.' },
             { Item: 'By service', Value: 'An opp counts toward each service on its Scope. Hidden services are left out.' },
             { Item: 'Exported', Value: new Date().toLocaleString() },
@@ -354,20 +369,44 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
           To
           <input type="date" value={to} onChange={e => { setTo(e.target.value); setPreset(''); }} />
         </label>
+        <div className={styles.filterButtons} role="group" aria-label="Filters">
+          <button
+            type="button"
+            className={leadOrHigher ? styles.filterOn : styles.filterOff}
+            aria-pressed={leadOrHigher}
+            onClick={() => setLeadOrHigher(v => !v)}
+            title="Only count opps known to have reached Lead or a later stage (from the opp's Stage or its stage history). Losses with no stage history can't be placed, so they stay in."
+          >
+            <span className={styles.check} aria-hidden="true">{leadOrHigher ? '✓' : ''}</span>
+            Lead stage or higher
+          </button>
+          <button
+            type="button"
+            className={noPullThroughs ? styles.filterOn : styles.filterOff}
+            aria-pressed={noPullThroughs}
+            onClick={() => setNoPullThroughs(v => !v)}
+            title="Leave pull-through opps out of every section"
+          >
+            <span className={styles.check} aria-hidden="true">{noPullThroughs ? '✓' : ''}</span>
+            Do not include pull-through opps
+          </button>
+        </div>
         <button type="button" className={styles.exportBtn} onClick={exportAll} disabled={exporting}>
           {exporting ? 'Exporting...' : 'Export all to Excel'}
         </button>
       </div>
       <div className={styles.scopeNote}>
-        Close rate = Sold / (Sold + Not Sold), by Close Date. Pull-through opps are left out of every section.
-        Sections 2 to 4 use {periodName.toLowerCase()}s over {windowText}.
+        Close rate = Sold / (Sold + Not Sold), by Close Date, {filterText}.
+        {leadOrHigher && ` ${filtered.belowLead} closed opp${filtered.belowLead === 1 ? '' : 's'} never reached Lead and ${filtered.belowLead === 1 ? 'is' : 'are'} left out${filtered.unknownStage ? `; ${filtered.unknownStage} loss${filtered.unknownStage === 1 ? '' : 'es'} with no stage history can't be placed and stay in` : ''}.`}
+        {noPullThroughs && ` ${filtered.pullThroughs} closed pull-through${filtered.pullThroughs === 1 ? '' : 's'} left out.`}
+        {' '}Sections 2 to 4 use {periodName.toLowerCase()}s over {windowText}.
       </div>
 
       <section className={styles.section}>
         <div className={styles.sectionHead}>
           <div>
             <h2 className={styles.sectionTitle}>1. Close rate trend (Weekly email)</h2>
-            <div className={styles.sectionSub}>Last 6 months by the stage each closed deal reached, the same table the Weekly email sends.</div>
+            <div className={styles.sectionSub}>Last 6 months by the stage each closed deal reached: the Weekly email's table with the filters above applied. It always leaves pull-throughs out, as the email does.</div>
           </div>
           <button type="button" className={styles.smallBtn} onClick={exportWeekly}>Export Excel</button>
         </div>

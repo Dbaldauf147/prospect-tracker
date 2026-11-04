@@ -58,3 +58,29 @@ assert.equal(fmtRate(null), '-');
 assert.equal(fmtRate(46.6), '47%');
 
 console.log('PASS closeRateDeepDive');
+
+// Filters: Lead stage or higher, pull-throughs.
+{
+  const { applyCloseRateFilters, reachedLead, stageCloseRateTrend: sct } = await import('../src/utils/closeRateDeepDive.js');
+  const recs = [
+    { Stage: 'Sold', 'Close Date': '2026-01-10', Scope: 'Audits' },                                              // reached all
+    { Stage: 'Not Sold', 'Close Date': '2026-01-11', Scope: 'Audits', _stageHistory: [{ stage: 'Not Started' }] }, // never reached Lead
+    { Stage: 'Not Sold', 'Close Date': '2026-01-12', Scope: 'Audits', _stageHistory: [{ stage: 'Lead' }] },        // reached Lead
+    { Stage: 'Not Sold', 'Close Date': '2026-01-13', Scope: 'Audits' },                                           // unknown: kept
+    { Stage: 'Sold', 'Close Date': '2026-01-14', Scope: 'Pull through' },                                          // pull-through
+  ];
+  assert.equal(reachedLead(recs[1]), false);
+  assert.equal(reachedLead(recs[2]), true);
+  assert.equal(reachedLead(recs[3]), null);
+  const on = applyCloseRateFilters(recs);
+  assert.equal(on.records.length, 3);
+  assert.equal(on.belowLead, 1);
+  assert.equal(on.pullThroughs, 1);
+  assert.equal(on.unknownStage, 1);
+  const off = applyCloseRateFilters(recs, { leadOrHigher: false, noPullThroughs: false });
+  assert.equal(off.records.length, 5);
+  // Pull-throughs back in: the by-stage trend counts them when told to.
+  assert.equal(sct(off.records, { period: 'year' }).decided, 4);
+  assert.equal(sct(off.records, { period: 'year', includePullThroughs: true }).decided, 5);
+  console.log('PASS closeRateDeepDive filters');
+}
