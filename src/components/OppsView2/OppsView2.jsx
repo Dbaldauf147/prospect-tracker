@@ -19397,6 +19397,12 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
             onClick={() => setServicesView('closeRate')}
             title="Each service's close rate (won / decided), by month, quarter or year"
           >Close rate over time</button>
+          <button
+            type="button"
+            className={servicesView === 'dealSize' ? styles.notSoldYearOn : styles.notSoldYear}
+            onClick={() => setServicesView('dealSize')}
+            title="Each service's average deal size (Quoted Amount), by month, quarter or year"
+          >Avg deal size over time</button>
         </div>
       )}
 

@@ -4,7 +4,7 @@ import {
 } from 'recharts';
 import { DataTable } from '../common/DataTable';
 import { TagMultiSelect } from '../common/TagMultiSelect';
-import { serviceShareTrend, serviceCloseRateTrend, periodLabel, servicesOf } from '../../utils/serviceTrends';
+import { serviceShareTrend, serviceCloseRateTrend, serviceDealSizeTrend, periodLabel, servicesOf } from '../../utils/serviceTrends';
 import { getServiceCategories } from '../../utils/serviceCategoriesStore';
 import styles from './OppsView2.module.css';
 
@@ -162,7 +162,23 @@ const MODES = {
     tableId: 'opps2-service-close-rate-trend',
     exportName: 'Close rate by service',
   },
+  dealSize: {
+    title: 'Avg deal size',
+    dateLabel: 'Started',
+    defaultPeriod: 'quarter',
+    blurb: 'Of each service\'s opps that started in a period (by Start Date, open or closed) with a Quoted Amount, the average Quoted Amount. An opp with several services counts its whole amount toward each. Overall counts each opp once, whatever its services. Opps with no Quoted Amount are left out.',
+    soldBlurb: 'Of each service\'s Sold opps that started in a period (by Start Date) with a Quoted Amount, the average Quoted Amount. An opp with several services counts its whole amount toward each. Overall counts each opp once, whatever its services.',
+    empty: 'No opps with a Start Date and a Quoted Amount match these filters.',
+    tableId: 'opps2-service-deal-size-trend',
+    exportName: 'Avg deal size by service',
+  },
 };
+
+// Deal size mode: every quoted opp, or only the Sold ones.
+const DEAL_SETS = [
+  { key: 'all', label: 'All quoted', title: 'Every opp with a Quoted Amount, open or closed' },
+  { key: 'sold', label: 'Sold only', title: 'Only Sold opps: the average won deal' },
+];
 
 // Saved service groups for both trend subtabs: settings.oppsServiceTrendGroups
 // = { on, groups: [{ name, services }] }. `on` is the Group toggle.
@@ -346,6 +362,15 @@ function ServiceSettingsPopup({
 }
 
 const fmtPct = (v) => (v == null ? '-' : `${v.toFixed(1)}%`);
+const fmtMoney = (v) => (v == null ? '-' : `$${Math.round(v).toLocaleString('en-US')}`);
+// Short dollars for the y axis: $850, $12k, $1.2M.
+const fmtMoneyAxis = (v) => {
+  const a = Math.abs(v);
+  if (a >= 1e6) return `$${+(v / 1e6).toFixed(1)}M`;
+  if (a >= 1e3) return `$${+(v / 1e3).toFixed(a >= 1e4 ? 0 : 1)}k`;
+  return `$${v}`;
+};
+const fmtOf = (mode) => (mode === 'dealSize' ? fmtMoney : fmtPct);
 
 // A period cell's numbers, the same in both modes: the % and what it's of.
 // `scale` only matters for share: 'mix' is out of the period's service tags.
@@ -359,6 +384,7 @@ function cellOf(mode, trend, series, p, scale = 'opps') {
     return { v, n, d };
   }
   const c = p == null ? series : series.byPeriod[p];
+  if (mode === 'dealSize') return { v: c.avg, n: c.sized, d: c.sized };
   return { v: c.rate, n: c.wins, d: c.decided };
 }
 
@@ -374,7 +400,9 @@ function TrendTooltip({ active, payload, mode, scale, trend, lines, period, show
     const n = trend.tagTotals[p] - lines.reduce((a, s) => a + s.byPeriod[p].count, 0);
     if (n > 0) items.push({ key: OTHER_KEY, label: 'Other', v: o, n, d: trend.tagTotals[p] });
   }
-  const o = mode === 'share' ? null : trend.overall[p];
+  const o = mode === 'share' ? null : cellOf(mode, trend, trend.overall[p], null);
+  const fmt = fmtOf(mode);
+  const countOf = (i) => (mode === 'dealSize' ? `${i.n} deal${i.n === 1 ? '' : 's'}` : `${i.n}/${i.d}`);
   return (
     <div style={{ background: 'var(--color-surface, #fff)', border: '1px solid var(--color-border, #E2E8F0)', borderRadius: 6, padding: '0.5rem 0.65rem', fontSize: '0.75rem', boxShadow: '0 4px 14px rgba(0,0,0,0.12)', minWidth: 230 }}>
       <div style={{ fontWeight: 700, marginBottom: 4 }}>
@@ -385,8 +413,8 @@ function TrendTooltip({ active, payload, mode, scale, trend, lines, period, show
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0', fontWeight: 700 }}>
           <span style={{ width: 10, height: 2, background: OVERALL_COLOUR }} />
           <span style={{ flex: 1 }}>Overall</span>
-          <span>{fmtPct(o.rate)}</span>
-          <span style={{ ...muted, minWidth: 48, textAlign: 'right', fontWeight: 400 }}>{o.wins}/{o.decided}</span>
+          <span>{fmt(o.v)}</span>
+          <span style={{ ...muted, minWidth: 48, textAlign: 'right', fontWeight: 400 }}>{countOf(o)}</span>
         </div>
       )}
       {items.length === 0 && <div style={muted}>Nothing for these services</div>}
@@ -394,17 +422,19 @@ function TrendTooltip({ active, payload, mode, scale, trend, lines, period, show
         <div key={i.key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0' }}>
           <span style={{ width: 8, height: 8, borderRadius: 999, background: colourOf(i.key) }} />
           <span style={{ flex: 1 }}>{i.label || i.key}</span>
-          <span style={{ fontWeight: 600 }}>{fmtPct(i.v)}</span>
-          <span style={{ ...muted, minWidth: 48, textAlign: 'right' }}>{i.n}/{i.d}</span>
+          <span style={{ fontWeight: 600 }}>{fmt(i.v)}</span>
+          <span style={{ ...muted, minWidth: 48, textAlign: 'right' }}>{countOf(i)}</span>
         </div>
       ))}
-      <div style={{ ...muted, marginTop: 4 }}>{mix ? 'Service count / all services on the opps started' : mode === 'share' ? 'Opps with the service / opps started' : 'Won / decided (Sold + Not Sold)'}</div>
+      <div style={{ ...muted, marginTop: 4 }}>{mix ? 'Service count / all services on the opps started' : mode === 'share' ? 'Opps with the service / opps started' : mode === 'dealSize' ? 'Average Quoted Amount, over the opps with one' : 'Won / decided (Sold + Not Sold)'}</div>
     </div>
   );
 }
 
 /**
- * Opps > By Service > "% of total over time" and "Close rate over time".
+ * Opps > By Service > "% of total over time", "Close rate over time" and
+ * "Avg deal size over time" ('dealSize': each service's average Quoted
+ * Amount per start period).
  *
  * One component, two measures (see utils/serviceTrends.js): `mode` 'share'
  * is each service's share of the opps started per period, 'closeRate' is
@@ -430,6 +460,9 @@ export function ServiceTrends({
   const cfg = MODES[mode] || MODES.share;
   const [period, setPeriod] = useState(cfg.defaultPeriod);
   const [scaleChoice, setScale] = useState('mix');
+  const [dealSet, setDealSet] = useState('all');
+  const hasOverall = mode === 'closeRate' || mode === 'dealSize';
+  const fmt = fmtOf(mode);
   const scale = mode === 'share' ? scaleChoice : 'opps';
   const isMix = mode === 'share' && scale === 'mix';
   const [from, setFrom] = useState('');
@@ -468,10 +501,12 @@ export function ServiceTrends({
     setSvcPopup({ name, left: r.left, top: r.bottom + 4 });
   };
 
-  const trend = useMemo(() => (mode === 'share'
-    ? serviceShareTrend(records, { period, from, to, hidden: hiddenServices, groups: activeGroups })
-    : serviceCloseRateTrend(records, { period, from, to, hidden: hiddenServices, groups: activeGroups })
-  ), [mode, records, period, from, to, hiddenServices, activeGroups]);
+  const trend = useMemo(() => {
+    const opts = { period, from, to, hidden: hiddenServices, groups: activeGroups };
+    if (mode === 'share') return serviceShareTrend(records, opts);
+    if (mode === 'dealSize') return serviceDealSizeTrend(records, { ...opts, sold: dealSet === 'sold' });
+    return serviceCloseRateTrend(records, opts);
+  }, [mode, records, period, from, to, hiddenServices, activeGroups, dealSet]);
 
   const allKeys = useMemo(() => trend.series.map(s => s.key), [trend]);
   const excluded = useMemo(
@@ -489,7 +524,7 @@ export function ServiceTrends({
   const colourMap = useMemo(() => new Map(lines.map((s, i) => [s.key, lineColour(i)])), [lines]);
   const colourOf = (k) => (k === OVERALL_KEY ? OVERALL_COLOUR : k === OTHER_KEY ? OTHER_COLOUR : colourMap.get(k) || '#9ca3af');
   const visible = lines.filter(s => !hidden.has(s.key));
-  const showOverall = mode === 'closeRate' && !hidden.has(OVERALL_KEY);
+  const showOverall = hasOverall && !hidden.has(OVERALL_KEY);
   // The services left out of the chart, so the % of 100 stack still adds up.
   const hasOther = isMix && trend.series.length > lines.length;
   const showOther = hasOther && !hidden.has(OTHER_KEY);
@@ -497,14 +532,14 @@ export function ServiceTrends({
   const chartData = useMemo(() => trend.periods.map(p => {
     const row = { period: p, label: periodLabel(p, period) };
     for (const s of lines) row[s.key] = cellOf(mode, trend, s, p, scale).v;
-    if (mode === 'closeRate') row[OVERALL_KEY] = trend.overall[p].rate;
+    if (hasOverall) row[OVERALL_KEY] = cellOf(mode, trend, trend.overall[p], null).v;
     if (isMix) {
       const d = trend.tagTotals[p];
       const drawn = lines.reduce((a, s) => a + s.byPeriod[p].count, 0);
       row[OTHER_KEY] = d > 0 ? ((d - drawn) / d) * 100 : null;
     }
     return row;
-  }), [trend, lines, period, mode, scale, isMix]);
+  }), [trend, lines, period, mode, scale, isMix, hasOverall]);
 
   // The legend popup: which entry it's open for, and where under it.
   const [linePopup, setLinePopup] = useState(null);
@@ -534,6 +569,8 @@ export function ServiceTrends({
     const rows = trend.series.map(s => ({ id: s.key, name: s.key, kind: 'series', s, _hidden: hiddenSet.has(s.key) }));
     if (mode === 'closeRate') {
       rows.push({ id: OVERALL_KEY, name: 'Overall', kind: 'total', s: { wins: trend.wins, decided: trend.decided, rate: trend.rate, byPeriod: trend.overall } });
+    } else if (mode === 'dealSize') {
+      rows.push({ id: OVERALL_KEY, name: 'Overall', kind: 'total', s: { sized: trend.sized, sum: trend.sum, avg: trend.avg, byPeriod: trend.overall } });
     } else {
       if (isMix) rows.push({ id: TAGS_KEY, name: 'Services on those opps', kind: 'total' });
       rows.push({ id: OVERALL_KEY, name: 'Opps started', kind: 'total' });
@@ -553,8 +590,15 @@ export function ServiceTrends({
       }
       const c = cellOf(mode, trend, row.s, p, scale);
       if (!c.d || (mode === 'closeRate' && c.d === 0)) return { text: '-', sort: -1, title: '' };
+      if (mode === 'dealSize') {
+        const total = p == null ? row.s.sum : row.s.byPeriod[p].sum;
+        return {
+          text: `${fmtMoney(c.v)} (${c.n})`, pct: fmtMoney(c.v), count: String(c.n), sort: c.v ?? -1,
+          title: `Average of ${c.n} Quoted Amount${c.n === 1 ? '' : 's'}, ${fmtMoney(total)} in all`,
+        };
+      }
       return {
-        text: `${fmtPct(c.v)} (${c.n}/${c.d})`, pct: fmtPct(c.v), n: c.n, d: c.d, sort: c.v ?? -1,
+        text: `${fmtPct(c.v)} (${c.n}/${c.d})`, pct: fmtPct(c.v), count: `${c.n}/${c.d}`, sort: c.v ?? -1,
         title: isMix ? `${c.n} of ${c.d} services on the opps started` : mode === 'share' ? `${c.n} of ${c.d} opps started` : `${c.n} won of ${c.d} decided`,
       };
     };
@@ -564,7 +608,7 @@ export function ServiceTrends({
       if (c.pct == null) return <div style={{ textAlign: 'right', fontWeight: bold ? 700 : 400, ...(c.text === '-' ? muted : null) }} title={c.title}>{c.text}</div>;
       return (
         <div style={{ textAlign: 'right', fontWeight: bold ? 700 : 400, fontVariantNumeric: 'tabular-nums' }} title={c.title}>
-          {c.pct} <span style={{ ...muted, fontWeight: 400 }}>({c.n}/{c.d})</span>
+          {c.pct} <span style={{ ...muted, fontWeight: 400 }}>({c.count})</span>
         </div>
       );
     };
@@ -574,7 +618,7 @@ export function ServiceTrends({
       defaultWidth: 240,
       render: (row) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: row.kind === 'total' ? 700 : 400 }}>
-          {(colourMap.has(row.name) || (row.kind === 'total' && mode === 'closeRate')) && (
+          {(colourMap.has(row.name) || (row.kind === 'total' && hasOverall)) && (
             <span style={{ width: 10, height: row.kind === 'total' ? 3 : 10, borderRadius: 2, background: colourOf(row.kind === 'total' ? OVERALL_KEY : row.name), flexShrink: 0 }} />
           )}
           {row.kind === 'series' ? (
@@ -633,10 +677,11 @@ export function ServiceTrends({
     }
     return cols;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trend, period, mode, scale, isMix, colourMap, onToggleHide, groupMembers, excluded, linesOffDefault, svcPopup]);
+  }, [trend, period, mode, scale, isMix, hasOverall, colourMap, onToggleHide, groupMembers, excluded, linesOffDefault, svcPopup]);
 
   const legend = [
     ...(mode === 'closeRate' ? [{ key: OVERALL_KEY, label: 'Overall', v: trend.rate }] : []),
+    ...(mode === 'dealSize' ? [{ key: OVERALL_KEY, label: 'Overall', v: trend.avg }] : []),
     ...lines.map(s => ({ key: s.key, label: s.key, v: cellOf(mode, trend, s, null, scale).v })),
     ...(hasOther ? [{
       key: OTHER_KEY,
@@ -646,6 +691,8 @@ export function ServiceTrends({
   ];
   const summary = mode === 'share'
     ? `${trend.total} opp${trend.total === 1 ? '' : 's'} started${trend.undated ? ` · ${trend.undated} without a Start Date left out` : ''}`
+    : mode === 'dealSize'
+    ? `${trend.sized} ${dealSet === 'sold' ? 'Sold ' : ''}opp${trend.sized === 1 ? '' : 's'} with a Quoted Amount${trend.sized ? ` · ${fmtMoney(trend.avg)} average` : ''}${trend.unsized ? ` · ${trend.unsized} without one left out` : ''}${trend.undated ? ` · ${trend.undated} without a Start Date left out` : ''}`
     : `${trend.wins} won of ${trend.decided} decided${trend.decided ? ` · ${fmtPct(trend.rate)} close rate` : ''}${trend.undated ? ` · ${trend.undated} without a Close Date left out` : ''}`;
 
   return (
@@ -672,6 +719,20 @@ export function ServiceTrends({
                 title={o.title}
                 className={scale === o.key ? styles.notSoldYearOn : styles.notSoldYear}
                 onClick={() => setScale(o.key)}
+              >{o.label}</button>
+            ))}
+          </span>
+        )}
+        {mode === 'dealSize' && (
+          <span className={styles.notSoldYears}>
+            <span className={styles.filterLabel} style={{ marginRight: 2 }}>Deals</span>
+            {DEAL_SETS.map(o => (
+              <button
+                key={o.key}
+                type="button"
+                title={o.title}
+                className={dealSet === o.key ? styles.notSoldYearOn : styles.notSoldYear}
+                onClick={() => setDealSet(o.key)}
               >{o.label}</button>
             ))}
           </span>
@@ -756,7 +817,7 @@ export function ServiceTrends({
       )}
       <div style={{ fontSize: '0.72rem', ...muted }}>
         {grouping && `Grouped: ${activeGroups.map(g => g.name).join(', ')}. `}
-        {isMix ? MIX_BLURB : cfg.blurb}
+        {isMix ? MIX_BLURB : mode === 'dealSize' && dealSet === 'sold' ? cfg.soldBlurb : cfg.blurb}
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -775,7 +836,7 @@ export function ServiceTrends({
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', color: 'var(--color-text)', fontWeight: l.key === OVERALL_KEY ? 700 : 400, opacity: hidden.has(l.key) ? 0.4 : 1, textDecoration: hidden.has(l.key) ? 'line-through' : 'none' }}
                 >
                   <span style={{ width: 12, height: l.key === OVERALL_KEY ? 3 : 10, borderRadius: l.key === OVERALL_KEY ? 0 : 999, background: colourOf(l.key) }} />
-                  {l.label} <span style={muted}>({fmtPct(l.v)})</span>
+                  {l.label} <span style={muted}>({fmt(l.v)})</span>
                   {linesOffDefault.has(l.key) && <span style={{ ...muted, fontSize: '0.66rem' }} title="Hidden by default">(off by default)</span>}
                 </button>
               ))}
@@ -841,7 +902,7 @@ export function ServiceTrends({
                 <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748B' }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} interval="preserveStartEnd" minTickGap={8} />
-                  <YAxis tick={{ fontSize: 11, fill: '#64748B' }} tickLine={false} axisLine={false} width={44} domain={mode === 'closeRate' ? [0, 100] : [0, 'auto']} tickFormatter={(v) => `${v}%`} />
+                  <YAxis tick={{ fontSize: 11, fill: '#64748B' }} tickLine={false} axisLine={false} width={mode === 'dealSize' ? 56 : 44} domain={mode === 'closeRate' ? [0, 100] : [0, 'auto']} tickFormatter={mode === 'dealSize' ? fmtMoneyAxis : (v) => `${v}%`} />
                   <Tooltip
                     content={<TrendTooltip mode={mode} scale={scale} trend={trend} lines={visible} period={period} showOverall={showOverall} colourOf={colourOf} />}
                     cursor={{ stroke: '#94a3b8', strokeDasharray: '3 3' }}
@@ -875,7 +936,7 @@ export function ServiceTrends({
                 alwaysVisible={['name']}
                 rowStyle={(row) => (row._hidden ? { opacity: 0.5 } : undefined)}
                 rowGroup={(row) => (row.kind === 'total' ? 1 : 0)}
-                exportFileName={`${cfg.exportName} by ${period}`}
+                exportFileName={`${cfg.exportName}${mode === 'dealSize' && dealSet === 'sold' ? ' (Sold)' : ''} by ${period}`}
                 emptyMessage={cfg.empty}
                 settings={settings}
                 updateSettings={updateSettings}
