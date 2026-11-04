@@ -16,16 +16,16 @@ const PRESETS = [
 
 // A preset is saved as the preset, so it re-resolves when applied later.
 const onPreset = snapshotFilters({ period: 'month', preset: '1y', from: '2024-01-01', to: '', leadOrHigher: false, noPullThroughs: true }, '  Last year  ', 1);
-assert.deepEqual(onPreset, { id: 1, name: 'Last year', period: 'month', preset: '1y', from: '', to: '', leadOrHigher: false, noPullThroughs: true });
-assert.deepEqual(filtersFromEntry(onPreset, PRESETS), { period: 'month', preset: '1y', from: '2025-11-04', to: '', leadOrHigher: false, noPullThroughs: true });
+assert.deepEqual(onPreset, { id: 1, name: 'Last year', period: 'month', dateBasis: 'close', preset: '1y', from: '', to: '', leadOrHigher: false, noPullThroughs: true });
+assert.deepEqual(filtersFromEntry(onPreset, PRESETS), { period: 'month', dateBasis: 'close', preset: '1y', from: '2025-11-04', to: '', leadOrHigher: false, noPullThroughs: true });
 
 // Fixed dates are kept as typed.
 const fixed = snapshotFilters({ period: 'year', preset: '', from: '2024-01-01', to: '2024-12-31', leadOrHigher: true, noPullThroughs: false }, 'FY24', 2);
-assert.deepEqual(filtersFromEntry(fixed, PRESETS), { period: 'year', preset: '', from: '2024-01-01', to: '2024-12-31', leadOrHigher: true, noPullThroughs: false });
+assert.deepEqual(filtersFromEntry(fixed, PRESETS), { period: 'year', dateBasis: 'close', preset: '', from: '2024-01-01', to: '2024-12-31', leadOrHigher: true, noPullThroughs: false });
 
 // A preset that no longer exists falls back to stored dates; bad period falls back to quarter.
 assert.deepEqual(filtersFromEntry({ period: 'week', preset: 'gone', from: '2023-01-01', to: '' }, PRESETS),
-  { period: 'quarter', preset: '', from: '2023-01-01', to: '', leadOrHigher: true, noPullThroughs: true });
+  { period: 'quarter', dateBasis: 'close', preset: '', from: '2023-01-01', to: '', leadOrHigher: true, noPullThroughs: true });
 
 // matchesEntry compares what would be saved.
 assert.equal(matchesEntry({ period: 'month', preset: '1y', from: '2025-11-04', to: '', leadOrHigher: false, noPullThroughs: true }, onPreset), true);
@@ -53,7 +53,7 @@ const chartFilters = { period: 'year', preset: '1y', from: '2025-11-04', to: '',
 const src = snapshotChart({ filters: chartFilters, off: new Set(['PE partner', 'Inside Sales']) }, 'No partners', 7);
 assert.deepEqual(src, {
   id: 7, name: 'No partners',
-  filters: { period: 'year', preset: '1y', from: '', to: '', leadOrHigher: true, noPullThroughs: false },
+  filters: { period: 'year', dateBasis: 'close', preset: '1y', from: '', to: '', leadOrHigher: true, noPullThroughs: false },
   off: ['Inside Sales', 'PE partner'],
 });
 // Matching ignores line order; a different line set or filter does not match.
@@ -62,7 +62,7 @@ assert.equal(chartMatchesEntry({ filters: chartFilters, off: new Set(['PE partne
 assert.equal(chartMatchesEntry({ filters: { ...chartFilters, period: 'month' }, off: new Set(['PE partner', 'Inside Sales']) }, src), false);
 // Restoring re-resolves the preset and gives the lines back as a Set.
 const back = chartFromEntry(src, PRESETS);
-assert.deepEqual(back.filters, { period: 'year', preset: '1y', from: '2025-11-04', to: '', leadOrHigher: true, noPullThroughs: false });
+assert.deepEqual(back.filters, { period: 'year', dateBasis: 'close', preset: '1y', from: '2025-11-04', to: '', leadOrHigher: true, noPullThroughs: false });
 assert.deepEqual([...back.off].sort(), ['Inside Sales', 'PE partner']);
 assert.equal(back.reach, null);
 
@@ -80,6 +80,15 @@ assert.deepEqual(readChartSaved({ ...settings, ...patch }, 'source').list, [src]
 assert.deepEqual(readChartSaved({}, 'reach'), { list: [], defaultId: null });
 // Entries without filters are dropped.
 assert.deepEqual(readChartSaved({ [CHART_SETTINGS_KEY]: { source: { list: [{ id: 2, name: 'x' }], defaultId: 2 } } }, 'source'), { list: [], defaultId: null });
+
+// The date basis: saved and restored; an entry from before it existed reads
+// as Close Date, and a different basis is a different saved set.
+const openBasis = snapshotFilters({ period: 'quarter', dateBasis: 'open', preset: 'all', leadOrHigher: true, noPullThroughs: true }, 'By open', 11);
+assert.equal(openBasis.dateBasis, 'open');
+assert.equal(filtersFromEntry(openBasis, PRESETS).dateBasis, 'open');
+assert.equal(filtersFromEntry({ period: 'quarter' }, PRESETS).dateBasis, 'close');
+assert.equal(matchesEntry({ period: 'quarter', dateBasis: 'close', preset: 'all', from: '', to: '', leadOrHigher: true, noPullThroughs: true }, openBasis), false);
+assert.equal(matchesEntry({ period: 'quarter', dateBasis: 'open', preset: 'all', from: '', to: '', leadOrHigher: true, noPullThroughs: true }, openBasis), true);
 
 console.log('closeRateSavedFilters: ok');
 

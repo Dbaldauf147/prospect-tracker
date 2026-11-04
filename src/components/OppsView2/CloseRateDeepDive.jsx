@@ -19,7 +19,7 @@ import {
   GROUPS_KEY, EXCLUDED_KEY, groupsFromSettings, excludedFromSettings, withServiceGroup, withExcluded,
 } from '../../utils/serviceTrendSettings';
 import {
-  stageCloseRateTrend, applyCloseRateFilters, trendTableRows, trendSheetRows,
+  byDateBasis, stageCloseRateTrend, applyCloseRateFilters, trendTableRows, trendSheetRows,
   weeklyTrendSheetRows, closedOppSheetRows, stageReachSheetRows, fmtRate,
   oppDetailSheetRows, stageReachDetailRows,
   fittedRateAxis,
@@ -60,6 +60,26 @@ const PERIODS = [
   { key: 'year', label: 'Year' },
 ];
 
+// Which date places a closed deal in a period and the window (see
+// byDateBasis in utils/closeRateDeepDive).
+const DATE_BASES = [
+  { key: 'close', label: 'Close Date', column: 'Close Date', tip: 'Group each closed deal by its Close Date: the deals decided in each period' },
+  { key: 'open', label: 'Open Date', column: 'Start Date', tip: 'Group each closed deal by the day it opened (Start Date): how the deals opened in each period turned out' },
+];
+const basisOf = (f) => DATE_BASES.find(b => b.key === f?.dateBasis) || DATE_BASES[0];
+
+function DateBasisToggle({ value, onChange }) {
+  return (
+    <div className={styles.group} role="group" aria-label="Date basis">
+      {DATE_BASES.map(b => (
+        <button key={b.key} type="button" className={(value || 'close') === b.key ? styles.toggleOn : styles.toggle} onClick={() => onChange(b.key)} title={b.tip}>
+          By {b.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 // Window presets, all by Close Date. Default is two calendar years back so a
@@ -75,7 +95,7 @@ function WindowSelect({ preset, onPick }) {
   return (
     <label className={styles.windowField}>
       Window
-      <select value={preset || ''} onChange={e => onPick(e.target.value)} aria-label="Close Date window">
+      <select value={preset || ''} onChange={e => onPick(e.target.value)} aria-label="Date window">
         {!preset && <option value="">Custom dates</option>}
         {PRESETS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
       </select>
@@ -485,10 +505,11 @@ function SavedFiltersMenu({ saved, isActive, makeEntry, onApply, onChange, what 
 // Period, Close Date window and the two filter buttons, as one value. The
 // per-chart filter bar uses it; `showWindow={false}` drops the Close Date
 // window for Stage reach, which groups by Start Date instead.
-function FilterControls({ value, onChange, showWindow = true, showPeriod = true, lockPullThroughs = false }) {
+function FilterControls({ value, onChange, showWindow = true, showPeriod = true, showBasis = true, lockPullThroughs = false }) {
   const set = (patch) => onChange({ ...value, ...patch });
   return (
     <>
+      {showBasis && <DateBasisToggle value={value.dateBasis} onChange={(dateBasis) => set({ dateBasis })} />}
       {showPeriod && (
         <div className={styles.group} role="group" aria-label="Period">
           {PERIODS.map(p => (
@@ -558,6 +579,7 @@ function describeFilters(f, { showWindow = true } = {}) {
   const preset = PRESETS.find(p => p.key === f.preset);
   const win = preset ? preset.label : (f.from || f.to ? `${f.from || 'start'} to ${f.to || 'today'}` : 'All time');
   return [
+    `by ${basisOf(f).label}`,
     period,
     ...(showWindow ? [win] : []),
     f.leadOrHigher ? 'Lead stage or higher' : 'every stage',
@@ -617,11 +639,11 @@ function EditableTitle({ value, fallback, onSave }) {
 
 // The filter row under a chart's title: follow the tab's filters or run on
 // the chart's own, plus the chart's own saved filters.
-function ChartFilterBar({ filters, own, onOwnChange, saved, onSavedChange, current, onApply, showWindow = true, showPeriod = true, lockPullThroughs = false }) {
+function ChartFilterBar({ filters, own, onOwnChange, saved, onSavedChange, current, onApply, showWindow = true, showPeriod = true, showBasis = true, lockPullThroughs = false }) {
   const period = PERIODS.find(p => p.key === filters.period)?.label || filters.period;
   const preset = PRESETS.find(p => p.key === filters.preset);
   const win = preset ? preset.label : (filters.from || filters.to ? `${filters.from || 'start'} to ${filters.to || 'today'}` : 'All time');
-  const summary = [...(showPeriod ? [period] : []), ...(showWindow ? [win] : [])].join(' · ');
+  const summary = [...(showBasis ? [`by ${basisOf(filters).label}`] : []), ...(showPeriod ? [period] : []), ...(showWindow ? [win] : [])].join(' · ');
   return (
     <div className={styles.chartFilters}>
       <div className={styles.group} role="group" aria-label="Chart filters">
@@ -639,7 +661,7 @@ function ChartFilterBar({ filters, own, onOwnChange, saved, onSavedChange, curre
         >Own filters</button>
       </div>
       {own
-        ? <FilterControls value={filters} onChange={onOwnChange} showWindow={showWindow} showPeriod={showPeriod} lockPullThroughs={lockPullThroughs} />
+        ? <FilterControls value={filters} onChange={onOwnChange} showWindow={showWindow} showPeriod={showPeriod} showBasis={showBasis} lockPullThroughs={lockPullThroughs} />
         : (
           <>
             {summary && <span className={styles.muted}>{summary}</span>}
@@ -678,11 +700,12 @@ export function CloseRateDeepDive({
   const [initial] = useState(() => {
     const def = saved.list.find(e => e.id === saved.defaultId);
     return def ? filtersFromEntry(def, PRESETS) : {
-      period: 'quarter', preset: '2y', from: PRESETS.find(p => p.key === '2y').from(), to: '',
+      period: 'quarter', dateBasis: 'close', preset: '2y', from: PRESETS.find(p => p.key === '2y').from(), to: '',
       leadOrHigher: true, noPullThroughs: true,
     };
   });
   const [period, setPeriod] = useState(initial.period);
+  const [dateBasis, setDateBasis] = useState(initial.dateBasis || 'close');
   const [preset, setPreset] = useState(initial.preset);
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
@@ -691,7 +714,7 @@ export function CloseRateDeepDive({
   const [noPullThroughs, setNoPullThroughs] = useState(initial.noPullThroughs);
   const applyFilters = useCallback((entry) => {
     const f = filtersFromEntry(entry, PRESETS);
-    setPeriod(f.period); setPreset(f.preset); setFrom(f.from); setTo(f.to);
+    setPeriod(f.period); setDateBasis(f.dateBasis); setPreset(f.preset); setFrom(f.from); setTo(f.to);
     setLeadOrHigher(f.leadOrHigher); setNoPullThroughs(f.noPullThroughs);
   }, []);
   // Settings can arrive after the tab has mounted (first load on a machine).
@@ -707,8 +730,8 @@ export function CloseRateDeepDive({
     applyFilters(def);
   }, [saved, applyFilters]);
   const currentFilters = useMemo(
-    () => ({ period, preset, from, to, leadOrHigher, noPullThroughs }),
-    [period, preset, from, to, leadOrHigher, noPullThroughs],
+    () => ({ period, dateBasis, preset, from, to, leadOrHigher, noPullThroughs }),
+    [period, dateBasis, preset, from, to, leadOrHigher, noPullThroughs],
   );
   const saveFilters = (next) => updateSettings?.({ [SAVED_FILTERS_KEY]: next });
 
@@ -802,7 +825,7 @@ export function CloseRateDeepDive({
     () => applyCloseRateFilters(records, { leadOrHigher, noPullThroughs }),
     [records, leadOrHigher, noPullThroughs],
   );
-  const counted = filtered.records;
+  const counted = useMemo(() => byDateBasis(filtered.records, dateBasis), [filtered, dateBasis]);
   const includePullThroughs = !noPullThroughs;
   const hidden = useMemo(() => [...(hiddenServices || [])], [hiddenServices]);
   const hiddenSet = useMemo(() => new Set(hiddenServices || []), [hiddenServices]);
@@ -852,8 +875,8 @@ export function CloseRateDeepDive({
   const countedFor = useMemo(() => {
     const cache = new Map();
     return (f) => {
-      const k = `${f.leadOrHigher}|${f.noPullThroughs}`;
-      if (!cache.has(k)) cache.set(k, applyCloseRateFilters(records, { leadOrHigher: f.leadOrHigher, noPullThroughs: f.noPullThroughs }).records);
+      const k = `${f.leadOrHigher}|${f.noPullThroughs}|${f.dateBasis || 'close'}`;
+      if (!cache.has(k)) cache.set(k, byDateBasis(applyCloseRateFilters(records, { leadOrHigher: f.leadOrHigher, noPullThroughs: f.noPullThroughs }).records, f.dateBasis));
       return cache.get(k);
     };
   }, [records]);
@@ -873,17 +896,19 @@ export function CloseRateDeepDive({
     () => stageCloseRateTrend(countedFor(fStage), { period: fStage.period, from: fStage.from, to: fStage.to, includePullThroughs: !fStage.noPullThroughs }),
     [countedFor, fStage],
   );
-  const reachRecords = countedFor(fReach);
+  // Stage reach groups by Start Date and chart 6 by stage stints, so the
+  // date basis doesn't apply to either: they always get the real dates.
+  const reachRecords = countedFor({ ...fReach, dateBasis: 'close' });
   // Chart 1 (the Weekly email table) runs on its own 6-month-style window,
   // so only its two filter buttons follow the tab (or its own).
   const fProgress = eff('progress');
-  const progressRecords = countedFor(fProgress);
+  const progressRecords = countedFor({ ...fProgress, dateBasis: 'close' });
   const fWeekly = eff('weekly');
   const weeklyRecords = countedFor(fWeekly);
   const weekly = useMemo(() => closeRateTrendByStage(weeklyRecords, { months: weeklyMonths }), [weeklyRecords, weeklyMonths]);
   const periodNameOf = (f) => PERIODS.find(p => p.key === f.period)?.label || f.period;
-  const windowTextOf = (f) => (f.from || f.to ? `Close Date ${f.from || 'start'} to ${f.to || 'today'}` : 'all Close Dates');
-  const chartBar = (chart, current, { showWindow = true, showPeriod = true, lockPullThroughs = false } = {}) => (
+  const windowTextOf = (f) => (f.from || f.to ? `${basisOf(f).column} ${f.from || 'start'} to ${f.to || 'today'}` : `all ${basisOf(f).column}s`);
+  const chartBar = (chart, current, { showWindow = true, showPeriod = true, showBasis = true, lockPullThroughs = false } = {}) => (
     <ChartFilterBar
       filters={eff(chart)}
       own={!!own[chart]}
@@ -894,6 +919,7 @@ export function CloseRateDeepDive({
       onApply={(e) => applyChart(chart, e)}
       showWindow={showWindow}
       showPeriod={showPeriod}
+      showBasis={showBasis}
       lockPullThroughs={lockPullThroughs}
     />
   );
@@ -921,9 +947,7 @@ export function CloseRateDeepDive({
   ].join(', ');
 
   const periodName = PERIODS.find(p => p.key === period)?.label || period;
-  const windowText = from || to
-    ? `Close Date ${from || 'start'} to ${to || 'today'}`
-    : 'all Close Dates';
+  const windowText = windowTextOf(currentFilters);
 
   const pickPreset = (key) => {
     const p = PRESETS.find(x => x.key === key);
@@ -947,7 +971,7 @@ export function CloseRateDeepDive({
           rows: [
             { Item: 'Window', Value: windowText },
             { Item: 'Period', Value: periodName },
-            { Item: 'Close rate', Value: 'Sold / (Sold + Not Sold), by Close Date. Rates are whole percentage points.' },
+            { Item: 'Close rate', Value: `Sold / (Sold + Not Sold), by ${basisOf(currentFilters).label}${dateBasis === 'open' ? ' (each closed deal in the period it opened, by Start Date)' : ''}. Rates are whole percentage points. The Close Date columns always show the real Close Date.` },
             { Item: 'Lead stage or higher', Value: leadOrHigher ? `On: opps closed before reaching Lead left out (${filtered.belowLead}). ${filtered.unknownStage} losses with no stage history kept.` : 'Off: every closed opp counted.' },
             { Item: 'Pull-throughs', Value: noPullThroughs ? `Left out (${filtered.pullThroughs}).` : 'Included, except in the Weekly email trend, which always leaves them out.' },
             { Item: 'Weekly email trend', Value: `Last ${weeklyMonths} months by stage, the Weekly email table with the filters above applied, whatever the window.` },
@@ -984,6 +1008,7 @@ export function CloseRateDeepDive({
   return (
     <div className={styles.wrap}>
       <div className={styles.controls}>
+        <DateBasisToggle value={dateBasis} onChange={(b) => { touched.current = true; setDateBasis(b); }} />
         <div className={styles.group} role="group" aria-label="Period">
           {PERIODS.map(p => (
             <button key={p.key} type="button" className={period === p.key ? styles.toggleOn : styles.toggle} onClick={() => { touched.current = true; setPeriod(p.key); }}>
@@ -1044,7 +1069,7 @@ export function CloseRateDeepDive({
         </button>
       </div>
       <div className={styles.scopeNote}>
-        Close rate = Sold / (Sold + Not Sold), by Close Date, {filterText}.
+        Close rate = Sold / (Sold + Not Sold), by {basisOf(currentFilters).label}{dateBasis === 'open' ? ' (each closed deal counted in the period it opened)' : ''}, {filterText}.
         {leadOrHigher && ` ${filtered.belowLead} closed opp${filtered.belowLead === 1 ? '' : 's'} never reached Lead and ${filtered.belowLead === 1 ? 'is' : 'are'} left out${filtered.unknownStage ? `; ${filtered.unknownStage} loss${filtered.unknownStage === 1 ? '' : 'es'} with no stage history can't be placed and stay in` : ''}.`}
         {noPullThroughs && ` ${filtered.pullThroughs} closed pull-through${filtered.pullThroughs === 1 ? '' : 's'} left out.`}
         {' '}Charts 2 to 5 use {periodName.toLowerCase()}s over {windowText} unless a chart is set to its own filters.
@@ -1203,7 +1228,7 @@ export function CloseRateDeepDive({
           filters: fReach,
           off: reachState.hidden,
           reach: { scope: reachState.closedOnly ? 'closed' : 'all', preset: reachState.preset || '', from: reachState.from, to: reachState.to },
-        }, { showWindow: false })}
+        }, { showWindow: false, showBasis: false })}
         <StageReach
           key={reachMount.key}
           applyState={reachMount.start}
@@ -1229,7 +1254,7 @@ export function CloseRateDeepDive({
         windowText={fProgress.from || fProgress.to ? `between ${fProgress.from || 'the start'} and ${fProgress.to || 'today'}` : 'at any time'}
         title={<EditableTitle {...titleProps('progress')} />}
         lineState={lineStateFor('progress')}
-        filterBar={chartBar('progress', { filters: fProgress, off: linesOff.progress }, { showPeriod: false })}
+        filterBar={chartBar('progress', { filters: fProgress, off: linesOff.progress }, { showPeriod: false, showBasis: false })}
         settings={settings}
         updateSettings={updateSettings}
       />

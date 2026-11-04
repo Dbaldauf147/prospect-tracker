@@ -91,6 +91,34 @@ function closeIso(raw) {
 
 const inRange = (iso, from, to) => (!from || iso >= from) && (!to || iso <= to);
 
+// ---- Date basis --------------------------------------------------------
+//
+// A close rate is Sold / (Sold + Not Sold) over a set of closed deals; the
+// date basis decides which date puts a deal in a period and in the window.
+// 'close' reads its Close Date (the default: deals decided in the period).
+// 'open' reads its Start Date, the day the opp opened, so a period's rate
+// is how the deals opened in it turned out.
+//
+// Rather than teach every trend and export a second date, an Open Date view
+// hands them each closed deal with its Start Date in the Close Date column,
+// and keeps the real one under CLOSE_DATE_ACTUAL for the exports to print.
+// A closed deal with no Start Date reads as undated, the same as one with no
+// Close Date does on the default basis.
+export const CLOSE_DATE_ACTUAL = '_closeDateActual';
+
+export function byDateBasis(records, basis = 'close') {
+  if (basis !== 'open') return records || [];
+  return (records || []).map((r) => {
+    const stage = String(r?.Stage ?? '').trim();
+    if (stage !== 'Sold' && stage !== 'Not Sold') return r;
+    return { ...r, 'Close Date': r['Start Date'] ?? '', [CLOSE_DATE_ACTUAL]: r['Close Date'] ?? '' };
+  });
+}
+
+// The Close Date an export should print for a row: the real one, whatever
+// the date basis put in the column.
+const actualCloseDate = (r) => (r && CLOSE_DATE_ACTUAL in r ? r[CLOSE_DATE_ACTUAL] : r?.['Close Date']);
+
 /** The stage rows, in the order the Weekly email lists them. */
 export const STAGE_SERIES = [
   ...CLOSE_RATE_STAGES.map(st => ({ key: `Stage ${st.num}`, label: st.label, signal: st.signal, test: st.test })),
@@ -245,7 +273,8 @@ export function closedOppSheetRows(records, { period = 'quarter', from = '', to 
       Scope: entry.scope,
       Source: sourceOf(r),
       Stage: entry.stage,
-      'Close Date': iso,
+      'Start Date': r['Start Date'] ?? '',
+      'Close Date': CLOSE_DATE_ACTUAL in r ? (closeIso(r[CLOSE_DATE_ACTUAL]) || '') : iso,
       Period: p ? periodLabel(p, period) : '',
       'Quoted Amount': entry.amount || '',
       'Pull-through': isPullThroughOpp(r) ? 'Yes' : '',
@@ -339,7 +368,7 @@ export function oppDetailSheetRows(opps, {
       Source: sourceOf(r),
       Stage: String(r.Stage ?? '').trim(),
       'Start Date': r['Start Date'] ?? '',
-      'Close Date': r['Close Date'] ?? '',
+      'Close Date': actualCloseDate(r) ?? '',
       [periodHeader]: periodText ? periodText(o) : (o.period ? periodLabel(o.period, period) : ''),
     };
     if (result) row.Result = o.won ? 'Won' : 'Lost';
