@@ -10,6 +10,7 @@ import { ColourPickDot } from '../common/ColourPickDot';
 import {
   CHART_PREFS_KEY, readChartPrefs, withColour, withoutColours, withLabels, labelText,
   isLabelled, withLineLabel, labelsState, withTarget,
+  WINDOW_OPTIONS, WEEKLY_MONTHS, windowRange, savedWindow, withWindow, withWeeklyMonths,
 } from '../../utils/closeRateChartPrefs';
 import { closeRateTrendByStage } from '../../utils/pipelineFunnelData';
 import { closeRateTrend, periodLabel } from '../../utils/notSoldAnalysis';
@@ -101,6 +102,26 @@ function ChartTooltip({ active, payload, label, lines, target }) {
   );
 }
 
+/**
+ * A chart's time frame: pick one for this visit, and Save as default makes
+ * it the one the chart opens with. `options` are { key, label }.
+ */
+export function WindowPicker({ value, saved, options, onChange, onSave, label = 'Time frame' }) {
+  return (
+    <span className={styles.windowField}>
+      <label>
+        {label}
+        <select value={value} onChange={e => onChange(e.target.value)} aria-label={label}>
+          {options.map(o => <option key={o.key} value={o.key}>{o.label}{o.key === saved ? ' (default)' : ''}</option>)}
+        </select>
+      </label>
+      {value !== saved && (
+        <button type="button" className={styles.resetLink} onClick={onSave} title="Open this chart with this time frame every visit (saved)">Save as default</button>
+      )}
+    </span>
+  );
+}
+
 // The target line's colour: a recessive slate, solid, so it can't be read
 // as the dashed black Overall line or as a series.
 const TARGET_COLOUR = '#64748b';
@@ -146,7 +167,7 @@ export function TargetInput({ value, onChange, label = 'Target' }) {
 function TrendSection({
   title, subtitle, nameHeader, trend, period, tableId, exportName, note, keepOrder = false, fitYAxis = false,
   colours, onColourChange, onResetColours, labelled = () => false, onLabelToggle, target = null, onTargetChange,
-  lineState, exclude, picked, onNameClick, nameBadge, headerExtra, settings, updateSettings,
+  lineState, exclude, picked, onNameClick, nameBadge, headerExtra, windowPicker, settings, updateSettings,
 }) {
   // Colour by entity: fixed by the series' place in the full list (most
   // decided first), so hiding one in the legend never repaints the rest.
@@ -279,6 +300,7 @@ function TrendSection({
           {subtitle && <div className={styles.sectionSub}>{subtitle}</div>}
         </div>
         <div className={styles.headActions}>
+          {windowPicker}
           {onTargetChange && <TargetInput value={target} onChange={onTargetChange} />}
           {headerExtra}
           <span className={styles.headline}>
@@ -542,6 +564,23 @@ export function CloseRateDeepDive({
     if (now) write(); else saveTimer.current = setTimeout(write, 500);
   }, [updateSettings]);
   useEffect(() => () => clearTimeout(saveTimer.current), []);
+  // Each chart's time frame: this visit's pick over the saved default. A
+  // rolling one is worked out from today; 'page' follows the window above.
+  const [windowPicks, setWindowPicks] = useState({});
+  const windowKeyOf = (chart) => windowPicks[chart] ?? savedWindow(prefs, chart);
+  const rangeOf = (chart) => windowRange(windowKeyOf(chart)) || { from, to };
+  const windowPickerFor = (chart, opts = {}) => (
+    <WindowPicker
+      value={windowKeyOf(chart)}
+      saved={savedWindow(prefs, chart)}
+      options={opts.pageLabel ? WINDOW_OPTIONS.map(o => (o.key === 'page' ? { ...o, label: opts.pageLabel } : o)) : WINDOW_OPTIONS}
+      onChange={(k) => setWindowPicks(prev => ({ ...prev, [chart]: k }))}
+      onSave={() => savePrefs(withWindow(prefs, chart, windowKeyOf(chart)), { now: true })}
+    />
+  );
+  const [weeklyPick, setWeeklyPick] = useState(null);
+  const weeklyMonths = weeklyPick ?? prefs.weeklyMonths;
+
   const colourProps = (chart) => ({
     colours: prefs.colours[chart],
     onColourChange: (key, hex) => savePrefs(withColour(prefs, chart, key, hex)),
@@ -596,10 +635,18 @@ export function CloseRateDeepDive({
   // 1. The Weekly email's table: always its own 6-month window, whatever the
   // window controls say. The filter buttons do apply; it leaves pull-throughs
   // out either way, as the email does.
-  const weekly = useMemo(() => closeRateTrendByStage(counted, { months: 6 }), [counted]);
-  const bySource = useMemo(() => closeRateTrend(counted, { period, from, to }), [counted, period, from, to]);
-  const byService = useMemo(() => serviceCloseRateTrend(counted, { period, from, to, hidden, groups: activeGroups }), [counted, period, from, to, hidden, activeGroups]);
-  const byStage = useMemo(() => stageCloseRateTrend(counted, { period, from, to, includePullThroughs }), [counted, period, from, to, includePullThroughs]);
+  const weekly = useMemo(() => closeRateTrendByStage(counted, { months: weeklyMonths }), [counted, weeklyMonths]);
+  const srcRange = rangeOf('source');
+  const svcRange = rangeOf('service');
+  const stgRange = rangeOf('stage');
+  const reachKey = windowKeyOf('reach');
+  const reachRange = useMemo(() => windowRange(reachKey), [reachKey]);
+  const bySource = useMemo(() => closeRateTrend(counted, { period, ...srcRange }), [counted, period, srcRange.from, srcRange.to]); // eslint-disable-line react-hooks/exhaustive-deps
+  const byService = useMemo(() => serviceCloseRateTrend(counted, { period, ...svcRange, hidden, groups: activeGroups }), [counted, period, svcRange.from, svcRange.to, hidden, activeGroups]); // eslint-disable-line react-hooks/exhaustive-deps
+  const byStage = useMemo(() => stageCloseRateTrend(counted, { period, ...stgRange, includePullThroughs }), [counted, period, stgRange.from, stgRange.to, includePullThroughs]); // eslint-disable-line react-hooks/exhaustive-deps
+  // What a chart's window reads as, for its subtitle and the export.
+  const rangeText = (rg, field = 'Close Date') => (rg.from || rg.to ? `${field} ${rg.from || 'start'} to ${rg.to || 'today'}` : `all ${field}s`);
+  const windowName = (chart) => (windowKeyOf(chart) === 'page' ? 'the window above' : WINDOW_OPTIONS.find(o => o.key === windowKeyOf(chart))?.label.toLowerCase());
   const filterText = [
     leadOrHigher ? 'Lead stage or higher only' : 'every stage',
     noPullThroughs ? 'pull-throughs left out' : 'pull-throughs included',
@@ -630,12 +677,15 @@ export function CloseRateDeepDive({
         {
           name: 'About',
           rows: [
-            { Item: 'Window', Value: windowText },
+            { Item: 'Window (page)', Value: windowText },
+            { Item: 'By source window', Value: rangeText(srcRange) },
+            { Item: 'By service window', Value: rangeText(svcRange) },
+            { Item: 'By stage window', Value: rangeText(stgRange) },
             { Item: 'Period', Value: periodName },
             { Item: 'Close rate', Value: 'Sold / (Sold + Not Sold), by Close Date. Rates are whole percentage points.' },
             { Item: 'Lead stage or higher', Value: leadOrHigher ? `On: opps closed before reaching Lead left out (${filtered.belowLead}). ${filtered.unknownStage} losses with no stage history kept.` : 'Off: every closed opp counted.' },
             { Item: 'Pull-throughs', Value: noPullThroughs ? `Left out (${filtered.pullThroughs}).` : 'Included, except in the Weekly email trend, which always leaves them out.' },
-            { Item: 'Weekly email trend', Value: 'Last 6 months by stage, the Weekly email table with the filters above applied, whatever the window.' },
+            { Item: 'Weekly email trend', Value: `Last ${weeklyMonths} months by stage, the Weekly email table with the filters above applied, whatever the window.` },
             { Item: 'By stage', Value: 'An opp counts toward every stage it reached, so stage rows do not add up.' },
             { Item: 'Stage reach', Value: `% of ${reachState.closedOnly ? 'closed ' : ''}opps that got at least as far as each stage, grouped by Start Date${reachState.from || reachState.to ? ` (${reachState.from || 'start'} to ${reachState.to || 'today'})` : ''}. Pull-throughs always left out; Not Sold opps with no stage history left out.` },
             { Item: 'By service', Value: 'An opp counts toward each service on its Scope. Hidden services are left out.' },
@@ -723,23 +773,33 @@ export function CloseRateDeepDive({
         Close rate = Sold / (Sold + Not Sold), by Close Date, {filterText}.
         {leadOrHigher && ` ${filtered.belowLead} closed opp${filtered.belowLead === 1 ? '' : 's'} never reached Lead and ${filtered.belowLead === 1 ? 'is' : 'are'} left out${filtered.unknownStage ? `; ${filtered.unknownStage} loss${filtered.unknownStage === 1 ? '' : 'es'} with no stage history can't be placed and stay in` : ''}.`}
         {noPullThroughs && ` ${filtered.pullThroughs} closed pull-through${filtered.pullThroughs === 1 ? '' : 's'} left out.`}
-        {' '}Sections 2 to 4 use {periodName.toLowerCase()}s over {windowText}.
+        {' '}Sections 2 to 4 use {periodName.toLowerCase()}s over {windowText}, unless a chart's own Time frame is set.
       </div>
 
       <section className={styles.section}>
         <div className={styles.sectionHead}>
           <div>
             <h2 className={styles.sectionTitle}>1. Close rate trend (Weekly email)</h2>
-            <div className={styles.sectionSub}>Last 6 months by the stage each closed deal reached: the Weekly email's table with the filters above applied. It always leaves pull-throughs out, as the email does.</div>
+            <div className={styles.sectionSub}>Last {weeklyMonths} months by the stage each closed deal reached: the Weekly email's table{weeklyMonths !== 6 ? ' (the email itself shows 6)' : ''} with the filters above applied. It always leaves pull-throughs out, as the email does.</div>
           </div>
-          <button type="button" className={styles.smallBtn} onClick={exportWeekly}>Export Excel</button>
+          <div className={styles.headActions}>
+            <WindowPicker
+              value={String(weeklyMonths)}
+              saved={String(prefs.weeklyMonths)}
+              options={WEEKLY_MONTHS.map(n => ({ key: String(n), label: `Last ${n} months` }))}
+              onChange={(k) => setWeeklyPick(Number(k))}
+              onSave={() => savePrefs(withWeeklyMonths(prefs, weeklyMonths), { now: true })}
+            />
+            <button type="button" className={styles.smallBtn} onClick={exportWeekly}>Export Excel</button>
+          </div>
         </div>
         <CloseRateTrend trend={weekly} />
       </section>
 
       <TrendSection
         title="2. Close rate by source"
-        subtitle={`Each source's close rate per ${periodName.toLowerCase()}.`}
+        subtitle={`Each source's close rate per ${periodName.toLowerCase()}, over ${windowName('source')} (${rangeText(srcRange)}).`}
+        windowPicker={windowPickerFor('source')}
         nameHeader="Source"
         trend={bySource}
         period={period}
@@ -753,7 +813,8 @@ export function CloseRateDeepDive({
 
       <TrendSection
         title="3. Close rate by service"
-        subtitle={`Each service's close rate per ${periodName.toLowerCase()}.`}
+        subtitle={`Each service's close rate per ${periodName.toLowerCase()}, over ${windowName('service')} (${rangeText(svcRange)}).`}
+        windowPicker={windowPickerFor('service')}
         nameHeader="Service"
         trend={byService}
         period={period}
@@ -820,7 +881,8 @@ export function CloseRateDeepDive({
 
       <TrendSection
         title="4. Close rate by stage"
-        subtitle={`By the stages each closed opp reached, per ${periodName.toLowerCase()}, over the window above.`}
+        subtitle={`By the stages each closed opp reached, per ${periodName.toLowerCase()}, over ${windowName('stage')} (${rangeText(stgRange)}).`}
+        windowPicker={windowPickerFor('stage')}
         nameHeader="Stage"
         trend={byStage}
         period={period}
@@ -843,12 +905,15 @@ export function CloseRateDeepDive({
               The same view as Days in Stage &gt; Stage Reach, with the filters above applied{leadOrHigher ? ', so Lead reads 100%' : ''}.
             </div>
           </div>
-          <button
+          <div className={styles.headActions}>
+            {windowPickerFor('reach', { pageLabel: 'Custom Start Dates' })}
+            <button
             type="button"
             className={styles.smallBtn}
             onClick={() => writeWorkbook('Stage reach', [{ name: 'Stage reach', rows: stageReachSheetRows(counted, { period, closedOnly: reachState.closedOnly, from: reachState.from, to: reachState.to }) }])}
             title="Each period's % and count per stage, whether or not the table is showing"
           >Export Excel</button>
+          </div>
         </div>
         <StageReach
           records={counted}
@@ -861,6 +926,7 @@ export function CloseRateDeepDive({
           onLabelToggle={(st) => savePrefs(withLineLabel(prefs, 'reach', st, !isLabelled(prefs, 'reach', st)), { now: true })}
           target={prefs.targets.reach ?? null}
           targetInput={TargetInput}
+          fixedRange={reachRange}
           onTargetChange={(v) => savePrefs(withTarget(prefs, 'reach', v), { now: true })}
           settings={settings}
           updateSettings={updateSettings}

@@ -87,7 +87,9 @@ function ReachTooltip({ active, payload, hidden, closedOnly, colourOf = (s) => C
 //   labelled(stage)  optional: does that line show a % on its points, and
 //   onLabelToggle(stage)  adds a % button to each legend chip to switch it.
 //   target / onTargetChange  optional: a target % line, and a box to set it.
-export function StageReach({ records, settings, updateSettings, period: periodProp, onState, collapsibleTable = false, colours, onColourChange, labelled = () => false, onLabelToggle, target = null, onTargetChange, targetInput: TargetBox }) {
+//   fixedRange  optional { from, to } Start Date window set by a parent (a
+//             rolling time frame); its own date boxes are hidden while set.
+export function StageReach({ records, settings, updateSettings, period: periodProp, onState, collapsibleTable = false, colours, onColourChange, labelled = () => false, onLabelToggle, target = null, onTargetChange, targetInput: TargetBox, fixedRange = null }) {
   const colourOf = useCallback((st) => colours?.[st] || COLOUR[st], [colours]);
   const [showTable, setShowTable] = useState(!collapsibleTable);
   const [ownPeriod, setPeriod] = useState('quarter');
@@ -95,8 +97,10 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
   // Closed only by default: how far finished deals got before they closed.
   const [scope, setScope] = useState('closed');
   const closedOnly = scope === 'closed';
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  const [ownFrom, setFrom] = useState('');
+  const [ownTo, setTo] = useState('');
+  const from = fixedRange ? fixedRange.from : ownFrom;
+  const to = fixedRange ? fixedRange.to : ownTo;
   // Stages switched off from the legend.
   const [hidden, setHidden] = useState(() => new Set());
 
@@ -244,15 +248,15 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
             >{o.label}</button>
           ))}
         </span>}
-        <label className={styles.filterLabel}>
+        {!fixedRange && <label className={styles.filterLabel}>
           Started from
           <input type="date" className={styles.filterInput} value={from} max={to || undefined} onChange={e => setFrom(e.target.value)} />
-        </label>
-        <label className={styles.filterLabel}>
+        </label>}
+        {!fixedRange && <label className={styles.filterLabel}>
           to
           <input type="date" className={styles.filterInput} value={to} min={from || undefined} onChange={e => setTo(e.target.value)} />
-        </label>
-        {(from || to) && (
+        </label>}
+        {!fixedRange && (from || to) && (
           <button type="button" className={styles.notSoldYear} onClick={() => { setFrom(''); setTo(''); }}>Clear dates</button>
         )}
         {onTargetChange && TargetBox && <TargetBox value={target} onChange={onTargetChange} />}

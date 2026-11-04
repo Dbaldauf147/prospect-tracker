@@ -5,7 +5,9 @@
 //   { labels: boolean,                                  // data labels: every line's default
 //     lineLabels: { [chart]: { [seriesKey]: boolean } },  // a line's own choice over that
 //     colours: { [chart]: { [seriesKey]: '#rrggbb' } },  // per-chart overrides
-//     targets: { [chart]: 0-100 } }                       // a target line per chart
+//     targets: { [chart]: 0-100 },                        // a target line per chart
+//     windows: { [chart]: windowKey },                    // each chart's default time frame
+//     weeklyMonths: 3 | 6 | 9 | 12 }                      // months in the Weekly email table
 //
 // chart is 'source' | 'service' | 'stage' | 'reach'. A series with no
 // override keeps the palette colour the page gives it. Pure, for tests.
@@ -41,7 +43,67 @@ export function readChartPrefs(settings) {
       if (n != null) targets[chart] = n;
     }
   }
-  return { labels: prefs.labels === true, lineLabels, colours, targets };
+  const windows = {};
+  if (prefs.windows && typeof prefs.windows === 'object') {
+    for (const [chart, v] of Object.entries(prefs.windows)) if (WINDOW_KEYS.has(v)) windows[chart] = v;
+  }
+  const weeklyMonths = WEEKLY_MONTHS.includes(prefs.weeklyMonths) ? prefs.weeklyMonths : DEFAULT_WEEKLY_MONTHS;
+  return { labels: prefs.labels === true, lineLabels, colours, targets, windows, weeklyMonths };
+}
+
+// ---------------------------------------------------------------------------
+// Each chart's time frame. 'page' follows the window at the top of the tab;
+// the rest are rolling, worked out from today every time, so "Last 12
+// months" saved in May still means the last 12 months in November.
+
+export const WINDOW_OPTIONS = [
+  { key: 'page', label: 'Same as page' },
+  { key: '6m', label: 'Last 6 months', months: 6 },
+  { key: '12m', label: 'Last 12 months', months: 12 },
+  { key: '18m', label: 'Last 18 months', months: 18 },
+  { key: '24m', label: 'Last 24 months', months: 24 },
+  { key: '36m', label: 'Last 36 months', months: 36 },
+  { key: 'ytd', label: 'This year' },
+  { key: 'all', label: 'All time' },
+];
+const WINDOW_KEYS = new Set(WINDOW_OPTIONS.map(o => o.key));
+export const WEEKLY_MONTHS = [3, 6, 9, 12];
+export const DEFAULT_WEEKLY_MONTHS = 6;
+
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/**
+ * A window key as { from, to } ISO dates ('' = open), or null for 'page'
+ * (use the page's own window). Rolling N months runs from the same day N
+ * months back, to today.
+ */
+export function windowRange(key, now = new Date()) {
+  const opt = WINDOW_OPTIONS.find(o => o.key === key);
+  if (!opt || key === 'page') return null;
+  if (key === 'all') return { from: '', to: '' };
+  if (key === 'ytd') return { from: `${now.getFullYear()}-01-01`, to: '' };
+  const d = new Date(now.getFullYear(), now.getMonth() - opt.months, now.getDate());
+  // 31 Mar minus a month would roll into March again; clamp to the month's end.
+  if (d.getMonth() !== ((now.getMonth() - opt.months) % 12 + 12) % 12) d.setDate(0);
+  return { from: iso(d), to: '' };
+}
+
+/** A chart's saved default time frame ('page' when none saved). */
+export function savedWindow(prefs, chart) {
+  return prefs.windows?.[chart] || 'page';
+}
+
+/** Save a chart's default time frame; 'page' removes the saved choice. */
+export function withWindow(prefs, chart, key) {
+  if (!WINDOW_KEYS.has(key)) return prefs;
+  const windows = { ...(prefs.windows || {}) };
+  if (key === 'page') delete windows[chart]; else windows[chart] = key;
+  return { ...prefs, windows };
+}
+
+export function withWeeklyMonths(prefs, months) {
+  const n = Number(months);
+  return WEEKLY_MONTHS.includes(n) ? { ...prefs, weeklyMonths: n } : prefs;
 }
 
 /** A target as typed: a number from 0 to 100 (one decimal), else null. */

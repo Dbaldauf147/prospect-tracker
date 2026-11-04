@@ -564,3 +564,28 @@
   border-top: 1px solid var(--color-border, #e2e8f0);
   color: var(--color-text-muted);
 }
+
+.windowField {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.windowField label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.windowField select {
+  padding: 0.25rem 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 0.78rem;
+  font-family: inherit;
+  color: var(--color-text);
+}
