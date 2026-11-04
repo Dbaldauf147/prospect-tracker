@@ -3,17 +3,124 @@ import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { DataTable } from '../common/DataTable';
-import { TagMultiSelect } from '../common/TagMultiSelect';
 import { serviceShareTrend, serviceCloseRateTrend, periodLabel, servicesOf } from '../../utils/serviceTrends';
 import { getServiceCategories } from '../../utils/serviceCategoriesStore';
 import styles from './OppsView2.module.css';
 
 const muted = { color: 'var(--color-text-muted, #64748B)' };
 
-// The validated categorical order the other Opps trend charts use. The
-// chart draws at most this many services at once; the table has them all.
+// The validated categorical order the other Opps trend charts use. With
+// nothing picked the chart draws the busiest MAX_LINES services; picking
+// draws exactly the picked ones, however many, and lines past the eighth
+// take colours spread round the wheel (lineColour).
 const PALETTE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'];
 const MAX_LINES = PALETTE.length;
+function lineColour(i) {
+  if (i < PALETTE.length) return PALETTE[i];
+  // Golden-angle hue steps keep neighbouring extra lines apart.
+  const hue = Math.round((i - PALETTE.length) * 137.508 + 200) % 360;
+  return `hsl(${hue}, 62%, ${i % 2 ? 42 : 55}%)`;
+}
+// Services switched off the chart for good (the Hide column of the
+// Services picker), saved and shared by both trend subtabs. They are never
+// drawn, picked or not; on the % of 100 scale they fall into Other.
+const EXCLUDED_KEY = 'oppsServiceTrendExcluded';
+
+/**
+ * The Chart box: a button that opens a list of every service with a Show
+ * and a Hide checkbox. Show picks the service onto the chart (none shown
+ * means the busiest eight); Hide keeps it off the chart. "Show all" picks
+ * every service that isn't hidden.
+ */
+function ServicePicker({ options, picked, excluded, onPickedChange, onExcludedChange, noun }) {
+  const [open, setOpen] = useState(false);
+  const [term, setTerm] = useState('');
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (!ref.current?.contains(e.target)) { setOpen(false); setTerm(''); } };
+    const onKey = (e) => { if (e.key === 'Escape') { setOpen(false); setTerm(''); } };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+  const pickedSet = new Set(picked);
+  const excludedSet = new Set(excluded);
+  const shown = options.filter(o => pickedSet.has(o) && !excludedSet.has(o));
+  const hiddenCount = options.filter(o => excludedSet.has(o)).length;
+  const showable = options.filter(o => !excludedSet.has(o));
+  const q = term.trim().toLowerCase();
+  const list = q ? options.filter(o => o.toLowerCase().includes(q)) : options;
+
+  const setShow = (o, on) => {
+    onPickedChange(on ? [...picked.filter(x => x !== o), o] : picked.filter(x => x !== o));
+    if (on && excludedSet.has(o)) onExcludedChange(excluded.filter(x => x !== o));
+  };
+  const setHide = (o, on) => {
+    onExcludedChange(on ? [...excluded.filter(x => x !== o), o].sort((a, b) => a.localeCompare(b)) : excluded.filter(x => x !== o));
+    if (on && pickedSet.has(o)) onPickedChange(picked.filter(x => x !== o));
+  };
+
+  let label = shown.length === 0
+    ? `Top ${MAX_LINES} ${noun}`
+    : shown.length === showable.length ? `All ${showable.length} ${noun}` : `${shown.length} ${noun} shown`;
+  if (hiddenCount) label += `, ${hiddenCount} hidden`;
+
+  const btn = { background: 'none', border: '1px solid var(--color-border, #CBD5E1)', borderRadius: 4, padding: '2px 8px', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' };
+  const cell = { width: 44, textAlign: 'center', flexShrink: 0 };
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        aria-expanded={open}
+        style={{ display: 'flex', alignItems: 'center', width: '100%', minHeight: 32, padding: '0.3rem 0.55rem', border: '1px solid var(--color-border, #CBD5E1)', borderRadius: 6, background: 'var(--color-bg, #fff)', color: 'var(--color-text)', fontSize: '0.74rem', fontFamily: 'inherit', cursor: 'pointer', textAlign: 'left' }}
+      >
+        <span style={{ flex: 1 }}>{label}</span>
+        <span style={{ fontSize: '0.6rem', ...muted }}>{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-label="Services on the chart"
+          style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 30, width: 'max(100%, 340px)', background: 'var(--color-surface, #fff)', border: '1px solid var(--color-border, #E2E8F0)', borderRadius: 8, boxShadow: '0 6px 20px rgba(0,0,0,0.14)', display: 'flex', flexDirection: 'column', maxHeight: 380 }}
+        >
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0.45rem 0.55rem 0.3rem' }}>
+            <button type="button" style={btn} onClick={() => onPickedChange(showable)} title={`Draw every ${noun === 'lines' ? 'line' : 'service'} that isn't hidden`}>Show all</button>
+            <button type="button" style={btn} onClick={() => onPickedChange([])} disabled={!picked.length} title={`Clear the Show ticks: the chart goes back to the top ${MAX_LINES}`}>Clear shown</button>
+            <button type="button" style={btn} onClick={() => onExcludedChange([])} disabled={!hiddenCount} title="Clear the Hide ticks">Clear hidden</button>
+          </div>
+          <input
+            type="text"
+            placeholder="Search..."
+            value={term}
+            onChange={e => setTerm(e.target.value)}
+            autoFocus
+            style={{ margin: '0 0.55rem 0.35rem', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border, #E2E8F0)', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit', outline: 'none', background: 'var(--color-bg, #fff)', color: 'var(--color-text)' }}
+          />
+          <div style={{ display: 'flex', alignItems: 'center', padding: '0.15rem 0.6rem', fontSize: '0.66rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border, #E2E8F0)', ...muted }}>
+            <span style={{ flex: 1 }}>{noun === 'lines' ? 'Line' : 'Service'}</span>
+            <span style={cell} title="Draw it on the chart">Show</span>
+            <span style={cell} title="Keep it off the chart (saved)">Hide</span>
+          </div>
+          <div style={{ overflowY: 'auto', flex: 1 }}>
+            {list.map(o => (
+              <div key={o} style={{ display: 'flex', alignItems: 'center', padding: '0.25rem 0.6rem', fontSize: '0.74rem', color: 'var(--color-text)', opacity: excludedSet.has(o) ? 0.55 : 1 }}>
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={o}>{o}</span>
+                <span style={cell}><input type="checkbox" aria-label={`Show ${o}`} checked={pickedSet.has(o) && !excludedSet.has(o)} onChange={e => setShow(o, e.target.checked)} /></span>
+                <span style={cell}><input type="checkbox" aria-label={`Hide ${o}`} checked={excludedSet.has(o)} onChange={e => setHide(o, e.target.checked)} /></span>
+              </div>
+            ))}
+            {list.length === 0 && <div style={{ padding: '0.5rem 0.6rem', fontSize: '0.72rem', ...muted }}>No matches</div>}
+          </div>
+          <div style={{ padding: '0.35rem 0.6rem', fontSize: '0.68rem', borderTop: '1px solid var(--color-border, #E2E8F0)', ...muted }}>
+            Nothing ticked under Show draws the top {MAX_LINES}. Hidden ones stay off the chart{noun === 'lines' ? '' : ' (on % of 100 they count in Other)'}.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 const OVERALL_COLOUR = '#334155';
 const OVERALL_KEY = '__overall';
 const OTHER_COLOUR = '#cbd5e1';
@@ -240,13 +347,19 @@ export function ServiceTrends({
   ), [mode, records, period, from, to, hiddenServices, activeGroups]);
 
   const allKeys = useMemo(() => trend.series.map(s => s.key), [trend]);
+  const excluded = useMemo(
+    () => (Array.isArray(settings?.[EXCLUDED_KEY]) ? settings[EXCLUDED_KEY] : []),
+    [settings],
+  );
+  const setExcluded = (next) => updateSettings?.({ [EXCLUDED_KEY]: next });
   const lines = useMemo(() => {
-    const keep = picked.filter(k => allKeys.includes(k));
-    return keep.length
-      ? trend.series.filter(s => keep.includes(s.key)).slice(0, MAX_LINES)
-      : trend.series.slice(0, MAX_LINES);
-  }, [trend, picked, allKeys]);
-  const colourMap = useMemo(() => new Map(lines.map((s, i) => [s.key, PALETTE[i]])), [lines]);
+    const off = new Set(excluded);
+    const pool = trend.series.filter(s => !off.has(s.key));
+    const keep = new Set(picked);
+    const chosen = pool.filter(s => keep.has(s.key));
+    return chosen.length ? chosen : pool.slice(0, MAX_LINES);
+  }, [trend, picked, excluded]);
+  const colourMap = useMemo(() => new Map(lines.map((s, i) => [s.key, lineColour(i)])), [lines]);
   const colourOf = (k) => (k === OVERALL_KEY ? OVERALL_COLOUR : k === OTHER_KEY ? OTHER_COLOUR : colourMap.get(k) || '#9ca3af');
   const visible = lines.filter(s => !hidden.has(s.key));
   const showOverall = mode === 'closeRate' && !hidden.has(OVERALL_KEY);
@@ -288,7 +401,6 @@ export function ServiceTrends({
     const btn = e.currentTarget.getBoundingClientRect();
     setLinePopup({ key, left: btn.left - (box?.left || 0), top: btn.bottom - (box?.top || 0) + 4 });
   };
-  const togglePick = (v) => onPickedChange?.(picked.includes(v) ? picked.filter(x => x !== v) : [...picked, v]);
 
   // ---- table: every service, then the total row ------------------------
   const tableRows = useMemo(() => {
@@ -437,8 +549,15 @@ export function ServiceTrends({
         </label>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 260, maxWidth: 460, flex: '1 1 260px' }}>
           <span className={styles.filterLabel}>Chart</span>
-          <div style={{ flex: 1 }} title={`Pick up to ${MAX_LINES} services to draw; none picked draws the ${MAX_LINES} busiest`}>
-            <TagMultiSelect options={allKeys} selected={picked} onToggle={togglePick} placeholder={`Top ${MAX_LINES} ${grouping ? 'lines' : 'services'}`} />
+          <div style={{ flex: 1 }} title={`Tick Show to draw a service, Hide to keep it off; none shown draws the ${MAX_LINES} busiest`}>
+            <ServicePicker
+              options={allKeys}
+              picked={picked}
+              excluded={excluded}
+              onPickedChange={(next) => onPickedChange?.(next)}
+              onExcludedChange={setExcluded}
+              noun={grouping ? 'lines' : 'services'}
+            />
           </div>
         </div>
         <span className={styles.notSoldYears}>
@@ -485,7 +604,6 @@ export function ServiceTrends({
       <div style={{ fontSize: '0.72rem', ...muted }}>
         {grouping && `Grouped: ${activeGroups.map(g => g.name).join(', ')}. `}
         {isMix ? MIX_BLURB : cfg.blurb}
-        {picked.length > MAX_LINES && ` The chart draws the first ${MAX_LINES} picked; the table has them all.`}
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
