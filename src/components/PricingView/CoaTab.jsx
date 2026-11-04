@@ -7,7 +7,8 @@ import styles from './CoaTab.module.css';
 // user's settings (settings.pricingCoaItems) and follows them to their other
 // machine rather than being cleared with the workbook.
 //
-// Each row: { id, item, approved, notes }.
+// Each row: { id, item, approved, approver, notes }. `approver` is who
+// signed the item off, free text; older rows without it read as blank.
 const SETTINGS_KEY = 'pricingCoaItems';
 
 const newId = () => `coa-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -15,7 +16,7 @@ const newId = () => `coa-${Date.now().toString(36)}-${Math.random().toString(36)
 // Typed into a draft and saved on blur / Enter, so every keystroke doesn't
 // write the settings document.
 // allowEmpty lets a cell be cleared (Notes); the COA Item itself can't be.
-function CellInput({ value, onSave, label, placeholder, allowEmpty = false }) {
+function CellInput({ value, onSave, label, placeholder, allowEmpty = false, list }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => { setDraft(value); }, [value]);
   const commit = () => {
@@ -29,6 +30,7 @@ function CellInput({ value, onSave, label, placeholder, allowEmpty = false }) {
       value={draft}
       aria-label={label}
       placeholder={placeholder}
+      list={list}
       onChange={e => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={e => {
@@ -52,7 +54,7 @@ export function CoaTab({ settings, updateSettings }) {
   const addItem = () => {
     const item = newItem.trim();
     if (!item) return;
-    save([...items, { id: newId(), item, approved: false, notes: '' }]);
+    save([...items, { id: newId(), item, approved: false, approver: '', notes: '' }]);
     setNewItem('');
   };
 
@@ -62,6 +64,11 @@ export function CoaTab({ settings, updateSettings }) {
   };
 
   const approvedCount = items.filter(r => r.approved).length;
+  // Names already used, offered as suggestions in every Approver box.
+  const approverNames = useMemo(
+    () => [...new Set(items.map(r => String(r.approver || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [items],
+  );
 
   const columns = useMemo(() => [
     {
@@ -89,6 +96,24 @@ export function CoaTab({ settings, updateSettings }) {
           />
           <span className={row.approved ? styles.yes : styles.no}>{row.approved ? 'Yes' : 'No'}</span>
         </label>
+      ),
+    },
+    {
+      key: 'approver',
+      label: 'Approver',
+      defaultWidth: 180,
+      getSortValue: (row) => (row.approver || '').toLowerCase(),
+      getFilterValue: (row) => row.approver || '',
+      exportValue: (row) => row.approver || '',
+      render: (row) => (
+        <CellInput
+          label="Approver"
+          placeholder="Who approved it"
+          allowEmpty
+          list="pricing-coa-approvers"
+          value={row.approver || ''}
+          onSave={(approver) => patchRow(row.id, { approver })}
+        />
       ),
     },
     {
@@ -136,6 +161,9 @@ export function CoaTab({ settings, updateSettings }) {
           aria-label="New COA item"
         />
         <button type="submit" className={styles.addBtn} disabled={!newItem.trim()}>Add</button>
+        <datalist id="pricing-coa-approvers">
+          {approverNames.map(n => <option key={n} value={n} />)}
+        </datalist>
         <span className={styles.count}>
           {items.length} item{items.length === 1 ? '' : 's'}, {approvedCount} approved
         </span>
