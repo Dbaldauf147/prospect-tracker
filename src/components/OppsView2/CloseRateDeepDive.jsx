@@ -29,6 +29,7 @@ import {
   CHART_IDS, readChartSaved, chartSavedPatch, snapshotChart, chartMatchesEntry, chartFromEntry,
 } from '../../utils/closeRateSavedFilters';
 import { PRESET_LIST, WEEKLY_MONTHS, cleanWeeklyMonths } from '../../utils/closeRateWindows';
+import { StageProgression } from './StageProgression';
 import styles from './CloseRateDeepDive.module.css';
 
 // Opps > Close Rates: every close-rate trend on one page, each exportable.
@@ -1136,6 +1137,15 @@ export function CloseRateDeepDive({
           updateSettings={updateSettings}
         />
       </section>
+
+      <StageProgression
+        records={counted}
+        from={from}
+        to={to}
+        windowText={from || to ? `between ${from || 'the start'} and ${to || 'today'}` : 'at any time'}
+        settings={settings}
+        updateSettings={updateSettings}
+      />
     </div>
   );
 }
