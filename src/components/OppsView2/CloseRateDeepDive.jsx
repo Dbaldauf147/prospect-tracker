@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  LabelList, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { DataTable } from '../common/DataTable';
 import { CloseRateTrend } from '../WeeklyReportView/CloseRateTrend';
 import { StageReach } from './StageReach';
+import { ColourPickDot } from '../common/ColourPickDot';
+import {
+  CHART_PREFS_KEY, readChartPrefs, withColour, withoutColours, withLabels, labelText,
+} from '../../utils/closeRateChartPrefs';
 import { closeRateTrendByStage } from '../../utils/pipelineFunnelData';
 import { closeRateTrend, periodLabel } from '../../utils/notSoldAnalysis';
 import { serviceCloseRateTrend } from '../../utils/serviceTrends';
@@ -95,14 +99,16 @@ function ChartTooltip({ active, payload, label, lines }) {
  * One trend (by source / service / stage): a line chart of the biggest
  * series plus Overall, and the full table under it.
  */
-function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exportName, note, keepOrder = false, fitYAxis = false, settings, updateSettings }) {
+function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exportName, note, keepOrder = false, fitYAxis = false, colours, onColourChange, onResetColours, showLabels = false, settings, updateSettings }) {
   // Colour by entity: fixed by the series' place in the full list (most
   // decided first), so hiding one in the legend never repaints the rest.
   const colourOf = useMemo(() => {
     const m = new Map();
-    trend.series.forEach((s, i) => m.set(s.key, PALETTE[i % PALETTE.length]));
+    // A colour the user picked (saved per chart) wins over the palette.
+    trend.series.forEach((s, i) => m.set(s.key, colours?.[s.key] || PALETTE[i % PALETTE.length]));
     return m;
-  }, [trend]);
+  }, [trend, colours]);
+  const overallColour = colours?.__overall || OVERALL_COLOUR;
   const candidates = useMemo(
     () => trend.series.filter(s => s.decided > 0).slice(0, MAX_LINES),
     [trend],
@@ -110,8 +116,8 @@ function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exp
   const [off, setOff] = useState(() => new Set());
   const lines = useMemo(() => [
     ...candidates.filter(s => !off.has(s.key)).map(s => ({ key: s.key, name: s.label || s.key, colour: colourOf.get(s.key), cells: s.byPeriod })),
-    ...(off.has('__overall') ? [] : [{ key: '__overall', name: 'Overall', colour: OVERALL_COLOUR, cells: trend.overall, overall: true }]),
-  ], [candidates, off, colourOf, trend]);
+    ...(off.has('__overall') ? [] : [{ key: '__overall', name: 'Overall', colour: overallColour, cells: trend.overall, overall: true }]),
+  ], [candidates, off, colourOf, trend, overallColour]);
 
   const data = useMemo(() => trend.periods.map(p => {
     const point = { period: periodLabel(p, period) };
@@ -235,25 +241,28 @@ function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exp
       ) : (
         <>
           <div className={styles.legend}>
-            {[...candidates.map(s => ({ key: s.key, name: s.label || s.key, colour: colourOf.get(s.key) })), { key: '__overall', name: 'Overall', colour: OVERALL_COLOUR }].map(l => (
-              <button
-                key={l.key}
-                type="button"
-                className={off.has(l.key) ? styles.legendOff : styles.legendItem}
-                onClick={() => toggle(l.key)}
-                title={off.has(l.key) ? 'Show on the chart' : 'Hide from the chart'}
-              >
-                <span className={styles.swatch} style={{ background: l.colour }} />
-                {l.name}
-              </button>
+            {[...candidates.map(s => ({ key: s.key, name: s.label || s.key, colour: colourOf.get(s.key) })), { key: '__overall', name: 'Overall', colour: overallColour }].map(l => (
+              <span key={l.key} className={off.has(l.key) ? styles.legendOff : styles.legendItem}>
+                {/* The dot picks the colour; the name shows / hides the line. */}
+                <ColourPickDot colour={l.colour} label={l.name} size={9} onChange={(hex) => onColourChange?.(l.key, hex)} />
+                <button
+                  type="button"
+                  className={styles.legendToggle}
+                  onClick={() => toggle(l.key)}
+                  title={off.has(l.key) ? 'Show on the chart' : 'Hide from the chart'}
+                >{l.name}</button>
+              </span>
             ))}
+            {colours && Object.keys(colours).length > 0 && (
+              <button type="button" className={styles.resetLink} onClick={onResetColours} title="Back to the standard colours for this chart">Reset colours</button>
+            )}
             {trend.series.filter(s => s.decided > 0).length > MAX_LINES && (
               <span className={styles.muted}>Chart shows the {MAX_LINES} with the most closed opps; the table has them all.</span>
             )}
           </div>
           <div className={styles.chart}>
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: -8 }}>
+              <LineChart data={data} margin={{ top: showLabels ? 22 : 8, right: 16, bottom: 0, left: -8 }}>
                 <CartesianGrid stroke="#eef2f7" vertical={false} />
                 <XAxis dataKey="period" tick={axisTick} tickLine={false} axisLine={{ stroke: '#e2e8f0' }} />
                 <YAxis domain={yAxis?.domain || [0, 100]} ticks={yAxis?.ticks || [0, 25, 50, 75, 100]} allowDataOverflow={false} tickFormatter={(v) => `${v}%`} tick={axisTick} tickLine={false} axisLine={false} />
@@ -270,7 +279,11 @@ function TrendSection({ title, subtitle, nameHeader, trend, period, tableId, exp
                     activeDot={{ r: 5, stroke: '#fff', strokeWidth: 2 }}
                     connectNulls={false}
                     isAnimationActive={false}
-                  />
+                  >
+                    {/* Text ink, not the series colour, so labels stay
+                        readable whatever colour the line is given. */}
+                    {showLabels && <LabelList dataKey={l.key} position="top" offset={7} formatter={labelText} style={{ fontSize: 10, fill: '#475569', fontWeight: l.overall ? 700 : 400 }} />}
+                  </Line>
                 ))}
               </LineChart>
             </ResponsiveContainer>
@@ -422,6 +435,27 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
   const currentFilters = { period, preset, from, to, leadOrHigher, noPullThroughs };
   const saveFilters = (next) => updateSettings?.({ [SAVED_FILTERS_KEY]: next });
 
+  // Chart colours and data labels, saved on settings (closeRatesChartPrefs).
+  // A colour drag fires many changes, so they show at once from a draft and
+  // are saved once the picking pauses.
+  const savedPrefs = useMemo(() => readChartPrefs(settings), [settings]);
+  const [draftPrefs, setDraftPrefs] = useState(null);
+  const prefs = draftPrefs || savedPrefs;
+  const saveTimer = useRef(null);
+  const savePrefs = useCallback((next, { now = false } = {}) => {
+    setDraftPrefs(next);
+    clearTimeout(saveTimer.current);
+    const write = () => { updateSettings?.({ [CHART_PREFS_KEY]: next }); setDraftPrefs(null); };
+    if (now) write(); else saveTimer.current = setTimeout(write, 500);
+  }, [updateSettings]);
+  useEffect(() => () => clearTimeout(saveTimer.current), []);
+  const colourProps = (chart) => ({
+    colours: prefs.colours[chart],
+    onColourChange: (key, hex) => savePrefs(withColour(prefs, chart, key, hex)),
+    onResetColours: () => savePrefs(withoutColours(prefs, chart), { now: true }),
+    showLabels: prefs.labels,
+  });
+
   const filtered = useMemo(
     () => applyCloseRateFilters(records, { leadOrHigher, noPullThroughs }),
     [records, leadOrHigher, noPullThroughs],
@@ -520,6 +554,16 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
           To
           <input type="date" value={to} onChange={e => { touched.current = true; setTo(e.target.value); setPreset(''); }} />
         </label>
+        <button
+          type="button"
+          className={prefs.labels ? styles.filterOn : styles.filterOff}
+          aria-pressed={prefs.labels}
+          onClick={() => savePrefs(withLabels(prefs, !prefs.labels), { now: true })}
+          title="Show the % on every point of every chart. Saved, so the charts open this way next time."
+        >
+          <span className={styles.check} aria-hidden="true">{prefs.labels ? '✓' : ''}</span>
+          Data labels
+        </button>
         <div className={styles.filterButtons} role="group" aria-label="Filters">
           <button
             type="button"
@@ -577,6 +621,7 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
         trend={bySource}
         period={period}
         tableId={`close-rates-source-${period}`}
+        {...colourProps('source')}
         exportName="Close rate by source"
         fitYAxis
         settings={settings}
@@ -590,6 +635,7 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
         trend={byService}
         period={period}
         tableId={`close-rates-service-${period}`}
+        {...colourProps('service')}
         exportName="Close rate by service"
         fitYAxis
         note={`An opp counts toward each service on its Scope, so service rows don't add up to Overall.${hidden.length ? ` ${hidden.length} service${hidden.length === 1 ? '' : 's'} hidden on By Service ${hidden.length === 1 ? 'is' : 'are'} left out.` : ''}`}
@@ -604,6 +650,7 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
         trend={byStage}
         period={period}
         tableId={`close-rates-stage-${period}`}
+        {...colourProps('stage')}
         exportName="Close rate by stage"
         fitYAxis
         keepOrder
@@ -633,6 +680,9 @@ export function CloseRateDeepDive({ records = [], hiddenServices, settings, upda
           period={period}
           onState={onReachState}
           collapsibleTable
+          colours={prefs.colours.reach}
+          onColourChange={(st, hex) => savePrefs(withColour(prefs, 'reach', st, hex))}
+          showLabels={prefs.labels}
           settings={settings}
           updateSettings={updateSettings}
         />
