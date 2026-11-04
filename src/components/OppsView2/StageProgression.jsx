@@ -29,12 +29,18 @@ async function writeWorkbook(fileBase, sheets) {
   XLSX.writeFile(wb, `${fileBase} - ${isoDay(new Date())}.xlsx`);
 }
 
-function ProgressTooltip({ active, payload, label, lines }) {
+// The two ways the chart and band table read the history.
+const MODES = [
+  { key: 'stage', label: 'Days in stage', title: 'How long the deal had sat in the stage' },
+  { key: 'heard', label: 'Days since heard from contact', title: 'How long since we last heard from the contact when the deal left the stage' },
+];
+
+function ProgressTooltip({ active, payload, label, lines, mode }) {
   if (!active || !payload?.length) return null;
   const point = payload[0].payload;
   return (
     <div className={styles.tooltip}>
-      <div className={styles.tooltipHead}>{label} in stage</div>
+      <div className={styles.tooltipHead}>{label} {mode === 'heard' ? 'since heard from the contact' : 'in stage'}</div>
       {lines.map(l => {
         const c = point[`${l.stage}__cell`];
         if (!c || !c.n) return null;
@@ -47,7 +53,7 @@ function ProgressTooltip({ active, payload, label, lines }) {
           </div>
         );
       })}
-      <div className={styles.muted} style={{ marginTop: 4 }}>Moved on / deals still in the stage this long</div>
+      <div className={styles.muted} style={{ marginTop: 4 }}>{mode === 'heard' ? 'Moved on / deals that had gone this long without hearing back' : 'Moved on / deals still in the stage this long'}</div>
     </div>
   );
 }
@@ -83,17 +89,22 @@ export function StageProgression({ records, from = '', to = '', windowText = '',
   const [ownOff, setOff] = useState(() => new Set());
   const off = lineState?.off || ownOff;
   const [showTable, setShowTable] = useState(false);
+  // 'stage': by days in stage; 'heard': by days since we heard from the
+  // contact when the deal left the stage.
+  const [mode, setMode] = useState('stage');
+  const bandsOf = (st) => (mode === 'heard' ? st.silenceBands : st.bands);
+  const withSilence = prog.stages.reduce((n, st) => n + st.withSilence, 0);
   const lines = shown.filter(s => !off.has(s.stage)).map(s => ({ stage: s.stage, next: s.next, colour: colourOf.get(s.stage) }));
 
   const data = useMemo(() => DAY_BANDS.map((b, i) => {
     const point = { band: b.label };
     for (const s of shown) {
-      const c = s.bands[i];
+      const c = (mode === 'heard' ? s.silenceBands : s.bands)[i];
       point[s.stage] = c.n >= MIN_N ? c.rate : null;
       point[`${s.stage}__cell`] = c;
     }
     return point;
-  }), [shown]);
+  }), [shown, mode]);
   const yAxis = useMemo(() => fittedRateAxis(data, lines.map(l => l.stage)), [data, lines]);
 
   const toggle = (k) => (lineState ? lineState.onShown(k, off.has(k)) : setOff(prev => {
@@ -124,13 +135,15 @@ export function StageProgression({ records, from = '', to = '', windowText = '',
       render: (s) => <div className={styles.cell} title="Of the deals that moved on, half did so within this many days">{s.medianDaysToMove == null ? '-' : Math.round(s.medianDaysToMove)}</div>,
     },
     ...DAY_BANDS.map((b, i) => ({
-      key: `b${i}`, label: b.label, defaultWidth: 120,
-      getSortValue: (s) => s.bands[i].rate ?? -1,
-      getFilterValue: (s) => fmtPct(s.bands[i].rate),
-      exportValue: (s) => (s.bands[i].n ? `${fmtPct(s.bands[i].rate)} (${s.bands[i].moved}/${s.bands[i].n})` : ''),
-      render: (s) => rateCell(s.bands[i]),
+      key: `b${i}`, label: mode === 'heard' ? `${b.label} silent` : b.label, defaultWidth: 120,
+      getSortValue: (s) => bandsOf(s)[i].rate ?? -1,
+      getFilterValue: (s) => fmtPct(bandsOf(s)[i].rate),
+      exportValue: (s) => (bandsOf(s)[i].n ? `${fmtPct(bandsOf(s)[i].rate)} (${bandsOf(s)[i].moved}/${bandsOf(s)[i].n})` : ''),
+      render: (s) => rateCell(bandsOf(s)[i]),
     })),
-  ], [colourOf]);
+  // bandsOf reads `mode`.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [colourOf, mode]);
 
   const openRows = useMemo(() => open.map((o, i) => ({ ...o, id: o.r._id || o.r.id || `o${i}` })), [open]);
   const openColumns = useMemo(() => [
@@ -158,6 +171,37 @@ export function StageProgression({ records, from = '', to = '', windowText = '',
         : <div className={styles.cellEmpty} title="No past deals stayed in this stage this long">-</div>),
     },
     { key: 'basis', label: 'Based on', defaultWidth: 150, getSortValue: (o) => o.n, exportValue: (o) => `${o.n} deals, ${o.band}`, render: (o) => <span className={styles.muted}>{o.n} deal{o.n === 1 ? '' : 's'} ({o.band})</span> },
+    { key: 'contact', label: 'Contact (starred)', defaultWidth: 160, getFilterValue: (o) => o.contact, exportValue: (o) => o.contact, render: (o) => o.contact || <span className={styles.muted}>-</span> },
+    {
+      key: 'silence', label: 'Days since heard from', defaultWidth: 160,
+      getSortValue: (o) => o.silence ?? -1, getFilterValue: (o) => (o.silence == null ? '' : String(o.silence)), exportValue: (o) => o.silence ?? '',
+      render: (o) => {
+        if (o.silence == null) return <div className={styles.cellEmpty} title="No Last Client Heard From Us date on this opp">-</div>;
+        const late = o.usualGap != null && o.silence > o.usualGap;
+        return (
+          <div className={styles.cell} style={late ? { color: '#B91C1C' } : undefined} title={late ? `Longer than their usual ${Math.round(o.usualGap)} days` : undefined}>
+            {o.silence}
+          </div>
+        );
+      },
+    },
+    {
+      key: 'usual', label: 'Usual gap', defaultWidth: 100,
+      getSortValue: (o) => o.usualGap ?? -1, exportValue: (o) => (o.usualGap == null ? '' : Math.round(o.usualGap)),
+      render: (o) => <div className={styles.cell} title="The contact's median days between replies so far">{o.usualGap == null ? '-' : Math.round(o.usualGap)}</div>,
+    },
+    {
+      key: 'silenceChance', label: 'Chance (by silence)', defaultWidth: 160,
+      getSortValue: (o) => o.silenceRate ?? -1, getFilterValue: (o) => fmtPct(o.silenceRate), exportValue: (o) => (o.silenceRate == null ? '' : Math.round(o.silenceRate)),
+      render: (o) => (o.silenceN
+        ? (
+          <div className={styles.cell} style={o.silenceN < MIN_N ? { opacity: 0.5 } : undefined} title={`Of ${o.silenceN} past ${o.stage} deals that had gone at least as long without hearing back (${o.silenceBand}), this share moved on${o.silenceN < MIN_N ? '. Few deals: read with care' : ''}`}>
+            <span className={styles.cellRate}>{fmtPct(o.silenceRate)}</span>
+            <span className={styles.cellCount}>{o.silenceN}</span>
+          </div>
+        )
+        : <div className={styles.cellEmpty} title={o.silence == null ? 'No heard-from date on this opp' : 'No past deals in this stage went this long without hearing back'}>-</div>),
+    },
   ], [colourOf]);
 
   const exportAll = () => writeWorkbook('Chance of moving on by days in stage', [
@@ -174,10 +218,21 @@ export function StageProgression({ records, from = '', to = '', windowText = '',
       })),
     },
     {
+      name: 'Chance by days silent',
+      rows: prog.stages.map(s => ({
+        Stage: s.stage,
+        'Next stage': s.next,
+        'Past stints with a heard-from date': s.withSilence,
+        ...Object.fromEntries(s.silenceBands.flatMap(b => [[`${b.label} silent %`, b.rate == null ? '' : Math.round(b.rate)], [`${b.label} silent deals`, b.n]])),
+      })),
+    },
+    {
       name: 'Open opps',
       rows: open.map(o => ({
         Account: String(o.r.Account || '').trim(), Scope: o.r.Scope || '', Stage: o.stage, 'Next stage': o.next,
         'Days in stage': o.days, Band: o.band, 'Chance of moving on %': o.rate == null ? '' : Math.round(o.rate), 'Based on (deals)': o.n,
+        'Contact (starred)': o.contact, 'Days since heard from': o.silence ?? '', 'Usual gap (days)': o.usualGap == null ? '' : Math.round(o.usualGap),
+        'Chance by silence %': o.silenceRate == null ? '' : Math.round(o.silenceRate), 'Silence based on (deals)': o.silenceN,
       })),
     },
     {
@@ -185,7 +240,7 @@ export function StageProgression({ records, from = '', to = '', windowText = '',
       rows: prog.stints.map(s => ({
         Account: String(s.r.Account || '').trim(), Scope: s.r.Scope || '', 'Stage today': String(s.r.Stage || '').trim(),
         'Stint stage': s.stage, 'Days in stage': s.days, 'Left stage on': s.exitedAt, 'Moved to': s.next,
-        'Moved on': s.progressed ? 'Yes' : 'No', Band: DAY_BANDS.find((b, i) => s.days >= b.min && (i === DAY_BANDS.length - 1 || s.days < DAY_BANDS[i + 1].min))?.label || '',
+        'Moved on': s.progressed ? 'Yes' : 'No', 'Days since heard from at exit': s.silence ?? '', Band: DAY_BANDS.find((b, i) => s.days >= b.min && (i === DAY_BANDS.length - 1 || s.days < DAY_BANDS[i + 1].min))?.label || '',
       })).sort((a, b) => String(b['Left stage on']).localeCompare(String(a['Left stage on']))),
     },
   ]);
@@ -199,6 +254,7 @@ export function StageProgression({ records, from = '', to = '', windowText = '',
             Of the past deals that sat in a stage at least this many days, the share that still moved on to a later stage (going back or Not Sold counts as not).
             Read from the stage history of {prog.withHistory} opp{prog.withHistory === 1 ? '' : 's'}, stints that ended {windowText || 'in any window'}.
             Points need {MIN_N}+ deals to be drawn.
+            {mode === 'heard' && <> By days since heard from: how long it had been since we last heard from the contact when the deal left the stage ({withSilence} past stint{withSilence === 1 ? '' : 's'} have a heard-from date to go on).</>}
           </div>
         </div>
         <div className={styles.headActions}>
@@ -216,6 +272,14 @@ export function StageProgression({ records, from = '', to = '', windowText = '',
         <div className={styles.empty}>No stage history in this window yet.</div>
       ) : (
         <>
+          <div className={styles.group} role="group" aria-label="Measure by" style={{ marginBottom: 6 }}>
+            {MODES.map(m => (
+              <button key={m.key} type="button" title={m.title} className={mode === m.key ? styles.toggleOn : styles.toggle} onClick={() => setMode(m.key)}>{m.label}</button>
+            ))}
+          </div>
+          {mode === 'heard' && withSilence === 0 && (
+            <div className={styles.empty}>No past deals have a heard-from date before they left a stage yet. This fills in as Last Client Heard From Us dates are logged.</div>
+          )}
           <div className={styles.legend}>
             {shown.map(s => (
               <button
@@ -236,7 +300,7 @@ export function StageProgression({ records, from = '', to = '', windowText = '',
                 <CartesianGrid stroke="#eef2f7" vertical={false} />
                 <XAxis dataKey="band" tick={axisTick} tickLine={false} axisLine={{ stroke: '#e2e8f0' }} />
                 <YAxis domain={yAxis?.domain || [0, 100]} ticks={yAxis?.ticks || [0, 25, 50, 75, 100]} tickFormatter={(v) => `${v}%`} tick={axisTick} tickLine={false} axisLine={false} />
-                <Tooltip content={<ProgressTooltip lines={lines} />} cursor={{ stroke: '#94a3b8', strokeDasharray: '3 3' }} />
+                <Tooltip content={<ProgressTooltip lines={lines} mode={mode} />} cursor={{ stroke: '#94a3b8', strokeDasharray: '3 3' }} />
                 {lines.map(l => (
                   <Line
                     key={l.stage}
@@ -269,7 +333,7 @@ export function StageProgression({ records, from = '', to = '', windowText = '',
           )}
           <h3 className={styles.sectionTitle} style={{ fontSize: '0.9rem', margin: '0.9rem 0 0.25rem' }}>Open opps: chance of moving on from where they are now</h3>
           <div className={styles.sectionSub} style={{ marginBottom: 6 }}>
-            Each open opp's days in its current stage (since it entered, else its Start Date), scored against that stage's history above. Faint figures rest on fewer than {MIN_N} deals.
+            Each open opp's days in its current stage (since it entered, else its Start Date), scored against that stage's history above. Days since heard from is from Last Client Heard From Us (red when longer than the starred contact's usual gap), and Chance (by silence) scores that against past deals in the same stage. Faint figures rest on fewer than {MIN_N} deals.
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', height: Math.min(560, 132 + Math.max(1, openRows.length) * 37) }}>
             <DataTable

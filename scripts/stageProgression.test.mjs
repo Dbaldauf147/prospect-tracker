@@ -1,7 +1,7 @@
 // Chance of moving to the next stage by days in stage. Plain Node. Run:
 //   node scripts/stageProgression.test.mjs
 import assert from 'node:assert/strict';
-import { stintsOf, stageProgression, openOppChances, bandOf, nextStageOf } from '../src/utils/stageProgression.js';
+import { stintsOf, stageProgression, openOppChances, bandOf, nextStageOf, heardDatesOf, silenceAt } from '../src/utils/stageProgression.js';
 
 const h = (stage, days, exitedAt) => ({ stage, days, enteredAt: '', exitedAt });
 
@@ -55,4 +55,35 @@ assert.deepEqual(scored.map(o => [o.r.Account, o.days, o.band, o.rate, o.n]), [
   ['Open A', 30, '30-59 days', null, 0],
   ['Open B', 3, '0-6 days', 50, 2],
 ]);
+
+// Silence: days since we last heard from the contact when a stint ended.
+const F = 'Last Client Heard From Us';
+const heardOpp = {
+  Stage: 'Not Sold', [F]: '2026-02-20',
+  _heardFromLog: [{ date: '2026-01-02' }, { date: '2026-01-25' }, { date: '2026-02-20' }],
+  _stageHistory: [h('Lead', 10, '2026-01-10'), h('Qualifying', 40, '2026-03-20')],
+};
+assert.deepEqual(heardDatesOf(heardOpp), ['2026-01-02', '2026-01-25', '2026-02-20'], 'log and current date, deduped');
+assert.equal(silenceAt(['2026-01-02', '2026-02-20'], '2026-01-10'), 8);
+assert.equal(silenceAt(['2026-02-20'], '2026-01-10'), null, 'nothing heard by then: unknown');
+assert.deepEqual(stintsOf(heardOpp).map(s => [s.stage, s.silence, s.progressed]), [['Lead', 8, true], ['Qualifying', 28, false]]);
+// A closed opp with no log still has its current heard-from date.
+const plain = { Stage: 'Sold', [F]: '2026-03-01', _stageHistory: [h('Quoted', 12, '2026-03-11')] };
+assert.equal(stintsOf(plain)[0].silence, 10);
+assert.equal(stintsOf(won)[0].silence, null, 'no heard-from dates: unknown');
+
+const ps = stageProgression([heardOpp, plain, won, lost]);
+const q = ps.stages.find(s => s.stage === 'Qualifying');
+assert.equal(q.withSilence, 1);
+assert.deepEqual(q.silenceBands.slice(0, 4).map(b => [b.n, b.moved]), [[1, 0], [1, 0], [1, 0], [0, 0]]);
+const leadS = ps.stages.find(s => s.stage === 'Lead');
+assert.deepEqual([leadS.withSilence, leadS.silenceBands[1].n, leadS.silenceBands[1].rate], [1, 1, 100]);
+
+// Open opps get the contact, silence and its chance.
+const openH = [{ Account: 'Live', Contact: 'Jane, Bob', Stage: 'Lead', _stageEnteredAt: '2026-03-25', [F]: '2026-03-20',
+  _heardFromLog: [{ date: '2026-03-01' }, { date: '2026-03-11', gapDays: 10 }, { date: '2026-03-20', gapDays: 9 }] }];
+const sc = openOppChances(openH, ps, { nowMs: Date.parse('2026-03-31T15:00:00Z') })[0];
+assert.deepEqual([sc.contact, sc.silence, sc.silenceBand, sc.silenceRate, sc.silenceN, sc.usualGap], ['Jane', 11, '7-13 days', 100, 1, 9.5]);
+const noHeard = openOppChances([{ Account: 'Quiet', Stage: 'Lead', _stageEnteredAt: '2026-03-25' }], ps, { nowMs: Date.parse('2026-03-31T15:00:00Z') })[0];
+assert.deepEqual([noHeard.silence, noHeard.silenceRate, noHeard.silenceN], [null, null, 0]);
 console.log('PASS stageProgression');
