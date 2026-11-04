@@ -7552,6 +7552,85 @@ function LeadQuotedAmountModal({
   );
 }
 
+// Gate on an opp's move from "Not Started" to "Lead". An opp only becomes a
+// Lead once the client has emailed back and wants to meet, so the move
+// waits on the user ticking that box. Cancel (or Escape / the backdrop)
+// leaves the opp on Not Started; nothing has been written yet.
+export function LeadGateModal({ opp, onConfirm, onCancel }) {
+  const [checked, setChecked] = useState(false);
+  const backdropMouseDown = useRef(false);
+  return createPortal(
+    <div
+      onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) onCancel(); }}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        role="dialog"
+        aria-label="Move to Lead"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+          if (e.key === 'Enter' && checked) { e.preventDefault(); onConfirm(); }
+        }}
+        style={{
+          width: 420, maxWidth: '92vw',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
+            Move to Lead?
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+            <strong>{opp?.['Account'] || 'This opp'}</strong>
+            {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
+            {' '}is moving from <strong>Not Started</strong> to <strong>Lead</strong>.
+          </div>
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.95rem 1rem', fontSize: '0.85rem', color: 'var(--color-text)', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            autoFocus
+            checked={checked}
+            onChange={(e) => setChecked(e.target.checked)}
+            style={{ width: 16, height: 16, cursor: 'pointer' }}
+          />
+          Client emailed and wants to meet
+        </label>
+        <div style={{ padding: '0.65rem 1rem', borderTop: '1px solid var(--color-border-light)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{
+              padding: '0.4rem 0.85rem', fontSize: '0.8rem', fontWeight: 600,
+              border: '1px solid var(--color-border)', borderRadius: 4,
+              background: '#fff', color: 'var(--color-text)', cursor: 'pointer',
+            }}
+          >Cancel</button>
+          <button
+            type="button"
+            disabled={!checked}
+            onClick={onConfirm}
+            title={checked ? '' : 'Tick the box to move this opp to Lead'}
+            style={{
+              padding: '0.4rem 0.85rem', fontSize: '0.8rem', fontWeight: 600,
+              border: '1px solid #2563EB', borderRadius: 4,
+              background: '#2563EB', color: '#fff',
+              cursor: checked ? 'pointer' : 'not-allowed', opacity: checked ? 1 : 0.45,
+            }}
+          >Move to Lead</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // Prompt shown when an opp moves into "Qualifying", from any stage.
 // Qualifying is the first stage the "Missing USD value" 🚩 applies to (see
 // needsUsdFlag), so this asks for the figure at the moment the gap would
@@ -14478,6 +14557,9 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // Amount so a newly-activated opp carries a dollar figure. Cleared on
   // Save or Skip.
   const [leadQuotedPromptId, setLeadQuotedPromptId] = useState(null);
+  // An opp waiting on the "Client emailed and wants to meet" box before its
+  // Not Started -> Lead move is applied. null when no gate is open.
+  const [leadGateId, setLeadGateId] = useState(null);
   // _id of the opp that just moved into "Qualifying" from any stage.
   // Qualifying is the first stage the "Missing USD value" flag covers, so
   // the QualifyingUsdModal asks for USD? right at that boundary instead of
@@ -15705,6 +15787,17 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     // them in one step instead of leaving the user to chase the
     // computed column back to life via "+ add".
     const row = (dataRef.current?.records || []).find(r => r._id === id);
+    // Not Started -> Lead waits on the LeadGateModal's checkbox. Nothing is
+    // written until it's ticked; its confirm calls back in with
+    // opts.leadConfirmed, which also stamps when the box was ticked.
+    if (
+      row && field === 'Stage' && !opts?.leadConfirmed
+      && String(row['Stage'] ?? '').trim().toLowerCase() === 'not started'
+      && String(value ?? '').trim().toLowerCase() === 'lead'
+    ) {
+      setLeadGateId(id);
+      return;
+    }
     const stageChanged = !!row && field === 'Stage' && String(row[field] ?? '') !== String(value ?? '');
     // A changed Follow Up date prompts the user to set the new Status
     // (Who is waiting) for that opp. Compared on the ISO date so a
@@ -15837,6 +15930,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           if (r._id !== id) return r;
           const now = Date.now();
           const next = { ...r, [field]: value, _rowUpdatedAt: now };
+          // When the "Client emailed and wants to meet" box was ticked.
+          if (opts?.leadConfirmed && field === 'Stage') next._clientWantsMeetAt = new Date().toISOString();
           // When the source date for a computed column changes, drop
           // any sheet-imported stored value on the computed column so
           // the render falls back to a live recompute. Without this, an
@@ -18448,6 +18543,22 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
               setSoldPromptId(null);
             }}
             onClose={() => setSoldPromptId(null)}
+          />
+        );
+      })()}
+
+      {leadGateId != null && (() => {
+        const opp = records.find(r => r._id === leadGateId);
+        if (!opp) return null;
+        return (
+          <LeadGateModal
+            key={leadGateId}
+            opp={opp}
+            onConfirm={() => {
+              setLeadGateId(null);
+              updateOppField(opp._id, 'Stage', 'Lead', { leadConfirmed: true });
+            }}
+            onCancel={() => setLeadGateId(null)}
           />
         );
       })()}
