@@ -28,6 +28,7 @@ import {
 import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import { buildUnansweredIndex } from '../../utils/unansweredOutreach';
 import { fetchAllActivityPages } from '../../utils/hubspotActivityPages';
+import { saveTouchIndexFromFeed } from '../../utils/relationshipLog';
 import styles from './ActivityView.module.css';
 
 const CACHE_KEY = 'hubspot-activity-cache';
@@ -146,6 +147,9 @@ function saveCache(data, workEmail) {
   try {
     userLsSet(OUTREACH_INDEX_KEY, JSON.stringify(buildOutreachIndex(data, workEmail)));
   } catch (err) { console.warn('ActivityView outreach-index write skipped:', err?.message || err); }
+  // The same feed boiled down to the touches Relationship Strength scores
+  // (utils/relationshipStrength), for the same reason: the feed may not fit.
+  saveTouchIndexFromFeed(data, workEmail);
   // Notify in-tab consumers (e.g. the Last Outreach column on
   // KeyContactsView) since the `storage` event only fires across tabs.
   window.dispatchEvent(new CustomEvent('hubspot-activity-cache-updated'));

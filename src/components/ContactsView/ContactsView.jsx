@@ -26,6 +26,7 @@ const EventsView = lazyView(() => import('../EventsView/EventsView'), 'EventsVie
 const MarketingLeadsView = lazyView(() => import('../MarketingLeadsView/MarketingLeadsView'), 'MarketingLeadsView');
 const ContactTitlesView = lazyView(() => import('../ContactTitlesView/ContactTitlesView'), 'ContactTitlesView');
 const ContactHistoryView = lazyView(() => import('../ContactHistoryView/ContactHistoryView'), 'ContactHistoryView');
+const RelationshipsView = lazyView(() => import('../RelationshipsView/RelationshipsView'), 'RelationshipsView');
 
 const ALL_SUBTABS = [
   { key: 'hubspot',    label: 'HubSpot',          adminOnly: true },
@@ -49,6 +50,8 @@ const ALL_SUBTABS = [
   // The Key / Client / Key Prospect roster sizes week by week. After the
   // rosters it counts, before the tabs that aren't rosters.
   { key: 'history',    label: 'History' },
+  // Relationship Strength across the contacts above, now and over the year.
+  { key: 'relationships', label: 'Relationships' },
   // Not a roster: the searches the rosters are built BY. It sits after them
   // rather than among them so the tabs that list people stay together.
   { key: 'titles',     label: 'Titles' },
@@ -243,6 +246,14 @@ export function ContactsView({
         )}
         {subtab === 'titles' && <ContactTitlesView settings={settings} updateSettings={updateSettings} />}
         {subtab === 'history' && <ContactHistoryView />}
+        {subtab === 'relationships' && (
+          <RelationshipsView
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
+            settings={settings}
+            updateSettings={updateSettings}
+          />
+        )}
         {subtab === 'all' && (
           <AllContactsView
             prospects={prospects}

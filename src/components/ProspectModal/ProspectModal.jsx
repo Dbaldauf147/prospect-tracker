@@ -78,6 +78,7 @@ import { accountPotential } from '../../utils/accountPotential';
 import { clientCounts, withServiceStatus } from '../../utils/clientDealSizing';
 import { formatMoneyRange, getServicePricing, resolvePricingBases } from '../../utils/servicePricing';
 import { classifyHqCountry, hqRegionMissing, HQ_REGION_OPTIONS, OUTSIDE_NORTH_AMERICA } from '../../utils/hqRegion';
+import { RelationshipPanel } from '../Relationship/RelationshipPanel';
 import { estimateEmailDomainCandidates } from '../../utils/emailDomainPattern';
 import { emailSuggestions } from '../../utils/emailSuggestions';
 import { scopeTokens, scopeTokenMatchesService } from '../../utils/scopeMatch';
@@ -2319,6 +2320,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1E293B' }}>{(!contact.id && !contact.vid) ? 'New HubSpot Contact' : 'Edit HubSpot Contact'}</h3>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>×</button>
         </div>
+        {(contact.id || contact.vid) && <RelationshipPanel contact={contact} />}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
           {/* Four answers rather than a tick: a checkbox recorded the same
               thing for somebody we have deliberately parked, somebody we
