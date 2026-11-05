@@ -7,7 +7,8 @@
 //                               and edits to the direction / outcome of a
 //                               HubSpot activity. Mirrored to Firestore, so
 //                               it follows you to another machine.
-//                               { activities: { id: entry }, overrides: { touchId: edit } }
+//                               { activities: { id: entry }, overrides: { touchId: edit },
+//                                 dateAdded: { contactId: { date, updatedAt } } }
 //
 //   the touch index             the HubSpot feed and Granola meetings
 //                               boiled down to touches, in IndexedDB (see
@@ -41,8 +42,8 @@ export function parseRelationshipLog(raw) {
   try {
     const v = typeof raw === 'string' ? JSON.parse(raw) : raw;
     const obj = (x) => (x && typeof x === 'object' && !Array.isArray(x) ? x : {});
-    return { activities: obj(v?.activities), overrides: obj(v?.overrides) };
-  } catch { return { activities: {}, overrides: {} }; }
+    return { activities: obj(v?.activities), overrides: obj(v?.overrides), dateAdded: obj(v?.dateAdded) };
+  } catch { return { activities: {}, overrides: {}, dateAdded: {} }; }
 }
 
 // Per entry, the newer edit wins; an entry only one side has is kept.
@@ -57,7 +58,11 @@ export function mergeRelationshipLogs(local, remote) {
     }
     return out;
   };
-  return { activities: pick(l.activities, r.activities), overrides: pick(l.overrides, r.overrides) };
+  return {
+    activities: pick(l.activities, r.activities),
+    overrides: pick(l.overrides, r.overrides),
+    dateAdded: pick(l.dateAdded, r.dateAdded),
+  };
 }
 
 registerMirroredKey(RELATIONSHIP_LOG_KEY, RELATIONSHIP_EVENT, { merge: mergeRelationshipLogs });
@@ -124,6 +129,22 @@ export function clearTouchOverride(touchId) {
   const log = loadRelationshipLog();
   if (!log.overrides[touchId]) return;
   log.overrides[touchId] = { updatedAt: new Date().toISOString(), cleared: true };
+  saveRelationshipLog(log);
+}
+
+/**
+ * Set the Date Added on a contact (YYYY-MM-DD): when the relationship
+ * started, for the score's new-or-established read. A blank date clears
+ * it, back to HubSpot's created date or the first activity.
+ */
+export function saveContactDateAdded(contactId, date) {
+  const id = String(contactId || '').trim();
+  if (!id) return;
+  const log = loadRelationshipLog();
+  const now = new Date().toISOString();
+  log.dateAdded[id] = /^\d{4}-\d{2}-\d{2}$/.test(date || '')
+    ? { date, updatedAt: now }
+    : { cleared: true, updatedAt: now };
   saveRelationshipLog(log);
 }
 

@@ -70,6 +70,11 @@ export const RELATIONSHIP_CONFIG = Object.freeze({
   consistencyMonths: 6,
   monthDays: 30,
 
+  // A relationship younger than this is New (utils/relationshipReview), and
+  // its consistency counts only the months it has existed: a contact met
+  // two months ago with a touch in both is fully consistent, not 2 of 6.
+  newRelationshipDays: 90,
+
   // Opportunity history: points per linked opp, capped at 100.
   oppPoints: Object.freeze({ open: 40, won: 50, past: 15 }),
   oppCap: 100,
@@ -468,6 +473,45 @@ export function linkReplies(touches, config = RELATIONSHIP_CONFIG) {
   });
 }
 
+// --- date added -------------------------------------------------------------
+
+/**
+ * When the relationship started: the Date Added you set on the contact
+ * (log.dateAdded), else the earlier of HubSpot's created date and the
+ * first activity on record. HubSpot's date alone can be an import date
+ * years after you met, and the first activity alone misses the time
+ * before the history begins, so the earlier of the two is the better read.
+ *
+ * Returns { ms, day, source: 'set' | 'hubspot' | 'activity' } or null.
+ */
+export function contactDateAdded(contact, { log = null, touches = [] } = {}) {
+  const id = contactKey(contact);
+  const set = id ? log?.dateAdded?.[id] : null;
+  if (set?.date && !set.cleared) {
+    const ms = logDayMs(set.date);
+    if (ms != null) return { ms, day: set.date, source: 'set' };
+  }
+  const created = hsMs(contact?.createdate);
+  const first = (touches || []).reduce((m, t) => (Number.isFinite(t.ms) && t.ms < m ? t.ms : m), Infinity);
+  const candidates = [
+    Number.isFinite(created) ? { ms: created, source: 'hubspot' } : null,
+    Number.isFinite(first) ? { ms: first, source: 'activity' } : null,
+  ].filter(Boolean);
+  if (!candidates.length) return null;
+  const pick = candidates.reduce((a, b) => (b.ms < a.ms ? b : a));
+  return { ...pick, day: localDay(pick.ms) };
+}
+
+/** How long a relationship has run, as a short label: "3 wk", "5 mo", "2.5 yr". */
+export function ageLabel(days) {
+  if (days == null) return '-';
+  if (days < 14) return `${days} d`;
+  if (days < 60) return `${Math.round(days / 7)} wk`;
+  if (days < 365) return `${Math.round(days / 30)} mo`;
+  const yrs = days / 365;
+  return `${yrs < 10 ? Math.round(yrs * 2) / 2 : Math.round(yrs)} yr`;
+}
+
 // --- scoring one touch -----------------------------------------------------
 
 // Whether the touch was two-way as of `nowMs`: a reply that hadn't come
@@ -546,7 +590,7 @@ export function oppsForContact(contact, oppsRecords, { nowMs = Infinity } = {}) 
  * consistency, opportunity } (each 0-100), trend: 'up'|'down'|'flat',
  * daysSinceTwoWay (null when never), lastTwoWayMs, touchCount }.
  */
-export function scoreContact(touches, { opps = null, nowMs = Date.now(), config = RELATIONSHIP_CONFIG } = {}) {
+export function scoreContact(touches, { opps = null, nowMs = Date.now(), addedMs = null, config = RELATIONSHIP_CONFIG } = {}) {
   const lookbackMs = config.lookbackDays * DAY_MS;
   const window = (touches || []).filter(t => t.ms <= nowMs && nowMs - t.ms <= lookbackMs);
 
@@ -570,7 +614,12 @@ export function scoreContact(touches, { opps = null, nowMs = Date.now(), config 
     const m = Math.floor((nowMs - t.ms) / monthMs);
     if (m < config.consistencyMonths) months.add(m);
   }
-  const consistency = 100 * months.size / config.consistencyMonths;
+  // Out of the months the relationship has existed, up to 6.
+  const ageDays = Number.isFinite(addedMs) ? Math.max(0, Math.floor((nowMs - addedMs) / DAY_MS)) : null;
+  const monthsKnown = ageDays == null
+    ? config.consistencyMonths
+    : Math.max(1, Math.min(config.consistencyMonths, Math.ceil((ageDays + 1) / config.monthDays)));
+  const consistency = 100 * Math.min(1, months.size / monthsKnown);
 
   // Opportunity history
   const o = opps || { open: 0, won: 0, past: 0 };
@@ -602,6 +651,8 @@ export function scoreContact(touches, { opps = null, nowMs = Date.now(), config 
     daysSinceTwoWay: everTwoWay == null ? null : Math.max(0, Math.floor((nowMs - everTwoWay) / DAY_MS)),
     touchCount: window.length,
     opps: o,
+    ageDays,
+    isNew: ageDays != null && ageDays < config.newRelationshipDays,
   };
 }
 
@@ -673,7 +724,16 @@ export function scoreAccount(entries, config = RELATIONSHIP_CONFIG) {
     trend: best.result.trend,
     lastTwoWayMs: Number.isFinite(lastTwoWayMs) ? lastTwoWayMs : null,
     daysSinceTwoWay: days.length ? Math.min(...days) : null,
+    // The account's relationship is as old as its oldest contact's.
+    ...accountAge(list, config),
   };
+}
+
+function accountAge(list, config) {
+  const ages = list.map(e => e.result.ageDays).filter(d => d != null);
+  if (!ages.length) return { ageDays: null, isNew: false };
+  const ageDays = Math.max(...ages);
+  return { ageDays, isNew: ageDays < config.newRelationshipDays };
 }
 
 // --- history for the trend chart -------------------------------------------

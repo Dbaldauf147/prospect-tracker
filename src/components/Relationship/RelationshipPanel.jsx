@@ -11,7 +11,47 @@ import { useState } from 'react';
 import { useContactRelationship } from '../../hooks/useRelationshipStrength';
 import { RelationshipBadge } from './RelationshipBadge';
 import { LogActivityModal } from './LogActivityModal';
-import { RELATIONSHIP_CONFIG, touchPoints, isTwoWay, localDay, touchLabel, touchDetail } from '../../utils/relationshipStrength';
+import { RELATIONSHIP_CONFIG, touchPoints, isTwoWay, localDay, touchLabel, touchDetail, ageLabel, contactKey } from '../../utils/relationshipStrength';
+import { saveContactDateAdded } from '../../utils/relationshipLog';
+
+const ADDED_SOURCE = {
+  set: 'set by you',
+  hubspot: 'created in HubSpot',
+  activity: 'first activity on record',
+};
+
+// When the relationship started. Defaults to the earlier of HubSpot's
+// created date and the first activity; setting it here overrides both
+// (an import date can be years after you met). It decides whether the
+// relationship reads as New and how many months consistency is out of.
+function DateAddedField({ contact, added, ageDays, isNew }) {
+  const id = contactKey(contact);
+  const [today] = useState(() => localDay(Date.now()));
+  if (!id) return null;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: '0.45rem', fontSize: '0.7rem', color: '#475569' }}>
+      <label htmlFor={`date-added-${id}`} style={{ fontSize: '0.65rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Date added</label>
+      <input
+        id={`date-added-${id}`}
+        type="date"
+        value={added?.day || ''}
+        max={today}
+        onChange={e => saveContactDateAdded(id, e.target.value)}
+        style={{ padding: '0.15rem 0.35rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.72rem', fontFamily: 'inherit' }}
+        title="When this relationship started. Defaults to the earlier of HubSpot's created date and the first activity; set it if you knew them before either."
+      />
+      {added && (
+        <span>
+          {ageLabel(ageDays)} ago, {ADDED_SOURCE[added.source]}
+          {isNew && <span style={{ marginLeft: 6, padding: '0 6px', borderRadius: 999, background: '#F5F3FF', color: '#6D28D9', border: '1px solid #C4B5FD', fontWeight: 700, fontSize: '0.62rem' }}>New</span>}
+        </span>
+      )}
+      {added?.source === 'set' && (
+        <button type="button" onClick={() => saveContactDateAdded(id, '')} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: '0.68rem', fontWeight: 600, padding: 0 }}>Use default</button>
+      )}
+    </div>
+  );
+}
 
 const COMPONENTS = [
   { key: 'engagement', label: 'Engagement', weight: RELATIONSHIP_CONFIG.weights.engagement, tip: 'Points per activity, halved every 45 days, over the last 12 months' },
@@ -42,6 +82,7 @@ export function RelationshipPanel({ contact }) {
           style={{ padding: '0.25rem 0.7rem', borderRadius: 6, border: '1px solid var(--color-accent)', background: 'var(--color-accent)', color: '#fff', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 600 }}
         >+ Log activity</button>
       </div>
+      <DateAddedField contact={contact} added={result?.added} ageDays={result?.ageDays} isNew={result?.isNew} />
       {result && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.35rem 0.9rem', marginTop: '0.5rem' }}>
           {COMPONENTS.map(c => (

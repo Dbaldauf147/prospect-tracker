@@ -14,7 +14,7 @@ import { useOppsRecords } from '../utils/rosterHooks';
 import {
   loadRelationshipLog, loadTouchIndex, hydrateTouchIndex, RELATIONSHIP_EVENT, RELATIONSHIP_LOG_KEY,
 } from '../utils/relationshipLog';
-import { oppsForContact, scoreContact, touchesForContact, RELATIONSHIP_CONFIG } from '../utils/relationshipStrength';
+import { oppsForContact, scoreContact, touchesForContact, contactDateAdded, RELATIONSHIP_CONFIG } from '../utils/relationshipStrength';
 
 export function useRelationshipData() {
   const { user } = useAuth() || {};
@@ -48,12 +48,21 @@ export function useRelationshipData() {
     (contact) => touchesForContact(contact, index, log, RELATIONSHIP_CONFIG),
     [index, log],
   );
+  // When the relationship started (utils/relationshipStrength contactDateAdded).
+  const dateAddedFor = useCallback(
+    (contact, touches = touchesFor(contact)) => contactDateAdded(contact, { log, touches }),
+    [log, touchesFor],
+  );
   const scoreFor = useCallback((contact, nowMs = Date.now()) => {
     const touches = touchesFor(contact);
-    return scoreContact(touches, { opps: oppsForContact(contact, oppsRecords, { nowMs }), nowMs });
-  }, [touchesFor, oppsRecords]);
+    const added = dateAddedFor(contact, touches);
+    return {
+      ...scoreContact(touches, { opps: oppsForContact(contact, oppsRecords, { nowMs }), nowMs, addedMs: added?.ms ?? null }),
+      added,
+    };
+  }, [touchesFor, dateAddedFor, oppsRecords]);
 
-  return { index, log, oppsRecords, touchesFor, scoreFor, hasFeed: !!index, indexLoaded };
+  return { index, log, oppsRecords, touchesFor, scoreFor, dateAddedFor, hasFeed: !!index, indexLoaded };
 }
 
 /** One contact's score, re-scored whenever its activity changes. */
