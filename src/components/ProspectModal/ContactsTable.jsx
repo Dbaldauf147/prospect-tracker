@@ -3,6 +3,9 @@ import { DataTable } from '../common/DataTable';
 import { sentimentFor, sentimentMark } from '../../utils/contactSentiment';
 import { BUCKETS, contactHasTag, contactIsHidden } from './contactTags.js';
 import { tagReviewScore } from '../../utils/contactTagReview';
+import { useRelationshipData } from '../../hooks/useRelationshipStrength';
+import { scoreAccount, RELATIONSHIP_CONFIG, daysLabel } from '../../utils/relationshipStrength';
+import { RelationshipBadge, ScorePill, TrendArrow } from '../Relationship/RelationshipBadge';
 
 // The company card's contact roster.
 //
@@ -81,6 +84,7 @@ const tagScoreOf = (c, settings) => tagReviewScore(c, (settings?.contactTagRevie
 const NO_EMAIL_COUNTS = () => ({ sent: 0, received: 0 });
 const NONE_EXCLUDED = new Set();
 const defaultSourceOf = (c) => c._source || 'hubspot';
+const NO_RELATIONSHIP = () => null;
 
 // One roster grid. ContactsTable below draws one of these for the
 // company's own people and, when it has an owner, a second for the owner's.
@@ -115,6 +119,8 @@ function RosterTable({
   // that column, which it has never seen, to the far right.
   companyOf = null,
   tableId = TABLE_ID,
+  // contact -> its Relationship Strength (scoreContact's result), or null.
+  relationshipOf = NO_RELATIONSHIP,
 }) {
   // Without a selection to write to there is no select column, and without
   // an exclude or delete handler there is no Actions column: a read-only
@@ -229,6 +235,17 @@ function RosterTable({
         const name = companyOf(c);
         return name ? <span style={{ color: '#334155', fontWeight: 600 }} title={name}>{name}</span> : dash;
       },
+    },
+    {
+      key: 'relationship',
+      label: 'Strength',
+      defaultWidth: 150,
+      // Unscored contacts sort below a 0, so a descending sort puts the
+      // strongest relationships first and the unknowns last.
+      getSortValue: (c) => relationshipOf(c)?.score ?? -1,
+      getFilterValue: (c) => relationshipOf(c)?.tier.label || '',
+      exportValue: (c) => relationshipOf(c)?.score ?? '',
+      render: (c) => <RelationshipBadge result={relationshipOf(c)} compact />,
     },
     {
       key: 'source',
@@ -547,7 +564,7 @@ function RosterTable({
     },
   ].filter(Boolean), [selectable, actionable, settings, bulkSelected, setBulkSelected, excludedContactIds, onExclude, onUnexclude,
     onHideContact, hidingContact, onDeleteContact, deletingContact, emailCountsFor, sourceOf, company,
-    allSelected, someSelected, selectableIds, companyOf]);
+    allSelected, someSelected, selectableIds, companyOf, relationshipOf]);
 
   // The row's own tints, which say two things at a glance and have to
   // survive every sort: a decision maker is the row you came for, and a
@@ -618,6 +635,28 @@ const sectionHeadStyle = {
 };
 const sectionNoteStyle = { fontWeight: 500, textTransform: 'none', letterSpacing: 0, color: '#94A3B8' };
 
+// The account's Relationship Strength over the roster: its best contact's
+// score plus the breadth bonus, and what the bonus was made of.
+function AccountRelationshipLine({ account }) {
+  if (!account) return null;
+  const roles = account.rolesCovered.length;
+  const title = [
+    `Account Relationship Strength ${account.score} (${account.tier.label})`,
+    `Best contact: ${`${account.best?.firstname || ''} ${account.best?.lastname || ''}`.trim() || account.best?.email || '-'} at ${account.bestScore}`,
+    `Breadth ${account.breadth}: ${account.engagedContacts} engaged contact${account.engagedContacts === 1 ? '' : 's'}, ${roles} buying role${roles === 1 ? '' : 's'} covered${roles ? ` (${account.rolesCovered.join(', ')})` : ''}`,
+  ].join('\n');
+  return (
+    <div title={title} style={{ ...sectionHeadStyle, alignItems: 'center', margin: '0 0 0.45rem' }}>
+      Account strength
+      <ScorePill score={account.score} tier={account.tier} />
+      <TrendArrow trend={account.trend} />
+      <span style={sectionNoteStyle}>
+        {`last two-way ${daysLabel(account.daysSinceTwoWay)} · ${account.engagedContacts} engaged · ${roles} of ${RELATIONSHIP_CONFIG.breadth.roles.length} roles`}
+      </span>
+    </div>
+  );
+}
+
 // The company's roster, split in two when the company has an owner: its
 // own people first, then the people at whoever owns it (the PE firm in
 // its PE Owner field, or the parent company on its divisions chart). Both
@@ -635,8 +674,26 @@ export function ContactsTable({
   height = 440,
   ...rest
 }) {
+  // Relationship Strength for everyone on the card, worked out once for
+  // both grids, and the account's own score from its direct contacts.
+  const { scoreFor } = useRelationshipData();
+  const relationshipOf = useMemo(() => {
+    const byContact = new Map();
+    for (const c of [...contacts, ...ownerContacts]) byContact.set(c, scoreFor(c));
+    return (c) => byContact.get(c) || null;
+  }, [contacts, ownerContacts, scoreFor]);
+  const account = useMemo(
+    () => scoreAccount(contacts.filter(c => !contactHasTag(c, 'left')).map(c => ({ contact: c, result: relationshipOf(c) }))),
+    [contacts, relationshipOf],
+  );
+  const accountLine = <AccountRelationshipLine account={account} />;
   if (ownerContacts.length === 0) {
-    return <RosterTable contacts={contacts} height={height} {...rest} />;
+    return (
+      <>
+        {accountLine}
+        <RosterTable contacts={contacts} height={height} relationshipOf={relationshipOf} {...rest} />
+      </>
+    );
   }
   // With two grids stacked, each sizes to what it holds, up to the same
   // cap, so two contacts don't sit in a box built for forty.
@@ -646,12 +703,13 @@ export function ContactsTable({
   const ownerNames = owners.map(o => o.name).filter(Boolean);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+      {accountLine}
       <div>
         <div style={sectionHeadStyle}>
           Direct contacts ({contacts.length})
           <span style={sectionNoteStyle}>people at {rest.company || 'this company'}</span>
         </div>
-        <RosterTable contacts={contacts} height={directHeight} {...rest} />
+        <RosterTable contacts={contacts} height={directHeight} relationshipOf={relationshipOf} {...rest} />
       </div>
       <div>
         <div style={sectionHeadStyle}>
@@ -666,6 +724,7 @@ export function ContactsTable({
           contacts={ownerContacts}
           height={ownerHeight}
           emptyMessage="No contacts at the owner."
+          relationshipOf={relationshipOf}
           {...rest}
         />
       </div>
@@ -681,6 +740,12 @@ export function ContactsTable({
 export function OwnedContactsSection({ rows = [], owned = [], height = 440, ...rest }) {
   const [open, setOpen] = useState(false);
   const contacts = useMemo(() => rows.map(r => r.contact), [rows]);
+  const { scoreFor } = useRelationshipData();
+  const relationshipOf = useMemo(() => {
+    if (!open) return NO_RELATIONSHIP;
+    const byContact = new Map(contacts.map(c => [c, scoreFor(c)]));
+    return (c) => byContact.get(c) || null;
+  }, [open, contacts, scoreFor]);
   const companyOf = useMemo(() => {
     const byId = new Map(rows.map(r => [String(r.contact.id || r.contact.vid || ''), r.company]));
     return (c) => byId.get(String(c.id || c.vid || '')) || c.company || '';
@@ -707,6 +772,7 @@ export function OwnedContactsSection({ rows = [], owned = [], height = 440, ...r
       </button>
       {open && (
         <RosterTable
+          relationshipOf={relationshipOf}
           contacts={contacts}
           height={Math.min(height, 130 + Math.max(contacts.length, 1) * 42)}
           companyOf={companyOf}
