@@ -101,7 +101,7 @@ function pillBtn(on) {
 export function RelationshipsView({ prospects = [], onSelectProspect, settings, updateSettings }) {
   const { user } = useAuth() || {};
   const contacts = useHubspotContacts(user?.uid || '');
-  const { touchesFor, oppsRecords, hasFeed, log } = useRelationshipData();
+  const { touchesFor, oppsRecords, hasFeed, indexLoaded, log } = useRelationshipData();
   // Review first: it is the one that says what to do.
   const [view, setView] = useState('review');
   const [reviewFilter, setReviewFilter] = useState(null); // a status key, or null for all
@@ -114,7 +114,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
 
   // Everyone with activity, their touches and today's score.
   const scored = useMemo(() => {
-    if (!contacts) return null;
+    if (!contacts || !indexLoaded) return null;
     const out = [];
     for (const c of contacts) {
       if (!usable(c)) continue;
@@ -124,7 +124,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
       out.push({ key: contactKey(c) || c.email, contact: c, touches, result });
     }
     return out;
-  }, [contacts, touchesFor, oppsRecords, nowMs]);
+  }, [contacts, indexLoaded, touchesFor, oppsRecords, nowMs]);
 
   // Each contact's score a fortnight at a time over the year.
   const dates = useMemo(() => Array.from({ length: POINTS }, (_, i) => nowMs - (POINTS - 1 - i) * STEP_DAYS * DAY_MS), [nowMs]);
@@ -323,9 +323,9 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
         <button type="button" onClick={() => setLogging(true)} style={pillBtn(true)}>+ Log activity</button>
       </div>
 
-      {!hasFeed && (
+      {indexLoaded && !hasFeed && (
         <div style={{ padding: '0.6rem 0.9rem', border: '1px dashed #CBD5E1', borderRadius: 8, fontSize: '0.74rem', color: '#64748B' }}>
-          No HubSpot activity loaded yet. Open the Activity tab once to pull it; until then the scores only see the
+          No HubSpot or Granola activity loaded yet. Open the Activity tab once to load it; until then the scores only see the
           {` ${loggedCount}`} activit{loggedCount === 1 ? 'y' : 'ies'} logged here.
         </div>
       )}

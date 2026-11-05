@@ -12,7 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useOppsRecords } from '../utils/rosterHooks';
 import {
-  loadRelationshipLog, loadTouchIndex, RELATIONSHIP_EVENT, RELATIONSHIP_LOG_KEY, TOUCH_INDEX_KEY,
+  loadRelationshipLog, loadTouchIndex, hydrateTouchIndex, RELATIONSHIP_EVENT, RELATIONSHIP_LOG_KEY,
 } from '../utils/relationshipLog';
 import { oppsForContact, scoreContact, touchesForContact, RELATIONSHIP_CONFIG } from '../utils/relationshipStrength';
 
@@ -21,16 +21,22 @@ export function useRelationshipData() {
   const uid = user?.uid || '';
   const [index, setIndex] = useState(() => loadTouchIndex());
   const [log, setLog] = useState(() => loadRelationshipLog());
+  // False until the index has been read from IndexedDB, so a page can
+  // tell "still loading" from "no activity on record".
+  const [indexLoaded, setIndexLoaded] = useState(false);
   useEffect(() => {
+    let cancelled = false;
     const reload = () => { setIndex(loadTouchIndex()); setLog(loadRelationshipLog()); };
     const onStorage = (e) => {
-      if (e.key && (e.key.endsWith(`:${RELATIONSHIP_LOG_KEY}`) || e.key.endsWith(`:${TOUCH_INDEX_KEY}`))) reload();
+      if (e.key && e.key.endsWith(`:${RELATIONSHIP_LOG_KEY}`)) reload();
     };
     reload();
+    hydrateTouchIndex().finally(() => { if (!cancelled) { reload(); setIndexLoaded(true); } });
     window.addEventListener(RELATIONSHIP_EVENT, reload);
     window.addEventListener('hubspot-activity-cache-updated', reload);
     window.addEventListener('storage', onStorage);
     return () => {
+      cancelled = true;
       window.removeEventListener(RELATIONSHIP_EVENT, reload);
       window.removeEventListener('hubspot-activity-cache-updated', reload);
       window.removeEventListener('storage', onStorage);
@@ -47,7 +53,7 @@ export function useRelationshipData() {
     return scoreContact(touches, { opps: oppsForContact(contact, oppsRecords, { nowMs }), nowMs });
   }, [touchesFor, oppsRecords]);
 
-  return { index, log, oppsRecords, touchesFor, scoreFor, hasFeed: !!index };
+  return { index, log, oppsRecords, touchesFor, scoreFor, hasFeed: !!index, indexLoaded };
 }
 
 /** One contact's score, re-scored whenever its activity changes. */

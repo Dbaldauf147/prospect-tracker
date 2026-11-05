@@ -42,6 +42,10 @@ const STORES = [
   { name: 'rfp-templates',       keyPath: null },
   // One entry per SIA loaded on the Pricing page - see siaLoadHistory.js.
   { name: 'sia-load-history',    keyPath: null },
+  // Relationship Strength's touch index: the Activity tab's HubSpot feed
+  // and Granola meetings boiled down per contact (relationshipLog.js). It
+  // outgrew localStorage, which the feed it is built from already fills.
+  { name: 'relationship-touches', keyPath: null },
 ];
 
 let dbPromise = null;

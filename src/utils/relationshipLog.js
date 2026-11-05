@@ -9,10 +9,10 @@
 //                               it follows you to another machine.
 //                               { activities: { id: entry }, overrides: { touchId: edit } }
 //
-//   relationship-touch-index    the HubSpot feed boiled down to touches
-//                               (buildTouchIndex). Rebuilt by the Activity
-//                               tab every time it pulls the feed, so it is a
-//                               cache and is not mirrored.
+//   the touch index             the HubSpot feed and Granola meetings
+//                               boiled down to touches, in IndexedDB (see
+//                               below). Rebuilt by the Activity tab, so it
+//                               is a cache and is not mirrored.
 //
 // An entry: { id, contactId, contactEmail, contactName, company, type,
 // direction, outcome, medium, date (YYYY-MM-DD), note, createdAt,
@@ -23,12 +23,16 @@
 // Both writes fire RELATIONSHIP_EVENT, which every score on screen listens
 // for: adding or editing an activity re-scores straight away.
 
-import { userLsGet, userLsSet } from './userLs.js';
+import { userLsGet, userLsSet, userLsRemove } from './userLs.js';
+import { dbGet, dbPut, getDbUserId } from './db.js';
 import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
-import { buildTouchIndex, TOUCH_INDEX_VERSION, normalizeTouch, logDayMs, localDay } from './relationshipStrength.js';
+import {
+  buildTouchIndex, buildMeetingTouchIndex, mergeTouchIndexes, TOUCH_INDEX_VERSION, normalizeTouch, logDayMs, localDay,
+} from './relationshipStrength.js';
 
 export const RELATIONSHIP_LOG_KEY = 'relationship:log';
-export const TOUCH_INDEX_KEY = 'relationship-touch-index';
+// Where the index used to live; read once to carry it over, then removed.
+const LEGACY_TOUCH_INDEX_KEY = 'relationship-touch-index';
 export const RELATIONSHIP_EVENT = 'relationship-data-updated';
 // The HubSpot feed the Activity tab keeps (when it fits in storage).
 const ACTIVITY_CACHE_KEY = 'hubspot-activity-cache';
@@ -123,36 +127,97 @@ export function clearTouchOverride(touchId) {
   saveRelationshipLog(log);
 }
 
-// --- the HubSpot touch index ----------------------------------------------
+// --- the touch index --------------------------------------------------------
+//
+// Two parts, saved separately so either can be rebuilt without the other:
+// `hubspot` from the Activity tab's HubSpot feed, `granola` from the
+// Granola meetings it shows. Read as one (mergeTouchIndexes).
+//
+// In IndexedDB, not localStorage. The index started out in localStorage
+// next to the feed, and the feed routinely fills that ~5 MB on its own:
+// the index write then failed, was only logged, and every contact read as
+// having no HubSpot history. IndexedDB has room for it. A copy is kept in
+// memory, so the score reads it synchronously once it has loaded.
 
+const TOUCH_STORE = 'relationship-touches';
+const parts = { hubspot: null, granola: null };
+let merged = null;
+let hydrated = null; // the uid the in-memory copy was loaded for
+let hydrating = null;
+
+function remerge() { merged = mergeTouchIndexes(parts.hubspot, parts.granola); }
+
+/** The index in memory: null until hydrateTouchIndex has loaded it. */
 export function loadTouchIndex() {
-  try {
-    const v = JSON.parse(userLsGet(TOUCH_INDEX_KEY) || 'null');
-    if (v?.v === TOUCH_INDEX_VERSION) return v;
-  } catch { /* unreadable: rebuilt below or by the next feed pull */ }
-  // No index yet (the first visit after this shipped): build one from the
-  // feed the Activity tab left behind, when it had room to keep it.
+  return merged;
+}
+
+function feedFromLocalStorage() {
   try {
     const feed = JSON.parse(userLsGet(ACTIVITY_CACHE_KEY) || 'null');
-    if (feed && (feed.emails || feed.calls || feed.meetings)) {
-      const built = buildTouchIndex(feed, readWorkEmail());
-      try { userLsSet(TOUCH_INDEX_KEY, JSON.stringify(built)); } catch { /* quota: used in memory */ }
-      return built;
+    return feed && (feed.emails || feed.calls || feed.meetings) ? feed : null;
+  } catch { return null; }
+}
+
+/**
+ * Load the index for the signed-in user into memory. Takes over an index
+ * an older version left in localStorage (and frees that space), or builds
+ * one from the feed the Activity tab kept there, when there is one.
+ */
+export function hydrateTouchIndex() {
+  const uid = getDbUserId();
+  if (!uid) return Promise.resolve(merged);
+  if (hydrated === uid) return Promise.resolve(merged);
+  if (hydrating?.uid === uid) return hydrating.promise;
+  const promise = (async () => {
+    parts.hubspot = null;
+    parts.granola = null;
+    try {
+      const [hs, gr] = await Promise.all([dbGet(TOUCH_STORE, 'hubspot'), dbGet(TOUCH_STORE, 'granola')]);
+      if (hs?.v === TOUCH_INDEX_VERSION) parts.hubspot = hs;
+      if (gr?.v === TOUCH_INDEX_VERSION) parts.granola = gr;
+    } catch { /* unreadable: rebuilt by the next Activity tab visit */ }
+    if (!parts.hubspot) {
+      let legacy = null;
+      try { legacy = JSON.parse(userLsGet(LEGACY_TOUCH_INDEX_KEY) || 'null'); } catch { /* none */ }
+      const feed = legacy?.v === TOUCH_INDEX_VERSION ? null : feedFromLocalStorage();
+      parts.hubspot = legacy?.v === TOUCH_INDEX_VERSION ? legacy : feed ? buildTouchIndex(feed, workEmailHint) : null;
+      if (parts.hubspot) dbPut(TOUCH_STORE, parts.hubspot, 'hubspot').catch(() => {});
     }
-  } catch { /* no feed */ }
-  return null;
+    try { userLsRemove(LEGACY_TOUCH_INDEX_KEY); } catch { /* nothing to free */ }
+    remerge();
+    hydrated = uid;
+    return merged;
+  })();
+  hydrating = { uid, promise };
+  promise.finally(() => { if (hydrating?.promise === promise) hydrating = null; });
+  return promise;
 }
 
 let workEmailHint = '';
-function readWorkEmail() { return workEmailHint; }
 
-/** Called by the Activity tab with each fresh feed. */
-export function saveTouchIndexFromFeed(feed, workEmail = '') {
-  workEmailHint = workEmail || workEmailHint;
-  try {
-    userLsSet(TOUCH_INDEX_KEY, JSON.stringify(buildTouchIndex(feed, workEmail)));
-  } catch (err) {
-    console.warn('Relationship touch index write skipped (quota):', err?.message || err);
-  }
+async function savePart(name, index) {
+  parts[name] = index;
+  remerge();
+  if (getDbUserId()) hydrated = getDbUserId();
   window.dispatchEvent(new CustomEvent(RELATIONSHIP_EVENT));
+  try {
+    await dbPut(TOUCH_STORE, index, name);
+  } catch (err) {
+    // Still scored from memory for this visit; the next visit rebuilds it.
+    console.warn('Relationship touch index write failed:', err?.message || err);
+  }
+}
+
+/** The Activity tab, with each HubSpot feed it has in hand. */
+export function saveTouchIndexFromFeed(feed, workEmail = '') {
+  if (!feed || !(feed.emails || feed.calls || feed.meetings)) return Promise.resolve();
+  workEmailHint = workEmail || workEmailHint;
+  return savePart('hubspot', buildTouchIndex(feed, workEmail));
+}
+
+/** The Activity tab, with the Granola meetings it shows. */
+export function saveMeetingTouches(meetings) {
+  if (!meetings?.length) return Promise.resolve();
+  return savePart('granola', buildMeetingTouchIndex(meetings));
 }

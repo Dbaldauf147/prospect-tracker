@@ -12,6 +12,7 @@ import {
   RELATIONSHIP_CONFIG as CFG, DAY_MS, normalizeTouch, touchPoints, isTwoWay, linkReplies,
   scoreContact, scoreAccount, tierFor, trendFor, hubspotCallOutcome, hubspotMeetingMedium,
   buildTouchIndex, touchesForContact, oppsForContact, encodeTouch, decodeTouch, scoreHistory,
+  buildMeetingTouchIndex, mergeTouchIndexes,
 } from '../src/utils/relationshipStrength.js';
 import { mergeRelationshipLogs, parseRelationshipLog } from '../src/utils/relationshipLog.js';
 
@@ -181,6 +182,27 @@ check('steady is flat', trendFor([t(10, { type: 'call', outcome: 'connected' }),
   const before = scoreContact(touchesForContact(pat, idx), { nowMs: NOW }).score;
   const after = scoreContact(withLog, { nowMs: NOW }).score;
   check('adding activity raises the score', after > before, true);
+}
+
+// --- Granola meetings and merging --------------------------------------------
+{
+  const pat = { id: '77', email: 'pat@acme.com', firstname: 'Pat', lastname: 'Lee' };
+  const gr = buildMeetingTouchIndex([
+    { id: 'granola:n1', _meetingStart: new Date(ago(10)).toISOString(), _externalEmails: ['Pat@Acme.com'], _location: 'Zoom' },
+    { id: 'granola:n2', _meetingStart: new Date(ago(40)).toISOString(), _externalEmails: ['pat@acme.com'], _location: '200 Park Ave' },
+    { id: 'granola:old', _meetingStart: new Date(ago(900)).toISOString(), _externalEmails: ['pat@acme.com'] },
+  ], { nowMs: NOW });
+  const list = touchesForContact(pat, gr);
+  check('Granola meetings become held meetings, matched by attendee address', list.map(t => [t.type, t.outcome, t.medium, t.source]),
+    [['meeting', 'held', 'in-person', 'granola'], ['meeting', 'held', 'video', 'granola']]);
+  check('older than two years is left out', list.length, 2);
+
+  const hs = buildTouchIndex({ meetings: [{ id: 'm9', hs_meeting_start_time: new Date(ago(10) + 30 * 60000).toISOString(), _contactIds: ['77'] }] }, '', { nowMs: NOW });
+  const both = touchesForContact(pat, mergeTouchIndexes(hs, gr));
+  check('the same meeting in HubSpot and Granola counts once', both.filter(t => Math.abs(t.ms - ago(10)) < 3 * 3600000).length, 1);
+  check('...keeping the other Granola meeting', both.length, 2);
+  check('merge of nothing is nothing', mergeTouchIndexes(null, undefined), null);
+  check('merge joins lists', mergeTouchIndexes({ byEmail: { a: [[1, 'eo-', 'x']] } }, { byEmail: { a: [[2, 'eo-', 'y']] } }).byEmail.a.length, 2);
 }
 
 // --- opps -------------------------------------------------------------------
