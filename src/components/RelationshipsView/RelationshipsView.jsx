@@ -26,7 +26,7 @@ import {
 } from '../../utils/relationshipStrength';
 import { RelationshipBadge, ScorePill, TrendArrow } from '../Relationship/RelationshipBadge';
 import { LogActivityModal } from '../Relationship/LogActivityModal';
-import { reviewContact, reviewCounts, reviewPriority, reviewStatus } from '../../utils/relationshipReview';
+import { reviewContact, reviewAccount, reviewCounts, reviewPriority, reviewStatus } from '../../utils/relationshipReview';
 
 const POINTS = 27; // one a fortnight, a year back
 const STEP_DAYS = 14;
@@ -105,6 +105,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
   // Review first: it is the one that says what to do.
   const [view, setView] = useState('review');
   const [reviewFilter, setReviewFilter] = useState(null); // a status key, or null for all
+  const [reviewOf, setReviewOf] = useState('contacts'); // what Review lists: 'contacts' | 'accounts'
   const [picked, setPicked] = useState([]); // contact keys drawn on the chart
   const [logging, setLogging] = useState(false);
   // The day the page was opened. Fixed for the visit, so the scores are a
@@ -144,8 +145,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
     const review = reviewContact({ result: s.result, history: h, touches: s.touches, nowMs, stepDays: STEP_DAYS });
     return { ...s, id: s.key, change90: h.length ? s.result.score - ago90 : null, review, priority: reviewPriority(review, s.result) };
   }), [scored, histories, nowMs]);
-  const statusCounts = useMemo(() => reviewCounts(rows.map(r => r.review)), [rows]);
-  const reviewRows = useMemo(() => (reviewFilter ? rows.filter(r => r.review.status === reviewFilter) : rows), [rows, reviewFilter]);
+
 
   const series = useMemo(() => {
     if (!histories || !scored?.length) return [];
@@ -184,12 +184,30 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
       const name = companyOf(r.contact);
       if (!name) continue;
       const k = name.toLowerCase();
-      if (!groups.has(k)) groups.set(k, { company: name, entries: [] });
-      groups.get(k).entries.push({ contact: r.contact, result: r.result });
+      if (!groups.has(k)) groups.set(k, { company: name, members: [] });
+      groups.get(k).members.push(r);
     }
-    return [...groups.entries()].map(([k, g]) => ({ id: k, company: g.company, count: g.entries.length, prospect: prospectByName.get(k) || null, result: scoreAccount(g.entries) }))
-      .filter(a => a.result);
+    return [...groups.entries()].map(([k, g]) => ({
+      id: k, company: g.company, count: g.members.length, members: g.members,
+      prospect: prospectByName.get(k) || null, result: scoreAccount(g.members),
+    })).filter(a => a.result);
   }, [rows, prospectByName]);
+
+  // The same review for accounts: the account score on each history date,
+  // and the rhythm of two-way touches with anyone there.
+  const accountReviews = useMemo(() => accounts.map(a => {
+    const review = reviewAccount({
+      account: a.result,
+      members: a.members.map(r => ({ contact: r.contact, result: r.result, history: histories?.get(r.key) || [], touches: r.touches, review: r.review })),
+      nowMs,
+      stepDays: STEP_DAYS,
+    });
+    return { ...a, review, priority: reviewPriority(review, a.result) };
+  }), [accounts, histories, nowMs]);
+
+  const reviewList = reviewOf === 'accounts' ? accountReviews : rows;
+  const statusCounts = useMemo(() => reviewCounts(reviewList.map(r => r.review)), [reviewList]);
+  const reviewRows = useMemo(() => (reviewFilter ? reviewList.filter(r => r.review.status === reviewFilter) : reviewList), [reviewList, reviewFilter]);
 
   const latest = series[series.length - 1];
   const prior = series[Math.max(0, series.length - 1 - Math.round(90 / STEP_DAYS))];
@@ -248,7 +266,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
       ),
     },
     { key: 'offPeak', label: 'Off peak', defaultWidth: 80, getSortValue: r => r.review.offPeak, exportValue: r => r.review.offPeak, render: r => (r.review.offPeak ? `-${r.review.offPeak}` : '0') },
-    { key: 'change90', label: 'Change 90d', defaultWidth: 90, getSortValue: r => r.change90 ?? -999, exportValue: r => r.change90 ?? '', render: r => (r.change90 == null ? '-' : `${r.change90 > 0 ? '+' : ''}${r.change90}`) },
+    { key: 'change90', label: 'Change 90d', defaultWidth: 90, getSortValue: r => r.review.change90, exportValue: r => r.review.change90, render: r => `${r.review.change90 > 0 ? '+' : ''}${r.review.change90}` },
     { key: 'usualGap', label: 'Usual gap', defaultWidth: 90, getSortValue: r => r.review.usualGapDays ?? 99999, exportValue: r => r.review.usualGapDays ?? '', render: r => (r.review.usualGapDays == null ? '-' : `${r.review.usualGapDays}d`) },
     {
       key: 'since', label: 'Since two-way', defaultWidth: 110, getSortValue: r => r.result.daysSinceTwoWay ?? 99999, exportValue: r => r.result.daysSinceTwoWay ?? '',
@@ -264,6 +282,21 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
     },
     { key: 'nextStep', label: 'Next step', defaultWidth: 340, getFilterValue: r => r.review.nextStep, exportValue: r => r.review.nextStep, render: r => <span style={{ fontSize: '0.72rem', color: '#334155', whiteSpace: 'normal' }}>{r.review.nextStep}</span> },
   ], []);
+
+  // The account review: the contact review's columns, with the account's
+  // name, size and the contact the status hangs on in place of the person.
+  const accountReviewColumns = useMemo(() => {
+    const byKey = Object.fromEntries(reviewColumns.map(c => [c.key, c]));
+    return [
+      byKey.status,
+      { key: 'company', label: 'Company', defaultWidth: 180, getSortValue: a => a.company.toLowerCase(), getFilterValue: a => a.company, exportValue: a => a.company, render: a => <span style={{ fontWeight: 600, color: a.prospect ? 'var(--color-accent)' : undefined }}>{a.company}</span> },
+      { ...byKey.score, render: a => <RelationshipBadge result={a.result} compact extraTitle={`Best contact ${a.result.bestScore} + breadth ${a.result.breadth} x ${RELATIONSHIP_CONFIG.weights.breadth}`} /> },
+      byKey.peak, byKey.offPeak, byKey.change90, byKey.usualGap, byKey.since,
+      { key: 'driver', label: 'Hangs on', defaultWidth: 140, getSortValue: a => contactName(a.review.driver).toLowerCase(), getFilterValue: a => contactName(a.review.driver), exportValue: a => contactName(a.review.driver), render: a => contactName(a.review.driver) || a.review.driver?.email || '-' },
+      { key: 'contacts', label: 'Engaged', defaultWidth: 80, getSortValue: a => a.result.engagedContacts, exportValue: a => `${a.result.engagedContacts} of ${a.count}`, render: a => <span title={`${a.result.engagedContacts} of ${a.count} contacts at Developing or better`}>{`${a.result.engagedContacts} of ${a.count}`}</span> },
+      byKey.nextStep,
+    ];
+  }, [reviewColumns]);
 
   const accountColumns = useMemo(() => [
     { key: 'company', label: 'Company', defaultWidth: 200, getSortValue: a => a.company.toLowerCase(), getFilterValue: a => a.company, exportValue: a => a.company, render: a => <span style={{ fontWeight: 600, color: a.prospect ? 'var(--color-accent)' : undefined }}>{a.company}</span> },
@@ -382,12 +415,26 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
           {view === 'review' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div style={{ fontSize: '0.72rem', color: '#64748B', maxWidth: 820 }}>
-                Each contact against their own last year: how far they sit below their peak score, and how long it has been
-                since a two-way touch compared with the usual gap between them. Most pressing first. Click a row to draw
-                that contact on the chart above.
+                {reviewOf === 'accounts'
+                  ? 'Each account against its own last year: how far its account score sits below its peak, and how long since a two-way touch with anyone there compared with the usual gap. Most pressing first. Click a row to open the company.'
+                  : 'Each contact against their own last year: how far they sit below their peak score, and how long it has been since a two-way touch compared with the usual gap between them. Most pressing first. Click a row to draw that contact on the chart above.'}
+              </div>
+              <div role="group" aria-label="Review contacts or accounts" style={{ display: 'flex', border: '1px solid #CBD5E1', borderRadius: 6, overflow: 'hidden', alignSelf: 'flex-start' }}>
+                {[['contacts', `Contacts (${rows.length})`], ['accounts', `Accounts (${accountReviews.length})`]].map(([k, label]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    aria-pressed={reviewOf === k}
+                    onClick={() => { setReviewOf(k); setReviewFilter(null); }}
+                    style={{
+                      padding: '0.3rem 0.8rem', border: 'none', fontFamily: 'inherit', fontSize: '0.74rem', fontWeight: 600, cursor: 'pointer',
+                      background: reviewOf === k ? '#1E293B' : '#fff', color: reviewOf === k ? '#fff' : '#475569',
+                    }}
+                  >{label}</button>
+                ))}
               </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} role="group" aria-label="Filter by status">
-                <button type="button" aria-pressed={!reviewFilter} onClick={() => setReviewFilter(null)} style={{ ...pillBtn(!reviewFilter), fontSize: '0.72rem' }}>All {rows.length}</button>
+                <button type="button" aria-pressed={!reviewFilter} onClick={() => setReviewFilter(null)} style={{ ...pillBtn(!reviewFilter), fontSize: '0.72rem' }}>All {reviewList.length}</button>
                 {statusCounts.map(st => {
                   const on = reviewFilter === st.key;
                   return (
@@ -411,7 +458,21 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
           )}
 
           <div style={{ height: 560, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'hidden', flex: 'none' }}>
-            {view === 'review' ? (
+            {view === 'review' && reviewOf === 'accounts' ? (
+              <DataTable
+                key="account-review"
+                tableId="relationship-account-review"
+                columns={accountReviewColumns}
+                rows={reviewRows}
+                alwaysVisible={['status', 'company']}
+                defaultSort={{ key: 'status', direction: 'asc' }}
+                onRowClick={(a) => { if (a.prospect && onSelectProspect) onSelectProspect(a.prospect); }}
+                exportFileName="relationship-account-review"
+                settings={settings}
+                updateSettings={updateSettings}
+                emptyMessage="No accounts with this status"
+              />
+            ) : view === 'review' ? (
               <DataTable
                 key="review"
                 tableId="relationship-review"

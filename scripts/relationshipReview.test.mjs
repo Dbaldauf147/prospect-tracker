@@ -6,9 +6,9 @@
 // and what counts as overdue against it, each status's threshold, the
 // priority order between statuses, and the order inside one.
 import {
-  reviewContact, twoWayRhythm, reviewCounts, reviewPriority, REVIEW_STATUSES,
+  reviewContact, reviewAccount, twoWayRhythm, reviewCounts, reviewPriority, REVIEW_STATUSES,
 } from '../src/utils/relationshipReview.js';
-import { DAY_MS, normalizeTouch } from '../src/utils/relationshipStrength.js';
+import { DAY_MS, normalizeTouch, scoreAccount } from '../src/utils/relationshipStrength.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -95,6 +95,34 @@ check('counts in status order', reviewCounts([{ status: 'steady' }, { status: 's
   const over = { status: 'overdue', overdueRatio: 5 };
   check('slipping outranks overdue', reviewPriority(slipSmall, res(44)) < reviewPriority(over, res(90)), true);
   check('the bigger fall comes first', reviewPriority(slipBig, res(45)) < reviewPriority(slipSmall, res(44)), true);
+}
+
+// --- accounts ---------------------------------------------------------------
+{
+  const pat = { id: '1', firstname: 'Pat', lastname: 'Lee', dans_tags: 'Decision Maker' };
+  const sam = { id: '2', firstname: 'Sam', lastname: 'Roe', dans_tags: 'Procurement' };
+  const member = (contact, history, touches, extra = {}) => {
+    const result = res(history[history.length - 1], extra);
+    return { contact, result, history, touches, review: reviewContact({ result, history, touches, nowMs: NOW }) };
+  };
+  // Pat fell from 85 to 50; Sam steady at 30.
+  const m1 = member(pat, [...flat(85, 20), 70, 60, 50], [call(200), call(100)]);
+  const m2 = member(sam, flat(30, 23), [call(100), call(30)]);
+  const account = scoreAccount([m1, m2]);
+  const r = reviewAccount({ account, members: [m1, m2], nowMs: NOW });
+  check('account history is the account score on each date', r.peak, scoreAccount([{ contact: pat, result: { score: 85 } }, { contact: sam, result: { score: 30 } }]).score);
+  check('an account that fell off its peak is slipping', r.status, 'slipping');
+  check('the driver is the contact who fell', r.driver, pat);
+  check('the next step names them', /^Pat Lee has dropped 35 points/.test(r.nextStep), true);
+  check('touches are shared across the account once each', twoWayRhythm([call(200), call(100), call(30)], NOW).usualGapDays, reviewAccount({ account, members: [m1, m2], nowMs: NOW }).usualGapDays);
+
+  const solo = member(pat, [...flat(85, 20), 50], [call(10)]);
+  check('a one-contact slide asks for a second contact', /only contact/.test(reviewAccount({ account: scoreAccount([solo]), members: [solo], nowMs: NOW }).nextStep), true);
+
+  const strong = member(pat, flat(80, 23), [call(20), call(5)]);
+  const narrow = reviewAccount({ account: scoreAccount([strong]), members: [strong], nowMs: NOW });
+  check('strong but narrow: at their best, asks to widen', [narrow.status, /buying roles/.test(narrow.nextStep)], ['at-best', true]);
+  check('no members, no review', reviewAccount({ account: null, members: [] }), null);
 }
 
 console.log(`${failed ? 'FAIL' : 'PASS'} relationshipReview: ${passed} passed, ${failed} failed`);

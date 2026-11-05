@@ -24,7 +24,7 @@
 // scripts/relationshipReview.test.mjs pins the rules. Every threshold is
 // in REVIEW_CONFIG.
 
-import { DAY_MS, isTwoWay } from './relationshipStrength.js';
+import { DAY_MS, isTwoWay, scoreAccount, contactName, RELATIONSHIP_CONFIG } from './relationshipStrength.js';
 
 export const REVIEW_CONFIG = Object.freeze({
   // Slipping: points off the peak, and how high the peak had to be.
@@ -138,6 +138,77 @@ function nextStepFor(status, { result, usualGapDays, since }) {
       return 'Momentum is back. Keep the cadence and look for a next step.';
     case 'at-best':
       return 'Strong right now. Use it: ask for an intro or move an opportunity forward.';
+    default:
+      return '';
+  }
+}
+
+// --- accounts --------------------------------------------------------------
+//
+// The same review, one level up. An account's history is its account score
+// (best contact plus breadth, scoreAccount) on each of the same dates, and
+// its rhythm is the two-way touches with anyone there. The statuses and
+// their thresholds are the contacts' ones; only the next step changes, to
+// name who it hangs on.
+
+/**
+ *   account  scoreAccount's result for today
+ *   members  [{ contact, result, history, touches, review }] - the
+ *            account's contacts, each with their own contact review
+ *
+ * Returns reviewContact's shape plus `driver`, the contact the status
+ * hangs on (the one who fell furthest when slipping, else the best).
+ */
+export function reviewAccount({ account, members = [], nowMs, stepDays = 14, config = REVIEW_CONFIG }) {
+  if (!account || !members.length) return null;
+  const points = Math.max(0, ...members.map(m => m.history?.length || 0));
+  const history = [];
+  for (let i = 0; i < points; i += 1) {
+    const at = members
+      .filter(m => m.history?.length === points)
+      .map(m => ({ contact: m.contact, result: { score: m.history[i] } }));
+    history.push(scoreAccount(at)?.score ?? 0);
+  }
+  const seen = new Set();
+  const touches = [];
+  for (const m of members) {
+    for (const t of (m.touches || [])) {
+      if (t.id && seen.has(t.id)) continue;
+      if (t.id) seen.add(t.id);
+      touches.push(t);
+    }
+  }
+  touches.sort((a, b) => a.ms - b.ms);
+  const best = members.find(m => m.contact === account.best) || members[0];
+  const result = {
+    ...account,
+    touchCount: members.reduce((n, m) => n + (m.result?.touchCount || 0), 0),
+    components: { reciprocity: best.result?.components?.reciprocity ?? 0 },
+  };
+  const review = reviewContact({ result, history, touches, nowMs, stepDays, config });
+  const fell = [...members].sort((a, b) => (b.review?.offPeak || 0) - (a.review?.offPeak || 0))[0];
+  const driver = review.status === 'slipping' && fell?.review?.offPeak > 0 ? fell : best;
+  return { ...review, driver: driver.contact, nextStep: accountNextStep(review, { account, driver, members, since: account.daysSinceTwoWay }) };
+}
+
+function accountNextStep(review, { account, driver, members, since }) {
+  const who = contactName(driver.contact) || driver.contact?.email || 'your best contact';
+  const roleCount = RELATIONSHIP_CONFIG.breadth.roles.length;
+  switch (review.status) {
+    case 'slipping':
+      return members.length > 1
+        ? `${who} has dropped ${driver.review?.offPeak ?? review.offPeak} points. Get back in touch, or go through someone else engaged there.`
+        : `${who} has dropped ${review.offPeak} points and is the only contact. Re-engage them and add a second contact.`;
+    case 'overdue':
+      return `Usually every ${review.usualGapDays} days with someone there; it has been ${since}. Check in with ${who}.`;
+    case 'never-developed':
+      return `Outreach to ${members.length} contact${members.length === 1 ? '' : 's'} has not landed. Try a warm intro or a different buyer.`;
+    case 'rebuilding':
+      return `Momentum is back through ${who}. Keep the cadence and bring in another contact.`;
+    case 'at-best':
+      return account.rolesCovered.length < 3
+        ? `Strong through ${who}, but only ${account.rolesCovered.length} of ${roleCount} buying roles. Ask for an intro while it is warm.`
+        : 'Strong and broad. Move an opportunity forward.';
     default:
       return '';
   }
