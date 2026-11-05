@@ -36,6 +36,8 @@ import { buildUnansweredIndex, unansweredFor, campaignSendsByAddress, UNANSWERED
 import { fetchAllActivityPages } from '../../utils/hubspotActivityPages';
 import { recipientMapSaver, recoverRecipientMaps, rekeyOrphanRecipients, describeRecipientSearch } from '../../utils/recipientMaps';
 import { findLostRecipients } from '../../utils/recipientRecovery';
+import { useRelationshipData } from '../../hooks/useRelationshipStrength';
+import { RelationshipBadge } from '../Relationship/RelationshipBadge';
 
 // The By Company rollup's columns, in order. Company is always shown; the
 // rest are the user's to hide, star as their standard view, and resize.
@@ -642,6 +644,9 @@ function buildContactColumns({ categorizeContact, showSuggestedCompany, showNewC
     // popup's Yes / No / Not sure table. All Contacts only, like
     // the other columns that report on the popup's local fields.
     ...(hasFullTable(storagePrefix) ? [{ key: 'taggedPct', label: 'Tagged %' }] : []),
+    // Relationship Strength (utils/relationshipStrength): score, tier,
+    // trend and days since a two-way touch. All Contacts only.
+    ...(hasFullTable(storagePrefix) ? [{ key: 'strength', label: 'Strength' }] : []),
     { key: 'lastOutreach', label: 'Last Outreach' },
     // Emails sent since the contact last replied. All Contacts only.
     ...(hasFullTable(storagePrefix) ? [{ key: 'noReply', label: 'No Reply' }] : []),
@@ -1909,7 +1914,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, companyStatus: 140, companyCdm: 140, companyVertical: 170, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, lastOutreach: 160, noReply: 100, campaignReply: 200, emailCampaigns: 240, campaignSends60: 120,
+    name: 180, category: 160, title: 200, company: 200, companyStatus: 140, companyCdm: 140, companyVertical: 170, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, strength: 170, lastOutreach: 160, noReply: 100, campaignReply: 200, emailCampaigns: 240, campaignSends60: 120,
   };
   // Column visibility - every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -1929,7 +1934,7 @@ function KeyContactsViewInner({
   // keys removes the guess: anything not on the list shows, so the next
   // column to ship here needs none of this. They stay only to convert a
   // layout saved under the old model, once.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'companyStatus', 'companyCdm', ...(showCompanyVertical ? ['companyVertical'] : []), ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(hasFullTable(storagePrefix) ? ['custom', 'toCc'] : []), 'tags', ...(hasFullTable(storagePrefix) ? ['taggedPct'] : []), 'lastOutreach', ...(hasFullTable(storagePrefix) ? ['noReply', 'campaignReply', 'emailCampaigns', 'campaignSends60'] : [])];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'companyStatus', 'companyCdm', ...(showCompanyVertical ? ['companyVertical'] : []), ...(showNewCompanyEmail ? ['newCompany', 'expectedEmail'] : []), ...(showReachedOut ? ['reachedOut'] : []), 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(hasFullTable(storagePrefix) ? ['custom', 'toCc'] : []), 'tags', ...(hasFullTable(storagePrefix) ? ['taggedPct', 'strength'] : []), 'lastOutreach', ...(hasFullTable(storagePrefix) ? ['noReply', 'campaignReply', 'emailCampaigns', 'campaignSends60'] : [])];
   function loadLegacyVisibleCols() {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -2014,6 +2019,15 @@ function KeyContactsViewInner({
             next = tIdx >= 0
               ? [...next.slice(0, tIdx + 1), 'taggedPct', ...next.slice(tIdx + 1)]
               : [...next, 'taggedPct'];
+          }
+          // And Strength, once, after Tagged %.
+          const strengthMigKey = lsKey('visible-cols-mig-strength');
+          if (!localStorage.getItem(strengthMigKey) && !next.includes('strength')) {
+            try { localStorage.setItem(strengthMigKey, '1'); } catch { /* private mode - column just re-offers next load */ }
+            const sIdx = next.indexOf('taggedPct');
+            next = sIdx >= 0
+              ? [...next.slice(0, sIdx + 1), 'strength', ...next.slice(sIdx + 1)]
+              : [...next, 'strength'];
           }
         }
         return next;
@@ -3279,6 +3293,24 @@ function KeyContactsViewInner({
     [flatContacts, stateFlagOf]
   );
 
+  // Each row's Relationship Strength, for the Strength column. Only the
+  // full table has the column, so only it pays for the scoring.
+  const { scoreFor: relationshipScoreFor } = useRelationshipData();
+  const contactStrength = useMemo(() => {
+    const map = new Map();
+    if (!hasFullTable(storagePrefix)) return map;
+    for (const c of flatContacts) {
+      const id = String(c.id || '');
+      if (!id || map.has(id)) continue;
+      const r = relationshipScoreFor(c.raw || c);
+      // Nothing on record at all reads as a dash, not a measured 0.
+      const blank = r.touchCount === 0 && r.lastTwoWayMs == null && !r.components.opportunity;
+      map.set(id, blank ? null : r);
+    }
+    return map;
+  }, [storagePrefix, flatContacts, relationshipScoreFor]);
+  const strengthFor = (c) => contactStrength.get(String(c?.id || '')) || null;
+
   const sortedContacts = useMemo(() => {
     const arr = [...flatContacts];
     arr.sort((a, b) => {
@@ -3318,6 +3350,10 @@ function KeyContactsViewInner({
         case 'events':  cmp = (contactEvents[String(a.id || '')] || '').localeCompare(contactEvents[String(b.id || '')] || ''); break;
         case 'met':     cmp = Number(!!a.metInPerson) - Number(!!b.metInPerson); break;
         case 'taggedPct': cmp = tagScoreFor(a).pct - tagScoreFor(b).pct; break;
+        // Unscored contacts (no activity on record) sit below a 0.
+        case 'strength':
+          cmp = (contactStrength.get(String(a.id || ''))?.score ?? -1) - (contactStrength.get(String(b.id || ''))?.score ?? -1);
+          break;
         case 'lastOutreach': {
           const av = contactLastOutreach.get(String(a.id || ''))?.tsMs || 0;
           const bv = contactLastOutreach.get(String(b.id || ''))?.tsMs || 0;
@@ -3358,7 +3394,7 @@ function KeyContactsViewInner({
       return cmp;
     });
     return arr;
-  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactUnanswered, campaignReplies, contactEvents, categorizeContact, contactCampaign, campaignSends60, tagScoreFor]);
+  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactUnanswered, campaignReplies, contactEvents, categorizeContact, contactCampaign, campaignSends60, tagScoreFor, contactStrength]);
 
   // Combined "To Also" + "CC" recipients edited in the contact popup,
   // keyed by lowercased primary email so the All Contacts "To / CC"
@@ -3468,6 +3504,7 @@ function KeyContactsViewInner({
     met:      c => c.metInPerson ? 'yes' : 'no',
     events:   c => contactEvents[String(c.id || '')] || '',
     taggedPct: c => `${tagScoreFor(c).pct}%`,
+    strength: c => strengthFor(c)?.tier.label || '',
     lastOutreach: c => fmtLastOutreach(contactLastOutreach.get(String(c.id || ''))),
     campaignReply: c => campaignReplyFor(c)?.label || '',
     noReply: c => (noReplyHidden(c) ? '' : String(contactUnanswered.get(String(c.id || ''))?.count || 0)),
@@ -4970,6 +5007,11 @@ function KeyContactsViewInner({
                         </div>
                       );
                     })(),
+                    strength: (
+                      <div style={{ padding: '0.4rem 0.6rem', minWidth: 0, overflow: 'hidden' }}>
+                        <RelationshipBadge result={strengthFor(c)} compact />
+                      </div>
+                    ),
                     lastOutreach: (() => {
                       const entry = contactLastOutreach.get(String(c.id || ''));
                       if (!entry) {
