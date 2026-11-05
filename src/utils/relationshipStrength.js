@@ -295,7 +295,7 @@ export function decodeTouch(tuple) {
     direction: code[1] === 'i' ? 'inbound' : 'outbound',
     outcome: type === 'email' ? '' : (CODE_OUTCOME[code[2]] || ''),
     medium: type === 'meeting' ? (code[3] === 'p' ? 'in-person' : 'video') : '',
-    source: String(id).startsWith('gr:') ? 'granola' : 'hubspot',
+    source: String(id).startsWith('gr:') ? 'granola' : String(id).startsWith('cal:') ? 'outlook' : 'hubspot',
   };
 }
 
@@ -340,6 +340,76 @@ export function buildMeetingTouchIndex(meetings, { nowMs = Date.now() } = {}) {
     }
   }
   return { v: TOUCH_INDEX_VERSION, builtAt: new Date(nowMs).toISOString(), byId: {}, byEmail, byPhone: {} };
+}
+
+// --- Outlook calendar meetings ------------------------------------------------
+//
+// The Activity tab only ever has a short window of the calendar in hand
+// (the last 30 days through Graph, the day's meetings through the Power
+// Automate webhook), so calendar meetings are kept as they are seen and
+// added to on every visit (calendarLog below) rather than rebuilt from
+// one fetch. The same meeting reaches the tab through more than one pipe
+// (Graph, the webhook, Granola's relay of the calendar), so its key is
+// built from what they all agree on, the start minute and the title.
+
+const INTERNAL_DOMAIN = 'se.com';
+const isInternalEmail = (em) => {
+  const d = String(em || '').toLowerCase().split('@')[1] || '';
+  return d === INTERNAL_DOMAIN || d.endsWith(`.${INTERNAL_DOMAIN}`);
+};
+const meetingTitleKey = (s) => String(s || '').toLowerCase()
+  .replace(/^(canceled|cancelled|updated|fw|fwd|re|accepted|declined|tentative):\s*/g, '')
+  .replace(/[^a-z0-9]+/g, ' ').trim();
+
+/**
+ * One calendar meeting (an Activity tab row from any Outlook pipe) as what
+ * the score keeps: { id, ms, emails, medium }, or null when it should not
+ * count: not happened yet, cancelled, all-day, shown as free or out of
+ * office, or with nobody outside the company on it.
+ */
+export function calendarMeetingRecord(m, nowMs = Date.now()) {
+  const ms = hsMs(m?._meetingStart || m?._timestamp);
+  if (!Number.isFinite(ms) || ms > nowMs) return null;
+  if (m._allDay) return null;
+  if (/^(free|oof|workingelsewhere)$/i.test(String(m._showAs || ''))) return null;
+  if (/^(canceled|cancelled):/i.test(String(m._subject || '').trim())) return null;
+  const fromDetails = (m._attendeeDetails || []).map(a => String(a?.email || '').toLowerCase().trim());
+  const emails = [...new Set([...(m._externalEmails || []), ...fromDetails]
+    .map(e => String(e).toLowerCase().trim())
+    .filter(e => e.includes('@') && !isInternalEmail(e)))];
+  if (!emails.length) return null;
+  return {
+    id: `cal:${Math.round(ms / 60000)}:${meetingTitleKey(m._subject).slice(0, 60)}`,
+    ms,
+    emails,
+    medium: hubspotMeetingMedium({ hs_meeting_location: m._location }),
+  };
+}
+
+/**
+ * The kept calendar meetings with `meetings` added: { v, meetings: { id:
+ * record }, backfilledAt }. A meeting seen again replaces its record (an
+ * attendee added since); anything past the two-year window is dropped.
+ */
+export function calendarLog(stored, meetings, { nowMs = Date.now() } = {}) {
+  const since = nowMs - TOUCH_INDEX_KEEP_DAYS * DAY_MS;
+  const kept = {};
+  for (const [id, r] of Object.entries(stored?.meetings || {})) if (r?.ms >= since) kept[id] = r;
+  for (const m of (meetings || [])) {
+    const r = calendarMeetingRecord(m, nowMs);
+    if (r && r.ms >= since) kept[r.id] = r;
+  }
+  return { v: TOUCH_INDEX_VERSION, meetings: kept, backfilledAt: stored?.backfilledAt || null };
+}
+
+/** The kept calendar meetings as a touch index, keyed by attendee address. */
+export function buildCalendarTouchIndex(log) {
+  const byEmail = {};
+  for (const r of Object.values(log?.meetings || {})) {
+    const tuple = encodeTouch(normalizeTouch({ id: r.id, ms: r.ms, type: 'meeting', direction: 'outbound', outcome: 'held', medium: r.medium }));
+    for (const em of r.emails || []) (byEmail[em] ||= []).push(tuple);
+  }
+  return { v: TOUCH_INDEX_VERSION, byId: {}, byEmail, byPhone: {} };
 }
 
 /** Two touch indexes read as one (each bucket's lists joined). */

@@ -28,7 +28,7 @@ import { userLsGet, userLsSet, userLsRemove } from './userLs.js';
 import { dbGet, dbPut, getDbUserId } from './db.js';
 import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 import {
-  buildTouchIndex, buildMeetingTouchIndex, mergeTouchIndexes, TOUCH_INDEX_VERSION, normalizeTouch, logDayMs, localDay,
+  buildTouchIndex, buildMeetingTouchIndex, mergeTouchIndexes, calendarLog, buildCalendarTouchIndex, TOUCH_INDEX_VERSION, normalizeTouch, logDayMs, localDay,
 } from './relationshipStrength.js';
 
 export const RELATIONSHIP_LOG_KEY = 'relationship:log';
@@ -161,12 +161,16 @@ export function saveContactDateAdded(contactId, date) {
 // memory, so the score reads it synchronously once it has loaded.
 
 const TOUCH_STORE = 'relationship-touches';
-const parts = { hubspot: null, granola: null };
+const parts = { hubspot: null, granola: null, outlook: null };
+// The Outlook meetings kept so far (calendarLog's shape). Unlike the other
+// two parts it is added to, never rebuilt: the tab only sees a short
+// window of the calendar at a time.
+let calendarStore = null;
 let merged = null;
 let hydrated = null; // the uid the in-memory copy was loaded for
 let hydrating = null;
 
-function remerge() { merged = mergeTouchIndexes(parts.hubspot, parts.granola); }
+function remerge() { merged = mergeTouchIndexes(parts.hubspot, parts.granola, parts.outlook); }
 
 /** The index in memory: null until hydrateTouchIndex has loaded it. */
 export function loadTouchIndex() {
@@ -193,10 +197,18 @@ export function hydrateTouchIndex() {
   const promise = (async () => {
     parts.hubspot = null;
     parts.granola = null;
+    parts.outlook = null;
+    calendarStore = null;
     try {
-      const [hs, gr] = await Promise.all([dbGet(TOUCH_STORE, 'hubspot'), dbGet(TOUCH_STORE, 'granola')]);
+      const [hs, gr, cal] = await Promise.all([
+        dbGet(TOUCH_STORE, 'hubspot'), dbGet(TOUCH_STORE, 'granola'), dbGet(TOUCH_STORE, CALENDAR_KEY),
+      ]);
       if (hs?.v === TOUCH_INDEX_VERSION) parts.hubspot = hs;
       if (gr?.v === TOUCH_INDEX_VERSION) parts.granola = gr;
+      if (cal?.v === TOUCH_INDEX_VERSION) {
+        calendarStore = cal;
+        parts.outlook = buildCalendarTouchIndex(cal);
+      }
     } catch { /* unreadable: rebuilt by the next Activity tab visit */ }
     if (!parts.hubspot) {
       let legacy = null;
@@ -218,9 +230,13 @@ export function hydrateTouchIndex() {
 let workEmailHint = '';
 
 async function savePart(name, index) {
+  // Load what is stored first. A save that ran before the load would mark
+  // this user loaded with only its own part in memory, and the parts it
+  // didn't write would never be read back (or, for the calendar, be
+  // overwritten by a log that had forgotten them).
+  await hydrateTouchIndex();
   parts[name] = index;
   remerge();
-  if (getDbUserId()) hydrated = getDbUserId();
   window.dispatchEvent(new CustomEvent(RELATIONSHIP_EVENT));
   try {
     await dbPut(TOUCH_STORE, index, name);
@@ -235,6 +251,27 @@ export function saveTouchIndexFromFeed(feed, workEmail = '') {
   if (!feed || !(feed.emails || feed.calls || feed.meetings)) return Promise.resolve();
   workEmailHint = workEmail || workEmailHint;
   return savePart('hubspot', buildTouchIndex(feed, workEmail));
+}
+
+const CALENDAR_KEY = 'outlook-meetings';
+
+/** The Activity tab, with the Outlook calendar meetings it has in hand. */
+export async function saveCalendarMeetings(meetings, { backfilled = false } = {}) {
+  if (!meetings?.length && !backfilled) return;
+  await hydrateTouchIndex();
+  const next = calendarLog(calendarStore, meetings);
+  if (backfilled) next.backfilledAt = new Date().toISOString();
+  calendarStore = next;
+  try { await dbPut(TOUCH_STORE, next, CALENDAR_KEY); } catch (err) {
+    console.warn('Relationship calendar write failed:', err?.message || err);
+  }
+  await savePart('outlook', buildCalendarTouchIndex(next));
+}
+
+/** Whether the one-time year of Outlook history has been read in. */
+export async function calendarBackfilled() {
+  await hydrateTouchIndex();
+  return !!calendarStore?.backfilledAt;
 }
 
 /** The Activity tab, with the Granola meetings it shows. */

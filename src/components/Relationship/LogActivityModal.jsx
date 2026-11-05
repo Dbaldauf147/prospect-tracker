@@ -98,7 +98,7 @@ export function LogActivityModal({ contact = null, contacts = [], entry = null, 
     onClose?.();
   }
 
-  const title = hubspot ? (touch.source === 'granola' ? 'Edit Granola meeting' : 'Edit HubSpot activity') : entry ? 'Edit activity' : 'Log activity';
+  const title = hubspot ? (({ granola: 'Edit Granola meeting', outlook: 'Edit Outlook meeting' })[touch.source] || 'Edit HubSpot activity') : entry ? 'Edit activity' : 'Log activity';
   const who = picked ? (contactName(picked) || picked.firstname || picked.email) : '';
 
   return (

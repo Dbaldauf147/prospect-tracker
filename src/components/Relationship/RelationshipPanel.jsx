@@ -100,7 +100,7 @@ export function RelationshipPanel({ contact }) {
       <div style={{ marginTop: '0.5rem' }}>
         {recent.length === 0 ? (
           <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
-            No activity found with this contact.{hasFeed ? '' : ' HubSpot activity is read from the Activity tab once it has loaded.'}
+            No activity found with this contact.{hasFeed ? '' : ' HubSpot, Granola and Outlook activity is read from the Activity tab once it has loaded.'}
           </div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
@@ -114,7 +114,7 @@ export function RelationshipPanel({ contact }) {
                     {isTwoWay(t) && <span style={{ marginLeft: 6, fontSize: '0.6rem', fontWeight: 700, color: '#166534' }}>two-way</span>}
                     {t.edited && <span style={{ marginLeft: 6, fontSize: '0.6rem', color: '#7C3AED' }} title="Direction or outcome edited here">edited</span>}
                   </td>
-                  <td style={{ padding: '3px 4px', color: '#94A3B8', fontSize: '0.64rem' }}>{t.source === 'manual' ? 'Logged' : t.source === 'granola' ? 'Granola' : 'HubSpot'}</td>
+                  <td style={{ padding: '3px 4px', color: '#94A3B8', fontSize: '0.64rem' }}>{({ manual: 'Logged', granola: 'Granola', outlook: 'Outlook' })[t.source] || 'HubSpot'}</td>
                   <td style={{ padding: '3px 4px', textAlign: 'right', color: '#64748B', fontVariantNumeric: 'tabular-nums' }}>{touchPoints(t)} pt</td>
                   <td style={{ padding: '3px 4px', textAlign: 'right' }}>
                     <button
