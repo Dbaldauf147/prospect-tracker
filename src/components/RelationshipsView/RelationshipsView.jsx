@@ -22,7 +22,7 @@ import { isSchneiderContact } from '../../utils/contactRosters';
 import { useAuth } from '../../contexts/AuthContext';
 import { useRelationshipData } from '../../hooks/useRelationshipStrength';
 import {
-  RELATIONSHIP_CONFIG, DAY_MS, scoreContact, scoreAccount, oppsForContact, tierFor, contactKey, contactName, daysLabel,
+  RELATIONSHIP_CONFIG, DAY_MS, scoreContact, scoreAccount, oppsForContact, tierFor, contactKey, contactName, daysLabel, ageLabel,
 } from '../../utils/relationshipStrength';
 import { RelationshipBadge, ScorePill, TrendArrow } from '../Relationship/RelationshipBadge';
 import { LogActivityModal } from '../Relationship/LogActivityModal';
@@ -42,6 +42,20 @@ const TIERS = RELATIONSHIP_CONFIG.tiers;
 
 const fmtShort = (ms) => new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 const companyOf = (c) => String(c?.company || '').trim();
+const fmtDayLong = (ms) => new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+// The Date Added column, for contacts (r.result.added) and accounts.
+const ADDED_COLUMN = {
+  key: 'added', label: 'Added', defaultWidth: 130,
+  getSortValue: r => r.result.ageDays ?? -1,
+  getFilterValue: r => (r.result.isNew ? 'New' : ageLabel(r.result.ageDays)),
+  exportValue: r => (r.result.added?.day || ''),
+  render: r => (r.result.ageDays == null ? <span style={{ color: '#CBD5E1' }}>-</span> : (
+    <span title={r.result.added ? `Added ${fmtDayLong(r.result.added.ms)}` : ''} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+      {ageLabel(r.result.ageDays)}
+      {r.result.isNew && <span style={{ padding: '0 6px', borderRadius: 999, background: '#F5F3FF', color: '#6D28D9', border: '1px solid #C4B5FD', fontWeight: 700, fontSize: '0.6rem' }}>New</span>}
+    </span>
+  )),
+};
 const usable = (c) => c && !isSchneiderContact(c) && !/(^|;)\s*hide\s*(;|$)/i.test(String(c.dans_tags || c.dan_s_tags || ''));
 
 function useHubspotContacts(uid) {
@@ -101,7 +115,7 @@ function pillBtn(on) {
 export function RelationshipsView({ prospects = [], onSelectProspect, settings, updateSettings }) {
   const { user } = useAuth() || {};
   const contacts = useHubspotContacts(user?.uid || '');
-  const { touchesFor, oppsRecords, hasFeed, indexLoaded, log } = useRelationshipData();
+  const { touchesFor, dateAddedFor, oppsRecords, hasFeed, indexLoaded, log } = useRelationshipData();
   // Review first: it is the one that says what to do.
   const [view, setView] = useState('review');
   const [reviewFilter, setReviewFilter] = useState(null); // a status key, or null for all
@@ -120,11 +134,12 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
       if (!usable(c)) continue;
       const touches = touchesFor(c);
       if (!touches.length) continue;
-      const result = scoreContact(touches, { opps: oppsForContact(c, oppsRecords, { nowMs }), nowMs });
-      out.push({ key: contactKey(c) || c.email, contact: c, touches, result });
+      const added = dateAddedFor(c, touches);
+      const result = { ...scoreContact(touches, { opps: oppsForContact(c, oppsRecords, { nowMs }), nowMs, addedMs: added?.ms ?? null }), added };
+      out.push({ key: contactKey(c) || c.email, contact: c, touches, result, added });
     }
     return out;
-  }, [contacts, indexLoaded, touchesFor, oppsRecords, nowMs]);
+  }, [contacts, indexLoaded, touchesFor, dateAddedFor, oppsRecords, nowMs]);
 
   // Each contact's score a fortnight at a time over the year.
   const dates = useMemo(() => Array.from({ length: POINTS }, (_, i) => nowMs - (POINTS - 1 - i) * STEP_DAYS * DAY_MS), [nowMs]);
@@ -132,7 +147,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
     if (!scored) return null;
     const map = new Map();
     for (const s of scored) {
-      map.set(s.key, dates.map(at => scoreContact(s.touches, { opps: oppsForContact(s.contact, oppsRecords, { nowMs: at }), nowMs: at }).score));
+      map.set(s.key, dates.map(at => scoreContact(s.touches, { opps: oppsForContact(s.contact, oppsRecords, { nowMs: at }), nowMs: at, addedMs: s.added?.ms ?? null }).score));
     }
     return map;
   }, [scored, dates, oppsRecords]);
@@ -231,6 +246,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
     { key: 'company', label: 'Company', defaultWidth: 170, getSortValue: r => companyOf(r.contact).toLowerCase(), getFilterValue: r => companyOf(r.contact), exportValue: r => companyOf(r.contact), render: r => companyOf(r.contact) || <span style={{ color: '#CBD5E1' }}>-</span> },
     { key: 'score', label: 'Score', defaultWidth: 190, getSortValue: r => r.result.score, getFilterValue: r => r.result.tier.label, exportValue: r => r.result.score, render: r => <RelationshipBadge result={r.result} /> },
     { key: 'tier', label: 'Tier', defaultWidth: 90, getSortValue: r => r.result.score, getFilterValue: r => r.result.tier.label, exportValue: r => r.result.tier.label, render: r => r.result.tier.label },
+    ADDED_COLUMN,
     { key: 'trend', label: 'Trend', defaultWidth: 70, getSortValue: r => ({ up: 2, flat: 1, down: 0 })[r.result.trend], getFilterValue: r => r.result.trend, exportValue: r => r.result.trend, render: r => <TrendArrow trend={r.result.trend} /> },
     { key: 'change90', label: 'Change 90d', defaultWidth: 90, getSortValue: r => r.change90 ?? -999, getFilterValue: r => String(r.change90 ?? ''), exportValue: r => r.change90 ?? '', render: r => (r.change90 == null ? '-' : `${r.change90 > 0 ? '+' : ''}${r.change90}`) },
     { key: 'lastTwoWay', label: 'Last two-way', defaultWidth: 110, getSortValue: r => r.result.daysSinceTwoWay ?? 99999, getFilterValue: r => daysLabel(r.result.daysSinceTwoWay), exportValue: r => r.result.daysSinceTwoWay ?? '', render: r => daysLabel(r.result.daysSinceTwoWay) },
@@ -256,6 +272,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
     { key: 'name', label: 'Name', defaultWidth: 160, getSortValue: r => contactName(r.contact).toLowerCase(), getFilterValue: r => contactName(r.contact), exportValue: r => contactName(r.contact), render: r => <span style={{ fontWeight: 600 }}>{contactName(r.contact) || r.contact.email}</span> },
     { key: 'company', label: 'Company', defaultWidth: 150, getSortValue: r => companyOf(r.contact).toLowerCase(), getFilterValue: r => companyOf(r.contact), exportValue: r => companyOf(r.contact), render: r => companyOf(r.contact) || <span style={{ color: '#CBD5E1' }}>-</span> },
     { key: 'score', label: 'Now', defaultWidth: 170, getSortValue: r => r.result.score, getFilterValue: r => r.result.tier.label, exportValue: r => r.result.score, render: r => <RelationshipBadge result={r.result} compact /> },
+    ADDED_COLUMN,
     {
       key: 'peak', label: 'Year peak', defaultWidth: 120, getSortValue: r => r.review.peak, exportValue: r => r.review.peak,
       render: r => (
@@ -291,6 +308,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
       byKey.status,
       { key: 'company', label: 'Company', defaultWidth: 180, getSortValue: a => a.company.toLowerCase(), getFilterValue: a => a.company, exportValue: a => a.company, render: a => <span style={{ fontWeight: 600, color: a.prospect ? 'var(--color-accent)' : undefined }}>{a.company}</span> },
       { ...byKey.score, render: a => <RelationshipBadge result={a.result} compact extraTitle={`Best contact ${a.result.bestScore} + breadth ${a.result.breadth} x ${RELATIONSHIP_CONFIG.weights.breadth}`} /> },
+      { ...ADDED_COLUMN, label: 'Since' },
       byKey.peak, byKey.offPeak, byKey.change90, byKey.usualGap, byKey.since,
       { key: 'driver', label: 'Hangs on', defaultWidth: 140, getSortValue: a => contactName(a.review.driver).toLowerCase(), getFilterValue: a => contactName(a.review.driver), exportValue: a => contactName(a.review.driver), render: a => contactName(a.review.driver) || a.review.driver?.email || '-' },
       { key: 'contacts', label: 'Engaged', defaultWidth: 80, getSortValue: a => a.result.engagedContacts, exportValue: a => `${a.result.engagedContacts} of ${a.count}`, render: a => <span title={`${a.result.engagedContacts} of ${a.count} contacts at Developing or better`}>{`${a.result.engagedContacts} of ${a.count}`}</span> },

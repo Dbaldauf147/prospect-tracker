@@ -27,6 +27,9 @@ export function slimHubspotContact(c) {
     decision_maker: c.decision_maker, role: c.role,
     hs_sequences_is_enrolled: c.hs_sequences_is_enrolled,
     notes_last_contacted: c.notes_last_contacted,
+    // When the contact was created in HubSpot: the default for the
+    // contact's Date Added (utils/relationshipStrength contactDateAdded).
+    createdate: c.createdate,
   };
 }
 

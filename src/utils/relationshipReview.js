@@ -14,6 +14,8 @@
 // and lands in one status, the first that fits, in priority order:
 //
 //   slipping        was Warm or better and has fallen well off that peak
+//   new             started under 90 days ago (Date Added): too young to
+//                   have a rhythm to miss, or to have failed to develop
 //   overdue         a regular rhythm, and the current silence is well past it
 //   never-developed plenty of outreach in the year, and it has never landed
 //   at-best         Warm or better and at (or near) their peak
@@ -49,6 +51,8 @@ export const REVIEW_CONFIG = Object.freeze({
 export const REVIEW_STATUSES = [
   { key: 'slipping', label: 'Slipping', order: 0, color: '#9A3412', bg: '#FFEDD5', border: '#FDBA74',
     tip: 'Was Warm or better in the last year and has fallen well off that peak' },
+  { key: 'new', label: 'New', order: 0.5, color: '#6D28D9', bg: '#F5F3FF', border: '#C4B5FD',
+    tip: 'Started under 90 days ago (by Date Added): building, not yet judged on rhythm or development' },
   { key: 'overdue', label: 'Overdue', order: 1, color: '#92400E', bg: '#FEF3C7', border: '#FCD34D',
     tip: 'Usually hear from them on a regular rhythm, and this silence is well past it' },
   { key: 'never-developed', label: 'Never developed', order: 2, color: '#475569', bg: '#F1F5F9', border: '#CBD5E1',
@@ -112,6 +116,7 @@ export function reviewContact({ result, history = [], touches = [], nowMs, stepD
 
   let status = 'steady';
   if (peak >= config.slipPeakMin && offPeak >= config.slipDrop) status = 'slipping';
+  else if (result?.isNew) status = 'new';
   else if (gaps >= config.overdueMinGaps && overdueRatio != null && overdueRatio >= config.overdueRatio && since >= config.overdueMinDays) status = 'overdue';
   else if ((result?.touchCount || 0) >= config.neverMinTouches && peak < config.neverPeakMax) status = 'never-developed';
   // At-best before rebuilding: a climb that has reached the peak is there.
@@ -130,6 +135,10 @@ function nextStepFor(status, { result, usualGapDays, since }) {
       return result?.components?.reciprocity < 40
         ? 'Outreach is going one way. Ask for a call or meeting rather than another email.'
         : 'Book a call or meeting to get back to where it was.';
+    case 'new':
+      return result?.daysSinceTwoWay == null
+        ? 'New and not yet two-way. Aim for a first call or meeting.'
+        : 'New relationship. Keep a two-way touch every few weeks through the first quarter.';
     case 'overdue':
       return `Usually every ${usualGapDays} days; it has been ${since}. Check in now.`;
     case 'never-developed':
@@ -199,6 +208,8 @@ function accountNextStep(review, { account, driver, members, since }) {
       return members.length > 1
         ? `${who} has dropped ${driver.review?.offPeak ?? review.offPeak} points. Get back in touch, or go through someone else engaged there.`
         : `${who} has dropped ${review.offPeak} points and is the only contact. Re-engage them and add a second contact.`;
+    case 'new':
+      return `New account relationship through ${who}. Build cadence, then widen to a second contact.`;
     case 'overdue':
       return `Usually every ${review.usualGapDays} days with someone there; it has been ${since}. Check in with ${who}.`;
     case 'never-developed':
@@ -231,6 +242,7 @@ export function reviewPriority(review, result) {
   const within = {
     slipping: review.offPeak * 2 + review.peak,
     overdue: (review.overdueRatio || 0) * 10 + (result?.score || 0),
+    new: result?.score || 0,
     'never-developed': result?.touchCount || 0,
     rebuilding: review.change90,
     'at-best': result?.score || 0,

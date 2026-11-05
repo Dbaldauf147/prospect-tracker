@@ -78,6 +78,11 @@ check('Warm and at the peak: at their best',
 check('at the peak but Developing is steady',
   reviewContact({ result: res(40), history: flat(40), nowMs: NOW }).status, 'steady');
 
+check('a new relationship is New, not never-developed',
+  reviewContact({ result: res(8, { touchCount: 9, isNew: true }), history: flat(8), nowMs: NOW }).status, 'new');
+check('...but a new one that crashed still reads slipping',
+  reviewContact({ result: res(40, { isNew: true }), history: [80, 40], nowMs: NOW }).status, 'slipping');
+
 // --- next step --------------------------------------------------------------
 check('a one-way slide asks for a call',
   /call or meeting rather than/.test(reviewContact({ result: res(50, { components: { reciprocity: 20 } }), history: [80, 50], nowMs: NOW }).nextStep), true);

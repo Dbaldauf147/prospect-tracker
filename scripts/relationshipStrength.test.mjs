@@ -12,7 +12,7 @@ import {
   RELATIONSHIP_CONFIG as CFG, DAY_MS, normalizeTouch, touchPoints, isTwoWay, linkReplies,
   scoreContact, scoreAccount, tierFor, trendFor, hubspotCallOutcome, hubspotMeetingMedium,
   buildTouchIndex, touchesForContact, oppsForContact, encodeTouch, decodeTouch, scoreHistory,
-  buildMeetingTouchIndex, mergeTouchIndexes,
+  buildMeetingTouchIndex, mergeTouchIndexes, contactDateAdded, ageLabel, logDayMs,
 } from '../src/utils/relationshipStrength.js';
 import { mergeRelationshipLogs, parseRelationshipLog } from '../src/utils/relationshipLog.js';
 
@@ -205,6 +205,25 @@ check('steady is flat', trendFor([t(10, { type: 'call', outcome: 'connected' }),
   check('merge joins lists', mergeTouchIndexes({ byEmail: { a: [[1, 'eo-', 'x']] } }, { byEmail: { a: [[2, 'eo-', 'y']] } }).byEmail.a.length, 2);
 }
 
+// --- date added ---------------------------------------------------------------
+{
+  const c = { id: '9', createdate: new Date(ago(800)).toISOString() };
+  const touches = [t(1000, { type: 'call', outcome: 'connected' }), t(5, { type: 'call', outcome: 'connected' })];
+  check('earlier of HubSpot created and first activity', contactDateAdded(c, { touches }).source, 'activity');
+  check('...HubSpot when it is earlier', contactDateAdded(c, { touches: [t(5, { type: 'call' })] }).source, 'hubspot');
+  check('a date you set wins', contactDateAdded(c, { touches, log: { dateAdded: { 9: { date: '2026-10-01' } } } }), { ms: logDayMs('2026-10-01'), day: '2026-10-01', source: 'set' });
+  check('a cleared date falls back', contactDateAdded(c, { touches, log: { dateAdded: { 9: { cleared: true } } } }).source, 'activity');
+  check('nothing to go on', contactDateAdded({ id: '1' }), null);
+
+  // Met 40 days ago, two-way touches in both of those two months.
+  const young = [t(35, { type: 'call', outcome: 'connected' }), t(5, { type: 'call', outcome: 'connected' })];
+  check('consistency counts only the months known', scoreContact(young, { nowMs: NOW, addedMs: ago(40) }).components.consistency, 100);
+  check('...against 6 without a date added', scoreContact(young, { nowMs: NOW }).components.consistency, 33);
+  check('an old relationship is out of 6', scoreContact(young, { nowMs: NOW, addedMs: ago(700) }).components.consistency, 33);
+  check('under 90 days is new', [scoreContact(young, { nowMs: NOW, addedMs: ago(40) }).isNew, scoreContact(young, { nowMs: NOW, addedMs: ago(200) }).isNew], [true, false]);
+  check('age labels', [ageLabel(3), ageLabel(30), ageLabel(150), ageLabel(900), ageLabel(null)], ['3 d', '4 wk', '5 mo', '2.5 yr', '-']);
+}
+
 // --- opps -------------------------------------------------------------------
 {
   const pat = { firstname: 'Pat', lastname: 'Lee', company: 'Acme Corp' };
@@ -237,7 +256,8 @@ check('steady is flat', trendFor([t(10, { type: 'call', outcome: 'connected' }),
   check('both sides\' entries kept', Object.keys(m.activities).sort(), ['x', 'y', 'z']);
   check('overrides merged', m.overrides.h.outcome, 'connected');
   check('order does not matter', mergeRelationshipLogs(b, a).activities.x.note, 'new');
-  check('junk parses empty', parseRelationshipLog('nope'), { activities: {}, overrides: {} });
+  check('junk parses empty', parseRelationshipLog('nope'), { activities: {}, overrides: {}, dateAdded: {} });
+  check('date added merges, newer wins', mergeRelationshipLogs({ dateAdded: { 7: { date: '2025-01-01', updatedAt: '2026-01-01T00:00:00Z' } } }, { dateAdded: { 7: { date: '2024-06-01', updatedAt: '2026-03-01T00:00:00Z' } } }).dateAdded['7'].date, '2024-06-01');
 }
 
 console.log(`${failed ? 'FAIL' : 'PASS'} relationshipStrength: ${passed} passed, ${failed} failed`);
