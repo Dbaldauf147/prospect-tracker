@@ -92,6 +92,8 @@ import { parseMoney, closeReasonOf, summarizeOppsMoneyAndReasons } from '../../u
 import { Coverage } from './Coverage';
 import { NotSoldAnalysis } from './NotSoldAnalysis';
 import { PricingAnalysisModal } from './PricingAnalysisModal';
+import { MoveOnChanceModal } from './MoveOnChanceModal';
+import { moveOnChancesById, MOVE_ON_MIN_N } from '../../utils/moveOnChance';
 import { ANALYSIS_FIELD, ESTIMATED_FEE_COLUMN, normalizePricingAnalysis } from '../../utils/pricingAnalysis';
 import {
   QUOTED_VARIANCE_COLUMN, quotedVariance, formatQuotedVariance, quotedVarianceTone,
@@ -14659,6 +14661,8 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // is showing. Resolved against the live records list on render so
   // the popup always reflects the latest cell edits.
   const [infoOppId, setInfoOppId] = useState(null);
+  // Opp whose Chance of moving on popup is open (see MoveOnChanceModal).
+  const [moveOnOppId, setMoveOnOppId] = useState(null);
   // Which Flags chip is open, as { oppId, flagId }: the row the popup is
   // about and the chip that opened it, which the popup puts first.
   const [flagFixTarget, setFlagFixTarget] = useState(null);
@@ -16516,6 +16520,11 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
   // shift when opps are added or deleted.
   const oppNumberById = useMemo(() => buildOppNumberMap(data?.records), [data?.records]);
 
+  // Chance of moving on per open opp, read off every opp's stage history
+  // the way Close Rates > 6 reads it (utils/moveOnChance). One pass over
+  // the records; the column and its popup both read from it.
+  const moveOn = useMemo(() => moveOnChancesById(records), [records]);
+
   const columns = useMemo(() => {
     const seen = new Set();
     const mapped = headers
@@ -17168,6 +17177,41 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     const bfoLinkIdx = mapped.findIndex(c => c.key === 'BFO Link');
     if (bfoLinkIdx >= 0) mapped.splice(bfoLinkIdx + 1, 0, missingDataCol);
     else mapped.push(missingDataCol);
+    // "Chance of moving on": of past deals that sat in this opp's stage at
+    // least as long, the share that moved on (Close Rates > 6). Synthetic,
+    // read-only; the cell opens a popup showing how it was worked out.
+    // Placed right after Stage, else at the end.
+    const fmtChance = (v) => (v == null ? '' : `${Math.round(v)}%`);
+    const moveOnCol = {
+      key: '_moveOnChance',
+      label: 'Chance of moving on',
+      defaultWidth: 150,
+      getFilterValue: (row) => { const o = moveOn.byId.get(row._id); return o?.n ? fmtChance(o.rate) : ''; },
+      getSortValue: (row) => { const o = moveOn.byId.get(row._id); return o?.n ? o.rate : -1; },
+      exportValue: (row) => { const o = moveOn.byId.get(row._id); return o?.n ? Math.round(o.rate) : ''; },
+      render: (row) => {
+        const o = moveOn.byId.get(row._id);
+        if (!o) return <span style={{ color: 'var(--color-text-muted)' }} title="Only open opps in a pipeline stage, with a Start Date, are scored">-</span>;
+        const few = o.n < MOVE_ON_MIN_N;
+        return (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setMoveOnOppId(row._id); }}
+            onMouseDown={(e) => e.stopPropagation()}
+            title={`${o.n ? `${fmtChance(o.rate)} of ${o.n} past ${o.stage} deals in for ${o.band} or longer moved on` : `No past ${o.stage} deals stayed this long`}${o.n && few ? '. Few deals: read with care' : ''}\nClick to see how it was worked out.`}
+            style={{
+              border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 'inherit', fontWeight: 600, fontVariantNumeric: 'tabular-nums',
+              color: 'var(--color-accent)', textDecoration: 'underline', textDecorationStyle: 'dotted',
+              opacity: o.n && few ? 0.55 : 1,
+            }}
+          >{o.n ? fmtChance(o.rate) : 'n/a'}</button>
+        );
+      },
+    };
+    const stageIdx = mapped.findIndex(c => c.key === 'Stage');
+    if (stageIdx >= 0) mapped.splice(stageIdx + 1, 0, moveOnCol);
+    else mapped.push(moveOnCol);
     // Splice the info column in just before Next Steps when it's
     // present in the visible header set. Falls back to appending so
     // a user who hid Next Steps still gets the button.
@@ -17203,7 +17247,7 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
     // `records` and `settings` feed the Scope services board (the account's
     // other opps and the user's category layout). Both belong in the deps so
     // a status edited elsewhere shows up the next time the board is opened.
-  }, [headers, columnLinks, listRegistry, updateOppField, deleteOppField, deleteOpp, companySuggestions, peOwnerSuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById, filteredRowIds, records, settings, updateSettings, refreshRateCard]);
+  }, [headers, columnLinks, listRegistry, updateOppField, deleteOppField, deleteOpp, companySuggestions, peOwnerSuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById, filteredRowIds, records, settings, updateSettings, refreshRateCard, moveOn]);
 
   // The same columns, taught to render a scheduled placeholder differently.
   // Wrapping once here beats a `__scheduledOpp` check inside forty column
@@ -18925,6 +18969,17 @@ export function OppsView2({ settings, updateSettings, updateSettingsPath, prospe
           </div>
         </div>,
         document.body
+      )}
+
+      {moveOnOppId != null && moveOn.byId.has(moveOnOppId) && (
+        <MoveOnChanceModal
+          scored={moveOn.byId.get(moveOnOppId)}
+          prog={moveOn.prog}
+          model={moveOn.model}
+          settings={settings}
+          updateSettings={updateSettings}
+          onClose={() => setMoveOnOppId(null)}
+        />
       )}
 
       {analysisOppId != null && (() => {
