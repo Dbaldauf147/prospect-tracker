@@ -36,6 +36,8 @@ import { primarySubject, withSubjects } from '../../utils/campaignSubjects';
 import { responseRateOf } from '../../utils/campaignContactHold';
 import { recipientMapSaver } from '../../utils/recipientMaps';
 import { absoluteHref, absolutizeLinks } from '../../utils/emailHrefs.js';
+import { recentCampaignWarnings, RECENT_CAMPAIGN_DAYS } from '../../utils/recentCampaignWarning';
+import { EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
 
 // Register an <hr> divider blot once so the editor can hold a horizontal
 // page-break line (inserted from the Insert menu). Quill drops any tag that
@@ -1961,6 +1963,27 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
   // send/reply counters start at zero since nothing's been sent yet, and a
   // later real subject-search Save in the campaign tracker overwrites this
   // placeholder by subject.
+  // Every saved campaign, for the "emailed by another campaign in the last
+  // 3 weeks" warning under To (utils/recentCampaignWarning). Re-read when a
+  // campaign is added to elsewhere, as the contacts tables do.
+  const [allCampaigns, setAllCampaigns] = useState([]);
+  useEffect(() => {
+    if (!user?.uid) return undefined;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'emailCampaigns', user.uid));
+        if (!cancelled) setAllCampaigns(snap.exists() ? (snap.data().campaigns || []) : []);
+      } catch { if (!cancelled) setAllCampaigns([]); }
+    };
+    load();
+    window.addEventListener(EMAIL_CAMPAIGNS_UPDATED_EVENT, load);
+    return () => { cancelled = true; window.removeEventListener(EMAIL_CAMPAIGNS_UPDATED_EVENT, load); };
+  }, [user?.uid]);
+  const recentCampaignHits = useMemo(
+    () => recentCampaignWarnings(allCampaigns, selectedContacts, { currentSubject: subject }),
+    [allCampaigns, selectedContacts, subject],
+  );
   const [namingCampaign, setNamingCampaign] = useState(false);
   const [campaignName, setCampaignName] = useState('');
   const [savingCampaign, setSavingCampaign] = useState(false);
@@ -2628,6 +2651,24 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
               </div>
             </div>
           </div>
+
+          {recentCampaignHits.length > 0 && (
+            <div
+              role="status"
+              style={{ margin: '-0.35rem 0 0.75rem', padding: '0.5rem 0.7rem', border: '1px solid #FCD34D', background: '#FFFBEB', borderRadius: 6, fontSize: '0.74rem', color: '#92400E', lineHeight: 1.45 }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: 2 }}>
+                {recentCampaignHits.length === 1 ? '1 recipient was' : `${recentCampaignHits.length} recipients were`} emailed by another campaign in the last {RECENT_CAMPAIGN_DAYS / 7} weeks
+              </div>
+              {recentCampaignHits.map(h => (
+                <div key={h.email}>
+                  <strong>{h.name || h.email}</strong>
+                  {': '}
+                  {h.campaigns.map(c => `${c.label}${c.lastSentDate ? ` (${new Date(c.lastSentDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})` : ''}`).join('; ')}
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Draft-level CC */}
           <div className={styles.field}>
