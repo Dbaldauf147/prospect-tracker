@@ -18,6 +18,7 @@ import { resolveMetInPerson as resolveMetInPersonWith, metInPersonUpdate } from 
 import { formatAum, statusColor } from '../../utils/formatters';
 import { STATUSES } from '../../data/enums';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
+import { tagValuesOf, anyValueSelected } from '../../utils/tagColumnFilter';
 import { tagReviewScore, tagVocabulary, saveTagReview, recordForVerdict, sameTagRecord, recordKeepsTag, dedupeTags, planTagEdit, groupTagWrites, findTagRecord, tagRecordKeyFor } from '../../utils/contactTagReview';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
@@ -3516,6 +3517,11 @@ function KeyContactsViewInner({
       return [...entry.to, ...entry.cc].join(', ');
     },
   };
+  // Columns whose cell holds several values (a contact's tags): filtered
+  // value by value rather than as one string (utils/tagColumnFilter).
+  const contactMultiGetters = {
+    tags: c => tagValuesOf(c.raw || c, dansTagOptions),
+  };
   const activeValueFilters = Object.entries(contactColValueFilters)
     .filter(([, v]) => Array.isArray(v) && v.length > 0)
     .map(([k, v]) => [k, new Set(v)]);
@@ -3565,6 +3571,11 @@ function KeyContactsViewInner({
   const passesColumnFilters = (c, exceptKey) => {
     for (const [key, vals] of activeValueFilters) {
       if (key === exceptKey) continue;
+      const multi = contactMultiGetters[key];
+      if (multi) {
+        if (!anyValueSelected(multi(c), vals)) return false;
+        continue;
+      }
       const getter = contactFieldGetters[key];
       if (!getter) continue;
       if (!vals.has(String(getter(c)))) return false;
@@ -3574,13 +3585,14 @@ function KeyContactsViewInner({
   // Distinct values available for a column, honoring all other filters —
   // this is the checklist the dropdown shows and what "Select All" ticks.
   const columnFilterValues = (key) => {
+    const multi = contactMultiGetters[key];
     const getter = contactFieldGetters[key];
-    if (!getter) return [];
+    if (!getter && !multi) return [];
     const set = new Set();
     for (const c of sortedContacts) {
       if (!passesNonColumnFilters(c)) continue;
       if (!passesColumnFilters(c, key)) continue;
-      set.add(String(getter(c)));
+      if (multi) { for (const v of multi(c)) set.add(v); } else set.add(String(getter(c)));
     }
     return Array.from(set).sort((a, b) => {
       if (a === '' && b !== '') return 1;
