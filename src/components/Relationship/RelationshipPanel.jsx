@@ -67,6 +67,10 @@ const fmtDay = (ms) => new Date(ms).toLocaleDateString('en-US', { month: 'short'
 export function RelationshipPanel({ contact }) {
   const { touches, result, hasFeed } = useContactRelationship(contact);
   const [form, setForm] = useState(null); // { entry } | { touch } | {}
+  // The activity list is collapsed each time the popup opens: the score
+  // and its components are what the panel is for, the list is the detail
+  // behind them, there to check or correct an entry.
+  const [showActivity, setShowActivity] = useState(false);
   if (!contact || (!contact.id && !contact.vid && !contact.email)) return null;
   const recent = [...touches].reverse().slice(0, RECENT_SHOWN);
 
@@ -102,7 +106,21 @@ export function RelationshipPanel({ contact }) {
           <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
             No activity found with this contact.{hasFeed ? '' : ' HubSpot, Granola and Outlook activity is read from the Activity tab once it has loaded.'}
           </div>
+        ) : !showActivity ? (
+          <button
+            type="button"
+            onClick={() => setShowActivity(true)}
+            aria-expanded={false}
+            style={{ background: 'none', border: 'none', padding: 0, color: 'var(--color-accent)', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.7rem', fontWeight: 600 }}
+          >▸ Show activity ({touches.length})</button>
         ) : (
+          <>
+          <button
+            type="button"
+            onClick={() => setShowActivity(false)}
+            aria-expanded
+            style={{ background: 'none', border: 'none', padding: 0, marginBottom: 2, color: 'var(--color-accent)', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.7rem', fontWeight: 600 }}
+          >▾ Hide activity{touches.length > RECENT_SHOWN ? ` (latest ${RECENT_SHOWN} of ${touches.length})` : ''}</button>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
             <tbody>
               {recent.map(t => (
@@ -127,6 +145,7 @@ export function RelationshipPanel({ contact }) {
               ))}
             </tbody>
           </table>
+          </>
         )}
       </div>
       {form && (
