@@ -17,7 +17,7 @@
 import { CLOSE_RATE_STAGES, bfoOppNameOf, closedOppEntry } from './pipelineFunnelData.js';
 import { closePeriodOf, periodLabel, periodRange, sourceOf } from './notSoldAnalysis.js';
 import { PULL_THROUGH_COLUMN, isPullThroughOpp } from './pullThrough.js';
-import { REACH_STAGES, furthestStageRank, stageReachByPeriod, reachPeriodLabel } from './stageReach.js';
+import { REACH_SERIES, NOT_STARTED, furthestStageRank, stageReachByPeriod, reachPeriodLabel } from './stageReach.js';
 
 const pct = (w, d) => (d > 0 ? (w / d) * 100 : null);
 
@@ -295,9 +295,10 @@ export function stageReachSheetRows(records, { period = 'quarter', closedOnly = 
   const data = stageReachByPeriod(records, { period, closedOnly, from, to });
   const row = (label, r) => {
     const out = { Started: label, [closedOnly ? 'Closed opps' : 'Opps']: r.total, 'No stage history (left out)': r.unknown };
-    for (const st of REACH_STAGES) {
-      out[`${st} %`] = r.pct[st] == null ? '' : r.pct[st];
-      out[`${st} count`] = r.reached[st];
+    for (const st of REACH_SERIES) {
+      const name = st === NOT_STARTED ? 'Not Started only' : st;
+      out[`${name} %`] = r.pct[st] == null ? '' : r.pct[st];
+      out[`${name} count`] = r.reached[st];
     }
     return out;
   };
