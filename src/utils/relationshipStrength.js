@@ -290,7 +290,7 @@ export function decodeTouch(tuple) {
     direction: code[1] === 'i' ? 'inbound' : 'outbound',
     outcome: type === 'email' ? '' : (CODE_OUTCOME[code[2]] || ''),
     medium: type === 'meeting' ? (code[3] === 'p' ? 'in-person' : 'video') : '',
-    source: 'hubspot',
+    source: String(id).startsWith('gr:') ? 'granola' : 'hubspot',
   };
 }
 
@@ -311,6 +311,46 @@ export function buildTouchIndex(feed, workEmail = '', { nowMs = Date.now() } = {
     for (const ph of new Set((phones || []).map(normPhone).filter(Boolean))) push(byPhone, ph, tuple);
   }
   return { v: TOUCH_INDEX_VERSION, builtAt: new Date(nowMs).toISOString(), byId, byEmail, byPhone };
+}
+
+/**
+ * The Granola meetings on the Activity tab (granolaMeetingsFromRecords) as
+ * a touch index of their own, keyed by the external attendees' addresses.
+ * A note only exists for a meeting that happened, so each is a held
+ * meeting; one with a street address for a location was in person.
+ */
+export function buildMeetingTouchIndex(meetings, { nowMs = Date.now() } = {}) {
+  const since = nowMs - TOUCH_INDEX_KEEP_DAYS * DAY_MS;
+  const byEmail = {};
+  for (const m of (meetings || [])) {
+    const ms = hsMs(m?._meetingStart || m?._timestamp);
+    if (!Number.isFinite(ms) || ms < since || ms > nowMs + DAY_MS) continue;
+    const id = String(m.id || `granola:${ms}`);
+    const tuple = encodeTouch(normalizeTouch({
+      id: id.startsWith('gr:') ? id : `gr:${id}`, ms, type: 'meeting', direction: 'outbound', outcome: 'held',
+      medium: hubspotMeetingMedium({ hs_meeting_location: m._location }),
+    }));
+    for (const em of new Set((m._externalEmails || []).map(e => String(e).toLowerCase().trim()).filter(Boolean))) {
+      (byEmail[em] ||= []).push(tuple);
+    }
+  }
+  return { v: TOUCH_INDEX_VERSION, builtAt: new Date(nowMs).toISOString(), byId: {}, byEmail, byPhone: {} };
+}
+
+/** Two touch indexes read as one (each bucket's lists joined). */
+export function mergeTouchIndexes(...indexes) {
+  const out = { v: TOUCH_INDEX_VERSION, byId: {}, byEmail: {}, byPhone: {} };
+  let any = false;
+  for (const idx of indexes) {
+    if (!idx) continue;
+    any = true;
+    for (const bucket of ['byId', 'byEmail', 'byPhone']) {
+      for (const [k, list] of Object.entries(idx[bucket] || {})) {
+        out[bucket][k] = out[bucket][k] ? out[bucket][k].concat(list) : list;
+      }
+    }
+  }
+  return any ? out : null;
 }
 
 export function normPhone(p) {
@@ -359,7 +399,7 @@ export function touchesForContact(contact, index, log = null, config = RELATIONS
     .map(normalizeTouch)
     .filter(t => Number.isFinite(t.ms))
     .sort((a, b) => a.ms - b.ms);
-  return linkReplies(list, config);
+  return linkReplies(dedupeMeetings(list), config);
 }
 
 function pickTouchFields(o) {
@@ -384,6 +424,24 @@ export function logDayMs(day) {
 export function localDay(ms) {
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// The same meeting can arrive twice: logged in HubSpot and noted by
+// Granola. Two meetings from different sources within two hours of each
+// other are one meeting, kept once (the earlier-listed, HubSpot's, wins).
+const SAME_MEETING_MS = 2 * 60 * 60 * 1000;
+export function dedupeMeetings(sorted) {
+  const out = [];
+  const kept = [];
+  for (const t of sorted) {
+    if (t.type === 'meeting') {
+      const src = t.source || 'hubspot';
+      if (kept.some(k => k.src !== src && Math.abs(k.ms - t.ms) <= SAME_MEETING_MS)) continue;
+      kept.push({ src, ms: t.ms });
+    }
+    out.push(t);
+  }
+  return out;
 }
 
 export function logEntryMatches(entry, contact) {

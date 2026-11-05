@@ -28,7 +28,7 @@ import {
 import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import { buildUnansweredIndex } from '../../utils/unansweredOutreach';
 import { fetchAllActivityPages } from '../../utils/hubspotActivityPages';
-import { saveTouchIndexFromFeed } from '../../utils/relationshipLog';
+import { saveTouchIndexFromFeed, saveMeetingTouches } from '../../utils/relationshipLog';
 import styles from './ActivityView.module.css';
 
 const CACHE_KEY = 'hubspot-activity-cache';
@@ -147,9 +147,6 @@ function saveCache(data, workEmail) {
   try {
     userLsSet(OUTREACH_INDEX_KEY, JSON.stringify(buildOutreachIndex(data, workEmail)));
   } catch (err) { console.warn('ActivityView outreach-index write skipped:', err?.message || err); }
-  // The same feed boiled down to the touches Relationship Strength scores
-  // (utils/relationshipStrength), for the same reason: the feed may not fit.
-  saveTouchIndexFromFeed(data, workEmail);
   // Notify in-tab consumers (e.g. the Last Outreach column on
   // KeyContactsView) since the `storage` event only fires across tabs.
   window.dispatchEvent(new CustomEvent('hubspot-activity-cache-updated'));
@@ -583,6 +580,18 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
       m._company ? m : { ...m, _company: guessCompanyFromEmails(...(m._externalEmails || [])) }
     ))
   ), [granolaRecords, hubspotContacts, domainToCompany]);
+
+  // Hand what this tab shows to Relationship Strength (utils/relationshipLog):
+  // the HubSpot feed whenever one is in hand, whether just pulled or read
+  // back from the cache, and the Granola meetings once they have loaded.
+  // It used to get the feed only on a fresh pull, so a visit that found the
+  // feed recent enough to reuse left the scores with nothing.
+  useEffect(() => {
+    if (data) void saveTouchIndexFromFeed(data, settings?.workEmail);
+  }, [data, settings?.workEmail]);
+  useEffect(() => {
+    if (granolaLoaded) void saveMeetingTouches(granolaMeetings);
+  }, [granolaLoaded, granolaMeetings]);
 
   // Notes that stored fine and still produced no row, because nothing on
   // them parses as a start time. diagnoseEmptySync explains a sync that

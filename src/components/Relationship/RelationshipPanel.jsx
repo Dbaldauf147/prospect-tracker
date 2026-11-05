@@ -73,7 +73,7 @@ export function RelationshipPanel({ contact }) {
                     {isTwoWay(t) && <span style={{ marginLeft: 6, fontSize: '0.6rem', fontWeight: 700, color: '#166534' }}>two-way</span>}
                     {t.edited && <span style={{ marginLeft: 6, fontSize: '0.6rem', color: '#7C3AED' }} title="Direction or outcome edited here">edited</span>}
                   </td>
-                  <td style={{ padding: '3px 4px', color: '#94A3B8', fontSize: '0.64rem' }}>{t.source === 'manual' ? 'Logged' : 'HubSpot'}</td>
+                  <td style={{ padding: '3px 4px', color: '#94A3B8', fontSize: '0.64rem' }}>{t.source === 'manual' ? 'Logged' : t.source === 'granola' ? 'Granola' : 'HubSpot'}</td>
                   <td style={{ padding: '3px 4px', textAlign: 'right', color: '#64748B', fontVariantNumeric: 'tabular-nums' }}>{touchPoints(t)} pt</td>
                   <td style={{ padding: '3px 4px', textAlign: 'right' }}>
                     <button
