@@ -26,6 +26,7 @@ import {
 } from '../../utils/relationshipStrength';
 import { RelationshipBadge, ScorePill, TrendArrow } from '../Relationship/RelationshipBadge';
 import { LogActivityModal } from '../Relationship/LogActivityModal';
+import { reviewContact, reviewCounts, reviewPriority, reviewStatus } from '../../utils/relationshipReview';
 
 const POINTS = 27; // one a fortnight, a year back
 const STEP_DAYS = 14;
@@ -101,7 +102,9 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
   const { user } = useAuth() || {};
   const contacts = useHubspotContacts(user?.uid || '');
   const { touchesFor, oppsRecords, hasFeed, log } = useRelationshipData();
-  const [view, setView] = useState('contacts');
+  // Review first: it is the one that says what to do.
+  const [view, setView] = useState('review');
+  const [reviewFilter, setReviewFilter] = useState(null); // a status key, or null for all
   const [picked, setPicked] = useState([]); // contact keys drawn on the chart
   const [logging, setLogging] = useState(false);
   // The day the page was opened. Fixed for the visit, so the scores are a
@@ -136,8 +139,13 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
   const rows = useMemo(() => (scored || []).map(s => {
     const h = histories?.get(s.key) || [];
     const ago90 = h[Math.max(0, h.length - 1 - Math.round(90 / STEP_DAYS))];
-    return { ...s, id: s.key, change90: h.length ? s.result.score - ago90 : null };
-  }), [scored, histories]);
+    // Where they stand against their own year: off their peak, out of
+    // their usual rhythm, climbing, or at their best (utils/relationshipReview).
+    const review = reviewContact({ result: s.result, history: h, touches: s.touches, nowMs, stepDays: STEP_DAYS });
+    return { ...s, id: s.key, change90: h.length ? s.result.score - ago90 : null, review, priority: reviewPriority(review, s.result) };
+  }), [scored, histories, nowMs]);
+  const statusCounts = useMemo(() => reviewCounts(rows.map(r => r.review)), [rows]);
+  const reviewRows = useMemo(() => (reviewFilter ? rows.filter(r => r.review.status === reviewFilter) : rows), [rows, reviewFilter]);
 
   const series = useMemo(() => {
     if (!histories || !scored?.length) return [];
@@ -214,6 +222,48 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
     { key: 'opportunity', label: 'Opps', defaultWidth: 70, getSortValue: r => r.result.components.opportunity, exportValue: r => r.result.components.opportunity, render: r => r.result.components.opportunity },
     { key: 'touches', label: 'Activities (12 mo)', defaultWidth: 110, getSortValue: r => r.result.touchCount, exportValue: r => r.result.touchCount, render: r => r.result.touchCount },
   ], [picked]);
+
+  const reviewColumns = useMemo(() => [
+    {
+      key: 'status', label: 'Status', defaultWidth: 130,
+      // Sorted by priority: status order, then the most pressing in each.
+      getSortValue: r => r.priority, getFilterValue: r => reviewStatus(r.review.status).label, exportValue: r => reviewStatus(r.review.status).label,
+      render: r => {
+        const st = reviewStatus(r.review.status);
+        return (
+          <span title={st.tip} style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.66rem', fontWeight: 700, background: st.bg, color: st.color, border: `1px solid ${st.border}`, whiteSpace: 'nowrap' }}>{st.label}</span>
+        );
+      },
+    },
+    { key: 'name', label: 'Name', defaultWidth: 160, getSortValue: r => contactName(r.contact).toLowerCase(), getFilterValue: r => contactName(r.contact), exportValue: r => contactName(r.contact), render: r => <span style={{ fontWeight: 600 }}>{contactName(r.contact) || r.contact.email}</span> },
+    { key: 'company', label: 'Company', defaultWidth: 150, getSortValue: r => companyOf(r.contact).toLowerCase(), getFilterValue: r => companyOf(r.contact), exportValue: r => companyOf(r.contact), render: r => companyOf(r.contact) || <span style={{ color: '#CBD5E1' }}>-</span> },
+    { key: 'score', label: 'Now', defaultWidth: 170, getSortValue: r => r.result.score, getFilterValue: r => r.result.tier.label, exportValue: r => r.result.score, render: r => <RelationshipBadge result={r.result} compact /> },
+    {
+      key: 'peak', label: 'Year peak', defaultWidth: 120, getSortValue: r => r.review.peak, exportValue: r => r.review.peak,
+      render: r => (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <ScorePill score={r.review.peak} tier={tierFor(r.review.peak)} showLabel={false} />
+          <span style={{ fontSize: '0.66rem', color: 'var(--color-text-muted)' }}>{r.review.peakAgoDays === 0 ? 'now' : `${Math.round(r.review.peakAgoDays / 7)}w ago`}</span>
+        </span>
+      ),
+    },
+    { key: 'offPeak', label: 'Off peak', defaultWidth: 80, getSortValue: r => r.review.offPeak, exportValue: r => r.review.offPeak, render: r => (r.review.offPeak ? `-${r.review.offPeak}` : '0') },
+    { key: 'change90', label: 'Change 90d', defaultWidth: 90, getSortValue: r => r.change90 ?? -999, exportValue: r => r.change90 ?? '', render: r => (r.change90 == null ? '-' : `${r.change90 > 0 ? '+' : ''}${r.change90}`) },
+    { key: 'usualGap', label: 'Usual gap', defaultWidth: 90, getSortValue: r => r.review.usualGapDays ?? 99999, exportValue: r => r.review.usualGapDays ?? '', render: r => (r.review.usualGapDays == null ? '-' : `${r.review.usualGapDays}d`) },
+    {
+      key: 'since', label: 'Since two-way', defaultWidth: 110, getSortValue: r => r.result.daysSinceTwoWay ?? 99999, exportValue: r => r.result.daysSinceTwoWay ?? '',
+      render: r => {
+        const ratio = r.review.overdueRatio;
+        const late = ratio != null && ratio >= 1.5;
+        return (
+          <span title={ratio != null ? `${ratio.toFixed(1)}x their usual gap` : ''} style={{ fontWeight: late ? 700 : 400, color: late ? '#92400E' : undefined }}>
+            {daysLabel(r.result.daysSinceTwoWay)}
+          </span>
+        );
+      },
+    },
+    { key: 'nextStep', label: 'Next step', defaultWidth: 340, getFilterValue: r => r.review.nextStep, exportValue: r => r.review.nextStep, render: r => <span style={{ fontSize: '0.72rem', color: '#334155', whiteSpace: 'normal' }}>{r.review.nextStep}</span> },
+  ], []);
 
   const accountColumns = useMemo(() => [
     { key: 'company', label: 'Company', defaultWidth: 200, getSortValue: a => a.company.toLowerCase(), getFilterValue: a => a.company, exportValue: a => a.company, render: a => <span style={{ fontWeight: 600, color: a.prospect ? 'var(--color-accent)' : undefined }}>{a.company}</span> },
@@ -311,6 +361,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
           )}
 
           <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }} role="tablist" aria-label="Relationships views">
+            <button type="button" role="tab" aria-selected={view === 'review'} onClick={() => setView('review')} style={pillBtn(view === 'review')}>Review</button>
             <button type="button" role="tab" aria-selected={view === 'contacts'} onClick={() => setView('contacts')} style={pillBtn(view === 'contacts')}>Contacts ({rows.length})</button>
             <button type="button" role="tab" aria-selected={view === 'accounts'} onClick={() => setView('accounts')} style={pillBtn(view === 'accounts')}>Accounts ({accounts.length})</button>
             {pickedRows.length > 0 && (
@@ -328,8 +379,53 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
             )}
           </div>
 
+          {view === 'review' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: '0.72rem', color: '#64748B', maxWidth: 820 }}>
+                Each contact against their own last year: how far they sit below their peak score, and how long it has been
+                since a two-way touch compared with the usual gap between them. Most pressing first. Click a row to draw
+                that contact on the chart above.
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} role="group" aria-label="Filter by status">
+                <button type="button" aria-pressed={!reviewFilter} onClick={() => setReviewFilter(null)} style={{ ...pillBtn(!reviewFilter), fontSize: '0.72rem' }}>All {rows.length}</button>
+                {statusCounts.map(st => {
+                  const on = reviewFilter === st.key;
+                  return (
+                    <button
+                      key={st.key}
+                      type="button"
+                      aria-pressed={on}
+                      title={st.tip}
+                      disabled={!st.count}
+                      onClick={() => setReviewFilter(on ? null : st.key)}
+                      style={{
+                        padding: '0.28rem 0.75rem', borderRadius: 999, fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 700,
+                        cursor: st.count ? 'pointer' : 'default', opacity: st.count ? 1 : 0.5,
+                        background: st.bg, color: st.color, border: `${on ? 2 : 1}px solid ${on ? st.color : st.border}`,
+                      }}
+                    >{st.label} {st.count}</button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <div style={{ height: 560, display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'hidden', flex: 'none' }}>
-            {view === 'contacts' ? (
+            {view === 'review' ? (
+              <DataTable
+                key="review"
+                tableId="relationship-review"
+                columns={reviewColumns}
+                rows={reviewRows}
+                alwaysVisible={['status', 'name']}
+                defaultSort={{ key: 'status', direction: 'asc' }}
+                onRowClick={(r) => togglePick(r.key)}
+                exportFileName="relationship-review"
+                settings={settings}
+                updateSettings={updateSettings}
+                emptyMessage="No contacts with this status"
+              />
+            ) : view === 'contacts' ? (
               <DataTable
                 key="contacts"
                 tableId="relationship-contacts"
