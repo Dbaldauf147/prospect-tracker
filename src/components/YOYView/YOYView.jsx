@@ -304,7 +304,7 @@ function quotedStoredSource(key, saved) {
     // A rebuild that comes out identical to the live month reconstructed
     // nothing: nothing datable placed any opp on one side of the month end.
     return saved._matchesLive
-      ? 'Not captured at month end; the rebuild from Opps only repeats today’s live pipeline, so the chart leaves it blank'
+      ? 'Not captured at month end; shown at today’s live pipeline figures, since the rebuild from Opps could not place any opp on either side of the month end'
       : 'Rebuilt from Opps as the pipeline stood at month end';
   }
   const seed = QUOTED_HISTORICAL_SEED[key];
@@ -589,17 +589,14 @@ export function YOYView() {
       const isLive = !manualSaved && key === liveKey && liveCurrentMonth != null;
       const v = manualSaved || (isLive ? liveCurrentMonth : rawSaved);
       // A rebuilt month the rebuild couldn't tell apart from today's live
-      // pipeline (see the auto-capture effect). Its rebuilt figures are just
-      // today's pipeline under an earlier label, so they are left off the
-      // chart: the month shows as a gap (with a tooltip saying why) rather
-      // than as a reading that duplicates the live point. BFO Pipe Total is
-      // carried across from what was recorded, not rebuilt, so it stays.
+      // pipeline (see the auto-capture effect). Dan chose to plot it at
+      // today's figures (the best stand-in there is) rather than leave a
+      // gap; the tooltip and export say where the numbers come from.
       const _matchesLive = !isLive && !!(rawSaved && rawSaved._rebuilt && rawSaved._matchesLive);
-      const rebuiltField = (f) => (v && !_matchesLive ? num(v[f]) : null);
-      const weak = rebuiltField('weak');
-      const ok = rebuiltField('ok');
-      const expected = rebuiltField('expected');
-      const agreements = rebuiltField('agreements');
+      const weak = v ? num(v.weak) : null;
+      const ok = v ? num(v.ok) : null;
+      const expected = v ? num(v.expected) : null;
+      const agreements = v ? num(v.agreements) : null;
       const bfoPipe = v ? num(v.bfoPipe) : null;
       const _hasData = [weak, ok, expected, agreements, bfoPipe].some(x => x != null);
       return { month: m.label, year: m.year, monthKey: key, weak, ok, expected, agreements, bfoPipe, _hasData, _live: isLive && _hasData, _matchesLive };
@@ -2669,7 +2666,7 @@ function QuotedProjectionsCard({ data, quotedTable, live, onSaveTable, onDownloa
                   note: row._live
                     ? 'Live: computed now from Opps (quoted $ by Chance / Agreements Sent) + BFO Activity (Pipe Total). Pin this point and hit ⬇ Excel for the opp-level rows behind it. Use “Edit values” to record a fixed month-end snapshot.'
                     : (row._matchesLive
-                        ? 'Not captured at its month end, and rebuilding it from today’s Opps only gives back today’s live figures (nothing datable, like a Quoted On date or a stage move, places any opp on one side of the month end). So it is left blank rather than repeating the live month. Type the real figures in through “Edit values” if you have them.'
+                        ? 'Not captured at its month end, so this point shows today’s live figures (nothing datable, like a Quoted On date or a stage move, places any opp on one side of the month end). Type the real figures in through “Edit values” if you have them.'
                         : row._hasData
                           ? 'Recorded month-end snapshot: pin this point and hit ⬇ Excel for the opp rows rebuilt as the pipeline stood at that month end - each under the Stage it was in then, from its stage history.'
                           : 'No values recorded for this month yet.'),
