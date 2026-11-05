@@ -343,7 +343,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
 
       {indexLoaded && !hasFeed && (
         <div style={{ padding: '0.6rem 0.9rem', border: '1px dashed #CBD5E1', borderRadius: 8, fontSize: '0.74rem', color: '#64748B' }}>
-          No HubSpot or Granola activity loaded yet. Open the Activity tab once to load it; until then the scores only see the
+          No HubSpot, Granola or Outlook activity loaded yet. Open the Activity tab once to load it; until then the scores only see the
           {` ${loggedCount}`} activit{loggedCount === 1 ? 'y' : 'ies'} logged here.
         </div>
       )}

@@ -28,7 +28,7 @@ import {
 import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import { buildUnansweredIndex } from '../../utils/unansweredOutreach';
 import { fetchAllActivityPages } from '../../utils/hubspotActivityPages';
-import { saveTouchIndexFromFeed, saveMeetingTouches } from '../../utils/relationshipLog';
+import { saveTouchIndexFromFeed, saveMeetingTouches, saveCalendarMeetings, calendarBackfilled } from '../../utils/relationshipLog';
 import styles from './ActivityView.module.css';
 
 const CACHE_KEY = 'hubspot-activity-cache';
@@ -184,6 +184,36 @@ const SOURCE_BADGES = {
   hubspot: { label: 'HubSpot', color: '#7C3AED', background: '#F3E8FF' },
   granola: { label: 'Granola', color: '#B45309', background: '#FEF3C7' },
 };
+
+// The year of Outlook calendar before the score started keeping it, read
+// once through Graph a month at a time (the endpoint pages up to 1,000
+// events per call, and a month always fits). Runs in the background after
+// a successful calendar load; a month that fails is skipped rather than
+// retried, and the run is marked done so it doesn't repeat every visit.
+let outlookBackfillRunning = false;
+async function backfillOutlookForScore(token) {
+  if (outlookBackfillRunning || !token) return;
+  if (await calendarBackfilled()) return;
+  outlookBackfillRunning = true;
+  try {
+    const meetings = [];
+    for (let k = 1; k <= 12; k += 1) {
+      try {
+        const r = await apiFetch(
+          `/api/outlook-calendar?startDays=${-30 * (k + 1)}&endDays=${-30 * k - 1}`,
+          { headers: { 'X-MS-Token': token } },
+        );
+        if (r.status === 401) return; // signed out mid-run: try again next visit
+        if (!r.ok) continue;
+        const body = await r.json();
+        meetings.push(...outlookMeetingsFromEvents(body.events || []));
+      } catch { /* that month is skipped */ }
+    }
+    await saveCalendarMeetings(meetings, { backfilled: true });
+  } finally {
+    outlookBackfillRunning = false;
+  }
+}
 
 export function ActivityView({ prospects = [], settings, updateSettings }) {
   const { user, isAdmin } = useAuth();
@@ -848,6 +878,8 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
       }
       const body = await r.json();
       setGraphEvents(outlookMeetingsFromEvents(body.events || []));
+      // A year of calendar for Relationship Strength, read once.
+      void backfillOutlookForScore(token);
       setGraphTruncated(!!body.truncated);
       setGraphLoaded(true);
       setGraphFetchedAt(new Date().toISOString());
@@ -1018,6 +1050,15 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   // events, and mergeMeetings only ever collapses copies from DIFFERENT
   // sources — so feeding it two calendar feeds would double every
   // meeting rather than reconcile them.
+  // Relationship Strength keeps every past Outlook meeting the tab sees,
+  // from all three pipes: each only ever holds a short window, so the
+  // score builds its calendar history up visit by visit. The same meeting
+  // arriving through two pipes is kept once (calendarMeetingRecord's key).
+  useEffect(() => {
+    const all = [...granolaCalendarRows, ...outlookMeetings, ...outlookEvents];
+    if (all.length) void saveCalendarMeetings(all);
+  }, [granolaCalendarRows, outlookMeetings, outlookEvents]);
+
   const calendarMeetings = granolaCalendarRows.length > 0
     ? granolaCalendarRows
     : (outlookMeetings.length > 0 ? outlookMeetings : outlookEvents);

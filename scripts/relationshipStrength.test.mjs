@@ -12,7 +12,7 @@ import {
   RELATIONSHIP_CONFIG as CFG, DAY_MS, normalizeTouch, touchPoints, isTwoWay, linkReplies,
   scoreContact, scoreAccount, tierFor, trendFor, hubspotCallOutcome, hubspotMeetingMedium,
   buildTouchIndex, touchesForContact, oppsForContact, encodeTouch, decodeTouch, scoreHistory,
-  buildMeetingTouchIndex, mergeTouchIndexes, contactDateAdded, ageLabel, logDayMs,
+  buildMeetingTouchIndex, mergeTouchIndexes, calendarMeetingRecord, calendarLog, buildCalendarTouchIndex, contactDateAdded, ageLabel, logDayMs,
 } from '../src/utils/relationshipStrength.js';
 import { mergeRelationshipLogs, parseRelationshipLog } from '../src/utils/relationshipLog.js';
 
@@ -203,6 +203,38 @@ check('steady is flat', trendFor([t(10, { type: 'call', outcome: 'connected' }),
   check('...keeping the other Granola meeting', both.length, 2);
   check('merge of nothing is nothing', mergeTouchIndexes(null, undefined), null);
   check('merge joins lists', mergeTouchIndexes({ byEmail: { a: [[1, 'eo-', 'x']] } }, { byEmail: { a: [[2, 'eo-', 'y']] } }).byEmail.a.length, 2);
+}
+
+// --- Outlook calendar meetings ------------------------------------------------
+{
+  const at = (d, h = 0) => new Date(ago(d) + h * 3600000).toISOString();
+  const graph = { _meetingStart: at(10), _subject: 'Acme / SE quarterly', _externalEmails: ['pat@acme.com'], _location: 'Microsoft Teams Meeting', _attendeeDetails: [] };
+  const webhook = { _meetingStart: at(10), _subject: 'Acme / SE Quarterly', _attendeeDetails: [{ email: 'Pat@Acme.com' }, { email: 'dan@se.com' }], _location: '' };
+  const r = calendarMeetingRecord(graph, NOW);
+  check('a past external meeting is kept', [r.emails, r.medium], [['pat@acme.com'], 'video']);
+  check('the same meeting through another pipe has the same key', calendarMeetingRecord(webhook, NOW).id, r.id);
+  check('colleagues are not who it was with', calendarMeetingRecord(webhook, NOW).emails, ['pat@acme.com']);
+  check('a meeting yet to happen is not kept', calendarMeetingRecord({ ...graph, _meetingStart: new Date(NOW + 86400000).toISOString() }, NOW), null);
+  check('cancelled, all-day, free and internal-only are not', [
+    calendarMeetingRecord({ ...graph, _subject: 'Canceled: Acme / SE quarterly' }, NOW),
+    calendarMeetingRecord({ ...graph, _allDay: true }, NOW),
+    calendarMeetingRecord({ ...graph, _showAs: 'free' }, NOW),
+    calendarMeetingRecord({ ...graph, _externalEmails: [], _attendeeDetails: [{ email: 'amy@se.com' }] }, NOW),
+  ], [null, null, null, null]);
+
+  // Two visits, each seeing a different window: the log keeps both.
+  const first = calendarLog(null, [graph], { nowMs: NOW });
+  const second = calendarLog(first, [webhook, { ...graph, _meetingStart: at(2), _subject: 'Site walk', _location: '200 Park Ave' }], { nowMs: NOW });
+  check('the log accumulates across visits, one entry per meeting', Object.keys(second.meetings).length, 2);
+  check('the backfill mark survives', calendarLog({ ...first, backfilledAt: 'x' }, [], { nowMs: NOW }).backfilledAt, 'x');
+  check('older than two years drops out', Object.keys(calendarLog({ meetings: { old: { ms: ago(800), emails: ['a@b.com'] } } }, [], { nowMs: NOW }).meetings).length, 0);
+
+  const pat = { id: '77', email: 'pat@acme.com' };
+  const touches = touchesForContact(pat, buildCalendarTouchIndex(second));
+  check('calendar meetings score as held meetings from Outlook', touches.map(t => [t.source, t.medium]), [['outlook', 'video'], ['outlook', 'in-person']]);
+  // A Granola note of the same meeting counts once.
+  const gr = buildMeetingTouchIndex([{ id: 'n1', _meetingStart: at(10, 0.2), _externalEmails: ['pat@acme.com'] }], { nowMs: NOW });
+  check('a Granola note of a calendar meeting counts once', touchesForContact(pat, mergeTouchIndexes(buildCalendarTouchIndex(second), gr)).length, 2);
 }
 
 // --- date added ---------------------------------------------------------------
