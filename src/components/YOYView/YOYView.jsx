@@ -304,7 +304,7 @@ function quotedStoredSource(key, saved) {
     // A rebuild that comes out identical to the live month reconstructed
     // nothing: nothing datable placed any opp on one side of the month end.
     return saved._matchesLive
-      ? 'Rebuilt from Opps, but identical to today’s live pipeline - today’s figures under this month’s label'
+      ? 'Not captured at month end; the rebuild from Opps only repeats today’s live pipeline, so the chart leaves it blank'
       : 'Rebuilt from Opps as the pipeline stood at month end';
   }
   const seed = QUOTED_HISTORICAL_SEED[key];
@@ -588,15 +588,20 @@ export function YOYView() {
       const manualSaved = rawSaved && !rawSaved._auto ? rawSaved : null;
       const isLive = !manualSaved && key === liveKey && liveCurrentMonth != null;
       const v = manualSaved || (isLive ? liveCurrentMonth : rawSaved);
-      const weak = v ? num(v.weak) : null;
-      const ok = v ? num(v.ok) : null;
-      const expected = v ? num(v.expected) : null;
-      const agreements = v ? num(v.agreements) : null;
+      // A rebuilt month the rebuild couldn't tell apart from today's live
+      // pipeline (see the auto-capture effect). Its rebuilt figures are just
+      // today's pipeline under an earlier label, so they are left off the
+      // chart: the month shows as a gap (with a tooltip saying why) rather
+      // than as a reading that duplicates the live point. BFO Pipe Total is
+      // carried across from what was recorded, not rebuilt, so it stays.
+      const _matchesLive = !isLive && !!(rawSaved && rawSaved._rebuilt && rawSaved._matchesLive);
+      const rebuiltField = (f) => (v && !_matchesLive ? num(v[f]) : null);
+      const weak = rebuiltField('weak');
+      const ok = rebuiltField('ok');
+      const expected = rebuiltField('expected');
+      const agreements = rebuiltField('agreements');
       const bfoPipe = v ? num(v.bfoPipe) : null;
       const _hasData = [weak, ok, expected, agreements, bfoPipe].some(x => x != null);
-      // A rebuilt month the rebuild couldn't tell apart from today's live
-      // pipeline (see the auto-capture effect) — plotted, but flagged.
-      const _matchesLive = !isLive && !!(rawSaved && rawSaved._rebuilt && rawSaved._matchesLive) && _hasData;
       return { month: m.label, year: m.year, monthKey: key, weak, ok, expected, agreements, bfoPipe, _hasData, _live: isLive && _hasData, _matchesLive };
     });
   }, [quotedTable, quotedYear, liveCurrentMonth]);
@@ -2612,10 +2617,6 @@ function QuotedProjectionsCard({ data, quotedTable, live, onSaveTable, onDownloa
   // saved values — say so, otherwise a frozen point looks like a bug.
   const liveRow = data.find(r => r.monthKey === currentMonthKey());
   const pinned = !!live && !!liveRow && !liveRow._live && liveRow._hasData;
-  // Months whose rebuild came out identical to the live month: plotted, but
-  // indistinguishable from today's pipeline, so say so on the card rather
-  // than leaving a flat line to be read as a real month-end reading.
-  const sameAsLive = data.filter(r => r._matchesLive);
   // BFO Pipe Total starts hidden — it rides its own right-hand axis and
   // overwhelms the quoted buckets, so surface it only on demand via the legend.
   const { hidden, legendProps } = useInteractiveLegend({ bfoPipe: true });
@@ -2623,21 +2624,11 @@ function QuotedProjectionsCard({ data, quotedTable, live, onSaveTable, onDownloa
     <div className={styles.chartCard}>
       <ChartHeader title="Quoted Projections" hideId="quotedProjections" onDownload={onDownload} canDownload={hasAnyValues} />
       <div className={styles.quotedEditRow}>
-        {(pinned || sameAsLive.length > 0) && (
+        {pinned && (
           <div className={styles.quotedNotes}>
-            {pinned && (
-              <span className={styles.quotedPinNote} title="This month is showing saved values instead of the live Opps + BFO figures. Tick “Auto (live)” in Edit values to resume auto-updating.">
-                {liveRow.month} pinned: not auto-updating
-              </span>
-            )}
-            {sameAsLive.length > 0 && (
-              <span
-                className={styles.quotedSameAsLiveNote}
-                title={`${sameAsLive.map(r => `${r.month} ${r.year}`).join(', ')} ${sameAsLive.length > 1 ? 'were' : 'was'} never captured at month end, so ${sameAsLive.length > 1 ? 'they are' : 'it is'} rebuilt from today’s Opps - and the rebuild comes out identical to the live month. Nothing datable (a Quoted On date, a stage move) placed any opp on one side of the month end, so ${sameAsLive.length > 1 ? 'these points are' : 'this point is'} today’s pipeline under an earlier label. Type the real figures in through “Edit values” to pin them.`}
-              >
-                ⚠ {sameAsLive.map(r => r.month).join(', ')}: rebuild = today’s live figures
-              </span>
-            )}
+            <span className={styles.quotedPinNote} title="This month is showing saved values instead of the live Opps + BFO figures. Tick “Auto (live)” in Edit values to resume auto-updating.">
+              {liveRow.month} pinned: not auto-updating
+            </span>
           </div>
         )}
         <span className={styles.quotedUnitNote}>values in $K</span>
@@ -2678,7 +2669,7 @@ function QuotedProjectionsCard({ data, quotedTable, live, onSaveTable, onDownloa
                   note: row._live
                     ? 'Live: computed now from Opps (quoted $ by Chance / Agreements Sent) + BFO Activity (Pipe Total). Pin this point and hit ⬇ Excel for the opp-level rows behind it. Use “Edit values” to record a fixed month-end snapshot.'
                     : (row._matchesLive
-                        ? 'Never captured at its month end, so this point is rebuilt from today’s Opps - and the rebuild lands on exactly the live month’s figures. Nothing datable (a Quoted On date, a stage move) placed any opp on one side of the month end, so it is today’s pipeline under this month’s label rather than a reading of its own. Type the real figures in through “Edit values” to pin them.'
+                        ? 'Not captured at its month end, and rebuilding it from today’s Opps only gives back today’s live figures (nothing datable, like a Quoted On date or a stage move, places any opp on one side of the month end). So it is left blank rather than repeating the live month. Type the real figures in through “Edit values” if you have them.'
                         : row._hasData
                           ? 'Recorded month-end snapshot: pin this point and hit ⬇ Excel for the opp rows rebuilt as the pipeline stood at that month end - each under the Stage it was in then, from its stage history.'
                           : 'No values recorded for this month yet.'),
