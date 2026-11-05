@@ -19,6 +19,7 @@ import {
 import { DataTable } from '../common/DataTable';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { isSchneiderContact } from '../../utils/contactRosters';
+import { isKeyContact } from '../../utils/decisionMakerCoverage';
 import { useAuth } from '../../contexts/AuthContext';
 import { useRelationshipData } from '../../hooks/useRelationshipStrength';
 import {
@@ -118,6 +119,10 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
   const { touchesFor, dateAddedFor, oppsRecords, hasFeed, indexLoaded, log } = useRelationshipData();
   // Review first: it is the one that says what to do.
   const [view, setView] = useState('review');
+  // Whose relationships the page covers. Key Contacts (tagged Dan Key
+  // Target, the Key Contacts tab's roster) by default; All widens it to
+  // everyone with activity. Cards, charts and tables all follow it.
+  const [scope, setScope] = useState('key'); // 'key' | 'all'
   const [reviewFilter, setReviewFilter] = useState(null); // a status key, or null for all
   const [reviewOf, setReviewOf] = useState('contacts'); // what Review lists: 'contacts' | 'accounts'
   const [picked, setPicked] = useState([]); // contact keys drawn on the chart
@@ -132,6 +137,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
     const out = [];
     for (const c of contacts) {
       if (!usable(c)) continue;
+      if (scope === 'key' && !isKeyContact(c)) continue;
       const touches = touchesFor(c);
       if (!touches.length) continue;
       const added = dateAddedFor(c, touches);
@@ -139,7 +145,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
       out.push({ key: contactKey(c) || c.email, contact: c, touches, result, added });
     }
     return out;
-  }, [contacts, indexLoaded, touchesFor, dateAddedFor, oppsRecords, nowMs]);
+  }, [contacts, indexLoaded, touchesFor, dateAddedFor, oppsRecords, nowMs, scope]);
 
   // Each contact's score a fortnight at a time over the year.
   const dates = useMemo(() => Array.from({ length: POINTS }, (_, i) => nowMs - (POINTS - 1 - i) * STEP_DAYS * DAY_MS), [nowMs]);
@@ -185,7 +191,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
 
   const pickedRows = picked.map(k => rows.find(r => r.key === k)).filter(Boolean);
   const lines = [
-    { key: 'average', label: 'Average, all contacts', color: AVERAGE_COLOR },
+    { key: 'average', label: scope === 'key' ? 'Average, key contacts' : 'Average, all contacts', color: AVERAGE_COLOR },
     ...pickedRows.map((r, i) => ({ key: `c:${r.key}`, label: contactName(r.contact) || r.contact.email, color: LINE_COLORS[i] })),
   ];
 
@@ -338,6 +344,10 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
           contacts and buying roles covered. Strong is 75+, Warm 50-74, Developing 25-49, Cold under 25.
           The arrow compares the last 30 days with the 60 before. Tick up to {MAX_LINES} contacts to draw them on the chart.
         </div>
+        <div style={{ display: 'inline-flex', gap: '0.35rem' }} role="group" aria-label="Which contacts">
+          <button type="button" aria-pressed={scope === 'key'} onClick={() => setScope('key')} style={pillBtn(scope === 'key')}>Key Contacts</button>
+          <button type="button" aria-pressed={scope === 'all'} onClick={() => setScope('all')} style={pillBtn(scope === 'all')}>All contacts</button>
+        </div>
         <button type="button" onClick={() => setLogging(true)} style={pillBtn(true)}>+ Log activity</button>
       </div>
 
@@ -361,7 +371,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
 
           {scored.length === 0 ? (
             <div style={{ padding: '0.75rem 1rem', border: '1px dashed #CBD5E1', borderRadius: 8, fontSize: '0.75rem', color: '#64748B' }}>
-              No contact has any activity on record yet. Log one with + Log activity, or open the Activity tab to pull HubSpot&apos;s.
+              {scope === 'key' ? 'No key contact has any activity on record yet. Switch to All contacts to see everyone.' : 'No contact has any activity on record yet.'} Log one with + Log activity, or open the Activity tab to pull HubSpot&apos;s.
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 460px), 1fr))', gap: '0.75rem' }}>
@@ -394,7 +404,7 @@ export function RelationshipsView({ prospects = [], onSelectProspect, settings, 
               </div>
               <div style={CARD}>
                 <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>Contacts in each tier</div>
-                <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: 6 }}>How many of your {scored.length} contacts sat in each tier on that day.</div>
+                <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: 6 }}>How many of your {scored.length} {scope === 'key' ? 'key ' : ''}contacts sat in each tier on that day.</div>
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={series} margin={{ top: 8, right: 12, left: -12, bottom: 0 }}>
                     <CartesianGrid vertical={false} stroke="#EEF2F6" />
