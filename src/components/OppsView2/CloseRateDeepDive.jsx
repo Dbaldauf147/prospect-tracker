@@ -32,6 +32,8 @@ import {
 import { PRESET_LIST, WEEKLY_MONTHS, cleanWeeklyMonths } from '../../utils/closeRateWindows';
 import { renameServiceGroupPatch } from '../../utils/serviceGroupRename';
 import { StageProgression } from './StageProgression';
+import { QuarterlyEmailButton } from './QuarterlyEmailButton';
+import { useAuth } from '../../contexts/AuthContext';
 import styles from './CloseRateDeepDive.module.css';
 
 // Opps > Close Rates: every close-rate trend on one page, each exportable.
@@ -690,6 +692,7 @@ export function CloseRateDeepDive({
   records = [], hiddenServices, settings, updateSettings,
   servicePicks, serviceLinesOff, onServiceLineShown, serviceLinesOffDefault, onServiceLineDefault, onToggleHideService,
 }) {
+  const { isAdmin } = useAuth() || {};
   const saved = useMemo(() => readSavedFilters(settings), [settings]);
   const chartTitles = useMemo(() => {
     const raw = settings?.[CHART_TITLES_KEY];
@@ -1067,6 +1070,7 @@ export function CloseRateDeepDive({
         <button type="button" className={styles.exportBtn} onClick={exportAll} disabled={exporting}>
           {exporting ? 'Exporting...' : 'Export all to Excel'}
         </button>
+        {isAdmin && <QuarterlyEmailButton />}
       </div>
       <div className={styles.scopeNote}>
         Close rate = Sold / (Sold + Not Sold), by {basisOf(currentFilters).label}{dateBasis === 'open' ? ' (each closed deal counted in the period it opened)' : ''}, {filterText}.
