@@ -14,7 +14,8 @@
     { "path": "/api/daily-backup", "schedule": "0 11 * * *" },
     { "path": "/api/oil-price-weekly", "schedule": "0 12 * * 1" },
     { "path": "/api/hubspot-weekly-export", "schedule": "35 12 * * 1" },
-    { "path": "/api/quoted-projections-month-end", "schedule": "40 23 28-31 * *" }
+    { "path": "/api/quoted-projections-month-end", "schedule": "40 23 28-31 * *" },
+    { "path": "/api/close-rates-quarterly", "schedule": "0 13 1 1,4,7,10 *" }
   ],
   "headers": [
     {
