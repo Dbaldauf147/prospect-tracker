@@ -1,7 +1,7 @@
 // Assertion tests for Opps > Days in Stage > Stage Reach. Plain Node. Run:
 //   node scripts/stageReach.test.mjs
 import {
-  furthestStageRank, stageReachByPeriod, reachPeriodLabel, REACH_STAGES,
+  furthestStageRank, stageReachByPeriod, reachPeriodLabel, REACH_STAGES, NOT_STARTED,
 } from '../src/utils/stageReach.js';
 
 let failures = 0;
@@ -37,6 +37,17 @@ const q1 = q.rows[0];
 check('Q1 reach', REACH_STAGES.map(s => q1.reached[s]), [3, 3, 3, 2, 1, 1, 1]);
 check('Q1 percentages', [q1.pct.Lead, q1.pct.Quoted, q1.pct.Sold], [100, 66.7, 33.3]);
 check('Not Started cohort reached nothing past it', q.rows[2].pct.Lead, 0);
+check('Not Started cohort reads as Not Started only', [q.rows[2].reached[NOT_STARTED], q.rows[2].pct[NOT_STARTED]], [1, 100]);
+check('Q1 has nobody stuck at Not Started', [q1.reached[NOT_STARTED], q1.pct[NOT_STARTED]], [0, 0]);
+
+// A deal that sat in Not Started and then went Not Sold is counted, and
+// shows on the Not Started only line rather than being dropped.
+const diedNotStarted = { Stage: 'Not Sold', 'Start Date': '2026-01-05', _stageHistory: [{ stage: 'Not Started' }] };
+const ns = stageReachByPeriod([won, diedNotStarted, lostNoHistory]);
+check('closed Not Started loss counted, no-history loss still left out', [ns.counted, ns.unknown], [2, 1]);
+check('closed Not Started loss on its own line', [ns.rows[0].reached[NOT_STARTED], ns.rows[0].pct[NOT_STARTED], ns.rows[0].pct.Lead], [1, 50, 50]);
+check('overall Not Started only', [ns.overall.reached[NOT_STARTED], ns.overall.pct[NOT_STARTED]], [1, 50]);
+check('its details row says Not Started', ns.opps.find(o => o.r === diedNotStarted).counted, [NOT_STARTED]);
 
 const m = stageReachByPeriod(all, { period: 'month', closedOnly: false });
 check('month gaps filled, empty month has null pct', [m.rows.length, m.rows[4].key, m.rows[4].total, m.rows[4].pct.Lead], [7, '2026-05', 0, null]);

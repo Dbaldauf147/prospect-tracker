@@ -7,15 +7,23 @@ import { ColourPickDot } from '../common/ColourPickDot';
 import { labelText, targetLineProps } from '../../utils/closeRateChartPrefs';
 import { TargetsMenu } from './CloseRateTargets';
 import { WINDOW_PRESETS, presetFrom } from '../../utils/closeRateWindows';
-import { stageReachByPeriod, REACH_STAGES } from '../../utils/stageReach';
+import { stageReachByPeriod, REACH_STAGES, REACH_SERIES, NOT_STARTED } from '../../utils/stageReach';
 import styles from './OppsView2.module.css';
 
 const muted = { color: 'var(--color-text-muted, #64748B)' };
 
 // The same validated categorical order the Not Sold trend uses, one hue
-// per stage. Seven stages, eight colours, so nothing folds into grey.
-const PALETTE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6'];
-const COLOUR = Object.fromEntries(REACH_STAGES.map((s, i) => [s, PALETTE[i]]));
+// per stage. The seven stages keep the first seven (so saved colours and
+// what people are used to don't move); Not Started takes the eighth.
+const PALETTE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'];
+const COLOUR = { ...Object.fromEntries(REACH_STAGES.map((s, i) => [s, PALETTE[i]])), [NOT_STARTED]: PALETTE[7] };
+
+// Not Started is a "stopped here" share, not an "at least this far" one,
+// so it reads as such wherever it is named.
+const nameOf = (s) => (s === NOT_STARTED ? 'Not Started only' : s);
+const shareText = (s) => (s === NOT_STARTED
+  ? 'Share of the period\u2019s opps that never got past Not Started (the gap under Lead)'
+  : `Share of the period's opps that got at least as far as ${s}`);
 const GRID = '#E2E8F0';
 const AXIS_TEXT = '#64748B';
 
@@ -55,10 +63,10 @@ function ReachTooltip({ active, payload, hidden, closedOnly, colourOf = (s) => C
         </div>
       )}
       {row.total === 0 && <div style={muted}>No {noun} opps with stage history in this period</div>}
-      {row.total > 0 && REACH_STAGES.filter(s => !hidden.has(s)).map(s => (
+      {row.total > 0 && REACH_SERIES.filter(s => !hidden.has(s)).map(s => (
         <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1px 0' }}>
           <span style={{ width: 8, height: 8, borderRadius: 2, background: colourOf(s) }} />
-          <span style={{ flex: 1 }}>{s}</span>
+          <span style={{ flex: 1 }}>{nameOf(s)}</span>
           <span style={muted}>{row[`${s}__n`]}</span>
           <span style={{ fontWeight: 600, minWidth: 44, textAlign: 'right' }}>{fmtPct(row[s])}</span>
         </div>
@@ -123,8 +131,8 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
     const kept = data.rows.filter(r => !isThin(r));
     const total = kept.reduce((n, r) => n + r.total, 0);
     const unknown = kept.reduce((n, r) => n + r.unknown, 0);
-    const reached = Object.fromEntries(REACH_STAGES.map(s => [s, kept.reduce((n, r) => n + r.reached[s], 0)]));
-    const pct = Object.fromEntries(REACH_STAGES.map(s => [s, total > 0 ? Math.round((reached[s] / total) * 1000) / 10 : null]));
+    const reached = Object.fromEntries(REACH_SERIES.map(s => [s, kept.reduce((n, r) => n + r.reached[s], 0)]));
+    const pct = Object.fromEntries(REACH_SERIES.map(s => [s, total > 0 ? Math.round((reached[s] / total) * 1000) / 10 : null]));
     const coverage = total + unknown > 0 ? Math.round((total / (total + unknown)) * 1000) / 10 : null;
     return { total, unknown, reached, pct, coverage, thinPeriods: data.rows.length - kept.length };
   }, [data]);
@@ -136,8 +144,8 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
   // gaps in the line.
   const chartData = useMemo(() => data.rows.slice(Math.max(0, data.rows.findIndex(r => r.total > 0 && !isThin(r)))).map(r => ({
     key: r.key, label: r.label, total: r.total, unknown: r.unknown, coverage: r.coverage,
-    ...Object.fromEntries(REACH_STAGES.map(s => [s, isThin(r) ? null : r.pct[s]])),
-    ...Object.fromEntries(REACH_STAGES.map(s => [`${s}__n`, r.reached[s]])),
+    ...Object.fromEntries(REACH_SERIES.map(s => [s, isThin(r) ? null : r.pct[s]])),
+    ...Object.fromEntries(REACH_SERIES.map(s => [`${s}__n`, r.reached[s]])),
   })), [data]);
 
   const tableRows = useMemo(() => {
@@ -193,23 +201,23 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
         ),
       },
     ];
-    for (const s of REACH_STAGES) {
+    for (const s of REACH_SERIES) {
       cols.push({
         key: `reach:${s}`,
-        label: s,
+        label: nameOf(s),
         defaultWidth: 110,
         getSortValue: (row) => row.pct[s] ?? -1,
         getFilterValue: (row) => fmtPct(row.pct[s]),
         exportValue: (row) => fmtPct(row.pct[s]),
         renderHeader: (label) => (
-          <span title={`Share of the period's opps that got at least as far as ${s}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <span title={shareText(s)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <span style={{ width: 8, height: 8, borderRadius: 2, background: colourOf(s), flexShrink: 0 }} />
             {label}
           </span>
         ),
         render: (row) => (
           <div
-            title={row.total ? `${row.reached[s]} of ${row.total} opps` : 'No opps counted in this period'}
+            title={row.total ? `${row.reached[s]} of ${row.total} opps${s === NOT_STARTED ? ' never got past Not Started' : ''}` : 'No opps counted in this period'}
             style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: row.isTotal ? 700 : 400, ...(row.pct[s] == null ? muted : null), ...thinStyle(row) }}
           >{fmtPct(row.pct[s])}</div>
         ),
@@ -286,11 +294,13 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
         {closedOnly ? (
           <>
             Each period is the opps that started in it (by Start Date) and have since closed as Sold or Not Sold; a stage&rsquo;s line is the share of them that got at least that far before they closed.
+            Not Started only is the share that sat in Not Started and then went Not Sold, without ever reaching Lead.
             Periods where under {MIN_COVERAGE}% of the closed deals have stage history are greyed in the table and left off the chart, because what is left is mostly the Sold ones.
           </>
         ) : (
           <>
             Each period is the opps that started in it (by Start Date); a stage&rsquo;s line is the share of them that got at least that far, now or at any point in their stage history.
+            Not Started only is the share that never got past Not Started.
             Recent periods are still in progress, so their later stages will keep rising.
           </>
         )}
@@ -299,7 +309,7 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
 
       {/* Legend doubles as the line toggle. */}
       <div className={styles.notSoldYears} style={{ gap: '0.35rem', flexWrap: 'wrap' }}>
-        {REACH_STAGES.map(s => {
+        {REACH_SERIES.map(s => {
           const off = hidden.has(s);
           return (
             <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -310,11 +320,11 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
                 type="button"
                 className={styles.notSoldYear}
                 onClick={() => toggleStage(s)}
-                title={off ? `Show ${s}` : `Hide ${s}`}
+                title={`${off ? 'Show' : 'Hide'} ${nameOf(s)}. ${shareText(s)}.`}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 5, opacity: off ? 0.45 : 1, textDecoration: off ? 'line-through' : 'none' }}
               >
                 {!onColourChange && <span style={{ width: 12, height: 3, borderRadius: 2, background: colourOf(s) }} />}
-                {s}
+                {nameOf(s)}
                 <span style={{ fontWeight: 400, opacity: 0.8 }}>{fmtPct(overall.pct[s])}</span>
               </button>
               {onLabelToggle && (
@@ -337,18 +347,18 @@ export function StageReach({ records, settings, updateSettings, period: periodPr
       ) : (
         <div style={{ height: 320, background: '#fff', border: `1px solid ${GRID}`, borderRadius: 6, padding: '8px 8px 0' }}>
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{ top: REACH_STAGES.some(st => !hidden.has(st) && labelled(st)) ? 22 : 8, right: 24, bottom: 4, left: 4 }}>
+            <LineChart data={chartData} margin={{ top: REACH_SERIES.some(st => !hidden.has(st) && labelled(st)) ? 22 : 8, right: 24, bottom: 4, left: 4 }}>
               <CartesianGrid stroke={GRID} strokeDasharray="2 4" vertical={false} />
               <XAxis dataKey="label" tick={{ fontSize: 10, fill: AXIS_TEXT }} tickLine={false} axisLine={{ stroke: GRID }} minTickGap={12} />
               <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tick={{ fontSize: 10, fill: AXIS_TEXT }} tickLine={false} axisLine={false} width={40} tickFormatter={v => `${v}%`} />
               <Tooltip content={<ReachTooltip hidden={hidden} closedOnly={closedOnly} colourOf={colourOf} />} cursor={{ stroke: AXIS_TEXT, strokeDasharray: '3 3' }} />
               {targetLineProps(targets).map(({ key, ...props }) => <ReferenceLine key={key} {...props} />)}
-              {REACH_STAGES.filter(s => !hidden.has(s)).map(s => (
+              {REACH_SERIES.filter(s => !hidden.has(s)).map(s => (
                 <Line
                   key={s}
                   type="linear"
                   dataKey={s}
-                  name={s}
+                  name={nameOf(s)}
                   stroke={colourOf(s)}
                   strokeWidth={2}
                   dot={{ r: 2.5, strokeWidth: 0, fill: colourOf(s) }}

@@ -41,8 +41,20 @@ import { toISODate } from './oppsCallIn.js';
 import { isPullThroughOpp } from './pullThrough.js';
 
 // The stages a cohort is measured against, in pipeline order. Not Started
-// is where every opp begins, so it is always 100% and not worth a line.
+// is where every opp begins, so "reached at least Not Started" would always
+// be 100%; it is measured the other way instead (see NOT_STARTED).
 export const REACH_STAGES = ['Lead', 'Qualifying', 'Quoting', 'Quoted', 'Contracting', 'Agreement Sent', 'Sold'];
+
+// The opps whose furthest known stage is Not Started: they never got to
+// Lead (in the closed view, deals that sat in Not Started and then went
+// Not Sold). Carried in `reached` / `pct` under this key alongside the
+// stages, but it is an "only got this far" share, not an "at least" one,
+// so it is the gap under the Lead line rather than a point on the funnel.
+// A loss with no stage history is not in it: nothing says where it died.
+export const NOT_STARTED = 'Not Started';
+
+// Every series the view draws, Not Started first.
+export const REACH_SERIES = [NOT_STARTED, ...REACH_STAGES];
 
 // Pipeline position of each stage. Repricing is a re-quote, so it sits
 // with Quoted (as in utils/oppStages.js ACTIVE_STAGE_RANK).
@@ -143,12 +155,12 @@ export function stageReachByPeriod(records, { period = 'quarter', from = '', to 
   const bucketFor = (key) => {
     let b = buckets.get(key);
     if (!b) {
-      b = { total: 0, unknown: 0, reached: Object.fromEntries(REACH_STAGES.map(s => [s, 0])) };
+      b = { total: 0, unknown: 0, reached: Object.fromEntries(REACH_SERIES.map(s => [s, 0])) };
       buckets.set(key, b);
     }
     return b;
   };
-  const overallReached = Object.fromEntries(REACH_STAGES.map(s => [s, 0]));
+  const overallReached = Object.fromEntries(REACH_SERIES.map(s => [s, 0]));
   let counted = 0;
   let undated = 0;
   let unknown = 0;
@@ -168,22 +180,24 @@ export function stageReachByPeriod(records, { period = 'quarter', from = '', to 
     const key = startPeriodOf(r, period);
     const rank = furthestStageRank(r);
     if (rank == null) { unknown += 1; bucketFor(key).unknown += 1; opps.push({ r, period: key, counted: null }); continue; }
-    opps.push({ r, period: key, counted: REACH_STAGES.filter((s, i) => rank >= REACH_RANK[i]) });
+    const stalled = rank === RANK[NOT_STARTED];
+    opps.push({ r, period: key, counted: stalled ? [NOT_STARTED] : REACH_STAGES.filter((s, i) => rank >= REACH_RANK[i]) });
     const b = bucketFor(key);
     b.total += 1;
     counted += 1;
+    if (stalled) { b.reached[NOT_STARTED] += 1; overallReached[NOT_STARTED] += 1; }
     REACH_STAGES.forEach((s, i) => {
       if (rank >= REACH_RANK[i]) { b.reached[s] += 1; overallReached[s] += 1; }
     });
   }
 
-  const pctOf = (reached, total) => Object.fromEntries(REACH_STAGES.map(s => [
+  const pctOf = (reached, total) => Object.fromEntries(REACH_SERIES.map(s => [
     s, total > 0 ? Math.round((reached[s] / total) * 1000) / 10 : null,
   ]));
 
   const keys = [...buckets.keys()].sort();
   const rows = periodRange(keys[0], keys[keys.length - 1], period).map(key => {
-    const b = buckets.get(key) || { total: 0, unknown: 0, reached: Object.fromEntries(REACH_STAGES.map(s => [s, 0])) };
+    const b = buckets.get(key) || { total: 0, unknown: 0, reached: Object.fromEntries(REACH_SERIES.map(s => [s, 0])) };
     // Share of the period's closed deals the percentages are taken over;
     // null when the period has none at all.
     const seen = b.total + b.unknown;
