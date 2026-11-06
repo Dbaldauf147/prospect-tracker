@@ -1628,6 +1628,11 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
   // ---- Paste → column mapping -----------------------------------------
   const [pasteModal, setPasteModal] = useState(null); // { headers, rows, mapping } | null
   const [pasteHelper, setPasteHelper] = useState(null); // null | string (manual paste box)
+  // Result of the last paste import, shown as an on-page notice rather
+  // than window.alert: a native dialog freezes the tab for a browser
+  // agent (Claude in Chrome can't click it), which stalled the Import
+  // Marketing Leads prompt right after Import.
+  const [importNotice, setImportNotice] = useState('');
 
   // Paste anywhere on the page (unless focused in an input/textarea)
   // routes the clipboard text into the mapping ingester.
@@ -1742,7 +1747,10 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
       persist([...plan.savedAfter, ...plan.additions]);
     }
     setPasteModal(null);
-    const notes = [];
+    const added = plan.additions.length;
+    const notes = [added
+      ? `${added} new lead${added === 1 ? '' : 's'} imported: ${summariseLeadNames(plan.additions)}.`
+      : 'No new leads imported.'];
     if (plan.statusPromoted > 0) {
       notes.push(
         `${plan.statusPromoted} lead${plan.statusPromoted === 1 ? '' : 's'} moved to Working ` +
@@ -1771,7 +1779,7 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
         `Unhide from "Show hidden" if you want to import ${n === 1 ? 'it' : 'them'} again.`
       );
     }
-    if (notes.length) window.alert(notes.join('\n'));
+    setImportNotice(notes.join('\n'));
   }
 
   // ---- Add to Table View bridge ---------------------------------------
@@ -2096,6 +2104,21 @@ export function MarketingLeadsView({ prospects = [], settings, updateSettings, u
           style={btn({ border: '1px solid #FCA5A5', background: persistedRows.length ? '#fff' : '#F8FAFC', color: persistedRows.length ? '#B91C1C' : '#CBD5E1', cursor: persistedRows.length ? 'pointer' : 'not-allowed' })}
         >Clear table</button>
       </div>
+      {importNotice && (
+        <div
+          role="status"
+          data-testid="marketing-leads-import-notice"
+          style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem', padding: '0.5rem 0.75rem', border: '1px solid #86EFAC', background: '#F0FDF4', color: '#166534', borderRadius: 6, fontSize: '0.8rem', whiteSpace: 'pre-line' }}
+        >
+          <div style={{ flex: 1 }}><strong>Import result:</strong> {importNotice}</div>
+          <button
+            type="button"
+            onClick={() => setImportNotice('')}
+            title="Dismiss this message."
+            style={btn({ border: '1px solid #86EFAC', background: '#fff', color: '#166534' })}
+          >Dismiss</button>
+        </div>
+      )}
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
         Tip: in the Salesforce Leads list, select the rows (including the header row), copy, then paste anywhere on this page (or click <strong>📋 Paste from Salesforce</strong>). A column-mapping modal pops up so you can confirm which pasted column fills each field before importing. Click a column header to sort, drag a header to reorder it (drag its right edge to resize), use <strong>Filters</strong> for per-column filtering, and <strong>Columns</strong> to show / hide or reorder columns. The <strong>Company Mapping</strong> column links each lead's company to a Table View account: accept the suggested match or type to pick another (<strong>✓ Accept all mappings</strong> accepts every suggested Company and HubSpot match at once). The <strong>Salesforce Link</strong> column captures the record link from each lead's name on paste (an <strong>Open ↗</strong> opens it in Salesforce); you can also paste a link or Lead ID into it by hand. The <strong>HubSpot Contact</strong> column maps each lead to a HubSpot contact: accept the email/name match, search to pick another, or <strong>+ Add to HubSpot</strong> to create a new contact from the lead. The read-only <strong>HubSpot Title</strong> column shows the mapped contact's job title. The <strong>Status</strong> column is a dropdown driven by the <strong>Marketing Lead Status</strong> list on the <strong>Dropdowns</strong> tab: edit that list to change the options. <strong>✉️ Draft Emails</strong> creates an Outlook draft for every shown lead with an email address, signed with your saved email signature (respects the current search / filters). Click a lead's <strong>Name</strong> to open it in the contact popup (the <strong>✎</strong> next to it edits the name inline instead). Tick the checkboxes and click <strong>🙈 Hide</strong> (or the per-row 🙈) to hide leads you're done with: they aren't deleted; use <strong>Show hidden</strong> to review or 👁 unhide them. Tick leads and click <strong>✏️ Bulk Edit</strong> to set one field (Status, Owner, Company Mapping, …) across all of them at once.
       </div>
