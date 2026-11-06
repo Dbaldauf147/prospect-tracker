@@ -5,6 +5,8 @@ import { ScopingNotesEditor } from './ScopingNotesEditor';
 import { SERVICE_CATEGORIES } from '../../data/enums';
 import { SERVICE_QUESTIONS, SERVICE_THEIR_QUESTIONS } from '../../data/serviceQuestions';
 import { loadMsgReader } from '../../utils/msgReaderLoader';
+import { splitPeOwners } from '../../utils/peOwners';
+import { attendeeRoles } from '../../utils/attendeeRoles';
 // OutlookMeetingPicker exists at ./OutlookMeetingPicker.jsx but is not
 // wired in: it requires a Microsoft Entra ID app registration in the
 // user's tenant (OUTLOOK_CLIENT_ID env var on Vercel), which Schneider
@@ -437,7 +439,24 @@ const ATTENDEE_SNAPSHOT_FIELDS = [
   'id', 'vid', 'firstname', 'lastname', 'email', 'jobtitle', 'company',
   'city', 'country', 'notes', 'hs_content_membership_notes', 'message',
   'hs_linkedin_url', 'linkedin_url', 'hs_linkedinid',
+  // Dan's tags, so a Primary Point of Contact still stands out from
+  // the snapshot alone.
+  'dans_tags', 'dan_s_tags', 'dans_tag',
 ];
+// How a PE-owner or Primary Point of Contact attendee is drawn on the
+// Attendees list. The Excel export uses the same colours (ARGB).
+const ATTENDEE_ROLE_STYLE = {
+  pe: { label: 'PE owner', bg: '#F5F3FF', border: '#C4B5FD', fg: '#5B21B6', badgeBg: '#EDE9FE', xlFill: 'FFEDE9FE', xlFg: 'FF5B21B6' },
+  poc: { label: 'Primary POC', bg: '#FFFBEB', border: '#FCD34D', rail: '#F59E0B', fg: '#92400E', badgeBg: '#FEF3C7', xlFill: 'FFFEF3C7', xlFg: 'FF92400E' },
+};
+function roleBadge(r) {
+  return {
+    fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+    color: r.fg, background: r.badgeBg, border: `1px solid ${r.border}`,
+    borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap',
+  };
+}
+
 function snapshotFromMatch(match) {
   if (!match) return null;
   const snap = {};
@@ -686,7 +705,7 @@ function CallContextImportPicker({ candidates, onImport }) {
   );
 }
 
-export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, contactNicknames = {}, prospects = [], onCreateContact, onOpenContact, importableNotes = [], cdmName, competitorOptions = [], onMentionCompetitor, companyBackground = null, serviceQuestionsOverride = null, serviceTheirQuestionsOverride = null }) {
+export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, contactNicknames = {}, prospects = [], onCreateContact, onOpenContact, importableNotes = [], cdmName, competitorOptions = [], onMentionCompetitor, companyBackground = null, serviceQuestionsOverride = null, serviceTheirQuestionsOverride = null, peOwner = null }) {
   const template = DEFAULT_FORM_TEMPLATE;
 
   // Local mirror of the persisted value. All edits update localValue
@@ -2006,6 +2025,15 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
 
   const totalAttendees = (seAttendees?.length || 0) + (customerAttendees?.length || 0);
 
+  // The company's PE owner firm(s): the popup's own field when it's
+  // passed, else whatever the matching prospect row says. Attendees from
+  // that firm, and anyone tagged Primary Point of Contact, are drawn
+  // differently in the Attendees list and the Excel export.
+  const peOwners = useMemo(() => {
+    const raw = peOwner != null ? peOwner : (matchProspectByName(companyName, prospects)?.peOwner || '');
+    return splitPeOwners(raw);
+  }, [peOwner, companyName, prospects]);
+
   // Persist a snapshot of each attendee's matched HubSpot contact onto the
   // saved meeting so the Attendees section still populates (name, title,
   // company, location, notes, LinkedIn) without re-loading the HubSpot
@@ -2703,6 +2731,8 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         hdrRow.height = 22;
 
         const dansAskMap = dansAsks || {};
+        let anyPeRow = false;
+        let anyPocRow = false;
         const maxAttendeeRows = Math.max(seAttendees.length, customerAttendees.length, 1);
         for (let i = 0; i < maxAttendeeRows; i++) {
           const dRow = ws.addRow([]);
@@ -2753,6 +2783,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           );
 
           const cust = customerAttendees[i];
+          const custRoles = cust ? attendeeRoles(cust, peOwners) : { peOwner: '', primaryPoc: false };
+          const custRole = custRoles.peOwner ? ATTENDEE_ROLE_STYLE.pe : custRoles.primaryPoc ? ATTENDEE_ROLE_STYLE.poc : null;
+          if (custRoles.peOwner) anyPeRow = true;
+          if (custRoles.primaryPoc) anyPocRow = true;
           let custVals;
           if (cust) {
             const city = (cust.match?.city || '').trim();
@@ -2780,8 +2814,12 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               })
               .filter(Boolean)
               .join(', ');
+            const roleLabels = [
+              custRoles.peOwner ? ATTENDEE_ROLE_STYLE.pe.label : '',
+              custRoles.primaryPoc ? ATTENDEE_ROLE_STYLE.poc.label : '',
+            ].filter(Boolean);
             custVals = [
-              displayAttendeeName(cust, contactNicknames),
+              displayAttendeeName(cust, contactNicknames) + (roleLabels.length ? ` (${roleLabels.join(', ')})` : ''),
               reportsToText,
               cust.match?.jobtitle || '',
               [city, country].filter(Boolean).join(', '),
@@ -2796,18 +2834,38 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             // Column 0 of the customer block is Name — hyperlink to LinkedIn when we have it.
             if (c === 0 && custLink && custVals[0]) {
               cell.value = { text: custVals[0], hyperlink: custLink };
-              cell.font = { name: 'Nunito Sans', size: 10, color: { argb: 'FF0A66C2' }, underline: true };
+              cell.font = { name: 'Nunito Sans', size: 10, color: { argb: 'FF0A66C2' }, underline: true, bold: !!custRole };
             } else {
               cell.value = custVals[c];
-              cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+              cell.font = { name: 'Nunito Sans', size: 10, color: { argb: (c === 0 && custRole) ? custRole.xlFg : SE_TEXT_DARK }, bold: c === 0 && !!custRole };
             }
             cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
             cell.border = borderAll;
-            if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
+            // PE owner / Primary POC rows take their tint over the zebra
+            // stripe, matching the on-screen list.
+            if (custRole) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: custRole.xlFill } };
+            else if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
             maxLines = Math.max(maxLines, estimateWrappedLines(custVals[c], colWidths[c + 5]));
           }
 
           dRow.height = rowHeightForLines(maxLines);
+        }
+
+        // Key for the tinted rows, only for the roles actually present.
+        const keyParts = [
+          anyPeRow ? { r: ATTENDEE_ROLE_STYLE.pe, text: `PE owner${peOwners.length ? ` (${peOwners.join(', ')})` : ''}` } : null,
+          anyPocRow ? { r: ATTENDEE_ROLE_STYLE.poc, text: 'Primary Point of Contact' } : null,
+        ].filter(Boolean);
+        if (keyParts.length) {
+          const kRow = ws.addRow([]);
+          keyParts.forEach((k, idx) => {
+            const cell = kRow.getCell(6 + idx * 2);
+            cell.value = k.text;
+            cell.font = { name: 'Nunito Sans', size: 9, bold: true, color: { argb: k.r.xlFg } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: k.r.xlFill } };
+            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            ws.mergeCells(kRow.number, 6 + idx * 2, kRow.number, 7 + idx * 2);
+          });
         }
       }
 
@@ -3258,6 +3316,14 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 const country = (a.match?.country || '').trim();
                 const cityCountry = [city, country].filter(Boolean).join(', ');
                 const wrap = { overflowWrap: 'anywhere', wordBreak: 'break-word', whiteSpace: 'pre-wrap' };
+                // PE owner rows go purple, the Primary Point of Contact
+                // gets an amber rail; both carry a badge after the name.
+                const roles = attendeeRoles(a, peOwners);
+                const roleStyle = roles.peOwner
+                  ? { background: ATTENDEE_ROLE_STYLE.pe.bg, borderColor: ATTENDEE_ROLE_STYLE.pe.border }
+                  : roles.primaryPoc
+                    ? { background: ATTENDEE_ROLE_STYLE.poc.bg, borderColor: ATTENDEE_ROLE_STYLE.poc.border }
+                    : null;
                 return (
                   <div
                     key={i}
@@ -3272,6 +3338,8 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                       border: '1px solid',
                       borderColor: matched ? '#BBF7D0' : '#FECACA',
                       borderRadius: 4,
+                      ...(roleStyle || {}),
+                      ...(roles.primaryPoc ? { borderLeft: `4px solid ${ATTENDEE_ROLE_STYLE.poc.rail}` } : {}),
                     }}
                   >
                     <span style={{ color: matched ? '#15803D' : '#B91C1C', fontWeight: 700, fontSize: '0.9rem', paddingTop: 2 }}>{matched ? '✓' : '✗'}</span>
@@ -3299,6 +3367,16 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                           style={{ fontSize: '0.7rem', color: '#0A66C2', textDecoration: 'none', fontWeight: 700 }}
                           title="Open LinkedIn profile"
                         >in↗</a>
+                      )}
+                      {roles.peOwner && (
+                        <span style={roleBadge(ATTENDEE_ROLE_STYLE.pe)} title={`Works for ${roles.peOwner}, the PE owner of ${companyName || 'this company'}`}>
+                          PE owner
+                        </span>
+                      )}
+                      {roles.primaryPoc && (
+                        <span style={roleBadge(ATTENDEE_ROLE_STYLE.poc)} title="Tagged Primary Point of Contact">
+                          ★ Primary POC
+                        </span>
                       )}
                       {(() => {
                         const mgrs = managersAmongAttendees(a);
