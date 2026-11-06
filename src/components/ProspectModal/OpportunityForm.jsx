@@ -6,7 +6,7 @@ import { SERVICE_CATEGORIES } from '../../data/enums';
 import { SERVICE_QUESTIONS, SERVICE_THEIR_QUESTIONS } from '../../data/serviceQuestions';
 import { loadMsgReader } from '../../utils/msgReaderLoader';
 import { splitPeOwners } from '../../utils/peOwners';
-import { attendeeRoles } from '../../utils/attendeeRoles';
+import { attendeeRoles, isPrimaryPoc } from '../../utils/attendeeRoles';
 // OutlookMeetingPicker exists at ./OutlookMeetingPicker.jsx but is not
 // wired in: it requires a Microsoft Entra ID app registration in the
 // user's tenant (OUTLOOK_CLIENT_ID env var on Vercel), which Schneider
@@ -2033,7 +2033,14 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       return displayAttendeeName(a, contactNicknames).localeCompare(displayAttendeeName(b, contactNicknames));
     };
     se.sort(sorter);
-    cust.sort(sorter);
+    // Primary Points of Contact lead the customer list (within their
+    // Required / Optional bucket), on screen and in the Excel export.
+    cust.sort((a, b) => {
+      const pa = isPrimaryPoc(a.match), pb = isPrimaryPoc(b.match);
+      if (!!a.required !== !!b.required) return a.required ? -1 : 1;
+      if (pa !== pb) return pa ? -1 : 1;
+      return sorter(a, b);
+    });
     return { seAttendees: se, customerAttendees: cust };
   }, [formData.meeting, allHubspotContacts, companyContacts, companyName]);
 
