@@ -1037,7 +1037,15 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     const col = template.tables.find(t => t.key === tableKey);
     if (!col) return;
     const empty = Object.fromEntries(col.columns.map(c => [c.key, '']));
-    let nextRows = [...(formData.tables[tableKey] || []), empty];
+    const current = formData.tables[tableKey] || [];
+    // Tables that close with a fixed wrap-up row (the agenda's "Determine
+    // next steps") get the new row just above it, so the wrap-up stays last.
+    const lastSeed = LAST_ROW_SEEDS[tableKey];
+    const last = current[current.length - 1];
+    const keepLast = lastSeed && last && (last.subject || '').trim() === lastSeed.subject;
+    let nextRows = keepLast
+      ? [...current.slice(0, -1), empty, last]
+      : [...current, empty];
     // Agenda: when a fresh blank row is added, recompute the
     // auto-fill so the new row picks up the remaining minutes (or, if
     // a previous row was already auto-filled, leave that one alone
@@ -1461,6 +1469,12 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               );
             })()}
           </table>
+          <button
+            type="button"
+            onClick={() => addTableRow(t.key)}
+            title={`Add a row to ${t.label}`}
+            style={{ marginTop: 4, fontSize: '0.72rem', padding: '0.2rem 0.6rem', border: '1px solid #CBD5E1', background: '#fff', color: '#334155', borderRadius: 4, cursor: 'pointer', fontWeight: 600, fontFamily: 'inherit' }}
+          >+ Add row</button>
         </div>
       );
     });
