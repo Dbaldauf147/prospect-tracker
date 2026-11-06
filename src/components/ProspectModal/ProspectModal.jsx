@@ -11548,6 +11548,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             });
                           }}
                           companyName={fields.company}
+                          peOwner={fields.peOwner || ''}
                           companyContacts={companyContacts}
                           allHubspotContacts={hubspotContacts}
                           serviceQuestionsOverride={settings.serviceQuestions || null}
