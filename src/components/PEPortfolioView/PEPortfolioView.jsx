@@ -28,6 +28,8 @@ import { buildZoomExcludedMatcher } from '../../utils/zoomExportExclude';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { PasteAddModal } from '../TableView/PasteAddModal';
 import { splitPeOwners } from '../../utils/peOwners';
+import { isPrimaryPoc } from '../../utils/attendeeRoles';
+import { downloadPeDecisionMakersWorkbook } from '../../utils/peDecisionMakersWorkbook';
 import {
   CLOSED_STAGES, INVALID_STAGES, accountMatchesCompany, isOppActive,
   normalizeAccount, peFirmAccountNames, peFirmOppRows, peFirmPortfolio,
@@ -1008,6 +1010,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         domain,
         metInPerson,
         city: String(c.city || '').trim(),
+        contact: c,
       });
     }
     return out;
@@ -1167,6 +1170,87 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
     links: settings?.companyContactLinks || null,
     exclusions: settings?.companyContactExclusions || null,
   }), [hubspotCache, settings?.contactLocalFields, settings?.companyContactLinks, settings?.companyContactExclusions]);
+
+  // Decision makers who work AT each PE firm on the roster (not at its
+  // portfolio companies), for the PE Overview tab's "Export PE Decision
+  // Makers" file. Same two sources the Portfolio tab's count reads: a
+  // Decision Maker whose company (or the company typed on the contact) is
+  // the firm, or whose email is on the firm's own domain; then whoever the
+  // shared lookup links to the firm by hand. Left contacts are dropped,
+  // since they are no longer anyone to ring.
+  const peFirmDecisionMakers = useMemo(() => {
+    const out = [];
+    for (const pe of peFirms) {
+      const firmName = String(pe.company || '').trim();
+      if (!firmName) continue;
+      const domains = new Set();
+      collectProspectDomains(pe, domains);
+      const seen = new Set();
+      const contacts = [];
+      const add = (c) => {
+        if (!c) return;
+        const tags = String(c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+        if (tags.includes('left')) return;
+        const key = String(c.id || c.vid || c.email || [c.firstname, c.lastname].join(' ')).toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        contacts.push(c);
+      };
+      for (const dm of decisionMakers) {
+        const names = [dm.company, dm.companyText].filter(Boolean);
+        if (names.some(n => companiesMatch(n, firmName)) || (dm.domain && domains.has(dm.domain))) add(dm.contact);
+      }
+      for (const c of dmLookup.forAccount(pe)) add(c);
+      out.push({ pe, contacts });
+    }
+    return out;
+  }, [peFirms, decisionMakers, dmLookup]);
+
+  const peDmContactCount = useMemo(
+    () => peFirmDecisionMakers.reduce((n, f) => n + f.contacts.length, 0),
+    [peFirmDecisionMakers],
+  );
+
+  const exportPeDecisionMakers = async () => {
+    const rows = [];
+    const firmsWithout = [];
+    for (const { pe, contacts } of peFirmDecisionMakers) {
+      const firm = String(pe.company || '').trim();
+      const peStage = peStageOf(pe.peStage);
+      const cdm = String(pe.cdm || '').trim();
+      if (contacts.length === 0) { firmsWithout.push({ firm, peStage, cdm }); continue; }
+      const sorted = [...contacts].sort((a, b) =>
+        Number(isPrimaryPoc(b)) - Number(isPrimaryPoc(a))
+        || [a.firstname, a.lastname].join(' ').localeCompare([b.firstname, b.lastname].join(' ')));
+      for (const c of sorted) {
+        const id = String(c.id || c.vid || '');
+        const tags = String(c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+        const met = (id && Object.prototype.hasOwnProperty.call(metInPersonMap, id))
+          ? !!metInPersonMap[id]
+          : tags.includes('met in person');
+        rows.push({
+          firm, peStage, cdm,
+          name: [c.firstname, c.lastname].filter(Boolean).join(' ').trim() || c.email || 'Unknown',
+          title: c.jobtitle || '',
+          email: c.email || '',
+          phone: c.phone || c.mobilephone || '',
+          cityCountry: [c.city, c.country].map(v => String(v || '').trim()).filter(Boolean).join(', '),
+          linkedin: c.hs_linkedin_url || c.linkedin_url || '',
+          metInPerson: met ? 'Yes' : '',
+          primaryPoc: isPrimaryPoc(c) ? 'Yes' : '',
+        });
+      }
+    }
+    if (rows.length === 0) {
+      alert('No PE firm has a contact tagged Decision Maker yet, so there is nothing to export.');
+      return;
+    }
+    try {
+      await downloadPeDecisionMakersWorkbook({ rows, firmsWithout, firmCount: peFirmDecisionMakers.length });
+    } catch (err) {
+      alert('Failed to export: ' + (err?.message || err));
+    }
+  };
 
   const stageStatsByFirm = useMemo(() => {
     const out = new Map();
@@ -1790,6 +1874,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect, metInPersonM
         // sort and row selection).
         <PEBlueOwlTab
           key="pe-overview"
+          onExportPeDecisionMakers={exportPeDecisionMakers}
+          peDmCounts={{ contacts: peDmContactCount, firms: peFirmDecisionMakers.length }}
           companies={peFirmCompanies}
           selectedFirm={peFirm}
           firmOptions={peFirmOptions}
@@ -3360,7 +3446,7 @@ function isNamHqRow(row) {
 //                same editing, its own saved column layout (own tableId)
 //                so widening the Services tab out to the bucket columns
 //                doesn't disturb the layout the user keeps on PE Overview.
-function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firmOptions = [], onSelectFirm, prospects = [], oppsRecords = [], portfolioByPe = new Map(), dmNamesByCompanyId = new Map(), onSelectProspect, onUpdateProspect, onAddProspect, onDownloadPortfolio, settings, updateSettings }) {
+function PEBlueOwlTab({ variant = 'overview', onExportPeDecisionMakers = null, peDmCounts = null, companies, selectedFirm = '', firmOptions = [], onSelectFirm, prospects = [], oppsRecords = [], portfolioByPe = new Map(), dmNamesByCompanyId = new Map(), onSelectProspect, onUpdateProspect, onAddProspect, onDownloadPortfolio, settings, updateSettings }) {
   const isServicesVariant = variant === 'services';
   const tabLabel = isServicesVariant ? 'PE Overview - Services' : 'PE Overview';
   const firmLabel = selectedFirm.trim() || 'PE firm';
@@ -4254,6 +4340,14 @@ function PEBlueOwlTab({ variant = 'overview', companies, selectedFirm = '', firm
             : `Pick services and see where each of these ${servicesReportScope.companies.length} compan${servicesReportScope.companies.length === 1 ? 'y' : 'ies'} stands on them`}
           style={{ padding: '0.4rem 0.75rem', border: '1px solid #E2E8F0', borderRadius: 6, background: rows.length === 0 ? '#F1F5F9' : '#fff', fontSize: '0.72rem', fontWeight: 600, color: rows.length === 0 ? '#94A3B8' : '#334155', cursor: rows.length === 0 ? 'not-allowed' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
         >Services Report</button>
+        {onExportPeDecisionMakers && (
+          <button
+            type="button"
+            onClick={onExportPeDecisionMakers}
+            title={`Download every contact tagged Decision Maker at a PE firm on the roster${peDmCounts ? ` (${peDmCounts.contacts} across ${peDmCounts.firms} firms)` : ''}, in the Schneider Excel layout`}
+            style={{ padding: '0.4rem 0.75rem', border: '1px solid #009530', borderRadius: 6, background: '#F0FDF4', fontSize: '0.72rem', fontWeight: 700, color: '#047857', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+          >Export PE Decision Makers{peDmCounts ? ` (${peDmCounts.contacts})` : ''}</button>
+        )}
         {(onAddProspect || onUpdateProspect) && (
           <button
             type="button"
