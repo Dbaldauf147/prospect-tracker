@@ -166,7 +166,8 @@ const MARKETING_LEADS_SAFETY_RULES = `Rules for this website while you work:
 - Keep https://prospect-tracker-ashen.vercel.app/ open in ONE browser tab only. A second tab holds an older copy of the leads and can save over your work.
 - Only ever fill an EMPTY Salesforce Link cell. Never clear, overwrite or retype a link that is already there.
 - Never delete, hide or clear leads, and never click "Remove duplicates", "Clear table" or a row's delete button on the Marketing Leads page. None of that is part of these tasks.
-- If a link you saved earlier looks empty again, don't paste over the gap: stop and report which leads it happened to.`;
+- If a link you saved earlier looks empty again, don't paste over the gap: stop and report which leads it happened to.
+- After a paste import on the Marketing Leads page, read the result from the green "Import result" box at the top of that page; it is not a pop-up. If a browser pop-up dialog ever appears and blocks the page, stop and ask me to click OK and tell you what it says, rather than retrying the import.`;
 
 function withMarketingLeadsSafety(prompt) {
   const text = String(prompt || '').trim();
@@ -196,7 +197,7 @@ const DEFAULT_AI_PROMPT_IMPORT_MARKETING_LEADS = `1.  Go to this Salesforce Lead
 3.  Copy the entire table, starting with the Name header and going down to the bottom right-hand corner of the last row.
 4.  Navigate to https://prospect-tracker-ashen.vercel.app/, open the Contacts page and select the Marketing Leads subtab.
 5.  Paste the copied table anywhere on that page (Ctrl+V / Cmd+V, not inside a cell). A column-mapping box opens: check that Name, Email, Job Title, Company, Status, Created Date, Last Lead Source, Owner, Country and Qualification Source Detail each point at the matching pasted column, then click Import.
-6.  Leads already saved are skipped by email, so pasting the whole list is safe - only the new ones are added. If a message says leads were skipped because they match a hidden lead, report which ones rather than unhiding them.
+6.  Leads already saved are skipped by email, so pasting the whole list is safe - only the new ones are added. The result appears as a green "Import result" box at the top of the Marketing Leads page (not a pop-up): read it there for how many leads were imported and which were skipped. If it says leads were skipped because they match a hidden lead, report which ones rather than unhiding them. If a browser pop-up dialog ever does appear and blocks the page, stop and ask me to click OK and tell you what it says, rather than retrying.
 7.  Go back to the printable view tab, copy the same table again, then on this website open the BFO Activity page, select the Leads subtab and paste it there. That feeds the Marketing Lead Status Update and Duplicate Leads prompts below, and any lead still missing from Marketing Leads is added there as you paste - the confirmation line names them.
 8.  Report back how many leads were newly imported and their names. Anything imported now is NOT in the lists further down this bundle - those were captured before the import ran - so say so, and I will re-copy the prompts to pick the new leads up.`
 
