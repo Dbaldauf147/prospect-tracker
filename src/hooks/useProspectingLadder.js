@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useOpps2Data } from './useOpps2Data';
 import { countCallInDue } from '../utils/oppsCallIn';
 import { campaignsAllSent, unfinishedCampaigns } from '../utils/campaignOutreach';
@@ -6,6 +6,8 @@ import { tagsAllMapped } from '../utils/contactRosters';
 import { useSavedCampaigns } from './useSavedCampaigns';
 import { collectPeFirmsToWork } from '../utils/peFirmOutreach';
 import { readSteps } from '../utils/prospectingPlaybook';
+import { changedJobsToWork } from '../utils/changedJobs';
+import { getHubspotCache } from '../utils/hubspotContactsCache';
 import {
   caughtUpSnapshot,
   countDueSteps,
@@ -36,7 +38,8 @@ function subscribeHydrated(onChange) {
 // the user has no way to tell which is lying. Same reasoning as
 // useProspectingTagDebt, which feeds the other two readouts on that page.
 //
-// Returns { steps, counts, autoClear, peFirmsToWork, campaignsToFinish, work,
+// Returns { steps, counts, autoClear, peFirmsToWork, campaignsToFinish,
+// changedJobsWork, work,
 // states, stateByKey, today, caughtUpMap, dueCount }.
 export function useProspectingLadder({ issues = null, serviceGaps = null, prospects = null, settings = null, userId = null, tagCoverage = null, cdmName = '' } = {}) {
   // The Opps 2 records, read the way every other consumer of that store
@@ -86,6 +89,30 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
     [campaigns],
   );
 
+  // The Changed Jobs contacts nobody has dealt with yet (not reached out,
+  // snoozed or hidden on that page), for the "Contacts who changed
+  // companies" step. Read off the same cached HubSpot contacts the page
+  // uses, and re-read when that cache changes. null until the cache read
+  // has answered; a device that has never synced contacts answers with
+  // none, which is also what its Changed Jobs page shows.
+  const [hubspotContacts, setHubspotContacts] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      getHubspotCache()
+        .then(c => { if (!cancelled) setHubspotContacts(c?.contacts || []); })
+        .catch(() => { if (!cancelled) setHubspotContacts([]); });
+    };
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
+  const localFields = settings?.contactLocalFields;
+  const changedJobsWork = useMemo(
+    () => (hubspotContacts ? changedJobsToWork(hubspotContacts, localFields) : null),
+    [hubspotContacts, localFields],
+  );
+
   // null (not 0) anywhere the answer hasn't landed: a step with a count
   // still in flight is "unknown", which shows nothing, rather than an
   // unearned "all caught up" that would also let the step below it go red.
@@ -94,7 +121,8 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
     renewals: countRenewalWork(issues),
     'targeted-services': countServiceGaps(serviceGaps),
     'pe-intros': peFirmsToWork ? peFirmsToWork.length : null,
-  }), [oppsRecords, issues, serviceGaps, peFirmsToWork]);
+    'changed-jobs': changedJobsWork ? changedJobsWork.length : null,
+  }), [oppsRecords, issues, serviceGaps, peFirmsToWork, changedJobsWork]);
 
   // The steps nothing counts, but that something in the app can still
   // answer for. "Reach out to contacts with market updates" is the batch a
@@ -152,11 +180,12 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
     autoClear,
     peFirmsToWork,
     campaignsToFinish,
+    changedJobsWork,
     states,
     stateByKey: statesByKey(states),
     today,
     caughtUpMap,
     dueCount: countDueSteps(states),
     work,
-  }), [steps, counts, autoClear, peFirmsToWork, campaignsToFinish, states, today, caughtUpMap, work]);
+  }), [steps, counts, autoClear, peFirmsToWork, campaignsToFinish, changedJobsWork, states, today, caughtUpMap, work]);
 }

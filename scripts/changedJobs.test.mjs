@@ -1,6 +1,6 @@
 // Assertion tests for the Changed Jobs page's selector and its Schneider
 // Electric split. Run: node scripts/changedJobs.test.mjs
-import { isChangedJobs, isSchneiderContact, snoozeUntilIso, activeSnoozeMs } from '../src/utils/changedJobs.js';
+import { isChangedJobs, isSchneiderContact, snoozeUntilIso, activeSnoozeMs, changedJobsToWork } from '../src/utils/changedJobs.js';
 
 let passed = 0, failed = 0;
 function check(label, actual, expected) {
@@ -36,6 +36,27 @@ check('Jan 31 + 1 month clamps to Feb 28', snoozeUntilIso(Date.UTC(2027, 0, 31),
 check('a future snooze is active', activeSnoozeMs({ _changedJobsSnoozeUntil: '2027-02-09T15:00:00.000Z' }, NOV_9), Date.UTC(2027, 1, 9, 15));
 check('a past snooze is not', activeSnoozeMs({ _changedJobsSnoozeUntil: '2026-01-01T00:00:00.000Z' }, NOV_9), null);
 check('no snooze is not', activeSnoozeMs(null, NOV_9), null);
+
+const pool = [
+  { id: '1', firstname: 'Zoe', lastname: 'Open', email: 'z@acme.com', company: 'Acme', dans_tags: 'Left' },
+  { id: '2', firstname: 'Ann', lastname: 'Reached', email: 'a@acme.com', company: 'Changed Jobs' },
+  { id: '3', firstname: 'Ben', lastname: 'Hidden', email: 'b@acme.com', company: 'Changed Jobs' },
+  { id: '4', firstname: 'Cy', lastname: 'Snoozed', email: 'c@acme.com', company: 'Changed Jobs' },
+  { id: '5', firstname: 'Di', lastname: 'Expired', email: 'd@acme.com', company: 'Changed Jobs', companyText: 'Old Co' },
+  { id: '6', firstname: 'Ed', lastname: 'Coworker', email: 'e@se.com', company: 'Schneider Electric', dans_tags: 'Left' },
+  { id: '7', firstname: 'Fi', lastname: 'Notonpage', email: 'f@acme.com', company: 'Acme' },
+];
+const lf = {
+  2: { _reachedOut: true },
+  3: { _changedJobsHidden: true },
+  4: { _changedJobsSnoozeUntil: '2027-03-01T00:00:00.000Z' },
+  5: { _changedJobsSnoozeUntil: '2026-01-01T00:00:00.000Z' },
+};
+const work = changedJobsToWork(pool, lf, NOV_9);
+check('to-work skips reached out, hidden and snoozed; keeps expired snoozes and SE', work.map(w => w.name).join(','), 'Di Expired,Ed Coworker,Zoe Open');
+check('to-work names the old company, not the marker', work[0].company, 'Old Co');
+check('to-work flags SE coworkers', work[1].schneider, true);
+check('nothing in, nothing out', changedJobsToWork(null, null, NOV_9).length, 0);
 
 console.log(`${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

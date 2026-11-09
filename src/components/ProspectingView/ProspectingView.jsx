@@ -473,6 +473,55 @@ const COVERAGE_NAMES_SHOWN = 6;
 // already leaves it out, so listing it under a row reading "All caught up"
 // only made the two contradict each other. It comes back on its own when
 // the pause lifts.
+// The Changed Jobs contacts nobody has dealt with yet, under the "Contacts
+// who changed companies" step: a warning line, then the names (the first
+// few, then a count of the rest). Each one is still sitting on the Changed
+// Jobs page waiting for Reached Out, Snooze or Hide; the link goes there.
+const CHANGED_JOBS_SHOWN = 8;
+function ChangedJobsWarning({ rows, onNavigate, onOpenContact }) {
+  if (!rows || rows.length === 0) return null;
+  const shown = rows.slice(0, CHANGED_JOBS_SHOWN);
+  const more = rows.length - shown.length;
+  return (
+    <div style={{ marginTop: 8, padding: '0.5rem 0.65rem', background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 6, display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#92400E' }}>
+          ⚠ {rows.length} {rows.length === 1 ? 'contact on Changed Jobs has' : 'contacts on Changed Jobs have'} not been reached out to, snoozed or hidden
+        </span>
+        {onNavigate && (
+          <button
+            type="button"
+            onClick={onNavigate}
+            style={{
+              padding: 0, border: 0, background: 'none', font: 'inherit',
+              fontSize: '0.68rem', fontWeight: 700, color: '#0A66C2', cursor: 'pointer',
+              textDecoration: 'underline', textDecorationColor: '#BFDBFE', textUnderlineOffset: 2,
+            }}
+          >Open Changed Jobs</button>
+        )}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem 0.9rem' }}>
+        {shown.map(r => (
+          <span key={r.id} style={{ fontSize: '0.72rem', lineHeight: 1.35 }}>
+            {onOpenContact ? (
+              <button
+                type="button"
+                onClick={() => onOpenContact(r.contact)}
+                title="Open this contact"
+                style={{ padding: 0, border: 0, background: 'none', font: 'inherit', fontWeight: 700, color: '#334155', cursor: 'pointer' }}
+              >{r.name}</button>
+            ) : <span style={{ fontWeight: 700, color: '#334155' }}>{r.name}</span>}
+            {(r.company || r.schneider) && (
+              <span style={{ color: '#94A3B8' }}> · {r.schneider ? 'ex-Schneider Electric' : r.company}</span>
+            )}
+          </span>
+        ))}
+        {more > 0 && <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>and {more} more</span>}
+      </div>
+    </div>
+  );
+}
+
 function CampaignOutreachList({ rows, onNavigate }) {
   if (!rows || rows.length === 0) return null;
   return (
@@ -1279,6 +1328,9 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
   // the same campaigns, so the list can't show two still going out beside
   // a row that says the step is clear. `null` until it has loaded.
   const campaignsToFinish = ladder?.campaignsToFinish || null;
+  // The Changed Jobs contacts still to deal with, under that step. Off the
+  // ladder for the same reason: the list and the step's count are one read.
+  const changedJobsWork = ladder?.changedJobsWork || null;
   // The Key contacts nobody has met yet, under the visits step. Built from
   // the same tag coverage the row above it prints percentages from — that
   // is already the Key roster, gated once for the whole app — plus the
@@ -1334,6 +1386,11 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
   // worked down in bulk. Same one-click trick as the audit above:
   // `contacts-view:active-subtab` is that page's memory of which subtab was
   // last open, so setting it saves the user the second click.
+  const openChangedJobs = useCallback(() => {
+    try { localStorage.setItem('contacts-view:active-subtab', 'changed'); } catch (e) { void e; }
+    onNavigate?.('contacts');
+  }, [onNavigate]);
+
   const openKeyContacts = useCallback(() => {
     try { localStorage.setItem('contacts-view:active-subtab', 'key'); } catch (e) { void e; }
     onNavigate?.('contacts');
@@ -1596,6 +1653,7 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
             || (step.key === 'pe-intros' && peFirmsToWork?.length)
             || (step.key === 'contact-mapping' && tagCoverage?.all?.contacts)
             || (step.key === 'market-updates' && campaignsToFinish?.length)
+            || (step.key === 'changed-jobs' && changedJobsWork?.length)
             || (step.key === 'visits' && visitContacts?.groups?.length)
             || (step.key === 'cold' && dmCoverage?.tiers?.some(t => t.total > 0));
           return (
@@ -1694,6 +1752,14 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                     onNavigate={onNavigate ? () => onNavigate('campaigns') : null}
                   />
                 )}
+                {/* Who changed jobs and is still waiting to be dealt with. */}
+                {!editing && step.key === 'changed-jobs' && (
+                  <ChangedJobsWarning
+                    rows={changedJobsWork}
+                    onNavigate={onNavigate ? openChangedJobs : null}
+                    onOpenContact={openContact}
+                  />
+                )}
                 {!editing && step.key === 'targeted-services' && <ServiceGapList gaps={serviceGaps} />}
                 {/* Who a trip would be for: the Key contacts still unmet,
                     by the account you would be visiting. */}
@@ -1740,8 +1806,11 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
                   {onNavigate && (step.view ? (
                     <button
                       type="button"
-                      onClick={() => onNavigate(step.view)}
-                      title={`Open the ${step.viewLabel} tab`}
+                      // The changed-jobs step's work is one subtab of Contacts,
+                      // so its button lands there rather than on whichever
+                      // subtab Contacts last showed (unless re-pointed).
+                      onClick={() => (step.key === 'changed-jobs' && step.view === 'contacts' ? openChangedJobs() : onNavigate(step.view))}
+                      title={step.key === 'changed-jobs' && step.view === 'contacts' ? 'Open Contacts > Changed Jobs' : `Open the ${step.viewLabel} tab`}
                       style={{
                         width: ACTION_COL, flexShrink: 0, alignSelf: hasList ? 'flex-start' : 'center',
                         padding: '0.3rem 0.7rem', borderRadius: 6, cursor: 'pointer',
