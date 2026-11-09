@@ -101,7 +101,7 @@ const CONTRACT_COLUMNS = [
   // opportunity name, the same join the Deals grid's Scope column uses
   // (utils/dealOppScope). Editable: see ContractScopeCell for where an
   // edit is saved.
-  { key: '__scope',                 label: 'Scope', minWidth: 220, maxWidth: 320 },
+  { key: '__scope',                 label: 'Scope', minWidth: 260 },
   { key: 'Paperwork completed',     label: 'Paperwork', minWidth: 220 },
   { key: 'Current Term Start Date', label: 'Current Term Start Date' },
   { key: 'Payment Terms',           label: 'Payment Terms' },
@@ -411,7 +411,55 @@ function InlineTextCell({ value, onCommit, placeholder, title }) {
   );
 }
 
-function ContractTable({ deals, oppScopeByBfo, onUpdateNotes, onSaveDealScope, onSaveOppScope }) {
+// Drag-to-resize widths for the contract drill-down, one set shared by
+// every client's table. Same storage pattern as the Post-Sale Follow-Up
+// table below: localStorage for the first paint, settings.tablePrefs to
+// follow the user to their other machine.
+const CONTRACT_WIDTHS_KEY = 'prospect-col-widths-client-contracts';
+const CONTRACT_PREFS_TABLE_ID = 'clients-contracts';
+const CONTRACT_MIN_WIDTH = 60;
+const CONTRACT_DEFAULT_WIDTH = 140;
+function loadContractWidths() {
+  try { return JSON.parse(localStorage.getItem(CONTRACT_WIDTHS_KEY)) || {}; } catch { return {}; }
+}
+function saveContractWidths(w) {
+  try { localStorage.setItem(CONTRACT_WIDTHS_KEY, JSON.stringify(w)); } catch { /* storage blocked */ }
+}
+
+// Drag from a header's right edge; the pointer is tracked on document so
+// the drag keeps going past the header. `onWidth` gets each new width.
+function startColumnDrag(e, startWidth, onWidth) {
+  e.preventDefault();
+  e.stopPropagation();
+  const startX = e.clientX;
+  const body = document.body;
+  function onMouseMove(ev) {
+    onWidth(Math.max(CONTRACT_MIN_WIDTH, startWidth + (ev.clientX - startX)));
+  }
+  function onMouseUp() {
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+    body.style.cursor = '';
+    body.style.userSelect = '';
+  }
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', onMouseUp);
+  body.style.cursor = 'col-resize';
+  body.style.userSelect = 'none';
+}
+
+function ContractTable({ deals, oppScopeByBfo, onUpdateNotes, onSaveDealScope, onSaveOppScope, settings, updateSettings }) {
+  const [colWidths, setColWidths] = useSyncedTablePref({
+    tableId: CONTRACT_PREFS_TABLE_ID, field: 'widths', settings, updateSettings,
+    readLocal: loadContractWidths,
+    writeLocal: saveContractWidths,
+    hasLocal: () => lsHas(CONTRACT_WIDTHS_KEY),
+  });
+  const getWidth = (col) => colWidths[col.key] || col.minWidth || CONTRACT_DEFAULT_WIDTH;
+  function handleResizeStart(e, col) {
+    startColumnDrag(e, getWidth(col), (w) => setColWidths(prev => ({ ...prev, [col.key]: w })));
+  }
+
   if (!deals || deals.length === 0) {
     return (
       <div style={{ padding: '0.75rem 1.25rem', color: '#64748B', fontSize: '0.75rem', fontStyle: 'italic' }}>
@@ -437,12 +485,31 @@ function ContractTable({ deals, oppScopeByBfo, onUpdateNotes, onSaveDealScope, o
   });
   return (
     <div style={{ overflowX: 'auto', padding: '0.5rem 0.75rem 0.75rem' }}>
-      <table style={{ borderCollapse: 'collapse', fontSize: '0.7rem', width: 'max-content', minWidth: '100%' }}>
+      {Object.keys(colWidths).length > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+          <button
+            type="button"
+            onClick={() => setColWidths({})}
+            title="Restore the default column widths"
+            style={{ background: 'transparent', border: '1px solid #E2E8F0', borderRadius: 4, fontSize: '0.65rem', color: '#64748B', cursor: 'pointer', padding: '1px 6px', fontFamily: 'inherit' }}
+          >Reset widths</button>
+        </div>
+      )}
+      <table style={{ borderCollapse: 'collapse', fontSize: '0.7rem', tableLayout: 'fixed', width: CONTRACT_COLUMNS.reduce((sum, c) => sum + getWidth(c), 0) }}>
+        <colgroup>
+          {CONTRACT_COLUMNS.map(col => <col key={col.key} style={{ width: getWidth(col) }} />)}
+        </colgroup>
         <thead>
           <tr style={{ background: '#F1F5F9' }}>
             {CONTRACT_COLUMNS.map(col => (
-              <th key={col.key} style={{ padding: '0.35rem 0.5rem', textAlign: 'left', color: '#475569', fontWeight: 700, fontSize: '0.65rem', whiteSpace: 'nowrap', borderBottom: '1px solid #CBD5E1', minWidth: col.minWidth, maxWidth: col.maxWidth }}>
+              <th key={col.key} title={col.label} style={{ position: 'relative', padding: '0.35rem 0.5rem', textAlign: 'left', color: '#475569', fontWeight: 700, fontSize: '0.65rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', borderBottom: '1px solid #CBD5E1' }}>
                 {col.label}
+                <span
+                  onMouseDown={e => handleResizeStart(e, col)}
+                  onClick={e => e.stopPropagation()}
+                  title="Drag to resize"
+                  style={{ position: 'absolute', top: 0, right: 0, height: '100%', width: 8, cursor: 'col-resize', userSelect: 'none' }}
+                />
               </th>
             ))}
           </tr>
@@ -454,7 +521,7 @@ function ContractTable({ deals, oppScopeByBfo, onUpdateNotes, onSaveDealScope, o
             return (
             <tr key={i} style={{ background: inactive ? '#F1F5F9' : baseBg, color: inactive ? '#94A3B8' : undefined, opacity: inactive ? 0.7 : 1 }}>
               {CONTRACT_COLUMNS.map(col => (
-                <td key={col.key} style={{ padding: '0.3rem 0.5rem', whiteSpace: 'nowrap', borderBottom: '1px solid #E2E8F0', minWidth: col.minWidth, maxWidth: col.maxWidth }}>
+                <td key={col.key} style={{ padding: '0.3rem 0.5rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', borderBottom: '1px solid #E2E8F0' }}>
                   {col.key === '__daysToEnd'
                     ? renderDaysToEnd(d['End Date'], inactive)
                     : col.key === '__scope'
@@ -1753,7 +1820,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
             }}
             expandedRowIds={expandedIds}
             renderExpansion={(row) => (
-              <ContractTable deals={dealsByClient.get(normClientName(row.company)) || []} oppScopeByBfo={oppScopeByBfo} onUpdateNotes={updateAgreementNotes} onSaveDealScope={updateAgreementScope} onSaveOppScope={updateOppScope} />
+              <ContractTable deals={dealsByClient.get(normClientName(row.company)) || []} oppScopeByBfo={oppScopeByBfo} onUpdateNotes={updateAgreementNotes} onSaveDealScope={updateAgreementScope} onSaveOppScope={updateOppScope} settings={settings} updateSettings={updateSettings} />
             )}
             emptyMessage={q ? `No clients match "${query}"` : 'No clients to display'}
             enableColumnFilters
