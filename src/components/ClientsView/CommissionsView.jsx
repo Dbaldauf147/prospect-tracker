@@ -20,6 +20,8 @@ import { CommissionsProjectedView } from './CommissionsProjectedView';
 import { projectCommissionRow } from '../../utils/commissionProjection';
 import { readCommissionsFile, isCommissionsFileName } from '../../utils/commissionsMonthFile';
 import { recordCommissionUpload, COMMISSION_UPLOADS_KEY } from '../../utils/commissionMonthUploads';
+import { normBfoKey } from '../../utils/commissionBfoSchedule';
+import { CommissionBfoModal } from './CommissionBfoModal';
 
 // Lookup columns the user adds at the front of the table. Account Name
 // is an autocomplete against the Table View prospect roster; BFO Name is
@@ -41,8 +43,12 @@ const BFO_NAME_LIST_ID = 'commissions-bfo-name-suggestions';
 // Inline cell editor: shows the formatted value, swaps to a text input on
 // double-click, commits on Enter / blur, cancels on Escape. `listId`
 // hooks the input up to a <datalist> for autocomplete (Account Name).
-function EditableCell({ value, render, onSave, listId }) {
+function EditableCell({ value, render, onSave, listId, onClick, title }) {
   const [editing, setEditing] = useState(false);
+  // A single click (onClick) waits out the double-click window, so a
+  // double-click still edits instead of also firing the click.
+  const clickTimer = useRef(null);
+  useEffect(() => () => clearTimeout(clickTimer.current), []);
   const [draft, setDraft] = useState(value == null ? '' : String(value));
   useEffect(() => {
     if (!editing) setDraft(value == null ? '' : String(value));
@@ -56,9 +62,14 @@ function EditableCell({ value, render, onSave, listId }) {
   if (!editing) {
     return (
       <span
-        onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
-        title="Double-click to edit"
-        style={{ display: 'inline-block', width: '100%', cursor: 'text' }}
+        onClick={onClick ? (e) => {
+          e.stopPropagation();
+          clearTimeout(clickTimer.current);
+          clickTimer.current = setTimeout(onClick, 250);
+        } : undefined}
+        onDoubleClick={(e) => { e.stopPropagation(); clearTimeout(clickTimer.current); setEditing(true); }}
+        title={title || 'Double-click to edit'}
+        style={{ display: 'inline-block', width: '100%', cursor: onClick ? 'pointer' : 'text' }}
       >
         {render(value)}
       </span>
@@ -396,6 +407,35 @@ function PaymentStatusBadge({ state, label, title }) {
   );
 }
 
+// BFO Name reads as a link: clicking it opens the opp's monthly schedule.
+function bfoLinkRender(v) {
+  return (
+    <span style={{ color: '#1D4ED8', textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
+      {v == null ? '' : String(v)}
+    </span>
+  );
+}
+
+// Hovering any row outlines every row tied to the same BFO opp. The rows
+// carry a `commBfoG<n>` class (see `rows` in CommissionsView); this draws
+// the outline for the hovered group with one <style> rule, so a hover
+// never re-renders the table itself.
+const BFO_GROUP_CLASS = 'commBfoG';
+const BFO_OUTLINE = '#2563EB';
+function BfoGroupOutline({ hoverRef }) {
+  const [group, setGroup] = useState(null);
+  useEffect(() => { hoverRef.current = setGroup; return () => { hoverRef.current = null; }; }, [hoverRef]);
+  if (group == null) return null;
+  const sel = `tr.${BFO_GROUP_CLASS}${group}`;
+  return (
+    <style>{`
+      ${sel} > td { box-shadow: inset 0 2px 0 ${BFO_OUTLINE}, inset 0 -2px 0 ${BFO_OUTLINE}; background-color: #F5F9FF; }
+      ${sel} > td:first-child { box-shadow: inset 2px 0 0 ${BFO_OUTLINE}, inset 0 2px 0 ${BFO_OUTLINE}, inset 0 -2px 0 ${BFO_OUTLINE}; }
+      ${sel} > td:last-child { box-shadow: inset -2px 0 0 ${BFO_OUTLINE}, inset 0 2px 0 ${BFO_OUTLINE}, inset 0 -2px 0 ${BFO_OUTLINE}; }
+    `}</style>
+  );
+}
+
 // Plain-text cell used by Account Name / BFO Name / pasted Name fields.
 function plainTextRender(v) {
   if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>-</span>;
@@ -517,9 +557,11 @@ function buildFrontColumns(oppsCache, oppIndex) {
               <span style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                 <EditableCell
                   value={row[BFO_NAME_KEY]}
-                  render={plainTextRender}
+                  render={bfoLinkRender}
                   onSave={(v) => row.__onUpdate?.(row.id, BFO_NAME_KEY, v)}
                   listId={BFO_NAME_LIST_ID}
+                  onClick={row.__onOpenBfo ? () => row.__onOpenBfo(row[BFO_NAME_KEY]) : undefined}
+                  title="Click to see this opp's revenue and commissions by month. Double-click to edit."
                 />
               </span>
             )}
@@ -1372,6 +1414,25 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     setShowOnlyDuplicates(false);
   }
 
+  // BFO Name -> group number, for the hover outline. Every linked name gets
+  // one, even on a single row, so the outline always reads as "the whole opp".
+  const bfoGroups = useMemo(() => {
+    const m = new Map();
+    for (const r of data) {
+      const k = normBfoKey(r?.[BFO_NAME_KEY]);
+      if (k && !m.has(k)) m.set(k, m.size);
+    }
+    return m;
+  }, [data]);
+  const [bfoModal, setBfoModal] = useState(null);
+  const bfoHoverRef = useRef(null);
+  const onTableMouseOver = useCallback((e) => {
+    const tr = e.target.closest?.('tr');
+    const match = tr && / commBfoG(\d+)(?: |$)/.exec(` ${tr.className}`);
+    bfoHoverRef.current?.(match ? match[1] : null);
+  }, []);
+  const onTableMouseLeave = useCallback(() => bfoHoverRef.current?.(null), []);
+
   const rows = useMemo(
     () => data.map((r, i) => ({
       ...r,
@@ -1385,9 +1446,26 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
       __onPickOpp: setPickerRowId,
       __isDupeCandidate: duplicateIds.has(i),
       __isDuplicate: flaggedDuplicateIds.has(i),
+      __onOpenBfo: setBfoModal,
+      __bfoGroup: bfoGroups.get(normBfoKey(r?.[BFO_NAME_KEY])) ?? null,
     })),
-    [data, selectedIds, duplicateIds, flaggedDuplicateIds]
+    [data, selectedIds, duplicateIds, flaggedDuplicateIds, bfoGroups]
   );
+
+  // The BFO opp popup: every roster row with the clicked BFO Name (ignored
+  // ones too; the popup counts and drops them), each projected the same way
+  // the Projected subtab does it.
+  const bfoModalRows = useMemo(() => {
+    if (!bfoModal) return [];
+    const key = normBfoKey(bfoModal);
+    return data.filter(r => normBfoKey(r?.[BFO_NAME_KEY]) === key);
+  }, [bfoModal, data]);
+  const bfoModalOpp = useMemo(() => (bfoModal ? findOppByBfoLink(oppsCache, bfoModal) : null), [bfoModal, oppsCache]);
+  const projectionOf = useCallback((row) => projectCommissionRow(row, {
+    status: paymentStatusFor(row).state,
+    opp: findOppByBfoLink(oppsCache, row?.[BFO_NAME_KEY]),
+  }), [oppsCache]);
+  const closeBfoModal = useCallback(() => setBfoModal(null), []);
 
   // Count of project rows missing an Account Name (and not ignored) —
   // drives the warning banner. Computed off the raw data so it reflects
@@ -1892,7 +1970,12 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
         />
       )}
 
-      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div
+        onMouseOver={onTableMouseOver}
+        onMouseLeave={onTableMouseLeave}
+        style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+      >
+        <BfoGroupOutline hoverRef={bfoHoverRef} />
         {rows.length === 0 ? (
           <div style={{ margin: '0 1.25rem', padding: '1.25rem', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569', textAlign: 'center' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No commissions yet</div>
@@ -1926,6 +2009,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
               : row.__isDuplicate
                 ? { background: '#FDF4FF', boxShadow: 'inset 3px 0 0 #C026D3' }
                 : undefined}
+            rowClassName={(row) => (row.__bfoGroup != null ? `${BFO_GROUP_CLASS}${row.__bfoGroup}` : undefined)}
             onFilteredRowsChange={onTableFilteredRowsChange}
             settings={settings}
             updateSettings={updateSettings}
@@ -1933,6 +2017,16 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
         )}
       </div>
       </>)}
+
+      {bfoModal && (
+        <CommissionBfoModal
+          bfoName={String(bfoModal).trim()}
+          rows={bfoModalRows}
+          projectionOf={projectionOf}
+          opp={bfoModalOpp}
+          onClose={closeBfoModal}
+        />
+      )}
 
       {showPaste && (
         <CommissionsPasteImportModal
