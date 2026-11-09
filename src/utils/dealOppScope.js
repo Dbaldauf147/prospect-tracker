@@ -31,6 +31,8 @@ import { scopeTokens } from './scopeMatch.js';
  *              is more, their scopes are pooled and the count lets the
  *              cell say where the list came from.
  *   accounts - the account names behind those opps, deduped.
+ *   oppIds   - those opps' _ids, so a caller editing the scope of a deal
+ *              tied to exactly one opp knows which opp to write to.
  *
  * An opp with an empty Scope still makes an entry, so a deal can tell
  * "its opp has no scope yet" apart from "no opp is tied to this deal".
@@ -42,10 +44,11 @@ export function indexOppScopeByBfo(records = []) {
     if (!bfo) continue;
     let entry = map.get(bfo);
     if (!entry) {
-      entry = { items: [], oppCount: 0, accounts: [], _seen: new Set() };
+      entry = { items: [], oppCount: 0, accounts: [], oppIds: [], _seen: new Set() };
       map.set(bfo, entry);
     }
     entry.oppCount += 1;
+    if (r?._id != null) entry.oppIds.push(r._id);
     const account = String(r?.Account || '').trim();
     if (account && !entry.accounts.includes(account)) entry.accounts.push(account);
     for (const token of scopeTokens(r?.Scope)) {

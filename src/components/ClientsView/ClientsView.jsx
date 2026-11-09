@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
 import { useOpps2Data } from '../../hooks/useOpps2Data';
+import { setOppField } from '../../utils/opps2Store';
 import { indexOppScopeByBfo, oppScopeForDeal, oppScopeText } from '../../utils/dealOppScope';
 import { lsHas } from '../../utils/tablePrefsSync';
 import { DataTable } from '../common/DataTable';
@@ -98,7 +99,8 @@ const CONTRACT_COLUMNS = [
   { key: 'Agreement Name',          label: 'Agreement Name', minWidth: 420 },
   // What the agreement was sold on: the Scope of the opp tied to it by BFO
   // opportunity name, the same join the Deals grid's Scope column uses
-  // (utils/dealOppScope). Read-only; Scope is edited on Opps 2.
+  // (utils/dealOppScope). Editable: see ContractScopeCell for where an
+  // edit is saved.
   { key: '__scope',                 label: 'Scope', minWidth: 220, maxWidth: 320 },
   { key: 'Paperwork completed',     label: 'Paperwork', minWidth: 220 },
   { key: 'Current Term Start Date', label: 'Current Term Start Date' },
@@ -326,47 +328,63 @@ function renderContractCell(key, value) {
   return <span style={{ color: '#1E293B' }}>{String(value)}</span>;
 }
 
-// The Scope cell in the contract drill-down. Falls back to a Scope value
-// uploaded on the deal row itself when no opp is tied to it.
-function renderContractScope(deal, oppScopeByBfo) {
+// The Scope cell in the contract drill-down, editable in place. Where an
+// edit goes depends on where the scope comes from, so there is still one
+// place each scope lives:
+//   - tied to exactly one opp: written to that opp's Scope (setOppField),
+//     so Opps 2 and the Deals grid show the same text;
+//   - tied to no opp: saved on the deal row as "Scope" (deals override);
+//   - pooled from several opps under one BFO name: read-only, since there
+//     is no single opp an edit could belong to.
+function ContractScopeCell({ deal, oppScopeByBfo, onSaveDealScope, onSaveOppScope }) {
   const entry = oppScopeForDeal(oppScopeByBfo, deal);
   const text = entry ? oppScopeText(entry) : String(deal?.Scope ?? '').trim();
-  if (!text) {
-    const title = entry
-      ? 'The opp this agreement is tied to has no Scope yet. Set it on Opps 2 and it shows up here.'
-      : 'No opp is tied to this agreement by BFO opportunity name, so there is no scope to pull in.';
-    return <span style={{ color: '#94A3B8' }} title={title}>-</span>;
+  const oppId = entry && entry.oppIds?.length === 1 ? entry.oppIds[0] : null;
+  const pooled = !!entry && !oppId;
+  const source = !entry ? 'Saved on this agreement (no opp is tied to it by BFO opportunity name).'
+    : pooled ? `Pooled from ${entry.oppCount} opps sharing this BFO opportunity name. Edit each one on Opps 2.`
+    : `From the ${entry.accounts[0] || 'matching'} opp. Editing here updates that opp's Scope.`;
+  const title = `${text ? `${(entry ? entry.items : [text]).map(it => `• ${it}`).join('\n')}\n\n` : ''}${source}`;
+  if (pooled) {
+    return (
+      <span title={title} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: text ? '#1E293B' : '#94A3B8' }}>
+        {text || '-'}
+      </span>
+    );
   }
-  const title = entry
-    ? `${entry.items.map(it => `• ${it}`).join('\n')}\n\nFrom the ${entry.oppCount > 1 ? `${entry.oppCount} opps sharing this BFO opportunity name` : `${entry.accounts[0] || 'matching'} opp`}. Edit it on Opps 2.`
-    : text;
   return (
-    <span title={title} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#1E293B' }}>
-      {text}
-    </span>
+    <InlineTextCell
+      key={text}
+      value={text}
+      placeholder="Add scope"
+      title={title}
+      onCommit={(v) => (oppId != null ? onSaveOppScope?.(oppId, v) : onSaveDealScope?.(deal, v))}
+    />
   );
 }
 
-// Inline editor for an agreement's Notes. Remounted by its caller (key)
+// Inline text editor for the drill-down's Scope and Notes cells. Remounted by its caller (key)
 // whenever the saved value changes, so the draft starts from what is
 // stored without an effect copying it across. Commits on blur or Enter,
 // reverts on Escape.
-function AgreementNotesCell({ value, onCommit }) {
+function InlineTextCell({ value, onCommit, placeholder, title }) {
   const [draft, setDraft] = useState(value || '');
   const [focused, setFocused] = useState(false);
+  const [error, setError] = useState('');
   const cancelled = useRef(false);
   function commit() {
     if (cancelled.current) { cancelled.current = false; return; }
     const next = draft.trim();
     if (next === String(value || '').trim()) return;
-    onCommit(next);
+    setError('');
+    Promise.resolve(onCommit(next)).catch((err) => setError(`Could not save: ${err?.message || err}`));
   }
   return (
     <input
       type="text"
       value={draft}
-      placeholder="Add a note"
-      title={draft || 'Add a note about this agreement'}
+      placeholder={placeholder}
+      title={error || title || draft}
       onChange={(e) => setDraft(e.target.value)}
       onFocus={() => setFocused(true)}
       onBlur={() => { setFocused(false); commit(); }}
@@ -385,7 +403,7 @@ function AgreementNotesCell({ value, onCommit }) {
       style={{
         width: '100%', boxSizing: 'border-box',
         padding: '2px 6px',
-        border: `1px solid ${focused ? '#3B82F6' : 'transparent'}`, borderRadius: 4,
+        border: `1px solid ${error ? '#DC2626' : focused ? '#3B82F6' : 'transparent'}`, borderRadius: 4,
         background: focused ? '#fff' : 'transparent', color: '#1E293B',
         fontSize: '0.7rem', fontFamily: 'inherit',
       }}
@@ -393,7 +411,7 @@ function AgreementNotesCell({ value, onCommit }) {
   );
 }
 
-function ContractTable({ deals, oppScopeByBfo, onUpdateNotes }) {
+function ContractTable({ deals, oppScopeByBfo, onUpdateNotes, onSaveDealScope, onSaveOppScope }) {
   if (!deals || deals.length === 0) {
     return (
       <div style={{ padding: '0.75rem 1.25rem', color: '#64748B', fontSize: '0.75rem', fontStyle: 'italic' }}>
@@ -440,9 +458,9 @@ function ContractTable({ deals, oppScopeByBfo, onUpdateNotes }) {
                   {col.key === '__daysToEnd'
                     ? renderDaysToEnd(d['End Date'], inactive)
                     : col.key === '__scope'
-                    ? renderContractScope(d, oppScopeByBfo)
+                    ? <ContractScopeCell deal={d} oppScopeByBfo={oppScopeByBfo} onSaveDealScope={onSaveDealScope} onSaveOppScope={onSaveOppScope} />
                     : col.key === 'Notes' && onUpdateNotes
-                    ? <AgreementNotesCell key={String(d.Notes ?? '')} value={d.Notes} onCommit={(v) => onUpdateNotes(d, v)} />
+                    ? <InlineTextCell key={String(d.Notes ?? '')} value={d.Notes} placeholder="Add a note" title={d.Notes || 'Add a note about this agreement'} onCommit={(v) => onUpdateNotes(d, v)} />
                     : renderContractCell(col.key, d[col.key])}
                 </td>
               ))}
@@ -800,20 +818,26 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
 
   // Save an agreement's Notes from the contract drill-down, the same way
   // updateFollowUpOnSale saves its date.
-  function updateAgreementNotes(targetDeal, value) {
+  // Also saves a Scope typed on an agreement no opp is tied to.
+  function updateDealTextField(targetDeal, field, value) {
     setDealsList(prev => {
       const idx = prev.indexOf(targetDeal);
       if (idx < 0) return prev;
       const next = [...prev];
       const current = { ...next[idx] };
       const v = String(value ?? '').trim();
-      if (!v) delete current.Notes;
-      else current.Notes = v;
+      if (!v) delete current[field];
+      else current[field] = v;
       next[idx] = current;
-      try { saveDealsOverride(next); } catch (err) { console.warn('Save agreement notes failed', err); }
+      try { saveDealsOverride(next); } catch (err) { console.warn(`Save agreement ${field} failed`, err); }
       return next;
     });
   }
+  const updateAgreementNotes = (deal, v) => updateDealTextField(deal, 'Notes', v);
+  const updateAgreementScope = (deal, v) => updateDealTextField(deal, 'Scope', v);
+  // A Scope typed on an agreement tied to one opp goes to that opp; the
+  // opps2-cache-updated event its save fires refreshes oppsRecords here.
+  const updateOppScope = (oppId, v) => setOppField(user?.uid, oppId, 'Scope', v);
 
   // One-time migration for the Tier / Target Tier columns. DataTable
   // permanently hides any column that didn't exist when a user last
@@ -1729,7 +1753,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
             }}
             expandedRowIds={expandedIds}
             renderExpansion={(row) => (
-              <ContractTable deals={dealsByClient.get(normClientName(row.company)) || []} oppScopeByBfo={oppScopeByBfo} onUpdateNotes={updateAgreementNotes} />
+              <ContractTable deals={dealsByClient.get(normClientName(row.company)) || []} oppScopeByBfo={oppScopeByBfo} onUpdateNotes={updateAgreementNotes} onSaveDealScope={updateAgreementScope} onSaveOppScope={updateOppScope} />
             )}
             emptyMessage={q ? `No clients match "${query}"` : 'No clients to display'}
             enableColumnFilters
