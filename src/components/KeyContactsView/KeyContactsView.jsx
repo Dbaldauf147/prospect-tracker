@@ -6,8 +6,6 @@ import {
   resolveHiddenKeys, isColumnVisible, resetToStarred, applyStar,
   orderColumns, mergeColumnOrder,
 } from '../../utils/tableColumnPrefs';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
 import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
@@ -31,7 +29,7 @@ import { getStateForCity, lookupStateForCity, CITY_OPTIONS, matchCities } from '
 import { useDraftCampaignQueue, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { companyOverrideUpdate, contactLocalFieldsUpdate } from '../../utils/contactCompanyOverride';
 import { primarySubject } from '../../utils/campaignSubjects';
-import { EMAIL_CAMPAIGNS_UPDATED_EVENT } from '../ProspectModal/ContactCampaignAdd';
+import { useSavedCampaigns } from '../../hooks/useSavedCampaigns';
 import { latestCampaignReplies, campaignReplyForContact } from '../../utils/campaignReplies';
 import { campaignSendDetailWithin } from '../../utils/campaignFollowUp';
 import { buildUnansweredIndex, unansweredFor, campaignSendsByAddress, UNANSWERED_VERSION } from '../../utils/unansweredOutreach';
@@ -566,6 +564,9 @@ export function KeyContactsView(props) {
 // written out as a string compare in nine places. DMs is the same page over
 // a narrower list rather than a cut-down copy of it, so it gets the same
 // furniture, and the nine places now ask one question.
+// Stable empty list for pages that don't show the campaign columns.
+const NO_SAVED_CAMPAIGNS = [];
+
 const FULL_TABLE_PREFIXES = new Set(['all-contacts', 'dm-contacts']);
 function hasFullTable(storagePrefix) {
   return FULL_TABLE_PREFIXES.has(storagePrefix);
@@ -2361,24 +2362,19 @@ function KeyContactsViewInner({
   // Saved email campaigns (created on the Email Campaigns subtab of the
   // Draft Emails page and persisted to Firestore at emailCampaigns/{uid}).
   // Drives the All Contacts "Email Campaigns" column, surfacing the most
-  // recent campaign a contact was a recipient of. Only the All Contacts
-  // page renders that column, so we skip the Firestore read elsewhere.
-  const [savedCampaigns, setSavedCampaigns] = useState([]);
-  useEffect(() => {
-    if (!hasFullTable(storagePrefix) || !user?.uid) return;
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const snap = await getDoc(doc(db, 'emailCampaigns', user.uid));
-        if (!cancelled) setSavedCampaigns(snap.exists() ? (snap.data().campaigns || []) : []);
-      } catch { if (!cancelled) setSavedCampaigns([]); }
-    };
-    load();
-    // Re-read when the contact popup adds somebody to a campaign, so the
-    // campaign columns pick it up without a reload.
-    window.addEventListener(EMAIL_CAMPAIGNS_UPDATED_EVENT, load);
-    return () => { cancelled = true; window.removeEventListener(EMAIL_CAMPAIGNS_UPDATED_EVENT, load); };
-  }, [user, storagePrefix]);
+  // recent campaign a contact was a recipient of.
+  //
+  // A live subscription (useSavedCampaigns), not the one-shot getDoc this
+  // used to be. That read ran once at mount and turned any failure into
+  // "no campaigns" for the life of the page: a tab on the in-memory cache
+  // whose first read landed before the connection did, or a read that hit
+  // "client is offline", left every campaign column blank until a reload.
+  // The snapshot recovers when the connection does, and picks up campaigns
+  // saved or refreshed on the Email Campaigns tab without a reload too.
+  // App already holds the same listener for the Prospecting ladder, so
+  // this adds no reads. Only the full tables render the campaign columns.
+  const { campaigns: liveCampaigns } = useSavedCampaigns();
+  const savedCampaigns = hasFullTable(storagePrefix) ? liveCampaigns : NO_SAVED_CAMPAIGNS;
 
   // Campaign membership filter (All Contacts only): pick a saved email
   // campaign to see which contacts are already in it vs. still missing.
@@ -2541,23 +2537,30 @@ function KeyContactsViewInner({
     return days === 1 ? '1 day' : `${days} days`;
   };
 
-  // Map each recipient email → the most recent campaign send they were
-  // part of. Saved-campaign contacts store their recipients as a single
+  // Map each recipient email → the most recent campaign they're in.
+  // Saved-campaign contacts store their recipients as a single
   // '; '-joined string (group sends), so split them back out and key by
-  // individual lowercased email, keeping the newest sentDate per email.
+  // individual lowercased email. A row that's been sent is dated by its
+  // sentDate. A row still waiting on its first send (added to the roster
+  // from a contact popup or Draft Emails) is still "in" the campaign, so it
+  // counts too, dated by when the campaign was saved: otherwise somebody
+  // just put on this week's campaign kept showing last quarter's.
   const contactCampaign = useMemo(() => {
     const map = new Map();
     for (const camp of (savedCampaigns || [])) {
-      const subject = primarySubject(camp);
+      const subject = primarySubject(camp) || String(camp.title || '').trim() || '(untitled campaign)';
+      const savedMs = camp.savedAt ? new Date(camp.savedAt).getTime() : NaN;
       for (const ct of (camp.contacts || [])) {
         const t = ct.sentDate ? new Date(ct.sentDate).getTime() : NaN;
-        const tsMs = Number.isFinite(t) ? t : 0;
+        const sent = Number.isFinite(t);
+        const tsMs = sent ? t : (Number.isFinite(savedMs) ? savedMs : 0);
         for (const part of String(ct.email || '').split(/[;,]/)) {
           const em = part.trim().toLowerCase();
           if (!em) continue;
           const prev = map.get(em);
-          if (!prev || tsMs > prev.tsMs) {
-            map.set(em, { subject, tsMs, ts: ct.sentDate || '', replied: !!ct.replied });
+          // Same moment: a real send beats a roster entry.
+          if (!prev || tsMs > prev.tsMs || (tsMs === prev.tsMs && sent && !prev.sent)) {
+            map.set(em, { subject, tsMs, ts: sent ? ct.sentDate : '', sent, replied: !!ct.replied });
           }
         }
       }
@@ -5157,18 +5160,19 @@ function KeyContactsViewInner({
                           >-</div>
                         );
                       }
-                      const d = new Date(entry.ts);
-                      const dateLabel = isNaN(d)
+                      const d = entry.sent ? new Date(entry.ts) : null;
+                      const dateLabel = !d || isNaN(d)
                         ? ''
                         : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                      const tip = `Most recent campaign: “${entry.subject}”${dateLabel ? ` · sent ${dateLabel}` : ''}`;
+                      const statusLabel = dateLabel || 'not sent yet';
+                      const tip = `Most recent campaign: "${entry.subject}" · ${dateLabel ? `sent ${dateLabel}` : 'on the roster, not sent to yet'}`;
                       return (
                         <div
                           style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#475569', display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                           title={tip}
                         >
                           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {entry.subject}{dateLabel ? ` · ${dateLabel}` : ''}
+                            {entry.subject}<span style={{ color: dateLabel ? '#475569' : '#94A3B8' }}> · {statusLabel}</span>
                           </span>
                         </div>
                       );
