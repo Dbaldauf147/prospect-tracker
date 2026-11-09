@@ -4,8 +4,9 @@
 // chart tracked All Missing Steps (their total was the field counts summed)
 // are left off, so the line doesn't jump between the two measures. The days come from utils/missingHistory.js,
 // recorded while My Accounts is open.
-import { useMemo, useSyncExternalStore } from 'react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 import { DataTable } from '../common/DataTable';
+import { MissingHistoryDayDiff } from './MissingHistoryDayDiff';
 import { COMPANY_DATA_FIELDS } from '../../utils/companyDataFields';
 import { subscribeMissingHistory, missingHistorySnapshot, parseMissingHistory, isStepsDay, baselineDay, setMissingBaseline } from '../../utils/missingHistory';
 
@@ -59,7 +60,9 @@ function TotalLine({ series }) {
   );
 }
 
-export function MissingHistoryView({ settings, updateSettings }) {
+export function MissingHistoryView({ settings, updateSettings, cdmName, onSelectCompany }) {
+  // The day whose Companies count was clicked: { day, prevDay }.
+  const [diffDay, setDiffDay] = useState(null);
   const raw = useSyncExternalStore(subscribeMissingHistory, missingHistorySnapshot);
   const history = useMemo(() => parseMissingHistory(raw), [raw]);
   const series = useMemo(
@@ -124,7 +127,19 @@ export function MissingHistoryView({ settings, updateSettings }) {
       exportValue: r => (r.vsBaseline == null ? '' : r.vsBaseline),
       render: r => signed(r.vsBaseline),
     }] : []),
-    { key: 'companies', label: 'Companies', defaultWidth: 100, render: r => withDelta(r.companies ?? 0, r.prev?.companies, true) },
+    {
+      key: 'companies', label: 'Companies', defaultWidth: 100,
+      render: r => (
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(e) => { e.stopPropagation(); setDiffDay({ day: r.day, prevDay: r.prev?.day || null }); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') setDiffDay({ day: r.day, prevDay: r.prev?.day || null }); }}
+          title="See which companies joined or left My Accounts this day (from the nightly backups)"
+          style={{ cursor: 'pointer', textDecoration: 'underline dotted', textUnderlineOffset: '3px' }}
+        >{withDelta(r.companies ?? 0, r.prev?.companies, true)}</span>
+      ),
+    },
     { key: 'stepsRemaining', label: 'Steps Remaining', defaultWidth: 130, render: r => withDelta(r.stepsRemaining ?? 0, r.prev?.stepsRemaining) },
     { key: 'missingData', label: 'Missing Data', defaultWidth: 110, render: r => withDelta(r.missingData ?? 0, r.prev?.missingData) },
     ...COMPANY_DATA_FIELDS.map(f => ({
@@ -156,7 +171,7 @@ export function MissingHistoryView({ settings, updateSettings }) {
         {`${series.length} day${series.length === 1 ? '' : 's'} recorded since ${fmtDay(first.day)}. `}
         Each day is the All Missing Steps column on the Company Data subtab added up (steps remaining on each company's
         By Category ladder, plus its blank sites, utility accounts and equipment) across the My Accounts companies,
-        inactive and Qualifying ones left out, as it stood at the end of that day. The field columns in the table count the companies missing each value.
+        inactive and Qualifying ones left out, as it stood at the end of that day. The field columns in the table count the companies missing each value. Click a day's Companies count to see which companies joined or left that day.
       </div>
       <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: '0.6rem 0.75rem', background: '#fff', maxWidth: 820 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
@@ -198,6 +213,17 @@ export function MissingHistoryView({ settings, updateSettings }) {
           updateSettings={updateSettings}
         />
       </div>
+      {diffDay && (
+        <MissingHistoryDayDiff
+          day={diffDay.day}
+          prevDay={diffDay.prevDay}
+          cdmName={cdmName}
+          settings={settings}
+          updateSettings={updateSettings}
+          onSelectCompany={onSelectCompany}
+          onClose={() => setDiffDay(null)}
+        />
+      )}
     </div>
   );
 }

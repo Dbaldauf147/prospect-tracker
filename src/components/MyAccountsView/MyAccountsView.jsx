@@ -4034,7 +4034,7 @@ Fix that now?
   if (mode === 'missingHistory') {
     return (
       <div className={styles.wrapper}>
-        <MissingHistoryView settings={settings} updateSettings={updateSettings} />
+        <MissingHistoryView settings={settings} updateSettings={updateSettings} cdmName={cdmName} onSelectCompany={(r) => { const p = prospects.find(x => x.id === r.id); if (p) onSelect(p); }} />
       </div>
     );
   }
