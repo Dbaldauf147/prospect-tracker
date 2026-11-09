@@ -45,6 +45,9 @@ eq('the mapped CDM column is what a row reports',
 eq('a mapped New Sales rep column is reported alongside it - either name covering the account is a clash',
   rowTargetCdms({ CDM: 'Jane Smith', 'New Sales rep': 'Ravi Patel' }, { cdmColumn: 'CDM', repColumn: 'New Sales rep' }),
   ['Jane Smith', 'Ravi Patel']);
+eq('a "-" CDM names nobody, so it is never a clashing rep',
+  rowTargetCdms({ CDM: '-', 'New Sales rep': ' - ' }, { cdmColumn: 'CDM', repColumn: 'New Sales rep' }),
+  []);
 eq('the same name in both columns is reported once',
   rowTargetCdms({ CDM: 'Jane Smith', 'New Sales rep': 'jane smith' }, { cdmColumn: 'CDM', repColumn: 'New Sales rep' }),
   ['Jane Smith']);

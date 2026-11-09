@@ -17,7 +17,7 @@
 // Pure — no React/DOM. Build the resolver once per (targetAccountsData,
 // settings) change and reuse it.
 
-import { matchesCdm, resolveTargetAccountCdm } from './cdmMatch.js';
+import { matchesCdm, resolveTargetAccountCdm, isBlankCdm } from './cdmMatch.js';
 import { buildCompanyIndex, findStrictMatchesInIndex } from './companyIndex.js';
 
 const COMPANY_KEYWORDS = ['Account', 'Company', 'Account Name', 'Client', 'Name'];
@@ -43,7 +43,7 @@ export function rowTargetCdms(record, { cdmColumn = '', repColumn = '' } = {}) {
   const out = [];
   const push = (v) => {
     const s = String(v || '').trim();
-    if (!s) return;
+    if (!s || isBlankCdm(s)) return;
     if (out.some(o => o.toLowerCase() === s.toLowerCase())) return;
     out.push(s);
   };

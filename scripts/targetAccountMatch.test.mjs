@@ -23,6 +23,17 @@ const data = { sheetNames: ['S'], sheets: { S: { records: [
 const rows = targetAccountRows(data, {});
 
 // rows
+{
+  // A "-" in the CDM column is no CDM, so the popup warns instead of
+  // reading "-" as a rep, and another row's real CDM still fills it in.
+  const dash = { sheetNames: ['A', 'B'], sheets: {
+    A: { records: [{ 'Account Name': 'Dash Co', CDM: '-', Tier: '1' }, { 'Account Name': 'Spaced Co', CDM: ' - ', Tier: '' }, { 'Account Name': 'Filled Co', CDM: '-', Tier: '2' }] },
+    B: { records: [{ 'Account Name': 'Filled Co', CDM: 'Dan Baldauf', Tier: '' }] },
+  } };
+  const dr = targetAccountRows(dash, {});
+  check('a "-" CDM reads as none', dr.map(r => r.cdm), ['', '', 'Dan Baldauf']);
+  check('a "-" CDM is not a mismatch with the card', targetRowFlags(dr[0], { cdm: 'Dan Baldauf' }).cdm, null);
+}
 check('one row per account, first wins', rows.map(r => r.name), ['Vibrantz Technologies', 'Vibrant Energy', 'Acme Corp']);
 check('a row carries CDM, Tier and Vertical', rows[0], { name: 'Vibrantz Technologies', cdm: 'Sam Ouimet', tier: 'Tier 2', vertical: 'chemicals & plastics', sheet: 'S' });
 check('an untiered row is still a row', rows[2].tier, '');
