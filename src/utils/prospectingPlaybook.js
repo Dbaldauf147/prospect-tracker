@@ -107,6 +107,23 @@ export const DEFAULT_STEPS = [
     // arrives untagged) and it is asked for again.
     clearTitle: 'Key, Client and Key Prospect are all fully tagged - no tag questions are left to answer',
   },
+  // People you already know, at a new desk: a warm way into a company you
+  // may never have reached. Ahead of the market updates (Dan's call): it is
+  // the same kind of work, writing to people who know you, but to a handful
+  // with a fresh reason to hear from you. Counted off the Changed Jobs
+  // page's Other contacts: everyone there not yet marked Reached Out,
+  // snoozed or hidden. Former Schneider Electric coworkers are left out of
+  // the step; they keep their own subtab on the page.
+  {
+    key: 'changed-jobs',
+    title: 'Contacts who changed companies',
+    detail: 'People you know who have moved to a new employer outside Schneider Electric. Reach out, snooze them, or hide them on the Changed Jobs page.',
+    view: 'contacts',
+    viewLabel: 'Contacts',
+    workLabel: n => `${n} to work`,
+    workTitle: n => `${n} ${n === 1 ? 'contact' : 'contacts'} on Changed Jobs > Other contacts ${n === 1 ? 'has' : 'have'} not been reached out to, snoozed or hidden (former Schneider Electric coworkers are not counted)`,
+    clearTitle: 'Everyone on Changed Jobs > Other contacts has been reached out to, snoozed or hidden',
+  },
   {
     key: 'market-updates',
     title: 'Reach out to contacts with market updates',
@@ -131,21 +148,6 @@ export const DEFAULT_STEPS = [
     // itself then, and this is what the Status pill says instead of the
     // undo hint a hand-marked step carries.
     clearTitle: 'Every email campaign that isn\'t paused has finished sending - no market update is still going out',
-  },
-  // People you already know, at a new desk: a warm way into a company you
-  // may never have reached. Straight after the market updates because it is
-  // the same kind of work, writing to people who know you, just to fewer
-  // of them. Counted off the Changed Jobs page: everyone on it (either
-  // subtab) not yet marked Reached Out, snoozed or hidden there.
-  {
-    key: 'changed-jobs',
-    title: 'Contacts who changed companies',
-    detail: 'People you know who have moved to a new employer. Reach out, snooze them, or hide them on the Changed Jobs page.',
-    view: 'contacts',
-    viewLabel: 'Contacts',
-    workLabel: n => `${n} to work`,
-    workTitle: n => `${n} ${n === 1 ? 'contact on the Changed Jobs page has' : 'contacts on the Changed Jobs page have'} not been reached out to, snoozed or hidden`,
-    clearTitle: 'Everyone on the Changed Jobs page has been reached out to, snoozed or hidden',
   },
   {
     key: 'renewals',
@@ -266,18 +268,20 @@ const BACKFILLED_STEPS = [
   // belongs, or at the end when cold outreach is gone.
   { key: 'visits', before: 'cold' },
   // "Contacts who changed companies" is new work too, placed straight
-  // after the market-updates step it follows (step 3 on the shipped
-  // ladder); without that step, ahead of renewals; failing both, at the end.
-  { key: 'changed-jobs', after: 'market-updates', before: 'renewals' },
+  // ahead of the market-updates step, where the shipped ladder has it;
+  // without that step, ahead of renewals; failing both, at the end.
+  { key: 'changed-jobs', before: ['market-updates', 'renewals'] },
 ];
 
-function insertBackfilled(entries, { key, after, before, onlyWithAnchor = false }) {
+// `before` is one anchor or a list tried in order; the first one present
+// in the ladder wins.
+function insertBackfilled(entries, { key, before, onlyWithAnchor = false }) {
   const keys = entries.map(e => e.key);
   if (keys.includes(key)) return entries;
   const base = DEFAULTS_BY_KEY.get(key);
   if (!base) return entries;
-  const afterAt = after ? keys.indexOf(after) : -1;
-  const at = afterAt !== -1 ? afterAt + 1 : keys.indexOf(before);
+  const anchor = [].concat(before).find(k => keys.includes(k));
+  const at = anchor ? keys.indexOf(anchor) : -1;
   if (at === -1 && onlyWithAnchor) return entries;
   const next = [...entries];
   // The shipped step, whole: the user has never edited one that didn't

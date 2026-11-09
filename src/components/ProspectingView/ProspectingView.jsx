@@ -511,9 +511,7 @@ function ChangedJobsWarning({ rows, onNavigate, onOpenContact }) {
                 style={{ padding: 0, border: 0, background: 'none', font: 'inherit', fontWeight: 700, color: '#334155', cursor: 'pointer' }}
               >{r.name}</button>
             ) : <span style={{ fontWeight: 700, color: '#334155' }}>{r.name}</span>}
-            {(r.company || r.schneider) && (
-              <span style={{ color: '#94A3B8' }}> · {r.schneider ? 'ex-Schneider Electric' : r.company}</span>
-            )}
+            {r.company && <span style={{ color: '#94A3B8' }}> · {r.company}</span>}
           </span>
         ))}
         {more > 0 && <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>and {more} more</span>}
@@ -1387,7 +1385,11 @@ export function ProspectingView({ onNavigate, ladder = null, serviceGaps = null,
   // `contacts-view:active-subtab` is that page's memory of which subtab was
   // last open, so setting it saves the user the second click.
   const openChangedJobs = useCallback(() => {
-    try { localStorage.setItem('contacts-view:active-subtab', 'changed'); } catch (e) { void e; }
+    try {
+      localStorage.setItem('contacts-view:active-subtab', 'changed');
+      // Its Other contacts subtab, which is what the step counts.
+      localStorage.setItem('changed-jobs-contacts:subtab', 'other');
+    } catch (e) { void e; }
     onNavigate?.('contacts');
   }, [onNavigate]);
 
