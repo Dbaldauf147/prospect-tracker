@@ -20,7 +20,6 @@ import { STATUSES } from '../../data/enums';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { tagValuesOf, anyValueSelected } from '../../utils/tagColumnFilter';
 import { isOpenProcurementDecisionMaker } from '../../utils/procurementDmFilter';
-import { serviceBucketContext } from '../../utils/bucketServices';
 import { tagReviewScore, tagVocabulary, saveTagReview, recordForVerdict, sameTagRecord, recordKeepsTag, dedupeTags, planTagEdit, groupTagWrites, findTagRecord, tagRecordKeyFor } from '../../utils/contactTagReview';
 import { toggleContactInEvents } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
@@ -1895,11 +1894,11 @@ function KeyContactsViewInner({
   const [onlyLocationFlagged, setOnlyLocationFlagged] = useState(() => localStorage.getItem(lsKey('only-loc-flagged')) === '1');
   useEffect(() => { try { localStorage.setItem(lsKey('only-loc-flagged'), onlyLocationFlagged ? '1' : '0'); } catch {} }, [onlyLocationFlagged]);
   // "Procurement DMs, open": tagged Procurement and Decision Maker, and the
-  // company hasn't answered Procurement yet (utils/procurementDmFilter).
+  // contact's own Procurement tag status isn't Sold / Not sold
+  // (utils/procurementDmFilter).
   // Remembered per page like the cleanup checkbox.
   const [onlyProcurementDm, setOnlyProcurementDm] = useState(() => localStorage.getItem(lsKey('only-procurement-dm')) === '1');
   useEffect(() => { try { localStorage.setItem(lsKey('only-procurement-dm'), onlyProcurementDm ? '1' : '0'); } catch { /* storage off */ } }, [onlyProcurementDm]);
-  const serviceCtx = useMemo(() => serviceBucketContext(settings), [settings]);
   // A page with the Company Vertical column starts sorted by it. The saved
   // sort is written on first visit, so a page that already had one is moved
   // onto Vertical once (sticky flag), after which a re-sort sticks.
@@ -3556,7 +3555,7 @@ function KeyContactsViewInner({
       if (travelCity && String(c.city || '').trim().toLowerCase() !== travelCity.trim().toLowerCase()) return false;
     }
     if (onlyLocationFlagged && !checkCity(c.city) && !stateFlagOf(c)) return false;
-    if (onlyProcurementDm && !opts?.skipProcurementDm && !isOpenProcurementDecisionMaker(c.raw || c, c.prospect, serviceCtx, tagReviewMap)) return false;
+    if (onlyProcurementDm && !opts?.skipProcurementDm && !isOpenProcurementDecisionMaker(c.raw || c, tagReviewMap)) return false;
     // skipCompanyStatus lets the pills count against everything else.
     if (companyStatusSet && !opts?.skipCompanyStatus && !companyStatusSet.has(c.prospect?.status || '')) return false;
     // Campaign membership gate — 'in' keeps contacts already emailed in
@@ -3612,7 +3611,7 @@ function KeyContactsViewInner({
   const filteredContacts = sortedContacts.filter(c => passesNonColumnFilters(c) && passesColumnFilters(c, null));
   // The button's count: how many rows it leaves, under every other filter.
   const procurementDmCount = sortedContacts.filter(c => passesNonColumnFilters(c, { skipProcurementDm: true }) && passesColumnFilters(c, null)
-    && isOpenProcurementDecisionMaker(c.raw || c, c.prospect, serviceCtx, tagReviewMap)).length;
+    && isOpenProcurementDecisionMaker(c.raw || c, tagReviewMap)).length;
   // Pill counts: contacts per company status under every other filter, so
   // each pill says how many rows lighting it would add.
   const companyStatusCounts = (() => {
@@ -4294,7 +4293,7 @@ function KeyContactsViewInner({
             type="button"
             aria-pressed={onlyProcurementDm}
             onClick={() => setOnlyProcurementDm(v => !v)}
-            title="Show only contacts tagged both Procurement and Decision Maker whose company has no Procurement service marked Sold or Not Sold on its Services board, leaving out any contact whose own Procurement tag status is Sold or Not sold. Procurement services are the ones whose Contact Tags include Procurement."
+            title="Show only contacts tagged both Procurement and Decision Maker whose own Procurement tag status is not Sold or Not sold."
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 5, padding: '0.2rem 0.6rem', fontSize: '0.7rem', fontWeight: 600,
               borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit',
