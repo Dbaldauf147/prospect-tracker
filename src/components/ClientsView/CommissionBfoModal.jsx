@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fmtCurrency, asNumber } from '../../utils/dealsFormat';
-import { buildBfoSchedule, normBfoKey } from '../../utils/commissionBfoSchedule';
+import {
+  buildBfoSchedule, normBfoKey, bfoMatchState, bfoOkSignature, bfoComparisons, BFO_OK_SETTINGS_KEY,
+} from '../../utils/commissionBfoSchedule';
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 
@@ -9,28 +11,69 @@ import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 // Actual section (recorded on the Commissions roster) and an Expected one
 // (what the Deals page expects over each deal's term), split into Setup and
 // Recurring; see utils/commissionBfoSchedule for the rules.
+//
+// Each Actual cell and its Expected twin (same line, same month) turn green
+// when they agree and red when they don't. A red pair can be marked OK by
+// clicking it, or in bulk per row, per table, or for the whole opp. Marks
+// live in settings[BFO_OK_SETTINGS_KEY][<bfo>] so they sync across machines.
 
 const cellBase = { padding: '0.4rem 0.55rem', borderBottom: '1px solid #F1F5F9', textAlign: 'right', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' };
 const headBase = { padding: '0.4rem 0.55rem', borderBottom: '1px solid #E2E8F0', textAlign: 'right', whiteSpace: 'nowrap', color: '#475569', background: '#F1F5F9', fontWeight: 600 };
 const stickyLeft = { position: 'sticky', left: 0, zIndex: 1, textAlign: 'left', minWidth: 110 };
 
-function Money({ value, bold }) {
-  if (value == null) return <span style={{ color: '#CBD5E1' }}>-</span>;
-  return <span style={{ color: '#0F172A', fontWeight: bold ? 700 : 400 }}>{fmtCurrency(value)}</span>;
+const STATE_STYLE = {
+  match: { background: '#DCFCE7', color: '#166534' },
+  ok: { background: '#F0FDF4', color: '#15803D' },
+  mismatch: { background: '#FEE2E2', color: '#991B1B', cursor: 'pointer' },
+};
+
+function Money({ value, bold, state }) {
+  const color = state === 'match' || state === 'ok' || state === 'mismatch' ? STATE_STYLE[state].color : '#0F172A';
+  if (value == null) return <span style={{ color: state && state !== 'none' ? color : '#CBD5E1' }}>-</span>;
+  return <span style={{ color, fontWeight: bold ? 700 : 400 }}>{state === 'ok' ? '✓ ' : ''}{fmtCurrency(value)}</span>;
+}
+
+const smallBtn = {
+  border: '1px solid #FCA5A5', background: '#fff', color: '#991B1B', borderRadius: 4,
+  fontSize: '0.64rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer', padding: '1px 6px', whiteSpace: 'nowrap',
+};
+
+function cellTitle(state, actual, expected) {
+  const pair = `Actual ${fmtCurrency(actual || 0)}, expected ${fmtCurrency(expected || 0)}`;
+  if (state === 'match') return `${pair}: they match`;
+  if (state === 'ok') return `${pair}: marked OK. Click to undo.`;
+  if (state === 'mismatch') return `${pair}: they differ. Click to mark OK.`;
+  return undefined;
 }
 
 // One table (Revenue or Commission): an Actual section and an Expected
 // section, each with Setup, Recurring and a subtotal across the months.
-function SectionTable({ title, months, data, notes }) {
+// `stateOf(key)` reads a comparison's state; `onToggle(keys, ok)` marks the
+// given comparison keys OK (or clears them).
+function SectionTable({ title, measure, months, data, notes, stateOf, onToggle }) {
   const sections = [
     { key: 'actual', label: 'Actual', note: notes.actual, ...data.actual },
     { key: 'expected', label: 'Expected', note: notes.expected, ...data.expected },
   ];
   const span = months.length + 2;
+  const cols = [...months.map((m) => m.key), 'total'];
+  const keyOf = (line, col) => `${measure}:${line}:${col}`;
+  const redKeys = (line) => cols.map((c) => keyOf(line, c)).filter((k) => stateOf(k) === 'mismatch');
+  const tableReds = ['setup', 'recurring', 'total'].flatMap(redKeys);
+  const toggle = (k) => {
+    const st = stateOf(k);
+    if (st === 'mismatch') onToggle([k], true);
+    else if (st === 'ok') onToggle([k], false);
+  };
   return (
     <section style={{ marginTop: '0.9rem' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.35rem' }}>
         <strong style={{ fontSize: '0.9rem', color: '#1E293B' }}>{title}</strong>
+        {tableReds.length > 0 && (
+          <button type="button" onClick={() => onToggle(tableReds, true)} style={smallBtn} title={`Mark every red ${title.toLowerCase()} cell OK`}>
+            Mark all red OK ({tableReds.length})
+          </button>
+        )}
         <span style={{ flex: 1 }} />
         <span style={{ fontSize: '0.72rem', color: '#334155', fontVariantNumeric: 'tabular-nums' }}>
           Actual <strong>{fmtCurrency(data.actual.total.total)}</strong> · Expected <strong>{fmtCurrency(data.expected.total.total)}</strong>
@@ -62,18 +105,46 @@ function SectionTable({ title, months, data, notes }) {
                 </td>
               </tr>,
               ...[
-                { label: 'Setup', line: sec.setup },
-                { label: 'Recurring', line: sec.recurring },
-                { label: `${sec.label} total`, line: sec.total, bold: true },
-              ].map((r) => (
-                <tr key={`${sec.key}:${r.label}`}>
-                  <td style={{ ...cellBase, ...stickyLeft, background: '#fff', color: r.bold ? '#0F172A' : '#334155', fontWeight: r.bold ? 700 : 400, paddingLeft: r.bold ? '0.55rem' : '1.2rem' }}>{r.label}</td>
-                  {r.line.cells.map((v, i) => (
-                    <td key={months[i].key} style={{ ...cellBase, ...(months[i].isCurrent ? { background: '#F8FBFF' } : null) }}><Money value={v} bold={r.bold} /></td>
-                  ))}
-                  <td style={{ ...cellBase, background: '#F8FAFC' }}><Money value={r.line.total} bold /></td>
-                </tr>
-              )),
+                { line: 'setup', label: 'Setup' },
+                { line: 'recurring', label: 'Recurring' },
+                { line: 'total', label: `${sec.label} total`, bold: true },
+              ].map((r) => {
+                const lineData = sec[r.line];
+                const other = (sec.key === 'actual' ? data.expected : data.actual)[r.line];
+                const reds = redKeys(r.line);
+                return (
+                  <tr key={`${sec.key}:${r.line}`}>
+                    <td style={{ ...cellBase, ...stickyLeft, background: '#fff', color: r.bold ? '#0F172A' : '#334155', fontWeight: r.bold ? 700 : 400, paddingLeft: r.bold ? '0.55rem' : '1.2rem' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        {r.label}
+                        {reds.length > 0 && (
+                          <button type="button" onClick={() => onToggle(reds, true)} style={smallBtn} title={`Mark the ${reds.length} red cell${reds.length === 1 ? '' : 's'} in this row OK`}>OK row</button>
+                        )}
+                      </span>
+                    </td>
+                    {cols.map((c, i) => {
+                      const k = keyOf(r.line, c);
+                      const st = stateOf(k);
+                      const v = c === 'total' ? lineData.total : lineData.cells[i];
+                      const ov = c === 'total' ? other.total : other.cells[i];
+                      const [actual, expected] = sec.key === 'actual' ? [v, ov] : [ov, v];
+                      const base = c === 'total'
+                        ? { background: '#F8FAFC' }
+                        : (months[i].isCurrent ? { background: '#F8FBFF' } : null);
+                      return (
+                        <td
+                          key={c}
+                          onClick={() => toggle(k)}
+                          title={cellTitle(st, actual, expected)}
+                          style={{ ...cellBase, ...base, ...(STATE_STYLE[st] || null), ...(st === 'ok' ? { cursor: 'pointer' } : null) }}
+                        >
+                          <Money value={v} bold={r.bold || c === 'total'} state={st} />
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              }),
             ])}
           </tbody>
         </table>
@@ -85,7 +156,7 @@ function SectionTable({ title, months, data, notes }) {
 // `bfoName`: the BFO Name clicked. `rows`: every roster row with that BFO
 // Name, ignored ones included (they're counted, then left out). `opp`: the
 // linked Opps record, if any.
-export function CommissionBfoModal({ bfoName, rows, opp, onClose }) {
+export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, updateSettings }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -110,6 +181,45 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose }) {
   const live = useMemo(() => (rows || []).filter((r) => !r.__ignored), [rows]);
   const ignored = (rows || []).length - live.length;
   const model = useMemo(() => buildBfoSchedule(live, { opp, deals }), [live, opp, deals]);
+
+  // Actual vs Expected: each comparison's state, with the OK marks saved
+  // for this opp.
+  const bfoKey = normBfoKey(bfoName);
+  const okMarks = settings?.[BFO_OK_SETTINGS_KEY]?.[bfoKey] || {};
+  const comparisons = useMemo(() => {
+    const m = new Map();
+    for (const c of [...bfoComparisons('revenue', model.revenue, model.months), ...bfoComparisons('commission', model.commission, model.months)]) m.set(c.key, c);
+    return m;
+  }, [model]);
+  const stateOf = (key) => {
+    const c = comparisons.get(key);
+    return c ? bfoMatchState(c.actual, c.expected, okMarks[key]) : 'none';
+  };
+  const allReds = [...comparisons.keys()].filter((k) => stateOf(k) === 'mismatch');
+  const okCount = [...comparisons.keys()].filter((k) => stateOf(k) === 'ok').length;
+  // Built on the current settings (function form), so marks saved since this
+  // rendered aren't overwritten. Clearing drops the key; marks that no longer
+  // hold (amounts changed) are pruned on every write.
+  const toggleOk = (keys, ok) => {
+    if (!updateSettings || !keys.length) return;
+    updateSettings((cur) => {
+      const all = cur?.[BFO_OK_SETTINGS_KEY] || {};
+      const next = {};
+      for (const [k, sig] of Object.entries(all[bfoKey] || {})) {
+        const c = comparisons.get(k);
+        if (c && sig === bfoOkSignature(c.actual, c.expected)) next[k] = sig;
+      }
+      for (const k of keys) {
+        const c = comparisons.get(k);
+        if (!c) continue;
+        if (ok) next[k] = bfoOkSignature(c.actual, c.expected);
+        else delete next[k];
+      }
+      const out = { ...all };
+      if (Object.keys(next).length) out[bfoKey] = next; else delete out[bfoKey];
+      return { [BFO_OK_SETTINGS_KEY]: out };
+    });
+  };
 
   const notes = {
     actual: live.length ? 'Recorded on the Commissions roster' : 'Every commission row for this opp is marked ignored',
@@ -164,8 +274,26 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose }) {
             <div style={{ marginTop: '0.7rem', fontSize: '0.7rem', color: '#64748B' }}>
               A roster row counts as Setup when its project name reads as a one-time line (NonRecurring, Setup, One-time, Implementation); every other row is Recurring.
             </div>
-            <SectionTable title="Revenue" months={model.months} data={model.revenue} notes={notes} />
-            <SectionTable title="Commission" months={model.months} data={model.commission} notes={notes} />
+            <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.7rem', color: '#475569' }}>
+              <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.match }}>Green</span> Actual matches Expected
+              <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.mismatch, cursor: 'default' }}>Red</span> they differ: click a red cell to mark it OK
+              <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.ok }}>✓ OK</span> marked OK
+              <span style={{ flex: 1 }} />
+              {allReds.length > 0 && (
+                <button type="button" onClick={() => toggleOk(allReds, true)} style={{ ...smallBtn, fontSize: '0.7rem', padding: '3px 9px' }}>
+                  Mark all red OK ({allReds.length})
+                </button>
+              )}
+              {okCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => toggleOk([...comparisons.keys()].filter((k) => stateOf(k) === 'ok'), false)}
+                  style={{ ...smallBtn, fontSize: '0.7rem', padding: '3px 9px', borderColor: '#CBD5E1', color: '#475569' }}
+                >Clear OK marks ({okCount})</button>
+              )}
+            </div>
+            <SectionTable title="Revenue" measure="revenue" months={model.months} data={model.revenue} notes={notes} stateOf={stateOf} onToggle={toggleOk} />
+            <SectionTable title="Commission" measure="commission" months={model.months} data={model.commission} notes={notes} stateOf={stateOf} onToggle={toggleOk} />
             {model.undated > 0 && (
               <div style={{ fontSize: '0.68rem', color: '#92400E', marginTop: '0.3rem' }}>
                 {model.undated} deal{model.undated === 1 ? ' has' : 's have'} no term dates (and no dated commission rows), so {model.undated === 1 ? 'it' : 'they'} can&apos;t be placed in a month.

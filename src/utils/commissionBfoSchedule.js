@@ -180,3 +180,36 @@ export function buildBfoSchedule(rows, { deals = [], today = new Date() } = {}) 
     undated: plans.filter((p) => !p.win).length,
   };
 }
+
+// ---- Actual vs Expected ----------------------------------------------------
+// Each Actual cell is compared with the Expected cell for the same line
+// (setup / recurring / total) and month. Within a dollar is a match. A
+// mismatch can be marked OK; the mark stores both amounts as they were, so
+// it only holds while those amounts stay the same and a later change flags
+// the cell again.
+export const BFO_OK_SETTINGS_KEY = 'commissionBfoOk';
+
+export function bfoOkSignature(actual, expected) {
+  return `${Math.round(actual || 0)}|${Math.round(expected || 0)}`;
+}
+
+// 'none' (nothing either side), 'match', 'ok' (marked OK) or 'mismatch'.
+export function bfoMatchState(actual, expected, okSignature) {
+  const a = actual || 0, e = expected || 0;
+  if (!a && !e) return 'none';
+  if (Math.abs(a - e) < 1) return 'match';
+  if (okSignature && okSignature === bfoOkSignature(a, e)) return 'ok';
+  return 'mismatch';
+}
+
+// Every comparison in one measure's data ({ actual, expected }), as
+// { key, actual, expected } with key `<measure>:<line>:<monthKey|total>`.
+export function bfoComparisons(measure, data, months) {
+  const out = [];
+  for (const line of ['setup', 'recurring', 'total']) {
+    const a = data.actual[line], e = data.expected[line];
+    months.forEach((m, i) => out.push({ key: `${measure}:${line}:${m.key}`, actual: a.cells[i], expected: e.cells[i] }));
+    out.push({ key: `${measure}:${line}:total`, actual: a.total, expected: e.total });
+  }
+  return out;
+}

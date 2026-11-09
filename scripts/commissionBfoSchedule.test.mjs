@@ -1,7 +1,7 @@
 // Commissions > BFO opp popup: Actual (roster) and Expected (Deals page)
 // revenue and commission by month.
 // Run: node scripts/commissionBfoSchedule.test.mjs
-const { buildBfoSchedule, normBfoKey, isSetupRow } = await import('../src/utils/commissionBfoSchedule.js');
+const { buildBfoSchedule, normBfoKey, isSetupRow, bfoMatchState, bfoOkSignature, bfoComparisons } = await import('../src/utils/commissionBfoSchedule.js');
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -60,6 +60,13 @@ eq([d2.months[0].label, d2.months.length, d2.commission.expected.recurring.cells
 // No dates at all: the deal can't be placed.
 const d3 = buildBfoSchedule([], { deals: [{ Commission: 600 }], today });
 eq([d3.undated, d3.commission.expected.total.total], [1, 0], 'undated deal not placed');
+
+// Actual vs Expected states.
+eq([bfoMatchState(null, null), bfoMatchState(0, null), bfoMatchState(100, 100.4), bfoMatchState(100, 120)], ['none', 'none', 'match', 'mismatch'], 'match states');
+eq(bfoMatchState(100, 120, bfoOkSignature(100, 120)), 'ok', 'marked OK holds while amounts are the same');
+eq(bfoMatchState(100, 130, bfoOkSignature(100, 120)), 'mismatch', 'marked OK lapses when an amount changes');
+const cmp = bfoComparisons('revenue', d.revenue, d.months);
+eq([cmp.length, cmp[0].key, cmp[0].actual, cmp[0].expected], [3 * 13, 'revenue:setup:2026-07', null, 1000], 'comparisons cover every line, month and total');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
