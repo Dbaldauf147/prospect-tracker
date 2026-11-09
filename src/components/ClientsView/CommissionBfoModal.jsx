@@ -1,6 +1,8 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { fmtCurrency, asNumber } from '../../utils/dealsFormat';
-import { buildBfoSchedule } from '../../utils/commissionBfoSchedule';
+import { buildBfoSchedule, normBfoKey } from '../../utils/commissionBfoSchedule';
+import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
+import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 
 // Commissions > All / Actively Paid: clicking a row's BFO Name opens this.
 // Every commission row tied to that BFO opp, as two month-by-month tables:
@@ -18,7 +20,7 @@ function Amount({ cell, bold }) {
   const expected = cell.kind === 'expected';
   return (
     <span
-      title={expected ? 'Expected: nothing recorded for this month yet' : 'Recorded on the Commissions roster'}
+      title={expected ? 'Expected: nothing recorded for this month yet' : cell.kind === 'deal' ? "From the deal's Commission on the Deals page" : 'Recorded on the Commissions roster'}
       style={{ color: expected ? EXPECTED_FG : '#0F172A', fontStyle: expected ? 'italic' : 'normal', fontWeight: bold ? 700 : 400 }}
     >{fmtCurrency(cell.value)}</span>
   );
@@ -78,6 +80,97 @@ function ScheduleTable({ title, note, months, schedule }) {
   );
 }
 
+// Third table: the commission the Deals page expects for this opp, month by
+// month, with the roster's payout schedule (table two) and the difference
+// underneath so the two can be read against each other.
+function DealsTable({ months, deals, roster }) {
+  const rosterTotal = roster.recorded + roster.expected;
+  const diffCells = months.map((_, i) => {
+    const d = deals.totals[i]?.value ?? 0;
+    const r = roster.totals[i]?.value ?? 0;
+    return d || r ? d - r : null;
+  });
+  const diffTotal = deals.total - rosterTotal;
+  const diffColor = (v) => (v == null || Math.round(v) === 0 ? '#64748B' : v > 0 ? '#B45309' : '#166534');
+  const diffText = (v) => (v == null ? '-' : `${v > 0 ? '+' : v < 0 ? '-' : ''}${fmtCurrency(Math.abs(v))}`);
+  const undated = deals.lines.filter((l) => !l.dated && l.commission).length;
+  const footCell = { ...cellBase, background: '#F8FAFC' };
+  return (
+    <section style={{ marginTop: '0.9rem' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.35rem' }}>
+        <strong style={{ fontSize: '0.85rem', color: '#1E293B' }}>Expected commissions from the Deals page</strong>
+        <span style={{ fontSize: '0.7rem', color: '#64748B' }}>Each deal&apos;s Commission over its term: the Setup share in the first month, the rest spread evenly</span>
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: '0.72rem', color: '#334155', fontVariantNumeric: 'tabular-nums' }}>
+          <strong>{fmtCurrency(deals.total)} expected</strong>
+          {deals.lines.length > 0 && <> · <span style={{ color: diffColor(diffTotal) }}>{diffText(diffTotal)} vs the roster</span></>}
+        </span>
+      </div>
+      {deals.lines.length === 0 ? (
+        <div style={{ padding: '0.75rem 1rem', color: '#475569', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.75rem' }}>
+          No deal on the Deals page has this BFO opp in its BFO column, so there is no deal commission to compare against.
+        </div>
+      ) : (<>
+        <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: 6 }}>
+          <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.72rem', width: '100%' }}>
+            <thead>
+              <tr>
+                <th style={{ ...headBase, ...stickyLeft, color: '#0F172A' }}>Deal</th>
+                {months.map((m) => (
+                  <th key={m.key} style={{ ...headBase, ...(m.isCurrent ? { background: '#DBEAFE', color: '#1E3A8A' } : null) }}>{m.label}</th>
+                ))}
+                <th style={{ ...headBase, color: '#0F172A' }}>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {deals.lines.map((l, r) => (
+                <tr key={r}>
+                  <td style={{ ...cellBase, ...stickyLeft, background: '#fff', color: '#334155', whiteSpace: 'normal' }}>
+                    <div>{l.name}</div>
+                    <div style={{ fontSize: '0.64rem', color: '#94A3B8', marginTop: 1 }}>
+                      {[l.sub, `Commission ${fmtCurrency(l.commission)}`, !l.dated && l.commission ? 'no term dates' : ''].filter(Boolean).join(' · ')}
+                    </div>
+                  </td>
+                  {l.cells.map((c, i) => (
+                    <td key={months[i].key} style={{ ...cellBase, ...(months[i].isCurrent ? { background: '#F8FBFF' } : null) }}><Amount cell={c} /></td>
+                  ))}
+                  <td style={{ ...cellBase, fontWeight: 600 }}>{fmtCurrency(l.total)}</td>
+                </tr>
+              ))}
+              <tr>
+                <td style={{ ...footCell, ...stickyLeft, fontWeight: 700, color: '#0F172A', borderTop: '1px solid #E2E8F0' }}>Total</td>
+                {deals.totals.map((c, i) => (
+                  <td key={months[i].key} style={{ ...footCell, borderTop: '1px solid #E2E8F0' }}><Amount cell={c} bold /></td>
+                ))}
+                <td style={{ ...footCell, borderTop: '1px solid #E2E8F0', fontWeight: 700 }}>{fmtCurrency(deals.total)}</td>
+              </tr>
+              <tr>
+                <td style={{ ...footCell, ...stickyLeft, color: '#475569' }}>Roster: to be paid out</td>
+                {roster.totals.map((c, i) => (
+                  <td key={months[i].key} style={footCell}><Amount cell={c} /></td>
+                ))}
+                <td style={{ ...footCell, fontWeight: 600 }}>{fmtCurrency(rosterTotal)}</td>
+              </tr>
+              <tr>
+                <td style={{ ...footCell, ...stickyLeft, color: '#475569' }} title="Deals page minus the roster. Above zero: the deal expects more than the roster shows.">Difference</td>
+                {diffCells.map((v, i) => (
+                  <td key={months[i].key} style={{ ...footCell, color: diffColor(v) }}>{diffText(v)}</td>
+                ))}
+                <td style={{ ...footCell, fontWeight: 700, color: diffColor(diffTotal) }}>{diffText(diffTotal)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        {undated > 0 && (
+          <div style={{ fontSize: '0.68rem', color: '#92400E', marginTop: '0.3rem' }}>
+            {undated} deal{undated === 1 ? ' has' : 's have'} no term dates (and no dated commission rows), so {undated === 1 ? 'its' : 'their'} commission can&apos;t be placed in a month.
+          </div>
+        )}
+      </>)}
+    </section>
+  );
+}
+
 // `bfoName`: the BFO Name clicked. `rows`: every roster row with that BFO
 // Name, ignored ones included (they're counted, then left out).
 // `projectionOf(row)`: the row's projection or null. `opp`: the linked Opps
@@ -89,9 +182,24 @@ export function CommissionBfoModal({ bfoName, rows, projectionOf, opp, onClose }
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // The Deals-page rows whose BFO column names this opp. Re-read when the
+  // deals roster is saved, so an edit on another tab shows up here.
+  const [dealsVersion, setDealsVersion] = useState(0);
+  useEffect(() => {
+    const bump = () => setDealsVersion((v) => v + 1);
+    window.addEventListener(DEALS_LIST_EVENT, bump);
+    window.addEventListener('storage', bump);
+    return () => { window.removeEventListener(DEALS_LIST_EVENT, bump); window.removeEventListener('storage', bump); };
+  }, []);
+  const deals = useMemo(() => {
+    void dealsVersion;
+    const key = normBfoKey(bfoName);
+    return (loadDealsList().data || []).filter((d) => key && normBfoKey(d?.[DEAL_BFO_KEY]) === key);
+  }, [bfoName, dealsVersion]);
+
   const live = useMemo(() => (rows || []).filter((r) => !r.__ignored), [rows]);
   const ignored = (rows || []).length - live.length;
-  const model = useMemo(() => buildBfoSchedule(live, { projectionOf, opp }), [live, projectionOf, opp]);
+  const model = useMemo(() => buildBfoSchedule(live, { projectionOf, opp, deals }), [live, projectionOf, opp, deals]);
 
   const account = String(opp?.['Account'] || live[0]?.['Account Name'] || '').trim();
   const facts = [
@@ -151,6 +259,7 @@ export function CommissionBfoModal({ bfoName, rows, projectionOf, opp, onClose }
               months={model.months}
               schedule={model.commission}
             />
+            <DealsTable months={model.months} deals={model.deals} roster={model.commission} />
           </>)}
         </div>
       </div>

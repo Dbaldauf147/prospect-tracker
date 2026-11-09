@@ -51,5 +51,20 @@ eq(stopped.commission.expected, 0, 'no projection, no expected amounts');
 const undated = buildBfoSchedule([{ 'Project Name': 'X', March: 50 }], { projectionOf: () => null, today });
 eq([undated.months[0].label, undated.commission.recorded], ['Jan 2026', 50], 'undated row reads as this year');
 
+// Deals page: Setup share up front, the rest even over the term.
+const deal = { 'Agreement Name': 'Acme UBM', 'Client Name': 'Acme', Commission: 1300, Setup: 1000, 'Recurring Revenue': 12000 };
+const d = buildBfoSchedule([paying], { projectionOf, deals: [deal], today });
+const dl = d.deals.lines[0];
+eq([dl.cells[0].value, dl.cells[1].value, Math.round(dl.total)], [100 + 1200 / 12, 100, 1300], 'deal: setup share in month one, recurring spread');
+eq(d.deals.totals[0], { value: 200, kind: 'deal' }, 'deal totals per month');
+
+// No commission rows: the deal's own term dates; range grows to cover it.
+const d2 = buildBfoSchedule([], { deals: [{ Commission: 600, 'Current Term Start Date': '1/1/2027', 'End Date': '6/30/2027' }], today });
+eq([d2.months[0].label, d2.months.length, d2.deals.lines[0].cells[0].value], ['Jan 2027', 6, 100], 'deal term dates set the months');
+
+// No dates at all: the deal can't be placed.
+const d3 = buildBfoSchedule([], { deals: [{ Commission: 600 }], today });
+eq([d3.deals.lines[0].dated, d3.deals.total], [false, 0], 'undated deal not placed');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
