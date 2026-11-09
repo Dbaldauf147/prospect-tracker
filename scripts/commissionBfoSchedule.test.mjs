@@ -1,7 +1,7 @@
 // Commissions > BFO opp popup: Actual (roster) and Expected (Deals page)
 // revenue and commission by month.
 // Run: node scripts/commissionBfoSchedule.test.mjs
-const { buildBfoSchedule, normBfoKey, isSetupRow, bfoMatchState, bfoOkSignature, bfoComparisons } = await import('../src/utils/commissionBfoSchedule.js');
+const { buildBfoSchedule, normBfoKey, isSetupRow, bfoMatchState, bfoOkSignature, bfoComparisons, bfoAllGreen, bfoComparisonStates } = await import('../src/utils/commissionBfoSchedule.js');
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -81,6 +81,20 @@ eq([pw.commission.projected.cells[9], pw.commission.projected.total], [320, 960]
 eq(pw.revenue.actual.recurring.cells[9], null, 'actual cells stay recorded-only');
 const ps = buildBfoSchedule([{ ...setupRow }], { today });
 eq(ps.revenue.projected.total, 0, 'setup rows are never projected');
+
+// All green: every compared cell matches or is marked OK; projected cells
+// don't count against it.
+const gRow = { 'Comm Start Date': '1/1/2026', 'Comm End Date': '3/31/2026', 'January Revenue': 1200, February: 0, January: 120 };
+const gDeal = { 'Recurring Revenue': 3600, Commission: 360, 'Current Term Start Date': '1/1/2026', 'End Date': '3/31/2026' };
+const full = { ...gRow, 'February Revenue': 1200, 'March Revenue': 1200, February: 120, March: 120 };
+eq(bfoAllGreen([full], { deals: [gDeal], today }), true, 'all green when every month matches');
+eq(bfoAllGreen([{ ...full, March: 150 }], { deals: [gDeal], today }), false, 'one red cell: not green');
+const redModel = buildBfoSchedule([{ ...full, March: 150 }], { deals: [gDeal], today });
+const marks = {};
+for (const [k, c] of bfoComparisonStates(redModel)) if (c.state === 'mismatch') marks[k] = bfoOkSignature(c.actual, c.expected);
+eq(bfoAllGreen([{ ...full, March: 150 }], { deals: [gDeal], today, okMarks: marks }), true, 'reds marked OK count as green');
+eq(bfoAllGreen([full], { deals: [], today }), false, 'nothing expected: not green');
+eq(bfoAllGreen([], { deals: [gDeal], today }), false, 'no rows: not green');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
