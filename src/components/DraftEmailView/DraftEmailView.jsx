@@ -1887,6 +1887,20 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
     setCritique(null);
   }
 
+  // "Remove contacts only": the recipient half of "Clear all". Drops the CC
+  // list and resets To to the user's own address, the same blank state Clear
+  // all leaves, but keeps the subject, message, banner and attachments, so
+  // one email can be sent on to a fresh set of people.
+  function clearContactsOnly() {
+    const others = selectedContacts.filter(c => c.id !== SELF_RECIPIENT.id).length + draftCc.length;
+    if (others > 0) {
+      const ok = window.confirm('Remove everyone from To and CC? The To line is reset to your own address (daniel.baldauf@se.com). The subject, message, banner and attachments are kept.');
+      if (!ok) return;
+    }
+    setSelectedContacts([SELF_RECIPIENT]);
+    setDraftCc([]);
+  }
+
   // The saved-draft list is capped so it never grows unbounded, but that cap
   // applies to UNPINNED drafts only: every pinned draft is kept, plus at most
   // the 5 most recent unpinned ones (the list is newest-first). Pinning a
@@ -2538,12 +2552,20 @@ export function DraftEmailView({ prospects, settings, updateSettings, updateSett
         <div className={styles.composeCard}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: '1rem' }}>
             <h3 className={styles.cardTitle} style={{ marginBottom: 0 }}>Compose</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button
+              type="button"
+              onClick={clearContactsOnly}
+              title="Remove everyone from To and CC (To resets to your own address). Keeps the subject, message, banner, and attachments."
+              style={{ padding: '0.25rem 0.6rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', color: '#475569', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+            >Remove contacts only</button>
             <button
               type="button"
               onClick={clearCompose}
               title={'Clear recipients, subject, message, and attachments. Keeps the "Hi {goesBy}," greeting and your signature.'}
               style={{ padding: '0.25rem 0.6rem', border: '1px solid #FCA5A5', borderRadius: 6, background: '#fff', color: '#B91C1C', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
             >Clear all</button>
+            </div>
           </div>
 
           {/* Tagged contacts */}
