@@ -25,10 +25,13 @@ const STATE_STYLE = {
   match: { background: '#DCFCE7', color: '#166534' },
   ok: { background: '#F0FDF4', color: '#15803D' },
   mismatch: { background: '#FEE2E2', color: '#991B1B', cursor: 'pointer' },
+  // An Actual month nothing has been recorded for yet, filled with the
+  // projection. Not compared, so never red.
+  projected: { background: '#F5F3FF', color: '#6D28D9', fontStyle: 'italic' },
 };
 
 function Money({ value, bold, state }) {
-  const color = state === 'match' || state === 'ok' || state === 'mismatch' ? STATE_STYLE[state].color : '#0F172A';
+  const color = STATE_STYLE[state] ? STATE_STYLE[state].color : '#0F172A';
   if (value == null) return <span style={{ color: state && state !== 'none' ? color : '#CBD5E1' }}>-</span>;
   return <span style={{ color, fontWeight: bold ? 700 : 400 }}>{state === 'ok' ? '✓ ' : ''}{fmtCurrency(value)}</span>;
 }
@@ -44,6 +47,13 @@ function cellTitle(state, actual, expected) {
   if (state === 'ok') return `${pair}: marked OK. Click to undo.`;
   if (state === 'mismatch') return `${pair}: they differ. Click to mark OK.`;
   return undefined;
+}
+
+// A projected amount shown under a recorded one (another row recorded this
+// month, this one is projected) or under the Actual total.
+function ProjectedNote({ value, label = 'proj.' }) {
+  if (!value) return null;
+  return <div style={{ ...STATE_STYLE.projected, background: 'transparent', fontSize: '0.62rem', fontWeight: 400 }}>+{fmtCurrency(value)} {label}</div>;
 }
 
 // One table (Revenue or Commission): an Actual section and an Expected
@@ -76,7 +86,11 @@ function SectionTable({ title, measure, months, data, notes, stateOf, onToggle }
         )}
         <span style={{ flex: 1 }} />
         <span style={{ fontSize: '0.72rem', color: '#334155', fontVariantNumeric: 'tabular-nums' }}>
-          Actual <strong>{fmtCurrency(data.actual.total.total)}</strong> · Expected <strong>{fmtCurrency(data.expected.total.total)}</strong>
+          Actual <strong>{fmtCurrency(data.actual.total.total)}</strong>
+          {data.projected.total > 0 && (<>
+            {' · '}<span style={{ color: STATE_STYLE.projected.color }}>Actual + projected <strong>{fmtCurrency(data.actual.total.total + data.projected.total)}</strong></span>
+          </>)}
+          {' · '}Expected <strong>{fmtCurrency(data.expected.total.total)}</strong>
         </span>
       </div>
       <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: 6 }}>
@@ -124,10 +138,17 @@ function SectionTable({ title, measure, months, data, notes, stateOf, onToggle }
                     </td>
                     {cols.map((c, i) => {
                       const k = keyOf(r.line, c);
-                      const st = stateOf(k);
+                      // A projected month isn't compared, so its Expected
+                      // twin shows plain.
+                      const st = stateOf(k) === 'projected' && sec.key !== 'actual' ? 'none' : stateOf(k);
                       const v = c === 'total' ? lineData.total : lineData.cells[i];
                       const ov = c === 'total' ? other.total : other.cells[i];
                       const [actual, expected] = sec.key === 'actual' ? [v, ov] : [ov, v];
+                      // Projected amount for this Actual cell (Recurring and
+                      // the total only; Setup is never projected).
+                      const pv = sec.key === 'actual' && r.line !== 'setup'
+                        ? (c === 'total' ? data.projected.total : data.projected.cells[i])
+                        : null;
                       const base = c === 'total'
                         ? { background: '#F8FAFC' }
                         : (months[i].isCurrent ? { background: '#F8FBFF' } : null);
@@ -135,10 +156,17 @@ function SectionTable({ title, measure, months, data, notes, stateOf, onToggle }
                         <td
                           key={c}
                           onClick={() => toggle(k)}
-                          title={cellTitle(st, actual, expected)}
+                          title={st === 'projected'
+                            ? `Projected ${fmtCurrency(pv)}: nothing recorded for this month yet, so the row's latest recorded month is carried forward. Expected ${fmtCurrency(expected || 0)}.`
+                            : (pv ? `${cellTitle(st, actual, expected) || ''} Plus ${fmtCurrency(pv)} projected.`.trim() : cellTitle(st, actual, expected))}
                           style={{ ...cellBase, ...base, ...(STATE_STYLE[st] || null), ...(st === 'ok' ? { cursor: 'pointer' } : null) }}
                         >
-                          <Money value={v} bold={r.bold || c === 'total'} state={st} />
+                          {st === 'projected'
+                            ? <Money value={pv} bold={r.bold} state={st} />
+                            : (<>
+                              <Money value={v} bold={r.bold || c === 'total'} state={st} />
+                              <ProjectedNote value={pv} label={c === 'total' ? 'projected' : 'proj.'} />
+                            </>)}
                         </td>
                       );
                     })}
@@ -191,7 +219,23 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
     for (const c of [...bfoComparisons('revenue', model.revenue, model.months), ...bfoComparisons('commission', model.commission, model.months)]) m.set(c.key, c);
     return m;
   }, [model]);
+  // Actual cells with nothing recorded but a projection: shown as projected,
+  // not compared, so they never count as red.
+  const projectedKeys = useMemo(() => {
+    const out = new Set();
+    for (const measure of ['revenue', 'commission']) {
+      const d = model[measure];
+      model.months.forEach((m, i) => {
+        if (!d.projected.cells[i]) return;
+        for (const line of ['recurring', 'total']) {
+          if (d.actual[line].cells[i] == null) out.add(`${measure}:${line}:${m.key}`);
+        }
+      });
+    }
+    return out;
+  }, [model]);
   const stateOf = (key) => {
+    if (projectedKeys.has(key)) return 'projected';
     const c = comparisons.get(key);
     return c ? bfoMatchState(c.actual, c.expected, okMarks[key]) : 'none';
   };
@@ -278,6 +322,7 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
               <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.match }}>Green</span> Actual matches Expected
               <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.mismatch, cursor: 'default' }}>Red</span> they differ: click a red cell to mark it OK
               <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.ok }}>✓ OK</span> marked OK
+              <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.projected }}>Projected</span> nothing recorded yet: the row's latest month carried to its Comm End Date
               <span style={{ flex: 1 }} />
               {allReds.length > 0 && (
                 <button type="button" onClick={() => toggleOk(allReds, true)} style={{ ...smallBtn, fontSize: '0.7rem', padding: '3px 9px' }}>
