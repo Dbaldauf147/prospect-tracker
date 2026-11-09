@@ -7,13 +7,14 @@
 //   part omitted  → the whole backup object
 //   part=opps2Data → just that collection (smaller payload; what the
 //                    Opps 2 restore picker uses)
-//   part=membership → each prospect cut to the few fields the All Missing
-//                    History "who joined that day" popup compares, plus the
-//                    ids with a Targets mapping (src/utils/backupMembership)
+//   part=membership&cdm=<name> → that night's My Accounts, worked out on
+//                    the server with the page's own rule, plus a slim card
+//                    per prospect (src/utils/backupMembership), for the All
+//                    Missing History "who joined that day" popup
 
 import { withAuth } from './_lib/http.js';
 import { downloadGcsObject } from './_lib/gcs.js';
-import { slimBackup } from '../src/utils/backupMembership.js';
+import { membershipFromBackup } from '../src/utils/backupMembership.js';
 
 async function handler(req, res, auth) {
   const bucket = process.env.BACKUP_GCS_BUCKET;
@@ -34,7 +35,7 @@ async function handler(req, res, auth) {
     catch { return res.status(500).json({ error: 'Backup file is not valid JSON' }); }
 
     if (part === 'membership') {
-      return res.status(200).json({ name, generatedAt: backup?.generatedAt || null, part, value: slimBackup(backup) });
+      return res.status(200).json({ name, generatedAt: backup?.generatedAt || null, part, value: membershipFromBackup(backup, String(req.query?.cdm || '').trim()) });
     }
     if (part) {
       const value = backup?.collections ? backup.collections[part] : undefined;
