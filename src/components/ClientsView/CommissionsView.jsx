@@ -2020,6 +2020,8 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           rows={bfoModalRows}
           opp={bfoModalOpp}
           onClose={closeBfoModal}
+          settings={settings}
+          updateSettings={updateSettings}
         />
       )}
 
