@@ -41,7 +41,8 @@ export function renderChangedJobsMonthlyHtml(report, { appUrl = '' } = {}) {
     ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;font-family:${FONT};font-size:12px;color:${INK}"><tr>${['Name', 'Previous company', 'New company', 'Email', 'LinkedIn', 'Reached out'].map(th).join('')}</tr>${body}</table>`
     : `<div style="font-family:${FONT};font-size:13px;color:${MUTED}">Nobody outside Schneider Electric is on the Changed Jobs page right now.</div>`;
   const summary = `${totals.total} contact${totals.total === 1 ? '' : 's'} who left for an outside company: ${totals.notReachedOut} not reached out yet, ${totals.reachedOut} reached out.`
-    + (totals.hidden ? ` ${totals.hidden} hidden from the page ${totals.hidden === 1 ? 'is' : 'are'} left out.` : '');
+    + (totals.hidden ? ` ${totals.hidden} hidden from the page ${totals.hidden === 1 ? 'is' : 'are'} left out.` : '')
+    + (totals.snoozed ? ` ${totals.snoozed} snoozed ${totals.snoozed === 1 ? 'contact is' : 'contacts are'} left out until ${totals.snoozed === 1 ? 'their snooze runs' : 'their snoozes run'} out.` : '');
   const link = appUrl ? `<div style="margin-top:12px;font-family:${FONT};font-size:12px"><a href="${esc(appUrl)}" style="color:#1D4ED8">Open the Changed Jobs page</a></div>` : '';
   return `<!doctype html><html><body style="margin:0;padding:24px;background:${PAGE_BG}">`
     + `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:960px;margin:0 auto;border-collapse:separate;background:#fff;border:1px solid ${BORDER};border-radius:8px"><tr><td style="padding:18px 20px">`

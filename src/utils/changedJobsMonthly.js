@@ -1,7 +1,8 @@
 // The monthly Changed Jobs email: everyone on the Changed Jobs page's
 // "Other contacts" subtab (people who left for an outside company, not
 // former Schneider Electric coworkers), minus anyone hidden from the page
-// from its Reached Out column.
+// from its Reached Out column and anyone snoozed there (they're on the
+// Snoozed subtab until their snooze runs out).
 //
 // Pure, so the serverless function (api/changed-jobs-monthly.js) and the
 // tests build the same list the page shows. Contacts come in as the flat
@@ -9,7 +10,7 @@
 // `settings` is the admin's settings doc, read for contactLocalFields (the
 // per-contact Company override, New Company, Reached Out and the hide flag).
 
-import { isChangedJobs, isSchneiderContact } from './changedJobs.js';
+import { isChangedJobs, isSchneiderContact, activeSnoozeMs } from './changedJobs.js';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -32,6 +33,7 @@ export function buildChangedJobsMonthly(contacts, settings, { nowMs = Date.now()
   const localFields = settings?.contactLocalFields || {};
   const rows = [];
   let hidden = 0;
+  let snoozed = 0;
   for (const base of (contacts || [])) {
     const id = String(base?.id || base?.vid || '');
     const local = localFields[id] || null;
@@ -42,6 +44,7 @@ export function buildChangedJobsMonthly(contacts, settings, { nowMs = Date.now()
       : base;
     if (!isChangedJobs(c) || isSchneiderContact(c)) continue;
     if (local?._changedJobsHidden) { hidden += 1; continue; }
+    if (activeSnoozeMs(local, nowMs) != null) { snoozed += 1; continue; }
     // "Changed Jobs" is a marker, not an employer: fall back to what was
     // typed on the contact, and leave it blank if that says the same.
     const previousCompany = [base.company, base.companyText, c.company]
@@ -64,6 +67,6 @@ export function buildChangedJobsMonthly(contacts, settings, { nowMs = Date.now()
   return {
     month: monthOf(nowMs),
     rows,
-    totals: { total: rows.length, reachedOut, notReachedOut: rows.length - reachedOut, hidden },
+    totals: { total: rows.length, reachedOut, notReachedOut: rows.length - reachedOut, hidden, snoozed },
   };
 }
