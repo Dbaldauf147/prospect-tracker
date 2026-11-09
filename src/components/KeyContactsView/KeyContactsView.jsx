@@ -918,6 +918,21 @@ function KeyContactsViewInner({
     }));
   }
 
+  // Hide a contact from the Changed Jobs page only (its Reached Out column
+  // offers this). Unlike the row's Hide button, which writes the HubSpot
+  // Hide tag and takes the contact off every contacts page, this is a local
+  // flag under _changedJobsHidden in the same per-contact settings bag:
+  // synced through Firestore, never pushed to HubSpot. The page's own
+  // selector reads it, and "Show hidden" brings them back to unhide.
+  function toggleChangedJobsHidden(contact) {
+    const id = String(contact?.id || contact?.vid || '');
+    if (!id) return;
+    updateSettings(contactLocalFieldsUpdate(id, (entry) => {
+      if (entry._changedJobsHidden) { delete entry._changedJobsHidden; delete entry._changedJobsHiddenAt; }
+      else { entry._changedJobsHidden = true; entry._changedJobsHiddenAt = new Date().toISOString(); }
+    }));
+  }
+
   // When a City is committed inline, auto-fill State and Country the
   // same way the Edit HubSpot Contact popup does: try the curated city
   // list first (fast, handles ambiguous-name cities by leaving State
@@ -1923,7 +1938,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, companyStatus: 140, companyCdm: 140, companyVertical: 170, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 150, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, strength: 170, lastOutreach: 160, noReply: 100, campaignReply: 200, emailCampaigns: 240, campaignSends60: 120,
+    name: 180, category: 160, title: 200, company: 200, companyStatus: 140, companyCdm: 140, companyVertical: 170, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 190, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, strength: 170, lastOutreach: 160, noReply: 100, campaignReply: 200, emailCampaigns: 240, campaignSends60: 120,
   };
   // Column visibility - every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -3005,6 +3020,7 @@ function KeyContactsViewInner({
         expectedEmail,
         reachedOut: !!local?._reachedOut,
         reachedOutAt: local?._reachedOutAt || '',
+        pageHidden: !!local?._changedJobsHidden,
         raw: c,
       });
     }
@@ -4804,6 +4820,21 @@ function KeyContactsViewInner({
                             whiteSpace: 'nowrap',
                           }}
                         >{c.reachedOut ? '✓ Reached out' : 'Mark reached out'}</button>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); toggleChangedJobsHidden(c.raw || c); }}
+                          title={c.pageHidden
+                            ? 'Hidden from this page. Click to bring this contact back.'
+                            : 'Hide this contact from the Changed Jobs page only. Other pages and HubSpot are not touched. "Show hidden" brings them back.'}
+                          style={{
+                            marginLeft: 4, padding: '2px 6px', borderRadius: 999,
+                            fontSize: '0.6rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                            background: c.pageHidden ? '#FEF3C7' : 'transparent',
+                            border: `1px solid ${c.pageHidden ? '#FCD34D' : '#E2E8F0'}`,
+                            color: c.pageHidden ? '#92400E' : '#94A3B8',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >{c.pageHidden ? 'Unhide' : 'Hide'}</button>
                       </div>
                     ),
                     email: (
