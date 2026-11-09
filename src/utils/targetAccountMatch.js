@@ -9,7 +9,7 @@
 // Accounts writes, so every page that reads the mapping agrees.
 
 import { normalizeCompanyName } from './companyKey.js';
-import { resolveTargetAccountCdm, matchesCdm } from './cdmMatch.js';
+import { resolveTargetAccountCdm, matchesCdm, isBlankCdm } from './cdmMatch.js';
 import { renameTargetVertical, resolveTargetAccountVertical, tierMismatch, targetRowCompany as rowCompany, targetRowTier as rowTier, targetTierColumns } from './targetTier.js';
 
 /**
@@ -38,7 +38,9 @@ export function targetAccountRows(targetAccountsData, settings) {
       const tier = rowTier(r, tierCols);
       const row = {
         name,
-        cdm: resolveTargetAccountCdm(r, settings?.targetCdmColumn),
+        // A "-" in the CDM column is the list saying nobody, so it reads as
+        // no CDM (and another row's real CDM can fill it in below).
+        cdm: (c => (isBlankCdm(c) ? '' : c))(resolveTargetAccountCdm(r, settings?.targetCdmColumn)),
         tier,
         vertical: renameTargetVertical(resolveTargetAccountVertical(r, settings?.targetVerticalColumn), settings),
         sheet: sheetName,

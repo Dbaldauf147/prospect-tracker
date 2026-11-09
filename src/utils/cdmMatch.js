@@ -17,6 +17,14 @@ export function matchesCdm(prospectCdm, cdmName) {
   return false;
 }
 
+// A Targets list CDM cell that names nobody: empty, or a placeholder dash
+// ("-", "--" or an en dash, as the workbook fills a blank with). The
+// company popup reads these as "no CDM on the list" and warns, rather than
+// treating "-" as a rep who disagrees with the card.
+export function isBlankCdm(value) {
+  return /^[\s\-\u2013]*$/.test(String(value ?? ''));
+}
+
 // Keyword fallback used to guess which Target Accounts column holds the
 // salesperson/CDM when the user hasn't explicitly mapped one on the
 // Target Accounts page. Order matters — the first matching column wins.

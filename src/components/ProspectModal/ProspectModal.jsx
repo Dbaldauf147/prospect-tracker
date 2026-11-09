@@ -10410,6 +10410,24 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           >Ignore</button>
                         </div>
                       )}
+                      {!row.missing && !row.cdm && (
+                        // Mapped to a target account nobody on the list is
+                        // tied to (blank CDM cell, or just "-"): the account
+                        // is a target without an owner, which is worth
+                        // fixing on the list before it is worked.
+                        <div
+                          role="alert"
+                          data-target-no-cdm
+                          style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.25rem 0.6rem', marginTop: 6, padding: '0.35rem 0.5rem', borderRadius: 4, background: '#FFFBEB', border: '1px solid #FCD34D', borderLeft: '3px solid #D97706', color: '#92400E' }}
+                        >
+                          <span>
+                            <span aria-hidden="true" style={{ marginRight: 4 }}>⚠</span>
+                            <strong>No CDM on the Targets list:</strong>{' '}
+                            <strong>{row.name}</strong> is a target account, but the list has no CDM tied to it.
+                            {cardCdm ? <> This card has <strong>{cardCdm}</strong>; add them to the Targets list so the two agree.</> : ' Nobody covers it yet.'}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   );
                 }) : targetSuggestions.map(row => (
