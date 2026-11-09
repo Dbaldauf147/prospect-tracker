@@ -119,8 +119,8 @@ check('the added step round-trips', byKey(roundTrip, 'ps_new').viewLabel, 'PE Po
 // user deleted and stays deleted — except this one, which they never had
 // the chance to delete. It goes back exactly where its work used to be
 // shown: immediately above the step it was split out of.
-checkDeep('the shipped ladder maps before it writes',
-  keys(DEFAULT_STEPS).slice(0, 3), ['opps', 'contact-mapping', 'market-updates']);
+check('the shipped ladder maps before it writes',
+  keys(DEFAULT_STEPS).indexOf('contact-mapping') < keys(DEFAULT_STEPS).indexOf('market-updates'), true);
 check('the campaigns step opens the campaigns tab',
   stepByKey('market-updates').view, 'campaigns');
 check('both halves go red once the ladder reaches them',
@@ -128,7 +128,7 @@ check('both halves go red once the ladder reaches them',
 
 const preSplit = readSteps(withSteps([{ key: 'opps' }, { key: 'market-updates' }, { key: 'cold' }]));
 checkDeep('a ladder stored before the split gains the mapping step',
-  keys(preSplit), ['opps', 'contact-mapping', 'market-updates', 'changed-jobs', 'visits', 'cold']);
+  keys(preSplit), ['opps', 'contact-mapping', 'changed-jobs', 'market-updates', 'visits', 'cold']);
 check('and it arrives whole, not as a bare key',
   byKey(preSplit, 'contact-mapping').title, stepByKey('contact-mapping').title);
 check('an edit to the step it split from is untouched',
@@ -136,7 +136,7 @@ check('an edit to the step it split from is untouched',
     .find(s => s.key === 'market-updates').title, 'Mine');
 checkDeep('a ladder that already has both is left alone',
   keys(readSteps(withSteps([{ key: 'contact-mapping' }, { key: 'market-updates' }]))),
-  ['contact-mapping', 'market-updates', 'changed-jobs', 'visits']);
+  ['contact-mapping', 'changed-jobs', 'market-updates', 'visits']);
 checkDeep('a ladder with neither gets neither: that step was deleted',
   keys(readSteps(withSteps([{ key: 'opps' }, { key: 'cold' }]))), ['opps', 'visits', 'cold', 'changed-jobs']);
 checkDeep('an emptied ladder stays empty', keys(readSteps(withSteps([]))), []);
@@ -180,16 +180,19 @@ checkDeep('the original is not mutated', keys(three), ['a', 'b', 'c']);
 
 // --- the changed-jobs step -------------------------------------------------
 // New work, straight after the market updates (step 3 on the shipped ladder).
-checkDeep('the shipped ladder puts it fourth, after the market updates',
-  keys(DEFAULT_STEPS).slice(2, 5), ['market-updates', 'changed-jobs', 'renewals']);
+checkDeep('the shipped ladder puts it ahead of the market updates',
+  keys(DEFAULT_STEPS).slice(1, 4), ['contact-mapping', 'changed-jobs', 'market-updates']);
 check('it is counted, not marked by hand', typeof stepByKey('changed-jobs').workLabel, 'function');
 check('it opens Contacts', stepByKey('changed-jobs').view, 'contacts');
-checkDeep('a stored ladder gains it right after the market updates',
+checkDeep('a stored ladder gains it right ahead of the market updates',
   keys(readSteps(withSteps([{ key: 'opps' }, { key: 'contact-mapping' }, { key: 'market-updates' }, { key: 'renewals' }, { key: 'visits' }, { key: 'cold' }]))),
-  ['opps', 'contact-mapping', 'market-updates', 'changed-jobs', 'renewals', 'visits', 'cold']);
+  ['opps', 'contact-mapping', 'changed-jobs', 'market-updates', 'renewals', 'visits', 'cold']);
+checkDeep('a ladder with an extra step of its own still gets it one place up',
+  keys(readSteps(withSteps([{ key: 'opps' }, { key: 'ps_mine', title: 'Mine' }, { key: 'contact-mapping' }, { key: 'market-updates' }, { key: 'renewals' }]))),
+  ['opps', 'ps_mine', 'contact-mapping', 'changed-jobs', 'market-updates', 'renewals', 'visits']);
 checkDeep('even when the market updates were moved down the ladder',
   keys(readSteps(withSteps([{ key: 'opps' }, { key: 'renewals' }, { key: 'market-updates' }, { key: 'visits' }, { key: 'cold' }]))),
-  ['opps', 'renewals', 'contact-mapping', 'market-updates', 'changed-jobs', 'visits', 'cold']);
+  ['opps', 'renewals', 'contact-mapping', 'changed-jobs', 'market-updates', 'visits', 'cold']);
 checkDeep('without the market updates it goes ahead of renewals',
   keys(readSteps(withSteps([{ key: 'opps' }, { key: 'renewals' }, { key: 'visits' }]))),
   ['opps', 'changed-jobs', 'renewals', 'visits']);

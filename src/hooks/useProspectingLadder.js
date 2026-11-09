@@ -90,7 +90,7 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
   );
 
   // The Changed Jobs contacts nobody has dealt with yet (not reached out,
-  // snoozed or hidden on that page), for the "Contacts who changed
+  // snoozed or hidden on that page, and not former SE coworkers), for the "Contacts who changed
   // companies" step. Read off the same cached HubSpot contacts the page
   // uses, and re-read when that cache changes. null until the cache read
   // has answered; a device that has never synced contacts answers with
@@ -109,7 +109,9 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
   }, []);
   const localFields = settings?.contactLocalFields;
   const changedJobsWork = useMemo(
-    () => (hubspotContacts ? changedJobsToWork(hubspotContacts, localFields) : null),
+    // Other contacts only: former Schneider Electric coworkers have their
+    // own subtab on the page and are not part of this step.
+    () => (hubspotContacts ? changedJobsToWork(hubspotContacts, localFields).filter(r => !r.schneider) : null),
     [hubspotContacts, localFields],
   );
 
