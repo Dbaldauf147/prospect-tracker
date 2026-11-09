@@ -5,29 +5,26 @@ import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 
 // Commissions > All / Actively Paid: clicking a row's BFO Name opens this.
-// Every commission row tied to that BFO opp, as two month-by-month tables:
-// the revenue expected and the commission to be paid out. Recorded months
-// read in solid ink; months still to come carry the projected amount in
-// blue italics (see utils/commissionBfoSchedule for the rules).
+// Two month-by-month tables for the opp: Actual (revenue and commission
+// recorded on the Commissions roster) and Expected (revenue and commission
+// the Deals page expects, spread over each deal's term; see
+// utils/commissionBfoSchedule for the rules).
 
-const EXPECTED_FG = '#1D4ED8';
-const cellBase = { padding: '0.35rem 0.5rem', borderBottom: '1px solid #F1F5F9', textAlign: 'right', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' };
-const headBase = { padding: '0.35rem 0.5rem', borderBottom: '1px solid #E2E8F0', textAlign: 'right', whiteSpace: 'nowrap', color: '#475569', background: '#F1F5F9', fontWeight: 600 };
-const stickyLeft = { position: 'sticky', left: 0, zIndex: 1, textAlign: 'left', minWidth: 200, maxWidth: 260 };
+const cellBase = { padding: '0.4rem 0.55rem', borderBottom: '1px solid #F1F5F9', textAlign: 'right', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' };
+const headBase = { padding: '0.4rem 0.55rem', borderBottom: '1px solid #E2E8F0', textAlign: 'right', whiteSpace: 'nowrap', color: '#475569', background: '#F1F5F9', fontWeight: 600 };
+const stickyLeft = { position: 'sticky', left: 0, zIndex: 1, textAlign: 'left', minWidth: 110 };
 
-function Amount({ cell, bold }) {
-  if (!cell) return <span style={{ color: '#CBD5E1' }}>-</span>;
-  const expected = cell.kind === 'expected';
-  return (
-    <span
-      title={expected ? 'Expected: nothing recorded for this month yet' : cell.kind === 'deal' ? "From the deal's Commission on the Deals page" : 'Recorded on the Commissions roster'}
-      style={{ color: expected ? EXPECTED_FG : '#0F172A', fontStyle: expected ? 'italic' : 'normal', fontWeight: bold ? 700 : 400 }}
-    >{fmtCurrency(cell.value)}</span>
-  );
+function Money({ value, bold }) {
+  if (value == null) return <span style={{ color: '#CBD5E1' }}>-</span>;
+  return <span style={{ color: '#0F172A', fontWeight: bold ? 700 : 400 }}>{fmtCurrency(value)}</span>;
 }
 
-function ScheduleTable({ title, note, months, schedule }) {
-  const grand = schedule.recorded + schedule.expected;
+// One table: a Revenue line and a Commission line across the months.
+function MeasureTable({ title, note, months, data, empty }) {
+  const lines = [
+    { label: 'Revenue', ...data.revenue },
+    { label: 'Commission', ...data.commission },
+  ];
   return (
     <section style={{ marginTop: '0.9rem' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.35rem' }}>
@@ -35,147 +32,49 @@ function ScheduleTable({ title, note, months, schedule }) {
         <span style={{ fontSize: '0.7rem', color: '#64748B' }}>{note}</span>
         <span style={{ flex: 1 }} />
         <span style={{ fontSize: '0.72rem', color: '#334155', fontVariantNumeric: 'tabular-nums' }}>
-          {fmtCurrency(schedule.recorded)} recorded · <span style={{ color: EXPECTED_FG }}>{fmtCurrency(schedule.expected)} expected</span> · <strong>{fmtCurrency(grand)} total</strong>
+          Revenue <strong>{fmtCurrency(data.revenue.total)}</strong> · Commission <strong>{fmtCurrency(data.commission.total)}</strong>
         </span>
       </div>
-      <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: 6 }}>
-        <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.72rem', width: '100%' }}>
-          <thead>
-            <tr>
-              <th style={{ ...headBase, ...stickyLeft, color: '#0F172A' }}>Project</th>
-              {months.map((m) => (
-                <th
-                  key={m.key}
-                  title={m.isCurrent ? 'This month' : m.isFuture ? 'Still to come' : undefined}
-                  style={{ ...headBase, ...(m.isCurrent ? { background: '#DBEAFE', color: '#1E3A8A' } : null) }}
-                >{m.label}</th>
-              ))}
-              <th style={{ ...headBase, color: '#0F172A' }}>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {schedule.lines.map((l, r) => (
-              <tr key={r}>
-                <td style={{ ...cellBase, ...stickyLeft, background: '#fff', color: '#334155', whiteSpace: 'normal' }}>
-                  <div>{l.name}</div>
-                  {l.sub && <div style={{ fontSize: '0.64rem', color: '#94A3B8', marginTop: 1 }}>{l.sub}</div>}
-                </td>
-                {l.cells.map((c, i) => (
-                  <td key={months[i].key} style={{ ...cellBase, ...(months[i].isCurrent ? { background: '#F8FBFF' } : null) }}><Amount cell={c} /></td>
-                ))}
-                <td style={{ ...cellBase, fontWeight: 600 }}>{fmtCurrency(l.total)}</td>
-              </tr>
-            ))}
-            <tr>
-              <td style={{ ...cellBase, ...stickyLeft, background: '#F8FAFC', fontWeight: 700, color: '#0F172A', borderTop: '1px solid #E2E8F0' }}>Total</td>
-              {schedule.totals.map((c, i) => (
-                <td key={months[i].key} style={{ ...cellBase, background: '#F8FAFC', borderTop: '1px solid #E2E8F0' }}><Amount cell={c} bold /></td>
-              ))}
-              <td style={{ ...cellBase, background: '#F8FAFC', borderTop: '1px solid #E2E8F0', fontWeight: 700 }}>{fmtCurrency(grand)}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
-// Third table: the commission the Deals page expects for this opp, month by
-// month, with the roster's payout schedule (table two) and the difference
-// underneath so the two can be read against each other.
-function DealsTable({ months, deals, roster }) {
-  const rosterTotal = roster.recorded + roster.expected;
-  const diffCells = months.map((_, i) => {
-    const d = deals.totals[i]?.value ?? 0;
-    const r = roster.totals[i]?.value ?? 0;
-    return d || r ? d - r : null;
-  });
-  const diffTotal = deals.total - rosterTotal;
-  const diffColor = (v) => (v == null || Math.round(v) === 0 ? '#64748B' : v > 0 ? '#B45309' : '#166534');
-  const diffText = (v) => (v == null ? '-' : `${v > 0 ? '+' : v < 0 ? '-' : ''}${fmtCurrency(Math.abs(v))}`);
-  const undated = deals.lines.filter((l) => !l.dated && l.commission).length;
-  const footCell = { ...cellBase, background: '#F8FAFC' };
-  return (
-    <section style={{ marginTop: '0.9rem' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.35rem' }}>
-        <strong style={{ fontSize: '0.85rem', color: '#1E293B' }}>Expected commissions from the Deals page</strong>
-        <span style={{ fontSize: '0.7rem', color: '#64748B' }}>Each deal&apos;s Commission over its term: the Setup share in the first month, the rest spread evenly</span>
-        <span style={{ flex: 1 }} />
-        <span style={{ fontSize: '0.72rem', color: '#334155', fontVariantNumeric: 'tabular-nums' }}>
-          <strong>{fmtCurrency(deals.total)} expected</strong>
-          {deals.lines.length > 0 && <> · <span style={{ color: diffColor(diffTotal) }}>{diffText(diffTotal)} vs the roster</span></>}
-        </span>
-      </div>
-      {deals.lines.length === 0 ? (
-        <div style={{ padding: '0.75rem 1rem', color: '#475569', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.75rem' }}>
-          No deal on the Deals page has this BFO opp in its BFO column, so there is no deal commission to compare against.
-        </div>
-      ) : (<>
+      {empty ? (
+        <div style={{ padding: '0.75rem 1rem', color: '#475569', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.75rem' }}>{empty}</div>
+      ) : (
         <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: 6 }}>
           <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.72rem', width: '100%' }}>
             <thead>
               <tr>
-                <th style={{ ...headBase, ...stickyLeft, color: '#0F172A' }}>Deal</th>
+                <th style={{ ...headBase, ...stickyLeft }} />
                 {months.map((m) => (
-                  <th key={m.key} style={{ ...headBase, ...(m.isCurrent ? { background: '#DBEAFE', color: '#1E3A8A' } : null) }}>{m.label}</th>
+                  <th
+                    key={m.key}
+                    title={m.isCurrent ? 'This month' : undefined}
+                    style={{ ...headBase, ...(m.isCurrent ? { background: '#DBEAFE', color: '#1E3A8A' } : null) }}
+                  >{m.label}</th>
                 ))}
                 <th style={{ ...headBase, color: '#0F172A' }}>Total</th>
               </tr>
             </thead>
             <tbody>
-              {deals.lines.map((l, r) => (
-                <tr key={r}>
-                  <td style={{ ...cellBase, ...stickyLeft, background: '#fff', color: '#334155', whiteSpace: 'normal' }}>
-                    <div>{l.name}</div>
-                    <div style={{ fontSize: '0.64rem', color: '#94A3B8', marginTop: 1 }}>
-                      {[l.sub, `Commission ${fmtCurrency(l.commission)}`, !l.dated && l.commission ? 'no term dates' : ''].filter(Boolean).join(' · ')}
-                    </div>
-                  </td>
-                  {l.cells.map((c, i) => (
-                    <td key={months[i].key} style={{ ...cellBase, ...(months[i].isCurrent ? { background: '#F8FBFF' } : null) }}><Amount cell={c} /></td>
+              {lines.map((l) => (
+                <tr key={l.label}>
+                  <td style={{ ...cellBase, ...stickyLeft, background: '#fff', color: '#334155', fontWeight: 600 }}>{l.label}</td>
+                  {l.cells.map((v, i) => (
+                    <td key={months[i].key} style={{ ...cellBase, ...(months[i].isCurrent ? { background: '#F8FBFF' } : null) }}><Money value={v} /></td>
                   ))}
-                  <td style={{ ...cellBase, fontWeight: 600 }}>{fmtCurrency(l.total)}</td>
+                  <td style={{ ...cellBase, background: '#F8FAFC' }}><Money value={l.total} bold /></td>
                 </tr>
               ))}
-              <tr>
-                <td style={{ ...footCell, ...stickyLeft, fontWeight: 700, color: '#0F172A', borderTop: '1px solid #E2E8F0' }}>Total</td>
-                {deals.totals.map((c, i) => (
-                  <td key={months[i].key} style={{ ...footCell, borderTop: '1px solid #E2E8F0' }}><Amount cell={c} bold /></td>
-                ))}
-                <td style={{ ...footCell, borderTop: '1px solid #E2E8F0', fontWeight: 700 }}>{fmtCurrency(deals.total)}</td>
-              </tr>
-              <tr>
-                <td style={{ ...footCell, ...stickyLeft, color: '#475569' }}>Roster: to be paid out</td>
-                {roster.totals.map((c, i) => (
-                  <td key={months[i].key} style={footCell}><Amount cell={c} /></td>
-                ))}
-                <td style={{ ...footCell, fontWeight: 600 }}>{fmtCurrency(rosterTotal)}</td>
-              </tr>
-              <tr>
-                <td style={{ ...footCell, ...stickyLeft, color: '#475569' }} title="Deals page minus the roster. Above zero: the deal expects more than the roster shows.">Difference</td>
-                {diffCells.map((v, i) => (
-                  <td key={months[i].key} style={{ ...footCell, color: diffColor(v) }}>{diffText(v)}</td>
-                ))}
-                <td style={{ ...footCell, fontWeight: 700, color: diffColor(diffTotal) }}>{diffText(diffTotal)}</td>
-              </tr>
             </tbody>
           </table>
         </div>
-        {undated > 0 && (
-          <div style={{ fontSize: '0.68rem', color: '#92400E', marginTop: '0.3rem' }}>
-            {undated} deal{undated === 1 ? ' has' : 's have'} no term dates (and no dated commission rows), so {undated === 1 ? 'its' : 'their'} commission can&apos;t be placed in a month.
-          </div>
-        )}
-      </>)}
+      )}
     </section>
   );
 }
 
 // `bfoName`: the BFO Name clicked. `rows`: every roster row with that BFO
-// Name, ignored ones included (they're counted, then left out).
-// `projectionOf(row)`: the row's projection or null. `opp`: the linked Opps
-// record, if any.
-export function CommissionBfoModal({ bfoName, rows, projectionOf, opp, onClose }) {
+// Name, ignored ones included (they're counted, then left out). `opp`: the
+// linked Opps record, if any.
+export function CommissionBfoModal({ bfoName, rows, opp, onClose }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -199,7 +98,7 @@ export function CommissionBfoModal({ bfoName, rows, projectionOf, opp, onClose }
 
   const live = useMemo(() => (rows || []).filter((r) => !r.__ignored), [rows]);
   const ignored = (rows || []).length - live.length;
-  const model = useMemo(() => buildBfoSchedule(live, { projectionOf, opp, deals }), [live, projectionOf, opp, deals]);
+  const model = useMemo(() => buildBfoSchedule(live, { opp, deals }), [live, opp, deals]);
 
   const account = String(opp?.['Account'] || live[0]?.['Account Name'] || '').trim();
   const facts = [
@@ -239,27 +138,32 @@ export function CommissionBfoModal({ bfoName, rows, projectionOf, opp, onClose }
         </div>
 
         <div style={{ padding: '0.2rem 1.1rem 1.1rem', overflow: 'auto' }}>
-          {live.length === 0 ? (
+          {live.length === 0 && deals.length === 0 ? (
             <div style={{ marginTop: '0.9rem', padding: '1rem', color: '#475569', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem' }}>
-              Every commission row for this opp is marked ignored, so there is nothing to schedule.
+              Every commission row for this opp is marked ignored and no deal names it, so there is nothing to show.
             </div>
           ) : (<>
-            <div style={{ marginTop: '0.7rem', fontSize: '0.7rem', color: '#64748B' }}>
-              Solid amounts are recorded on the roster. <span style={{ color: EXPECTED_FG, fontStyle: 'italic' }}>Blue italic</span> amounts are expected for months with nothing recorded yet, inside each row&apos;s Comm Start - End window.
-            </div>
-            <ScheduleTable
-              title="Expected revenue"
-              note="Monthly revenue on file, else the commission / %, else the opp's Quoted Amount / 12"
+            <MeasureTable
+              title="Actual"
+              note="Recorded on the Commissions roster"
               months={model.months}
-              schedule={model.revenue}
+              data={model.actual}
+              empty={live.length === 0 ? 'Every commission row for this opp is marked ignored.' : ''}
             />
-            <ScheduleTable
-              title="Commissions to be paid out"
-              note="Monthly commission on file, else the projected monthly commission"
+            <MeasureTable
+              title="Expected"
+              note={`From the Deals page${model.expected.deals ? ` (${model.expected.deals} deal${model.expected.deals === 1 ? '' : 's'})` : ''}: Setup and its commission in the term's first month, Recurring Revenue and the rest of the Commission spread evenly`}
               months={model.months}
-              schedule={model.commission}
+              data={model.expected}
+              empty={model.expected.deals === 0
+                ? 'No deal on the Deals page has this BFO opp in its BFO column, so there is nothing expected to show.'
+                : ''}
             />
-            <DealsTable months={model.months} deals={model.deals} roster={model.commission} />
+            {model.expected.undated > 0 && (
+              <div style={{ fontSize: '0.68rem', color: '#92400E', marginTop: '0.3rem' }}>
+                {model.expected.undated} deal{model.expected.undated === 1 ? ' has' : 's have'} no term dates (and no dated commission rows), so {model.expected.undated === 1 ? 'it' : 'they'} can&apos;t be placed in a month.
+              </div>
+            )}
           </>)}
         </div>
       </div>

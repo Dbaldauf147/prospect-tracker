@@ -1461,10 +1461,6 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     return data.filter(r => normBfoKey(r?.[BFO_NAME_KEY]) === key);
   }, [bfoModal, data]);
   const bfoModalOpp = useMemo(() => (bfoModal ? findOppByBfoLink(oppsCache, bfoModal) : null), [bfoModal, oppsCache]);
-  const projectionOf = useCallback((row) => projectCommissionRow(row, {
-    status: paymentStatusFor(row).state,
-    opp: findOppByBfoLink(oppsCache, row?.[BFO_NAME_KEY]),
-  }), [oppsCache]);
   const closeBfoModal = useCallback(() => setBfoModal(null), []);
 
   // Count of project rows missing an Account Name (and not ignored) —
@@ -2022,7 +2018,6 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
         <CommissionBfoModal
           bfoName={String(bfoModal).trim()}
           rows={bfoModalRows}
-          projectionOf={projectionOf}
           opp={bfoModalOpp}
           onClose={closeBfoModal}
         />
