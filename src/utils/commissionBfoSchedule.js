@@ -1,8 +1,11 @@
 // Commissions > BFO opp popup: one BFO opp's revenue and commission, month
-// by month, as two tables.
+// by month, as two tables (Revenue, Commission). Each splits into Actual and
+// Expected, and each of those into Setup and Recurring.
 //
 // Actual: what the Commissions roster has recorded, summed over every row
-// tied to the opp. The roster's month cells are year-agnostic ("March",
+// tied to the opp. The roster has no setup / recurring column, so a row
+// counts as Setup when its Project Name or Name reads as a one-time line
+// ("NonRecurring", "Setup", "One-time", "Implementation"), else Recurring. The roster's month cells are year-agnostic ("March",
 // "March Revenue"), so each row's Comm Start - End window pins them to real
 // months: a recorded cell lands on that month inside the window, and when a
 // window runs past 12 months (so a month name occurs twice) on the latest
@@ -82,24 +85,30 @@ function dealWindow(deal, rows) {
   return { first, last };
 }
 
-// One deal's revenue and commission, each as month number -> amount.
+const SETUP_RE = /non[\s_-]?recurring|set[\s_-]?up|one[\s_-]?time|implementation/i;
+export function isSetupRow(row) {
+  return SETUP_RE.test(`${row?.['Project Name'] ?? ''} ${row?.['Name'] ?? ''}`);
+}
+
+// One deal's revenue and commission, each split into setup and recurring,
+// as month number -> amount.
 function dealPlan(deal, rows) {
   const win = dealWindow(deal, rows);
-  const revenue = new Map();
-  const commission = new Map();
-  if (!win) return { win, revenue, commission };
+  const plan = { win, revenueSetup: new Map(), revenueRecurring: new Map(), commissionSetup: new Map(), commissionRecurring: new Map() };
+  if (!win) return plan;
   const total = asNumber(deal?.['Commission']) ?? 0;
   const setup = asNumber(deal?.['Setup']) ?? 0;
   const recurring = asNumber(deal?.['Recurring Revenue']) ?? 0;
   const span = win.last - win.first + 1;
   const base = setup + recurring;
   const setupShare = base > 0 && setup > 0 ? total * (setup / base) : 0;
+  if (setup) plan.revenueSetup.set(win.first, setup);
+  if (setupShare) plan.commissionSetup.set(win.first, setupShare);
   for (let n = win.first; n <= win.last; n++) {
-    const lead = n === win.first;
-    if (setup || recurring) revenue.set(n, recurring / span + (lead ? setup : 0));
-    if (total) commission.set(n, (total - setupShare) / span + (lead ? setupShare : 0));
+    if (recurring) plan.revenueRecurring.set(n, recurring / span);
+    if (total - setupShare) plan.commissionRecurring.set(n, (total - setupShare) / span);
   }
-  return { win, revenue, commission };
+  return plan;
 }
 
 function monthLabel(n) {
@@ -110,9 +119,10 @@ function monthLabel(n) {
 
 // `rows`: the commission rows for one BFO opp (ignored ones already left
 // out). `deals`: the Deals-page rows tied to the same opp.
-// Returns { months, actual, expected }. actual and expected each hold
-// { revenue, commission } lines of { cells, total }, cells aligned to
-// months (null where nothing lands); expected also carries { deals, undated }.
+// Returns { months, revenue, commission, deals, undated }. revenue and
+// commission each hold { actual, expected }, each of those
+// { setup, recurring, total } lines of { cells, total }, cells aligned to
+// months (null where nothing lands).
 export function buildBfoSchedule(rows, { deals = [], today = new Date() } = {}) {
   const todayN = monthNumber(today);
   const items = (rows || []).map((row) => {
@@ -139,23 +149,34 @@ export function buildBfoSchedule(rows, { deals = [], today = new Date() } = {}) 
     });
     return { cells, total: cells.reduce((s, v) => s + (v || 0), 0) };
   };
-  const recorded = (cellKey) => line((m) => items.map((it) => {
+  const sum = (lines) => {
+    const cells = months.map((_, i) => {
+      const vs = lines.map((l) => l.cells[i]).filter((v) => v != null);
+      return vs.length ? vs.reduce((x, y) => x + y, 0) : null;
+    });
+    return { cells, total: cells.reduce((x, v) => x + (v || 0), 0) };
+  };
+  const recorded = (cellKey, setup) => line((m) => items.map((it) => {
+    if (isSetupRow(it.row) !== setup) return null;
     if (m.n < it.win.first || m.n > it.win.last || it.placed[m.monthIdx] !== m.n) return null;
     return asNumber(it.row?.[cellKey(MONTHS[m.monthIdx])]);
   }));
   const fromDeals = (pick) => line((m) => plans.map((p) => p[pick].get(m.n)));
+  const section = (setup, recurring) => ({ setup, recurring, total: sum([setup, recurring]) });
+  const revKey = (m) => `${m} Revenue`;
+  const commKey = (m) => m;
 
   return {
     months,
-    actual: {
-      revenue: recorded((m) => `${m} Revenue`),
-      commission: recorded((m) => m),
+    revenue: {
+      actual: section(recorded(revKey, true), recorded(revKey, false)),
+      expected: section(fromDeals('revenueSetup'), fromDeals('revenueRecurring')),
     },
-    expected: {
-      revenue: fromDeals('revenue'),
-      commission: fromDeals('commission'),
-      deals: plans.length,
-      undated: plans.filter((p) => !p.win).length,
+    commission: {
+      actual: section(recorded(commKey, true), recorded(commKey, false)),
+      expected: section(fromDeals('commissionSetup'), fromDeals('commissionRecurring')),
     },
+    deals: plans.length,
+    undated: plans.filter((p) => !p.win).length,
   };
 }

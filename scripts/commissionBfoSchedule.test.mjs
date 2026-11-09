@@ -1,7 +1,7 @@
 // Commissions > BFO opp popup: Actual (roster) and Expected (Deals page)
 // revenue and commission by month.
 // Run: node scripts/commissionBfoSchedule.test.mjs
-const { buildBfoSchedule, normBfoKey } = await import('../src/utils/commissionBfoSchedule.js');
+const { buildBfoSchedule, normBfoKey, isSetupRow } = await import('../src/utils/commissionBfoSchedule.js');
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -22,35 +22,44 @@ const paying = {
 const s = buildBfoSchedule([paying], { today });
 eq([s.months.length, s.months[0].label, s.months[11].label], [12, 'Jul 2026', 'Jun 2027'], 'months follow the window');
 eq(s.months.find(m => m.isCurrent).label, 'Nov 2026', 'current month flagged');
-eq(s.actual.commission.cells.slice(0, 5), [300, 300, 400, 400, null], 'actual commission: recorded only, nothing projected');
-eq([s.actual.revenue.total, s.actual.commission.total], [14000, 1400], 'actual totals');
-eq([s.expected.deals, s.expected.revenue.total], [0, 0], 'no deals, nothing expected');
+const A = (sch, k) => sch[k].actual;
+eq(A(s, 'commission').recurring.cells.slice(0, 5), [300, 300, 400, 400, null], 'actual commission: recorded only, nothing projected');
+eq([A(s, 'revenue').total.total, A(s, 'commission').total.total], [14000, 1400], 'actual totals');
+eq([s.deals, s.revenue.expected.total.total], [0, 0], 'no deals, nothing expected');
 
-// Two rows sum per month; a row is blank before its window, and a recorded
-// cell lands in the year its window puts it in.
+// Setup vs recurring classification by project name.
+eq([isSetupRow({ 'Project Name': 'Prologis_SoW#7 NonRecurring' }), isSetupRow({ 'Project Name': 'X Recurring' }), isSetupRow({ Name: 'Setup fee' }), isSetupRow({ 'Project Name': 'One-time implementation' })], [true, false, true, true], 'setup rows detected by name');
+
+// Setup and recurring rows split into their own lines; total sums both.
+const setupRow = { 'Project Name': 'Acme NonRecurring', 'Comm Start Date': '7/1/2026', 'Comm End Date': '6/30/2027', 'July Revenue': 5000, July: 500 };
+const split = buildBfoSchedule([paying, setupRow], { today });
+eq([A(split, 'revenue').setup.cells[0], A(split, 'revenue').recurring.cells[0], A(split, 'revenue').total.cells[0]], [5000, 3000, 8000], 'actual split into setup / recurring');
+eq(A(split, 'commission').setup.total, 500, 'setup commission total');
+
+// Two rows sum per month; a recorded cell lands in its window's year.
 const annex = { 'Comm Start Date': '1/1/2027', 'Comm End Date': '3/31/2027', 'January Revenue': 2000, January: 200 };
 const two = buildBfoSchedule([paying, annex], { today });
 const jan = two.months.findIndex(m => m.label === 'Jan 2027');
-eq([two.actual.revenue.cells[jan], two.actual.commission.cells[jan]], [2000, 200], 'annex placed in Jan 2027');
-eq(two.actual.revenue.cells[0], 3000, 'month sums only rows in their window');
+eq([A(two, 'revenue').recurring.cells[jan], A(two, 'commission').recurring.cells[jan]], [2000, 200], 'annex placed in Jan 2027');
 
 // Undated row: read as this calendar year.
 const undated = buildBfoSchedule([{ March: 50 }], { today });
-eq([undated.months[0].label, undated.actual.commission.total], ['Jan 2026', 50], 'undated row reads as this year');
+eq([undated.months[0].label, A(undated, 'commission').total.total], ['Jan 2026', 50], 'undated row reads as this year');
 
-// Deals page: Setup (and its commission share) up front, the rest even.
+// Deals page: Setup (and its commission share) in month one, the rest even.
 const deal = { Commission: 1300, Setup: 1000, 'Recurring Revenue': 12000 };
 const d = buildBfoSchedule([paying], { deals: [deal], today });
-eq([d.expected.revenue.cells[0], d.expected.revenue.cells[1], d.expected.revenue.total], [2000, 1000, 13000], 'expected revenue: setup up front, recurring spread');
-eq([d.expected.commission.cells[0], d.expected.commission.cells[1], Math.round(d.expected.commission.total)], [200, 100, 1300], 'expected commission: setup share up front');
+const E = (k) => d[k].expected;
+eq([E('revenue').setup.cells[0], E('revenue').setup.cells[1], E('revenue').recurring.cells[0], E('revenue').total.total], [1000, null, 1000, 13000], 'expected revenue: setup in month one, recurring spread');
+eq([E('commission').setup.total, E('commission').recurring.cells[1], Math.round(E('commission').total.total)], [100, 100, 1300], 'expected commission: setup share in month one');
 
 // No commission rows: the deal's own term dates set the months.
 const d2 = buildBfoSchedule([], { deals: [{ Commission: 600, 'Current Term Start Date': '1/1/2027', 'End Date': '6/30/2027' }], today });
-eq([d2.months[0].label, d2.months.length, d2.expected.commission.cells[0]], ['Jan 2027', 6, 100], 'deal term dates set the months');
+eq([d2.months[0].label, d2.months.length, d2.commission.expected.recurring.cells[0]], ['Jan 2027', 6, 100], 'deal term dates set the months');
 
 // No dates at all: the deal can't be placed.
 const d3 = buildBfoSchedule([], { deals: [{ Commission: 600 }], today });
-eq([d3.expected.undated, d3.expected.commission.total], [1, 0], 'undated deal not placed');
+eq([d3.undated, d3.commission.expected.total.total], [1, 0], 'undated deal not placed');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

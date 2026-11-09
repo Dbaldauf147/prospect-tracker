@@ -5,10 +5,10 @@ import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 
 // Commissions > All / Actively Paid: clicking a row's BFO Name opens this.
-// Two month-by-month tables for the opp: Actual (revenue and commission
-// recorded on the Commissions roster) and Expected (revenue and commission
-// the Deals page expects, spread over each deal's term; see
-// utils/commissionBfoSchedule for the rules).
+// Two month-by-month tables for the opp, Revenue and Commission. Each has an
+// Actual section (recorded on the Commissions roster) and an Expected one
+// (what the Deals page expects over each deal's term), split into Setup and
+// Recurring; see utils/commissionBfoSchedule for the rules.
 
 const cellBase = { padding: '0.4rem 0.55rem', borderBottom: '1px solid #F1F5F9', textAlign: 'right', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' };
 const headBase = { padding: '0.4rem 0.55rem', borderBottom: '1px solid #E2E8F0', textAlign: 'right', whiteSpace: 'nowrap', color: '#475569', background: '#F1F5F9', fontWeight: 600 };
@@ -19,54 +19,65 @@ function Money({ value, bold }) {
   return <span style={{ color: '#0F172A', fontWeight: bold ? 700 : 400 }}>{fmtCurrency(value)}</span>;
 }
 
-// One table: a Revenue line and a Commission line across the months.
-function MeasureTable({ title, note, months, data, empty }) {
-  const lines = [
-    { label: 'Revenue', ...data.revenue },
-    { label: 'Commission', ...data.commission },
+// One table (Revenue or Commission): an Actual section and an Expected
+// section, each with Setup, Recurring and a subtotal across the months.
+function SectionTable({ title, months, data, notes }) {
+  const sections = [
+    { key: 'actual', label: 'Actual', note: notes.actual, ...data.actual },
+    { key: 'expected', label: 'Expected', note: notes.expected, ...data.expected },
   ];
+  const span = months.length + 2;
   return (
     <section style={{ marginTop: '0.9rem' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.35rem' }}>
-        <strong style={{ fontSize: '0.85rem', color: '#1E293B' }}>{title}</strong>
-        <span style={{ fontSize: '0.7rem', color: '#64748B' }}>{note}</span>
+        <strong style={{ fontSize: '0.9rem', color: '#1E293B' }}>{title}</strong>
         <span style={{ flex: 1 }} />
         <span style={{ fontSize: '0.72rem', color: '#334155', fontVariantNumeric: 'tabular-nums' }}>
-          Revenue <strong>{fmtCurrency(data.revenue.total)}</strong> · Commission <strong>{fmtCurrency(data.commission.total)}</strong>
+          Actual <strong>{fmtCurrency(data.actual.total.total)}</strong> · Expected <strong>{fmtCurrency(data.expected.total.total)}</strong>
         </span>
       </div>
-      {empty ? (
-        <div style={{ padding: '0.75rem 1rem', color: '#475569', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.75rem' }}>{empty}</div>
-      ) : (
-        <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: 6 }}>
-          <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.72rem', width: '100%' }}>
-            <thead>
-              <tr>
-                <th style={{ ...headBase, ...stickyLeft }} />
-                {months.map((m) => (
-                  <th
-                    key={m.key}
-                    title={m.isCurrent ? 'This month' : undefined}
-                    style={{ ...headBase, ...(m.isCurrent ? { background: '#DBEAFE', color: '#1E3A8A' } : null) }}
-                  >{m.label}</th>
-                ))}
-                <th style={{ ...headBase, color: '#0F172A' }}>Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((l) => (
-                <tr key={l.label}>
-                  <td style={{ ...cellBase, ...stickyLeft, background: '#fff', color: '#334155', fontWeight: 600 }}>{l.label}</td>
-                  {l.cells.map((v, i) => (
-                    <td key={months[i].key} style={{ ...cellBase, ...(months[i].isCurrent ? { background: '#F8FBFF' } : null) }}><Money value={v} /></td>
-                  ))}
-                  <td style={{ ...cellBase, background: '#F8FAFC' }}><Money value={l.total} bold /></td>
-                </tr>
+      <div style={{ overflowX: 'auto', border: '1px solid #E2E8F0', borderRadius: 6 }}>
+        <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.72rem', width: '100%' }}>
+          <thead>
+            <tr>
+              <th style={{ ...headBase, ...stickyLeft }} />
+              {months.map((m) => (
+                <th
+                  key={m.key}
+                  title={m.isCurrent ? 'This month' : undefined}
+                  style={{ ...headBase, ...(m.isCurrent ? { background: '#DBEAFE', color: '#1E3A8A' } : null) }}
+                >{m.label}</th>
               ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              <th style={{ ...headBase, color: '#0F172A' }}>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sections.map((sec) => [
+              <tr key={`${sec.key}:head`}>
+                <td colSpan={span} style={{ padding: '0.4rem 0.55rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', borderTop: sec.key === 'expected' ? '1px solid #E2E8F0' : undefined }}>
+                  <span style={{ position: 'sticky', left: '0.55rem', display: 'inline-flex', gap: '0.5rem', alignItems: 'baseline' }}>
+                    <strong style={{ color: '#0F172A', fontSize: '0.74rem' }}>{sec.label}</strong>
+                    <span style={{ color: '#64748B', fontSize: '0.66rem', whiteSpace: 'nowrap' }}>{sec.note}</span>
+                  </span>
+                </td>
+              </tr>,
+              ...[
+                { label: 'Setup', line: sec.setup },
+                { label: 'Recurring', line: sec.recurring },
+                { label: `${sec.label} total`, line: sec.total, bold: true },
+              ].map((r) => (
+                <tr key={`${sec.key}:${r.label}`}>
+                  <td style={{ ...cellBase, ...stickyLeft, background: '#fff', color: r.bold ? '#0F172A' : '#334155', fontWeight: r.bold ? 700 : 400, paddingLeft: r.bold ? '0.55rem' : '1.2rem' }}>{r.label}</td>
+                  {r.line.cells.map((v, i) => (
+                    <td key={months[i].key} style={{ ...cellBase, ...(months[i].isCurrent ? { background: '#F8FBFF' } : null) }}><Money value={v} bold={r.bold} /></td>
+                  ))}
+                  <td style={{ ...cellBase, background: '#F8FAFC' }}><Money value={r.line.total} bold /></td>
+                </tr>
+              )),
+            ])}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -99,6 +110,13 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose }) {
   const live = useMemo(() => (rows || []).filter((r) => !r.__ignored), [rows]);
   const ignored = (rows || []).length - live.length;
   const model = useMemo(() => buildBfoSchedule(live, { opp, deals }), [live, opp, deals]);
+
+  const notes = {
+    actual: live.length ? 'Recorded on the Commissions roster' : 'Every commission row for this opp is marked ignored',
+    expected: model.deals
+      ? `From the Deals page (${model.deals} deal${model.deals === 1 ? '' : 's'}): Setup in the term's first month, Recurring spread evenly over the term`
+      : 'No deal on the Deals page has this BFO opp in its BFO column',
+  };
 
   const account = String(opp?.['Account'] || live[0]?.['Account Name'] || '').trim();
   const facts = [
@@ -143,25 +161,14 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose }) {
               Every commission row for this opp is marked ignored and no deal names it, so there is nothing to show.
             </div>
           ) : (<>
-            <MeasureTable
-              title="Actual"
-              note="Recorded on the Commissions roster"
-              months={model.months}
-              data={model.actual}
-              empty={live.length === 0 ? 'Every commission row for this opp is marked ignored.' : ''}
-            />
-            <MeasureTable
-              title="Expected"
-              note={`From the Deals page${model.expected.deals ? ` (${model.expected.deals} deal${model.expected.deals === 1 ? '' : 's'})` : ''}: Setup and its commission in the term's first month, Recurring Revenue and the rest of the Commission spread evenly`}
-              months={model.months}
-              data={model.expected}
-              empty={model.expected.deals === 0
-                ? 'No deal on the Deals page has this BFO opp in its BFO column, so there is nothing expected to show.'
-                : ''}
-            />
-            {model.expected.undated > 0 && (
+            <div style={{ marginTop: '0.7rem', fontSize: '0.7rem', color: '#64748B' }}>
+              A roster row counts as Setup when its project name reads as a one-time line (NonRecurring, Setup, One-time, Implementation); every other row is Recurring.
+            </div>
+            <SectionTable title="Revenue" months={model.months} data={model.revenue} notes={notes} />
+            <SectionTable title="Commission" months={model.months} data={model.commission} notes={notes} />
+            {model.undated > 0 && (
               <div style={{ fontSize: '0.68rem', color: '#92400E', marginTop: '0.3rem' }}>
-                {model.expected.undated} deal{model.expected.undated === 1 ? ' has' : 's have'} no term dates (and no dated commission rows), so {model.expected.undated === 1 ? 'it' : 'they'} can&apos;t be placed in a month.
+                {model.undated} deal{model.undated === 1 ? ' has' : 's have'} no term dates (and no dated commission rows), so {model.undated === 1 ? 'it' : 'they'} can&apos;t be placed in a month.
               </div>
             )}
           </>)}
