@@ -60,7 +60,7 @@ function TotalLine({ series }) {
   );
 }
 
-export function MissingHistoryView({ settings, updateSettings, cdmName, onSelectCompany }) {
+export function MissingHistoryView({ settings, updateSettings, cdmName, onSelectCompany, getLiveCheck }) {
   // The day whose Companies count was clicked: { day, prevDay }.
   const [diffDay, setDiffDay] = useState(null);
   const raw = useSyncExternalStore(subscribeMissingHistory, missingHistorySnapshot);
@@ -133,9 +133,9 @@ export function MissingHistoryView({ settings, updateSettings, cdmName, onSelect
         <span
           role="button"
           tabIndex={0}
-          onClick={(e) => { e.stopPropagation(); setDiffDay({ day: r.day, prevDay: r.prev?.day || null }); }}
-          onKeyDown={(e) => { if (e.key === 'Enter') setDiffDay({ day: r.day, prevDay: r.prev?.day || null }); }}
-          title="See which companies joined or left My Accounts this day (from the nightly backups)"
+          onClick={(e) => { e.stopPropagation(); setDiffDay({ day: r.day, prevDay: r.prev?.day || null, dayRow: history[r.day], prevRow: r.prev ? history[r.prev.day] : null }); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') setDiffDay({ day: r.day, prevDay: r.prev?.day || null, dayRow: history[r.day], prevRow: r.prev ? history[r.prev.day] : null }); }}
+          title="See which companies were added to and left My Accounts this day"
           style={{ cursor: 'pointer', textDecoration: 'underline dotted', textUnderlineOffset: '3px' }}
         >{withDelta(r.companies ?? 0, r.prev?.companies, true)}</span>
       ),
@@ -171,7 +171,7 @@ export function MissingHistoryView({ settings, updateSettings, cdmName, onSelect
         {`${series.length} day${series.length === 1 ? '' : 's'} recorded since ${fmtDay(first.day)}. `}
         Each day is the All Missing Steps column on the Company Data subtab added up (steps remaining on each company's
         By Category ladder, plus its blank sites, utility accounts and equipment) across the My Accounts companies,
-        inactive and Qualifying ones left out, as it stood at the end of that day. The field columns in the table count the companies missing each value. Click a day's Companies count to see which companies joined or left that day.
+        inactive and Qualifying ones left out, as it stood at the end of that day. The field columns in the table count the companies missing each value. Click a day's Companies count to see which companies were added and which left that day.
       </div>
       <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: '0.6rem 0.75rem', background: '#fff', maxWidth: 820 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
@@ -217,7 +217,10 @@ export function MissingHistoryView({ settings, updateSettings, cdmName, onSelect
         <MissingHistoryDayDiff
           day={diffDay.day}
           prevDay={diffDay.prevDay}
+          dayRow={diffDay.dayRow}
+          prevRow={diffDay.prevRow}
           cdmName={cdmName}
+          getLiveCheck={getLiveCheck}
           settings={settings}
           updateSettings={updateSettings}
           onSelectCompany={onSelectCompany}

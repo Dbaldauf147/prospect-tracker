@@ -41,6 +41,7 @@ import { CompanyDataTab } from './CompanyDataTab';
 import { DealSizeTab } from './DealSizeTab';
 import { HubspotMappingTab } from './HubspotMappingTab';
 import { MissingHistoryView } from './MissingHistoryView';
+import { findTier, parseTargetAccounts } from '../../utils/myAccountsMembership';
 import { missingStepsReading, recordMissingDay, dayKey } from '../../utils/missingHistory';
 import { companyClosedBuckets, serviceBucketContext } from '../../utils/bucketServices';
 import { BUCKETS } from '../ProspectModal/contactTags';
@@ -108,70 +109,6 @@ function FilterDrop({ label, options, selected, onToggle }) {
   );
 }
 
-// Dan's tiered account names (normalized lowercase for matching)
-const MY_ACCOUNTS = new Map([
-  ['blue owl capital', 'Tier 1'],
-  ['brookfield asset management', 'Tier 1'],
-  ['cbre investment management', 'Tier 1'],
-  ['cerberus capital management', 'Tier 1'],
-  ['nationwide', 'Tier 1'],
-  ['goldman sachs asset management', 'Tier 1'],
-  ['hellman & friedman', 'Tier 1'],
-  ['jones lang lasalle (jll)', 'Tier 1'],
-  ['jp morgan asset management real estate', 'Tier 1'],
-  ['nuveen real estate, a tiaa co.', 'Tier 1'],
-  ['pnc', 'Tier 1'],
-  ['prologis', 'Tier 1'],
-  ['simon property group', 'Tier 1'],
-  ['thoma bravo', 'Tier 1'],
-  ['ventas', 'Tier 1'],
-  ['ameriprise financial', 'Tier 2'],['affinius capital, a usaa co.', 'Tier 2'],['affinius capital', 'Tier 2'],
-  ['american homes 4 rent', 'Tier 2'],['article student living', 'Tier 2'],['article student living, llc', 'Tier 2'],
-  ['bank ozk', 'Tier 2'],['bok financial', 'Tier 2'],['berkeley partners', 'Tier 2'],
-  ['chubb, ltd.', 'Tier 2'],['cibc', 'Tier 2'],['eos hospitality', 'Tier 2'],
-  ['formerly washreit', 'Tier 2'],['washreit', 'Tier 2'],['invitation homes', 'Tier 2'],
-  ['lineage logistics (a bay grove co.)', 'Tier 2'],['lineage logistics', 'Tier 2'],
-  ['bluerock residential growth reit', 'Tier 2'],['boxer properties', 'Tier 2'],
-  ['cabot properties', 'Tier 2'],['cadillac fairview', 'Tier 2'],['cbre', 'Tier 2'],
-  ['lpl financial', 'Tier 2'],['clayton, dubilier & rice (cdr)', 'Tier 2'],
-  ['new york life', 'Tier 2'],['community healthcare trust inc.', 'Tier 2'],
-  ['costar group, inc.', 'Tier 2'],['deloitte', 'Tier 2'],['northern trust', 'Tier 2'],
-  ['park hotels & resorts', 'Tier 2'],['divcowest', 'Tier 2'],['realterm', 'Tier 2'],
-  ['diversified healthcare trust', 'Tier 2'],['sofi', 'Tier 2'],
-  ['teachers insurance and annuity association of america (tiaa)', 'Tier 2'],['tiaa', 'Tier 2'],
-  ['dream industrial (a dream unlimited co.)', 'Tier 2'],['dream industrial', 'Tier 2'],
-  ['easterly government properties inc.', 'Tier 2'],['eastgroup properties (egp)', 'Tier 2'],
-  ['edens', 'Tier 2'],['education realty trust inc. (a greystar co.)', 'Tier 2'],['education realty trust inc.', 'Tier 2'],
-  ['equity lifestyle properties', 'Tier 2'],['ey consulting', 'Tier 2'],['gbx group', 'Tier 2'],
-  ['griffis residential', 'Tier 2'],['harrison street', 'Tier 2'],['hines', 'Tier 2'],
-  ['hobbs brook real estate', 'Tier 2'],['industrious', 'Tier 2'],
-  ['international workplace group (iwg)', 'Tier 2'],['invesco real estate', 'Tier 2'],
-  ['jackson financial group', 'Tier 2'],['jamestown properties', 'Tier 2'],
-  ['kilroy realty', 'Tier 2'],['kimco realty corporation', 'Tier 2'],
-  ['kite realty group trust', 'Tier 2'],['klein enterprises, llc', 'Tier 2'],['klein enterprises', 'Tier 2'],
-  ['lennar corp.', 'Tier 2'],['macerich', 'Tier 2'],['merritt properties', 'Tier 2'],
-  ["moody's", 'Tier 2'],['piedmont office realty trust inc.', 'Tier 2'],
-  ['popular, inc.', 'Tier 2'],['price waterhouse coopers (pwc)', 'Tier 2'],
-  ['principal financial group', 'Tier 2'],['pritzker private capital (ppc-pc)', 'Tier 2'],
-  ['pulte group', 'Tier 2'],['realty income', 'Tier 2'],['remedy reit', 'Tier 2'],
-  ['renew senior living', 'Tier 2'],['rinchem company', 'Tier 2'],['rmr group', 'Tier 2'],
-  ["shearer's foods", 'Tier 2'],['silver lake', 'Tier 2'],['south bay development company', 'Tier 2'],
-  ['starwood capital group', 'Tier 2'],['store capital', 'Tier 2'],['strategic value partners', 'Tier 2'],
-  ['tishman speyer properties inc.', 'Tier 2'],['trammell crow company, (a cbre co.)', 'Tier 2'],
-  ['trammell crow company (a cbre co.)', 'Tier 2'],['trammell crow company', 'Tier 2'],
-  ['tricon residential', 'Tier 2'],['usaa', 'Tier 2'],['vertiv', 'Tier 2'],
-  ['westinghouse (a brookfield co.)', 'Tier 2'],['wework', 'Tier 2'],
-  ['whitestone reit', 'Tier 2'],['wilsonart international, inc.', 'Tier 2'],['wsp global', 'Tier 2'],
-]);
-
-function findTier(companyName) {
-  const key = (companyName || '').toLowerCase().trim();
-  if (MY_ACCOUNTS.has(key)) return MY_ACCOUNTS.get(key);
-  for (const [k, tier] of MY_ACCOUNTS) {
-    if (k.startsWith(key) || key.startsWith(k)) return tier;
-  }
-  return null;
-}
 
 // Type → "Type 2" rollup, shared by the column renderer and its
 // header filter so filtering matches the pill the user sees.
@@ -1508,62 +1445,17 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
   const activeFilterCount = Object.values(filters).reduce((s, a) => s + a.length, 0);
 
-  // Parse Target Accounts from prop data
+  // Parse Target Accounts from prop data (utils/myAccountsMembership, which
+  // the All Missing History day comparison reads the same way).
   const targetAccounts = useMemo(() => {
-    const data = targetAccountsData;
-    if (!data?.sheets) return [];
-    const accounts = [];
-
-    function findCol(r, keywords) {
-      for (const key of Object.keys(r)) {
-        const lower = key.toLowerCase();
-        for (const kw of keywords) {
-          if (lower.includes(kw.toLowerCase())) return (r[key] || '').trim();
-        }
-      }
-      return '';
+    if (!targetAccountsData?.sheets) return [];
+    for (const sheetName of targetAccountsData.sheetNames || []) {
+      const headers = targetAccountsData.sheets[sheetName]?.headers;
+      if (headers) console.log(`Target Accounts sheet "${sheetName}" columns:`, headers.filter(Boolean));
     }
-
-    const skippedAccounts = [];
-    for (const sheetName of data.sheetNames || []) {
-      const sheet = data.sheets[sheetName];
-      if (!sheet?.records) continue;
-      if (sheet.headers) console.log(`Target Accounts sheet "${sheetName}" columns:`, sheet.headers.filter(Boolean));
-
-      const cdmLastName = (cdmName || '').toLowerCase().split(/\s+/).filter(Boolean).pop() || '';
-      for (const r of sheet.records) {
-        const companyForLog = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
-        let cdm = resolveTargetAccountCdm(r, settings?.targetCdmColumn).toLowerCase();
-        if (!cdm && cdmLastName) {
-          cdm = Object.values(r).find(v => String(v || '').toLowerCase().includes(cdmLastName)) || '';
-          cdm = String(cdm).toLowerCase();
-        }
-        if (!matchesCdm(cdm, cdmName)) {
-          if (companyForLog) skippedAccounts.push({ company: companyForLog, reason: `CDM="${cdm}" (not ${cdmName || 'configured CDM'})` });
-          continue;
-        }
-        let tier = normalizeTierText(findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']));
-        if (!tier) {
-          tier = Object.values(r).map(normalizeTierText).find(v => /Tier\s*[1-3]/i.test(v)) || '';
-        }
-        // Tier 3 belongs to the book too. It used to be dropped here, which
-        // is what kept the rep's Tier 3 targets ("all remaining assigned in
-        // your segments") off My Accounts entirely — no row, no 'Target
-        // List' badge, no missing-target chip. Prefer an explicit "Tier N"
-        // over a bare digit so a cell like "2025 Tier 1" still reads as
-        // Tier 1 rather than Tier 2.
-        const tierDigit = (tier.match(/Tier\s*([1-3])/i) || tier.match(/([1-3])/) || [])[1];
-        if (!tierDigit) {
-          if (companyForLog) skippedAccounts.push({ company: companyForLog, reason: `Tier="${tier}" (not Tier 1/2/3)` });
-          continue;
-        }
-        const company = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
-        if (!company) continue;
-        accounts.push({ company: company.trim(), tier: `Tier ${tierDigit}`, ...r });
-      }
-    }
+    const { accounts, skipped } = parseTargetAccounts(targetAccountsData, cdmName, settings?.targetCdmColumn);
     console.log(`Target Accounts: found ${accounts.length} ${cdmName || 'CDM'} Tier 1/2/3 accounts`);
-    if (skippedAccounts.length > 0) console.log('Target Accounts SKIPPED:', skippedAccounts);
+    if (skipped.length > 0) console.log('Target Accounts SKIPPED:', skipped);
     return accounts;
   }, [targetAccountsData, cdmName, settings?.targetCdmColumn]);
 
@@ -3241,6 +3133,33 @@ Fix that now?
     return () => clearTimeout(timer);
   }, [hubspotCache, allAccounts, dmTagLocalFields, dmTagLinks, dmTagExclusions]);
 
+  // For the All Missing History day popup: today's inputs to the shared
+  // membership rule (utils/myAccountsMembership) and the ids the page
+  // actually counts, so the popup can check the rule still agrees with the
+  // page. Read through a ref so the callback stays stable.
+  const liveCheckRef = useRef(null);
+  liveCheckRef.current = { prospects, cdmName, settings, targetAccounts, oppsRecords, allAccounts };
+  const getLiveCheck = useCallback(() => {
+    const c = liveCheckRef.current;
+    if (!c?.allAccounts?.length) return null;
+    const byId = new Map((c.prospects || []).map(p => [p.id, p]));
+    const ids = c.allAccounts
+      .filter(a => !isInactive(a) && byId.has(a.id) && !isQualifyingCompany(byId.get(a.id)))
+      .map(a => String(a.id));
+    return {
+      ids,
+      inputs: {
+        prospects: c.prospects || [],
+        cdmName: c.cdmName,
+        targetMap: c.settings?.targetMap || {},
+        dismissedCompanies: c.settings?.dismissedCompanies || [],
+        divisionsMap: c.settings?.divisionsMap || {},
+        targetAccounts: c.targetAccounts || [],
+        oppsRecords: c.oppsRecords || [],
+      },
+    };
+  }, []);
+
   // Record today's All Missing Steps total for the All Missing History
   // subtab, on the basis the Company Data subtab opens on: every account
   // with a company record, inactive and Qualifying ones out, no search. Each company is
@@ -4034,7 +3953,7 @@ Fix that now?
   if (mode === 'missingHistory') {
     return (
       <div className={styles.wrapper}>
-        <MissingHistoryView settings={settings} updateSettings={updateSettings} cdmName={cdmName} onSelectCompany={(r) => { const p = prospects.find(x => x.id === r.id); if (p) onSelect(p); }} />
+        <MissingHistoryView settings={settings} updateSettings={updateSettings} cdmName={cdmName} onSelectCompany={(r) => { const p = prospects.find(x => String(x.id) === String(r.id)); if (p) onSelect(p); }} getLiveCheck={getLiveCheck} />
       </div>
     );
   }

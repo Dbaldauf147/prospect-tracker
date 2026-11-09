@@ -22,6 +22,10 @@
 //                   Steps carry none: their total was the field counts
 //                   summed, so they are not charted beside these.
 //   companies  how many companies the counts are out of
+//   ids        the prospect ids of those companies, sorted, so a day's
+//              "who joined or left" is exact (MissingHistoryDayDiff).
+//              Kept for the last MISSING_HISTORY_IDS_DAYS days only; a
+//              day without them falls back to the nightly backups.
 //   seeded     true on the one day backfilled from the first reading
 //   baseline   true on the one day frozen as the baseline: never rewritten,
 //              and what the subtab measures progress against
@@ -44,6 +48,8 @@ export const MISSING_HISTORY_EVENT = 'company-data-missing-history-changed';
 registerMirroredKey(MISSING_HISTORY_KEY, MISSING_HISTORY_EVENT, { merge: mergeDayHistories });
 
 export const MISSING_HISTORY_MAX_DAYS = 730;
+// ~320 ids is a few KB a day: kept long enough to look back on, not for two years.
+export const MISSING_HISTORY_IDS_DAYS = 90;
 
 export function parseMissingHistory(raw) {
   try {
@@ -108,6 +114,7 @@ export function missingStepsReading(entries, { tagReview = null, fields = COMPAN
     fields: counts,
     companies: list.length,
     basis: MISSING_HISTORY_BASIS,
+    ids: list.map(e => String(e.record.id)).filter(id => id && id !== 'undefined').sort(),
   };
 }
 
@@ -125,11 +132,21 @@ function sameReading(a, b) {
   if (!a || !b) return false;
   return a.total === b.total && a.companies === b.companies && a.basis === b.basis
     && a.stepsRemaining === b.stepsRemaining && a.missingData === b.missingData
-    && JSON.stringify(a.fields) === JSON.stringify(b.fields);
+    && JSON.stringify(a.fields) === JSON.stringify(b.fields)
+    && JSON.stringify(a.ids || null) === JSON.stringify(b.ids || null);
 }
 
 function trim(history, max = MISSING_HISTORY_MAX_DAYS) {
   const keys = Object.keys(history || {}).sort();
+  // Only the latest days keep their company ids.
+  const idCutoff = keys.length > MISSING_HISTORY_IDS_DAYS ? keys[keys.length - MISSING_HISTORY_IDS_DAYS] : '';
+  if (idCutoff && keys.some(k => k < idCutoff && history[k]?.ids)) {
+    const stripped = {};
+    for (const k of keys) {
+      if (k < idCutoff && history[k]?.ids) { const { ids: _ids, ...rest } = history[k]; stripped[k] = rest; } else stripped[k] = history[k];
+    }
+    history = stripped;
+  }
   if (keys.length <= max) return history;
   const out = {};
   // The baseline outlives the window: it is what the rest is measured against.
