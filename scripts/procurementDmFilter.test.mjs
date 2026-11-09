@@ -29,4 +29,12 @@ assert.equal(isOpenProcurementDecisionMaker(dm, sold, ctx), false, 'Sold leaves 
 assert.equal(isOpenProcurementDecisionMaker(dm, notSold, ctx), false, 'Not Sold leaves them out');
 assert.equal(isOpenProcurementDecisionMaker(dm, null, ctx), true, 'no matched company: nothing answered');
 assert.equal(isOpenProcurementDecisionMaker({ dans_tags: 'Procurement' }, open, ctx), false);
+
+// The contact's own Procurement tag status.
+const dmId = { ...dm, id: 7 };
+assert.equal(isOpenProcurementDecisionMaker(dmId, open, ctx, { 7: { Procurement: { answer: 'yes', status: 'sold' } } }), false, 'tag status Sold leaves them out');
+assert.equal(isOpenProcurementDecisionMaker(dmId, open, ctx, { 7: { procurement: { answer: 'yes', status: 'notsold' } } }), false, 'tag status Not sold leaves them out, any spelling');
+assert.equal(isOpenProcurementDecisionMaker(dmId, open, ctx, { 7: { Procurement: { answer: 'yes', status: '' } } }), true, 'a plain Yes stays in');
+assert.equal(isOpenProcurementDecisionMaker(dmId, open, ctx, { 7: { 'Decision Maker': { status: 'sold' } } }), true, 'another tag\'s status does not count');
+assert.equal(isOpenProcurementDecisionMaker(dmId, open, ctx, { 8: { Procurement: { status: 'sold' } } }), true, 'another contact\'s status does not count');
 console.log('PASS  procurement DM filter');

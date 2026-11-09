@@ -3556,7 +3556,7 @@ function KeyContactsViewInner({
       if (travelCity && String(c.city || '').trim().toLowerCase() !== travelCity.trim().toLowerCase()) return false;
     }
     if (onlyLocationFlagged && !checkCity(c.city) && !stateFlagOf(c)) return false;
-    if (onlyProcurementDm && !opts?.skipProcurementDm && !isOpenProcurementDecisionMaker(c.raw || c, c.prospect, serviceCtx)) return false;
+    if (onlyProcurementDm && !opts?.skipProcurementDm && !isOpenProcurementDecisionMaker(c.raw || c, c.prospect, serviceCtx, tagReviewMap)) return false;
     // skipCompanyStatus lets the pills count against everything else.
     if (companyStatusSet && !opts?.skipCompanyStatus && !companyStatusSet.has(c.prospect?.status || '')) return false;
     // Campaign membership gate — 'in' keeps contacts already emailed in
@@ -3612,7 +3612,7 @@ function KeyContactsViewInner({
   const filteredContacts = sortedContacts.filter(c => passesNonColumnFilters(c) && passesColumnFilters(c, null));
   // The button's count: how many rows it leaves, under every other filter.
   const procurementDmCount = sortedContacts.filter(c => passesNonColumnFilters(c, { skipProcurementDm: true }) && passesColumnFilters(c, null)
-    && isOpenProcurementDecisionMaker(c.raw || c, c.prospect, serviceCtx)).length;
+    && isOpenProcurementDecisionMaker(c.raw || c, c.prospect, serviceCtx, tagReviewMap)).length;
   // Pill counts: contacts per company status under every other filter, so
   // each pill says how many rows lighting it would add.
   const companyStatusCounts = (() => {
@@ -4294,7 +4294,7 @@ function KeyContactsViewInner({
             type="button"
             aria-pressed={onlyProcurementDm}
             onClick={() => setOnlyProcurementDm(v => !v)}
-            title="Show only contacts tagged both Procurement and Decision Maker whose company has no Procurement service marked Sold or Not Sold on its Services board. Procurement services are the ones whose Contact Tags include Procurement."
+            title="Show only contacts tagged both Procurement and Decision Maker whose company has no Procurement service marked Sold or Not Sold on its Services board, leaving out any contact whose own Procurement tag status is Sold or Not sold. Procurement services are the ones whose Contact Tags include Procurement."
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 5, padding: '0.2rem 0.6rem', fontSize: '0.7rem', fontWeight: 600,
               borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit',
