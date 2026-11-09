@@ -13,11 +13,15 @@
 // Those former coworkers get their own subtab, Schneider Electric, so the
 // main list (Other contacts) is only people at outside companies. The two
 // subtabs are one page split in two: same selector, same table layout.
+//
+// A third subtab, Snoozed, holds anyone snoozed from the Reached Out column
+// (SE or not) until their snooze runs out; then they're back where they
+// were without anybody doing anything.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { KeyContactsView } from '../KeyContactsView/KeyContactsView';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
-import { isChangedJobs, isSchneiderContact } from '../../utils/changedJobs';
+import { isChangedJobs, isSchneiderContact, activeSnoozeMs } from '../../utils/changedJobs';
 import { useAuth } from '../../contexts/AuthContext';
 import { MonthlyEmailButton } from './MonthlyEmailButton';
 
@@ -25,31 +29,46 @@ import { MonthlyEmailButton } from './MonthlyEmailButton';
 const SUBTABS = [
   { key: 'other', label: 'Other contacts' },
   { key: 'schneider', label: 'Schneider Electric' },
+  { key: 'snoozed', label: 'Snoozed' },
 ];
+const SUBTAB_KEYS = new Set(SUBTABS.map(t => t.key));
 const SUBTAB_LS_KEY = 'changed-jobs-contacts:subtab';
 
 export function ChangedJobsContactsView({ prospects = [], onSelectProspect, settings, updateSettings, updateSettingsPath, cdmName }) {
   const { isAdmin } = useAuth() || {};
   const [subtab, setSubtab] = useState(() => {
-    try { return localStorage.getItem(SUBTAB_LS_KEY) === 'schneider' ? 'schneider' : 'other'; } catch { return 'other'; }
+    try { const v = localStorage.getItem(SUBTAB_LS_KEY); return SUBTAB_KEYS.has(v) ? v : 'other'; } catch { return 'other'; }
   });
   const pickSubtab = (key) => {
     setSubtab(key);
     try { localStorage.setItem(SUBTAB_LS_KEY, key); } catch { /* storage blocked */ }
   };
   const schneider = subtab === 'schneider';
+  const snoozedTab = subtab === 'snoozed';
   // Contacts hidden from this page from the Reached Out column (a local
   // flag, see KeyContactsView toggleChangedJobsHidden). Off the list unless
   // "Show hidden" is ticked, which shows ONLY them so they're easy to undo.
   const [showHidden, setShowHidden] = useState(false);
   const localFields = settings?.contactLocalFields;
-  const isHidden = useCallback(
-    (c) => !!localFields?.[String(c?.id || c?.vid || '')]?._changedJobsHidden,
-    [localFields],
+  const localFor = useCallback((c) => localFields?.[String(c?.id || c?.vid || '')] || null, [localFields]);
+  const isHidden = useCallback((c) => !!localFor(c)?._changedJobsHidden, [localFor]);
+  // "Now" for the snooze test, refreshed hourly so a snooze that runs out
+  // while the page sits open still lets the contact back. A new snooze is
+  // always in the future, so it takes effect at once either way.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 60 * 60 * 1000);
+    return () => clearInterval(t);
+  }, []);
+  const isSnoozed = useCallback((c) => activeSnoozeMs(localFor(c), nowMs) != null, [localFor, nowMs]);
+  // Which subtab a contact belongs on, hidden or not.
+  const subtabOf = useCallback(
+    (c) => (isSnoozed(c) ? 'snoozed' : isSchneiderContact(c) ? 'schneider' : 'other'),
+    [isSnoozed],
   );
   const selector = useCallback(
-    (c) => isChangedJobs(c) && isSchneiderContact(c) === schneider && isHidden(c) === showHidden,
-    [schneider, isHidden, showHidden],
+    (c) => isChangedJobs(c) && subtabOf(c) === subtab && isHidden(c) === showHidden,
+    [subtabOf, subtab, isHidden, showHidden],
   );
 
   // How many contacts each subtab holds, for the counts on the pills. Read
@@ -63,17 +82,15 @@ export function ChangedJobsContactsView({ prospects = [], onSelectProspect, sett
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   const counts = useMemo(() => {
-    let other = 0;
-    let se = 0;
-    let hidden = 0;
+    const out = { other: 0, schneider: 0, snoozed: 0, hidden: 0 };
     for (const c of contacts) {
       if (!isChangedJobs(c)) continue;
-      const sec = isSchneiderContact(c);
-      if (isHidden(c)) { if (sec === schneider) hidden += 1; continue; }
-      if (sec) se += 1; else other += 1;
+      const tab = subtabOf(c);
+      if (isHidden(c)) { if (tab === subtab) out.hidden += 1; continue; }
+      out[tab] += 1;
     }
-    return { other, schneider: se, hidden };
-  }, [contacts, isHidden, schneider]);
+    return out;
+  }, [contacts, isHidden, subtabOf, subtab]);
 
   const pills = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: '0.6rem', flexWrap: 'wrap' }}>
@@ -120,7 +137,7 @@ export function ChangedJobsContactsView({ prospects = [], onSelectProspect, sett
       >{counts.hidden}</span>
     </label>
     {/* The monthly email covers Other contacts, so it sits there. */}
-    {isAdmin && !schneider && <MonthlyEmailButton />}
+    {isAdmin && subtab === 'other' && <MonthlyEmailButton />}
     </div>
   );
 
@@ -138,13 +155,15 @@ export function ChangedJobsContactsView({ prospects = [], onSelectProspect, sett
       showReachedOut
       pageSubtitle={
         <>
-          HubSpot contacts who have changed jobs: either tagged <code>Left</code> or with their Company set to <code>Changed Jobs</code>. Use this to find people you want to chase down at their new employer. Map their <strong>New Company</strong> and (if that company's email format is known), the <strong>Expected Email</strong> column predicts their new address. Use the <strong>Reached Out</strong> toggle to track who you've contacted. <strong>Hide</strong> next to it takes someone off this page only (tick <strong>Show hidden</strong> to bring them back); <strong>Hide</strong> at the far right of a row tags them Hide in HubSpot, which drops them from every contacts page. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up. <strong>Schneider Electric</strong> holds former coworkers (a Schneider company or address, tagged <code>Left</code>); <strong>Other contacts</strong> is everyone else, and is emailed to you on the 1st of each month.
+          HubSpot contacts who have changed jobs: either tagged <code>Left</code> or with their Company set to <code>Changed Jobs</code>. Use this to find people you want to chase down at their new employer. Map their <strong>New Company</strong> and (if that company's email format is known), the <strong>Expected Email</strong> column predicts their new address. Use the <strong>Reached Out</strong> toggle to track who you've contacted. <strong>Hide</strong> next to it takes someone off this page only (tick <strong>Show hidden</strong> to bring them back); <strong>Hide</strong> at the far right of a row tags them Hide in HubSpot, which drops them from every contacts page. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up. <strong>Schneider Electric</strong> holds former coworkers (a Schneider company or address, tagged <code>Left</code>); <strong>Other contacts</strong> is everyone else, and is emailed to you on the 1st of each month. <strong>Snooze</strong> in the Reached Out column moves someone to <strong>Snoozed</strong> for the months you pick; when that runs out they come back by themselves.
           {pills}
         </>
       }
-      emptyTitle={showHidden ? 'Nobody hidden on this subtab' : schneider ? 'No Schneider Electric contacts have changed jobs' : 'No Changed Jobs contacts found'}
+      emptyTitle={showHidden ? 'Nobody hidden on this subtab' : snoozedTab ? 'Nobody is snoozed' : schneider ? 'No Schneider Electric contacts have changed jobs' : 'No Changed Jobs contacts found'}
       emptyDetail={showHidden
         ? <>Contacts you hide with <strong>Hide</strong> in the Reached Out column are listed here. Untick <strong>Show hidden</strong> to go back.</>
+        : snoozedTab
+        ? <>Use <strong>Snooze</strong> in the Reached Out column to set someone aside for a few months. They wait here until then, and go back to their subtab when the snooze runs out.</>
         : schneider
         ? <>Nobody with a Schneider Electric company or address is tagged <code>Left</code>. Former coworkers show up here once their <code>Left</code> tag is set.</>
         : <>Nobody outside Schneider Electric currently has the <code>Left</code> tag or a Company of <code>Changed Jobs</code>. Mark a contact's <code>Left</code> tag in the contact modal: the app will automatically set their Company to <code>Changed Jobs</code> so they show up here.</>}

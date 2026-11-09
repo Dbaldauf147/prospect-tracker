@@ -33,7 +33,7 @@ export function MonthlyEmailButton() {
   const last = status?.last;
   const tip = [
     status ? `Monthly email: ${status.schedule}, to ${status.to.join(', ')}.` : 'Monthly email.',
-    'It lists everyone on the Other contacts subtab (not former Schneider Electric coworkers), leaving out anyone hidden from this page.',
+    'It lists everyone on the Other contacts subtab (not former Schneider Electric coworkers), leaving out anyone hidden from this page or snoozed.',
     last ? (last.ok ? `Last sent ${new Date(last.finishedAt).toLocaleString()}.` : `Last run ${new Date(last.finishedAt).toLocaleString()} failed: ${last.error}`) : '',
   ].filter(Boolean).join(' ');
   return (

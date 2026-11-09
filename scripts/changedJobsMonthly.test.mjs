@@ -18,12 +18,16 @@ const contacts = [
   { id: '4', firstname: 'Dan', lastname: 'Stillhere', email: 'dan@se.com', company: 'Schneider Electric' },
   { id: '5', firstname: 'Hid', lastname: 'Den', email: 'hid@gamma.com', company: 'Gamma', dans_tags: 'Left' },
   { id: '6', firstname: 'Ovi', lastname: 'Override', email: 'ovi@delta.com', company: 'Delta' },
+  { id: '7', firstname: 'Sno', lastname: 'Ozed', email: 'sno@eps.com', company: 'Eps', dans_tags: 'Left' },
+  { id: '8', firstname: 'Was', lastname: 'Snoozed', email: 'was@zeta.com', company: 'Zeta', dans_tags: 'Left' },
 ];
 const settings = {
   contactLocalFields: {
     1: { _reachedOut: true, _reachedOutAt: '2026-11-03T15:00:00.000Z', _newCompany: 'Omega' },
     5: { _changedJobsHidden: true },
     6: { _companyOverride: 'Changed Jobs' },
+    7: { _changedJobsSnoozeUntil: '2027-03-01T00:00:00.000Z' },
+    8: { _changedJobsSnoozeUntil: '2026-10-01T00:00:00.000Z' },
   },
 };
 const report = buildChangedJobsMonthly(contacts, settings, { nowMs: DEC_1_2026 });
@@ -33,8 +37,8 @@ await check('month is named from the run date', async () => {
 });
 
 await check('only outside contacts, minus the page-hidden, not-yet-reached first', async () => {
-  assert.deepEqual(report.rows.map(r => r.name), ['Amy Outside', 'Ovi Override', 'Zed Outside']);
-  assert.deepEqual(report.totals, { total: 3, reachedOut: 1, notReachedOut: 2, hidden: 1 });
+  assert.deepEqual(report.rows.map(r => r.name), ['Amy Outside', 'Ovi Override', 'Was Snoozed', 'Zed Outside']);
+  assert.deepEqual(report.totals, { total: 4, reachedOut: 1, notReachedOut: 3, hidden: 1, snoozed: 1 });
 });
 
 await check('previous company skips the Changed Jobs marker; local fields carry over', async () => {
@@ -48,10 +52,11 @@ await check('previous company skips the Changed Jobs marker; local fields carry 
 
 await check('subject and html read right, with no em dash', async () => {
   const subject = changedJobsMonthlySubject(report);
-  assert.equal(subject, 'Changed Jobs, December 2026: 3 contacts, 2 not reached out');
+  assert.equal(subject, 'Changed Jobs, December 2026: 4 contacts, 3 not reached out');
+  assert.ok(renderChangedJobsMonthlyHtml(report).includes('1 snoozed contact is left out'));
   const html = renderChangedJobsMonthlyHtml(report);
   assert.ok(html.includes('Amy Outside') && html.includes('Beta Corp') && html.includes('Omega'));
-  assert.ok(!html.includes('Cat Coworker') && !html.includes('Hid Den'));
+  assert.ok(!html.includes('Cat Coworker') && !html.includes('Hid Den') && !html.includes('Sno Ozed'));
   assert.ok(!html.includes('—') && !subject.includes('—'));
   const empty = renderChangedJobsMonthlyHtml(buildChangedJobsMonthly([], {}, { nowMs: DEC_1_2026 }));
   assert.ok(empty.includes('Nobody outside Schneider Electric'));
@@ -82,7 +87,7 @@ await check('runMonthly sends once a month from the cron, always on demand', asy
   const first = await runMonthly({ db, fromCron: true, ...opts });
   assert.equal(first.ok, true);
   assert.equal(first.month, '2026-12');
-  assert.equal(first.total, 3);
+  assert.equal(first.total, 4);
   assert.deepEqual(sent[0].to, ['me@example.com']);
   const again = await runMonthly({ db, fromCron: true, ...opts });
   assert.equal(again.skipped, 'already sent for this month');

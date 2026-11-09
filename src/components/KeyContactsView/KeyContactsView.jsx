@@ -29,6 +29,7 @@ import { getStateForCity, lookupStateForCity, CITY_OPTIONS, matchCities } from '
 import { useDraftCampaignQueue, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import { companyOverrideUpdate, contactLocalFieldsUpdate } from '../../utils/contactCompanyOverride';
 import { primarySubject } from '../../utils/campaignSubjects';
+import { SNOOZE_MONTH_OPTIONS, snoozeUntilIso, activeSnoozeMs } from '../../utils/changedJobs';
 import { useSavedCampaigns } from '../../hooks/useSavedCampaigns';
 import { latestCampaignReplies, campaignReplyForContact } from '../../utils/campaignReplies';
 import { campaignSendDetailWithin } from '../../utils/campaignFollowUp';
@@ -930,6 +931,19 @@ function KeyContactsViewInner({
     updateSettings(contactLocalFieldsUpdate(id, (entry) => {
       if (entry._changedJobsHidden) { delete entry._changedJobsHidden; delete entry._changedJobsHiddenAt; }
       else { entry._changedJobsHidden = true; entry._changedJobsHiddenAt = new Date().toISOString(); }
+    }));
+  }
+
+  // Snooze a contact on the Changed Jobs page for `months` months (from the
+  // Reached Out column), or clear it with null. Local like the hide flag:
+  // _changedJobsSnoozeUntil in the per-contact settings bag, never pushed to
+  // HubSpot. The page moves them to its Snoozed subtab until then.
+  function setChangedJobsSnooze(contact, months) {
+    const id = String(contact?.id || contact?.vid || '');
+    if (!id) return;
+    updateSettings(contactLocalFieldsUpdate(id, (entry) => {
+      if (months) entry._changedJobsSnoozeUntil = snoozeUntilIso(Date.now(), months);
+      else delete entry._changedJobsSnoozeUntil;
     }));
   }
 
@@ -1938,7 +1952,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, companyStatus: 140, companyCdm: 140, companyVertical: 170, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 190, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, strength: 170, lastOutreach: 160, noReply: 100, campaignReply: 200, emailCampaigns: 240, campaignSends60: 120,
+    name: 180, category: 160, title: 200, company: 200, companyStatus: 140, companyCdm: 140, companyVertical: 170, suggestedCompany: 220, newCompany: 200, expectedEmail: 220, reachedOut: 260, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, toCc: 280, tags: 200, taggedPct: 100, strength: 170, lastOutreach: 160, noReply: 100, campaignReply: 200, emailCampaigns: 240, campaignSends60: 120,
   };
   // Column visibility - every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -3021,6 +3035,7 @@ function KeyContactsViewInner({
         reachedOut: !!local?._reachedOut,
         reachedOutAt: local?._reachedOutAt || '',
         pageHidden: !!local?._changedJobsHidden,
+        snoozeUntilMs: activeSnoozeMs(local),
         raw: c,
       });
     }
@@ -4803,7 +4818,7 @@ function KeyContactsViewInner({
                       <ExpectedEmailCell info={c.expectedEmail} name={c.name} />
                     ),
                     reachedOut: (
-                      <div style={{ padding: '0.3rem 0.5rem', display: 'flex', alignItems: 'center' }}>
+                      <div style={{ padding: '0.3rem 0.5rem', display: 'flex', alignItems: 'center', flexWrap: 'wrap', rowGap: 3 }}>
                         <button
                           type="button"
                           onClick={(e) => { e.stopPropagation(); toggleReachedOut(c.raw || c); }}
@@ -4835,6 +4850,36 @@ function KeyContactsViewInner({
                             whiteSpace: 'nowrap',
                           }}
                         >{c.pageHidden ? 'Unhide' : 'Hide'}</button>
+                        {c.snoozeUntilMs ? (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setChangedJobsSnooze(c.raw || c, null); }}
+                            title="Snoozed: off Other contacts / Schneider Electric until then. Click to unsnooze now."
+                            style={{
+                              marginLeft: 4, padding: '2px 6px', borderRadius: 999,
+                              fontSize: '0.6rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                              background: '#EDE9FE', border: '1px solid #C4B5FD', color: '#5B21B6', whiteSpace: 'nowrap',
+                            }}
+                          >Snoozed to {new Date(c.snoozeUntilMs).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} ×</button>
+                        ) : (
+                          <select
+                            value=""
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => { const m = Number(e.target.value); if (m) setChangedJobsSnooze(c.raw || c, m); }}
+                            title="Snooze this contact for a number of months. They move to the Snoozed subtab and come back by themselves when it runs out."
+                            aria-label={`Snooze ${c.name}`}
+                            style={{
+                              marginLeft: 4, padding: '1px 2px', borderRadius: 999, maxWidth: 82,
+                              fontSize: '0.6rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                              background: 'transparent', border: '1px solid #E2E8F0', color: '#94A3B8',
+                            }}
+                          >
+                            <option value="">Snooze</option>
+                            {SNOOZE_MONTH_OPTIONS.map(m => (
+                              <option key={m} value={m}>{m} month{m === 1 ? '' : 's'}</option>
+                            ))}
+                          </select>
+                        )}
                       </div>
                     ),
                     email: (
