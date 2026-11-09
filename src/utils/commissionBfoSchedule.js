@@ -12,6 +12,12 @@
 // occurrence that isn't in the future. A row with no Comm Start Date can't
 // be placed in time, so its cells are read as this calendar year.
 //
+// Projected: the Actual months a roster row hasn't recorded yet. A Recurring
+// row's latest recorded month is carried forward, month by month, to the end
+// of its Comm Start - End window (the Projected tab's "being paid" rule).
+// Only months after that latest one are projected, never a gap before it,
+// and Setup rows never are: a one-time line doesn't repeat.
+//
 // Expected: what the Deals page expects, summed over every deal whose BFO
 // opp name matches, spread over each deal's term:
 //  - Revenue: Setup in the term's first month, Recurring Revenue evenly
@@ -120,7 +126,8 @@ function monthLabel(n) {
 // `rows`: the commission rows for one BFO opp (ignored ones already left
 // out). `deals`: the Deals-page rows tied to the same opp.
 // Returns { months, revenue, commission, deals, undated }. revenue and
-// commission each hold { actual, expected }, each of those
+// commission each hold { actual, expected, projected }: projected is one
+// { cells, total } line (Recurring rows only); actual and expected are each
 // { setup, recurring, total } lines of { cells, total }, cells aligned to
 // months (null where nothing lands).
 export function buildBfoSchedule(rows, { deals = [], today = new Date() } = {}) {
@@ -161,6 +168,28 @@ export function buildBfoSchedule(rows, { deals = [], today = new Date() } = {}) 
     if (m.n < it.win.first || m.n > it.win.last || it.placed[m.monthIdx] !== m.n) return null;
     return asNumber(it.row?.[cellKey(MONTHS[m.monthIdx])]);
   }));
+  // Recorded value of one row in one month number, or null.
+  const valueAt = (it, cellKey, n) => {
+    if (n < it.win.first || n > it.win.last) return null;
+    const idx = ((n % 12) + 12) % 12;
+    if (it.placed[idx] !== n) return null;
+    const v = asNumber(it.row?.[cellKey(MONTHS[idx])]);
+    return v ? v : null;
+  };
+  const projectedLine = (cellKey) => {
+    const per = items.filter((it) => !isSetupRow(it.row)).map((it) => {
+      const out = new Map();
+      let latest = null;
+      for (let n = it.win.first; n <= it.win.last; n++) {
+        const v = valueAt(it, cellKey, n);
+        if (v != null) latest = { n, v };
+      }
+      if (!latest) return out;
+      for (let n = latest.n + 1; n <= it.win.last; n++) out.set(n, latest.v);
+      return out;
+    });
+    return line((m) => per.map((p) => p.get(m.n)));
+  };
   const fromDeals = (pick) => line((m) => plans.map((p) => p[pick].get(m.n)));
   const section = (setup, recurring) => ({ setup, recurring, total: sum([setup, recurring]) });
   const revKey = (m) => `${m} Revenue`;
@@ -171,10 +200,12 @@ export function buildBfoSchedule(rows, { deals = [], today = new Date() } = {}) 
     revenue: {
       actual: section(recorded(revKey, true), recorded(revKey, false)),
       expected: section(fromDeals('revenueSetup'), fromDeals('revenueRecurring')),
+      projected: projectedLine(revKey),
     },
     commission: {
       actual: section(recorded(commKey, true), recorded(commKey, false)),
       expected: section(fromDeals('commissionSetup'), fromDeals('commissionRecurring')),
+      projected: projectedLine(commKey),
     },
     deals: plans.length,
     undated: plans.filter((p) => !p.win).length,

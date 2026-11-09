@@ -68,5 +68,19 @@ eq(bfoMatchState(100, 130, bfoOkSignature(100, 120)), 'mismatch', 'marked OK lap
 const cmp = bfoComparisons('revenue', d.revenue, d.months);
 eq([cmp.length, cmp[0].key, cmp[0].actual, cmp[0].expected], [3 * 13, 'revenue:setup:2026-07', null, 1000], 'comparisons cover every line, month and total');
 
+// Projected: a Recurring row's latest month carried to its window's end.
+// Willco-shaped: Nov 2025 - Oct 2026, nothing in Nov, Dec..Jul recorded.
+const willco = {
+  'Project Name': 'Willco Construction 1st Amendment', 'Comm Start Date': '11/1/2025', 'Comm End Date': '10/31/2026',
+  'December Revenue': 6310, 'January Revenue': 4000, 'June Revenue': 3800, 'July Revenue': 3550,
+  December: 568, January: 360, June: 342, July: 320,
+};
+const pw = buildBfoSchedule([willco], { today });
+eq(pw.revenue.projected.cells, [null, null, null, null, null, null, null, null, null, 3550, 3550, 3550], 'projected revenue: only after the latest recorded month, to the window end');
+eq([pw.commission.projected.cells[9], pw.commission.projected.total], [320, 960], 'projected commission carries the latest month');
+eq(pw.revenue.actual.recurring.cells[9], null, 'actual cells stay recorded-only');
+const ps = buildBfoSchedule([{ ...setupRow }], { today });
+eq(ps.revenue.projected.total, 0, 'setup rows are never projected');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
