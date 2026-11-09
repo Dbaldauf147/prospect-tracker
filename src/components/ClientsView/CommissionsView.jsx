@@ -20,7 +20,9 @@ import { CommissionsProjectedView } from './CommissionsProjectedView';
 import { projectCommissionRow } from '../../utils/commissionProjection';
 import { readCommissionsFile, isCommissionsFileName } from '../../utils/commissionsMonthFile';
 import { recordCommissionUpload, COMMISSION_UPLOADS_KEY } from '../../utils/commissionMonthUploads';
-import { normBfoKey } from '../../utils/commissionBfoSchedule';
+import { normBfoKey, bfoAllGreen, BFO_OK_SETTINGS_KEY } from '../../utils/commissionBfoSchedule';
+import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
+import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 import { CommissionBfoModal } from './CommissionBfoModal';
 
 // Lookup columns the user adds at the front of the table. Account Name
@@ -1433,6 +1435,40 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   }, []);
   const onTableMouseLeave = useCallback(() => bfoHoverRef.current?.(null), []);
 
+  // BFO opps whose popup is all green (every Actual cell matches Expected or
+  // is marked OK): their rows tint green on All and Actively Paid. Deals are
+  // re-read when the Deals roster is saved.
+  const [dealsVersion, setDealsVersion] = useState(0);
+  useEffect(() => {
+    const bump = () => setDealsVersion((v) => v + 1);
+    window.addEventListener(DEALS_LIST_EVENT, bump);
+    window.addEventListener('storage', bump);
+    return () => { window.removeEventListener(DEALS_LIST_EVENT, bump); window.removeEventListener('storage', bump); };
+  }, []);
+  const bfoOkMarks = settings?.[BFO_OK_SETTINGS_KEY];
+  const greenBfoKeys = useMemo(() => {
+    void dealsVersion;
+    const dealsByKey = new Map();
+    for (const d of loadDealsList().data || []) {
+      const k = normBfoKey(d?.[DEAL_BFO_KEY]);
+      if (!k) continue;
+      if (!dealsByKey.has(k)) dealsByKey.set(k, []);
+      dealsByKey.get(k).push(d);
+    }
+    const rowsByKey = new Map();
+    for (const r of data) {
+      const k = normBfoKey(r?.[BFO_NAME_KEY]);
+      if (!k || r.__ignored) continue;
+      if (!rowsByKey.has(k)) rowsByKey.set(k, []);
+      rowsByKey.get(k).push(r);
+    }
+    const out = new Set();
+    for (const [k, rs] of rowsByKey) {
+      if (bfoAllGreen(rs, { deals: dealsByKey.get(k) || [], okMarks: bfoOkMarks?.[k] || {} })) out.add(k);
+    }
+    return out;
+  }, [data, bfoOkMarks, dealsVersion]);
+
   const rows = useMemo(
     () => data.map((r, i) => ({
       ...r,
@@ -1448,8 +1484,9 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
       __isDuplicate: flaggedDuplicateIds.has(i),
       __onOpenBfo: setBfoModal,
       __bfoGroup: bfoGroups.get(normBfoKey(r?.[BFO_NAME_KEY])) ?? null,
+      __bfoGreen: greenBfoKeys.has(normBfoKey(r?.[BFO_NAME_KEY])),
     })),
-    [data, selectedIds, duplicateIds, flaggedDuplicateIds, bfoGroups]
+    [data, selectedIds, duplicateIds, flaggedDuplicateIds, bfoGroups, greenBfoKeys]
   );
 
   // The BFO opp popup: every roster row with the clicked BFO Name (ignored
@@ -1999,12 +2036,15 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
             enableColumnFilters
             // Ignored rows grey out (wins if a row is both). A duplicate
             // Project Name gets a fuchsia tint + left accent so it reads as
-            // "flagged, still here" rather than an error.
+            // "flagged, still here" rather than an error. A row whose BFO
+            // opp checks out in the BFO popup (all green) tints green.
             rowStyle={(row) => row.__ignored
               ? { opacity: 0.45, background: '#F8FAFC', color: '#64748B' }
               : row.__isDuplicate
                 ? { background: '#FDF4FF', boxShadow: 'inset 3px 0 0 #C026D3' }
-                : undefined}
+                : row.__bfoGreen
+                  ? { background: '#DCFCE7' }
+                  : undefined}
             rowClassName={(row) => (row.__bfoGroup != null ? `${BFO_GROUP_CLASS}${row.__bfoGroup}` : undefined)}
             onFilteredRowsChange={onTableFilteredRowsChange}
             settings={settings}

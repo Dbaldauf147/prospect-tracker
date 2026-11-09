@@ -244,3 +244,45 @@ export function bfoComparisons(measure, data, months) {
   }
   return out;
 }
+
+// Actual cells nothing has been recorded for but the projection fills:
+// shown as projected and never compared, so never red. Keys as
+// bfoComparisons builds them.
+export function bfoProjectedKeys(model) {
+  const out = new Set();
+  for (const measure of ['revenue', 'commission']) {
+    const d = model[measure];
+    model.months.forEach((m, i) => {
+      if (!d.projected.cells[i]) return;
+      for (const line of ['recurring', 'total']) {
+        if (d.actual[line].cells[i] == null) out.add(`${measure}:${line}:${m.key}`);
+      }
+    });
+  }
+  return out;
+}
+
+// Every comparison of one opp's schedule with its state, as the popup
+// colors it: Map key -> { actual, expected, state }.
+export function bfoComparisonStates(model, okMarks = {}) {
+  const projected = bfoProjectedKeys(model);
+  const out = new Map();
+  for (const c of [...bfoComparisons('revenue', model.revenue, model.months), ...bfoComparisons('commission', model.commission, model.months)]) {
+    out.set(c.key, { ...c, state: projected.has(c.key) ? 'projected' : bfoMatchState(c.actual, c.expected, okMarks[c.key]) });
+  }
+  return out;
+}
+
+// True when the popup for this opp shows no red at all and at least one
+// cell is green (matched or marked OK): revenue and commission check out.
+// `rows`: the opp's roster rows, ignored ones already left out.
+export function bfoAllGreen(rows, { deals = [], okMarks = {}, today = new Date() } = {}) {
+  if (!rows?.length) return false;
+  const states = bfoComparisonStates(buildBfoSchedule(rows, { deals, today }), okMarks);
+  let any = false;
+  for (const { state } of states.values()) {
+    if (state === 'mismatch') return false;
+    if (state === 'match' || state === 'ok') any = true;
+  }
+  return any;
+}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fmtCurrency, asNumber } from '../../utils/dealsFormat';
 import {
-  buildBfoSchedule, normBfoKey, bfoMatchState, bfoOkSignature, bfoComparisons, BFO_OK_SETTINGS_KEY,
+  buildBfoSchedule, normBfoKey, bfoOkSignature, bfoComparisonStates, BFO_OK_SETTINGS_KEY,
 } from '../../utils/commissionBfoSchedule';
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
@@ -213,32 +213,10 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
   // Actual vs Expected: each comparison's state, with the OK marks saved
   // for this opp.
   const bfoKey = normBfoKey(bfoName);
-  const okMarks = settings?.[BFO_OK_SETTINGS_KEY]?.[bfoKey] || {};
-  const comparisons = useMemo(() => {
-    const m = new Map();
-    for (const c of [...bfoComparisons('revenue', model.revenue, model.months), ...bfoComparisons('commission', model.commission, model.months)]) m.set(c.key, c);
-    return m;
-  }, [model]);
-  // Actual cells with nothing recorded but a projection: shown as projected,
-  // not compared, so they never count as red.
-  const projectedKeys = useMemo(() => {
-    const out = new Set();
-    for (const measure of ['revenue', 'commission']) {
-      const d = model[measure];
-      model.months.forEach((m, i) => {
-        if (!d.projected.cells[i]) return;
-        for (const line of ['recurring', 'total']) {
-          if (d.actual[line].cells[i] == null) out.add(`${measure}:${line}:${m.key}`);
-        }
-      });
-    }
-    return out;
-  }, [model]);
-  const stateOf = (key) => {
-    if (projectedKeys.has(key)) return 'projected';
-    const c = comparisons.get(key);
-    return c ? bfoMatchState(c.actual, c.expected, okMarks[key]) : 'none';
-  };
+  const savedMarks = settings?.[BFO_OK_SETTINGS_KEY]?.[bfoKey];
+  const okMarks = useMemo(() => savedMarks || {}, [savedMarks]);
+  const comparisons = useMemo(() => bfoComparisonStates(model, okMarks), [model, okMarks]);
+  const stateOf = (key) => comparisons.get(key)?.state || 'none';
   const allReds = [...comparisons.keys()].filter((k) => stateOf(k) === 'mismatch');
   const okCount = [...comparisons.keys()].filter((k) => stateOf(k) === 'ok').length;
   // Built on the current settings (function form), so marks saved since this
