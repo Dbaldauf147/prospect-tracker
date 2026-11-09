@@ -11,8 +11,8 @@
 //   GET  ?action=status   when it goes, where, and the last run (admin only)
 //
 // Env:
-//   CHANGED_JOBS_MONTHLY_TO    where it goes (comma separated; default the
-//                              admin account's address)
+//   CHANGED_JOBS_MONTHLY_TO    where it goes (comma separated; default
+//                              daniel.baldauf@se.com, Dan's work inbox)
 //   HUBSPOT_ACCESS_TOKEN, GMAIL_USER / GMAIL_APP_PASSWORD, CRON_SECRET,
 //   FIREBASE_SERVICE_ACCOUNT_KEY
 //
@@ -31,13 +31,18 @@ import { flatContact } from './_lib/hubspotWeekly.js';
 import { buildChangedJobsMonthly } from '../src/utils/changedJobsMonthly.js';
 import { changedJobsMonthlySubject, renderChangedJobsMonthlyHtml } from './_lib/changedJobsMonthlyEmail.js';
 
+// The account whose settings (Reached Out, New Company, hidden) the list
+// is built from.
 const ADMIN_EMAIL = 'baldaufdan@gmail.com';
+// Where it goes unless CHANGED_JOBS_MONTHLY_TO says otherwise: Dan asked
+// for it at work, where he does the outreach, not the admin account.
+const DEFAULT_TO = 'daniel.baldauf@se.com';
 
 // vercel.json runs it at 13:20 UTC on the 1st of every month.
 export const SCHEDULE_TEXT = 'The 1st of every month at 8:20am Eastern (9:20am in summer)';
 
 export function recipientsFromEnv(env = process.env) {
-  return String(env.CHANGED_JOBS_MONTHLY_TO || ADMIN_EMAIL).split(/[,;]/).map(s => s.trim()).filter(Boolean);
+  return String(env.CHANGED_JOBS_MONTHLY_TO || DEFAULT_TO).split(/[,;]/).map(s => s.trim()).filter(Boolean);
 }
 
 async function loadSources(db, env = process.env) {

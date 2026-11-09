@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { buildChangedJobsMonthly, monthOf } from '../src/utils/changedJobsMonthly.js';
 import { changedJobsMonthlySubject, renderChangedJobsMonthlyHtml } from '../api/_lib/changedJobsMonthlyEmail.js';
-import { runMonthly } from '../api/changed-jobs-monthly.js';
+import { runMonthly, recipientsFromEnv } from '../api/changed-jobs-monthly.js';
 
 let failed = 0;
 async function check(label, fn) {
@@ -60,6 +60,11 @@ await check('subject and html read right, with no em dash', async () => {
 await check('names are escaped', async () => {
   const r = buildChangedJobsMonthly([{ id: '9', firstname: '<b>x</b>', email: 'x@y.com', company: 'Changed Jobs' }], {}, { nowMs: DEC_1_2026 });
   assert.ok(!renderChangedJobsMonthlyHtml(r).includes('<b>x</b>'));
+});
+
+await check('it goes to the work inbox unless the env says otherwise', async () => {
+  assert.deepEqual(recipientsFromEnv({}), ['daniel.baldauf@se.com']);
+  assert.deepEqual(recipientsFromEnv({ CHANGED_JOBS_MONTHLY_TO: 'a@x.com; b@x.com' }), ['a@x.com', 'b@x.com']);
 });
 
 function fakeDb(initial = null) {
