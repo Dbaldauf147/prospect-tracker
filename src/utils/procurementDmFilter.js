@@ -9,11 +9,15 @@
 // The status is the one set on the company card's Services board
 // (record.servicesExplored). A contact with no matched company has no
 // statuses, so nothing has been answered and it stays in.
+//
+// The contact's own answer counts too: a contact whose Procurement tag
+// status (the contact popup's Sold / Not sold, settings.contactTagReview)
+// is Sold or Not sold has been answered, so it stays out.
 // Pure, so scripts/procurementDmFilter.test.mjs checks it.
 
 import { servicesForBucket } from './bucketServices.js';
 import { serviceStatusBucket } from './serviceStatusColors.js';
-import { tagKey } from './contactTagReview.js';
+import { tagKey, findTagRecord, tagRecordFrom } from './contactTagReview.js';
 import { rawTagsOf } from './tagColumnFilter.js';
 
 export const PROCUREMENT_BUCKET = { key: 'procurement', label: 'Procurement' };
@@ -40,7 +44,20 @@ export function answeredProcurementServices(prospect, ctx) {
     });
 }
 
+/**
+ * The contact's own Procurement tag status is Sold or Not sold?
+ * `reviewMap` is settings.contactTagReview (contact id -> tag -> record).
+ */
+export function hasProcurementTagSaleStatus(contact, reviewMap) {
+  const cid = contact?.id ?? contact?.vid;
+  if (cid == null || !reviewMap) return false;
+  const { status } = tagRecordFrom(findTagRecord(reviewMap[cid], 'Procurement'));
+  return status === 'sold' || status === 'notsold';
+}
+
 /** The button's test for one contact row (its raw HubSpot contact and matched company). */
-export function isOpenProcurementDecisionMaker(contact, prospect, ctx) {
-  return isProcurementDecisionMaker(contact) && answeredProcurementServices(prospect, ctx).length === 0;
+export function isOpenProcurementDecisionMaker(contact, prospect, ctx, reviewMap) {
+  return isProcurementDecisionMaker(contact)
+    && !hasProcurementTagSaleStatus(contact, reviewMap)
+    && answeredProcurementServices(prospect, ctx).length === 0;
 }
