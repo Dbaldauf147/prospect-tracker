@@ -18,6 +18,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { KeyContactsView } from '../KeyContactsView/KeyContactsView';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { isChangedJobs, isSchneiderContact } from '../../utils/changedJobs';
+import { useAuth } from '../../contexts/AuthContext';
+import { MonthlyEmailButton } from './MonthlyEmailButton';
 
 
 const SUBTABS = [
@@ -27,6 +29,7 @@ const SUBTABS = [
 const SUBTAB_LS_KEY = 'changed-jobs-contacts:subtab';
 
 export function ChangedJobsContactsView({ prospects = [], onSelectProspect, settings, updateSettings, updateSettingsPath, cdmName }) {
+  const { isAdmin } = useAuth() || {};
   const [subtab, setSubtab] = useState(() => {
     try { return localStorage.getItem(SUBTAB_LS_KEY) === 'schneider' ? 'schneider' : 'other'; } catch { return 'other'; }
   });
@@ -116,6 +119,8 @@ export function ChangedJobsContactsView({ prospects = [], onSelectProspect, sett
         }}
       >{counts.hidden}</span>
     </label>
+    {/* The monthly email covers Other contacts, so it sits there. */}
+    {isAdmin && !schneider && <MonthlyEmailButton />}
     </div>
   );
 
@@ -133,7 +138,7 @@ export function ChangedJobsContactsView({ prospects = [], onSelectProspect, sett
       showReachedOut
       pageSubtitle={
         <>
-          HubSpot contacts who have changed jobs: either tagged <code>Left</code> or with their Company set to <code>Changed Jobs</code>. Use this to find people you want to chase down at their new employer. Map their <strong>New Company</strong> and (if that company's email format is known), the <strong>Expected Email</strong> column predicts their new address. Use the <strong>Reached Out</strong> toggle to track who you've contacted. <strong>Hide</strong> next to it takes someone off this page only (tick <strong>Show hidden</strong> to bring them back); <strong>Hide</strong> at the far right of a row tags them Hide in HubSpot, which drops them from every contacts page. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up. <strong>Schneider Electric</strong> holds former coworkers (a Schneider company or address, tagged <code>Left</code>); <strong>Other contacts</strong> is everyone else.
+          HubSpot contacts who have changed jobs: either tagged <code>Left</code> or with their Company set to <code>Changed Jobs</code>. Use this to find people you want to chase down at their new employer. Map their <strong>New Company</strong> and (if that company's email format is known), the <strong>Expected Email</strong> column predicts their new address. Use the <strong>Reached Out</strong> toggle to track who you've contacted. <strong>Hide</strong> next to it takes someone off this page only (tick <strong>Show hidden</strong> to bring them back); <strong>Hide</strong> at the far right of a row tags them Hide in HubSpot, which drops them from every contacts page. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up. <strong>Schneider Electric</strong> holds former coworkers (a Schneider company or address, tagged <code>Left</code>); <strong>Other contacts</strong> is everyone else, and is emailed to you on the 1st of each month.
           {pills}
         </>
       }
