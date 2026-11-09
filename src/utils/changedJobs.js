@@ -56,3 +56,36 @@ export function activeSnoozeMs(local, nowMs = Date.now()) {
   const t = local?._changedJobsSnoozeUntil ? new Date(local._changedJobsSnoozeUntil).getTime() : NaN;
   return Number.isFinite(t) && t > nowMs ? t : null;
 }
+
+/**
+ * The Changed Jobs contacts nobody has dealt with yet: on the page (either
+ * subtab), not marked Reached Out, not snoozed, not hidden from the page.
+ * What the Prospecting ladder's "Contacts who changed companies" step
+ * counts and lists. `localFields` is settings.contactLocalFields; the
+ * Company override is applied first, as the page does.
+ * Returns [{ id, name, company, schneider, contact }] (contact is the
+ * HubSpot record, for opening the contact popup), sorted by name.
+ */
+export function changedJobsToWork(contacts, localFields, nowMs = Date.now()) {
+  const out = [];
+  for (const base of (contacts || [])) {
+    const id = String(base?.id || base?.vid || '');
+    const local = (id && localFields?.[id]) || null;
+    const c = local && typeof local._companyOverride === 'string' && local._companyOverride
+      ? { ...base, company: local._companyOverride }
+      : base;
+    if (!isChangedJobs(c)) continue;
+    if (local?._reachedOut || local?._changedJobsHidden) continue;
+    if (activeSnoozeMs(local, nowMs) != null) continue;
+    const company = [base.company, base.companyText].map(s => String(s || '').trim())
+      .find(s => s && s.toLowerCase() !== 'changed jobs') || '';
+    out.push({
+      id,
+      name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown',
+      company,
+      schneider: isSchneiderContact(c),
+      contact: base,
+    });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}

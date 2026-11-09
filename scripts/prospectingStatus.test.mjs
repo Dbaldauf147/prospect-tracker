@@ -337,26 +337,36 @@ eq(stateOf(STEPS, { opps: 4, renewals: 0 }, {}, 'opps', { opps: true }), 'work',
   // Everything above the services step cleared: opps and renewals counted to
   // zero, the two hand-marked steps between them marked today.
   const ABOVE_CLEAR = { 'contact-mapping': TODAY, 'market-updates': TODAY };
+  // The Changed Jobs step sits between the market updates and renewals, and
+  // is counted, so a full-ladder count leaves it at 0 unless a test is
+  // about it.
+  const FCLEAR = { ...CLEAR, 'changed-jobs': 0 };
   const badge = (counts, map = ABOVE_CLEAR, autoClear = null) => countLadderWork(ladder(FULL, counts, map, autoClear));
 
-  eq(badge({ ...CLEAR, 'targeted-services': 2, 'pe-intros': 0 }), 2,
+  eq(badge({ ...FCLEAR, 'targeted-services': 2, 'pe-intros': 0 }), 2,
     'with the steps above it clear, two services short of coverage badge a 2');
-  eq(ladderWork(ladder(FULL, { ...CLEAR, 'targeted-services': 2 }, ABOVE_CLEAR))?.key, 'targeted-services',
+  eq(ladderWork(ladder(FULL, { ...FCLEAR, 'targeted-services': 2 }, ABOVE_CLEAR))?.key, 'targeted-services',
     'and the badge names the step the number came from');
-  eq(badge(CLEAR), 0, 'a clear ladder badges nothing');
+  eq(badge(FCLEAR), 0, 'a clear ladder badges nothing');
 
   // The rule the user asked for: the previous stages have to be done first.
-  eq(badge({ ...CLEAR, 'targeted-services': 2 }, {}), 0,
+  eq(badge({ ...FCLEAR, 'targeted-services': 2 }, {}), 0,
     'an unmarked hand-marked step above it holds the number back');
-  eq(badge({ ...CLEAR, 'targeted-services': 2 }, { 'contact-mapping': TODAY }), 0,
+  eq(badge({ ...FCLEAR, 'targeted-services': 2 }, { 'contact-mapping': TODAY }), 0,
     'and so does the next one down, still unmarked');
-  eq(badge({ opps: 0, renewals: 3, 'targeted-services': 2 }), 3,
+  eq(badge({ opps: 0, 'changed-jobs': 0, renewals: 3, 'targeted-services': 2 }), 3,
     'renewals outstanding above it show their own number instead');
-  eq(badge({ opps: 0, renewals: null, 'targeted-services': 2 }), 0,
+  eq(badge({ opps: 0, 'changed-jobs': 4, renewals: 3, 'targeted-services': 2 }), 4,
+    'Changed Jobs contacts still to work show their number ahead of renewals');
+  eq(ladderWork(ladder(FULL, { opps: 0, 'changed-jobs': 4, renewals: 3 }, ABOVE_CLEAR))?.key, 'changed-jobs',
+    'and the badge names that step');
+  eq(badge({ opps: 0, 'changed-jobs': null, renewals: 3, 'targeted-services': 2 }), 0,
+    'while the contacts are loading, nothing below the step is badged');
+  eq(badge({ opps: 0, 'changed-jobs': 0, renewals: null, 'targeted-services': 2 }), 0,
     'a count still loading above it badges nothing rather than skipping past it');
 
   // Auto-clearing a step counts as clearing it, like a mark does.
-  eq(badge({ ...CLEAR, 'targeted-services': 2 }, {}, { 'contact-mapping': true, 'market-updates': true }), 2,
+  eq(badge({ ...FCLEAR, 'targeted-services': 2 }, {}, { 'contact-mapping': true, 'market-updates': true }), 2,
     'steps that cleared themselves let the number through');
 
   // The one step left out, and why.

@@ -132,6 +132,21 @@ export const DEFAULT_STEPS = [
     // undo hint a hand-marked step carries.
     clearTitle: 'Every email campaign that isn\'t paused has finished sending - no market update is still going out',
   },
+  // People you already know, at a new desk: a warm way into a company you
+  // may never have reached. Straight after the market updates because it is
+  // the same kind of work, writing to people who know you, just to fewer
+  // of them. Counted off the Changed Jobs page: everyone on it (either
+  // subtab) not yet marked Reached Out, snoozed or hidden there.
+  {
+    key: 'changed-jobs',
+    title: 'Contacts who changed companies',
+    detail: 'People you know who have moved to a new employer. Reach out, snooze them, or hide them on the Changed Jobs page.',
+    view: 'contacts',
+    viewLabel: 'Contacts',
+    workLabel: n => `${n} to work`,
+    workTitle: n => `${n} ${n === 1 ? 'contact on the Changed Jobs page has' : 'contacts on the Changed Jobs page have'} not been reached out to, snoozed or hidden`,
+    clearTitle: 'Everyone on the Changed Jobs page has been reached out to, snoozed or hidden',
+  },
   {
     key: 'renewals',
     title: 'Follow up with current client renewals',
@@ -227,7 +242,7 @@ const str = (v) => (typeof v === 'string' ? v.trim() : '');
 //
 // A stored ladder IS the ladder — a default the array doesn't carry is one
 // the user deleted, and resurrecting those is exactly what this model
-// exists to prevent. These two are the exception, because nobody deleted
+// exists to prevent. These are the exception, because nobody deleted
 // them: they did not exist when the ladder was stored, so there is no
 // choice of the user's to honour.
 //
@@ -250,14 +265,19 @@ const BACKFILLED_STEPS = [
   // anchor is no reason to withhold it: above cold outreach where it
   // belongs, or at the end when cold outreach is gone.
   { key: 'visits', before: 'cold' },
+  // "Contacts who changed companies" is new work too, placed straight
+  // after the market-updates step it follows (step 3 on the shipped
+  // ladder); without that step, ahead of renewals; failing both, at the end.
+  { key: 'changed-jobs', after: 'market-updates', before: 'renewals' },
 ];
 
-function insertBackfilled(entries, { key, before, onlyWithAnchor = false }) {
+function insertBackfilled(entries, { key, after, before, onlyWithAnchor = false }) {
   const keys = entries.map(e => e.key);
   if (keys.includes(key)) return entries;
   const base = DEFAULTS_BY_KEY.get(key);
   if (!base) return entries;
-  const at = keys.indexOf(before);
+  const afterAt = after ? keys.indexOf(after) : -1;
+  const at = afterAt !== -1 ? afterAt + 1 : keys.indexOf(before);
   if (at === -1 && onlyWithAnchor) return entries;
   const next = [...entries];
   // The shipped step, whole: the user has never edited one that didn't
