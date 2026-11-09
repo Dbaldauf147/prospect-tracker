@@ -7,7 +7,7 @@ import { useSavedCampaigns } from './useSavedCampaigns';
 import { collectPeFirmsToWork } from '../utils/peFirmOutreach';
 import { readSteps } from '../utils/prospectingPlaybook';
 import { changedJobsToWork } from '../utils/changedJobs';
-import { getHubspotCache } from '../utils/hubspotContactsCache';
+import { getHubspotCacheShared } from '../utils/hubspotContactsCache';
 import {
   caughtUpSnapshot,
   countDueSteps,
@@ -95,18 +95,29 @@ export function useProspectingLadder({ issues = null, serviceGaps = null, prospe
   // uses, and re-read when that cache changes. null until the cache read
   // has answered; a device that has never synced contacts answers with
   // none, which is also what its Changed Jobs page shows.
-  const [hubspotContacts, setHubspotContacts] = useState(null);
+  //
+  // Keyed on the uid, and not read at all without one: IndexedDB scopes
+  // every key by uid and answers nothing until AuthContext has called
+  // setDbUserId. This hook lives in App and first runs before auth
+  // resolves, so an unkeyed read came back empty, counted 0, and left the
+  // step reading "All caught up" until a HubSpot sync happened to fire the
+  // update event (same race as useRosterTagCoverage / App's own read).
+  // The read is stored with the uid it was made for, so a read from before
+  // a sign-in (or another user's) reads as not-yet-answered.
+  const [hubspotRead, setHubspotRead] = useState(null);
   useEffect(() => {
+    if (!userId) return undefined;
     let cancelled = false;
     const refresh = () => {
-      getHubspotCache()
-        .then(c => { if (!cancelled) setHubspotContacts(c?.contacts || []); })
-        .catch(() => { if (!cancelled) setHubspotContacts([]); });
+      getHubspotCacheShared()
+        .then(c => { if (!cancelled) setHubspotRead({ uid: userId, contacts: c?.contacts || [] }); })
+        .catch(() => { if (!cancelled) setHubspotRead({ uid: userId, contacts: [] }); });
     };
     refresh();
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
-  }, []);
+  }, [userId]);
+  const hubspotContacts = userId && hubspotRead?.uid === userId ? hubspotRead.contacts : null;
   const localFields = settings?.contactLocalFields;
   const changedJobsWork = useMemo(
     // Other contacts only: former Schneider Electric coworkers have their
