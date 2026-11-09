@@ -1,5 +1,7 @@
 import { useMemo, useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useSyncedTablePref } from '../../hooks/useSyncedTablePref';
+import { useOpps2Data } from '../../hooks/useOpps2Data';
+import { indexOppScopeByBfo, oppScopeForDeal, oppScopeText } from '../../utils/dealOppScope';
 import { lsHas } from '../../utils/tablePrefsSync';
 import { DataTable } from '../common/DataTable';
 import { FollowUpOnSaleCell } from '../common/FollowUpOnSaleCell';
@@ -94,6 +96,10 @@ function todayISODate() {
 // DealsView already folds them onto the same key.
 const CONTRACT_COLUMNS = [
   { key: 'Agreement Name',          label: 'Agreement Name', minWidth: 420 },
+  // What the agreement was sold on: the Scope of the opp tied to it by BFO
+  // opportunity name, the same join the Deals grid's Scope column uses
+  // (utils/dealOppScope). Read-only; Scope is edited on Opps 2.
+  { key: '__scope',                 label: 'Scope', minWidth: 220, maxWidth: 320 },
   { key: 'Paperwork completed',     label: 'Paperwork', minWidth: 220 },
   { key: 'Current Term Start Date', label: 'Current Term Start Date' },
   { key: 'Payment Terms',           label: 'Payment Terms' },
@@ -101,6 +107,10 @@ const CONTRACT_COLUMNS = [
   { key: '__daysToEnd',             label: 'Days to End Date', minWidth: 130 },
   { key: 'Auto renewal?',           label: 'Auto renewal?' },
   { key: 'Esc',                     label: 'Esc', minWidth: 140 },
+  // Free-text notes on the agreement, typed right here. Stored on the deal
+  // row as "Notes" through the shared deals override, the same path the
+  // Post-Sale Follow-Up date takes, so the Deals subtab sees them too.
+  { key: 'Notes',                   label: 'Notes', minWidth: 260 },
 ];
 
 // Whole-day delta between a contract End Date and today, rendered as
@@ -316,7 +326,74 @@ function renderContractCell(key, value) {
   return <span style={{ color: '#1E293B' }}>{String(value)}</span>;
 }
 
-function ContractTable({ deals }) {
+// The Scope cell in the contract drill-down. Falls back to a Scope value
+// uploaded on the deal row itself when no opp is tied to it.
+function renderContractScope(deal, oppScopeByBfo) {
+  const entry = oppScopeForDeal(oppScopeByBfo, deal);
+  const text = entry ? oppScopeText(entry) : String(deal?.Scope ?? '').trim();
+  if (!text) {
+    const title = entry
+      ? 'The opp this agreement is tied to has no Scope yet. Set it on Opps 2 and it shows up here.'
+      : 'No opp is tied to this agreement by BFO opportunity name, so there is no scope to pull in.';
+    return <span style={{ color: '#94A3B8' }} title={title}>-</span>;
+  }
+  const title = entry
+    ? `${entry.items.map(it => `• ${it}`).join('\n')}\n\nFrom the ${entry.oppCount > 1 ? `${entry.oppCount} opps sharing this BFO opportunity name` : `${entry.accounts[0] || 'matching'} opp`}. Edit it on Opps 2.`
+    : text;
+  return (
+    <span title={title} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#1E293B' }}>
+      {text}
+    </span>
+  );
+}
+
+// Inline editor for an agreement's Notes. Remounted by its caller (key)
+// whenever the saved value changes, so the draft starts from what is
+// stored without an effect copying it across. Commits on blur or Enter,
+// reverts on Escape.
+function AgreementNotesCell({ value, onCommit }) {
+  const [draft, setDraft] = useState(value || '');
+  const [focused, setFocused] = useState(false);
+  const cancelled = useRef(false);
+  function commit() {
+    if (cancelled.current) { cancelled.current = false; return; }
+    const next = draft.trim();
+    if (next === String(value || '').trim()) return;
+    onCommit(next);
+  }
+  return (
+    <input
+      type="text"
+      value={draft}
+      placeholder="Add a note"
+      title={draft || 'Add a note about this agreement'}
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => { setFocused(false); commit(); }}
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') {
+          e.preventDefault();
+          cancelled.current = true;
+          setDraft(value || '');
+          e.currentTarget.blur();
+        }
+      }}
+      style={{
+        width: '100%', boxSizing: 'border-box',
+        padding: '2px 6px',
+        border: `1px solid ${focused ? '#3B82F6' : 'transparent'}`, borderRadius: 4,
+        background: focused ? '#fff' : 'transparent', color: '#1E293B',
+        fontSize: '0.7rem', fontFamily: 'inherit',
+      }}
+    />
+  );
+}
+
+function ContractTable({ deals, oppScopeByBfo, onUpdateNotes }) {
   if (!deals || deals.length === 0) {
     return (
       <div style={{ padding: '0.75rem 1.25rem', color: '#64748B', fontSize: '0.75rem', fontStyle: 'italic' }}>
@@ -346,7 +423,7 @@ function ContractTable({ deals }) {
         <thead>
           <tr style={{ background: '#F1F5F9' }}>
             {CONTRACT_COLUMNS.map(col => (
-              <th key={col.key} style={{ padding: '0.35rem 0.5rem', textAlign: 'left', color: '#475569', fontWeight: 700, fontSize: '0.65rem', whiteSpace: 'nowrap', borderBottom: '1px solid #CBD5E1', minWidth: col.minWidth }}>
+              <th key={col.key} style={{ padding: '0.35rem 0.5rem', textAlign: 'left', color: '#475569', fontWeight: 700, fontSize: '0.65rem', whiteSpace: 'nowrap', borderBottom: '1px solid #CBD5E1', minWidth: col.minWidth, maxWidth: col.maxWidth }}>
                 {col.label}
               </th>
             ))}
@@ -359,9 +436,13 @@ function ContractTable({ deals }) {
             return (
             <tr key={i} style={{ background: inactive ? '#F1F5F9' : baseBg, color: inactive ? '#94A3B8' : undefined, opacity: inactive ? 0.7 : 1 }}>
               {CONTRACT_COLUMNS.map(col => (
-                <td key={col.key} style={{ padding: '0.3rem 0.5rem', whiteSpace: 'nowrap', borderBottom: '1px solid #E2E8F0', minWidth: col.minWidth }}>
+                <td key={col.key} style={{ padding: '0.3rem 0.5rem', whiteSpace: 'nowrap', borderBottom: '1px solid #E2E8F0', minWidth: col.minWidth, maxWidth: col.maxWidth }}>
                   {col.key === '__daysToEnd'
                     ? renderDaysToEnd(d['End Date'], inactive)
+                    : col.key === '__scope'
+                    ? renderContractScope(d, oppScopeByBfo)
+                    : col.key === 'Notes' && onUpdateNotes
+                    ? <AgreementNotesCell key={String(d.Notes ?? '')} value={d.Notes} onCommit={(v) => onUpdateNotes(d, v)} />
                     : renderContractCell(col.key, d[col.key])}
                 </td>
               ))}
@@ -603,6 +684,10 @@ function isOldClient(p) { return normStatus(p.status) === 'old client'; }
 
 export function ClientsView({ prospects = [], cdmName, settings, updateSettings, user, targetAccountsData, addProspect, updateProspect, onSelectProspect }) {
   const [subtab, setSubtab] = useState(readSavedSubtab);
+  // Opp Scope by BFO opportunity name, for the contract drill-down's Scope
+  // column (see utils/dealOppScope).
+  const oppsRecords = useOpps2Data(user?.uid)?.records ?? null;
+  const oppScopeByBfo = useMemo(() => indexOppScopeByBfo(oppsRecords || []), [oppsRecords]);
   function selectSubtab(key) {
     setSubtab(key);
     try { localStorage.setItem(SUBTAB_STORAGE_KEY, key); } catch {}
@@ -709,6 +794,23 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       else current['Follow Up On Sale'] = v;
       next[idx] = current;
       try { saveDealsOverride(next); } catch (err) { console.warn('Save follow-up failed', err); }
+      return next;
+    });
+  }
+
+  // Save an agreement's Notes from the contract drill-down, the same way
+  // updateFollowUpOnSale saves its date.
+  function updateAgreementNotes(targetDeal, value) {
+    setDealsList(prev => {
+      const idx = prev.indexOf(targetDeal);
+      if (idx < 0) return prev;
+      const next = [...prev];
+      const current = { ...next[idx] };
+      const v = String(value ?? '').trim();
+      if (!v) delete current.Notes;
+      else current.Notes = v;
+      next[idx] = current;
+      try { saveDealsOverride(next); } catch (err) { console.warn('Save agreement notes failed', err); }
       return next;
     });
   }
@@ -1627,7 +1729,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
             }}
             expandedRowIds={expandedIds}
             renderExpansion={(row) => (
-              <ContractTable deals={dealsByClient.get(normClientName(row.company)) || []} />
+              <ContractTable deals={dealsByClient.get(normClientName(row.company)) || []} oppScopeByBfo={oppScopeByBfo} onUpdateNotes={updateAgreementNotes} />
             )}
             emptyMessage={q ? `No clients match "${query}"` : 'No clients to display'}
             enableColumnFilters
