@@ -289,6 +289,17 @@ export function bfoTicketPatch(cur, bfoKey, url) {
   return { [BFO_TICKET_SETTINGS_KEY]: all };
 }
 
+// Free-text notes on each BFO opp, kept from its popup:
+// { <bfoKey>: { text, updatedAt } }. Function-form patch like the others.
+export const BFO_NOTES_SETTINGS_KEY = 'commissionBfoNotes';
+
+export function bfoNotesPatch(cur, bfoKey, text, now = new Date()) {
+  const all = { ...(cur?.[BFO_NOTES_SETTINGS_KEY] || {}) };
+  const clean = String(text || '').replace(/\s+$/, '');
+  if (clean.trim()) all[bfoKey] = { text: clean, updatedAt: now.toISOString() }; else delete all[bfoKey];
+  return { [BFO_NOTES_SETTINGS_KEY]: all };
+}
+
 // A pasted ticket address as something a link can open: a bare
 // "jira.example.com/..." gets https:// in front. Only http(s) is linked;
 // anything else (javascript:, file:) is shown as text instead.

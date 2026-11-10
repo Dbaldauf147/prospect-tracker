@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fmtCurrency, asNumber } from '../../utils/dealsFormat';
 import {
   buildBfoSchedule, normBfoKey, bfoOkSignature, bfoComparisonStates, bfoActualTotal, bfoPaymentStatus, BFO_PAYMENT_STATUS_LABEL, BFO_OK_SETTINGS_KEY,
-  BFO_WATCH_SETTINGS_KEY, bfoWatchPatch, BFO_TICKET_SETTINGS_KEY, bfoTicketPatch, ticketHref } from '../../utils/commissionBfoSchedule';
+  BFO_WATCH_SETTINGS_KEY, bfoWatchPatch, BFO_TICKET_SETTINGS_KEY, bfoTicketPatch, ticketHref, BFO_NOTES_SETTINGS_KEY, bfoNotesPatch } from '../../utils/commissionBfoSchedule';
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 import { formatDateDisplay, toISODate } from '../../utils/oppsCallIn';
@@ -223,6 +223,53 @@ function SectionTable({ title, measure, months, data, notes, stateOf, onToggle }
 // `bfoName`: the BFO Name clicked. `rows`: every roster row with that BFO
 // Name, ignored ones included (they're counted, then left out). `opp`: the
 // linked Opps record, if any.
+// Notes on the opp: one line when empty, growing with what is typed (to
+// about six lines, then it scrolls). Saved on blur, and on close if the
+// popup is shut mid-edit.
+function NotesField({ value, updatedAt, onSave }) {
+  // null while not editing, so a save from the other machine shows through.
+  const [draft, setDraft] = useState(null);
+  const shown = draft ?? (value || '');
+  const ref = useRef(null);
+  const pending = useRef(null);
+  useEffect(() => { pending.current = draft == null ? null : { draft, onSave }; }, [draft, onSave]);
+  useEffect(() => () => { const p = pending.current; if (p) p.onSave?.(p.draft); }, []);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 110)}px`;
+  }, [shown]);
+  const commit = () => {
+    if (draft == null) return;
+    if (draft !== (value || '')) onSave?.(draft);
+    pending.current = null;
+    setDraft(null);
+  };
+  const when = updatedAt ? new Date(updatedAt) : null;
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', flex: 1, minWidth: 0 }}>
+      <span style={{ fontSize: '0.6rem', color: '#64748B', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', paddingTop: 5, flexShrink: 0 }}>Notes</span>
+      <textarea
+        ref={ref}
+        rows={1}
+        value={shown}
+        readOnly={!onSave}
+        placeholder={onSave ? 'Add notes on this opp' : ''}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); e.currentTarget.blur(); } }}
+        style={{ flex: 1, minWidth: 0, resize: 'none', overflowY: 'auto', fontFamily: 'inherit', fontSize: '0.76rem', lineHeight: 1.35, color: '#1E293B', padding: '3px 6px', border: '1px solid #E2E8F0', borderRadius: 5, background: '#fff', boxSizing: 'border-box' }}
+      />
+      {when && !Number.isNaN(when.getTime()) && (
+        <span style={{ fontSize: '0.62rem', color: '#94A3B8', paddingTop: 5, whiteSpace: 'nowrap', flexShrink: 0 }}>
+          Saved {when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+        </span>
+      )}
+    </div>
+  );
+}
+
 // One labelled box in the popup's header.
 function HeaderBox({ label, value, strong = false, nowrap = false }) {
   const text = String(value || '').trim();
@@ -321,6 +368,10 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
   const okCount = [...comparisons.keys()].filter((k) => stateOf(k) === 'ok').length;
   const watching = !!settings?.[BFO_WATCH_SETTINGS_KEY]?.[bfoKey];
   const ticketUrl = settings?.[BFO_TICKET_SETTINGS_KEY]?.[bfoKey] || '';
+  const oppNotes = settings?.[BFO_NOTES_SETTINGS_KEY]?.[bfoKey] || null;
+  const saveNotes = bfoKey && updateSettings
+    ? (text) => updateSettings((cur) => bfoNotesPatch(cur, bfoKey, text))
+    : null;
   const saveTicket = bfoKey && updateSettings
     ? (url) => updateSettings((cur) => bfoTicketPatch(cur, bfoKey, url))
     : null;
@@ -400,9 +451,14 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
               <HeaderBox label="Close date" value={closeDate} nowrap />
               <TicketBox url={ticketUrl} onSave={saveTicket} />
             </div>
-            <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: '0.3rem' }}>
-              {[...facts, `${live.length} commission row${live.length === 1 ? '' : 's'}`, ignored ? `${ignored} ignored row${ignored === 1 ? '' : 's'} left out` : '']
-                .filter(Boolean).join(' · ')}
+            {/* The opp's other facts, then its notes on the same line, so the
+                notes cost no height until there is more than a line of them. */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem', marginTop: '0.35rem' }}>
+              <div style={{ fontSize: '0.7rem', color: '#64748B', paddingTop: 4, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                {[...facts, `${live.length} commission row${live.length === 1 ? '' : 's'}`, ignored ? `${ignored} ignored row${ignored === 1 ? '' : 's'} left out` : '']
+                  .filter(Boolean).join(' · ')}
+              </div>
+              <NotesField value={oppNotes?.text || ''} updatedAt={oppNotes?.updatedAt} onSave={saveNotes} />
             </div>
           </div>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 }}>
