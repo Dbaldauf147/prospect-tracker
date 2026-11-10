@@ -63,6 +63,7 @@ eq([d3.undated, d3.commission.expected.total.total], [1, 0], 'undated deal not p
 
 // Actual vs Expected states.
 eq([bfoMatchState(null, null), bfoMatchState(0, null), bfoMatchState(100, 100.4), bfoMatchState(100, 120)], ['none', 'none', 'match', 'mismatch'], 'match states');
+eq([bfoMatchState(150, 120), bfoMatchState(6310, 3155), bfoMatchState(50, null)], ['match', 'match', 'match'], 'actual above expected is green');
 eq(bfoMatchState(100, 120, bfoOkSignature(100, 120)), 'ok', 'marked OK holds while amounts are the same');
 eq(bfoMatchState(100, 130, bfoOkSignature(100, 120)), 'mismatch', 'marked OK lapses when an amount changes');
 const cmp = bfoComparisons('revenue', d.revenue, d.months);
@@ -88,11 +89,12 @@ const gRow = { 'Comm Start Date': '1/1/2026', 'Comm End Date': '3/31/2026', 'Jan
 const gDeal = { 'Recurring Revenue': 3600, Commission: 360, 'Current Term Start Date': '1/1/2026', 'End Date': '3/31/2026' };
 const full = { ...gRow, 'February Revenue': 1200, 'March Revenue': 1200, February: 120, March: 120 };
 eq(bfoAllGreen([full], { deals: [gDeal], today }), true, 'all green when every month matches');
-eq(bfoAllGreen([{ ...full, March: 150 }], { deals: [gDeal], today }), false, 'one red cell: not green');
-const redModel = buildBfoSchedule([{ ...full, March: 150 }], { deals: [gDeal], today });
+eq(bfoAllGreen([{ ...full, March: 90 }], { deals: [gDeal], today }), false, 'one red cell (short of expected): not green');
+eq(bfoAllGreen([{ ...full, March: 150 }], { deals: [gDeal], today }), true, 'actual above expected stays green');
+const redModel = buildBfoSchedule([{ ...full, March: 90 }], { deals: [gDeal], today });
 const marks = {};
 for (const [k, c] of bfoComparisonStates(redModel)) if (c.state === 'mismatch') marks[k] = bfoOkSignature(c.actual, c.expected);
-eq(bfoAllGreen([{ ...full, March: 150 }], { deals: [gDeal], today, okMarks: marks }), true, 'reds marked OK count as green');
+eq(bfoAllGreen([{ ...full, March: 90 }], { deals: [gDeal], today, okMarks: marks }), true, 'reds marked OK count as green');
 eq(bfoAllGreen([full], { deals: [], today }), false, 'nothing expected: not green');
 eq(bfoAllGreen([], { deals: [gDeal], today }), false, 'no rows: not green');
 
