@@ -21,5 +21,20 @@ eq(splitPeOwners('Smith, Jones Partners, Blackstone'), ['Smith, Jones Partners',
 const round = joinPeOwners(splitPeOwners('Clayton, Dubilier & Rice (CD&R), KKR'));
 eq(splitPeOwners(round), ['Clayton, Dubilier & Rice (CD&R)', 'KKR'], 'join/split round trip');
 
+// A returned array can be changed by its caller without changing the next answer.
+const mutated = splitPeOwners('Blue Owl Capital, KKR'); mutated.push('X');
+eq(splitPeOwners('Blue Owl Capital, KKR'), ['Blue Owl Capital', 'KKR'], 'cached result is not shared');
+
+// Speed: the app registers every comma company on the roster, and splits
+// inside firm x prospect loops at startup. Scanning every known name per
+// fragment froze the page for ~18s on load (Nov 10), so 20,000 distinct
+// splits against 1,000 registered names must stay well under a second.
+registerKnownPeOwnerNames(Array.from({ length: 1000 }, (_, i) => `Perf Co ${i}, Inc`));
+const t0 = performance.now();
+for (let i = 0; i < 20000; i++) splitPeOwners(`Firm ${i} Capital, Firm ${i + 1} Partners, Perf Co ${i % 1000}, Inc`);
+const ms = performance.now() - t0;
+eq(ms < 1000, true, `20,000 splits with 1,000 known names in ${ms.toFixed(0)}ms`);
+eq(splitPeOwners('Perf Co 7, Inc, KKR'), ['Perf Co 7, Inc', 'KKR'], 'registered bulk name');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
