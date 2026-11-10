@@ -2,8 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { fmtCurrency, asNumber } from '../../utils/dealsFormat';
 import {
   buildBfoSchedule, normBfoKey, bfoOkSignature, bfoComparisonStates, bfoActualTotal, bfoPaymentStatus, BFO_PAYMENT_STATUS_LABEL, BFO_OK_SETTINGS_KEY,
-  BFO_WATCH_SETTINGS_KEY, bfoWatchPatch,
-} from '../../utils/commissionBfoSchedule';
+  BFO_WATCH_SETTINGS_KEY, bfoWatchPatch, BFO_TICKET_SETTINGS_KEY, bfoTicketPatch, ticketHref } from '../../utils/commissionBfoSchedule';
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 import { formatDateDisplay, toISODate } from '../../utils/oppsCallIn';
@@ -239,6 +238,51 @@ function HeaderBox({ label, value, strong = false, nowrap = false }) {
   );
 }
 
+// The Commission Ticket box: the link saved for this opp, opened in a new
+// tab, or an input to paste one into.
+function TicketBox({ url, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(url || '');
+  const href = ticketHref(url);
+  const start = () => { setDraft(url || ''); setEditing(true); };
+  const commit = () => { setEditing(false); if (draft.trim() !== String(url || '').trim()) onSave?.(draft); };
+  const linkBtn = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-accent)' };
+  return (
+    <div style={{ minWidth: 0, border: '1px solid #E2E8F0', borderRadius: 6, background: '#F8FAFC', padding: '0.3rem 0.55rem' }}>
+      <div style={{ fontSize: '0.6rem', color: '#64748B', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em' }}>Commission ticket</div>
+      {editing ? (
+        <input
+          autoFocus
+          type="url"
+          value={draft}
+          placeholder="Paste the ticket link"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+            if (e.key === 'Escape') { e.stopPropagation(); setDraft(url || ''); setEditing(false); }
+          }}
+          style={{ width: '100%', marginTop: 1, padding: '1px 4px', fontSize: '0.75rem', border: '1px solid #CBD5E1', borderRadius: 4, boxSizing: 'border-box' }}
+        />
+      ) : href ? (
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', marginTop: 1, whiteSpace: 'nowrap' }}>
+          <a href={href} target="_blank" rel="noopener noreferrer" title={url} style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--color-accent)' }}>Open ticket ↗</a>
+          {onSave && <button type="button" onClick={start} style={{ ...linkBtn, color: '#64748B', fontWeight: 500 }}>Edit</button>}
+        </div>
+      ) : url ? (
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', marginTop: 1, whiteSpace: 'nowrap' }}>
+          <span title={url} style={{ fontSize: '0.75rem', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 160 }}>{url}</span>
+          {onSave && <button type="button" onClick={start} style={{ ...linkBtn, color: '#64748B', fontWeight: 500 }}>Edit</button>}
+        </div>
+      ) : onSave ? (
+        <button type="button" onClick={start} style={{ ...linkBtn, marginTop: 1 }}>+ Add link</button>
+      ) : (
+        <div style={{ fontSize: '0.78rem', color: '#94A3B8', marginTop: 1 }}>-</div>
+      )}
+    </div>
+  );
+}
+
 export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, updateSettings }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -276,6 +320,10 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
   const allReds = [...comparisons.keys()].filter((k) => stateOf(k) === 'mismatch');
   const okCount = [...comparisons.keys()].filter((k) => stateOf(k) === 'ok').length;
   const watching = !!settings?.[BFO_WATCH_SETTINGS_KEY]?.[bfoKey];
+  const ticketUrl = settings?.[BFO_TICKET_SETTINGS_KEY]?.[bfoKey] || '';
+  const saveTicket = bfoKey && updateSettings
+    ? (url) => updateSettings((cur) => bfoTicketPatch(cur, bfoKey, url))
+    : null;
   const toggleWatch = () => {
     if (!updateSettings || !bfoKey) return;
     updateSettings((cur) => bfoWatchPatch(cur, bfoKey, !watching));
@@ -345,11 +393,12 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
           <div style={{ minWidth: 0, flex: 1 }}>
             {/* The four things the popup is matched by, side by side. Each
                 value stops at two lines; the box's hover has the rest. */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2.2fr) minmax(0, 1.6fr) minmax(0, 1.6fr) max-content', gap: '0.5rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2.2fr) minmax(0, 1.6fr) minmax(0, 1.6fr) max-content minmax(110px, max-content)', gap: '0.5rem' }}>
               <HeaderBox label="BFO name" value={bfoName} strong />
               <HeaderBox label={`Project name${projectNames.length > 1 ? 's' : ''}`} value={projectNames.join(' · ')} />
               <HeaderBox label="Scope" value={scope} />
               <HeaderBox label="Close date" value={closeDate} nowrap />
+              <TicketBox url={ticketUrl} onSave={saveTicket} />
             </div>
             <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: '0.3rem' }}>
               {[...facts, `${live.length} commission row${live.length === 1 ? '' : 's'}`, ignored ? `${ignored} ignored row${ignored === 1 ? '' : 's'} left out` : '']
