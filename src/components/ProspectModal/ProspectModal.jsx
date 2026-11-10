@@ -164,6 +164,7 @@ import { userLsGet } from '../../utils/userLs';
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { companyOppRows, summarizeCompanyOpps } from '../../utils/companyOppList';
+import { OPP_PROGRESS_KEY, OPP_PROGRESS_OPTIONS, oppProgressFor, oppProgressPatch } from '../../utils/oppProgressLabel';
 import {
   subscribeIndicativeAnalysisMeta, loadIndicativeAnalysis, deleteIndicativeAnalysis,
 } from '../../utils/firestoreSync';
@@ -4832,6 +4833,31 @@ function DivisionsChart({ tree, parents, addingParent, editing, adding, picking,
         <DivisionChildren node={tree} layout={rootLayout} shared={shared} />
       </div>
     </div>
+  );
+}
+
+// Company card > Opps: the Stalled / Progressing label on one opp. A pill
+// coloured by the choice, over a native select so it is one click to change.
+function OppProgressPicker({ value, disabled, onChange }) {
+  const opt = OPP_PROGRESS_OPTIONS.find(o => o.value === value);
+  return (
+    <select
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      title={disabled ? 'This opp has no Opps tab id, so a label cannot be saved against it.' : 'Label this opp Progressing or Stalled'}
+      aria-label="Opp status"
+      style={{
+        padding: '1px 4px', borderRadius: 999, fontSize: '0.66rem', fontWeight: 700,
+        border: `1px solid ${opt ? opt.border : '#E2E8F0'}`,
+        background: opt ? opt.bg : '#fff', color: opt ? opt.color : '#94A3B8',
+        cursor: disabled ? 'default' : 'pointer',
+      }}
+    >
+      <option value="">-</option>
+      {OPP_PROGRESS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
   );
 }
 
@@ -11329,6 +11355,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             <th style={oppTh}>Opportunity</th>
                             {ownedOpps.length > 0 && <th style={oppTh}>Account</th>}
                             <th style={oppTh}>Stage</th>
+                            <th style={oppTh} title="Your own label for how the opp is going. Saved to your settings, separate from the Status column on the Opps tab.">Status</th>
                             <th style={oppTh}>Scope</th>
                             <th style={{ ...oppTh, textAlign: 'right' }}>Deal Size</th>
                             <th style={oppTh}>Started</th>
@@ -11348,7 +11375,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               <Fragment key={`${owned ? 'owned' : 'own'}-${opp.id}`}>
                               {firstOwned && (
                                 <tr>
-                                  <td colSpan={7} style={{ ...oppTd, paddingTop: '0.6rem', fontSize: '0.68rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                                  <td colSpan={8} style={{ ...oppTd, paddingTop: '0.6rem', fontSize: '0.68rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
                                     At companies {fields.company.trim()} owns ({ownedOpps.length})
                                   </td>
                                 </tr>
@@ -11372,6 +11399,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     }}>{opp.stage}</span>
                                   ) : <span style={{ color: '#CBD5E1' }}>-</span>}
                                 </td>
+                                <td style={oppTd}>
+                                  <OppProgressPicker
+                                    value={oppProgressFor(settings?.[OPP_PROGRESS_KEY], opp.oppId)}
+                                    disabled={!opp.oppId}
+                                    onChange={(v) => { const patch = oppProgressPatch(opp.oppId, v); if (patch) updateSettingsPath(patch); }}
+                                  />
+                                </td>
                                 <td style={{ ...oppTd, color: '#475569' }}>{opp.scope || <span style={{ color: '#CBD5E1' }}>-</span>}</td>
                                 <td style={{ ...oppTd, textAlign: 'right', color: '#475569', whiteSpace: 'nowrap' }}>{opp.amount || <span style={{ color: '#CBD5E1' }}>-</span>}</td>
                                 <td style={{ ...oppTd, color: '#64748B', whiteSpace: 'nowrap' }}>{opp.startDate || <span style={{ color: '#CBD5E1' }}>-</span>}</td>
@@ -11383,7 +11417,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         </tbody>
                       </table>
                       <div style={{ fontSize: '0.68rem', color: '#94A3B8', marginTop: '0.35rem' }}>
-                        Read-only - opps are worked on the Opps tab.
+                        Read-only - opps are worked on the Opps tab. Status is your own Progressing / Stalled label, saved here.
                       </div>
                     </div>
                   )}
