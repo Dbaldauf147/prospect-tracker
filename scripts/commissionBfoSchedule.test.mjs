@@ -131,5 +131,13 @@ eq(bfoWatchPatch(undefined, 'a', true, at)[BFO_WATCH_SETTINGS_KEY], { a: '2026-1
 
 eq([bfoPaymentStatus(120, 100), bfoPaymentStatus(80, 100), bfoPaymentStatus(100.4, 100), bfoPaymentStatus(0, null), bfoPaymentStatus(50, 0)], ['overpaid', 'underpaid', 'exact', null, 'overpaid'], 'payment status');
 
+// Uploaded months: flagged on the month, and never projected into (the
+// file is that month's record). Willco row, Nov 2025 - Oct 2026, latest
+// paid Jul 2026: Aug and Sep uploaded, so only Oct and Nov 2026 project.
+const up = buildBfoSchedule([willco], { today, uploads: { '2026-08': { fileName: 'Aug.xlsx', at: 'x' }, '2026-09': { fileName: 'Sep.xlsx', at: 'y' } } });
+eq(up.months.filter(m => m.uploaded).map(m => m.label), ['Aug 2026', 'Sep 2026'], 'uploaded months flagged');
+eq(up.revenue.projected.cells.slice(9), [null, null, 3550, 3550], 'no projection into uploaded months');
+eq(buildBfoSchedule([willco], { today }).months.every(m => m.uploaded === null), true, 'no uploads, nothing flagged');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

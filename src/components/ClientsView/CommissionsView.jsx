@@ -1459,6 +1459,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     return () => { window.removeEventListener(DEALS_LIST_EVENT, bump); window.removeEventListener('storage', bump); };
   }, []);
   const bfoOkMarks = settings?.[BFO_OK_SETTINGS_KEY];
+  const uploads = settings?.[COMMISSION_UPLOADS_KEY];
   const greenBfoKeys = useMemo(() => {
     void dealsVersion;
     const dealsByKey = new Map();
@@ -1477,10 +1478,10 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     }
     const out = new Set();
     for (const [k, rs] of rowsByKey) {
-      if (bfoAllGreen(rs, { deals: dealsByKey.get(k) || [], okMarks: bfoOkMarks?.[k] || {} })) out.add(k);
+      if (bfoAllGreen(rs, { deals: dealsByKey.get(k) || [], okMarks: bfoOkMarks?.[k] || {}, uploads })) out.add(k);
     }
     return out;
-  }, [data, bfoOkMarks, dealsVersion]);
+  }, [data, bfoOkMarks, dealsVersion, uploads]);
 
   // BFO opps flagged "To watch" in the popup: yellow rows, own subtab.
   const watchMap = settings?.[BFO_WATCH_SETTINGS_KEY];
