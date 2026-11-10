@@ -220,6 +220,41 @@ async function repairOppSourceFiles(userId) {
   return { fixed, failed, seen };
 }
 
+// The commissions files dropped on Commissions > Monthly's month cards.
+async function repairCommissionMonthFiles(userId) {
+  const [{ dbGetAllEntries }, files] = await Promise.all([
+    import('./db.js'),
+    import('./commissionMonthFiles.js'),
+  ]);
+  let rows;
+  try { rows = await dbGetAllEntries(files.COMMISSION_FILES_STORE); }
+  catch { return { fixed: 0, failed: 1, seen: null }; }
+  let fixed = 0;
+  let failed = 0;
+  const seen = new Set();
+  for (const { key, value } of rows) {
+    if (!value?.blob || !key) continue;
+    const riskId = `commissionFile:${key}`;
+    seen.add(riskId);
+    if (value.blob.size > files.COMMISSION_FILE_MAX_SYNC_BYTES) {
+      markLocalOnly(riskId, {
+        kind: 'commissionFile', reason: 'too-big', name: value.fileName, sizeBytes: value.blob.size,
+        limitBytes: files.COMMISSION_FILE_MAX_SYNC_BYTES,
+      });
+      continue;
+    }
+    try {
+      if (!(await cloudCopyMissing(files.commissionFileDoc(userId, key)))) { clearLocalOnly(riskId); continue; }
+      await files.saveCommissionMonthFile(key, value.blob, value.fileName);
+      fixed++;
+    } catch (err) {
+      console.warn('Commission month file backup repair failed', key, err);
+      failed++;
+    }
+  }
+  return { fixed, failed, seen };
+}
+
 // The emails dropped onto Draft Emails > Market Updates.
 async function repairMarketUpdates(userId) {
   const { loadMarketUpdates, backUpEntry } = await import('./marketUpdatesStore.js');
@@ -290,13 +325,14 @@ export async function repairCloudBackups(userId, email) {
   // mid-pass costs half an hour rather than a day.
   scheduleNextRun(RETRY_INTERVAL_MS);
 
-  const kinds = ['list', 'rfp', 'sia', 'marketUpdate', 'portfolio'];
+  const kinds = ['list', 'rfp', 'sia', 'marketUpdate', 'portfolio', 'commissionFile'];
   const results = await Promise.allSettled([
     repairUploadedLists(userId, email),
     repairRfpTemplates(userId),
     repairOppSourceFiles(userId),
     repairMarketUpdates(userId),
     repairPortfolioFiles(),
+    repairCommissionMonthFiles(userId),
   ]);
   let fixed = 0;
   let failed = 0;

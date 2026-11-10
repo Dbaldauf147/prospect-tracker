@@ -32,6 +32,7 @@ export const LOCAL_ONLY_KINDS = {
   rfp: { label: 'RFP workbook', where: 'Opps > the opp > Follow Up Notes > RFP' },
   marketUpdate: { label: 'Market Update email', where: 'Draft Emails > Market Updates' },
   list: { label: 'Uploaded list', where: 'Lists' },
+  commissionFile: { label: 'Commissions month file', where: 'Clients > Commissions > Monthly' },
   // Not a file in IndexedDB: a site list whose save failed, so the change
   // is held only by the open tab (see companySiteListsStore). Same list,
   // different wording below.

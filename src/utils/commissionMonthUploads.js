@@ -32,13 +32,33 @@ export function commissionUploadFor(uploads, monthIdx, now = new Date()) {
   return entry && typeof entry === 'object' ? entry : null;
 }
 
-// Settings patch that records a file as uploaded for `monthIdx`.
-export function recordCommissionUpload(uploads, monthIdx, fileName, now = new Date()) {
+// Settings patch that records a file as uploaded for `monthIdx`. The entry's
+// top-level fileName / at are the latest file; `files` lists every file
+// dropped on the month, oldest first, each with the `fileId` its stored copy
+// is kept under (commissionMonthFiles.js). Entries from before copies were
+// kept have no `files`; commissionUploadFiles reads them as one file.
+export function recordCommissionUpload(uploads, monthIdx, fileName, now = new Date(), { fileId = '' } = {}) {
   const base = uploads && typeof uploads === 'object' ? uploads : {};
+  const key = commissionUploadKey(monthIdx, now);
+  const prev = commissionUploadFiles(base[key]);
+  const entry = { fileName: String(fileName || ''), at: now.toISOString() };
+  if (fileId) entry.fileId = String(fileId);
   return {
     ...base,
-    [commissionUploadKey(monthIdx, now)]: { fileName: String(fileName || ''), at: now.toISOString() },
+    [key]: { ...entry, files: [...prev, entry] },
   };
+}
+
+// Every file on record in one month's upload entry, oldest first.
+export function commissionUploadFiles(entry) {
+  if (!entry || typeof entry !== 'object') return [];
+  if (Array.isArray(entry.files) && entry.files.length) {
+    return entry.files.filter(f => f && typeof f === 'object');
+  }
+  if (!entry.fileName && !entry.at) return [];
+  const one = { fileName: String(entry.fileName || ''), at: entry.at || '' };
+  if (entry.fileId) one.fileId = entry.fileId;
+  return [one];
 }
 
 // The Issues-tab row for last month's file, while it hasn't been uploaded.

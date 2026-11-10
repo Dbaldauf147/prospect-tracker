@@ -20,7 +20,8 @@ import { CommissionsMonthlyView } from './CommissionsMonthlyView';
 import { CommissionsProjectedView } from './CommissionsProjectedView';
 import { projectCommissionRow } from '../../utils/commissionProjection';
 import { readCommissionsFile, isCommissionsFileName } from '../../utils/commissionsMonthFile';
-import { recordCommissionUpload, COMMISSION_UPLOADS_KEY } from '../../utils/commissionMonthUploads';
+import { recordCommissionUpload, commissionUploadKey, COMMISSION_UPLOADS_KEY } from '../../utils/commissionMonthUploads';
+import { newCommissionFileId, saveCommissionMonthFile } from '../../utils/commissionMonthFiles';
 import { normBfoKey, bfoAllGreen, BFO_OK_SETTINGS_KEY, BFO_WATCH_SETTINGS_KEY } from '../../utils/commissionBfoSchedule';
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
@@ -1661,8 +1662,13 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     // A file dropped on a month card marks that month's file as uploaded
     // (the card goes green and the Issues tab's warning clears).
     if (fileImport && fileImport.monthIdx != null && updateSettings) {
-      const { monthIdx, fileName } = fileImport;
-      updateSettings((prev) => ({ [COMMISSION_UPLOADS_KEY]: recordCommissionUpload(prev?.[COMMISSION_UPLOADS_KEY], monthIdx, fileName) }));
+      const { monthIdx, fileName, file } = fileImport;
+      // Keep a copy of the file itself so the month's popup can download it.
+      const fileId = file ? newCommissionFileId(commissionUploadKey(monthIdx)) : '';
+      if (fileId) {
+        saveCommissionMonthFile(fileId, file, fileName).catch((err) => console.warn('Saving the commissions file failed', err));
+      }
+      updateSettings((prev) => ({ [COMMISSION_UPLOADS_KEY]: recordCommissionUpload(prev?.[COMMISSION_UPLOADS_KEY], monthIdx, fileName, new Date(), { fileId }) }));
     }
     setPasteNote(describeCommissionsPaste(summary));
     setShowPaste(false);
@@ -1683,7 +1689,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     setFileBusyMonth(monthIdx);
     try {
       const grid = await readCommissionsFile(file, monthIdx);
-      setFileImport({ ...grid, monthIdx, fileName: file.name });
+      setFileImport({ ...grid, monthIdx, fileName: file.name, file });
       setInitialPaste('');
       setShowPaste(true);
       if (files.length > 1) setFileError(`Only ${file.name} was read. Drop the other files one at a time.`);
