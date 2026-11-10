@@ -293,15 +293,8 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
               Every commission row for this opp is marked ignored and no deal names it, so there is nothing to show.
             </div>
           ) : (<>
-            <div style={{ marginTop: '0.7rem', fontSize: '0.7rem', color: '#64748B' }}>
-              A roster row counts as Setup when its project name reads as a one-time line (NonRecurring, Setup, One-time, Implementation); every other row is Recurring.
-            </div>
-            <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.7rem', color: '#475569' }}>
-              <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.match }}>Green</span> Actual meets or beats Expected
-              <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.mismatch, cursor: 'default' }}>Red</span> Actual is below Expected: click a red cell to mark it OK
-              <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.ok }}>✓ OK</span> marked OK
-              <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.projected }}>Projected</span> nothing recorded yet: the row's latest month carried to its term end
-              <span style={{ flex: 1 }} />
+            {(allReds.length > 0 || okCount > 0) && (
+            <div style={{ marginTop: '0.7rem', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
               {allReds.length > 0 && (
                 <button type="button" onClick={() => toggleOk(allReds, true)} style={{ ...smallBtn, fontSize: '0.7rem', padding: '3px 9px' }}>
                   Mark all red OK ({allReds.length})
@@ -315,6 +308,7 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
                 >Clear OK marks ({okCount})</button>
               )}
             </div>
+            )}
             <SectionTable title="Revenue" measure="revenue" months={model.months} data={model.revenue} notes={notes} stateOf={stateOf} onToggle={toggleOk} />
             <SectionTable title="Commission" measure="commission" months={model.months} data={model.commission} notes={notes} stateOf={stateOf} onToggle={toggleOk} />
             {model.undated > 0 && (
