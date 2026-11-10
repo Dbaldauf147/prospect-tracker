@@ -120,6 +120,24 @@ export function cumulativeDealMargins({ feeByYear = [], costByYear = [], ctsPass
   };
 }
 
+// Up-front (non-recurring) fees for an option: every Setup row at
+// fee x units, plus every One Time row as the grid's year columns bill
+// it (inside the contract term, escalated to the year it lands in), so
+// the summary's Setup line agrees with the Year columns.
+export function setupAndOneTimeTotal(rows, termYears, escPct) {
+  const list = Array.isArray(rows) ? rows : [];
+  return list.reduce((s, r) => {
+    const t = (r?.type || '').toLowerCase();
+    if (t === 'setup') return s + (toNum(r.fee) || 0) * unitCountOrOne(r.unitCount);
+    if (t === 'one time') {
+      let v = 0;
+      for (let y = 1; y <= termYears; y += 1) v += rowYearRevenue(r, y, termYears, escPct);
+      return s + v;
+    }
+    return s;
+  }, 0);
+}
+
 // Freeze an Options-tab option into a self-contained snapshot the
 // Opp can render later. Includes every computed total the Options-tab
 // summary shows so the Opp view never re-does the math.
@@ -141,9 +159,7 @@ export function buildPricingOptionSnapshot(option) {
     }
     return sum;
   });
-  const setupTotal = rows
-    .filter(r => (r.type || '').toLowerCase() === 'setup')
-    .reduce((s, r) => s + (toNum(r.fee) || 0) * unitCountOrOne(r.unitCount), 0);
+  const setupTotal = setupAndOneTimeTotal(rows, termYears, esc);
   const year1Monthly = Array.from({ length: 12 }, (_, i) => {
     const month = i + 1;
     return rows.reduce((s, r) => s + rowMonthRevenue(r, month, termYears, esc), 0);

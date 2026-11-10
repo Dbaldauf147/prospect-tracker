@@ -2091,7 +2091,7 @@ function PricingOptionSnapshotView({ snapshot }) {
               </tr>
               {snapshot.setupTotal ? (
                 <tr>
-                  <td style={{ padding: '2px 4px', color: 'var(--color-text-muted)' }}>Setup</td>
+                  <td style={{ padding: '2px 4px', color: 'var(--color-text-muted)' }}>Setup + One Time</td>
                   <td style={{ padding: '2px 4px', textAlign: 'right' }}>{fmtMoneyWhole(snapshot.setupTotal)}</td>
                   {hasMargin && <td style={{ padding: '2px 4px' }} />}
                 </tr>
