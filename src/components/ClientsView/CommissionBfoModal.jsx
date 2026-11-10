@@ -6,6 +6,7 @@ import {
 } from '../../utils/commissionBfoSchedule';
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
+import { formatDateDisplay, toISODate } from '../../utils/oppsCallIn';
 
 // Commissions > All / Actively Paid: clicking a row's BFO Name opens this.
 // Two month-by-month tables for the opp, Revenue and Commission. Each has an
@@ -264,6 +265,7 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
     account,
     opp?.['Scope'] ? `Scope: ${opp['Scope']}` : '',
     opp?.['Stage'] ? `Stage: ${opp['Stage']}` : '',
+    toISODate(opp?.['Close Date']) ? `Close date: ${formatDateDisplay(opp['Close Date'])}` : '',
     asNumber(opp?.['Quoted Amount']) ? `Quoted ${fmtCurrency(opp['Quoted Amount'])}` : '',
   ].filter(Boolean);
 
