@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { DataTable } from '../common/DataTable';
 import { fmtCurrency, fmtDate, fmtPercent, asDate } from '../../utils/dealsFormat';
+import { BFO_PAYMENT_STATUS_LABEL } from '../../utils/commissionBfoSchedule';
 import { projectionTotals, PROJECTION_MONTHS, upcomingMonths, expectedForMonth } from '../../utils/commissionProjection';
 
 // Commissions > Projected. A 12-month projection for the commissions being
@@ -17,6 +18,21 @@ const CATEGORY = {
   paying: { label: 'Being paid', bg: '#DCFCE7', fg: '#166534', title: 'Payment Status is Active and commission has been paid' },
   notYet: { label: 'Not yet paid', bg: '#DBEAFE', fg: '#1D4ED8', title: 'Has a Comm Start Date and no commission paid yet' },
 };
+
+// Payment status pill colors, as the BFO popup draws them: overpaid and
+// paid as expected green, underpaid red.
+const PAY_STYLE = {
+  overpaid: { bg: '#DCFCE7', fg: '#166534' },
+  exact: { bg: '#DCFCE7', fg: '#166534' },
+  underpaid: { bg: '#FEE2E2', fg: '#991B1B' },
+};
+const pill = (label, { bg, fg }, title) => (
+  <span title={title} style={{ fontSize: '0.68rem', fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: bg, color: fg, whiteSpace: 'nowrap' }}>{label}</span>
+);
+const paymentLabel = (row) => (row.__bfoPayment ? BFO_PAYMENT_STATUS_LABEL[row.__bfoPayment.status] : '');
+// To watch (flagged in the BFO popup) and OK (popup all green, every cell
+// matching or marked OK). An opp can be both.
+const reviewLabel = (row) => [row.__bfoWatched && 'To watch', row.__bfoGreen && 'OK'].filter(Boolean).join(', ');
 
 function Tile({ label, totals, note }) {
   return (
@@ -76,6 +92,37 @@ export function CommissionsProjectedView({ items, settings, updateSettings }) {
         return <span title={c.title} style={{ fontSize: '0.68rem', fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: c.bg, color: c.fg, whiteSpace: 'nowrap' }}>{c.label}</span>;
       },
       exportValue: (row) => CATEGORY[row.projection.category].label,
+    },
+    {
+      key: '__payment', label: 'Payment Status', defaultWidth: 140,
+      getSortValue: (row) => paymentLabel(row) || null,
+      getFilterValue: (row) => paymentLabel(row),
+      render: (row) => {
+        const p = row.__bfoPayment;
+        if (!p) return <span title="No expected commission to compare against (no linked deal)">{muted}</span>;
+        const diff = p.actual - p.expected;
+        return pill(
+          BFO_PAYMENT_STATUS_LABEL[p.status],
+          PAY_STYLE[p.status],
+          `Commission actual ${fmtCurrency(p.actual)} (recorded + projected) against expected ${fmtCurrency(p.expected)}${p.status === 'exact' ? '' : `, ${p.status} by ${fmtCurrency(Math.abs(diff))}`}`,
+        );
+      },
+      exportValue: (row) => paymentLabel(row),
+    },
+    {
+      key: '__review', label: 'Watch / OK', defaultWidth: 140,
+      getSortValue: (row) => reviewLabel(row) || null,
+      getFilterValue: (row) => reviewLabel(row),
+      render: (row) => {
+        if (!row.__bfoWatched && !row.__bfoGreen) return muted;
+        return (
+          <span style={{ display: 'inline-flex', gap: 4 }}>
+            {row.__bfoWatched && pill('To watch', { bg: '#FEF9C3', fg: '#854D0E' }, 'Flagged To watch in the BFO popup')}
+            {row.__bfoGreen && pill('OK', { bg: '#DCFCE7', fg: '#166534' }, 'BFO popup is all green: every cell matches Expected or is marked OK')}
+          </span>
+        );
+      },
+      exportValue: (row) => reviewLabel(row),
     },
     { key: 'Account Name', label: 'Account Name', defaultWidth: 180, render: (row) => row['Account Name'] || muted },
     { key: 'Project Name', label: 'Project Name', defaultWidth: 280, render: (row) => row['Project Name'] || row['Name'] || muted },
