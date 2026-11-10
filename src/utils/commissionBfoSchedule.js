@@ -251,6 +251,19 @@ export function buildBfoSchedule(rows, { deals = [], today = new Date() } = {}) 
 // the cell again.
 export const BFO_OK_SETTINGS_KEY = 'commissionBfoOk';
 
+// BFO opps flagged "To watch" from the popup: normBfoKey -> ISO time it was
+// flagged. Their roster rows tint yellow and get their own Commissions
+// subtab. Kept in settings so the list follows the user across machines.
+export const BFO_WATCH_SETTINGS_KEY = 'commissionBfoWatch';
+
+// Settings patch that flags (or unflags) one opp, built on the current
+// settings so another machine's flags aren't overwritten.
+export function bfoWatchPatch(cur, bfoKey, watch, now = new Date()) {
+  const all = { ...(cur?.[BFO_WATCH_SETTINGS_KEY] || {}) };
+  if (watch) all[bfoKey] = now.toISOString(); else delete all[bfoKey];
+  return { [BFO_WATCH_SETTINGS_KEY]: all };
+}
+
 export function bfoOkSignature(actual, expected) {
   return `${Math.round(actual || 0)}|${Math.round(expected || 0)}`;
 }
