@@ -539,9 +539,63 @@ export function makeRosterGates({
     .filter(({ key }) => gateFor[key](c))
     .map(({ label }) => label);
 
+  // Why a contact is or isn't on the rosters, in words, for the All page's
+  // "Why isn't this contact here?" lookup. Re-asks the same questions the
+  // gates above ask, so it reads off the same rules.
+  //
+  // Returns { on: [roster labels], blocked: '' | text (a rule that takes
+  // them off everything), rosters: [{ label, ok, why }] }.
+  const explain = (c) => {
+    const tags = tagsOf(c);
+    const company = String(c?.company || '').trim();
+    const companyLower = company.toLowerCase();
+    const domain = accountDomain(c);
+    let blocked = '';
+    const exclusion = clientExclusionOf(c);
+    if (showHidden ? !tags.includes('hide') : tags.includes('hide')) {
+      blocked = showHidden
+        ? 'Show hidden contacts is on, and this contact is not tagged Hide.'
+        : 'Tagged Hide. Turn on Show hidden contacts to see them, or remove the tag.';
+    } else if (tags.includes('left')) blocked = 'Tagged Left: they belong on the Changed Jobs tab.';
+    else if (isSchneiderContact(c)) blocked = 'A Schneider Electric coworker.';
+    else if (exclusion === 'cancelling') blocked = `Their account is "Cancelling for Sure" on the Clients tab (matched by ${company && excluded.cancelling.companies.has(companyLower) ? `Company "${company}"` : `email domain ${domain}`}).`;
+    else if (exclusion === 'untracked') blocked = `Their account is ticked Don't Track on the Clients tab (matched by ${company && excluded.untracked.companies.has(companyLower) ? `Company "${company}"` : `email domain ${domain}`}).`;
+
+    const keyWhy = () => (tags.includes('dan key target') ? '' : 'Not tagged Dan Key Target.');
+    const clientWhy = () => {
+      if (company && oldClientProspects.some(p => String(p.company || '').toLowerCase().trim() === companyLower)) return `"${company}" is an Old Client.`;
+      if (domain && oldClientDomains.has(domain)) return `Email domain ${domain} belongs to an Old Client.`;
+      if (company) return clientProspects.some(p => String(p.company || '').toLowerCase().trim() === companyLower) ? '' : `"${company}" is not exactly the name of a Client account on your book.`;
+      if (!domain) return 'No Company and no work email to match a Client account by.';
+      return clientDomains.has(domain) ? '' : `No Company, and email domain ${domain} is not on a Client account on your book.`;
+    };
+    const activeWhy = () => {
+      if (tags.includes('dan key target')) return 'Tagged Dan Key Target, so they sit on Key rather than Active.';
+      if (company && activeClientCompanies.some(n => String(n || '').toLowerCase().trim() === companyLower)) return `"${company}" is a Client, so they sit on Client rather than Active.`;
+      if (!company && domain && activeClientDomains.has(domain)) return 'Their email domain is a Client\'s, so they sit on Client rather than Active.';
+      if (!baseActive(c)) return `No email sent, opened, clicked, replied or logged in the last ${ROLLUP_ACTIVE_WINDOW_DAYS} days.`;
+      if (!company) return 'No Company to match an open opp to.';
+      return isActive(c) ? '' : `"${company}" has no open opp (matched by Account name).`;
+    };
+    const keyProspectWhy = () => {
+      if (!tags.includes('decision maker')) return 'Not tagged Decision Maker.';
+      if (!company) return 'No Company to match a Tier 1 / 2 / 3 account to.';
+      const acct = tierAccountOf(c);
+      if (!acct) return `"${company}" does not match a Tier 1 / 2 / 3 account on your book (Clients don't count).`;
+      return acct.untouched ? '' : `"${acct.account}" already has opps, so it is no longer a Key Prospect account.`;
+    };
+    const rosters = [
+      { label: 'Key', why: keyWhy() },
+      { label: 'Active', why: activeWhy() },
+      { label: 'Client', why: clientWhy() },
+      { label: 'Key Prospect', why: keyProspectWhy() },
+    ].map(r => ({ ...r, ok: !blocked && !r.why }));
+    return { on: rosters.filter(r => r.ok).map(r => r.label), blocked, rosters };
+  };
+
   return {
     isKey, isActive, isClient, isKeyProspect, keyProspectAccountOf,
-    clientExclusionOf, rosterSelector, categorize, gateFor,
+    clientExclusionOf, rosterSelector, categorize, gateFor, explain,
   };
 }
 
