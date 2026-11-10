@@ -28,7 +28,7 @@ import { userLsGet, userLsSet, userLsRemove } from './userLs.js';
 import { dbGet, dbPut, getDbUserId } from './db.js';
 import { registerMirroredKey, queueMirrorPush } from './localMirrorSync.js';
 import {
-  buildTouchIndex, buildMeetingTouchIndex, mergeTouchIndexes, calendarLog, buildCalendarTouchIndex, TOUCH_INDEX_VERSION, normalizeTouch, logDayMs, localDay,
+  buildTouchIndex, buildMeetingTouchIndex, mergeTouchIndexes, calendarLog, buildCalendarTouchIndex, TOUCH_INDEX_VERSION, HUBSPOT_INDEX_REV, normalizeTouch, logDayMs, localDay,
 } from './relationshipStrength.js';
 
 export const RELATIONSHIP_LOG_KEY = 'relationship:log';
@@ -204,6 +204,16 @@ export function hydrateTouchIndex() {
         dbGet(TOUCH_STORE, 'hubspot'), dbGet(TOUCH_STORE, 'granola'), dbGet(TOUCH_STORE, CALENDAR_KEY),
       ]);
       if (hs?.v === TOUCH_INDEX_VERSION) parts.hubspot = hs;
+      // Built by older code: rebuilt from the saved feed when there is one
+      // (below), else kept until the Activity tab next rebuilds it, so the
+      // panel is not left blank meanwhile.
+      if (parts.hubspot && parts.hubspot.hv !== HUBSPOT_INDEX_REV) {
+        const feed = feedFromLocalStorage();
+        if (feed) {
+          parts.hubspot = buildTouchIndex(feed, workEmailHint);
+          dbPut(TOUCH_STORE, parts.hubspot, 'hubspot').catch(() => {});
+        }
+      }
       if (gr?.v === TOUCH_INDEX_VERSION) parts.granola = gr;
       if (cal?.v === TOUCH_INDEX_VERSION) {
         calendarStore = cal;

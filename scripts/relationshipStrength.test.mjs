@@ -184,6 +184,28 @@ check('steady is flat', trendFor([t(10, { type: 'call', outcome: 'connected' }),
   check('adding activity raises the score', after > before, true);
 }
 
+// --- auto-replies, and the subject/sender kept for the hover -----------------
+{
+  const feed = {
+    emails: [
+      { id: 'o1', hs_timestamp: new Date(ago(20)).toISOString(), hs_email_from_email: 'dan@se.com', hs_email_to_email: 'ryan@rehlko.com', hs_email_subject: 'RE: Intro' },
+      { id: 'a1', hs_timestamp: new Date(ago(19)).toISOString(), hs_email_from_email: 'ryan@rehlko.com', hs_email_to_email: 'dan@se.com', hs_email_subject: 'Automatic reply: RE: Intro' },
+      { id: 'a2', hs_timestamp: new Date(ago(19)).toISOString(), hs_email_from_email: 'Ryan <ryan@rehlko.com>', hs_email_to_email: 'dan@se.com', hs_email_subject: 'Out of Office: RE: Intro' },
+      { id: 'b1', hs_timestamp: new Date(ago(19)).toISOString(), hs_email_from_email: 'postmaster@rehlko.com', hs_email_to_email: 'dan@se.com', hs_email_subject: 'Undeliverable: RE: Intro' },
+    ],
+  };
+  const ryan = { id: '5', email: 'ryan@rehlko.com', firstname: 'Ryan' };
+  const list = touchesForContact(ryan, buildTouchIndex(feed, 'dan@se.com', { nowMs: NOW }));
+  check('auto-replies are not the contact reaching out', list.map(t => [t.id, t.direction]), [['hs:e:o1', 'outbound']]);
+  check('an auto-reply does not count as a reply', list[0].outcome, 'no-reply');
+  check('the send keeps its subject and sender', [list[0].subject, list[0].from], ['RE: Intro', 'dan@se.com']);
+
+  const real = touchesForContact(ryan, buildTouchIndex({ emails: [feed.emails[0], { ...feed.emails[1], id: 'r1', hs_email_subject: 'RE: Intro' }] }, 'dan@se.com', { nowMs: NOW }));
+  check('a real reply still counts', [real[0].outcome, real[1].direction, real[1].from], ['replied', 'inbound', 'ryan@rehlko.com']);
+  check('the HubSpot index carries its revision', buildTouchIndex(feed, '', { nowMs: NOW }).hv, 2);
+  check('an old tuple without subject still decodes', decodeTouch([5, 'eo-', 'hs:e:x']).subject, undefined);
+}
+
 // --- Granola meetings and merging --------------------------------------------
 {
   const pat = { id: '77', email: 'pat@acme.com', firstname: 'Pat', lastname: 'Lee' };
