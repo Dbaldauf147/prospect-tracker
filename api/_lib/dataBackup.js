@@ -86,7 +86,7 @@ export async function collectUserBackup(db, uid, email) {
       // The services board (which bucket each service is filed in) is a key
       // on the settings document, so it is in the snapshot already. Counted
       // so a morning email flags it when services fall out of their buckets.
-      if (col === 'userSettings') Object.assign(summary.counts, serviceBoardCounts(data));
+      if (col === 'userSettings') Object.assign(summary.counts, serviceBoardCounts(data), commissionSettingsCounts(data));
       // Counted so the day-over-day check flags a wiped Weekly Progress
       // history the same way it flags a shrunken Opps 2.
       if (col === 'progressHistory') {
@@ -197,6 +197,36 @@ export function serviceBoardCounts(settings) {
   return { serviceBuckets: cats.length, servicesInBuckets: filed.size };
 }
 
+// The Commissions tab's own settings: the BFO popup's OK marks
+// (commissionBfoOk, { <bfo>: { <cell>: signature } }), which months'
+// files were uploaded (commissionMonthUploads, { 'YYYY-MM': {...} }) and
+// its saved table layouts (tablePrefs.commissions*). The roster itself is a
+// local mirror and already gets a row count. These are in the snapshot
+// with the rest of the settings; counting them makes a wipe show up in the
+// morning email instead of passing silently. Only what has been saved is
+// counted, so a user who never used the tab gets no rows.
+function asMap(v) {
+  if (typeof v === 'string') { try { v = JSON.parse(v); } catch { return null; } }
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+}
+export function commissionSettingsCounts(settings) {
+  const out = {};
+  const marks = asMap(settings?.commissionBfoOk);
+  if (marks) {
+    const opps = Object.values(marks).map(asMap).filter((m) => m && Object.keys(m).length);
+    out.commissionBfoOkOpps = opps.length;
+    out.commissionBfoOkMarks = opps.reduce((n, m) => n + Object.keys(m).length, 0);
+  }
+  const uploads = asMap(settings?.commissionMonthUploads);
+  if (uploads) out.commissionMonthUploads = Object.keys(uploads).length;
+  const prefs = asMap(settings?.tablePrefs);
+  if (prefs) {
+    const layouts = Object.keys(prefs).filter((k) => /^commissions(-|$)/.test(k)).length;
+    if (layouts) out.commissionTableLayouts = layouts;
+  }
+  return out;
+}
+
 // The Opps To do list's mirror id (src/utils/mirroredWorkKeys) and its item
 // count: the non-blank lines. The text isn't JSON, so the backup holds it
 // as { _unparseableJson: text }; a plain string is read too.
@@ -218,7 +248,13 @@ export function todoItemCount(value) {
 // is always 100%). Ticking items off shrinks it every day, so flagging any
 // drop would raise a data-loss alert after every productive day and teach
 // everyone to ignore it; a wipe takes it to nothing.
-const DROP_THRESHOLDS = { serviceBuckets: 0, servicesInBuckets: 0, oppsTodoItems: 0.5 };
+// commissionBfoOkMarks: a mark lapses on its own when an amount it was made
+// on changes (a new month's file), so only a large drop alerts. Uploads and
+// layouts only ever grow, so any drop does.
+const DROP_THRESHOLDS = {
+  serviceBuckets: 0, servicesInBuckets: 0, oppsTodoItems: 0.5,
+  commissionBfoOkMarks: 0.5, commissionBfoOkOpps: 0.5, commissionMonthUploads: 0, commissionTableLayouts: 0,
+};
 
 // Compare today's counts against the previous run. Flags any count that
 // dropped by `dropFraction` or more — the early-warning a sudden Opps 2
