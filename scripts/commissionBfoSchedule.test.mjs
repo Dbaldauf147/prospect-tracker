@@ -1,7 +1,7 @@
 // Commissions > BFO opp popup: Actual (roster) and Expected (Deals page)
 // revenue and commission by month.
 // Run: node scripts/commissionBfoSchedule.test.mjs
-const { buildBfoSchedule, normBfoKey, isSetupRow, bfoMatchState, bfoOkSignature, bfoComparisons, bfoAllGreen, bfoComparisonStates, bfoActualTotal, bfoWatchPatch, BFO_WATCH_SETTINGS_KEY } = await import('../src/utils/commissionBfoSchedule.js');
+const { buildBfoSchedule, normBfoKey, isSetupRow, bfoMatchState, bfoOkSignature, bfoComparisons, bfoAllGreen, bfoComparisonStates, bfoActualTotal, bfoPaymentStatus, bfoWatchPatch, BFO_WATCH_SETTINGS_KEY } = await import('../src/utils/commissionBfoSchedule.js');
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -128,6 +128,8 @@ const w1 = bfoWatchPatch({ [BFO_WATCH_SETTINGS_KEY]: { other: 'x' } }, 'divco', 
 eq(w1, { [BFO_WATCH_SETTINGS_KEY]: { other: 'x', divco: '2026-11-10T12:00:00.000Z' } }, 'watch flag added, others kept');
 eq(bfoWatchPatch(w1, 'divco', false), { [BFO_WATCH_SETTINGS_KEY]: { other: 'x' } }, 'watch flag removed');
 eq(bfoWatchPatch(undefined, 'a', true, at)[BFO_WATCH_SETTINGS_KEY], { a: '2026-11-10T12:00:00.000Z' }, 'watch flag with no settings yet');
+
+eq([bfoPaymentStatus(120, 100), bfoPaymentStatus(80, 100), bfoPaymentStatus(100.4, 100), bfoPaymentStatus(0, null), bfoPaymentStatus(50, 0)], ['overpaid', 'underpaid', 'exact', null, 'overpaid'], 'payment status');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
