@@ -1,7 +1,7 @@
 // Commissions > BFO opp popup: Actual (roster) and Expected (Deals page)
 // revenue and commission by month.
 // Run: node scripts/commissionBfoSchedule.test.mjs
-const { buildBfoSchedule, normBfoKey, isSetupRow, bfoMatchState, bfoOkSignature, bfoComparisons, bfoAllGreen, bfoComparisonStates } = await import('../src/utils/commissionBfoSchedule.js');
+const { buildBfoSchedule, normBfoKey, isSetupRow, bfoMatchState, bfoOkSignature, bfoComparisons, bfoAllGreen, bfoComparisonStates, bfoActualTotal } = await import('../src/utils/commissionBfoSchedule.js');
 
 let passed = 0, failed = 0;
 function eq(actual, expected, name) {
@@ -112,6 +112,15 @@ const lp = lateS.revenue.projected;
 eq([lateS.months[lp.cells.length - 1].label, lp.cells[lp.cells.length - 1], lp.cells[lp.cells.length - 2], lp.cells[3]], ['Nov 2026', 4000, 4000, 4000], 'projection runs to the moved term end');
 const lateNoDeal = buildBfoSchedule([late], { today });
 eq(lateNoDeal.months[lateNoDeal.months.length - 1].label, 'Nov 2026', 'columns cover the pushed-out projection without a deal');
+
+// The Total column compares recorded + projected against Expected.
+const wd = { 'Recurring Revenue': 37857, Commission: 3407, 'Current Term Start Date': '11/1/2025', 'End Date': '10/31/2026' };
+const wS = buildBfoSchedule([willco], { deals: [wd], today });
+const recorded = wS.revenue.actual.total.total;
+eq(bfoActualTotal(wS.revenue, 'total'), recorded + wS.revenue.projected.total, 'actual total includes the projection');
+eq(bfoActualTotal(wS.revenue, 'setup'), wS.revenue.actual.setup.total, 'setup total has no projection');
+const wSt = bfoComparisonStates(wS);
+eq([wSt.get('revenue:total:total').actual, wSt.get('revenue:recurring:total').state], [recorded + wS.revenue.projected.total, recorded + wS.revenue.projected.total >= 37856 ? 'match' : 'mismatch'], 'total compared with projection included');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

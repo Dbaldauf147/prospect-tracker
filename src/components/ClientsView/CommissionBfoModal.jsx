@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fmtCurrency, asNumber } from '../../utils/dealsFormat';
 import {
-  buildBfoSchedule, normBfoKey, bfoOkSignature, bfoComparisonStates, BFO_OK_SETTINGS_KEY,
+  buildBfoSchedule, normBfoKey, bfoOkSignature, bfoComparisonStates, bfoActualTotal, BFO_OK_SETTINGS_KEY,
 } from '../../utils/commissionBfoSchedule';
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
@@ -123,8 +123,6 @@ function SectionTable({ title, measure, months, data, notes, stateOf, onToggle }
                 { line: 'recurring', label: 'Recurring' },
                 { line: 'total', label: `${sec.label} total`, bold: true },
               ].map((r) => {
-                const lineData = sec[r.line];
-                const other = (sec.key === 'actual' ? data.expected : data.actual)[r.line];
                 const reds = redKeys(r.line);
                 return (
                   <tr key={`${sec.key}:${r.line}`}>
@@ -141,9 +139,12 @@ function SectionTable({ title, measure, months, data, notes, stateOf, onToggle }
                       // A projected month isn't compared, so its Expected
                       // twin shows plain.
                       const st = stateOf(k) === 'projected' && sec.key !== 'actual' ? 'none' : stateOf(k);
-                      const v = c === 'total' ? lineData.total : lineData.cells[i];
-                      const ov = c === 'total' ? other.total : other.cells[i];
-                      const [actual, expected] = sec.key === 'actual' ? [v, ov] : [ov, v];
+                      // The Actual total includes the projection (see
+                      // bfoActualTotal), and that is what gets compared.
+                      const actualAt = c === 'total' ? bfoActualTotal(data, r.line) : data.actual[r.line].cells[i];
+                      const expectedAt = c === 'total' ? data.expected[r.line].total : data.expected[r.line].cells[i];
+                      const [actual, expected] = [actualAt, expectedAt];
+                      const v = sec.key === 'actual' ? actual : expected;
                       // Projected amount for this Actual cell (Recurring and
                       // the total only; Setup is never projected).
                       const pv = sec.key === 'actual' && r.line !== 'setup'
@@ -158,14 +159,16 @@ function SectionTable({ title, measure, months, data, notes, stateOf, onToggle }
                           onClick={() => toggle(k)}
                           title={st === 'projected'
                             ? `Projected ${fmtCurrency(pv)}: nothing recorded for this month yet, so the row's latest recorded month is carried forward. Expected ${fmtCurrency(expected || 0)}.`
-                            : (pv ? `${cellTitle(st, actual, expected) || ''} Plus ${fmtCurrency(pv)} projected.`.trim() : cellTitle(st, actual, expected))}
+                            : (pv ? `${cellTitle(st, actual, expected) || ''} ${c === 'total' ? 'Includes' : 'Plus'} ${fmtCurrency(pv)} projected.`.trim() : cellTitle(st, actual, expected))}
                           style={{ ...cellBase, ...base, ...(STATE_STYLE[st] || null), ...(st === 'ok' ? { cursor: 'pointer' } : null) }}
                         >
                           {st === 'projected'
                             ? <Money value={pv} bold={r.bold} state={st} />
                             : (<>
                               <Money value={v} bold={r.bold || c === 'total'} state={st} />
-                              <ProjectedNote value={pv} label={c === 'total' ? 'projected' : 'proj.'} />
+                              {c === 'total'
+                                ? (pv ? <div style={{ ...STATE_STYLE.projected, background: 'transparent', fontSize: '0.62rem', fontWeight: 400 }}>incl. {fmtCurrency(pv)} proj.</div> : null)
+                                : <ProjectedNote value={pv} label="proj." />}
                             </>)}
                         </td>
                       );
