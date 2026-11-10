@@ -13,7 +13,7 @@ import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 // Recurring; see utils/commissionBfoSchedule for the rules.
 //
 // Each Actual cell and its Expected twin (same line, same month) turn green
-// when they agree and red when they don't. A red pair can be marked OK by
+// when Actual meets or beats Expected and red when it falls short. A red pair can be marked OK by
 // clicking it, or in bulk per row, per table, or for the whole opp. Marks
 // live in settings[BFO_OK_SETTINGS_KEY][<bfo>] so they sync across machines.
 
@@ -43,9 +43,9 @@ const smallBtn = {
 
 function cellTitle(state, actual, expected) {
   const pair = `Actual ${fmtCurrency(actual || 0)}, expected ${fmtCurrency(expected || 0)}`;
-  if (state === 'match') return `${pair}: they match`;
+  if (state === 'match') return `${pair}: actual meets or beats expected`;
   if (state === 'ok') return `${pair}: marked OK. Click to undo.`;
-  if (state === 'mismatch') return `${pair}: they differ. Click to mark OK.`;
+  if (state === 'mismatch') return `${pair}: actual is below expected. Click to mark OK.`;
   return undefined;
 }
 
@@ -297,8 +297,8 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
               A roster row counts as Setup when its project name reads as a one-time line (NonRecurring, Setup, One-time, Implementation); every other row is Recurring.
             </div>
             <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.7rem', color: '#475569' }}>
-              <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.match }}>Green</span> Actual matches Expected
-              <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.mismatch, cursor: 'default' }}>Red</span> they differ: click a red cell to mark it OK
+              <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.match }}>Green</span> Actual meets or beats Expected
+              <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.mismatch, cursor: 'default' }}>Red</span> Actual is below Expected: click a red cell to mark it OK
               <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.ok }}>✓ OK</span> marked OK
               <span style={{ padding: '1px 8px', borderRadius: 4, ...STATE_STYLE.projected }}>Projected</span> nothing recorded yet: the row's latest month carried to its Comm End Date
               <span style={{ flex: 1 }} />

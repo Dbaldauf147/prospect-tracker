@@ -225,10 +225,12 @@ export function bfoOkSignature(actual, expected) {
 }
 
 // 'none' (nothing either side), 'match', 'ok' (marked OK) or 'mismatch'.
+// Actual at or above Expected counts as a match: earning more than planned
+// is fine, only a shortfall is red.
 export function bfoMatchState(actual, expected, okSignature) {
   const a = actual || 0, e = expected || 0;
   if (!a && !e) return 'none';
-  if (Math.abs(a - e) < 1) return 'match';
+  if (a - e > -1) return 'match';
   if (okSignature && okSignature === bfoOkSignature(a, e)) return 'ok';
   return 'mismatch';
 }
@@ -279,10 +281,13 @@ export function bfoComparisonStates(model, okMarks = {}) {
 export function bfoAllGreen(rows, { deals = [], okMarks = {}, today = new Date() } = {}) {
   if (!rows?.length) return false;
   const states = bfoComparisonStates(buildBfoSchedule(rows, { deals, today }), okMarks);
-  let any = false;
-  for (const { state } of states.values()) {
+  // With nothing expected at all (no deal), any actual would read as
+  // "above expected"; there is nothing to check against, so not green.
+  let any = false, expected = false;
+  for (const { state, expected: e } of states.values()) {
     if (state === 'mismatch') return false;
     if (state === 'match' || state === 'ok') any = true;
+    if (e) expected = true;
   }
-  return any;
+  return any && expected;
 }
