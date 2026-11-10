@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fmtCurrency, asNumber } from '../../utils/dealsFormat';
 import {
-  buildBfoSchedule, normBfoKey, bfoOkSignature, bfoComparisonStates, bfoActualTotal, BFO_OK_SETTINGS_KEY,
+  buildBfoSchedule, normBfoKey, bfoOkSignature, bfoComparisonStates, bfoActualTotal, bfoPaymentStatus, BFO_PAYMENT_STATUS_LABEL, BFO_OK_SETTINGS_KEY,
   BFO_WATCH_SETTINGS_KEY, bfoWatchPatch,
 } from '../../utils/commissionBfoSchedule';
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
@@ -45,10 +45,34 @@ const smallBtn = {
 
 function cellTitle(state, actual, expected) {
   const pair = `Actual ${fmtCurrency(actual || 0)}, expected ${fmtCurrency(expected || 0)}`;
-  if (state === 'match') return `${pair}: actual meets or beats expected`;
-  if (state === 'ok') return `${pair}: marked OK. Click to undo.`;
-  if (state === 'mismatch') return `${pair}: actual is below expected. Click to mark OK.`;
+  const label = BFO_PAYMENT_STATUS_LABEL[bfoPaymentStatus(actual, expected)];
+  if (state === 'match') return `${pair}: ${label.toLowerCase()}`;
+  if (state === 'ok') return `${pair}: ${label.toLowerCase()}, marked OK. Click to undo.`;
+  if (state === 'mismatch') return `${pair}: ${label.toLowerCase()}. Click to mark OK.`;
   return undefined;
+}
+
+// Overpaid and paid as expected are green, underpaid red.
+const STATUS_STYLE = {
+  overpaid: { background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC' },
+  exact: { background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC' },
+  underpaid: { background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' },
+};
+
+// The table's status: its Total column (recorded + projected) against
+// Expected, with the difference.
+function PaymentStatus({ actual, expected }) {
+  const status = bfoPaymentStatus(actual, expected);
+  if (!status) return null;
+  const diff = (actual || 0) - (expected || 0);
+  return (
+    <span
+      title={`Actual ${fmtCurrency(actual || 0)} (recorded + projected) against expected ${fmtCurrency(expected || 0)}`}
+      style={{ ...STATUS_STYLE[status], borderRadius: 999, padding: '1px 9px', fontSize: '0.68rem', fontWeight: 700, whiteSpace: 'nowrap' }}
+    >
+      {BFO_PAYMENT_STATUS_LABEL[status]}{status === 'exact' ? '' : ` by ${fmtCurrency(Math.abs(diff))}`}
+    </span>
+  );
 }
 
 // A projected amount shown under a recorded one (another row recorded this
@@ -81,6 +105,7 @@ function SectionTable({ title, measure, months, data, notes, stateOf, onToggle }
     <section style={{ marginTop: '0.6rem' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.35rem' }}>
         <strong style={{ fontSize: '0.9rem', color: '#1E293B' }}>{title}</strong>
+        <PaymentStatus actual={bfoActualTotal(data, 'total')} expected={data.expected.total.total} />
         {tableReds.length > 0 && (
           <button type="button" onClick={() => onToggle(tableReds, true)} style={smallBtn} title={`Mark every red ${title.toLowerCase()} cell OK`}>
             Mark all red OK ({tableReds.length})

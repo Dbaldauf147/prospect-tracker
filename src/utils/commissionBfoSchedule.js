@@ -279,6 +279,17 @@ export function bfoMatchState(actual, expected, okSignature) {
   return 'mismatch';
 }
 
+// How an amount paid compares with what was expected: 'overpaid',
+// 'underpaid' or 'exact' (within a dollar), null with nothing either side.
+export function bfoPaymentStatus(actual, expected) {
+  const a = actual || 0, e = expected || 0;
+  if (!a && !e) return null;
+  if (Math.abs(a - e) < 1) return 'exact';
+  return a > e ? 'overpaid' : 'underpaid';
+}
+
+export const BFO_PAYMENT_STATUS_LABEL = { overpaid: 'Overpaid', underpaid: 'Underpaid', exact: 'Paid as expected' };
+
 // Every comparison in one measure's data ({ actual, expected, projected }),
 // as { key, actual, expected } with key `<measure>:<line>:<monthKey|total>`.
 // The Total column's Actual for Recurring and the line total includes the
