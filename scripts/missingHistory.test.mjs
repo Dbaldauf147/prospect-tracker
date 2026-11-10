@@ -7,7 +7,7 @@
 //      when there are no companies to read.
 //   2. The first reading on record is also logged as the day before.
 //   3. After that a day is rewritten only when its numbers move.
-import { missingReading, missingStepsReading, isStepsDay, withMissingDay, previousDay, withBaseline, baselineDay } from '../src/utils/missingHistory.js';
+import { missingReading, missingStepsReading, isStepsDay, withMissingDay, previousDay, withBaseline, baselineDay, dayCdmsById } from '../src/utils/missingHistory.js';
 import { allMissingStepsFor } from '../src/utils/allMissingSteps.js';
 
 let passed = 0, failed = 0;
@@ -109,6 +109,24 @@ check('a later day does not reseed', Object.keys(tomorrow).sort(), ['2026-10-14'
   check('baseline: a reading on the baseline day writes nothing', withMissingDay(frozen, '2026-10-14', reading(1), 4) === frozen, true);
   const moved = withBaseline(later, '2026-10-15', 5);
   check('baseline: only one at a time', [moved['2026-10-14'].baseline, moved['2026-10-15'].baseline], [undefined, true]);
+}
+
+{
+  // Each day saves its companies' CDMs beside the ids, in the same order,
+  // so the day popup shows who the CDM was that day, not today.
+  const r = missingStepsReading([
+    { record: { id: 'b2', company: 'Access Industries', cdm: ' Dan Baldauf ' } },
+    { record: { id: 'a1', company: 'ACRE Management' } },
+  ]);
+  check('cdms: parallel to sorted ids, trimmed, blank for none', [r.ids, r.cdms], [['a1', 'b2'], ['', 'Dan Baldauf']]);
+  check('cdms: read back per id', [...dayCdmsById(r)], [['a1', ''], ['b2', 'Dan Baldauf']]);
+  check('cdms: a day saved without them reads as none', dayCdmsById({ ids: ['a1'] }), null);
+  const day = withMissingDay({ '2026-11-01': { ...r, seeded: false } }, '2026-11-10', r, 1);
+  const cleared = missingStepsReading([
+    { record: { id: 'b2', company: 'Access Industries', cdm: '' } },
+    { record: { id: 'a1', company: 'ACRE Management' } },
+  ]);
+  check('cdms: a CDM change alone rewrites the day', withMissingDay(day, '2026-11-10', cleared, 2)['2026-11-10'].cdms, ['', '']);
 }
 
 console.log(`${passed} passed, ${failed} failed`);

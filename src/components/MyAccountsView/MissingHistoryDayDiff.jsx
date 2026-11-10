@@ -17,6 +17,7 @@ import { DataTable } from '../common/DataTable';
 import { apiFetch } from '../../utils/apiFetch';
 import { backupsForDay, diffMembership } from '../../utils/backupMembership';
 import { countedMyAccounts } from '../../utils/myAccountsMembership';
+import { dayCdmsById } from '../../utils/missingHistory';
 
 const fmtDay = (iso) => {
   const [y, m, d] = String(iso).split('-').map(Number);
@@ -36,14 +37,21 @@ async function fetchMembership(name, cdmName) {
   return body?.value || { members: {}, cards: {}, mapped: [] };
 }
 
-// A history row's ids as a membership: cards from the live prospects.
-function membershipFromIds(ids, cardsById) {
+// A history row as a membership: cards from the live prospects, with the
+// CDM the day saved (row.cdms). A day saved before CDMs were kept has
+// only today's card to go on, so its CDM is flagged cdmIsNow.
+function membershipFromRow(row, cardsById) {
+  const saved = dayCdmsById(row);
   const members = {};
   const cards = {};
-  for (const id of ids) {
+  for (const id of row.ids) {
     members[id] = '';
     const p = cardsById.get(id);
-    if (p) cards[id] = { company: p.company, cdm: p.cdm, tier: p.tier, tierOwnTarget: p.tierOwnTarget, status: p.status, substatus: p.substatus, vertical: p.vertical, createdAt: typeof p.createdAt === 'string' ? p.createdAt : '' };
+    if (!p) continue;
+    const card = { company: p.company, cdm: p.cdm, tier: p.tier, tierOwnTarget: p.tierOwnTarget, status: p.status, substatus: p.substatus, vertical: p.vertical, createdAt: typeof p.createdAt === 'string' ? p.createdAt : '' };
+    if (saved) card.cdm = saved.get(String(id)) ?? '';
+    else card.cdmIsNow = true;
+    cards[id] = card;
   }
   return { members, cards, mapped: [] };
 }
@@ -59,8 +67,8 @@ export function MissingHistoryDayDiff({ day, prevDay, dayRow, prevRow, cdmName, 
         if (Array.isArray(dayRow?.ids) && Array.isArray(prevRow?.ids)) {
           const live = getLiveCheck?.();
           const cardsById = new Map((live?.inputs?.prospects || []).map(p => [String(p.id), p]));
-          const b = membershipFromIds(prevRow.ids, cardsById);
-          const a = membershipFromIds(dayRow.ids, cardsById);
+          const b = membershipFromRow(prevRow, cardsById);
+          const a = membershipFromRow(dayRow, cardsById);
           if (!cancelled) setState({ loading: false, error: '', source: 'ids', before: null, after: null, diff: diffMembership(b, a) });
           return;
         }

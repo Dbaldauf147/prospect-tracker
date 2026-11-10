@@ -106,5 +106,15 @@ eq([gap.before?.name, gap.after?.name], ['b-2026-10-30', 'b-2026-11-01'], 'a gap
 eq(backupsForDay(files, '2026-11-01', '2026-10-31').after, null, 'no backup after the day yet');
 eq(backupsForDay(files.slice(2), '2026-10-30', '2026-10-29').before, null, 'before no longer kept');
 
+{
+  // A day saved without CDMs shows today's card CDM marked "(now)" and
+  // doesn't claim a CDM change it can't see.
+  const b = { members: { x: '' }, cards: { x: { company: 'Access Industries', cdm: '', cdmIsNow: true } }, mapped: [] };
+  const a = { members: { x: '' }, cards: { x: { company: 'Access Industries', cdm: 'Dan Baldauf' } }, mapped: [] };
+  const row = diffMembership(b, a).rows[0];
+  eq([row.cdmBefore, row.cdmAfter], ['blank (now)', 'Dan Baldauf'], 'cdm now: labelled');
+  eq(row.whatChanged, '', 'cdm now: no CDM change claimed');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
