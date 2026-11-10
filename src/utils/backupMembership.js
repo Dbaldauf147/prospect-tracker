@@ -89,13 +89,17 @@ export function membershipFromBackup(backup, cdmName) {
   };
 }
 
+// A CDM read off today's card for a day that saved none says so.
+const cdmLabel = (card) => (card?.cdmIsNow ? `${card.cdm || 'blank'} (now)` : card?.cdm || '');
+
 const statusOf = (card) => (String(card?.substatus ?? '').trim() ? 'Hold Off' : String(card?.status ?? '').trim());
 
 function whatChanged(b, a) {
   if (!b) return ['New in the tracker'];
   if (!a) return ['Deleted from the tracker'];
   const parts = [];
-  if ((b.cdm || '') !== (a.cdm || '')) parts.push(`CDM ${b.cdm || 'blank'} to ${a.cdm || 'blank'}`);
+  // A side without that day's CDM (cdmIsNow) can't say whether it changed.
+  if (!b.cdmIsNow && !a.cdmIsNow && (b.cdm || '') !== (a.cdm || '')) parts.push(`CDM ${b.cdm || 'blank'} to ${a.cdm || 'blank'}`);
   if ((b.tier || '') !== (a.tier || '')) parts.push(`Tier ${b.tier || 'blank'} to ${a.tier || 'blank'}`);
   if (!!b.tierOwnTarget !== !!a.tierOwnTarget) parts.push(a.tierOwnTarget ? 'Ticked as Dan target' : 'Unticked as Dan target');
   if (statusOf(b) !== statusOf(a)) parts.push(`Status ${statusOf(b) || 'blank'} to ${statusOf(a) || 'blank'}`);
@@ -134,8 +138,8 @@ export function diffMembership(before, after) {
       whyBefore: inB ? bm[id] : '',
       whyAfter: inA ? am[id] : '',
       whatChanged: changed.join('; '),
-      cdmBefore: b?.cdm || '',
-      cdmAfter: a?.cdm || '',
+      cdmBefore: cdmLabel(b),
+      cdmAfter: cdmLabel(a),
       tier: card.tier || '',
       vertical: card.vertical || '',
       status: statusOf(card),

@@ -26,6 +26,10 @@
 //              "who joined or left" is exact (MissingHistoryDayDiff).
 //              Kept for the last MISSING_HISTORY_IDS_DAYS days only; a
 //              day without them falls back to the nightly backups.
+//   cdms       each of those companies' CDM as its card read that day,
+//              in the same order as ids ('' for none), so the day popup
+//              shows who the CDM was then rather than now. Kept and
+//              trimmed with ids; days saved before Nov 10 2026 have none.
 //   seeded     true on the one day backfilled from the first reading
 //   baseline   true on the one day frozen as the baseline: never rewritten,
 //              and what the subtab measures progress against
@@ -114,8 +118,23 @@ export function missingStepsReading(entries, { tagReview = null, fields = COMPAN
     fields: counts,
     companies: list.length,
     basis: MISSING_HISTORY_BASIS,
-    ids: list.map(e => String(e.record.id)).filter(id => id && id !== 'undefined').sort(),
+    ...idsAndCdms(list),
   };
+}
+
+// The day's ids, sorted, and each one's CDM in the same order.
+function idsAndCdms(list) {
+  const pairs = list
+    .map(e => [String(e.record.id), String(e.record.cdm ?? '').trim()])
+    .filter(([id]) => id && id !== 'undefined')
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return { ids: pairs.map(p => p[0]), cdms: pairs.map(p => p[1]) };
+}
+
+/** A day row's saved CDM per id: Map, or null when the day saved none. */
+export function dayCdmsById(row) {
+  if (!Array.isArray(row?.ids) || !Array.isArray(row?.cdms) || row.cdms.length !== row.ids.length) return null;
+  return new Map(row.ids.map((id, i) => [String(id), String(row.cdms[i] ?? '')]));
 }
 
 // YYYY-MM-DD in local time.
@@ -133,7 +152,8 @@ function sameReading(a, b) {
   return a.total === b.total && a.companies === b.companies && a.basis === b.basis
     && a.stepsRemaining === b.stepsRemaining && a.missingData === b.missingData
     && JSON.stringify(a.fields) === JSON.stringify(b.fields)
-    && JSON.stringify(a.ids || null) === JSON.stringify(b.ids || null);
+    && JSON.stringify(a.ids || null) === JSON.stringify(b.ids || null)
+    && JSON.stringify(a.cdms || null) === JSON.stringify(b.cdms || null);
 }
 
 function trim(history, max = MISSING_HISTORY_MAX_DAYS) {
@@ -143,7 +163,7 @@ function trim(history, max = MISSING_HISTORY_MAX_DAYS) {
   if (idCutoff && keys.some(k => k < idCutoff && history[k]?.ids)) {
     const stripped = {};
     for (const k of keys) {
-      if (k < idCutoff && history[k]?.ids) { const { ids: _ids, ...rest } = history[k]; stripped[k] = rest; } else stripped[k] = history[k];
+      if (k < idCutoff && history[k]?.ids) { const { ids: _ids, cdms: _cdms, ...rest } = history[k]; stripped[k] = rest; } else stripped[k] = history[k];
     }
     history = stripped;
   }
