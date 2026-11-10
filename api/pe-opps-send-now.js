@@ -9,7 +9,7 @@
 import { withAuth } from './_lib/http.js';
 import { enforceRateLimit } from './_lib/rateLimit.js';
 import { adminDb } from './_lib/firebaseAdmin.js';
-import { loadPeOpps, loadOppsForFirm, loadPeFirms, buildPeOppsWorkbook, sendPeOppsEmail, peOppsFilename } from './_lib/peOpps.js';
+import { loadPeOpps, loadOppsForFirm, loadPeFirms, buildPeOppsWorkbook, buildPeOppsHtmlTable, sendPeOppsEmail, peOppsFilename } from './_lib/peOpps.js';
 
 async function handler(req, res, auth) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -58,6 +58,8 @@ async function handler(req, res, auth) {
       message,
       buffer,
       filename: peOppsFilename(),
+      tableHtml: buildPeOppsHtmlTable(records, columns),
+      oppCount: records.length,
       replyTo: auth.email,
     });
     return res.json({ success: true, id: result.id, opps: records.length, recipients: to.length });
