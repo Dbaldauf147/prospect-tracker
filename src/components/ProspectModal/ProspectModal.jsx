@@ -7688,6 +7688,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       const bytes = await buildOppDeck({
         JSZip, template: await res.arrayBuffer(), company: fields.company.trim(), entries: deckEntries, contactInfo,
         categories, renames,
+        // The Progressing / Stalled / On Hold label set on the Opps table.
+        statusFor: (record) => oppProgressFor(settings?.[OPP_PROGRESS_KEY], record?._id),
       });
       const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
       const url = URL.createObjectURL(blob);
