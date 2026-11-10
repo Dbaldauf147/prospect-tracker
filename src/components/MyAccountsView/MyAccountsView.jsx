@@ -50,6 +50,8 @@ import { readWorkKey } from '../../utils/mirroredWorkKeys';
 import { makeDecisionMakerLookup } from '../../utils/decisionMakerCoverage';
 import { tagMatrixColumns } from '../../utils/decisionMakerTagMatrix';
 import { dmTagReading, recordDmTagDay } from '../../utils/dmTagHistory';
+import { targetAccountRows } from '../../utils/targetAccountMatch';
+import { cardsToClear, FIX_KEY as CDM_BLANK_FIX_KEY } from '../../utils/clearCdmBlankTargets';
 import styles from './MyAccountsView.module.css';
 import { buildZoomExclusionExplainer, buildZoomExcludedMatcher, normZoomCompany } from '../../utils/zoomExportExclude';
 
@@ -1444,6 +1446,21 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   }
 
   const activeFilterCount = Object.values(filters).reduce((s, a) => s + a.length, 0);
+
+  // One-time fix (utils/clearCdmBlankTargets): the Nov 10 additions whose
+  // Targets list row has no CDM drop Dan as their CDM. Runs once, when both
+  // the cards and the Targets workbook are loaded, and records what it
+  // cleared in settings so it never runs again.
+  const cdmBlankFixRan = useRef(false);
+  useEffect(() => {
+    if (cdmBlankFixRan.current || !settings || settings[CDM_BLANK_FIX_KEY]) return;
+    if (!/baldauf/i.test(cdmName || '') || !prospects?.length || !targetAccountsData?.sheetNames?.length) return;
+    cdmBlankFixRan.current = true;
+    const clear = cardsToClear({ prospects, rows: targetAccountRows(targetAccountsData, settings), targetMap: settings.targetMap || {}, cdmName });
+    for (const c of clear) onUpdate(c.id, { cdm: '' });
+    updateSettings({ [CDM_BLANK_FIX_KEY]: { at: new Date().toISOString(), cleared: clear.map(c => c.company) } });
+    console.log(`CDM fix: cleared CDM on ${clear.length} accounts whose Targets list row has no CDM`, clear);
+  }, [settings, cdmName, prospects, targetAccountsData, onUpdate, updateSettings]);
 
   // Parse Target Accounts from prop data (utils/myAccountsMembership, which
   // the All Missing History day comparison reads the same way).
