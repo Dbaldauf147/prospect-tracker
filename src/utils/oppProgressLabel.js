@@ -1,8 +1,8 @@
-// The Stalled / Progressing label on the company card's Opps table.
+// The Progressing / Stalled / On Hold label on the company card's Opps table.
 //
 // Held in user settings as `oppProgress`, keyed by the opp's Opps 2 `_id`,
 // so it follows Dan to his other machine:
-//   { 'abc123': 'stalled', 'def456': 'progressing' }
+//   { 'abc123': 'stalled', 'def456': 'progressing', 'ghi789': 'on-hold' }
 // Separate from the opp's own Status column on the Opps tab, which is free
 // text about who is waiting on whom.
 
@@ -11,6 +11,7 @@ export const OPP_PROGRESS_KEY = 'oppProgress';
 export const OPP_PROGRESS_OPTIONS = [
   { value: 'progressing', label: 'Progressing', bg: '#DCFCE7', color: '#166534', border: '#86EFAC' },
   { value: 'stalled', label: 'Stalled', bg: '#FEE2E2', color: '#991B1B', border: '#FCA5A5' },
+  { value: 'on-hold', label: 'On Hold', bg: '#FEF3C7', color: '#92400E', border: '#FCD34D' },
 ];
 
 // A settings path segment for an opp id: dots and slashes would split the

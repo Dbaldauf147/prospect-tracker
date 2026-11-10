@@ -4836,7 +4836,7 @@ function DivisionsChart({ tree, parents, addingParent, editing, adding, picking,
   );
 }
 
-// Company card > Opps: the Stalled / Progressing label on one opp. A pill
+// Company card > Opps: the Progressing / Stalled / On Hold label on one opp. A pill
 // coloured by the choice, over a native select so it is one click to change.
 function OppProgressPicker({ value, disabled, onChange }) {
   const opt = OPP_PROGRESS_OPTIONS.find(o => o.value === value);
@@ -4846,7 +4846,7 @@ function OppProgressPicker({ value, disabled, onChange }) {
       disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
       onClick={(e) => e.stopPropagation()}
-      title={disabled ? 'This opp has no Opps tab id, so a label cannot be saved against it.' : 'Label this opp Progressing or Stalled'}
+      title={disabled ? 'This opp has no Opps tab id, so a label cannot be saved against it.' : 'Label this opp Progressing, Stalled or On Hold'}
       aria-label="Opp status"
       style={{
         padding: '1px 4px', borderRadius: 999, fontSize: '0.66rem', fontWeight: 700,
@@ -11417,7 +11417,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         </tbody>
                       </table>
                       <div style={{ fontSize: '0.68rem', color: '#94A3B8', marginTop: '0.35rem' }}>
-                        Read-only - opps are worked on the Opps tab. Status is your own Progressing / Stalled label, saved here.
+                        Read-only - opps are worked on the Opps tab. Status is your own Progressing / Stalled / On Hold label, saved here.
                       </div>
                     </div>
                   )}

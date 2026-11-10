@@ -12,4 +12,6 @@ assert.equal(oppProgressFor({ abc: 'progressing' }, 'abc'), 'progressing', 'read
 assert.equal(oppProgressFor({ a_b: 'stalled' }, 'a.b'), 'stalled', 'reads through the same key');
 assert.equal(oppProgressFor({ abc: 'weird' }, 'abc'), '', 'ignores junk');
 assert.equal(oppProgressFor(null, 'abc'), '', 'no map');
+assert.equal(oppProgressFor({ abc: 'on-hold' }, 'abc'), 'on-hold', 'reads On Hold');
+assert.deepEqual(oppProgressPatch('abc', 'on-hold'), { 'oppProgress.abc': 'on-hold' }, 'sets On Hold');
 console.log('PASS  oppProgressLabel');
