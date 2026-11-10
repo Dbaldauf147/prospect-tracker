@@ -44,6 +44,7 @@ import { DailyWeatherPopup } from './components/DailyWeather/DailyWeatherPopup';
 import { WEATHER_SEEN_SETTINGS_KEY, localDateKey, shouldShowWeather } from './utils/dailyWeather';
 import { UTILITY_LOOKUP_HANDOFF_EVENT } from './utils/utilityLookupHandoff';
 import { seedTablePrefsFromLocal } from './utils/tablePrefsSync';
+import { registerKnownPeOwnerNames } from './utils/peOwners';
 import './App.css';
 
 // Route views load on first navigation rather than shipping in the entry
@@ -109,6 +110,14 @@ function App() {
 
   const { prospects, loading: dataLoading, error: dataError, addProspect, updateProspect, deleteProspect, reconcileAll, findDuplicates, dedupe } =
     useProspects(user, { settingsLoaded, onDuplicatesCollapsed: handleDuplicatesCollapsed });
+
+  // Company names with a comma of their own ("Clayton, Dubilier & Rice
+  // (CD&R)") must survive splitPeOwners as one PE owner, not two.
+  // Registered during render (useMemo, idempotent) so every child that
+  // splits owners on this render already knows the names.
+  useMemo(() => {
+    registerKnownPeOwnerNames((prospects || []).map(p => p.company).filter(c => c && /[,;]/.test(c)));
+  }, [prospects]);
 
   // The CDM name to filter and default new-prospect ownership against.
   // Stored per-user in userSettings.cdmName; the admin account falls back
