@@ -4,11 +4,16 @@
 // chart tracked All Missing Steps (their total was the field counts summed)
 // are left off, so the line doesn't jump between the two measures. The days come from utils/missingHistory.js,
 // recorded while My Accounts is open.
+//
+// A day can be hidden (settings.missingHistoryHiddenDays): it leaves the
+// chart, the headline and the table, and the next day's Change is measured
+// from the last day still showing. "Show hidden days" lists them again,
+// greyed at the bottom, each with Unhide. The baseline can't be hidden.
 import { useMemo, useState, useSyncExternalStore } from 'react';
 import { DataTable } from '../common/DataTable';
 import { MissingHistoryDayDiff } from './MissingHistoryDayDiff';
 import { COMPANY_DATA_FIELDS } from '../../utils/companyDataFields';
-import { subscribeMissingHistory, missingHistorySnapshot, parseMissingHistory, isStepsDay, baselineDay, setMissingBaseline } from '../../utils/missingHistory';
+import { subscribeMissingHistory, missingHistorySnapshot, parseMissingHistory, isStepsDay, baselineDay, setMissingBaseline, HIDDEN_DAYS_SETTING, withDayHidden } from '../../utils/missingHistory';
 
 const INK = '#DC2626';
 const BASELINE_CHIP = { marginLeft: 4, padding: '0 5px', borderRadius: 3, background: '#E0E7FF', color: '#3730A3', fontSize: '0.62rem', fontWeight: 700 };
@@ -65,23 +70,38 @@ export function MissingHistoryView({ settings, updateSettings, cdmName, onSelect
   const [diffDay, setDiffDay] = useState(null);
   const raw = useSyncExternalStore(subscribeMissingHistory, missingHistorySnapshot);
   const history = useMemo(() => parseMissingHistory(raw), [raw]);
-  const series = useMemo(
+  const allSeries = useMemo(
     () => Object.keys(history).sort().filter(day => isStepsDay(history[day])).map(day => ({ day, ...history[day], total: Number(history[day]?.total) || 0 })),
     [history],
   );
+  const hiddenList = settings?.[HIDDEN_DAYS_SETTING];
+  const hidden = useMemo(() => new Set(Array.isArray(hiddenList) ? hiddenList : []), [hiddenList]);
+  const [showHidden, setShowHidden] = useState(false);
+  const setHidden = (day, hide) => updateSettings?.({ [HIDDEN_DAYS_SETTING]: withDayHidden(hiddenList, day, hide) });
+  // The baseline always shows: progress is measured against it.
+  const series = useMemo(() => allSeries.filter(s => s.baseline || !hidden.has(s.day)), [allSeries, hidden]);
+  const hiddenSeries = useMemo(() => allSeries.filter(s => !s.baseline && hidden.has(s.day)), [allSeries, hidden]);
 
   // The frozen baseline day, when one is set and counted the same way as
   // the chart. Progress is measured against it rather than the first day.
   const baseDay = baselineDay(history);
   const base = series.find(x => x.day === baseDay) || null;
 
-  const rows = useMemo(() => series.map((s, i) => ({
-    id: s.day,
-    ...s,
-    prev: i === 0 ? null : series[i - 1],
-    change: i === 0 ? null : s.total - series[i - 1].total,
-    vsBaseline: base && s.day > base.day ? s.total - base.total : null,
-  })), [series, base]);
+  const rows = useMemo(() => {
+    const shown = series.map((s, i) => ({
+      id: s.day,
+      ...s,
+      prev: i === 0 ? null : series[i - 1],
+      change: i === 0 ? null : s.total - series[i - 1].total,
+      vsBaseline: base && s.day > base.day ? s.total - base.total : null,
+    }));
+    if (!showHidden) return shown;
+    // A hidden day still compares with the last showing day before it.
+    return shown.concat(hiddenSeries.map((s) => {
+      const prev = [...series].reverse().find(x => x.day < s.day) || null;
+      return { id: s.day, ...s, isHidden: true, prev, change: prev ? s.total - prev.total : null, vsBaseline: base && s.day > base.day ? s.total - base.total : null };
+    }));
+  }, [series, hiddenSeries, showHidden, base]);
 
   const signed = (n) => (n == null || n === 0
     ? <span style={{ color: '#94A3B8' }}>-</span>
@@ -113,6 +133,22 @@ export function MissingHistoryView({ settings, updateSettings, cdmName, onSelect
       render: r => (r.baseline
         ? <span>{fmtDay(r.day)} <span style={BASELINE_CHIP} title="Frozen baseline: never rewritten">Baseline</span></span>
         : fmtDay(r.day)),
+    },
+    {
+      key: 'hide', label: 'Hide', defaultWidth: 84,
+      getSortValue: r => (r.isHidden ? 1 : 0),
+      getFilterValue: r => (r.isHidden ? 'Hidden' : 'Showing'),
+      exportValue: r => (r.isHidden ? 'Hidden' : ''),
+      render: r => (r.baseline
+        ? <span style={{ color: '#CBD5E1' }} title="The baseline can't be hidden">-</span>
+        : (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setHidden(r.day, !r.isHidden); }}
+            title={r.isHidden ? `Show ${fmtDay(r.day)} again in the chart and table` : `Hide ${fmtDay(r.day)} from the chart and table`}
+            style={{ padding: '0.05rem 0.45rem', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#475569', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+          >{r.isHidden ? 'Unhide' : 'Hide'}</button>
+        )),
     },
     { key: 'total', label: 'All Missing Steps', defaultWidth: 140, render: r => <span style={{ fontWeight: 700 }}>{r.total.toLocaleString()}</span> },
     {
@@ -151,7 +187,7 @@ export function MissingHistoryView({ settings, updateSettings, cdmName, onSelect
     })),
   ];
 
-  if (series.length === 0) {
+  if (allSeries.length === 0) {
     return (
       <div style={{ padding: '1rem', fontSize: '0.8rem', color: '#64748B', maxWidth: 640 }}>
         Nothing recorded yet. A reading is taken each day while My Accounts is open, once the accounts and contacts have loaded.
@@ -160,20 +196,34 @@ export function MissingHistoryView({ settings, updateSettings, cdmName, onSelect
     );
   }
 
-  const last = series[series.length - 1];
-  const first = series[0];
+  // Every day hidden: the chart has nothing to draw, but the table still
+  // lists them so they can be shown again.
+  if (series.length === 0 && !showHidden) {
+    return (
+      <div style={{ padding: '1rem', fontSize: '0.8rem', color: '#64748B', maxWidth: 640 }}>
+        {`Every recorded day is hidden. `}
+        <button type="button" onClick={() => setShowHidden(true)} style={{ padding: '0.2rem 0.55rem', border: '1px solid #CBD5E1', borderRadius: 5, background: '#fff', color: '#334155', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+          {`Show ${hiddenSeries.length} hidden day${hiddenSeries.length === 1 ? '' : 's'}`}
+        </button>
+      </div>
+    );
+  }
+
+  const last = series[series.length - 1] || null;
+  const first = series[0] || null;
   const from = base || first;
-  const delta = last.total - from.total;
+  const delta = last && from ? last.total - from.total : 0;
+  const hiddenNote = hiddenSeries.length ? ` ${hiddenSeries.length} hidden.` : '';
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0.25rem 0.25rem 1rem' }}>
       <div style={{ fontSize: '0.72rem', color: '#64748B', margin: '0 0 0.6rem' }}>
-        {`${series.length} day${series.length === 1 ? '' : 's'} recorded since ${fmtDay(first.day)}. `}
+        {first ? `${series.length} day${series.length === 1 ? '' : 's'} showing since ${fmtDay(first.day)}.${hiddenNote} ` : `Every day is hidden.${hiddenNote} `}
         Each day is the All Missing Steps column on the Company Data subtab added up (steps remaining on each company's
         By Category ladder, plus its blank sites, utility accounts and equipment) across the My Accounts companies,
         inactive and Qualifying ones left out, as it stood at the end of that day. The field columns in the table count the companies missing each value. Click a day's Companies count to see which companies were added and which left that day.
       </div>
-      <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: '0.6rem 0.75rem', background: '#fff', maxWidth: 820 }}>
+      {last && <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: '0.6rem 0.75rem', background: '#fff', maxWidth: 820 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
           <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1E293B' }}>All missing steps</span>
           <span style={{ fontSize: '1.3rem', fontWeight: 700, color: '#1E293B', fontVariantNumeric: 'tabular-nums' }}>{last.total.toLocaleString()}</span>
@@ -199,8 +249,8 @@ export function MissingHistoryView({ settings, updateSettings, cdmName, onSelect
           </span>
         </div>
         <div style={{ marginTop: 6 }}><TotalLine series={series} /></div>
-      </div>
-      <div style={{ marginTop: '1rem', height: Math.min(420, 90 + rows.length * 32), display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden' }}>
+      </div>}
+      <div style={{ marginTop: '1rem', height: Math.min(460, 112 + rows.length * 36), display: 'flex', flexDirection: 'column', border: '1px solid #E2E8F0', borderRadius: 8, overflow: 'hidden' }}>
         <DataTable
           tableId="my-accounts-missing-history"
           exportFileName="All Missing History"
@@ -209,6 +259,14 @@ export function MissingHistoryView({ settings, updateSettings, cdmName, onSelect
           defaultSort={{ key: 'day', direction: 'desc' }}
           alwaysVisible={['day']}
           gridLines
+          rowGroup={r => (r.isHidden ? 1 : 0)}
+          rowStyle={r => (r.isHidden ? { opacity: 0.5 } : undefined)}
+          toolbarActions={hiddenSeries.length ? [{
+            key: 'hidden-days',
+            label: showHidden ? 'Hide hidden days' : `Show hidden days (${hiddenSeries.length})`,
+            title: showHidden ? 'Take the hidden days back out of the table' : 'List the hidden days at the bottom of the table, greyed, so they can be unhidden',
+            onClick: () => setShowHidden(v => !v),
+          }] : undefined}
           settings={settings}
           updateSettings={updateSettings}
         />

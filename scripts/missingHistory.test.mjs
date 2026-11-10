@@ -7,7 +7,7 @@
 //      when there are no companies to read.
 //   2. The first reading on record is also logged as the day before.
 //   3. After that a day is rewritten only when its numbers move.
-import { missingReading, missingStepsReading, isStepsDay, withMissingDay, previousDay, withBaseline, baselineDay, dayCdmsById } from '../src/utils/missingHistory.js';
+import { missingReading, missingStepsReading, isStepsDay, withMissingDay, previousDay, withBaseline, baselineDay, dayCdmsById, withDayHidden } from '../src/utils/missingHistory.js';
 import { allMissingStepsFor } from '../src/utils/allMissingSteps.js';
 
 let passed = 0, failed = 0;
@@ -127,6 +127,14 @@ check('a later day does not reseed', Object.keys(tomorrow).sort(), ['2026-10-14'
     { record: { id: 'a1', company: 'ACRE Management' } },
   ]);
   check('cdms: a CDM change alone rewrites the day', withMissingDay(day, '2026-11-10', cleared, 2)['2026-11-10'].cdms, ['', '']);
+}
+
+{
+  // Hidden days: a sorted, de-duplicated list, junk dropped.
+  check('hide: adds sorted', withDayHidden(['2026-11-05'], '2026-11-01', true), ['2026-11-01', '2026-11-05']);
+  check('hide: twice is once', withDayHidden(['2026-11-01'], '2026-11-01', true), ['2026-11-01']);
+  check('hide: unhide removes', withDayHidden(['2026-11-01', '2026-11-05'], '2026-11-01', false), ['2026-11-05']);
+  check('hide: no list yet, junk dropped', [withDayHidden(undefined, '2026-11-02', true), withDayHidden(['', null, '2026-11-03'], '2026-11-02', true)], [['2026-11-02'], ['2026-11-02', '2026-11-03']]);
 }
 
 console.log(`${passed} passed, ${failed} failed`);
