@@ -19,3 +19,17 @@ assert.equal(isOpenProcurementDecisionMaker(dm, { 8: { Procurement: { status: 's
 assert.equal(hasProcurementTagSaleStatus({}, { 7: { Procurement: { status: 'sold' } } }), false, 'no id: nothing recorded');
 assert.equal(isOpenProcurementDecisionMaker({ id: 7, dans_tags: 'Procurement' }, {}), false);
 console.log('PASS  procurement DM filter');
+
+// ESG and CAP (Capital Planning) work the same way, each on its own tag.
+{
+  const { isOpenTopicDecisionMaker } = await import('../src/utils/procurementDmFilter.js');
+  const esg = { id: 9, dans_tags: 'ESG; Decision Maker' };
+  assert.equal(isOpenTopicDecisionMaker(esg, {}, 'ESG'), true);
+  assert.equal(isOpenTopicDecisionMaker(esg, {}, 'Procurement'), false, 'ESG DM is not a Procurement DM');
+  assert.equal(isOpenTopicDecisionMaker(esg, { 9: { ESG: { status: 'sold' } } }, 'ESG'), false);
+  assert.equal(isOpenTopicDecisionMaker(esg, { 9: { Procurement: { status: 'sold' } } }, 'ESG'), true);
+  const cap = { id: 10, dans_tags: 'CapitalPlanning;decision maker' };
+  assert.equal(isOpenTopicDecisionMaker(cap, {}, 'Capital Planning'), true, 'spacing ignored');
+  assert.equal(isOpenTopicDecisionMaker(cap, { 10: { 'Capital Planning': { status: 'notsold' } } }, 'Capital Planning'), false);
+  console.log('PASS  ESG / CAP DM filter');
+}
