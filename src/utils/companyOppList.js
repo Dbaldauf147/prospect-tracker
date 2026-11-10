@@ -57,6 +57,9 @@ export function companyOppRows(records) {
       const close = cell(r, 'Close Date');
       return {
         id: r._id != null ? String(r._id) : `opp-${i}`,
+        // The real Opps 2 id, or '' for a row without one: what a label
+        // saved against the opp (oppProgressLabel.js) is keyed by.
+        oppId: r._id != null ? String(r._id) : '',
         name: cell(r, NAME_KEY),
         account: cell(r, 'Account'),
         scope: cell(r, 'Scope'),
