@@ -243,6 +243,19 @@ service cloud.firestore {
       allow read, write: if owns(userId);
     }
 
+    // The commissions Excel files dropped on Clients > Commissions >
+    // Monthly's month cards, kept so the month popup can download them.
+    // Same chunked shape as the opp files above.
+    match /commissionMonthFiles/{userId} {
+      allow read, write: if owns(userId);
+    }
+    match /commissionMonthFiles/{userId}/items/{fileId} {
+      allow read, write: if owns(userId);
+    }
+    match /commissionMonthFiles/{userId}/items/{fileId}/chunks/{chunkId} {
+      allow read, write: if owns(userId);
+    }
+
     // Portfolio source-file attachments — the workbook uploaded against a
     // PE portfolio company. Same shape as the opp files above.
     match /portfolioSourceFiles/{userId} {

@@ -46,6 +46,9 @@ const STORES = [
   // and Granola meetings boiled down per contact (relationshipLog.js). It
   // outgrew localStorage, which the feed it is built from already fills.
   { name: 'relationship-touches', keyPath: null },
+  // The commissions Excel files dropped on Commissions > Monthly's month
+  // cards, so a card can hand its file back (commissionMonthFiles.js).
+  { name: 'commission-month-files', keyPath: null },
 ];
 
 let dbPromise = null;

@@ -4,17 +4,19 @@ import { asNumber, fmtCurrency } from '../../utils/dealsFormat';
 import { COMMISSION_MONTH_NAMES } from '../../utils/commissionsStore';
 import { commissionMonthlyTotals } from '../../utils/commissionsMonthFile';
 import { commissionUploadFor, COMMISSION_UPLOADS_KEY } from '../../utils/commissionMonthUploads';
+import { CommissionMonthImportModal } from './CommissionMonthImportModal';
 
 // Commissions > Monthly. One card per calendar month with that month's
 // commission and revenue totals. Each card is also a drop target: drop a
 // commissions Excel file on it (or browse for one) and the parent reads it
 // and opens the usual column-mapping popup, with generic "Commission" /
 // "Revenue" columns pointed at that month. Clicking a card lists the rows
-// behind its totals underneath.
+// behind its totals underneath; on a month with a file it also opens a
+// popup of that import, with the file to download.
 
 const ACCEPT = '.xlsx,.xls,.xlsm,.csv';
 
-function MonthCard({ idx, totals, selected, isCurrent, busy, upload, onSelect, onFile }) {
+function MonthCard({ idx, totals, selected, isCurrent, busy, upload, onSelect, onOpen, onFile }) {
   const [over, setOver] = useState(false);
   const inputRef = useRef(null);
   const month = COMMISSION_MONTH_NAMES[idx];
@@ -30,12 +32,12 @@ function MonthCard({ idx, totals, selected, isCurrent, busy, upload, onSelect, o
 
   return (
     <div
-      onClick={() => onSelect(idx)}
+      onClick={() => { onSelect(idx); if (upload) onOpen(idx); }}
       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; if (!over) setOver(true); }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOver(false); }}
       onDrop={(e) => { e.preventDefault(); setOver(false); takeFiles(e.dataTransfer.files); }}
       title={upload
-        ? `${month}'s file is uploaded${upload.fileName ? ` (${upload.fileName})` : ''}${uploadedOn ? ` on ${uploadedOn}` : ''}. Drop another file to add to it. Click to see ${month}'s rows below.`
+        ? `${month}'s file is uploaded${upload.fileName ? ` (${upload.fileName})` : ''}${uploadedOn ? ` on ${uploadedOn}` : ''}. Drop another file to add to it. Click to see the import and download the file.`
         : `Drop a commissions Excel file here to add it to ${month}. Click to see ${month}'s rows below.`}
       style={{
         background: over ? '#EFF6FF' : upload ? '#F0FDF4' : '#fff',
@@ -95,6 +97,8 @@ export function CommissionsMonthlyView({ data, onFile, busyMonth, fileError, onD
   const currentMonth = new Date().getMonth();
   const [selected, setSelected] = useState(currentMonth);
   const selectedMonth = COMMISSION_MONTH_NAMES[selected];
+  // The month whose import popup is open, or null.
+  const [openMonth, setOpenMonth] = useState(null);
 
   const yearTotal = useMemo(() => totals.reduce((acc, t) => ({
     commission: acc.commission + t.commission,
@@ -165,6 +169,7 @@ export function CommissionsMonthlyView({ data, onFile, busyMonth, fileError, onD
               busy={busyMonth === i}
               upload={commissionUploadFor(settings?.[COMMISSION_UPLOADS_KEY], i)}
               onSelect={setSelected}
+              onOpen={setOpenMonth}
               onFile={onFile}
             />
           ))}
@@ -186,6 +191,16 @@ export function CommissionsMonthlyView({ data, onFile, busyMonth, fileError, onD
           updateSettings={updateSettings}
         />
       </div>
+      {openMonth != null && (
+        <CommissionMonthImportModal
+          monthIdx={openMonth}
+          upload={commissionUploadFor(settings?.[COMMISSION_UPLOADS_KEY], openMonth)}
+          data={data}
+          settings={settings}
+          updateSettings={updateSettings}
+          onClose={() => setOpenMonth(null)}
+        />
+      )}
     </div>
   );
 }
