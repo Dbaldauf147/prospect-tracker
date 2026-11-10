@@ -73,6 +73,9 @@ function contactTagStatus(c, tag, reviewMap) {
   return tagAnswerFrom(tagged, isLocalTagVerdict(stored) ? stored : '');
 }
 
+// See clientUntrackedMap in AllContactsView.
+const NO_UNTRACKED = Object.freeze({});
+
 export function AllContactsView({ prospects = [], onSelectProspect, settings, updateSettings, updateSettingsPath, cdmName = '' }) {
   const { user } = useAuth();
   const oppsRecords = useOppsRecords(user?.uid);
@@ -82,9 +85,16 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   // dedicated tabs and shared with the Prospecting tab's Tagged readout
   // (see utils/contactRosters.js). The Clients-tab maps are read from that
   // tab's own stores and re-read on the events it fires, so a company
-  // switched to "Cancelling for Sure" or ticked "Don't Track" drops off this
-  // page without a reload.
-  const { clientStatusMap, clientUntrackedMap } = useClientFlagMaps();
+  // switched to "Cancelling for Sure" drops off this page without a reload.
+  //
+  // Don't Track does NOT take anyone off this page: Dan wants everyone who
+  // qualifies on All whatever the Clients tab says about tracking their
+  // account (a Don't Track Blackstone was hiding Dan Egan, a Key Target).
+  // An empty map rather than a gate option, so the other pages that share
+  // makeRosterGates (Decision Makers, Prospecting, Draft Emails) keep their
+  // behaviour.
+  const { clientStatusMap } = useClientFlagMaps();
+  const clientUntrackedMap = NO_UNTRACKED;
 
   // "Show hidden contacts" toggle. Same review-mode behaviour the
   // dedicated Active page exposes — when on, the page becomes a list
@@ -376,7 +386,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       </button>
       {showAbout && (
         <div style={{ marginTop: 4 }}>
-          Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. The <strong>Totals</strong> pills double as filters: click as many as you want and the list shows contacts on <em>any</em> of the lit ones, click a lit pill to turn it off, or hit <strong>All</strong> to clear them. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Contacts at accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong>, or that are ticked <strong>Don't Track</strong> there, are left out. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through - any answer against a scored tag counts, Yes, No, Not sure, Sold or Not sold. <strong>Sold</strong> and <strong>Not sold</strong> are the two ends of one question asked of anyone a tag is true of: has their company bought that area? Sold keeps the tag on, so those contacts still come back in a plain pull of it; Not sold is the hold-off, keeping the tag off so they don't. Pick the tag and hit either status to see each list.
+          Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, <strong>Client</strong>, or <strong>Key Prospect</strong> rosters: same selectors and filters those tabs run, rolled up into a single list. The <strong>Totals</strong> pills double as filters: click as many as you want and the list shows contacts on <em>any</em> of the lit ones, click a lit pill to turn it off, or hit <strong>All</strong> to clear them. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table, <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats, or <strong>Travel</strong> to pick a state/city and see everyone in that area. Contacts at accounts whose Status on the Clients tab is <strong>Cancelling for Sure</strong> are left out. Accounts ticked <strong>Don't Track</strong> there still show. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters. Tick the row checkboxes and hit <strong>Edit Tags</strong> (or open <strong>Mass Edit</strong> and pick the <strong>Tags</strong> field) to add, remove, or replace Dan's Tags across every selected contact at once. <strong>Tagged</strong> is how much of the tag vocabulary each group has been worked through - any answer against a scored tag counts, Yes, No, Not sure, Sold or Not sold. <strong>Sold</strong> and <strong>Not sold</strong> are the two ends of one question asked of anyone a tag is true of: has their company bought that area? Sold keeps the tag on, so those contacts still come back in a plain pull of it; Not sold is the hold-off, keeping the tag off so they don't. Pick the tag and hit either status to see each list.
         </div>
       )}
       <WhyMissingLookup
@@ -415,14 +425,12 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
             </button>
           );
         })}
-        {/* Said out loud rather than silently dropped: both flags live on the
-            Clients tab, so each note names the one to change to get those
-            people back. */}
+        {/* Said out loud rather than silently dropped: the flag lives on the
+            Clients tab, so the note names what to change to get those people
+            back. (Don't Track no longer leaves anyone out here.) */}
         {[
           { attr: 'cancelling', count: categoryCounts.cancelling, label: 'at cancelling clients, left out',
             tip: 'Contacts at accounts whose Status on the Clients tab is "Cancelling for Sure". They\'d otherwise qualify for one of the rosters; change the account\'s Status there to bring them back.' },
-          { attr: 'untracked', count: categoryCounts.untracked, label: "at Don't Track clients, left out",
-            tip: 'Contacts at accounts ticked "Don\'t Track" on the Clients tab. They\'d otherwise qualify for one of the rosters; untick Don\'t Track there to bring them back.' },
         ].filter(n => n.count > 0).map(({ attr, count, label, tip }) => (
           <span
             key={attr}
