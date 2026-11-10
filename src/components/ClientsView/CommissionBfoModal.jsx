@@ -17,8 +17,8 @@ import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 // clicking it, or in bulk per row, per table, or for the whole opp. Marks
 // live in settings[BFO_OK_SETTINGS_KEY][<bfo>] so they sync across machines.
 
-const cellBase = { padding: '0.4rem 0.55rem', borderBottom: '1px solid #F1F5F9', textAlign: 'right', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' };
-const headBase = { padding: '0.4rem 0.55rem', borderBottom: '1px solid #E2E8F0', textAlign: 'right', whiteSpace: 'nowrap', color: '#475569', background: '#F1F5F9', fontWeight: 600 };
+const cellBase = { padding: '0.28rem 0.45rem', borderBottom: '1px solid #F1F5F9', textAlign: 'right', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' };
+const headBase = { padding: '0.3rem 0.45rem', borderBottom: '1px solid #E2E8F0', textAlign: 'right', whiteSpace: 'nowrap', color: '#475569', background: '#F1F5F9', fontWeight: 600 };
 const stickyLeft = { position: 'sticky', left: 0, zIndex: 1, textAlign: 'left', minWidth: 110 };
 
 const STATE_STYLE = {
@@ -76,7 +76,7 @@ function SectionTable({ title, measure, months, data, notes, stateOf, onToggle }
     else if (st === 'ok') onToggle([k], false);
   };
   return (
-    <section style={{ marginTop: '0.9rem' }}>
+    <section style={{ marginTop: '0.6rem' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.35rem' }}>
         <strong style={{ fontSize: '0.9rem', color: '#1E293B' }}>{title}</strong>
         {tableReds.length > 0 && (
@@ -111,7 +111,7 @@ function SectionTable({ title, measure, months, data, notes, stateOf, onToggle }
           <tbody>
             {sections.map((sec) => [
               <tr key={`${sec.key}:head`}>
-                <td colSpan={span} style={{ padding: '0.4rem 0.55rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', borderTop: sec.key === 'expected' ? '1px solid #E2E8F0' : undefined }}>
+                <td colSpan={span} style={{ padding: '0.25rem 0.55rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', borderTop: sec.key === 'expected' ? '1px solid #E2E8F0' : undefined }}>
                   <span style={{ position: 'sticky', left: '0.55rem', display: 'inline-flex', gap: '0.5rem', alignItems: 'baseline' }}>
                     <strong style={{ color: '#0F172A', fontSize: '0.74rem' }}>{sec.label}</strong>
                     <span style={{ color: '#64748B', fontSize: '0.66rem', whiteSpace: 'nowrap' }}>{sec.note}</span>
@@ -261,16 +261,16 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
   return (
     <div
       onClick={onClose}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0.5rem' }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label={`Monthly schedule for ${bfoName}`}
-        style={{ background: '#fff', borderRadius: 8, width: 'min(1200px, 96vw)', maxHeight: '92vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 10px 40px rgba(15, 23, 42, 0.3)' }}
+        style={{ background: '#fff', borderRadius: 8, width: 'min(1800px, 98vw)', maxHeight: '97vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 10px 40px rgba(15, 23, 42, 0.3)' }}
       >
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', padding: '0.9rem 1.1rem', borderBottom: '1px solid #E2E8F0' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', padding: '0.6rem 1.1rem', borderBottom: '1px solid #E2E8F0' }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: '0.7rem', color: '#64748B', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em' }}>BFO opp</div>
             <div style={{ fontSize: '1rem', fontWeight: 700, color: '#1E293B', marginTop: 2 }}>{bfoName}</div>
@@ -287,7 +287,7 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
           >×</button>
         </div>
 
-        <div style={{ padding: '0.2rem 1.1rem 1.1rem', overflow: 'auto' }}>
+        <div style={{ padding: '0.1rem 1.1rem 0.8rem', overflow: 'auto' }}>
           {live.length === 0 && deals.length === 0 ? (
             <div style={{ marginTop: '0.9rem', padding: '1rem', color: '#475569', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem' }}>
               Every commission row for this opp is marked ignored and no deal names it, so there is nothing to show.
