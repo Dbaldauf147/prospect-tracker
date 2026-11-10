@@ -22,7 +22,7 @@ import { projectCommissionRow } from '../../utils/commissionProjection';
 import { readCommissionsFile, isCommissionsFileName } from '../../utils/commissionsMonthFile';
 import { recordCommissionUpload, commissionUploadKey, COMMISSION_UPLOADS_KEY } from '../../utils/commissionMonthUploads';
 import { newCommissionFileId, saveCommissionMonthFile } from '../../utils/commissionMonthFiles';
-import { normBfoKey, bfoAllGreen, BFO_OK_SETTINGS_KEY, BFO_WATCH_SETTINGS_KEY } from '../../utils/commissionBfoSchedule';
+import { normBfoKey, bfoAllGreen, bfoPaymentStatus, bfoActualTotal, buildBfoSchedule, BFO_OK_SETTINGS_KEY, BFO_WATCH_SETTINGS_KEY } from '../../utils/commissionBfoSchedule';
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 import { CommissionBfoModal } from './CommissionBfoModal';
@@ -1461,7 +1461,10 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   }, []);
   const bfoOkMarks = settings?.[BFO_OK_SETTINGS_KEY];
   const uploads = settings?.[COMMISSION_UPLOADS_KEY];
-  const greenBfoKeys = useMemo(() => {
+  // Per BFO opp: whether its popup is all green, and its Commission table's
+  // payment status (Total actual, recorded + projected, against Expected),
+  // the same pill the popup shows.
+  const bfoReview = useMemo(() => {
     void dealsVersion;
     const dealsByKey = new Map();
     for (const d of loadDealsList().data || []) {
@@ -1477,12 +1480,21 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
       if (!rowsByKey.has(k)) rowsByKey.set(k, []);
       rowsByKey.get(k).push(r);
     }
-    const out = new Set();
+    const green = new Set();
+    const payment = new Map();
     for (const [k, rs] of rowsByKey) {
-      if (bfoAllGreen(rs, { deals: dealsByKey.get(k) || [], okMarks: bfoOkMarks?.[k] || {}, uploads })) out.add(k);
+      const deals = dealsByKey.get(k) || [];
+      if (bfoAllGreen(rs, { deals, okMarks: bfoOkMarks?.[k] || {}, uploads })) green.add(k);
+      const c = buildBfoSchedule(rs, { deals, uploads }).commission;
+      const actual = bfoActualTotal(c, 'total');
+      const expected = c.expected.total.total;
+      // No deal means nothing expected: no status to give.
+      const status = expected ? bfoPaymentStatus(actual, expected) : null;
+      if (status) payment.set(k, { status, actual: actual || 0, expected: expected || 0 });
     }
-    return out;
+    return { green, payment };
   }, [data, bfoOkMarks, dealsVersion, uploads]);
+  const greenBfoKeys = bfoReview.green;
 
   // BFO opps flagged "To watch" in the popup: yellow rows, own subtab.
   const watchMap = settings?.[BFO_WATCH_SETTINGS_KEY];
@@ -1577,10 +1589,19 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
         status: paymentStatusFor(row).state,
         opp: findOppByBfoLink(oppsCache, row?.[BFO_NAME_KEY]),
       });
-      if (projection) out.push({ ...row, id: i, projection });
+      if (!projection) return;
+      const k = normBfoKey(row?.[BFO_NAME_KEY]);
+      out.push({
+        ...row,
+        id: i,
+        projection,
+        __bfoPayment: (k && bfoReview.payment.get(k)) || null,
+        __bfoWatched: !!k && watchedBfoKeys.has(k),
+        __bfoGreen: !!k && bfoReview.green.has(k),
+      });
     });
     return out;
-  }, [data, oppsCache]);
+  }, [data, oppsCache, bfoReview, watchedBfoKeys]);
 
   const filtered = useMemo(() => {
     let base = rows;
