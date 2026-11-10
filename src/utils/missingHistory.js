@@ -248,6 +248,19 @@ export function recordMissingDay(day, reading, now = Date.now()) {
   return writeHistory(next);
 }
 
+// Days Dan has hidden from the All Missing History subtab (a reading taken
+// while the page was half loaded, say), as YYYY-MM-DD strings. A setting
+// rather than a change to the history, so a hidden day is still recorded
+// and can be shown again; synced with the rest of settings.
+export const HIDDEN_DAYS_SETTING = 'missingHistoryHiddenDays';
+
+/** The hidden days with `day` hidden (hide true) or shown again, sorted. */
+export function withDayHidden(list, day, hide) {
+  const set = new Set((Array.isArray(list) ? list : []).filter(d => typeof d === 'string' && d));
+  if (hide) set.add(day); else set.delete(day);
+  return [...set].sort();
+}
+
 const EVENTS = [MISSING_HISTORY_EVENT, 'storage'];
 
 export function subscribeMissingHistory(onChange) {
