@@ -7,6 +7,7 @@ import {
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 import { formatDateDisplay, toISODate } from '../../utils/oppsCallIn';
+import { COMMISSION_UPLOADS_KEY } from '../../utils/commissionMonthUploads';
 
 // Commissions > All / Actively Paid: clicking a row's BFO Name opens this.
 // Two month-by-month tables for the opp, Revenue and Commission. Each has an
@@ -128,8 +129,17 @@ function SectionTable({ title, measure, months, data, notes, stateOf, onToggle }
               {months.map((m) => (
                 <th
                   key={m.key}
-                  title={m.isCurrent ? 'This month' : undefined}
-                  style={{ ...headBase, ...(m.isCurrent ? { background: '#DBEAFE', color: '#1E3A8A' } : null) }}
+                  // Green: this month's commissions file has been uploaded
+                  // (Commissions > Monthly), so its numbers are final and
+                  // nothing is projected into it.
+                  title={m.uploaded
+                    ? `Commissions file uploaded${m.uploaded.fileName ? ` (${m.uploaded.fileName})` : ''}: this month's numbers are final, nothing is projected into it`
+                    : (m.isCurrent ? 'This month: commissions file not uploaded yet' : 'Commissions file not uploaded for this month')}
+                  style={{
+                    ...headBase,
+                    ...(m.isCurrent ? { background: '#DBEAFE', color: '#1E3A8A' } : null),
+                    ...(m.uploaded ? { background: '#BBF7D0', color: '#166534' } : null),
+                  }}
                 >{m.label}</th>
               ))}
               <th style={{ ...headBase, color: '#0F172A' }}>Total</th>
@@ -238,7 +248,8 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
 
   const live = useMemo(() => (rows || []).filter((r) => !r.__ignored), [rows]);
   const ignored = (rows || []).length - live.length;
-  const model = useMemo(() => buildBfoSchedule(live, { opp, deals }), [live, opp, deals]);
+  const uploads = settings?.[COMMISSION_UPLOADS_KEY];
+  const model = useMemo(() => buildBfoSchedule(live, { opp, deals, uploads }), [live, opp, deals, uploads]);
 
   // Actual vs Expected: each comparison's state, with the OK marks saved
   // for this opp.

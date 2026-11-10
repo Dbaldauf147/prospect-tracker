@@ -19,7 +19,9 @@
 // and Setup rows never are: a one-time line doesn't repeat. A row whose
 // first recorded month comes after its Comm Start Date started paying late,
 // so its projection runs that many months past the Comm End Date too (the
-// same move the Expected term makes).
+// same move the Expected term makes). A month whose commissions file has
+// been uploaded (Commissions > Monthly) is never projected: the file is the
+// record for that month, so a row with nothing in it wasn't paid then.
 //
 // Expected: what the Deals page expects, summed over every deal whose BFO
 // opp name matches, spread over each deal's term:
@@ -139,7 +141,10 @@ function monthLabel(n) {
 // { cells, total } line (Recurring rows only); actual and expected are each
 // { setup, recurring, total } lines of { cells, total }, cells aligned to
 // months (null where nothing lands).
-export function buildBfoSchedule(rows, { deals = [], today = new Date() } = {}) {
+// `uploads`: settings.commissionMonthUploads ('YYYY-MM' -> { fileName, at }),
+// the months whose commissions file has been uploaded. Each month carries
+// `uploaded` (that entry, or null).
+export function buildBfoSchedule(rows, { deals = [], today = new Date(), uploads = null } = {}) {
   const todayN = monthNumber(today);
   const items = (rows || []).map((row) => {
     const win = rowWindow(row, today);
@@ -177,7 +182,15 @@ export function buildBfoSchedule(rows, { deals = [], today = new Date() } = {}) 
   if (first == null) { first = today.getFullYear() * 12; last = first + 11; }
   if (last - first + 1 > MAX_SCHEDULE_MONTHS) last = first + MAX_SCHEDULE_MONTHS - 1;
   const months = [];
-  for (let n = first; n <= last; n++) months.push({ ...monthLabel(n), isCurrent: n === todayN });
+  const uploadOf = (key) => {
+    const u = uploads && typeof uploads === 'object' ? uploads[key] : null;
+    return u && typeof u === 'object' ? u : null;
+  };
+  for (let n = first; n <= last; n++) {
+    const m = monthLabel(n);
+    months.push({ ...m, isCurrent: n === todayN, uploaded: uploadOf(m.key) });
+  }
+  const uploadedN = new Set(months.filter((m) => m.uploaded).map((m) => m.n));
 
   const line = (valueAt) => {
     const cells = months.map((m) => {
@@ -216,7 +229,7 @@ export function buildBfoSchedule(rows, { deals = [], today = new Date() } = {}) 
         if (v != null) latest = { n, v };
       }
       if (!latest) return out;
-      for (let n = latest.n + 1; n <= it.projectTo; n++) out.set(n, latest.v);
+      for (let n = latest.n + 1; n <= it.projectTo; n++) if (!uploadedN.has(n)) out.set(n, latest.v);
       return out;
     });
     return line((m) => per.map((p) => p.get(m.n)));
@@ -340,9 +353,9 @@ export function bfoComparisonStates(model, okMarks = {}) {
 // True when the popup for this opp shows no red at all and at least one
 // cell is green (matched or marked OK): revenue and commission check out.
 // `rows`: the opp's roster rows, ignored ones already left out.
-export function bfoAllGreen(rows, { deals = [], okMarks = {}, today = new Date() } = {}) {
+export function bfoAllGreen(rows, { deals = [], okMarks = {}, today = new Date(), uploads = null } = {}) {
   if (!rows?.length) return false;
-  const states = bfoComparisonStates(buildBfoSchedule(rows, { deals, today }), okMarks);
+  const states = bfoComparisonStates(buildBfoSchedule(rows, { deals, today, uploads }), okMarks);
   // With nothing expected at all (no deal), any actual would read as
   // "above expected"; there is nothing to check against, so not green.
   let any = false, expected = false;
