@@ -11,7 +11,7 @@ import { useState } from 'react';
 import { useContactRelationship } from '../../hooks/useRelationshipStrength';
 import { RelationshipBadge } from './RelationshipBadge';
 import { LogActivityModal } from './LogActivityModal';
-import { RELATIONSHIP_CONFIG, touchPoints, isTwoWay, localDay, touchLabel, touchDetail, ageLabel, contactKey } from '../../utils/relationshipStrength';
+import { RELATIONSHIP_CONFIG, touchPoints, isTwoWay, localDay, touchLabel, OPTION_LABELS, ageLabel, contactKey } from '../../utils/relationshipStrength';
 import { saveContactDateAdded } from '../../utils/relationshipLog';
 
 const ADDED_SOURCE = {
@@ -62,6 +62,18 @@ const COMPONENTS = [
 
 const RECENT_SHOWN = 8;
 
+const fmtShort = (ms) => new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+// Who a touch came from, as a pill: inbound is the contact reaching out
+// (an email they sent you, a call they placed), outbound is you.
+function FromPill({ inbound, name }) {
+  return inbound ? (
+    <span title={`${name} sent or started this`} style={{ display: 'inline-block', padding: '0 6px', borderRadius: 999, background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC', fontSize: '0.62rem', fontWeight: 700, whiteSpace: 'nowrap' }}>← From {name}</span>
+  ) : (
+    <span title="You sent or started this" style={{ display: 'inline-block', padding: '0 6px', borderRadius: 999, background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0', fontSize: '0.62rem', fontWeight: 600, whiteSpace: 'nowrap' }}>You →</span>
+  );
+}
+
 const fmtDay = (ms) => new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
 export function RelationshipPanel({ contact }) {
@@ -71,8 +83,14 @@ export function RelationshipPanel({ contact }) {
   // and its components are what the panel is for, the list is the detail
   // behind them, there to check or correct an entry.
   const [showActivity, setShowActivity] = useState(false);
+  // Narrow the list to what the contact sent you.
+  const [onlyFromThem, setOnlyFromThem] = useState(false);
   if (!contact || (!contact.id && !contact.vid && !contact.email)) return null;
-  const recent = [...touches].reverse().slice(0, RECENT_SHOWN);
+  const name = String(contact.firstname || '').trim() || 'them';
+  const fromThemCount = touches.filter(t => t.direction === 'inbound').length;
+  const recent = [...touches].reverse()
+    .filter(t => !onlyFromThem || t.direction === 'inbound')
+    .slice(0, RECENT_SHOWN);
 
   return (
     <div style={{ border: '1px solid #E2E8F0', borderRadius: 8, padding: '0.6rem 0.75rem', marginBottom: '1rem', background: '#F8FAFC' }}>
@@ -102,7 +120,7 @@ export function RelationshipPanel({ contact }) {
         </div>
       )}
       <div style={{ marginTop: '0.5rem' }}>
-        {recent.length === 0 ? (
+        {touches.length === 0 ? (
           <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
             No activity found with this contact.{hasFeed ? '' : ' HubSpot, Granola and Outlook activity is read from the Activity tab once it has loaded.'}
           </div>
@@ -120,15 +138,24 @@ export function RelationshipPanel({ contact }) {
             onClick={() => setShowActivity(false)}
             aria-expanded
             style={{ background: 'none', border: 'none', padding: 0, marginBottom: 2, color: 'var(--color-accent)', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.7rem', fontWeight: 600 }}
-          >▾ Hide activity{touches.length > RECENT_SHOWN ? ` (latest ${RECENT_SHOWN} of ${touches.length})` : ''}</button>
+          >▾ Hide activity{touches.length > RECENT_SHOWN && !onlyFromThem ? ` (latest ${RECENT_SHOWN} of ${touches.length})` : ''}</button>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 12, fontSize: '0.66rem', color: '#475569', cursor: 'pointer' }}>
+            <input type="checkbox" checked={onlyFromThem} onChange={e => setOnlyFromThem(e.target.checked)} style={{ margin: 0 }} />
+            Only from {name} ({fromThemCount})
+          </label>
+          {recent.length === 0 && (
+            <div style={{ fontSize: '0.72rem', color: '#64748B', padding: '3px 4px' }}>Nothing from {name} on record yet.</div>
+          )}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
             <tbody>
               {recent.map(t => (
-                <tr key={t.id} style={{ borderTop: '1px solid #EEF2F7' }}>
+                <tr key={t.id} style={{ borderTop: '1px solid #EEF2F7', background: t.direction === 'inbound' ? '#F0FDF4' : undefined }}>
                   <td style={{ padding: '3px 4px', color: '#64748B', whiteSpace: 'nowrap' }}>{fmtDay(t.ms)}</td>
                   <td style={{ padding: '3px 4px', fontWeight: 600, color: '#1E293B' }}>{touchLabel(t)}</td>
                   <td style={{ padding: '3px 4px', color: '#475569' }}>
-                    {touchDetail(t)}
+                    <FromPill inbound={t.direction === 'inbound'} name={name} />
+                    {t.outcome && t.outcome !== 'held' && <span style={{ marginLeft: 6 }}>{OPTION_LABELS[t.outcome]}</span>}
+                    {t.outcome === 'replied' && t.replyMs && <span style={{ marginLeft: 4, color: '#64748B' }}>{fmtShort(t.replyMs)}</span>}
                     {isTwoWay(t) && <span style={{ marginLeft: 6, fontSize: '0.6rem', fontWeight: 700, color: '#166534' }}>two-way</span>}
                     {t.edited && <span style={{ marginLeft: 6, fontSize: '0.6rem', color: '#7C3AED' }} title="Direction or outcome edited here">edited</span>}
                   </td>
