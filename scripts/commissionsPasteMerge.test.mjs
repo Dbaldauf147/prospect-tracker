@@ -9,6 +9,7 @@
 // never mentions being touched at all.
 import {
   planCommissionsPaste, describeCommissionsPaste, normProjectName, PERIOD_KEYS,
+  CELL_SOURCES_KEY, cellSourceOf, dropCellSources,
 } from '../src/utils/commissionsPasteMerge.js';
 
 let pass = 0, fail = 0;
@@ -159,6 +160,33 @@ ok(!PERIOD_KEYS.has('Account Name') && !PERIOD_KEYS.has('%'), 'identity and look
   eq(describeCommissionsPaste(summary),
     'Paste imported: 1 new row added · 1 project already on file matched (1 blank cell filled) · 1 duplicate value ignored.',
     'the notice reads as a sentence');
+}
+
+// --- which file each month cell came from -----------------------------------
+{
+  const oct = { via: 'file', file: 'Oct commissions.xlsx', month: 9, at: '2026-11-02T00:00:00.000Z' };
+  const nov = { via: 'file', file: 'Nov commissions.xlsx', month: 10, at: '2026-12-02T00:00:00.000Z' };
+  // A new project: its month cells are stamped, its identity cells are not.
+  const first = planCommissionsPaste([], [{ 'Project Name': 'Acme', 'Account Name': 'Acme Co', October: '50', 'October Revenue': '500' }], { source: oct });
+  eq(first.next[0][CELL_SOURCES_KEY], { October: oct, 'October Revenue': oct }, 'a new row records the file behind each month cell');
+  // The next month's file fills November; October keeps its own file.
+  const second = planCommissionsPaste(first.next, [{ 'Project Name': 'Acme', October: '50', November: '60' }], { source: nov });
+  eq(cellSourceOf(second.next[0], 'November'), nov, 'a filled month records the file that filled it');
+  eq(cellSourceOf(second.next[0], 'October'), oct, 'a month the next file only repeats keeps its original file');
+  // Fill mode keeps a differing value on file, and its source with it.
+  const kept = planCommissionsPaste(first.next, [{ 'Project Name': 'Acme', October: '99' }], { source: nov });
+  eq(cellSourceOf(kept.next[0], 'October'), oct, 'a value left as it was keeps its source');
+  const upd = planCommissionsPaste(first.next, [{ 'Project Name': 'Acme', October: '99' }], { source: nov, dupeMode: 'update' });
+  eq(cellSourceOf(upd.next[0], 'October'), nov, 'an overwritten value takes the new source');
+  // A replace drops the cleared months' sources.
+  const rep = planCommissionsPaste(first.next, [{ 'Project Name': 'Acme', November: '60' }], { source: nov, dupeMode: 'replace' });
+  eq(rep.next[0][CELL_SOURCES_KEY], { November: nov }, 'a replace keeps only the sources of the months it put back');
+  // A cell imported before sources existed picks one up when a file repeats it.
+  const legacy = planCommissionsPaste([{ 'Project Name': 'Acme', October: '50' }], [{ 'Project Name': 'Acme', October: '50' }], { source: oct });
+  eq(cellSourceOf(legacy.next[0], 'October'), oct, 're-dropping a file backfills the source of a cell it repeats');
+  // The preview passes no source and records nothing.
+  eq(planCommissionsPaste([], [{ 'Project Name': 'X', October: '1' }]).next[0][CELL_SOURCES_KEY], undefined, 'no source, nothing recorded');
+  eq(dropCellSources(first.next[0], ['October', 'October Revenue'])[CELL_SOURCES_KEY], undefined, 'dropping the last source removes the map');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -41,6 +41,49 @@ for (const m of COMMISSION_MONTH_NAMES) { PERIOD_KEYS.add(`${m} Revenue`); PERIO
 
 export const PROJECT_NAME_KEY = 'Project Name';
 
+// Where each month/period cell's value came from, so clicking a month on the
+// Commissions table can say which month's file (or paste, or hand edit) put
+// it there. Rides on the row as { [cellKey]: source }, where a source is
+//   { via: 'file', file: 'Oct commissions.xlsx', month: 9, at: ISO }
+//   { via: 'paste', at: ISO }
+//   { via: 'edit', at: ISO }
+// Only PERIOD_KEYS are tracked, which keeps the stored roster small. Cells
+// imported before this existed have no entry; the popup says so.
+export const CELL_SOURCES_KEY = '__cellSources';
+
+// The row with `keys` stamped as coming from `source` (period keys only).
+// Returns the same row when nothing changes.
+export function stampCellSources(row, keys, source) {
+  if (!row || !source) return row;
+  const tracked = keys.filter(k => PERIOD_KEYS.has(k));
+  if (tracked.length === 0) return row;
+  const prev = row[CELL_SOURCES_KEY] && typeof row[CELL_SOURCES_KEY] === 'object' ? row[CELL_SOURCES_KEY] : {};
+  const next = { ...prev };
+  for (const k of tracked) next[k] = source;
+  return { ...row, [CELL_SOURCES_KEY]: next };
+}
+
+// The row with the source entries for `keys` dropped (a cleared cell).
+export function dropCellSources(row, keys) {
+  const prev = row?.[CELL_SOURCES_KEY];
+  if (!prev || typeof prev !== 'object') return row;
+  const next = { ...prev };
+  let changed = false;
+  for (const k of keys) if (k in next) { delete next[k]; changed = true; }
+  if (!changed) return row;
+  const out = { ...row };
+  if (Object.keys(next).length) out[CELL_SOURCES_KEY] = next;
+  else delete out[CELL_SOURCES_KEY];
+  return out;
+}
+
+// The recorded source of one cell, or null.
+export function cellSourceOf(row, key) {
+  const map = row?.[CELL_SOURCES_KEY];
+  const src = map && typeof map === 'object' ? map[key] : null;
+  return src && typeof src === 'object' ? src : null;
+}
+
 // Normalize a Project Name for duplicate matching — strips surrounding
 // whitespace, collapses internal whitespace, and lowercases so trivial typing
 // differences ("Acme — Phase 1" vs "ACME — Phase 1 ") count as the same
@@ -64,8 +107,10 @@ const sameValue = (a, b) => normProjectName(a) === normProjectName(b);
  * roster, `results` classifies each incoming row in the order given, `touched`
  * lists the indices in `next` this paste added to or changed (the caller
  * stamps those rows as freshly updated), and `summary` carries the counts.
+ * `source` (see CELL_SOURCES_KEY) is recorded against every month cell this
+ * paste writes; leave it null for a preview.
  */
-export function planCommissionsPaste(existing, incoming, { dupeMode = 'fill' } = {}) {
+export function planCommissionsPaste(existing, incoming, { dupeMode = 'fill', source = null } = {}) {
   const out = [];
   const order = [];                 // keyed projects, in first-seen order
   const existingByKey = new Map();
@@ -146,7 +191,7 @@ export function planCommissionsPaste(existing, incoming, { dupeMode = 'fill' } =
     const add = incomingByKey.get(key);
     if (!add) { out.push(base); continue; }           // project not in this paste → untouched
     if (!base) {                                       // brand-new project
-      out.push({ ...add });
+      out.push(stampCellSources({ ...add }, Object.keys(add), source));
       touched.push(out.length - 1);
       continue;
     }
@@ -157,8 +202,10 @@ export function planCommissionsPaste(existing, incoming, { dupeMode = 'fill' } =
         if (PERIOD_KEYS.has(k)) { summary.clearedCells++; continue; }  // paste repopulates the months
         seed[k] = v;
       }
+      seed = dropCellSources(seed, [...PERIOD_KEYS]);
     }
-    const { row, filled, duplicates, conflicts, overwritten } = overlay(seed, add, dupeMode);
+    const { row: merged, filled, duplicates, conflicts, overwritten, written } = overlay(seed, add, dupeMode);
+    const row = stampCellSources(merged, written, source);
     summary.filledCells += filled;
     summary.duplicateCells += duplicates;
     summary.conflictCells += conflicts.length;
@@ -171,7 +218,7 @@ export function planCommissionsPaste(existing, incoming, { dupeMode = 'fill' } =
   // Append the genuine within-paste duplicates last, so they land right after
   // the roster they duplicate.
   for (const row of pasteDuplicateRows) {
-    out.push(row);
+    out.push(stampCellSources(row, Object.keys(row), source));
     touched.push(out.length - 1);
   }
 
@@ -187,19 +234,31 @@ function overlay(base, addition, dupeMode) {
   let duplicates = 0;
   let overwritten = 0;
   const conflicts = [];
+  const written = [];
+  const confirmed = [];
   for (const [k, v] of Object.entries(addition)) {
     if (isBlank(v)) continue;                        // a blank paste never clears
-    if (isBlank(row[k])) { row[k] = v; filled++; continue; }
+    if (k === CELL_SOURCES_KEY) {
+      // Two rows for one project collapsing: keep both rows' sources, the
+      // later row's winning where both recorded the same cell.
+      if (v && typeof v === 'object') row[k] = { ...(row[k] && typeof row[k] === 'object' ? row[k] : {}), ...v };
+      continue;
+    }
+    if (isBlank(row[k])) { row[k] = v; filled++; written.push(k); continue; }
     if (sameValue(row[k], v)) {
+      // A repeat still tells us where the value lives. Record it for a cell
+      // that has no source yet (one imported before sources were tracked),
+      // so re-dropping a month's file fills in its popup.
+      if (!cellSourceOf(row, k)) confirmed.push(k);
       // The column that did the matching repeats by definition — counting it
       // would pad every "duplicates ignored" tally with the project name.
       if (k !== PROJECT_NAME_KEY) duplicates++;
       continue;
     }
     conflicts.push({ field: k, existing: row[k], pasted: v });
-    if (dupeMode !== 'fill') { row[k] = v; overwritten++; }
+    if (dupeMode !== 'fill') { row[k] = v; overwritten++; written.push(k); }
   }
-  return { row, filled, duplicates, conflicts, overwritten };
+  return { row, filled, duplicates, conflicts, overwritten, written: [...written, ...confirmed] };
 }
 
 // One-line report of what an import did, for the notice on the page.

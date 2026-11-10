@@ -11,6 +11,7 @@ import { MIRROR_CONFLICT_EVENT } from '../../utils/localMirrorSync';
 import { COMMISSIONS_MIRROR_KEY } from '../../utils/commissionsStore';
 import {
   planCommissionsPaste, describeCommissionsPaste, normProjectName,
+  stampCellSources, dropCellSources,
 } from '../../utils/commissionsPasteMerge';
 import { loadOppsFromCache, findOppByBfoLink } from '../../utils/oppsCache';
 import { buildOppIndex, suggestOpps, fieldsFromOpp, commissionProjectName } from '../../utils/commissionOppMatch';
@@ -24,6 +25,7 @@ import { normBfoKey, bfoAllGreen, BFO_OK_SETTINGS_KEY, BFO_WATCH_SETTINGS_KEY } 
 import { loadDealsList, DEALS_LIST_EVENT } from '../../utils/dealsStore';
 import { DEAL_BFO_KEY } from '../../utils/dealCommissions';
 import { CommissionBfoModal } from './CommissionBfoModal';
+import { CommissionCellSourceModal } from './CommissionCellSourceModal';
 
 // Lookup columns the user adds at the front of the table. Account Name
 // is an autocomplete against the Table View prospect roster; BFO Name is
@@ -815,11 +817,16 @@ function buildColumns(oppsCache, selectCol, oppIndex) {
           if (isDate) return <span style={{ color: '#334155' }}>{fmtDate(v)}</span>;
           return <span>{String(v)}</span>;
         };
+        // A month cell opens a popup naming the month file (or paste, or
+        // hand edit) its value came from. Double-click still edits.
+        const isMonthCell = isMonthCommissionKey(k) || isMonthRevenueKey(k);
         return (
           <EditableCell
             value={row[k]}
             render={renderValue}
             onSave={(v) => row.__onUpdate?.(row.id, k, v)}
+            onClick={isMonthCell && row.__onShowSource ? () => row.__onShowSource(row.id, k) : undefined}
+            title={isMonthCell ? 'Click to see which commission month file this came from. Double-click to edit.' : undefined}
           />
         );
       },
@@ -1339,9 +1346,12 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     if (!Number.isFinite(idx)) return;
     setStore(prev => {
       const next = [...prev.data];
-      const current = { ...(next[idx] || {}) };
-      if (value === '' || value == null) delete current[key];
-      else current[key] = value;
+      let current = { ...(next[idx] || {}) };
+      if (value === '' || value == null) { delete current[key]; current = dropCellSources(current, [key]); }
+      else if (String(value) !== String(current[key] ?? '')) {
+        current[key] = value;
+        current = stampCellSources(current, [key], { via: 'edit', at: nowStamp() });
+      }
       current[UPDATED_AT_KEY] = nowStamp();
       next[idx] = current;
       try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
@@ -1427,6 +1437,9 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     return m;
   }, [data]);
   const [bfoModal, setBfoModal] = useState(null);
+  // { rowId, key } of the month cell whose source popup is open.
+  const [sourceCell, setSourceCell] = useState(null);
+  const showCellSource = useCallback((rowId, key) => setSourceCell({ rowId, key }), []);
   const bfoHoverRef = useRef(null);
   const onTableMouseOver = useCallback((e) => {
     const tr = e.target.closest?.('tr');
@@ -1487,11 +1500,12 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
       __isDupeCandidate: duplicateIds.has(i),
       __isDuplicate: flaggedDuplicateIds.has(i),
       __onOpenBfo: setBfoModal,
+      __onShowSource: showCellSource,
       __bfoGroup: bfoGroups.get(normBfoKey(r?.[BFO_NAME_KEY])) ?? null,
       __bfoGreen: greenBfoKeys.has(normBfoKey(r?.[BFO_NAME_KEY])),
       __bfoWatched: watchedBfoKeys.has(normBfoKey(r?.[BFO_NAME_KEY])),
     })),
-    [data, selectedIds, duplicateIds, flaggedDuplicateIds, bfoGroups, greenBfoKeys, watchedBfoKeys]
+    [data, selectedIds, duplicateIds, flaggedDuplicateIds, bfoGroups, greenBfoKeys, watchedBfoKeys, showCellSource]
   );
 
   // The BFO opp popup: every roster row with the clicked BFO Name (ignored
@@ -1590,9 +1604,9 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     setStore(prev => {
       const next = prev.data.map((row, i) => {
         if (!selectedIds.has(i)) return row;
-        const out = { ...row };
-        if (rawValue === '' || rawValue == null) delete out[key];
-        else out[key] = rawValue;
+        let out = { ...row };
+        if (rawValue === '' || rawValue == null) { delete out[key]; out = dropCellSources(out, [key]); }
+        else { out[key] = rawValue; out = stampCellSources(out, [key], { via: 'edit', at: nowStamp() }); }
         out[UPDATED_AT_KEY] = nowStamp();
         return out;
       });
@@ -1627,7 +1641,12 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     //
     // Planned out here rather than inside a setStore updater: it saves, and
     // reports what it did, which an updater must not do.
-    const { next, summary, touched } = planCommissionsPaste(data || [], records, { dupeMode });
+    // Each month cell this import writes remembers where it came from, so
+    // clicking it later names the month file (see CELL_SOURCES_KEY).
+    const source = fileImport && fileImport.monthIdx != null
+      ? { via: 'file', file: String(fileImport.fileName || ''), month: fileImport.monthIdx, at: nowStamp() }
+      : { via: 'paste', at: nowStamp() };
+    const { next, summary, touched } = planCommissionsPaste(data || [], records, { dupeMode, source });
     // Stamp "now" as the Last Updated time on the rows this paste actually
     // added to or changed, so a project the paste doesn't mention keeps its
     // prior stamp — an unrelated row never looks freshly-updated just because
@@ -2075,6 +2094,15 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           onClose={closeBfoModal}
           settings={settings}
           updateSettings={updateSettings}
+        />
+      )}
+
+      {sourceCell && data?.[Number(sourceCell.rowId)] && (
+        <CommissionCellSourceModal
+          row={data[Number(sourceCell.rowId)]}
+          cellKey={sourceCell.key}
+          uploads={settings?.[COMMISSION_UPLOADS_KEY]}
+          onClose={() => setSourceCell(null)}
         />
       )}
 
