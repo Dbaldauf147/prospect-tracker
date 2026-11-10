@@ -31,6 +31,7 @@
 // to that one object.
 
 import { emailDirection } from './unansweredOutreach.js';
+import { isAutoReply } from '../../api/_lib/autoReply.js';
 import { rosterCompaniesMatch } from './contactRosters.js';
 
 export const RELATIONSHIP_CONFIG = Object.freeze({
@@ -166,6 +167,8 @@ export function normalizeTouch(t) {
     ...(t?.outcomeSet ? { outcomeSet: true } : {}),
     ...(t?.edited ? { edited: true } : {}),
     ...(t?.note ? { note: String(t.note) } : {}),
+    ...(t?.subject ? { subject: String(t.subject) } : {}),
+    ...(t?.from ? { from: String(t.from) } : {}),
   };
 }
 
@@ -225,12 +228,22 @@ export function touchesFromHubspotFeed(feed, workEmail = '') {
   const out = [];
   for (const e of (feed?.emails || [])) {
     if (String(e?.hs_email_subject || '').toLowerCase().includes('(sample email)')) continue;
+    // An out-of-office, auto-reply or bounce is a machine answering, not the
+    // contact: it would read as them reaching out, and as a reply to every
+    // send before it. Same rules the campaign replies use.
+    if (isAutoReply(e)) continue;
     const ms = hsMs(e?.hs_timestamp);
     const dir = emailDirection(e, workEmail);
     if (!Number.isFinite(ms) || !dir) continue;
     const inbound = dir === 'in';
     out.push({
-      touch: { id: `hs:e:${e.id || ms}`, ms, type: 'email', direction: inbound ? 'inbound' : 'outbound', source: 'hubspot' },
+      touch: {
+        id: `hs:e:${e.id || ms}`, ms, type: 'email', direction: inbound ? 'inbound' : 'outbound', source: 'hubspot',
+        // Shown on hover in the activity list, so a row can be checked
+        // without opening HubSpot.
+        subject: String(e?.hs_email_subject || '').trim(),
+        from: splitAddrs(e?.hs_email_from_email)[0] || '',
+      },
       // Only the To line on a send (being cc'd isn't an ask of that
       // person) and only the sender on a reply.
       emails: inbound ? splitAddrs(e.hs_email_from_email).slice(0, 1) : splitAddrs(e.hs_email_to_email),
@@ -273,6 +286,12 @@ export function touchesFromHubspotFeed(feed, workEmail = '') {
 // chart has a full year of history behind each of its points.
 
 export const TOUCH_INDEX_VERSION = 1;
+// The HubSpot part's own revision, stamped as `hv`. Bumped when what the
+// HubSpot feed turns into changes, so a stored HubSpot index is rebuilt
+// without touching the Granola and calendar parts (the calendar part is a
+// kept log, not something that can be rebuilt). 2: auto-replies dropped,
+// emails carry subject and sender.
+export const HUBSPOT_INDEX_REV = 2;
 export const TOUCH_INDEX_KEEP_DAYS = 730;
 
 const TYPE_CODE = { email: 'e', call: 'c', meeting: 'm' };
@@ -284,14 +303,19 @@ export function encodeTouch(t) {
   const code = TYPE_CODE[t.type] + (t.direction === 'inbound' ? 'i' : 'o')
     + (OUTCOME_CODE[t.type === 'email' ? '' : (t.outcome || '')] || '-')
     + (t.medium === 'in-person' ? 'p' : '');
-  return [Math.round(t.ms), code, t.id];
+  const tuple = [Math.round(t.ms), code, t.id];
+  // An email's subject and sender ride along for the activity list's hover.
+  if (t.type === 'email' && (t.subject || t.from)) tuple.push(String(t.subject || '').slice(0, 140), String(t.from || ''));
+  return tuple;
 }
 
 export function decodeTouch(tuple) {
-  const [ms, code = '', id = ''] = tuple || [];
+  const [ms, code = '', id = '', subject = '', from = ''] = tuple || [];
   const type = CODE_TYPE[code[0]] || 'email';
   return {
     id, ms, type,
+    ...(subject ? { subject } : {}),
+    ...(from ? { from } : {}),
     direction: code[1] === 'i' ? 'inbound' : 'outbound',
     outcome: type === 'email' ? '' : (CODE_OUTCOME[code[2]] || ''),
     medium: type === 'meeting' ? (code[3] === 'p' ? 'in-person' : 'video') : '',
@@ -315,7 +339,7 @@ export function buildTouchIndex(feed, workEmail = '', { nowMs = Date.now() } = {
     for (const em of new Set(emails)) push(byEmail, em, tuple);
     for (const ph of new Set((phones || []).map(normPhone).filter(Boolean))) push(byPhone, ph, tuple);
   }
-  return { v: TOUCH_INDEX_VERSION, builtAt: new Date(nowMs).toISOString(), byId, byEmail, byPhone };
+  return { v: TOUCH_INDEX_VERSION, hv: HUBSPOT_INDEX_REV, builtAt: new Date(nowMs).toISOString(), byId, byEmail, byPhone };
 }
 
 /**

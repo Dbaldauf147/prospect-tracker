@@ -68,10 +68,22 @@ const fmtShort = (ms) => new Date(ms).toLocaleDateString('en-US', { month: 'shor
 // (an email they sent you, a call they placed), outbound is you.
 function FromPill({ inbound, name }) {
   return inbound ? (
-    <span title={`${name} sent or started this`} style={{ display: 'inline-block', padding: '0 6px', borderRadius: 999, background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC', fontSize: '0.62rem', fontWeight: 700, whiteSpace: 'nowrap' }}>← From {name}</span>
+    <span style={{ display: 'inline-block', padding: '0 6px', borderRadius: 999, background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC', fontSize: '0.62rem', fontWeight: 700, whiteSpace: 'nowrap' }}>← From {name}</span>
   ) : (
-    <span title="You sent or started this" style={{ display: 'inline-block', padding: '0 6px', borderRadius: 999, background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0', fontSize: '0.62rem', fontWeight: 600, whiteSpace: 'nowrap' }}>You →</span>
+    <span style={{ display: 'inline-block', padding: '0 6px', borderRadius: 999, background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0', fontSize: '0.62rem', fontWeight: 600, whiteSpace: 'nowrap' }}>You →</span>
   );
+}
+
+// What hovering a row says: an email's subject and who sent it, so a row
+// can be checked against the mailbox without opening HubSpot.
+function touchHover(t) {
+  if (t.type !== 'email') return t.note || undefined;
+  const lines = [];
+  lines.push(t.subject ? `Subject: ${t.subject}` : 'Subject: not on record');
+  if (t.from) lines.push(`From: ${t.from}`);
+  if (t.note) lines.push(t.note);
+  if (!t.subject && !t.from && t.source === 'hubspot') lines.push('Open the Activity tab to load the subject and sender.');
+  return lines.join('\n');
 }
 
 const fmtDay = (ms) => new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -149,7 +161,7 @@ export function RelationshipPanel({ contact }) {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
             <tbody>
               {recent.map(t => (
-                <tr key={t.id} style={{ borderTop: '1px solid #EEF2F7', background: t.direction === 'inbound' ? '#F0FDF4' : undefined }}>
+                <tr key={t.id} title={touchHover(t)} style={{ borderTop: '1px solid #EEF2F7', background: t.direction === 'inbound' ? '#F0FDF4' : undefined }}>
                   <td style={{ padding: '3px 4px', color: '#64748B', whiteSpace: 'nowrap' }}>{fmtDay(t.ms)}</td>
                   <td style={{ padding: '3px 4px', fontWeight: 600, color: '#1E293B' }}>{touchLabel(t)}</td>
                   <td style={{ padding: '3px 4px', color: '#475569' }}>
