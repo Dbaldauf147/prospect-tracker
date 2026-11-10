@@ -266,14 +266,21 @@ export function bfoMatchState(actual, expected, okSignature) {
   return 'mismatch';
 }
 
-// Every comparison in one measure's data ({ actual, expected }), as
-// { key, actual, expected } with key `<measure>:<line>:<monthKey|total>`.
+// Every comparison in one measure's data ({ actual, expected, projected }),
+// as { key, actual, expected } with key `<measure>:<line>:<monthKey|total>`.
+// The Total column's Actual for Recurring and the line total includes the
+// projection: what the opp is on track to bring in over the term.
+export function bfoActualTotal(data, line) {
+  const t = data.actual[line].total || 0;
+  return line === 'setup' ? data.actual[line].total : t + (data.projected?.total || 0) || null;
+}
+
 export function bfoComparisons(measure, data, months) {
   const out = [];
   for (const line of ['setup', 'recurring', 'total']) {
     const a = data.actual[line], e = data.expected[line];
     months.forEach((m, i) => out.push({ key: `${measure}:${line}:${m.key}`, actual: a.cells[i], expected: e.cells[i] }));
-    out.push({ key: `${measure}:${line}:total`, actual: a.total, expected: e.total });
+    out.push({ key: `${measure}:${line}:total`, actual: bfoActualTotal(data, line), expected: e.total });
   }
   return out;
 }
