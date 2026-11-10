@@ -305,6 +305,14 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
     asNumber(opp?.['Quoted Amount']) ? `Quoted ${fmtCurrency(opp['Quoted Amount'])}` : '',
   ].filter(Boolean);
 
+  // The Project Name each of this opp's commission rows carries in the
+  // commission file, once each, so the popup can be matched to the file.
+  const projectNames = [];
+  for (const r of live) {
+    const name = String(r?.['Project Name'] || '').trim();
+    if (name && !projectNames.some((n) => n.toLowerCase() === name.toLowerCase())) projectNames.push(name);
+  }
+
   return (
     <div
       onClick={onClose}
@@ -325,6 +333,12 @@ export function CommissionBfoModal({ bfoName, rows, opp, onClose, settings, upda
               {[...facts, `${live.length} commission row${live.length === 1 ? '' : 's'}`, ignored ? `${ignored} ignored row${ignored === 1 ? '' : 's'} left out` : '']
                 .filter(Boolean).join(' · ')}
             </div>
+            {projectNames.length > 0 && (
+              <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: '0.2rem', wordBreak: 'break-word' }}>
+                <span style={{ color: '#64748B', fontWeight: 600 }}>Commission file project name{projectNames.length === 1 ? '' : 's'}:</span>{' '}
+                {projectNames.join(' · ')}
+              </div>
+            )}
           </div>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem', flexShrink: 0 }}>
           {bfoKey && updateSettings && (
