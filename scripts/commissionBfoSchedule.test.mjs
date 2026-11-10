@@ -96,5 +96,13 @@ eq(bfoAllGreen([{ ...full, March: 150 }], { deals: [gDeal], today, okMarks: mark
 eq(bfoAllGreen([full], { deals: [], today }), false, 'nothing expected: not green');
 eq(bfoAllGreen([], { deals: [gDeal], today }), false, 'no rows: not green');
 
+// Expected starts when Actual does: window opens Nov 2025 but nothing is
+// recorded until Dec 2025, so the deal's 12-month term moves to Dec-Nov.
+const late = { 'Comm Start Date': '11/1/2025', 'Comm End Date': '10/31/2026', December: 568, 'December Revenue': 6310, January: 360, 'January Revenue': 4000 };
+const lateS = buildBfoSchedule([late], { deals: [{ Commission: 1200, 'Recurring Revenue': 12000 }], today });
+const lr = lateS.revenue.expected.recurring;
+eq([lateS.months[0].label, lr.cells[0], lr.cells[1], lateS.months[lr.cells.lastIndexOf(1000)].label, lr.total], ['Nov 2025', null, 1000, 'Nov 2026', 12000], 'expected term moves to start with the first recorded month');
+eq(lateS.commission.expected.recurring.cells.slice(0, 2), [null, 100], 'expected commission starts with actuals too');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

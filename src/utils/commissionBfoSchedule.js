@@ -28,7 +28,9 @@
 // page's own history popup reads it), else the deal's Current Term Start
 // Date (or Original Contract Start) to its End Date, 12 months when no end
 // is on file. A deal with no dates at all can't be placed and is counted
-// as undated.
+// as undated. Once the roster has recorded anything, the whole term is moved
+// (same length) so it starts in the first month with a recorded amount:
+// Expected starts when Actual does.
 
 import { asNumber, asDate } from './dealsFormat.js';
 
@@ -98,8 +100,12 @@ export function isSetupRow(row) {
 
 // One deal's revenue and commission, each split into setup and recurring,
 // as month number -> amount.
-function dealPlan(deal, rows) {
-  const win = dealWindow(deal, rows);
+function dealPlan(deal, rows, startAt = null) {
+  let win = dealWindow(deal, rows);
+  if (win && startAt != null && startAt !== win.first) {
+    const shift = startAt - win.first;
+    win = { first: win.first + shift, last: win.last + shift };
+  }
   const plan = { win, revenueSetup: new Map(), revenueRecurring: new Map(), commissionSetup: new Map(), commissionRecurring: new Map() };
   if (!win) return plan;
   const total = asNumber(deal?.['Commission']) ?? 0;
@@ -136,7 +142,18 @@ export function buildBfoSchedule(rows, { deals = [], today = new Date() } = {}) 
     const win = rowWindow(row, today);
     return { row, win, placed: placeMonths(win, todayN) };
   });
-  const plans = (deals || []).map((deal) => dealPlan(deal, rows));
+  // First month any row has a recorded (non-zero) amount, revenue or
+  // commission: the Expected term starts there.
+  let firstActual = null;
+  for (const it of items) {
+    for (let n = it.win.first; n <= it.win.last; n++) {
+      if (firstActual != null && n >= firstActual) break;
+      const idx = ((n % 12) + 12) % 12;
+      if (it.placed[idx] !== n) continue;
+      if (asNumber(it.row?.[MONTHS[idx]]) || asNumber(it.row?.[`${MONTHS[idx]} Revenue`])) { firstActual = n; break; }
+    }
+  }
+  const plans = (deals || []).map((deal) => dealPlan(deal, rows, firstActual));
 
   let first = null, last = null;
   for (const w of [...items.map((it) => it.win), ...plans.map((p) => p.win).filter(Boolean)]) {
