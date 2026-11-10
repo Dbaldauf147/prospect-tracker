@@ -2229,10 +2229,14 @@ function KeyContactsViewInner({
   // column key → array of selected display values; a row passes when its
   // value for that column is one of them. Absent / empty = column not
   // filtered. Replaces the old free-text per-column filter.
-  const [contactColValueFilters, setContactColValueFilters] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(lsKey('contact-col-value-filters'))) || {}; } catch { return {}; }
-  });
-  useEffect(() => { try { localStorage.setItem(lsKey('contact-col-value-filters'), JSON.stringify(contactColValueFilters)); } catch {} }, [contactColValueFilters]);
+  //
+  // Per session, not saved, like every other table's filters: a filter
+  // remembered from weeks ago silently hid contacts with nothing on screen
+  // to say why. The copy older builds saved is dropped on load.
+  const [contactColValueFilters, setContactColValueFilters] = useState({});
+  useEffect(() => {
+    try { localStorage.removeItem(lsKey('contact-col-value-filters')); } catch { /* nothing saved */ }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // Company Status pills (companyStatusFilterEnabled). The statuses lit, as
   // the prospect spells them; '' is "No status", which covers a company
   // with a blank Status and one mapped to no prospect at all, the same two
