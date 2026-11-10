@@ -362,6 +362,43 @@ function addPeStagesSheet(wb, firms) {
 }
 
 // ---- Build the SE-branded workbook (mirror PEOppsTab.handleExport) -------
+// The PE Opps columns a schedule asked for, in canonical order. Account is
+// the row anchor, so it is always kept; an empty list means all of them.
+// Shared by the workbook and the email-body table so the two match.
+export function selectedPeOppsColumns(columnKeys) {
+  const keys = Array.isArray(columnKeys) && columnKeys.length ? columnKeys : PE_OPPS_COLUMN_KEYS;
+  const selected = new Set([...keys, 'Account']);
+  return PE_OPPS_COLUMNS.filter((c) => selected.has(c.key));
+}
+
+// The opps as an HTML table for the email body, so they can be read
+// without opening the attachment. Inline styles only (Outlook/Gmail drop
+// <style> blocks). Same rows and columns as the workbook's PE Opps sheet.
+export function buildPeOppsHtmlTable(records, columnKeys) {
+  const columns = selectedPeOppsColumns(columnKeys);
+  const rows = Array.isArray(records) ? records : [];
+  const th = 'padding:6px 10px;border-bottom:2px solid #009530;background:#E6F7EC;color:#009530;font-size:12px;font-weight:bold;text-align:left;white-space:nowrap';
+  const head = columns.map((c) => `<th style="${th}${c.align === 'right' ? ';text-align:right' : ''}">${escapeHtml(c.label)}</th>`).join('');
+  if (rows.length === 0) {
+    return '<p style="color:#5A6B7E;font-size:13px;margin:0 0 12px">No open PE opportunities right now.</p>';
+  }
+  const body = rows.map((r, idx) => {
+    const bg = idx % 2 === 1 ? 'background:#F6FCF8;' : '';
+    const cells = columns.map((c) => {
+      const raw = cellValue(r, c);
+      const text = raw == null ? '' : String(raw).trim();
+      const isUrl = /^https?:\/\/\S+$/i.test(text);
+      const content = isUrl
+        ? `<a href="${escapeHtml(text)}" style="color:#0369A1">Open</a>`
+        : escapeHtml(text);
+      const align = c.align === 'right' ? 'text-align:right;white-space:nowrap;' : 'text-align:left;';
+      return `<td style="${bg}${align}padding:5px 10px;border-bottom:1px solid #E2E8F0;font-size:12px;color:#1E293B;vertical-align:top">${content}</td>`;
+    }).join('');
+    return `<tr>${cells}</tr>`;
+  }).join('');
+  return `<table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;font-family:Arial,sans-serif;margin:0 0 12px"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
 // Returns a Node Buffer of the .xlsx file. `columnKeys` selects/orders the
 // PE Opps columns; unknown keys are ignored and an empty list falls back
 // to all. When `firms` is non-empty a second "PE Stages" worksheet is
@@ -373,11 +410,8 @@ export async function buildPeOppsWorkbook(records, columnKeys, firms = [], opts 
   const exceljs = await import('exceljs');
   const Workbook = exceljs.Workbook || exceljs.default?.Workbook;
   if (typeof Workbook !== 'function') throw new Error('exceljs Workbook unavailable');
-  const keys = Array.isArray(columnKeys) && columnKeys.length ? columnKeys : PE_OPPS_COLUMN_KEYS;
   const byKey = new Map(PE_OPPS_COLUMNS.map((c) => [c.key, c]));
-  // Account is the row anchor — always keep it, and preserve canonical order.
-  const selected = new Set([...keys, 'Account']);
-  const columns = PE_OPPS_COLUMNS.filter((c) => selected.has(c.key));
+  const columns = selectedPeOppsColumns(columnKeys);
 
   const SE_GREEN_DARK = 'FF009530';
   const SE_GREEN_LIGHT = 'FFE6F7EC';
@@ -436,7 +470,7 @@ export async function buildPeOppsWorkbook(records, columnKeys, firms = [], opts 
 // Uses a Gmail account + App Password (GMAIL_USER / GMAIL_APP_PASSWORD) so
 // the digest can be sent to any recipient for free, without a paid email
 // domain. The message is sent from — and replies go to — the Gmail account.
-export async function sendPeOppsEmail({ to, subject, message, buffer, filename, replyTo }) {
+export async function sendPeOppsEmail({ to, subject, message, buffer, filename, replyTo, tableHtml = '', oppCount }) {
   const user = process.env.GMAIL_USER;
   const pass = process.env.GMAIL_APP_PASSWORD;
   if (!user || !pass) {
@@ -452,10 +486,11 @@ export async function sendPeOppsEmail({ to, subject, message, buffer, filename, 
     ? `<p style="color:#334155;font-size:14px;white-space:pre-wrap;margin:0 0 16px">${escapeHtml(message)}</p>`
     : '';
   const html = `
-    <div style="font-family:Arial,sans-serif;max-width:680px;margin:0 auto">
-      <h2 style="color:#009530;margin:0 0 8px">PE Opportunities</h2>
+    <div style="font-family:Arial,sans-serif">
+      <h2 style="color:#009530;margin:0 0 8px">PE Opportunities${Number.isFinite(oppCount) ? ` (${oppCount})` : ''}</h2>
       ${intro}
-      <p style="color:#5A6B7E;font-size:13px;margin:0">The latest PE opportunities are attached as an Excel file.</p>
+      ${tableHtml}
+      <p style="color:#5A6B7E;font-size:13px;margin:0">${tableHtml ? 'The same opportunities are attached as an Excel file.' : 'The latest PE opportunities are attached as an Excel file.'}</p>
     </div>
   `;
 
