@@ -30,30 +30,50 @@ const BUILTIN_COMMA_FIRMS = [
   'Castle Harlan, Inc',
 ];
 
+// Performance matters here: splitPeOwners runs inside nested loops (every
+// PE firm x every prospect, in the Prospecting ladder App computes at
+// startup), and the app registers every comma company on the roster. A
+// scan of every known name per fragment froze the page for tens of seconds
+// on load, so known names are indexed by their FIRST segment (only those
+// can start a run at a fragment) and whole results are cached per input
+// string. The cache is dropped whenever a genuinely new name is registered.
 const norm = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
 const knownSegments = new Map(); // normalized full name -> normalized segments
+const knownByFirst = new Map(); // normalized first segment -> [segments]
+const splitCache = new Map(); // raw value -> split result (frozen)
+const SPLIT_CACHE_MAX = 20000;
 
 function addKnown(name) {
   const segs = String(name || '').split(/[,;]/).map(norm).filter(Boolean);
-  if (segs.length < 2) return;
-  knownSegments.set(segs.join(', '), segs);
+  if (segs.length < 2) return false;
+  const key = segs.join(', ');
+  if (knownSegments.has(key)) return false;
+  knownSegments.set(key, segs);
+  const list = knownByFirst.get(segs[0]);
+  if (list) list.push(segs); else knownByFirst.set(segs[0], [segs]);
+  return true;
 }
 BUILTIN_COMMA_FIRMS.forEach(addKnown);
 
 export function registerKnownPeOwnerNames(names) {
-  for (const n of names || []) addKnown(n);
+  let changed = false;
+  for (const n of names || []) if (addKnown(n)) changed = true;
+  if (changed) splitCache.clear();
 }
 
-// How many fragments from `parts[i]` on spell a known comma name (0 = none).
-function knownRunAt(parts, i) {
+// How many fragments from `normed[i]` on spell a known comma name (0 = none).
+// `normed` is the fragments already normalized.
+function knownRunAt(normed, i) {
+  const candidates = knownByFirst.get(normed[i]);
+  if (!candidates) return 0;
   let best = 0;
-  for (const segs of knownSegments.values()) {
+  for (const segs of candidates) {
     const n = segs.length;
-    if (n <= best || i + n > parts.length) continue;
+    if (n <= best || i + n > normed.length) continue;
     let ok = true;
-    for (let k = 0; k < n - 1 && ok; k++) ok = norm(parts[i + k]) === segs[k];
+    for (let k = 1; k < n - 1 && ok; k++) ok = normed[i + k] === segs[k];
     if (!ok) continue;
-    const last = norm(parts[i + n - 1]);
+    const last = normed[i + n - 1];
     const tail = segs[n - 1];
     if (last === tail || (last.startsWith(tail) && !/[a-z0-9]/.test(last[tail.length]))) best = n;
   }
@@ -61,10 +81,22 @@ function knownRunAt(parts, i) {
 }
 
 export function splitPeOwners(value) {
-  const parts = String(value || '').split(/[,;]/).map(p => p.trim()).filter(Boolean);
+  const raw = String(value || '');
+  const hit = splitCache.get(raw);
+  // A copy, so a caller that mutates its array can't poison the cache.
+  if (hit) return hit.slice();
+  const out = splitUncached(raw);
+  if (splitCache.size >= SPLIT_CACHE_MAX) splitCache.clear();
+  splitCache.set(raw, out);
+  return out.slice();
+}
+
+function splitUncached(raw) {
+  const parts = raw.split(/[,;]/).map(p => p.trim()).filter(Boolean);
+  const normed = parts.map(norm);
   const out = [];
   for (let i = 0; i < parts.length; i++) {
-    const run = knownRunAt(parts, i);
+    const run = knownRunAt(normed, i);
     if (run > 1) {
       out.push(parts.slice(i, i + run).join(', '));
       i += run - 1;
