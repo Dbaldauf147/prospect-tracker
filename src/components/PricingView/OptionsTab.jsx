@@ -9,7 +9,7 @@ import {
   findLinkedOppId,
   OPTION_LINKS_EVENT,
 } from '../../utils/pricingOptionLinks';
-import { buildPricingOptionSnapshot } from '../../utils/pricingOptionCalc';
+import { buildPricingOptionSnapshot, setupAndOneTimeTotal } from '../../utils/pricingOptionCalc';
 import {
   setOppPricingSnapshot,
   clearOppPricingSnapshot,
@@ -218,9 +218,7 @@ function OptionPanel({ opt, onChange, savedToLabel, onClickSave, onClearSave }) 
     return sum;
   });
 
-  const setupTotal = opt.rows
-    .filter(r => (r.type || '').toLowerCase() === 'setup')
-    .reduce((s, r) => s + (toNum(r.fee) || 0) * unitCountOrOne(r.unitCount), 0);
+  const setupTotal = setupAndOneTimeTotal(opt.rows, termYears, esc);
 
   // Recurring run-rate per contract year: the monthly bill of every
   // Recurring row that has started by the end of that year, escalated
@@ -418,7 +416,7 @@ function OptionPanel({ opt, onChange, savedToLabel, onClickSave, onClearSave }) 
           <table className={styles.summaryTable}>
             <tbody>
               <tr>
-                <td>Setup</td>
+                <td title="Setup and One Time fees billed within the contract term">Setup + One Time</td>
                 <td className={styles.numCell}>{fmtMoneyWhole(setupTotal)}</td>
               </tr>
               {Array.from({ length: termYears }, (_, i) => (
